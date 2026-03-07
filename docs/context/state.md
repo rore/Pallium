@@ -5,6 +5,7 @@
 - repository initialized locally and linked to GitHub
 - no application code yet
 - context layer created under `docs/context`
+- design-doc layer created under `docs/designs`
 
 ## Current Direction
 
