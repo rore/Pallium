@@ -1,48 +1,39 @@
 # Project Context
 
-This directory holds the stable working context for `Pallium`.
+This directory holds the stable project context for `Pallium`.
 
-It exists to keep the project direction explicit while the codebase is still
-small and evolving quickly.
+Use it for broader design intent and accepted architectural direction.
 
 ## Purpose
 
 Use this folder to store:
 
-- current project intent
-- architectural direction that is currently accepted
-- active decisions
-- open questions
-- current implementation state
+- project vision and scope
+- accepted architectural direction
+- important decisions and open design questions
+- repo state that is useful for implementation handoff
 
-For fuller design threads, proposals, and analyses, use `docs/designs/`.
+`roadmap/` is the canonical planning workspace for queue, ordering, phases,
+status, and parked ideas.
 
 ## File Map
 
 - `vision.md`
-  The product and architecture intent. What Pallium is, is not, and the core
-  principles that should remain stable.
+  What Pallium is, is not, and the core principles that should remain stable.
 
 - `architecture.md`
-  The current top-level design of the system.
+  The current top-level architecture of the system.
 
 - `decisions.md`
-  Short running log of important decisions and why they were made.
-
-- `ideas.md`
-  Raw ideas worth keeping, but not yet accepted as current design.
+  Short running log of important accepted decisions and open architectural
+  questions.
 
 - `state.md`
-  Current repo/project state so implementation work can resume with less
-  re-discovery.
-
-- `roadmap.md`
-  Current expected phases and near-term priorities.
+  Repo and implementation-handoff state that is useful across sessions.
 
 ## Conventions
 
-- Keep entries short and high-signal.
-- Prefer updating these files over repeating the same design context in chat.
-- Record decisions when they affect the shape of the core, plugin model, API,
-  storage, or retrieval behavior.
-- Treat `vision.md` as stable intent and `state.md` as volatile working notes.
+- Keep these files short and high-signal.
+- Prefer `roadmap/` for planning state and queue changes.
+- Prefer `docs/designs/` for fuller design threads, tradeoffs, and analyses.
+- Update `decisions.md` when a design thread becomes accepted project direction.

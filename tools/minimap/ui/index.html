@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>__REPO_NAME__ Roadmap</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="title-wrap">
+          <p class="eyebrow">Repo-local roadmap workspace</p>
+          <h1><span id="repo-name">__REPO_NAME__</span> Roadmap</h1>
+        </div>
+        <div class="topbar-meta">
+          <span id="workspace-summary" class="chip chip-muted">Loading items...</span>
+          <span id="roadmap-path" class="chip">Loading...</span>
+          <button id="refresh-button" class="ghost-button" type="button">Refresh</button>
+        </div>
+      </header>
+
+      <div id="status-banner" class="status-banner" hidden></div>
+
+      <main class="layout" id="layout-shell" data-scope-collapsed="false">
+        <section class="panel board-panel" id="board-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Board</h2>
+              <p class="muted">Compact by default, with groups you can collapse and reorder.</p>
+            </div>
+            <button id="jump-to-editor" class="ghost-button mobile-nav-button" type="button" hidden>Open item</button>
+          </div>
+          <div id="board-groups" class="board-groups"></div>
+        </section>
+
+        <section class="panel editor-panel" id="editor-panel" data-editor-mode="structured">
+          <div class="panel-header editor-header">
+            <div class="editor-heading">
+              <div class="editor-heading-top">
+                <h2 id="editor-title">Item</h2>
+              </div>
+              <p id="editor-subtitle" class="muted">Choose an item from the board.</p>
+            </div>
+            <div class="editor-actions">
+              <button id="jump-to-board" class="ghost-button mobile-nav-button" type="button">Board</button>
+              <button id="save-button" class="primary-button" type="button" disabled>Save</button>
+            </div>
+          </div>
+
+          <div class="editor-tabs" role="tablist" aria-label="Item editor modes">
+            <button class="editor-tab is-active" id="tab-preview" data-editor-mode="preview" type="button" role="tab" aria-selected="true">Preview</button>
+            <button class="editor-tab" id="tab-structured" data-editor-mode="structured" type="button" role="tab" aria-selected="false">Edit</button>
+            <button class="editor-tab" id="tab-raw" data-editor-mode="raw" type="button" role="tab" aria-selected="false">Raw</button>
+          </div>
+
+          <div class="editor-panels">
+            <form id="item-form" class="item-form editor-pane" data-mode-pane="structured">
+              <details class="metadata-details">
+                <summary id="metadata-toggle" class="metadata-summary">
+                  <span class="metadata-summary-title">Item details</span>
+                  <span class="metadata-summary-copy">Title, status, priority, commitment, milestone</span>
+                </summary>
+
+                <div class="metadata-grid">
+                  <label>
+                    <span>ID</span>
+                    <input id="field-id" name="id" type="text" readonly />
+                  </label>
+
+                  <label>
+                    <span>Title</span>
+                    <input id="field-title" name="title" type="text" />
+                  </label>
+
+                  <label>
+                    <span>Status</span>
+                    <select id="field-status" name="status">
+                      <option value="queued">queued</option>
+                      <option value="in-progress">in-progress</option>
+                      <option value="blocked">blocked</option>
+                      <option value="done">done</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    <span>Priority</span>
+                    <select id="field-priority" name="priority">
+                      <option value="high">high</option>
+                      <option value="medium">medium</option>
+                      <option value="low">low</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    <span>Commitment</span>
+                    <select id="field-commitment" name="commitment">
+                      <option value="committed">committed</option>
+                      <option value="uncommitted">uncommitted</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    <span>Milestone</span>
+                    <input id="field-milestone" name="milestone" type="text" placeholder="Optional" />
+                  </label>
+                </div>
+
+                <p class="muted editor-note">Markdown is allowed inside every section. Minimap keeps unknown frontmatter and extra sections intact.</p>
+              </details>
+
+              <div class="section-stack fixed-section-grid">
+                <label data-span="full">
+                  <span>Summary</span>
+                  <textarea id="section-summary" rows="4"></textarea>
+                </label>
+
+                <label>
+                  <span>Why</span>
+                  <textarea id="section-why" rows="4"></textarea>
+                </label>
+
+                <label>
+                  <span>In Scope</span>
+                  <textarea id="section-in-scope" rows="4"></textarea>
+                </label>
+
+                <label>
+                  <span>Out of Scope</span>
+                  <textarea id="section-out-of-scope" rows="4"></textarea>
+                </label>
+
+                <label data-span="full">
+                  <span>Done When</span>
+                  <textarea id="section-done-when" rows="4"></textarea>
+                </label>
+
+                <label data-span="full">
+                  <span>Notes</span>
+                  <textarea id="section-notes" rows="5"></textarea>
+                </label>
+              </div>
+
+              <section id="extra-sections-panel" class="extra-sections-panel" hidden>
+                <div class="extra-sections-header">
+                  <h3>Additional Sections</h3>
+                  <p class="muted">These came from the item file and stay in their original order.</p>
+                </div>
+                <div id="extra-sections" class="section-stack"></div>
+              </section>
+            </form>
+
+            <section class="editor-pane" data-mode-pane="preview" hidden>
+              <div id="item-preview" class="preview-surface preview-empty">Preview updates as you edit the structured form.</div>
+            </section>
+
+            <section class="editor-pane raw-pane" data-mode-pane="raw" hidden>
+              <div class="raw-pane-header">
+                <h3>Raw Markdown</h3>
+                <p class="muted">Use this for uncommon metadata or formatting that does not fit the structured editor.</p>
+              </div>
+              <textarea id="raw-text" class="raw-textarea" spellcheck="false"></textarea>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel scope-panel" id="scope-panel">
+          <div class="panel-header">
+            <div class="panel-header-main">
+              <h2>Scope</h2>
+              <span class="muted">Read-only for now</span>
+            </div>
+            <button id="scope-toggle" class="scope-toggle-button" type="button" aria-expanded="true">Collapse</button>
+          </div>
+          <div id="scope-content" class="scope-content"></div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
