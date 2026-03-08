@@ -34,6 +34,50 @@ Why:
 - preserves a differentiated long-term direction
 - allows consolidation to be added without distorting the core model
 
+### 2026-03-08 - Build a walking skeleton before deep model hardening
+
+The project should start with a minimal end-to-end skeleton that includes all
+major system elements, then evolve iteratively.
+
+Why:
+
+- reduces the risk of locking in the wrong abstractions too early
+- keeps the system mentally graspable while the design is still evolving
+- gives continuous end-to-end proof as capabilities expand
+
+### 2026-03-08 - Use Python for the main Pallium service
+
+The first implementation should use Python.
+
+Why:
+
+- best fit for rapid iteration on semantic processing and consolidation logic
+- strong ecosystem for retrieval and text-heavy workflows
+- good enough performance for a local-first, non-multi-tenant internal service
+- aligns with the walking-skeleton approach better than a heavier runtime
+
+### 2026-03-08 - Use a single-service architecture first
+
+Pallium should start as a single local-first service with clear internal module
+boundaries instead of multiple services.
+
+Why:
+
+- keeps the first implementation small and understandable
+- preserves end-to-end flow without distributed-system overhead
+- still allows later extraction of boundaries if needed
+
+### 2026-03-08 - Start with a simulated agent-memory consumer
+
+The first end-to-end usage should include a simulated generic agent that uses
+Pallium as its unstructured memory layer.
+
+Why:
+
+- keeps the project grounded in a real consumer workflow
+- exercises both write and read paths from the start
+- avoids building storage and retrieval without proving actual use
+
 ## Open
 
 ### Ingestion policy

@@ -9,7 +9,7 @@ milestone: Phase 0
 
 ## Summary
 
-Refine the architecture notes into implementation-ready decisions for the minimal core entities, lifecycle states, and write and query API contracts.
+Refine the architecture notes into implementation-ready decisions for the minimal core entities, lifecycle states, and write and query API contracts that the walking skeleton can be built against.
 
 ## Why
 

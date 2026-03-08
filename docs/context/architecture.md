@@ -2,11 +2,29 @@
 
 ## Top-Level Shape
 
-Pallium has three main layers:
+Pallium should begin as a single local-first service with clear internal
+module boundaries.
 
-1. Generic core
-2. Semantic use-case layer
-3. External producers and consumers
+Main layers:
+
+1. API layer
+2. Generic core
+3. Semantic use-case layer
+4. Storage layer
+5. Retrieval layer
+6. Optional background jobs
+
+## API Layer
+
+Owns the write and read surfaces for downstream producers and consumers.
+
+Expected first endpoints:
+
+- `POST /items`
+- `POST /items/batch`
+- `POST /query`
+- `GET /items/{id}`
+- `GET /objects/{id}`
 
 ## Generic Core
 
@@ -20,7 +38,7 @@ Core responsibilities:
 - persist relations
 - persist index entries
 - persist promoted memory objects
-- run processing pipelines
+- orchestrate processing
 - orchestrate retrieval
 - package evidence-backed results
 
@@ -43,7 +61,7 @@ Responsibilities:
 - processing pipeline selection
 - typed annotation and memory-object definitions
 - promotion rules
-- retrieval policy
+- retrieval policy hints
 - result shaping
 
 The semantic layer should declare types through schema metadata rather than by
@@ -55,6 +73,9 @@ Expected generic fields for typed semantic artifacts:
 - `schema_id`
 - `schema_version`
 - `payload`
+
+The first implementation should use a simple in-repo code plugin pattern,
+not a dynamic plugin marketplace.
 
 ## Producers and Consumers
 
@@ -73,6 +94,9 @@ Typical consumers:
 - internal tools
 - lightweight admin or review UIs
 
+The first walking skeleton should include a simulated generic agent consumer so
+write and read behavior are exercised end to end.
+
 ## Base Memory Flow
 
 1. Producer submits a normalized `SourceItem`
@@ -89,11 +113,20 @@ Typical consumers:
 Preferred order of importance:
 
 1. structured filters
-2. relations/entity links
+2. relations or entity links
 3. lexical retrieval
 4. optional vector retrieval
 
 Returned results should stay compact and cite supporting evidence.
+
+## Storage and Jobs
+
+The first implementation should keep storage simple and local-first.
+
+- one database
+- no separate graph database requirement
+- no separate vector database requirement
+- background jobs only where needed for processing or later consolidation
 
 ## Tiered Memory Extension
 

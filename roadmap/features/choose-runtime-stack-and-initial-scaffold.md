@@ -9,17 +9,17 @@ milestone: Phase 0
 
 ## Summary
 
-Pick the initial runtime and storage stack, then scaffold the first repo modules around that choice.
+Choose the initial Python runtime and local-first storage approach, then scaffold the first repo modules around that choice.
 
 ## Why
 
-The repo is still pre-implementation. Picking a simple local-first stack early will make the first code cuts concrete and reduce thrash in storage, provider abstraction, and API wiring.
+The repo is still pre-implementation. Picking a simple stack early will make the first code cuts concrete and keep the walking skeleton coherent.
 
 ## In Scope
 
-- choose the initial backend runtime
+- choose the initial Python web stack
 - choose the initial storage approach
-- choose the initial project layout for core, storage, pipeline, retrieval, providers, and API
+- choose the initial project layout for API, core, semantic layer, storage, retrieval, and jobs
 - scaffold the first module boundaries without overbuilding them
 
 ## Out of Scope
@@ -32,8 +32,8 @@ The repo is still pre-implementation. Picking a simple local-first stack early w
 
 1. The initial runtime and storage choices are explicit.
 2. The repo has the first implementation-oriented scaffold in place.
-3. The scaffold aligns with Pallium's generic-core and local-first direction.
+3. The scaffold aligns with Pallium's generic-core, local-first, and walking-skeleton direction.
 
 ## Notes
 
-Sources: `roadmap/scope.md`, `docs/context/vision.md`
+Sources: `roadmap/scope.md`, `docs/context/vision.md`, `docs/context/architecture.md`

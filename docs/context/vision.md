@@ -58,3 +58,7 @@ Pallium is not:
 10. Tiered memory is an extension.
     Higher-level consolidation is important, but it should not be required for
     the base system to function.
+
+11. Build iteratively around a walking skeleton.
+    Prefer a thin end-to-end system with all major layers present over a large
+    upfront design freeze.

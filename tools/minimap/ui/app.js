@@ -15,13 +15,27 @@ const state = {
   editorMode: "preview",
   dirtyStructured: false,
   dirtyRaw: false,
+  boardEditMode: false,
+  boardDraft: null,
+  boardDirty: false,
+  scopeEditMode: false,
+  scopeDraft: "",
+  scopeDirty: false,
 };
 
 const layoutElement = document.querySelector("#layout-shell");
 const boardPanelElement = document.querySelector("#board-panel");
 const boardGroupsElement = document.querySelector("#board-groups");
+const boardEditButton = document.querySelector("#board-edit-button");
+const boardSaveButton = document.querySelector("#board-save-button");
+const boardCancelButton = document.querySelector("#board-cancel-button");
 const scopePanelElement = document.querySelector("#scope-panel");
 const scopeContentElement = document.querySelector("#scope-content");
+const scopeTextElement = document.querySelector("#scope-text");
+const scopeEditButton = document.querySelector("#scope-edit-button");
+const scopeSaveButton = document.querySelector("#scope-save-button");
+const scopeCancelButton = document.querySelector("#scope-cancel-button");
+const scopeSubtitleElement = document.querySelector("#scope-subtitle");
 const scopeResizerElement = document.querySelector("#scope-resizer");
 const scopeToggleButton = document.querySelector("#scope-toggle");
 const jumpToBoardButton = document.querySelector("#jump-to-board");
@@ -38,8 +52,7 @@ const statusBanner = document.querySelector("#status-banner");
 const form = document.querySelector("#item-form");
 const previewElement = document.querySelector("#item-preview");
 const rawTextElement = document.querySelector("#raw-text");
-const extraSectionsPanel = document.querySelector("#extra-sections-panel");
-const extraSectionsElement = document.querySelector("#extra-sections");
+const sectionsContainer = document.querySelector("#sections-container");
 const modeButtons = Array.from(document.querySelectorAll("[data-editor-mode]"));
 const modePanes = Array.from(document.querySelectorAll("[data-mode-pane]"));
 const stackedLayoutMedia = window.matchMedia("(max-width: 980px)");
@@ -52,12 +65,6 @@ const fields = {
   priority: document.querySelector("#field-priority"),
   commitment: document.querySelector("#field-commitment"),
   milestone: document.querySelector("#field-milestone"),
-  Summary: document.querySelector("#section-summary"),
-  Why: document.querySelector("#section-why"),
-  "In Scope": document.querySelector("#section-in-scope"),
-  "Out of Scope": document.querySelector("#section-out-of-scope"),
-  "Done When": document.querySelector("#section-done-when"),
-  Notes: document.querySelector("#section-notes"),
 };
 
 function loadStoredScopePreference() {
@@ -72,7 +79,7 @@ function persistScopePreference() {
   try {
     window.localStorage.setItem(SCOPE_STORAGE_KEY, String(state.scopeCollapsed));
   } catch {
-    // Ignore storage failures; the toggle still works for the session.
+    // Ignore storage failures.
   }
 }
 
@@ -93,7 +100,7 @@ function persistScopeWidth() {
   try {
     window.localStorage.setItem(SCOPE_WIDTH_STORAGE_KEY, String(state.scopeWidth));
   } catch {
-    // Ignore storage failures; resize still works for the session.
+    // Ignore storage failures.
   }
 }
 
@@ -164,7 +171,6 @@ function renderMarkdownToHtml(markdown) {
     blocks.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
     codeLines = [];
   }
-
   for (const line of lines) {
     if (line.startsWith("```")) {
       flushParagraph();
@@ -220,7 +226,6 @@ function renderMarkdownToHtml(markdown) {
   flushParagraph();
   flushList();
   flushCodeBlock();
-
   return blocks.join("");
 }
 
@@ -239,8 +244,17 @@ function getBoardItems() {
   return state.workspace?.boardGroups.flatMap((group) => group.items) ?? [];
 }
 
+function getBoardItemById(itemId) {
+  return state.workspace?.items?.[itemId] ?? null;
+}
+
+function getFirstBoardItemId(workspace = state.workspace) {
+  return workspace?.boardGroups.flatMap((group) => group.items).at(0)?.id ?? null;
+}
+
 function renderBadges(item) {
-  return [item.status, item.priority, item.commitment, item.milestone].filter(Boolean)
+  return [item.status, item.priority, item.commitment, item.milestone]
+    .filter(Boolean)
     .map((value) => `<span class="badge">${escapeHtml(value)}</span>`)
     .join("");
 }
@@ -270,9 +284,19 @@ function scrollPanelIntoView(element) {
 }
 
 function syncMobileNavigation() {
+  const stacked = isStackedLayout();
   const hasItem = Boolean(state.selectedItemId);
-  jumpToEditorButton.hidden = !hasItem;
-  jumpToEditorButton.disabled = !hasItem;
+  jumpToBoardButton.hidden = !stacked;
+  jumpToBoardButton.disabled = !stacked;
+  jumpToEditorButton.hidden = !stacked || !hasItem || state.boardEditMode;
+  jumpToEditorButton.disabled = !stacked || !hasItem || state.boardEditMode;
+}
+
+function renderBoardChrome() {
+  boardEditButton.hidden = state.boardEditMode;
+  boardSaveButton.hidden = !state.boardEditMode;
+  boardCancelButton.hidden = !state.boardEditMode;
+  boardSaveButton.disabled = !state.boardDirty;
 }
 
 function renderScopeChrome() {
@@ -281,9 +305,17 @@ function renderScopeChrome() {
   layoutElement.dataset.scopeCollapsed = String(state.scopeCollapsed);
   layoutElement.style.setProperty("--scope-width", `${state.scopeWidth}px`);
   scopePanelElement.classList.toggle("scope-collapsed", state.scopeCollapsed);
+  scopePanelElement.classList.toggle("scope-editing", state.scopeEditMode);
+  scopeSubtitleElement.textContent = "";
+  scopeSubtitleElement.hidden = true;
+  scopeEditButton.hidden = state.scopeEditMode;
+  scopeSaveButton.hidden = !state.scopeEditMode;
+  scopeCancelButton.hidden = !state.scopeEditMode;
+  scopeSaveButton.disabled = !state.scopeDirty;
+  scopeToggleButton.hidden = state.scopeEditMode;
+  scopeToggleButton.disabled = state.scopeEditMode;
   scopeToggleButton.textContent = state.scopeCollapsed ? "Expand" : "Collapse";
   scopeToggleButton.setAttribute("aria-expanded", state.scopeCollapsed ? "false" : "true");
-  scopeToggleButton.setAttribute("aria-label", state.scopeCollapsed ? "Expand scope panel" : "Collapse scope panel");
   scopeResizerElement.hidden = !showResizer;
   scopeResizerElement.setAttribute("aria-hidden", showResizer ? "false" : "true");
   scopeResizerElement.setAttribute("aria-valuemin", String(MIN_SCOPE_WIDTH));
@@ -299,12 +331,17 @@ function renderEditorChrome() {
 function syncWorkspaceChrome() {
   updateDocumentTitle();
   updateWorkspaceSummary();
+  renderBoardChrome();
   renderScopeChrome();
   renderEditorChrome();
   syncMobileNavigation();
 }
 
 function toggleScopePanel() {
+  if (state.scopeEditMode) {
+    return;
+  }
+
   state.scopeCollapsed = !state.scopeCollapsed;
   persistScopePreference();
   renderScopeChrome();
@@ -358,17 +395,114 @@ function reorderGroups(groups, fromIndex, toIndex) {
   return nextGroups;
 }
 
-async function saveBoardGroups() {
-  const groups = state.workspace.boardGroups.map((group) => ({
+function cloneBoardDraftFromWorkspace() {
+  return state.workspace?.boardGroups.map((group) => ({
     name: group.name,
     itemIds: group.items.map((item) => item.id),
-  }));
+  })) ?? [];
+}
 
+function markBoardDirty() {
+  state.boardDirty = true;
+  renderBoardChrome();
+}
+
+function findBoardDraftItem(itemId) {
+  if (!state.boardDraft) {
+    return { groupIndex: -1, itemIndex: -1 };
+  }
+
+  for (let groupIndex = 0; groupIndex < state.boardDraft.length; groupIndex += 1) {
+    const itemIndex = state.boardDraft[groupIndex].itemIds.indexOf(itemId);
+    if (itemIndex >= 0) {
+      return { groupIndex, itemIndex };
+    }
+  }
+
+  return { groupIndex: -1, itemIndex: -1 };
+}
+
+function moveDraftGroup(fromIndex, toIndex) {
+  if (!state.boardDraft || fromIndex === toIndex || toIndex < 0 || toIndex >= state.boardDraft.length) {
+    return;
+  }
+
+  state.boardDraft = reorderGroups(state.boardDraft, fromIndex, toIndex);
+  markBoardDirty();
+  renderBoard();
+}
+
+function updateDraftGroupName(groupIndex, nextName) {
+  if (!state.boardDraft?.[groupIndex]) {
+    return;
+  }
+
+  state.boardDraft[groupIndex].name = nextName;
+  markBoardDirty();
+}
+function moveDraftItemToGroup(itemId, targetGroupIndex) {
+  if (!state.boardDraft?.[targetGroupIndex]) {
+    return;
+  }
+
+  const { groupIndex, itemIndex } = findBoardDraftItem(itemId);
+  if (groupIndex < 0 || itemIndex < 0 || groupIndex === targetGroupIndex) {
+    return;
+  }
+
+  state.boardDraft[groupIndex].itemIds.splice(itemIndex, 1);
+  state.boardDraft[targetGroupIndex].itemIds.push(itemId);
+  markBoardDirty();
+  renderBoard();
+}
+
+function moveDraftItemWithinGroup(groupIndex, itemIndex, direction) {
+  const group = state.boardDraft?.[groupIndex];
+  if (!group) {
+    return;
+  }
+
+  const targetIndex = direction === "up" ? itemIndex - 1 : itemIndex + 1;
+  if (targetIndex < 0 || targetIndex >= group.itemIds.length) {
+    return;
+  }
+
+  const [itemId] = group.itemIds.splice(itemIndex, 1);
+  group.itemIds.splice(targetIndex, 0, itemId);
+  markBoardDirty();
+  renderBoard();
+}
+
+function startBoardEditMode() {
+  if (!state.workspace) {
+    return;
+  }
+
+  state.boardEditMode = true;
+  state.boardDraft = cloneBoardDraftFromWorkspace();
+  state.boardDirty = false;
+  renderBoardChrome();
+  renderBoard();
+}
+
+function cancelBoardEditMode(force = false) {
+  if (state.boardEditMode && state.boardDirty && !force) {
+    if (!window.confirm("Discard unsaved board changes?")) {
+      return;
+    }
+  }
+
+  state.boardEditMode = false;
+  state.boardDraft = null;
+  state.boardDirty = false;
+  renderBoardChrome();
+  renderBoard();
+}
+
+async function persistImmediateBoardOrder(groups) {
   const workspace = await fetchJson("/api/board", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ groups }),
   });
 
@@ -377,11 +511,7 @@ async function saveBoardGroups() {
 }
 
 async function persistGroupOrder(fromIndex, toIndex) {
-  if (!state.workspace || fromIndex === toIndex) {
-    return;
-  }
-
-  if (toIndex < 0 || toIndex >= state.workspace.boardGroups.length) {
+  if (!state.workspace || fromIndex === toIndex || toIndex < 0 || toIndex >= state.workspace.boardGroups.length) {
     return;
   }
 
@@ -394,7 +524,11 @@ async function persistGroupOrder(fromIndex, toIndex) {
   setBanner("Saving board order...");
 
   try {
-    await saveBoardGroups();
+    const groups = state.workspace.boardGroups.map((group) => ({
+      name: group.name,
+      itemIds: group.items.map((item) => item.id),
+    }));
+    await persistImmediateBoardOrder(groups);
     renderBoard();
     setBanner("Board order saved.", "success");
   } catch (error) {
@@ -407,7 +541,45 @@ async function persistGroupOrder(fromIndex, toIndex) {
   }
 }
 
-function renderBoard() {
+async function saveBoardDraft() {
+  if (!state.boardDraft) {
+    return;
+  }
+
+  boardSaveButton.disabled = true;
+  setBanner("Saving board...");
+
+  try {
+    const workspace = await fetchJson("/api/board", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groups: state.boardDraft }),
+    });
+
+    state.workspace = workspace;
+    state.boardEditMode = false;
+    state.boardDraft = null;
+    state.boardDirty = false;
+    syncWorkspaceChrome();
+    renderBoard();
+    renderScope();
+    setBanner("Board saved.", "success");
+  } catch (error) {
+    renderBoardChrome();
+    setBanner(error.message, "error");
+  }
+}
+
+function buildBoardGroupOptions(selectedIndex) {
+  return (state.boardDraft ?? [])
+    .map((group, index) => {
+      const label = group.name.trim() || `Group ${index + 1}`;
+      return `<option value="${index}" ${index === selectedIndex ? "selected" : ""}>${escapeHtml(label)}</option>`;
+    })
+    .join("");
+}
+
+function renderBoardReadMode() {
   if (!state.workspace) {
     boardGroupsElement.innerHTML = "";
     return;
@@ -419,43 +591,39 @@ function renderBoard() {
     return;
   }
 
-  const html = state.workspace.boardGroups
-    .map((group, index) => {
-      const collapsed = state.collapsedGroups.has(group.name);
-      const items = group.items
-        .map((item) => {
-          const active = item.id === state.selectedItemId ? " board-item-active" : "";
-          return `
-            <button class="board-item${active}" data-item-id="${escapeHtml(item.id)}" type="button" aria-pressed="${item.id === state.selectedItemId ? "true" : "false"}">
-              <span class="board-item-top">
-                <span class="board-item-title">${escapeHtml(item.title)}</span>
-                <span class="board-item-kind">${escapeHtml(item.kind)}</span>
-              </span>
-              <span class="board-item-id">${escapeHtml(item.id)}</span>
-              <span class="badge-row">${renderBadges(item)}</span>
-            </button>
-          `;
-        })
-        .join("");
-
+  const html = state.workspace.boardGroups.map((group, index) => {
+    const collapsed = state.collapsedGroups.has(group.name);
+    const items = group.items.map((item) => {
+      const active = item.id === state.selectedItemId ? " board-item-active" : "";
       return `
-        <section class="board-group${collapsed ? " board-group-collapsed" : ""}" data-group-index="${index}">
-          <div class="board-group-header">
-            <button class="collapse-toggle" data-group-toggle="${escapeHtml(group.name)}" type="button" aria-expanded="${collapsed ? "false" : "true"}">
-              <span class="collapse-icon">${collapsed ? "+" : "-"}</span>
-              <span class="group-name">${escapeHtml(group.name)}</span>
-              <span class="group-count">${group.items.length}</span>
-            </button>
-            <div class="group-actions">
-              <button class="order-button" data-move-group="up" data-group-index="${index}" type="button" aria-label="Move ${escapeHtml(group.name)} up" ${index === 0 ? "disabled" : ""}>Up</button>
-              <button class="order-button" data-move-group="down" data-group-index="${index}" type="button" aria-label="Move ${escapeHtml(group.name)} down" ${index === state.workspace.boardGroups.length - 1 ? "disabled" : ""}>Down</button>
-            </div>
-          </div>
-          <div class="board-item-list" ${collapsed ? "hidden" : ""}>${items}</div>
-        </section>
+        <button class="board-item${active}" data-item-id="${escapeHtml(item.id)}" type="button" aria-pressed="${item.id === state.selectedItemId ? "true" : "false"}">
+          <span class="board-item-top">
+            <span class="board-item-title">${escapeHtml(item.title)}</span>
+            <span class="board-item-kind">${escapeHtml(item.kind)}</span>
+          </span>
+          <span class="board-item-id">${escapeHtml(item.id)}</span>
+          <span class="badge-row">${renderBadges(item)}</span>
+        </button>
       `;
-    })
-    .join("");
+    }).join("");
+
+    return `
+      <section class="board-group${collapsed ? " board-group-collapsed" : ""}" data-group-index="${index}">
+        <div class="board-group-header">
+          <button class="collapse-toggle" data-group-toggle="${escapeHtml(group.name)}" type="button" aria-expanded="${collapsed ? "false" : "true"}">
+            <span class="collapse-icon">${collapsed ? "+" : "-"}</span>
+            <span class="group-name">${escapeHtml(group.name)}</span>
+            <span class="group-count">${group.items.length}</span>
+          </button>
+          <div class="group-actions">
+            <button class="order-button" data-move-group="up" data-group-index="${index}" type="button" ${index === 0 ? "disabled" : ""}>Up</button>
+            <button class="order-button" data-move-group="down" data-group-index="${index}" type="button" ${index === state.workspace.boardGroups.length - 1 ? "disabled" : ""}>Down</button>
+          </div>
+        </div>
+        <div class="board-item-list" ${collapsed ? "hidden" : ""}>${items}</div>
+      </section>
+    `;
+  }).join("");
 
   boardGroupsElement.innerHTML = html;
   syncMobileNavigation();
@@ -470,9 +638,7 @@ function renderBoard() {
   }
 
   for (const button of boardGroupsElement.querySelectorAll("[data-group-toggle]")) {
-    button.addEventListener("click", () => {
-      toggleGroup(button.dataset.groupToggle);
-    });
+    button.addEventListener("click", () => toggleGroup(button.dataset.groupToggle));
   }
 
   for (const button of boardGroupsElement.querySelectorAll("[data-move-group]")) {
@@ -484,7 +650,110 @@ function renderBoard() {
   }
 }
 
+function renderBoardEditMode() {
+  const groups = state.boardDraft ?? [];
+
+  if (groups.length === 0) {
+    boardGroupsElement.innerHTML = '<div class="empty-state">No board groups to edit.</div>';
+    return;
+  }
+
+  const html = groups.map((group, groupIndex) => {
+    const itemsHtml = group.itemIds.length === 0
+      ? '<div class="group-empty">No items in this group.</div>'
+      : group.itemIds.map((itemId, itemIndex) => {
+          const item = getBoardItemById(itemId);
+          if (!item) {
+            return "";
+          }
+
+          return `
+            <div class="board-edit-item" data-board-item-row="${escapeHtml(item.id)}">
+              <div class="board-edit-item-main">
+                <div class="board-item-top">
+                  <span class="board-item-title">${escapeHtml(item.title)}</span>
+                  <span class="board-item-kind">${escapeHtml(item.kind)}</span>
+                </div>
+                <span class="board-item-id">${escapeHtml(item.id)}</span>
+              </div>
+              <div class="board-edit-toolbar">
+                <select class="board-item-group-select" data-board-item-group="${escapeHtml(item.id)}" aria-label="Group for ${escapeHtml(item.title)}">${buildBoardGroupOptions(groupIndex)}</select>
+                <div class="group-actions board-item-move-actions">
+                  <button class="order-button" data-board-item-move="up" data-item-id="${escapeHtml(item.id)}" type="button" ${itemIndex === 0 ? "disabled" : ""}>Up</button>
+                  <button class="order-button" data-board-item-move="down" data-item-id="${escapeHtml(item.id)}" type="button" ${itemIndex === group.itemIds.length - 1 ? "disabled" : ""}>Down</button>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join("");
+
+    return `
+      <section class="board-group board-edit-group" data-board-group="${groupIndex}">
+        <div class="board-group-header board-edit-header">
+          <label class="board-group-name-field">
+            <span class="visually-hidden">Group name</span>
+            <input class="board-group-name-input" data-board-group-name="${groupIndex}" type="text" value="${escapeHtml(group.name)}" placeholder="Group name" />
+          </label>
+          <span class="group-count">${group.itemIds.length}</span>
+          <div class="group-actions">
+            <button class="order-button" data-board-group-move="up" data-group-index="${groupIndex}" type="button" ${groupIndex === 0 ? "disabled" : ""}>Up</button>
+            <button class="order-button" data-board-group-move="down" data-group-index="${groupIndex}" type="button" ${groupIndex === groups.length - 1 ? "disabled" : ""}>Down</button>
+          </div>
+        </div>
+        <div class="board-edit-items">${itemsHtml}</div>
+      </section>
+    `;
+  }).join("");
+
+  boardGroupsElement.innerHTML = html;
+  syncMobileNavigation();
+
+  for (const input of boardGroupsElement.querySelectorAll("[data-board-group-name]")) {
+    input.addEventListener("input", () => updateDraftGroupName(Number(input.dataset.boardGroupName), input.value));
+  }
+
+  for (const button of boardGroupsElement.querySelectorAll("[data-board-group-move]")) {
+    button.addEventListener("click", () => {
+      const fromIndex = Number(button.dataset.groupIndex);
+      const toIndex = button.dataset.boardGroupMove === "up" ? fromIndex - 1 : fromIndex + 1;
+      moveDraftGroup(fromIndex, toIndex);
+    });
+  }
+  for (const select of boardGroupsElement.querySelectorAll("[data-board-item-group]")) {
+    select.addEventListener("change", () => {
+      moveDraftItemToGroup(select.dataset.boardItemGroup, Number(select.value));
+    });
+  }
+
+  for (const button of boardGroupsElement.querySelectorAll("[data-board-item-move]")) {
+    button.addEventListener("click", () => {
+      const itemId = button.dataset.itemId;
+      const { groupIndex, itemIndex } = findBoardDraftItem(itemId);
+      moveDraftItemWithinGroup(groupIndex, itemIndex, button.dataset.boardItemMove);
+    });
+  }
+}
+
+function renderBoard() {
+  if (state.boardEditMode) {
+    renderBoardEditMode();
+    return;
+  }
+
+  renderBoardReadMode();
+}
+
 function renderScope() {
+  scopeContentElement.hidden = state.scopeEditMode;
+  scopeTextElement.hidden = !state.scopeEditMode;
+
+  if (state.scopeEditMode) {
+    if (scopeTextElement.value !== state.scopeDraft) {
+      scopeTextElement.value = state.scopeDraft;
+    }
+    return;
+  }
+
   const scopeHtml = renderMarkdownToHtml(state.workspace?.scopeText ?? "");
   scopeContentElement.innerHTML = scopeHtml || '<p class="muted">No scope notes yet.</p>';
 }
@@ -527,8 +796,7 @@ function resetEditor() {
   saveButton.disabled = true;
   state.selectedItemId = null;
   form.reset();
-  extraSectionsElement.innerHTML = "";
-  extraSectionsPanel.hidden = true;
+  sectionsContainer.innerHTML = "";
   rawTextElement.value = "";
   previewElement.className = "preview-surface preview-empty";
   previewElement.innerHTML = "Preview the current item or switch to Edit to change its core fields.";
@@ -536,43 +804,63 @@ function resetEditor() {
   syncMobileNavigation();
 }
 
-function getExtraSectionHeadings() {
-  return Array.from(extraSectionsElement.querySelectorAll("textarea[data-extra-section]"))
-    .map((textarea) => textarea.dataset.extraSection || "")
-    .filter(Boolean);
+function getSectionValueFromItem(item, heading) {
+  return item?.sections?.[heading] ?? item?.extraSections?.[heading] ?? "";
 }
 
-function renderExtraSections(item) {
-  const orderedHeadings = item.extraSectionOrder || Object.keys(item.extraSections || {});
+function getStructuredSectionHeadings(item = state.currentItem) {
+  const ordered = [];
+  const seen = new Set();
+  const originalOrder = Array.isArray(item?.sectionOrder) ? item.sectionOrder : [];
+  const fallbackHeadings = [...FIXED_SECTIONS, ...Object.keys(item?.extraSections || {})];
 
-  if (orderedHeadings.length === 0) {
-    extraSectionsElement.innerHTML = "";
-    extraSectionsPanel.hidden = true;
-    return;
+  function append(heading) {
+    if (!heading || seen.has(heading)) {
+      return;
+    }
+
+    const value = getSectionValueFromItem(item, heading);
+    const hasContent = String(value ?? "").trim().length > 0;
+    if (!hasContent && !originalOrder.includes(heading)) {
+      return;
+    }
+
+    ordered.push(heading);
+    seen.add(heading);
   }
 
-  extraSectionsPanel.hidden = false;
-  extraSectionsElement.innerHTML = orderedHeadings
-    .map((heading) => {
-      const safeHeading = escapeHtml(heading);
-      return `
-        <label>
-          <span>${safeHeading}</span>
-          <textarea data-extra-section="${safeHeading}" rows="6"></textarea>
-        </label>
-      `;
-    })
-    .join("");
+  for (const heading of originalOrder) {
+    append(heading);
+  }
 
-  for (const textarea of extraSectionsElement.querySelectorAll("textarea[data-extra-section]")) {
-    textarea.value = item.extraSections[textarea.dataset.extraSection] || "";
+  for (const heading of fallbackHeadings) {
+    append(heading);
+  }
+
+  return ordered;
+}
+
+function renderStructuredSections(item) {
+  const headings = getStructuredSectionHeadings(item);
+
+  sectionsContainer.innerHTML = headings.map((heading) => {
+    const safeHeading = escapeHtml(heading);
+    const rowCount = heading === "Notes" ? 5 : 4;
+    return `
+      <label class="structured-section-field">
+        <span>${safeHeading}</span>
+        <textarea data-section-heading="${safeHeading}" rows="${rowCount}"></textarea>
+      </label>
+    `;
+  }).join("");
+
+  for (const textarea of sectionsContainer.querySelectorAll("textarea[data-section-heading]")) {
+    textarea.value = getSectionValueFromItem(item, textarea.dataset.sectionHeading);
     autosizeTextarea(textarea);
     textarea.addEventListener("input", () => {
       autosizeTextarea(textarea);
       setDirtyState("structured", true);
-      if (state.editorMode === "preview") {
-        renderPreview();
-      }
+      renderPreview();
     });
   }
 }
@@ -580,12 +868,8 @@ function renderExtraSections(item) {
 function getStructuredSections() {
   const sections = {};
 
-  for (const sectionName of FIXED_SECTIONS) {
-    sections[sectionName] = fields[sectionName].value;
-  }
-
-  for (const textarea of extraSectionsElement.querySelectorAll("textarea[data-extra-section]")) {
-    sections[textarea.dataset.extraSection] = textarea.value;
+  for (const textarea of sectionsContainer.querySelectorAll("textarea[data-section-heading]")) {
+    sections[textarea.dataset.sectionHeading] = textarea.value;
   }
 
   return sections;
@@ -611,15 +895,13 @@ function renderPreview() {
 
   const metadata = getStructuredMetadata();
   const sections = getStructuredSections();
-  const orderedSections = [...FIXED_SECTIONS, ...getExtraSectionHeadings()];
-  const sectionHtml = orderedSections
-    .map((heading) => `
-      <section class="preview-section">
-        <h3>${escapeHtml(heading)}</h3>
-        <div class="preview-markdown">${renderMarkdownToHtml(sections[heading] || "") || '<p class="muted">Empty section.</p>'}</div>
-      </section>
-    `)
-    .join("");
+  const orderedSections = getStructuredSectionHeadings().filter((heading) => Object.hasOwn(sections, heading));
+  const sectionHtml = orderedSections.map((heading) => `
+    <section class="preview-section">
+      <h3>${escapeHtml(heading)}</h3>
+      <div class="preview-markdown">${renderMarkdownToHtml(sections[heading] || "") || '<p class="muted">Empty section.</p>'}</div>
+    </section>
+  `).join("");
   const previewBadges = [metadata.status, metadata.priority, metadata.commitment, metadata.milestone]
     .filter(Boolean)
     .map((value) => `<span class="badge">${escapeHtml(value)}</span>`)
@@ -645,12 +927,7 @@ function renderItem(item) {
   ensureSelectValue(fields.priority, item.metadata.priority || "medium");
   ensureSelectValue(fields.commitment, item.metadata.commitment || "uncommitted");
   fields.milestone.value = item.metadata.milestone || "";
-
-  for (const sectionName of FIXED_SECTIONS) {
-    fields[sectionName].value = item.sections[sectionName] || "";
-  }
-
-  renderExtraSections(item);
+  renderStructuredSections(item);
   rawTextElement.value = item.rawText || "";
   autosizeStructuredTextareas();
   renderPreview();
@@ -668,9 +945,19 @@ async function fetchJson(url, options = {}) {
   return payload;
 }
 
+function resetAncillaryEditModes() {
+  state.boardEditMode = false;
+  state.boardDraft = null;
+  state.boardDirty = false;
+  state.scopeEditMode = false;
+  state.scopeDraft = "";
+  state.scopeDirty = false;
+}
+
 async function loadWorkspace(preferredItemId = state.selectedItemId) {
   try {
     const workspace = await fetchJson("/api/workspace");
+    resetAncillaryEditModes();
     state.workspace = workspace;
     roadmapPathElement.textContent = workspace.roadmapPath;
     syncWorkspaceChrome();
@@ -678,9 +965,7 @@ async function loadWorkspace(preferredItemId = state.selectedItemId) {
     renderScope();
     setBanner("");
 
-    const firstItemId = workspace.boardGroups.flatMap((group) => group.items).at(0)?.id;
-    const itemIdToLoad = preferredItemId || firstItemId;
-
+    const itemIdToLoad = preferredItemId && workspace.items?.[preferredItemId] ? preferredItemId : getFirstBoardItemId(workspace);
     if (itemIdToLoad) {
       await loadItem(itemIdToLoad, false);
     } else {
@@ -689,9 +974,11 @@ async function loadWorkspace(preferredItemId = state.selectedItemId) {
   } catch (error) {
     state.workspace = null;
     roadmapPathElement.textContent = "Unavailable";
+    resetAncillaryEditModes();
     syncWorkspaceChrome();
     boardGroupsElement.innerHTML = "";
     scopeContentElement.textContent = "";
+    scopeTextElement.hidden = true;
     resetEditor();
     setBanner(error.message, "error");
   }
@@ -711,7 +998,6 @@ async function loadItem(itemId, rerenderBoard = true) {
     setBanner(error.message, "error");
   }
 }
-
 function collectPayload() {
   return {
     metadata: getStructuredMetadata(),
@@ -764,15 +1050,6 @@ function applyEditorMode() {
   }
 }
 
-desktopScopeLayoutMedia.addEventListener("change", () => {
-  renderScopeChrome();
-});
-
-stackedLayoutMedia.addEventListener("change", () => {
-  renderScopeChrome();
-  syncMobileNavigation();
-});
-
 function switchEditorMode(nextMode) {
   if (nextMode === state.editorMode) {
     return;
@@ -812,9 +1089,7 @@ async function saveCurrentItem() {
     const payload = state.editorMode === "raw" ? { rawText: rawTextElement.value } : collectPayload();
     await fetchJson(`/api/items/${encodeURIComponent(state.selectedItemId)}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     await loadWorkspace(state.selectedItemId);
@@ -826,12 +1101,91 @@ async function saveCurrentItem() {
   }
 }
 
+function startScopeEditMode() {
+  if (!state.workspace) {
+    return;
+  }
+
+  state.scopeCollapsed = false;
+  persistScopePreference();
+  state.scopeEditMode = true;
+  state.scopeDraft = state.workspace.scopeText || "";
+  state.scopeDirty = false;
+  renderScopeChrome();
+  renderScope();
+  scopeTextElement.focus();
+  scopeTextElement.setSelectionRange(scopeTextElement.value.length, scopeTextElement.value.length);
+}
+
+function cancelScopeEditMode(force = false) {
+  if (state.scopeEditMode && state.scopeDirty && !force) {
+    if (!window.confirm("Discard unsaved scope changes?")) {
+      return;
+    }
+  }
+
+  state.scopeEditMode = false;
+  state.scopeDraft = state.workspace?.scopeText || "";
+  state.scopeDirty = false;
+  renderScopeChrome();
+  renderScope();
+}
+
+async function saveScopeDraft() {
+  scopeSaveButton.disabled = true;
+  setBanner("Saving scope...");
+
+  try {
+    const workspace = await fetchJson("/api/scope", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scopeText: state.scopeDraft }),
+    });
+
+    state.workspace = workspace;
+    state.scopeEditMode = false;
+    state.scopeDraft = workspace.scopeText || "";
+    state.scopeDirty = false;
+    syncWorkspaceChrome();
+    renderBoard();
+    renderScope();
+    setBanner("Scope saved.", "success");
+  } catch (error) {
+    renderScopeChrome();
+    setBanner(error.message, "error");
+  }
+}
+
 saveButton.addEventListener("click", () => {
   void saveCurrentItem();
 });
 
 refreshButton.addEventListener("click", () => {
   void loadWorkspace();
+});
+
+boardEditButton.addEventListener("click", () => {
+  startBoardEditMode();
+});
+
+boardSaveButton.addEventListener("click", () => {
+  void saveBoardDraft();
+});
+
+boardCancelButton.addEventListener("click", () => {
+  cancelBoardEditMode();
+});
+
+scopeEditButton.addEventListener("click", () => {
+  startScopeEditMode();
+});
+
+scopeSaveButton.addEventListener("click", () => {
+  void saveScopeDraft();
+});
+
+scopeCancelButton.addEventListener("click", () => {
+  cancelScopeEditMode();
 });
 
 scopeToggleButton.addEventListener("click", () => {
@@ -856,13 +1210,17 @@ form.addEventListener("input", (event) => {
   }
 
   setDirtyState("structured", true);
-  if (state.editorMode === "preview") {
-    renderPreview();
-  }
+  renderPreview();
 });
 
 rawTextElement.addEventListener("input", () => {
   setDirtyState("raw", true);
+});
+
+scopeTextElement.addEventListener("input", () => {
+  state.scopeDraft = scopeTextElement.value;
+  state.scopeDirty = true;
+  renderScopeChrome();
 });
 
 for (const button of modeButtons) {
@@ -884,5 +1242,3 @@ resetEditor();
 renderScopeChrome();
 applyEditorMode();
 void loadWorkspace();
-
-

@@ -35,6 +35,10 @@ function trimBlankLines(value) {
   return value.replace(/^\s*\n/, "").replace(/\s*$/, "");
 }
 
+function hasMeaningfulSectionValue(value) {
+  return String(value ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim().length > 0;
+}
+
 function parseScalar(rawValue) {
   const value = rawValue.trim();
 
@@ -142,12 +146,6 @@ export function parseItemText(text, sourcePath = "item.md") {
     segments.push({ heading, rawSection });
   }
 
-  for (const heading of KNOWN_SECTIONS) {
-    if (!(heading in sections)) {
-      throw new AppError(`Missing section "${heading}" in ${sourcePath}.`, 422, "parse_error");
-    }
-  }
-
   return {
     eol,
     rawText: text,
@@ -204,6 +202,7 @@ export function serializeItem(parsedItem, updates) {
 
   const bodyParts = [parsedItem.prefix];
   const seenSections = new Set();
+  const originalSectionNames = new Set(parsedItem.segments.map((segment) => segment.heading));
 
   for (const segment of parsedItem.segments) {
     if (KNOWN_SECTIONS.includes(segment.heading) || updatedSectionNames.has(segment.heading)) {
@@ -215,14 +214,14 @@ export function serializeItem(parsedItem, updates) {
   }
 
   for (const heading of KNOWN_SECTIONS) {
-    if (!seenSections.has(heading)) {
+    if (!seenSections.has(heading) && (originalSectionNames.has(heading) || hasMeaningfulSectionValue(sections[heading]))) {
       bodyParts.push(renderSection(heading, sections[heading], eol));
       seenSections.add(heading);
     }
   }
 
   for (const heading of updatedSectionNames) {
-    if (!seenSections.has(heading)) {
+    if (!seenSections.has(heading) && (originalSectionNames.has(heading) || hasMeaningfulSectionValue(sections[heading]))) {
       bodyParts.push(renderSection(heading, sections[heading], eol));
       seenSections.add(heading);
     }
@@ -468,6 +467,7 @@ export async function readItemById(repoRoot, id) {
       milestone: item.parsed.frontmatter.milestone ?? "",
     },
     sections: Object.fromEntries(KNOWN_SECTIONS.map((heading) => [heading, item.parsed.sections[heading] ?? ""])),
+    sectionOrder: item.parsed.segments.map((segment) => segment.heading),
     extraSections,
     extraSectionOrder: Object.keys(extraSections),
     rawText: item.parsed.rawText,
@@ -511,12 +511,6 @@ export async function saveItemById(repoRoot, id, payload) {
     nextSections[heading] = value;
   }
 
-  for (const heading of KNOWN_SECTIONS) {
-    if (!(heading in nextSections)) {
-      nextSections[heading] = "";
-    }
-  }
-
   const serialized = serializeItem(item.parsed, {
     metadata: nextMetadata,
     sections: nextSections,
@@ -524,6 +518,18 @@ export async function saveItemById(repoRoot, id, payload) {
 
   await fs.writeFile(item.filePath, serialized, "utf8");
   return readItemById(repoRoot, id);
+}
+
+export async function saveScopeText(repoRoot, scopeText) {
+  const workspace = await resolveRoadmapRoot(repoRoot);
+  const scopePath = path.join(workspace.resolvedPath, "scope.md");
+  const existingScopeText = await readUtf8(scopePath, "Missing roadmap scope.md file.");
+  const eol = detectEol(existingScopeText);
+  const normalized = String(scopeText ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trimEnd();
+  const nextText = normalized.length === 0 ? "" : `${normalized}${eol}`;
+
+  await fs.writeFile(scopePath, nextText.replace(/\n/g, eol), "utf8");
+  return loadWorkspace(repoRoot);
 }
 
 export async function saveBoardByGroups(repoRoot, groupsPayload) {

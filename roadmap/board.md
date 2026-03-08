@@ -5,6 +5,7 @@
 # Next
 - implement-source-item-persistence-and-primitives
 - add-first-semantic-layer-and-promotion
+- add-agent-memory-simulation
 
 # Later
 - build-structured-retrieval-foundation

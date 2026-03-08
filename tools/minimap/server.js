@@ -8,6 +8,7 @@ import {
   readItemById,
   saveBoardByGroups,
   saveItemById,
+  saveScopeText,
 } from "./src/roadmap.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -91,6 +92,19 @@ async function handleApi(request, response, pathname) {
     const rawBody = await readRequestBody(request);
     const body = parseJsonBody(rawBody);
     const workspace = await saveBoardByGroups(repoRoot, body.groups);
+    sendJson(response, 200, workspace);
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/scope") {
+    const rawBody = await readRequestBody(request);
+    const body = parseJsonBody(rawBody);
+
+    if (typeof body.scopeText !== "string") {
+      throw new AppError("Scope update must provide scopeText.", 400, "bad_request");
+    }
+
+    const workspace = await saveScopeText(repoRoot, body.scopeText);
     sendJson(response, 200, workspace);
     return true;
   }

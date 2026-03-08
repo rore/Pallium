@@ -25,11 +25,15 @@
       <main class="layout" id="layout-shell" data-scope-collapsed="false">
         <section class="panel board-panel" id="board-panel">
           <div class="panel-header">
-            <div>
+            <div class="panel-header-main">
               <h2>Board</h2>
-              <p class="muted">Compact by default, with groups you can collapse and reorder.</p>
             </div>
-            <button id="jump-to-editor" class="ghost-button mobile-nav-button" type="button" hidden>Open item</button>
+            <div class="panel-actions">
+              <button id="board-edit-button" class="ghost-button" type="button">Edit</button>
+              <button id="board-save-button" class="ghost-button" type="button" hidden>Save</button>
+              <button id="board-cancel-button" class="ghost-button" type="button" hidden>Cancel</button>
+              <button id="jump-to-editor" class="ghost-button mobile-nav-button" type="button" hidden>Open item</button>
+            </div>
           </div>
           <div id="board-groups" class="board-groups"></div>
         </section>
@@ -109,45 +113,7 @@
                 <p class="muted editor-note">Markdown is allowed inside every section. Minimap keeps unknown frontmatter and extra sections intact.</p>
               </details>
 
-              <div class="section-stack fixed-section-grid">
-                <label data-span="full">
-                  <span>Summary</span>
-                  <textarea id="section-summary" rows="4"></textarea>
-                </label>
-
-                <label>
-                  <span>Why</span>
-                  <textarea id="section-why" rows="4"></textarea>
-                </label>
-
-                <label>
-                  <span>In Scope</span>
-                  <textarea id="section-in-scope" rows="4"></textarea>
-                </label>
-
-                <label>
-                  <span>Out of Scope</span>
-                  <textarea id="section-out-of-scope" rows="4"></textarea>
-                </label>
-
-                <label data-span="full">
-                  <span>Done When</span>
-                  <textarea id="section-done-when" rows="4"></textarea>
-                </label>
-
-                <label data-span="full">
-                  <span>Notes</span>
-                  <textarea id="section-notes" rows="5"></textarea>
-                </label>
-              </div>
-
-              <section id="extra-sections-panel" class="extra-sections-panel" hidden>
-                <div class="extra-sections-header">
-                  <h3>Additional Sections</h3>
-                  <p class="muted">These came from the item file and stay in their original order.</p>
-                </div>
-                <div id="extra-sections" class="section-stack"></div>
-              </section>
+              <div id="sections-container" class="section-stack structured-sections"></div>
             </form>
 
             <section class="editor-pane" data-mode-pane="preview" hidden>
@@ -170,11 +136,17 @@
           <div class="panel-header">
             <div class="panel-header-main">
               <h2>Scope</h2>
-              <span class="muted">Read-only for now</span>
+              <span id="scope-subtitle" class="muted" hidden></span>
             </div>
-            <button id="scope-toggle" class="scope-toggle-button" type="button" aria-expanded="true">Collapse</button>
+            <div class="panel-actions">
+              <button id="scope-edit-button" class="ghost-button" type="button">Edit</button>
+              <button id="scope-save-button" class="ghost-button" type="button" hidden>Save</button>
+              <button id="scope-cancel-button" class="ghost-button" type="button" hidden>Cancel</button>
+              <button id="scope-toggle" class="scope-toggle-button" type="button" aria-expanded="true">Collapse</button>
+            </div>
           </div>
           <div id="scope-content" class="scope-content"></div>
+          <textarea id="scope-text" class="scope-textarea" hidden spellcheck="false"></textarea>
         </section>
       </main>
     </div>
