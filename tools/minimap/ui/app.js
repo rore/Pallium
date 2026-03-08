@@ -4,6 +4,7 @@ const SCOPE_WIDTH_STORAGE_KEY = "roadmap-ui.scope-width";
 const DEFAULT_SCOPE_WIDTH = 272;
 const MIN_SCOPE_WIDTH = 240;
 const MAX_SCOPE_WIDTH = 440;
+const EDITOR_MODES = new Set(["preview", "structured", "raw"]);
 
 const state = {
   workspace: null,
@@ -269,6 +270,50 @@ function updateWorkspaceSummary() {
   const groups = state.workspace?.boardGroups.length ?? 0;
   const items = getBoardItems().length;
   workspaceSummaryElement.textContent = state.workspace ? `${items} items / ${groups} groups` : "Unavailable";
+}
+
+function normalizeEditorMode(mode) {
+  return EDITOR_MODES.has(mode) ? mode : "preview";
+}
+
+function readRouteState() {
+  const rawHash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+  const params = new URLSearchParams(rawHash);
+  return {
+    itemId: params.get("item") || "",
+    mode: normalizeEditorMode(params.get("mode") || "preview"),
+  };
+}
+
+function buildRouteHash(itemId = state.selectedItemId, mode = state.editorMode) {
+  const params = new URLSearchParams();
+
+  if (itemId) {
+    params.set("item", itemId);
+  }
+
+  const normalizedMode = normalizeEditorMode(mode);
+  if (normalizedMode !== "preview") {
+    params.set("mode", normalizedMode);
+  }
+
+  const serialized = params.toString();
+  return serialized ? `#${serialized}` : "";
+}
+
+function syncRouteState({ replace = false } = {}) {
+  const nextHash = buildRouteHash();
+  if (window.location.hash === nextHash) {
+    return;
+  }
+
+  const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`;
+  if (replace) {
+    window.history.replaceState(null, "", nextUrl);
+    return;
+  }
+
+  window.history.pushState(null, "", nextUrl);
 }
 
 function isStackedLayout() {
@@ -954,11 +999,40 @@ function resetAncillaryEditModes() {
   state.scopeDirty = false;
 }
 
-async function loadWorkspace(preferredItemId = state.selectedItemId) {
+async function applyRouteStateFromLocation() {
+  const route = readRouteState();
+  const routeItemId = route.itemId || "";
+  const currentItemId = state.selectedItemId || "";
+
+  if (routeItemId && routeItemId !== currentItemId) {
+    await loadWorkspace(routeItemId, {
+      preferredMode: route.mode,
+      syncRoute: false,
+    });
+    return;
+  }
+
+  if (!routeItemId && currentItemId) {
+    await loadWorkspace(undefined, {
+      preferredMode: route.mode,
+      syncRoute: false,
+    });
+    return;
+  }
+
+  const nextMode = normalizeEditorMode(route.mode);
+  if (nextMode !== state.editorMode) {
+    state.editorMode = nextMode;
+    applyEditorMode();
+  }
+}
+
+async function loadWorkspace(preferredItemId = state.selectedItemId, options = {}) {
   try {
     const workspace = await fetchJson("/api/workspace");
     resetAncillaryEditModes();
     state.workspace = workspace;
+    state.editorMode = normalizeEditorMode(options.preferredMode ?? state.editorMode);
     roadmapPathElement.textContent = workspace.roadmapPath;
     syncWorkspaceChrome();
     renderBoard();
@@ -967,9 +1041,15 @@ async function loadWorkspace(preferredItemId = state.selectedItemId) {
 
     const itemIdToLoad = preferredItemId && workspace.items?.[preferredItemId] ? preferredItemId : getFirstBoardItemId(workspace);
     if (itemIdToLoad) {
-      await loadItem(itemIdToLoad, false);
+      await loadItem(itemIdToLoad, false, {
+        syncRoute: options.syncRoute,
+        replaceRoute: options.replaceRoute,
+      });
     } else {
       resetEditor();
+      if (options.syncRoute !== false) {
+        syncRouteState({ replace: options.replaceRoute !== false });
+      }
     }
   } catch (error) {
     state.workspace = null;
@@ -984,7 +1064,7 @@ async function loadWorkspace(preferredItemId = state.selectedItemId) {
   }
 }
 
-async function loadItem(itemId, rerenderBoard = true) {
+async function loadItem(itemId, rerenderBoard = true, options = {}) {
   try {
     const item = await fetchJson(`/api/items/${encodeURIComponent(itemId)}`);
     state.selectedItemId = itemId;
@@ -992,6 +1072,9 @@ async function loadItem(itemId, rerenderBoard = true) {
     applyEditorMode();
     if (rerenderBoard) {
       renderBoard();
+    }
+    if (options.syncRoute !== false) {
+      syncRouteState({ replace: options.replaceRoute === true });
     }
     setBanner("");
   } catch (error) {
@@ -1050,7 +1133,7 @@ function applyEditorMode() {
   }
 }
 
-function switchEditorMode(nextMode) {
+function switchEditorMode(nextMode, options = {}) {
   if (nextMode === state.editorMode) {
     return;
   }
@@ -1075,6 +1158,10 @@ function switchEditorMode(nextMode) {
 
   state.editorMode = nextMode;
   applyEditorMode();
+
+  if (options.syncRoute !== false) {
+    syncRouteState({ replace: options.replaceRoute !== false });
+  }
 }
 
 async function saveCurrentItem() {
@@ -1229,6 +1316,10 @@ for (const button of modeButtons) {
   });
 }
 
+window.addEventListener("hashchange", () => {
+  void applyRouteStateFromLocation();
+});
+
 desktopScopeLayoutMedia.addEventListener("change", () => {
   renderScopeChrome();
 });
@@ -1239,6 +1330,20 @@ stackedLayoutMedia.addEventListener("change", () => {
 });
 
 resetEditor();
+const initialRoute = readRouteState();
+state.editorMode = initialRoute.mode;
 renderScopeChrome();
 applyEditorMode();
-void loadWorkspace();
+void loadWorkspace(initialRoute.itemId || state.selectedItemId, {
+  preferredMode: initialRoute.mode,
+  syncRoute: false,
+}).then(() => {
+  if (initialRoute.itemId || initialRoute.mode !== "preview") {
+    void applyRouteStateFromLocation();
+    return;
+  }
+
+  if (state.selectedItemId) {
+    syncRouteState({ replace: true });
+  }
+});
