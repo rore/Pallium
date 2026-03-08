@@ -15,6 +15,9 @@
   --shadow-soft: 0 10px 22px rgba(29, 49, 89, 0.07);
   --radius: 24px;
   --radius-small: 18px;
+  --scope-width: 272px;
+  --scope-width-collapsed: 92px;
+  --divider-width: 8px;
   --font-display: "Aptos Display", "Segoe UI Variable Display", "Inter", "Segoe UI", sans-serif;
   --font-body: "Aptos", "Segoe UI Variable Text", "Inter", "Segoe UI", sans-serif;
 }
@@ -47,6 +50,11 @@ textarea {
 
 button {
   outline: none;
+}
+
+body.is-resizing-scope {
+  cursor: col-resize;
+  user-select: none;
 }
 
 ::-webkit-scrollbar {
@@ -246,14 +254,15 @@ h3 {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(290px, 340px) minmax(760px, 1fr) minmax(220px, 272px);
-  grid-template-areas: "board editor scope";
-  gap: 14px;
+  grid-template-columns: minmax(290px, 340px) minmax(520px, 1fr) var(--divider-width) minmax(220px, var(--scope-width));
+  grid-template-areas: "board editor divider scope";
+  column-gap: 8px;
+  row-gap: 14px;
   align-items: start;
 }
 
 .layout[data-scope-collapsed="true"] {
-  grid-template-columns: minmax(290px, 340px) minmax(840px, 1fr) 92px;
+  grid-template-columns: minmax(290px, 340px) minmax(620px, 1fr) 0px var(--scope-width-collapsed);
 }
 
 .panel {
@@ -277,6 +286,33 @@ h3 {
 
 .editor-panel {
   grid-area: editor;
+}
+
+.scope-resizer {
+  grid-area: divider;
+  position: sticky;
+  top: 18px;
+  height: calc(100vh - 36px);
+  align-self: stretch;
+  border: none;
+  padding: 0;
+  background: transparent;
+  cursor: col-resize;
+}
+
+.scope-resizer::before {
+  content: "";
+  display: block;
+  width: 4px;
+  height: 100%;
+  margin: 0 auto;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(44, 108, 255, 0.08), rgba(44, 108, 255, 0.18), rgba(44, 108, 255, 0.08));
+  box-shadow: inset 0 0 0 1px rgba(63, 82, 118, 0.08);
+}
+
+.scope-resizer[hidden] {
+  display: none;
 }
 
 .scope-panel {
@@ -508,11 +544,55 @@ h3 {
 .scope-content {
   margin: 0;
   padding: 16px 18px;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--font-body);
-  line-height: 1.56;
+  line-height: 1.6;
   font-size: 0.92rem;
+}
+
+.scope-content > :first-child {
+  margin-top: 0;
+}
+
+.scope-content > :last-child {
+  margin-bottom: 0;
+}
+
+.scope-content p,
+.scope-content ul,
+.scope-content ol,
+.scope-content pre,
+.scope-content h1,
+.scope-content h2,
+.scope-content h3,
+.scope-content h4 {
+  margin: 0 0 0.85rem;
+}
+
+.scope-content ul,
+.scope-content ol {
+  padding-left: 1.25rem;
+}
+
+.scope-content code {
+  padding: 0.1rem 0.34rem;
+  border-radius: 999px;
+  background: rgba(21, 32, 51, 0.08);
+  font-size: 0.92em;
+}
+
+.scope-content pre {
+  overflow: auto;
+  padding: 0.86rem 0.92rem;
+  border-radius: 14px;
+  background: #142033;
+  color: #f4f7ff;
+}
+
+.scope-content pre code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
 }
 
 .scope-panel.scope-collapsed .panel-header {
@@ -533,6 +613,10 @@ h3 {
 
 .scope-panel.scope-collapsed {
   min-height: auto;
+}
+
+.layout[data-scope-collapsed="true"] .scope-resizer {
+  display: none;
 }
 
 .scope-panel.scope-collapsed h2 {
@@ -882,9 +966,12 @@ textarea {
 }
 
 @media (max-width: 1380px) {
-  .layout,
+  .layout {
+    grid-template-columns: minmax(260px, 300px) minmax(480px, 1fr) var(--divider-width) minmax(210px, var(--scope-width));
+  }
+
   .layout[data-scope-collapsed="true"] {
-    grid-template-columns: minmax(260px, 300px) minmax(0, 1fr) minmax(210px, 236px);
+    grid-template-columns: minmax(260px, 300px) minmax(560px, 1fr) 0px var(--scope-width-collapsed);
   }
 }
 
@@ -895,6 +982,10 @@ textarea {
     grid-template-areas:
       "board editor"
       "scope scope";
+  }
+
+  .scope-resizer {
+    display: none;
   }
 
   .panel {

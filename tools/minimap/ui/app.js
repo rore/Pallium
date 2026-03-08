@@ -1,5 +1,9 @@
 const FIXED_SECTIONS = ["Summary", "Why", "In Scope", "Out of Scope", "Done When", "Notes"];
 const SCOPE_STORAGE_KEY = "roadmap-ui.scope-collapsed";
+const SCOPE_WIDTH_STORAGE_KEY = "roadmap-ui.scope-width";
+const DEFAULT_SCOPE_WIDTH = 272;
+const MIN_SCOPE_WIDTH = 240;
+const MAX_SCOPE_WIDTH = 440;
 
 const state = {
   workspace: null,
@@ -7,6 +11,7 @@ const state = {
   currentItem: null,
   collapsedGroups: new Set(),
   scopeCollapsed: loadStoredScopePreference(),
+  scopeWidth: loadStoredScopeWidth(),
   editorMode: "preview",
   dirtyStructured: false,
   dirtyRaw: false,
@@ -17,6 +22,7 @@ const boardPanelElement = document.querySelector("#board-panel");
 const boardGroupsElement = document.querySelector("#board-groups");
 const scopePanelElement = document.querySelector("#scope-panel");
 const scopeContentElement = document.querySelector("#scope-content");
+const scopeResizerElement = document.querySelector("#scope-resizer");
 const scopeToggleButton = document.querySelector("#scope-toggle");
 const jumpToBoardButton = document.querySelector("#jump-to-board");
 const jumpToEditorButton = document.querySelector("#jump-to-editor");
@@ -37,6 +43,7 @@ const extraSectionsElement = document.querySelector("#extra-sections");
 const modeButtons = Array.from(document.querySelectorAll("[data-editor-mode]"));
 const modePanes = Array.from(document.querySelectorAll("[data-mode-pane]"));
 const stackedLayoutMedia = window.matchMedia("(max-width: 980px)");
+const desktopScopeLayoutMedia = window.matchMedia("(min-width: 1321px)");
 
 const fields = {
   id: document.querySelector("#field-id"),
@@ -66,6 +73,27 @@ function persistScopePreference() {
     window.localStorage.setItem(SCOPE_STORAGE_KEY, String(state.scopeCollapsed));
   } catch {
     // Ignore storage failures; the toggle still works for the session.
+  }
+}
+
+function clampScopeWidth(width) {
+  return Math.max(MIN_SCOPE_WIDTH, Math.min(MAX_SCOPE_WIDTH, Math.round(width)));
+}
+
+function loadStoredScopeWidth() {
+  try {
+    const rawValue = Number(window.localStorage.getItem(SCOPE_WIDTH_STORAGE_KEY));
+    return Number.isFinite(rawValue) && rawValue > 0 ? clampScopeWidth(rawValue) : DEFAULT_SCOPE_WIDTH;
+  } catch {
+    return DEFAULT_SCOPE_WIDTH;
+  }
+}
+
+function persistScopeWidth() {
+  try {
+    window.localStorage.setItem(SCOPE_WIDTH_STORAGE_KEY, String(state.scopeWidth));
+  } catch {
+    // Ignore storage failures; resize still works for the session.
   }
 }
 
@@ -233,6 +261,10 @@ function isStackedLayout() {
   return stackedLayoutMedia.matches;
 }
 
+function isDesktopScopeLayout() {
+  return desktopScopeLayoutMedia.matches;
+}
+
 function scrollPanelIntoView(element) {
   element?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -244,11 +276,19 @@ function syncMobileNavigation() {
 }
 
 function renderScopeChrome() {
+  const showResizer = !state.scopeCollapsed && isDesktopScopeLayout();
+
   layoutElement.dataset.scopeCollapsed = String(state.scopeCollapsed);
+  layoutElement.style.setProperty("--scope-width", `${state.scopeWidth}px`);
   scopePanelElement.classList.toggle("scope-collapsed", state.scopeCollapsed);
   scopeToggleButton.textContent = state.scopeCollapsed ? "Expand" : "Collapse";
   scopeToggleButton.setAttribute("aria-expanded", state.scopeCollapsed ? "false" : "true");
   scopeToggleButton.setAttribute("aria-label", state.scopeCollapsed ? "Expand scope panel" : "Collapse scope panel");
+  scopeResizerElement.hidden = !showResizer;
+  scopeResizerElement.setAttribute("aria-hidden", showResizer ? "false" : "true");
+  scopeResizerElement.setAttribute("aria-valuemin", String(MIN_SCOPE_WIDTH));
+  scopeResizerElement.setAttribute("aria-valuemax", String(MAX_SCOPE_WIDTH));
+  scopeResizerElement.setAttribute("aria-valuenow", String(state.scopeWidth));
 }
 
 function renderEditorChrome() {
@@ -268,6 +308,37 @@ function toggleScopePanel() {
   state.scopeCollapsed = !state.scopeCollapsed;
   persistScopePreference();
   renderScopeChrome();
+}
+
+function beginScopeResize(event) {
+  if (!isDesktopScopeLayout() || state.scopeCollapsed) {
+    return;
+  }
+
+  event.preventDefault();
+  const startX = event.clientX;
+  const startWidth = state.scopeWidth;
+  document.body.classList.add("is-resizing-scope");
+
+  function handlePointerMove(moveEvent) {
+    const nextWidth = clampScopeWidth(startWidth + (startX - moveEvent.clientX));
+    if (nextWidth !== state.scopeWidth) {
+      state.scopeWidth = nextWidth;
+      renderScopeChrome();
+    }
+  }
+
+  function stopResize() {
+    document.body.classList.remove("is-resizing-scope");
+    window.removeEventListener("pointermove", handlePointerMove);
+    window.removeEventListener("pointerup", stopResize);
+    window.removeEventListener("pointercancel", stopResize);
+    persistScopeWidth();
+  }
+
+  window.addEventListener("pointermove", handlePointerMove);
+  window.addEventListener("pointerup", stopResize);
+  window.addEventListener("pointercancel", stopResize);
 }
 
 function toggleGroup(name) {
@@ -414,7 +485,8 @@ function renderBoard() {
 }
 
 function renderScope() {
-  scopeContentElement.textContent = state.workspace?.scopeText ?? "";
+  const scopeHtml = renderMarkdownToHtml(state.workspace?.scopeText ?? "");
+  scopeContentElement.innerHTML = scopeHtml || '<p class="muted">No scope notes yet.</p>';
 }
 
 function setDirtyState(kind, value) {
@@ -548,19 +620,14 @@ function renderPreview() {
       </section>
     `)
     .join("");
+  const previewBadges = [metadata.status, metadata.priority, metadata.commitment, metadata.milestone]
+    .filter(Boolean)
+    .map((value) => `<span class="badge">${escapeHtml(value)}</span>`)
+    .join("");
 
   previewElement.className = "preview-surface";
   previewElement.innerHTML = `
-    <header class="preview-header">
-      <div>
-        <p class="eyebrow preview-eyebrow">Item preview</p>
-        <h2>${escapeHtml(metadata.title || state.currentItem.metadata.title || state.currentItem.id)}</h2>
-        <p class="muted">${escapeHtml(state.currentItem.filePath)}</p>
-      </div>
-      <div class="preview-meta">
-        ${[metadata.status, metadata.priority, metadata.commitment, metadata.milestone].filter(Boolean).map((value) => `<span class="badge">${escapeHtml(value)}</span>`).join("")}
-      </div>
-    </header>
+    ${previewBadges ? `<div class="preview-meta">${previewBadges}</div>` : ""}
     <div class="preview-body">${sectionHtml}</div>
   `;
 }
@@ -697,6 +764,15 @@ function applyEditorMode() {
   }
 }
 
+desktopScopeLayoutMedia.addEventListener("change", () => {
+  renderScopeChrome();
+});
+
+stackedLayoutMedia.addEventListener("change", () => {
+  renderScopeChrome();
+  syncMobileNavigation();
+});
+
 function switchEditorMode(nextMode) {
   if (nextMode === state.editorMode) {
     return;
@@ -762,6 +838,8 @@ scopeToggleButton.addEventListener("click", () => {
   toggleScopePanel();
 });
 
+scopeResizerElement.addEventListener("pointerdown", beginScopeResize);
+
 jumpToBoardButton.addEventListener("click", () => {
   scrollPanelIntoView(boardPanelElement);
 });
@@ -792,6 +870,15 @@ for (const button of modeButtons) {
     switchEditorMode(button.dataset.editorMode);
   });
 }
+
+desktopScopeLayoutMedia.addEventListener("change", () => {
+  renderScopeChrome();
+});
+
+stackedLayoutMedia.addEventListener("change", () => {
+  renderScopeChrome();
+  syncMobileNavigation();
+});
 
 resetEditor();
 renderScopeChrome();
