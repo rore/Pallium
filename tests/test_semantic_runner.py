@@ -125,7 +125,7 @@ def test_run_semantic_eval_writes_summary_and_jsonl_results(tmp_path: Path) -> N
             llm_provider="openai_compatible",
             llm_model="fake-model",
             llm_base_url="http://fake.local/v1",
-            llm_prompt_variant="strict_decision_v2_source_aware",
+            llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
         ),
         suite_name="semantic smoke",
     )
@@ -139,21 +139,21 @@ def test_run_semantic_eval_writes_summary_and_jsonl_results(tmp_path: Path) -> N
     assert summary["input_file"] == str(input_file)
     assert summary["results_file"] == "results.jsonl"
     assert summary["prompt_schema_id"] == "typed_memory_extraction"
-    assert summary["prompt_schema_version"] == "v3"
+    assert summary["prompt_schema_version"] == "v4"
     assert summary["split_output"] is False
     assert summary["split_outputs"] == []
-    assert summary["prompt_variants"] == ["strict_decision_v2_source_aware"]
+    assert summary["prompt_variants"] == ["strict_typed_memory_v4_evidence_guarded"]
     assert summary["max_concurrency"] == 1
-    variant = summary["per_variant"]["strict_decision_v2_source_aware"]
+    variant = summary["per_variant"]["strict_typed_memory_v4_evidence_guarded"]
     assert variant["prompt_schema_id"] == "typed_memory_extraction"
-    assert variant["prompt_schema_version"] == "v3"
+    assert variant["prompt_schema_version"] == "v4"
     assert variant["promoted_counts"]["decision"] == 1
     assert variant["type_metrics"]["decision"]["correct"] == 1
     assert summary["run_id"].startswith("semantic-smoke__openai-compatible__fake-model__")
     assert len(results) == 1
     assert results[0]["status"] == "ok"
     assert results[0]["request"]["prompt_schema_id"] == "typed_memory_extraction"
-    assert results[0]["request"]["prompt_schema_version"] == "v3"
+    assert results[0]["request"]["prompt_schema_version"] == "v4"
     assert results[0]["normalized_extraction"]["candidate_type"] == "decision"
     assert results[0]["artifacts"]["memory_objects"][0]["type"] == "decision"
 
@@ -172,7 +172,7 @@ def test_run_semantic_eval_can_compare_prompt_variants_in_one_run(tmp_path: Path
         input_file=input_file,
         output_root=output_dir,
         plugin=plugin,
-        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant="strict_decision_v2_source_aware"),
+        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant="strict_typed_memory_v4_evidence_guarded"),
         run_name="variant-run",
         prompt_variants=["baseline", "strict_decision_v1"],
         split_output=True,
@@ -202,7 +202,7 @@ def test_run_semantic_eval_parallel_keeps_stable_result_order(tmp_path: Path) ->
         input_file=input_file,
         output_root=output_dir,
         plugin=plugin,
-        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant="strict_decision_v2_source_aware"),
+        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant="strict_typed_memory_v4_evidence_guarded"),
         run_name="parallel-order-run",
         prompt_variants=["baseline", "strict_decision_v1"],
         max_concurrency=4,
@@ -233,7 +233,7 @@ def test_run_semantic_eval_records_errors(tmp_path: Path) -> None:
         input_file=input_file,
         output_root=output_dir,
         plugin=plugin,
-        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant="strict_decision_v2_source_aware"),
+        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant="strict_typed_memory_v4_evidence_guarded"),
         run_name="error-run",
     )
 
@@ -241,7 +241,7 @@ def test_run_semantic_eval_records_errors(tmp_path: Path) -> None:
     results = _read_jsonl(run_dir / "results.jsonl")
 
     assert summary["items_failed"] == 1
-    assert summary["per_variant"]["strict_decision_v2_source_aware"]["items_failed"] == 1
+    assert summary["per_variant"]["strict_typed_memory_v4_evidence_guarded"]["items_failed"] == 1
     assert len(results) == 1
     assert results[0]["status"] == "error"
     assert results[0]["error"]["type"] == "RuntimeError"

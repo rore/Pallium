@@ -100,7 +100,18 @@ The current prompt remains slightly too eager on:
 - detected backlog/symptom notifications
 
 Solution:
-Keep `strict_decision_v2_source_aware` as the current default because it is materially better than the looser prompt, but use the committed regression set to keep tightening abstention on non-decision, non-investigation events.
+The committed regression set showed that prompt-only conservatism was not enough; the current best path is stricter evidence-grounded prompting plus code-side evidence gating. Make `strict_typed_memory_v4_evidence_guarded` the default typed-memory prompt and require typed-memory promotion evidence to contain a strong explicit cue.
+
+## 2026-03-09 - Local config can silently override code defaults during semantic evaluation
+
+Problem:
+A real regression run used the old prompt behavior even after the code default changed.
+
+Why:
+`.env.local` can pin `PALLIUM_LLM_PROMPT_VARIANT`, which overrides the new code default.
+
+Solution:
+When validating a prompt change, either update `.env.local` or pass `--prompt-variants` explicitly to the eval harness so the run is unambiguous.
 
 ## 2026-03-09 - Lifecycle filtering should hide stale promoted memory without deleting evidence
 

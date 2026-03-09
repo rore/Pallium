@@ -53,8 +53,8 @@ def test_llm_plugin_promotes_decision_memory_from_valid_extraction() -> None:
     assert result.memory_objects[0].payload["decision"] == "use event timestamp watermarking"
     assert result.memory_objects[0].payload["decision_evidence_text"] == "Decision: use event timestamp watermarking"
     assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_id"] == "typed_memory_extraction"
-    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_version"] == "v3"
-    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_variant"] == "strict_decision_v2_source_aware"
+    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_version"] == "v4"
+    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_variant"] == "strict_typed_memory_v4_evidence_guarded"
 
 
 def test_llm_plugin_promotes_investigation_outcome_from_valid_extraction() -> None:
@@ -121,6 +121,68 @@ def test_llm_plugin_uses_discussion_summary_when_typed_output_lacks_evidence_tex
     assert result.memory_objects[0].schema_id == "llm.discussion_summary"
 
 
+def test_llm_plugin_rejects_weak_decision_evidence_and_falls_back_to_discussion_summary() -> None:
+    plugin = LLMAgentMemoryPlugin(
+        provider=StubLLMProvider(
+            response=LLMJsonResponse(
+                raw_text='{"summary":"Playbook note","candidate_type":"decision","decision_text":"create a clearer operator playbook","decision_evidence_text":"The team agreed that we need a clearer operator playbook for export incidents.","investigation_text":null,"investigation_evidence_text":null,"rationale_text":null}',
+                parsed_json={
+                    "summary": "Playbook note",
+                    "candidate_type": "decision",
+                    "decision_text": "create a clearer operator playbook",
+                    "decision_evidence_text": "The team agreed that we need a clearer operator playbook for export incidents.",
+                    "investigation_text": None,
+                    "investigation_evidence_text": None,
+                    "rationale_text": None,
+                },
+            )
+        )
+    )
+    source_item = SourceItem(
+        source_type="meeting_summary",
+        source_id="discussion-guard-1",
+        content_type="text/plain",
+        content="The team agreed that we need a clearer operator playbook for export incidents.",
+        artifact_kind="assistant_output",
+    )
+
+    result = plugin.process_item(source_item)
+
+    assert len(result.annotations) == 1
+    assert result.memory_objects[0].type == "discussion_summary"
+
+
+def test_llm_plugin_rejects_weak_investigation_evidence_and_falls_back_to_discussion_summary() -> None:
+    plugin = LLMAgentMemoryPlugin(
+        provider=StubLLMProvider(
+            response=LLMJsonResponse(
+                raw_text='{"summary":"Status update","candidate_type":"investigation_outcome","decision_text":null,"decision_evidence_text":null,"investigation_text":"export lag increased after the broker restart","investigation_evidence_text":"Export lag increased after the broker restart, and we should watch it closely tonight.","rationale_text":null}',
+                parsed_json={
+                    "summary": "Status update",
+                    "candidate_type": "investigation_outcome",
+                    "decision_text": None,
+                    "decision_evidence_text": None,
+                    "investigation_text": "export lag increased after the broker restart",
+                    "investigation_evidence_text": "Export lag increased after the broker restart, and we should watch it closely tonight.",
+                    "rationale_text": None,
+                },
+            )
+        )
+    )
+    source_item = SourceItem(
+        source_type="status_update",
+        source_id="discussion-guard-2",
+        content_type="text/plain",
+        content="Export lag increased after the broker restart, and we should watch it closely tonight.",
+        artifact_kind="notification",
+    )
+
+    result = plugin.process_item(source_item)
+
+    assert len(result.annotations) == 1
+    assert result.memory_objects[0].type == "discussion_summary"
+
+
 def test_llm_plugin_raises_on_invalid_output() -> None:
     plugin = LLMAgentMemoryPlugin(provider=StubLLMProvider(error=LLMProviderError("malformed output")))
     source_item = SourceItem(
@@ -148,7 +210,7 @@ def test_build_analysis_request_uses_requested_prompt_variant() -> None:
 
     assert request.prompt_variant == "strict_decision_v1"
     assert request.prompt_schema_id == "typed_memory_extraction"
-    assert request.prompt_schema_version == "v3"
+    assert request.prompt_schema_version == "v4"
     assert 'investigation_outcome' in request.schema_description
     assert 'Artifact kind: message' in request.user_prompt
 
@@ -168,7 +230,7 @@ def test_llm_plugin_with_prompt_variant_uses_variant_prompt() -> None:
             },
         )
     )
-    plugin = LLMAgentMemoryPlugin(provider=provider, prompt_variant="strict_decision_v2_source_aware")
+    plugin = LLMAgentMemoryPlugin(provider=provider, prompt_variant="strict_typed_memory_v4_evidence_guarded")
     source_item = SourceItem(
         source_type="investigation_summary",
         source_id="investigation-999",
@@ -181,4 +243,5 @@ def test_llm_plugin_with_prompt_variant_uses_variant_prompt() -> None:
 
     assert provider.last_system_prompt is not None
     assert 'investigation_outcome' in provider.last_system_prompt
-    assert 'Do not convert findings into decisions.' in provider.last_system_prompt
+    assert 'Evidence rule:' in provider.last_system_prompt
+    assert 'we should watch' in provider.last_system_prompt

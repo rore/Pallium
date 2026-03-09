@@ -33,12 +33,12 @@
 
 ## Verification Notes
 
-- `pytest` passes locally: `23 passed`
+- `pytest` passes locally: `25 passed`
 - semantic regression run against the real OpenAI path succeeded on the committed batch
-- current recorded baseline on `gpt-5-mini` with `strict_decision_v2_source_aware` is:
-  - `27 / 30` overall correct
-  - `1` decision false positive
-  - `2` investigation false positives
+- current recorded baseline on `gpt-5-mini` with `strict_typed_memory_v4_evidence_guarded` is:
+  - `30 / 30` overall correct
+  - `0` decision false positives
+  - `0` investigation false positives
   - `0` false negatives
 
 ## Context Memory Note

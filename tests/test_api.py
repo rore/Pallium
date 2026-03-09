@@ -245,7 +245,7 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
                 llm_provider="openai_compatible",
                 llm_model="fake-model",
                 llm_base_url="http://fake-provider.local",
-                llm_prompt_variant="strict_decision_v2_source_aware",
+                llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
             )
         )
     )
@@ -291,7 +291,7 @@ def test_llm_plugin_path_returns_server_error_when_provider_fails(monkeypatch, t
                 llm_provider="openai_compatible",
                 llm_model="fake-model",
                 llm_base_url="http://fake-provider.local",
-                llm_prompt_variant="strict_decision_v2_source_aware",
+                llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
             )
         ),
         raise_server_exceptions=False,

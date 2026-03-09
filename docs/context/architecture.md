@@ -109,9 +109,9 @@ Current chosen path:
 
 - provider: OpenAI-compatible
 - model: `gpt-5-mini`
-- prompt variant: `strict_decision_v2_source_aware`
+- prompt variant: `strict_typed_memory_v4_evidence_guarded`
 - prompt schema: `typed_memory_extraction`
-- prompt schema version: `v3`
+- prompt schema version: `v4`
 
 ## Tiered Memory
 

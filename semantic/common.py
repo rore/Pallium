@@ -38,6 +38,22 @@ INVESTIGATION_RATIONALE_SPLITTERS = (
 )
 INVESTIGATION_SOURCE_TYPES = {"investigation_summary", "assistant_artifact", "tool_summary", "incident_note", "assistant_output"}
 INVESTIGATION_ARTIFACT_KINDS = {"assistant_output", "tool_use_summary"}
+DECISION_EVIDENCE_PATTERNS = (
+    re.compile(r"^\s*decision:\s*", re.IGNORECASE),
+    re.compile(r"^\s*we decided(?: to)?\s+", re.IGNORECASE),
+    re.compile(r"^\s*we chose\s+", re.IGNORECASE),
+    re.compile(r"^\s*chosen approach[:\s]+", re.IGNORECASE),
+    re.compile(r"^\s*we will use\s+", re.IGNORECASE),
+)
+INVESTIGATION_EVIDENCE_PATTERNS = (
+    re.compile(r"^\s*root cause[:\s]+", re.IGNORECASE),
+    re.compile(r"^\s*investigation found(?: that)?\s+", re.IGNORECASE),
+    re.compile(r"^\s*investigation concluded(?: that)?\s+", re.IGNORECASE),
+    re.compile(r"^\s*analysis found(?: that)?\s+", re.IGNORECASE),
+    re.compile(r"^\s*findings?[:\s]+", re.IGNORECASE),
+    re.compile(r"^\s*outcome[:\s]+", re.IGNORECASE),
+    re.compile(r"^\s*we found that\s+", re.IGNORECASE),
+)
 
 
 @dataclass(frozen=True)
@@ -166,6 +182,18 @@ def deterministic_extraction(source_item: SourceItem) -> SemanticExtraction:
     return SemanticExtraction(summary=summary)
 
 
+def has_explicit_decision_evidence(text: str | None) -> bool:
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in DECISION_EVIDENCE_PATTERNS)
+
+
+def has_explicit_investigation_evidence(text: str | None) -> bool:
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in INVESTIGATION_EVIDENCE_PATTERNS)
+
+
 def build_process_result(
     source_item: SourceItem,
     extraction: SemanticExtraction,
@@ -186,7 +214,12 @@ def build_process_result(
         )
     ]
 
-    if extraction.candidate_type == "decision" and extraction.decision_text and extraction.decision_evidence_text:
+    if (
+        extraction.candidate_type == "decision"
+        and extraction.decision_text
+        and extraction.decision_evidence_text
+        and has_explicit_decision_evidence(extraction.decision_evidence_text)
+    ):
         candidate_payload = {
             "candidate_type": "decision",
             "decision_text": extraction.decision_text,
@@ -229,7 +262,12 @@ def build_process_result(
             )
             if part
         )
-    elif extraction.candidate_type == "investigation_outcome" and extraction.investigation_text and extraction.investigation_evidence_text:
+    elif (
+        extraction.candidate_type == "investigation_outcome"
+        and extraction.investigation_text
+        and extraction.investigation_evidence_text
+        and has_explicit_investigation_evidence(extraction.investigation_evidence_text)
+    ):
         candidate_payload = {
             "candidate_type": "investigation_outcome",
             "investigation_text": extraction.investigation_text,

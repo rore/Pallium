@@ -57,9 +57,9 @@ The LLM-backed path records semantic provenance with each derived artifact:
 
 Default LLM prompt path:
 
-- prompt variant: `strict_decision_v2_source_aware`
+- prompt variant: `strict_typed_memory_v4_evidence_guarded`
 - prompt schema: `typed_memory_extraction`
-- prompt schema version: `v3`
+- prompt schema version: `v4`
 
 ## Semantic Regression
 
@@ -69,10 +69,10 @@ Latest recorded baseline:
 
 - provider: OpenAI-compatible
 - model: `gpt-5-mini`
-- prompt variant: `strict_decision_v2_source_aware`
-- overall correct: `27 / 30`
-- decision false positives: `1`
-- investigation false positives: `2`
+- prompt variant: `strict_typed_memory_v4_evidence_guarded`
+- overall correct: `30 / 30`
+- decision false positives: `0`
+- investigation false positives: `0`
 - false negatives: `0`
 
 See [C:/Dev/rore/Pallium/evals/semantic/baseline.md](C:/Dev/rore/Pallium/evals/semantic/baseline.md).
@@ -106,7 +106,7 @@ PALLIUM_LLM_PROVIDER=openai_compatible
 PALLIUM_LLM_MODEL=gpt-5-mini
 PALLIUM_LLM_BASE_URL=https://api.openai.com/v1
 PALLIUM_LLM_API_KEY=your-key
-PALLIUM_LLM_PROMPT_VARIANT=strict_decision_v2_source_aware
+PALLIUM_LLM_PROMPT_VARIANT=strict_typed_memory_v4_evidence_guarded
 ```
 
 ## LLM Semantic Eval Harness

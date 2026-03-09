@@ -11,9 +11,9 @@ from semantic.base import SemanticPlugin
 from semantic.common import SemanticExtraction, build_process_result
 
 
-DEFAULT_PROMPT_VARIANT = "strict_decision_v2_source_aware"
+DEFAULT_PROMPT_VARIANT = "strict_typed_memory_v4_evidence_guarded"
 PROMPT_SCHEMA_ID = "typed_memory_extraction"
-PROMPT_SCHEMA_VERSION = "v3"
+PROMPT_SCHEMA_VERSION = "v4"
 PROMPT_VARIANTS: dict[str, str] = {
     "baseline": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
 
@@ -64,6 +64,27 @@ Use candidate_type null for:
 When candidate_type is `decision`, fill only the decision fields.
 When candidate_type is `investigation_outcome`, fill only the investigation fields.
 If you are not certain the source contains explicit evidence, return candidate_type null.""",
+    "strict_typed_memory_v4_evidence_guarded": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
+
+Your task is conservative typed-memory extraction with evidence grounding.
+A decision exists only when the source explicitly records a concrete choice that has already been made.
+An investigation_outcome exists only when the source explicitly records an established finding, root cause, conclusion, or diagnostic outcome.
+If the source only states a need, a symptom, a proposal, a preference, a recommendation, a status update, or something to watch, candidate_type must be null.
+
+Evidence rule:
+- candidate_type may be non-null only if decision_evidence_text or investigation_evidence_text contains the exact explicit cue proving the type.
+- Valid decision cues are phrasing like: "Decision:", "we decided", "we chose", "chosen approach", or "we will use".
+- Valid investigation cues are phrasing like: "Root cause:", "Investigation found", "Investigation concluded", "Analysis found", "Findings:", "Outcome:", or "We found that".
+- Statements such as "we need", "we should watch", "was detected", "leaned toward", or "prefer" are not valid evidence and must produce candidate_type null.
+
+Source-type guidance:
+- For `decision_note`, require explicit committed-choice wording rather than inferred intent.
+- For `investigation_summary`, `incident_note`, `tool_summary`, and `assistant_artifact`, allow investigation_outcome only when the established finding is explicit.
+- For `chat_message`, `meeting_summary`, `status_update`, and `notification`, default to null unless the text itself contains one of the valid explicit cues above.
+
+When candidate_type is `decision`, fill only decision_text and decision_evidence_text.
+When candidate_type is `investigation_outcome`, fill only investigation_text and investigation_evidence_text.
+If no explicit proof phrase exists, candidate_type must be null.""",
 }
 
 SCHEMA_DESCRIPTION = json.dumps(
