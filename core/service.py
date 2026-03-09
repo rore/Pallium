@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import re
+
 from core.contracts import IngestResult, QueryResult, build_source_item
+from core.models import IndexEntry
 from retrieval.base import RetrievalProvider
 from semantic.base import SemanticPlugin
 from storage.base import StorageProvider
+
+
+TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+
+
+def _normalize_for_index(text: str) -> str:
+    return " ".join(TOKEN_PATTERN.findall(text.lower()))
 
 
 class PalliumService:
@@ -33,7 +43,10 @@ class PalliumService:
             annotations = self._storage.list_annotations_for_source_item(existing_source_item.id)
             memory_objects = self._storage.list_memory_objects_for_source_item(existing_source_item.id)
             relations = self._storage.list_relations_for_source_item(existing_source_item.id)
-            index_entries = []
+            index_entries = self._storage.list_index_entries_for_target(
+                target_kind="source_item",
+                target_id=existing_source_item.id,
+            )
             for memory_object in memory_objects:
                 index_entries.extend(
                     self._storage.list_index_entries_for_target(
@@ -61,6 +74,14 @@ class PalliumService:
         )
         self._storage.create_source_item(source_item)
 
+        source_index_entry = IndexEntry(
+            target_kind="source_item",
+            target_id=source_item.id,
+            index_type="lexical",
+            text_view=_normalize_for_index(source_item.content),
+        )
+        self._storage.create_index_entry(source_index_entry)
+
         derived = plugin.process_item(source_item)
         for annotation in derived.annotations:
             self._storage.create_annotation(annotation)
@@ -76,7 +97,7 @@ class PalliumService:
             annotation_ids=[item.id for item in derived.annotations],
             memory_object_ids=[item.id for item in derived.memory_objects],
             relation_ids=[item.id for item in derived.relations],
-            index_entry_ids=[item.id for item in derived.index_entries],
+            index_entry_ids=[source_index_entry.id, *[item.id for item in derived.index_entries]],
         )
 
     def query(self, text: str, limit: int) -> QueryResult:

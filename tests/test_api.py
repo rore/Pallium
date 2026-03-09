@@ -19,7 +19,7 @@ def test_post_items_creates_artifacts(client) -> None:
     assert len(payload["annotation_ids"]) == 1
     assert len(payload["memory_object_ids"]) == 1
     assert len(payload["relation_ids"]) == 1
-    assert len(payload["index_entry_ids"]) == 1
+    assert len(payload["index_entry_ids"]) == 2
 
 
 def test_post_items_is_idempotent_on_source_reference(client) -> None:
@@ -38,7 +38,7 @@ def test_post_items_is_idempotent_on_source_reference(client) -> None:
     assert second_response.json() == first_response.json()
 
 
-def test_post_query_returns_relevant_results(client) -> None:
+def test_post_query_returns_mixed_results(client) -> None:
     client.post(
         "/items",
         json={
@@ -56,8 +56,18 @@ def test_post_query_returns_relevant_results(client) -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert len(payload["results"]) >= 1
-    first_result = payload["results"][0]
-    assert first_result["type"] == "discussion_summary"
-    assert first_result["score"] > 0
-    assert len(first_result["evidence"]) == 1
+    assert len(payload["results"]) >= 2
+    result_kinds = {result["result_kind"] for result in payload["results"]}
+    assert "memory_hit" in result_kinds
+    assert "source_hit" in result_kinds
+
+    memory_hit = next(result for result in payload["results"] if result["result_kind"] == "memory_hit")
+    assert memory_hit["type"] == "discussion_summary"
+    assert memory_hit["payload"]
+    assert len(memory_hit["evidence"]) == 1
+
+    source_hit = next(result for result in payload["results"] if result["result_kind"] == "source_hit")
+    assert source_hit["source_item_id"]
+    assert source_hit["source_type"] == "decision_note"
+    assert source_hit["source_id"] == "decision-1"
+    assert source_hit["content"]

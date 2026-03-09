@@ -227,8 +227,14 @@ class SQLiteStorageProvider(StorageProvider):
             text_tokens = set(TOKEN_PATTERN.findall(record.text_view.lower()))
             score = len(unique_tokens.intersection(text_tokens))
             if score > 0:
-                hits.append(IndexSearchHit(target_id=record.target_id, score=score))
-        hits.sort(key=lambda item: item.score, reverse=True)
+                hits.append(
+                    IndexSearchHit(
+                        target_kind=record.target_kind,
+                        target_id=record.target_id,
+                        score=score,
+                    )
+                )
+        hits.sort(key=lambda item: (item.score, 1 if item.target_kind == "memory_object" else 0), reverse=True)
         return hits[:limit]
 
     def get_evidence_for_memory_object(self, memory_object_id: str) -> list[EvidenceReference]:

@@ -1,7 +1,7 @@
 ---
 id: build-structured-retrieval-foundation
 title: Build the structured retrieval foundation
-status: in_progress
+status: done
 priority: high
 commitment: committed
 milestone: Phase 3
@@ -9,18 +9,17 @@ milestone: Phase 3
 
 ## Summary
 
-Build the next retrieval layer around structured filters, explicit relation-aware retrieval, and lexical search, keeping embeddings optional and additive.
+The retrieval layer now returns mixed results across promoted memory and raw source evidence while keeping evidence links explicit.
 
 ## Why
 
-The first slice already proves lexical retrieval and evidence lookup. The next step is to strengthen retrieval quality without breaking the generic-core and replaceable-provider direction.
+The first slice already proved lexical retrieval and evidence lookup. This step strengthened retrieval quality without breaking the generic-core and replaceable-provider direction.
 
 ## In Scope
 
-- structured filtering over core entities and metadata
-- relation-aware retrieval beyond basic evidence resolution
-- lexical retrieval over selected text views
-- retrieval packaging that stays compact and cited
+- structured retrieval preparation through indexing both source and memory targets
+- mixed lexical retrieval over source items and memory objects
+- explicit result-kind packaging that stays compact and cited
 
 ## Out of Scope
 
@@ -30,12 +29,12 @@ The first slice already proves lexical retrieval and evidence lookup. The next s
 
 ## Done When
 
-1. The system can answer retrieval requests with structured and lexical signals alone.
+1. The system can answer retrieval requests with mixed memory and source results.
 2. The retrieval contract stays compatible with optional semantic enhancement later.
 3. Results remain evidence-backed and compact enough for downstream agent use.
 
 ## Notes
 
-Status: next active engineering focus after the first executable slice.
+Status: completed and verified with pytest and a live temporary-database HTTP run.
 
 Sources: roadmap/scope.md, docs/context/vision.md, roadmap/ideas/idea-optional-embedding-provider-support.md

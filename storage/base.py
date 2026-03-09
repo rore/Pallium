@@ -8,6 +8,7 @@ from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject,
 
 @dataclass(frozen=True)
 class IndexSearchHit:
+    target_kind: str
     target_id: str
     score: int
 

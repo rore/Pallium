@@ -14,7 +14,7 @@ Main layers:
 5. Retrieval layer
 6. Optional background jobs
 
-## Implemented First Slice
+## Implemented Retrieval Slice
 
 Implemented HTTP endpoints:
 
@@ -31,6 +31,8 @@ Implemented storage and retrieval behavior:
 
 - SQLite-backed storage provider
 - lexical retrieval over indexed text views
+- indexing for both SourceItem and MemoryObject
+- mixed query results with explicit result kinds
 - evidence resolution from memory objects back to source items
 
 Implemented semantic behavior:
@@ -128,26 +130,28 @@ Typical consumers:
 - internal tools
 - lightweight admin or review UIs
 
-The first walking skeleton includes a simulated generic agent consumer so
+The current walking skeleton includes a simulated generic agent consumer so
 write and read behavior are exercised end to end.
 
 ## Base Memory Flow
 
 1. Producer submits a normalized SourceItem
 2. Core persists the raw item and provenance
-3. Semantic layer creates Annotation objects
-4. Semantic layer may promote one or more MemoryObject instances
-5. Core stores Relation and IndexEntry objects
-6. Consumer queries Pallium
-7. Retrieval combines lexical signals with evidence lookups today, and will later combine structured filters and relation-aware retrieval
-8. Pallium returns compact evidence-backed results
+3. Core creates a lexical index entry for the source item
+4. Semantic layer creates Annotation objects
+5. Semantic layer may promote one or more MemoryObject instances
+6. Core stores Relation and IndexEntry objects for promoted memory
+7. Consumer queries Pallium
+8. Retrieval returns mixed memory and source evidence hits
+9. Pallium returns compact evidence-backed results
 
 ## Retrieval Model
 
-Current first-slice order of importance:
+Current implemented order of importance:
 
 1. lexical retrieval
 2. evidence resolution through relations
+3. mixed result packaging across memory and source evidence
 
 Target later direction:
 
@@ -157,9 +161,6 @@ Target later direction:
 4. optional vector retrieval
 
 Returned results stay compact and cite supporting evidence.
-
-The intended index model allows retrieval over both raw evidence and promoted
-memory.
 
 ## Relation Model
 
@@ -175,7 +176,7 @@ Stable early relation types:
 
 ## Storage and Jobs
 
-The first implementation keeps storage simple and local-first.
+The current implementation keeps storage simple and local-first.
 
 - one database implementation today: SQLite
 - no separate graph database requirement

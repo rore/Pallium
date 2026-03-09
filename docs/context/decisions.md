@@ -88,16 +88,6 @@ Why:
 - preserves the ability to add Postgres later without changing core flow
 - applies the same design posture to retrieval and semantic processing
 
-### 2026-03-09 - First executable slice delivered and verified
-
-The first walking skeleton now exists and has been verified locally.
-
-What was proven:
-
-- POST /items persists source items and derived artifacts
-- POST /query returns evidence-backed memory results
-- the simulation script exercises the live HTTP path end to end
-
 ### 2026-03-09 - Memory objects are explicitly evidence-backed
 
 The intended model is that memory objects always point to one or more
@@ -119,6 +109,16 @@ Why:
 - keeps the generic core disciplined
 - avoids turning the system into a store of low-value promoted summaries
 
+### 2026-03-09 - Mixed retrieval over memory and source evidence
+
+The next retrieval layer should return both promoted memory and raw evidence in one explicit response contract.
+
+Why:
+
+- moves Pallium closer to its real value than memory-only lexical search
+- keeps answers grounded in raw evidence
+- reduces the risk that retrieval overfits to promoted summaries only
+
 ## Open
 
 ### Ingestion policy
@@ -130,7 +130,7 @@ Need explicit rules for when a producer should submit a source item.
 Need a clear model for candidate, active, corrected, rejected, superseded, and
 consolidated memory states.
 
-### Query contract
+### Query contract beyond mixed hits
 
-Need to define how generic the query API remains versus how much retrieval
-intent is expressed by semantic layers.
+Need to define how far the query API should evolve toward structured filters,
+retrieval intent, and result-type-specific controls.

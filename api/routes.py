@@ -27,9 +27,7 @@ def create_router(service: PalliumService) -> APIRouter:
         return QueryResponse(
             results=[
                 {
-                    "memory_object_id": item.memory_object_id,
-                    "type": item.type,
-                    "payload": item.payload,
+                    "result_kind": item.result_kind,
                     "score": item.score,
                     "evidence": [
                         {
@@ -39,6 +37,14 @@ def create_router(service: PalliumService) -> APIRouter:
                         }
                         for evidence in item.evidence
                     ],
+                    "memory_object_id": item.memory_object_id,
+                    "type": item.type,
+                    "payload": item.payload,
+                    "source_item_id": item.source_item_id,
+                    "source_type": item.source_type,
+                    "source_id": item.source_id,
+                    "content": item.content,
+                    "metadata": item.metadata,
                 }
                 for item in result.results
             ]

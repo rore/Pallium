@@ -74,8 +74,14 @@ class EvidenceReference:
 
 @dataclass(frozen=True)
 class QueryResultItem:
-    memory_object_id: str
-    type: str
-    payload: dict[str, Any]
+    result_kind: str
     score: int
     evidence: list[EvidenceReference]
+    memory_object_id: str | None = None
+    type: str | None = None
+    payload: dict[str, Any] | None = None
+    source_item_id: str | None = None
+    source_type: str | None = None
+    source_id: str | None = None
+    content: str | None = None
+    metadata: dict[str, Any] | None = None

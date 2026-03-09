@@ -36,12 +36,18 @@ def test_end_to_end_simulation_flow(client) -> None:
 
     query_response = client.post(
         "/query",
-        json={"text": "why do we use event timestamp watermarking?", "limit": 5},
+        json={"text": "why do we use event timestamp watermarking?", "limit": 6},
     )
     assert query_response.status_code == 200
 
     payload = query_response.json()
     assert payload["results"]
-    assert len(payload["results"]) == 2
-    assert any(item["type"] == "discussion_summary" for item in payload["results"])
-    assert payload["results"][0]["evidence"]
+    result_kinds = {item["result_kind"] for item in payload["results"]}
+    assert "memory_hit" in result_kinds
+    assert "source_hit" in result_kinds
+
+    memory_hits = [item for item in payload["results"] if item["result_kind"] == "memory_hit"]
+    source_hits = [item for item in payload["results"] if item["result_kind"] == "source_hit"]
+    assert any(item.get("type") == "discussion_summary" for item in memory_hits)
+    assert any(item.get("source_id") == "decision-001" for item in source_hits)
+    assert len([item for item in source_hits if item.get("source_id") == "decision-001"]) == 1

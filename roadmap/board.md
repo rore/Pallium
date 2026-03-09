@@ -1,7 +1,4 @@
 # Now
-- build-structured-retrieval-foundation
-
-# Next
 - add-tiered-memory-extension
 
 # Done
@@ -10,6 +7,7 @@
 - implement-source-item-persistence-and-primitives
 - add-first-semantic-layer-and-promotion
 - add-agent-memory-simulation
+- build-structured-retrieval-foundation
 
 # Ideas
 - idea-evidence-backed-agent-memory

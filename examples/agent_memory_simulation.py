@@ -50,7 +50,7 @@ def main() -> int:
 
     query_result = _post(
         "/query",
-        {"text": "why do we use event timestamp watermarking?", "limit": 5},
+        {"text": "why do we use event timestamp watermarking?", "limit": 6},
     )
     print(json.dumps(query_result, indent=2))
     return 0

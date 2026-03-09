@@ -34,7 +34,7 @@ The current implementation is a walking skeleton with:
 - one generic core
 - one semantic layer interface with a simple in-repo plugin pattern
 - one storage layer
-- one retrieval path
+- one mixed retrieval path over memory and source evidence
 - one simulated generic agent consumer for end-to-end proof
 
 The current top-level architecture is:
@@ -60,7 +60,7 @@ The core owns storage and orchestration. Semantic layers define meaning.
 
 ## Tiered Memory
 
-Tiered memory is an intended extension, not part of the first executable slice.
+Tiered memory is an intended extension, not part of the current executable slice.
 
 The idea is to periodically consolidate lower-level memory into higher-level
 reusable memory objects such as topic summaries or recurring patterns, while
@@ -68,7 +68,7 @@ keeping all lower-level evidence intact.
 
 ## Status
 
-The first executable slice is implemented and verified.
+The mixed retrieval foundation is implemented and verified.
 
 What exists now:
 
@@ -76,16 +76,15 @@ What exists now:
 - FastAPI application wiring
 - generic core models and orchestration service
 - semantic plugin interface plus a deterministic demo plugin
-- retrieval interface plus lexical retrieval implementation
 - storage abstraction plus SQLite implementation
-- simulation script and pytest coverage
+- mixed retrieval over promoted memory and raw source evidence
+- simulation script, Bruno collection, and pytest coverage
 - project context, designs, and roadmap docs
 
 Verified locally:
 
 - pytest passes
-- the live HTTP simulation ingests sample items and returns evidence-backed
-  discussion_summary results
+- the live HTTP flow returns both memory hits and source hits with evidence
 
 ## Run Locally
 
@@ -119,10 +118,10 @@ in Bruno.
 3. Run `items/Create Item`.
 4. Run `query/Query Items`.
 
-The collection matches the current first-slice HTTP surface:
+The current collection matches the active HTTP surface:
 
 - `POST /items`
-- `POST /query`
+- `POST /query` returning mixed `memory_hit` and `source_hit` results
 
 ## Repository Guide
 
