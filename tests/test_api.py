@@ -98,6 +98,7 @@ def test_post_query_returns_decision_memory_and_source_hits(client) -> None:
     memory_hit = next(result for result in payload["results"] if result["result_kind"] == "memory_hit")
     assert memory_hit["type"] == "decision"
     assert memory_hit["payload"]["decision"] == "use event timestamp watermarking for exports"
+    assert memory_hit["payload"]["decision_evidence_text"] == "Decision: use event timestamp watermarking for exports to avoid skipped records during lag"
     assert memory_hit["payload"]["rationale"] == "to avoid skipped records during lag"
     assert len(memory_hit["evidence"]) == 1
 
@@ -116,6 +117,7 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
                 "summary": "Decision discussion about watermarking.",
                 "candidate_type": "decision",
                 "decision_text": "use event timestamp watermarking",
+                "decision_evidence_text": "We decided to use event timestamp watermarking.",
                 "rationale_text": "to avoid skipped records during lag",
             }
         ),
@@ -154,6 +156,7 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
     memory_hit = next(result for result in payload["results"] if result["result_kind"] == "memory_hit")
     assert memory_hit["type"] == "decision"
     assert memory_hit["payload"]["decision"] == "use event timestamp watermarking"
+    assert memory_hit["payload"]["decision_evidence_text"] == "We decided to use event timestamp watermarking."
     assert any(result["result_kind"] == "source_hit" for result in payload["results"])
 
 

@@ -17,6 +17,7 @@ class AppConfig:
     llm_model: str | None = None
     llm_base_url: str | None = None
     llm_api_key: str | None = None
+    llm_prompt_variant: str = "baseline"
     llm_timeout_seconds: float = 30.0
 
     @classmethod
@@ -31,6 +32,7 @@ class AppConfig:
             llm_model=_resolve_value("PALLIUM_LLM_MODEL", file_values),
             llm_base_url=_resolve_value("PALLIUM_LLM_BASE_URL", file_values),
             llm_api_key=_resolve_value("PALLIUM_LLM_API_KEY", file_values),
+            llm_prompt_variant=_resolve_value("PALLIUM_LLM_PROMPT_VARIANT", file_values, "baseline") or "baseline",
             llm_timeout_seconds=float(timeout_value),
         )
 

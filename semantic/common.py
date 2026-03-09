@@ -29,8 +29,10 @@ class SemanticExtraction:
     summary: str
     candidate_type: str | None = None
     decision_text: str | None = None
+    decision_evidence_text: str | None = None
     rationale_text: str | None = None
     matched_phrase: str | None = None
+
 
 
 def summarize_content(content: str) -> str:
@@ -43,12 +45,15 @@ def summarize_content(content: str) -> str:
     return text[:200].strip()
 
 
+
 def normalize_for_index(text: str) -> str:
     return " ".join(TOKEN_PATTERN.findall(text.lower()))
 
 
+
 def strip_terminal_punctuation(text: str) -> str:
     return text.strip().rstrip(" .!?;:")
+
 
 
 def extract_decision_candidate(content: str) -> dict[str, str | None] | None:
@@ -75,11 +80,13 @@ def extract_decision_candidate(content: str) -> dict[str, str | None] | None:
 
         return {
             "decision_text": decision_text,
+            "decision_evidence_text": strip_terminal_punctuation(match.group(0)),
             "rationale_text": rationale_text,
             "matched_phrase": match.group(0).split(match.group("body"))[0].strip(),
         }
 
     return None
+
 
 
 def deterministic_extraction(content: str) -> SemanticExtraction:
@@ -91,9 +98,11 @@ def deterministic_extraction(content: str) -> SemanticExtraction:
         summary=summary,
         candidate_type="decision",
         decision_text=candidate["decision_text"],
+        decision_evidence_text=candidate["decision_evidence_text"],
         rationale_text=candidate["rationale_text"],
         matched_phrase=candidate["matched_phrase"],
     )
+
 
 
 def build_process_result(
@@ -111,10 +120,11 @@ def build_process_result(
         )
     ]
 
-    if extraction.candidate_type == "decision" and extraction.decision_text:
+    if extraction.candidate_type == "decision" and extraction.decision_text and extraction.decision_evidence_text:
         candidate_payload = {
             "candidate_type": "decision",
             "decision_text": extraction.decision_text,
+            "decision_evidence_text": extraction.decision_evidence_text,
             "rationale_text": extraction.rationale_text,
         }
         if extraction.matched_phrase:
@@ -134,6 +144,7 @@ def build_process_result(
             schema_version="v1",
             payload={
                 "decision": extraction.decision_text,
+                "decision_evidence_text": extraction.decision_evidence_text,
                 "rationale": extraction.rationale_text,
                 "source_type": source_item.source_type,
                 "source_id": source_item.source_id,
@@ -144,6 +155,7 @@ def build_process_result(
             for part in (
                 extraction.summary,
                 extraction.decision_text or "",
+                extraction.decision_evidence_text or "",
                 extraction.rationale_text or "",
             )
             if part

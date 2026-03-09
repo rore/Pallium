@@ -7,3 +7,4 @@ __pycache__/
 pallium.db
 pallium.egg-info/
 .env.local
+evals/semantic/output/

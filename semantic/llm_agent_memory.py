@@ -1,60 +1,130 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from core.contracts import ProcessResult
 from core.models import SourceItem
-from providers.llm.base import LLMProvider
+from providers.llm.base import LLMJsonResponse, LLMProvider
 from semantic.base import SemanticPlugin
 from semantic.common import SemanticExtraction, build_process_result
 
 
-SYSTEM_PROMPT = """You extract reusable memory from technical discussions.
-Return exactly one JSON object and no extra prose."""
+DEFAULT_PROMPT_VARIANT = "baseline"
+PROMPT_VARIANTS: dict[str, str] = {
+    "baseline": """You extract reusable memory from technical discussions.
+Return exactly one JSON object and no extra prose.""",
+    "strict_decision_v1": """You extract reusable memory from technical discussions.
+Return exactly one JSON object and no extra prose.
+
+Classify candidate_type as \"decision\" only when the text explicitly records a committed choice that has already been made.
+Do not mark a decision for hypotheses, preferences, suggestions, observations, diagnoses, risks, next steps, or statements that something is needed.
+If the text discusses options or leans toward an approach without an explicit committed choice, candidate_type must be null.
+If the text reports an investigation finding or root cause without an explicit committed choice, candidate_type must be null.
+If the text says the team agreed that something is needed, but did not choose a concrete action or approach, candidate_type must be null.
+When candidate_type is \"decision\", decision_text must restate the committed choice only, not an inferred fix or recommendation.
+When candidate_type is \"decision\", decision_evidence_text must be an exact quote or close paraphrase of the source phrase that proves the decision was explicitly made. If you cannot point to explicit decision evidence, candidate_type must be null.""",
+}
 
 SCHEMA_DESCRIPTION = json.dumps(
     {
         "summary": "string",
         "candidate_type": "decision or null",
         "decision_text": "string or null",
+        "decision_evidence_text": "string or null",
         "rationale_text": "string or null",
     },
     indent=2,
 )
 
 
+@dataclass(frozen=True)
+class LLMAnalysisRequest:
+    prompt_variant: str
+    system_prompt: str
+    user_prompt: str
+    schema_description: str
+
+
+@dataclass(frozen=True)
+class LLMSemanticTrace:
+    request: LLMAnalysisRequest
+    response: LLMJsonResponse
+    extraction: SemanticExtraction
+    process_result: ProcessResult
+
+
 class LLMAgentMemoryPlugin(SemanticPlugin):
     name = "llm_agent_memory"
 
-    def __init__(self, provider: LLMProvider) -> None:
+    def __init__(self, provider: LLMProvider, *, prompt_variant: str = DEFAULT_PROMPT_VARIANT) -> None:
         self._provider = provider
+        self._prompt_variant = _resolve_prompt_variant(prompt_variant)
 
-    def process_item(self, source_item: SourceItem) -> ProcessResult:
+    @property
+    def prompt_variant(self) -> str:
+        return self._prompt_variant
+
+    def with_prompt_variant(self, prompt_variant: str) -> "LLMAgentMemoryPlugin":
+        return LLMAgentMemoryPlugin(provider=self._provider, prompt_variant=prompt_variant)
+
+    def analyze_item(self, source_item: SourceItem) -> LLMSemanticTrace:
+        request = build_analysis_request(source_item, prompt_variant=self._prompt_variant)
         response = self._provider.generate_json(
-            system_prompt=SYSTEM_PROMPT,
-            user_prompt=_build_user_prompt(source_item),
-            schema_description=SCHEMA_DESCRIPTION,
+            system_prompt=request.system_prompt,
+            user_prompt=request.user_prompt,
+            schema_description=request.schema_description,
         )
         extraction = _normalize_extraction(response.parsed_json)
-        return build_process_result(source_item, extraction, schema_prefix="llm")
+        process_result = build_process_result(source_item, extraction, schema_prefix="llm")
+        return LLMSemanticTrace(
+            request=request,
+            response=response,
+            extraction=extraction,
+            process_result=process_result,
+        )
+
+    def process_item(self, source_item: SourceItem) -> ProcessResult:
+        return self.analyze_item(source_item).process_result
 
 
-def _build_user_prompt(source_item: SourceItem) -> str:
+
+def build_analysis_request(source_item: SourceItem, *, prompt_variant: str = DEFAULT_PROMPT_VARIANT) -> LLMAnalysisRequest:
+    resolved_prompt_variant = _resolve_prompt_variant(prompt_variant)
     metadata_text = json.dumps(source_item.metadata or {}, sort_keys=True)
-    return (
-        f"Source type: {source_item.source_type}\n"
-        f"Source id: {source_item.source_id}\n"
-        f"Content type: {source_item.content_type}\n"
-        f"Metadata: {metadata_text}\n"
-        f"Content:\n{source_item.content}"
+    return LLMAnalysisRequest(
+        prompt_variant=resolved_prompt_variant,
+        system_prompt=PROMPT_VARIANTS[resolved_prompt_variant],
+        user_prompt=(
+            f"Source type: {source_item.source_type}\n"
+            f"Source id: {source_item.source_id}\n"
+            f"Content type: {source_item.content_type}\n"
+            f"Metadata: {metadata_text}\n"
+            f"Content:\n{source_item.content}"
+        ),
+        schema_description=SCHEMA_DESCRIPTION,
     )
+
+
+
+def list_prompt_variants() -> list[str]:
+    return list(PROMPT_VARIANTS.keys())
+
+
+
+def _resolve_prompt_variant(prompt_variant: str) -> str:
+    if prompt_variant not in PROMPT_VARIANTS:
+        raise ValueError(f"Unsupported prompt variant: {prompt_variant}")
+    return prompt_variant
+
 
 
 def _normalize_extraction(payload: dict[str, Any]) -> SemanticExtraction:
     summary = _normalize_required_string(payload.get("summary"), field_name="summary")
     candidate_type = _normalize_optional_string(payload.get("candidate_type"), field_name="candidate_type")
     decision_text = _normalize_optional_string(payload.get("decision_text"), field_name="decision_text")
+    decision_evidence_text = _normalize_optional_string(payload.get("decision_evidence_text"), field_name="decision_evidence_text")
     rationale_text = _normalize_optional_string(payload.get("rationale_text"), field_name="rationale_text")
 
     if candidate_type is not None:
@@ -66,8 +136,10 @@ def _normalize_extraction(payload: dict[str, Any]) -> SemanticExtraction:
         summary=summary,
         candidate_type=candidate_type,
         decision_text=decision_text,
+        decision_evidence_text=decision_evidence_text,
         rationale_text=rationale_text,
     )
+
 
 
 def _normalize_required_string(value: Any, *, field_name: str) -> str:
@@ -77,6 +149,7 @@ def _normalize_required_string(value: Any, *, field_name: str) -> str:
     if not normalized:
         raise ValueError(f"{field_name} must not be empty")
     return normalized
+
 
 
 def _normalize_optional_string(value: Any, *, field_name: str) -> str | None:

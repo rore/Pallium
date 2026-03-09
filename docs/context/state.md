@@ -20,6 +20,7 @@
 - first consumer proof: simulated generic agent-memory workflow
 - current slice includes API, core service, semantic plugins, LLM provider adapters, retrieval provider, SQLite storage provider, simulation script, Bruno collection, and pytest coverage
 - current semantic behavior includes deterministic and LLM-backed `decision` promotion, with `discussion_summary` used only for non-decision extraction results
+- semantic eval uses a single JSONL input file and now defaults to `results.jsonl` plus `summary.json`, with split per-input artifacts only when explicitly requested
 - the LLM-backed path no longer falls back to deterministic extraction on provider or parsing failure
 
 ## Verification Notes

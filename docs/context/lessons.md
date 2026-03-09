@@ -21,3 +21,39 @@ That makes it hard to tell whether Pallium actually used the LLM path, and it ca
 
 Solution:
 The LLM-backed plugin should not fall back to deterministic extraction. If the LLM path fails, treat it as an LLM-backed processing failure and surface it clearly.
+
+
+## 2026-03-09 - LLM decision extraction is still too permissive
+
+Problem:
+A 10-item semantic eval batch against a real OpenAI model promoted almost every item to `decision`, including discussion and investigation-style inputs.
+
+Why:
+The current prompt and validation contract make it too easy for the model to classify general conclusions or observations as formal decisions.
+
+Solution:
+Tighten the decision prompt and add stricter promotion validation before relying on LLM-produced `decision` memory at scale.
+
+## 2026-03-09 - GPT-5 mini rejects forced temperature 0 on chat completions
+
+Problem:
+The OpenAI-compatible provider failed completely after switching to `gpt-5-mini`.
+
+Why:
+The provider hardcoded `temperature: 0`, and this model only accepts its default temperature on the chat completions endpoint.
+
+Solution:
+Do not force `temperature` in the OpenAI-compatible provider unless the target model explicitly supports it.
+
+
+## 2026-03-09 - Stricter decision prompt reduces false positives substantially
+
+Problem:
+The baseline LLM prompt promoted too many discussions and findings into `decision` memory objects.
+
+Why:
+The prompt did not clearly distinguish committed choices from preferences, findings, or agreed needs.
+
+Solution:
+Add a stricter decision-only prompt variant with explicit non-decision cases. In the 40-item GPT-5 mini comparison run, this reduced false positives from 8 to 2 while keeping false negatives at 0.
+

@@ -31,7 +31,6 @@ class OpenAICompatibleLLMProvider(LLMProvider):
     ) -> LLMJsonResponse:
         payload = {
             "model": self._model,
-            "temperature": 0,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {
@@ -52,6 +51,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
             return LLMJsonResponse(raw_text=raw_text, parsed_json=parse_json_object(raw_text))
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
             raise LLMProviderError("OpenAI-compatible LLM request failed") from exc
+
 
 
 def _extract_openai_content(body: dict[str, Any]) -> str:

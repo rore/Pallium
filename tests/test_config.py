@@ -15,6 +15,7 @@ def test_app_config_loads_from_env_file_and_env_overrides(monkeypatch, tmp_path:
                 "PALLIUM_LLM_MODEL=file-model",
                 "PALLIUM_LLM_BASE_URL=https://file.example/v1",
                 "PALLIUM_LLM_API_KEY=file-key",
+                "PALLIUM_LLM_PROMPT_VARIANT=strict_decision_v1",
                 "PALLIUM_LLM_TIMEOUT_SECONDS=45",
             ]
         ),
@@ -31,4 +32,5 @@ def test_app_config_loads_from_env_file_and_env_overrides(monkeypatch, tmp_path:
     assert config.llm_model == "env-model"
     assert config.llm_base_url == "https://file.example/v1"
     assert config.llm_api_key == "file-key"
+    assert config.llm_prompt_variant == "strict_decision_v1"
     assert config.llm_timeout_seconds == 45.0

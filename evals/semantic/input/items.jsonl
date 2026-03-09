@@ -1,0 +1,3 @@
+{"source_type":"chat_thread","source_id":"thread-001","content_type":"text/plain","content":"We need to decide whether export watermarking should use ingestion time or event time. Ingestion time may skip records when lag spikes.","metadata":{"topic":"watermarking"}}
+{"source_type":"decision_note","source_id":"decision-001","content_type":"text/plain","content":"Decision: use event timestamp watermarking for exports to avoid skipped records during lag.","metadata":{"topic":"watermarking"}}
+{"source_type":"investigation_summary","source_id":"investigation-001","content_type":"text/plain","content":"Skipped records were observed when EventHub lag increased. The issue correlates with using ingestion-time progress tracking.","metadata":{"topic":"watermarking"}}

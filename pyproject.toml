@@ -29,6 +29,7 @@ packages = [
     "app",
     "api",
     "core",
+    "evals",
     "providers",
     "providers.llm",
     "retrieval",

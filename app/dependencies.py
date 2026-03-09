@@ -3,8 +3,8 @@ from __future__ import annotations
 from api.routes import create_router
 from app.config import AppConfig
 from core.service import PalliumService
-from providers.llm.base import LLMProvider
 from providers.llm.anthropic_claude import AnthropicClaudeLLMProvider
+from providers.llm.base import LLMProvider
 from providers.llm.openai_compatible import OpenAICompatibleLLMProvider
 from retrieval.base import RetrievalProvider
 from retrieval.lexical import LexicalRetrievalProvider
@@ -52,7 +52,7 @@ def build_semantic_plugins(config: AppConfig) -> dict[str, SemanticPlugin]:
 
     llm_provider = build_llm_provider(config)
     if llm_provider is not None:
-        llm_plugin = LLMAgentMemoryPlugin(provider=llm_provider)
+        llm_plugin = LLMAgentMemoryPlugin(provider=llm_provider, prompt_variant=config.llm_prompt_variant)
         plugins[llm_plugin.name] = llm_plugin
 
     return plugins

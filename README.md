@@ -37,6 +37,7 @@ The current implementation is a walking skeleton with:
 - one mixed retrieval path over memory and source evidence
 - one deterministic typed-memory path for `decision`
 - one LLM-backed semantic path compatible with OpenAI-compatible and Claude-style APIs
+- one semantic eval harness that records raw LLM output, normalized extraction, and promoted artifacts
 - one simulated generic agent consumer for end-to-end proof
 
 The current top-level architecture is:
@@ -83,6 +84,7 @@ What exists now:
 - storage abstraction plus SQLite implementation
 - mixed retrieval over promoted memory and raw source evidence
 - deterministic and LLM-backed promotion of `decision` memory objects, with `discussion_summary` used only when extraction itself produces a non-decision result
+- semantic eval harness with input fixtures and per-run output artifacts
 - simulation script, Bruno collection, and pytest coverage
 - project context, designs, and roadmap docs
 
@@ -91,6 +93,7 @@ Verified locally:
 - pytest passes
 - the live HTTP flow works with the deterministic plugin
 - the live HTTP flow also works with the LLM-backed plugin against a local fake OpenAI-compatible provider
+- a real OpenAI-backed run also succeeded against a fresh temporary database
 
 ## Run Locally
 
@@ -145,6 +148,45 @@ PALLIUM_LLM_BASE_URL=https://api.anthropic.com/v1
 PALLIUM_LLM_API_KEY=your-key
 ```
 
+## LLM Semantic Eval Harness
+
+To inspect what the LLM actually returns and what Pallium promotes from it, run:
+
+```powershell
+.\.venv\Scripts\python.exe -m evals.semantic_runner
+```
+
+To run a different batch file:
+
+```powershell
+.\.venv\Scripts\python.exe -m evals.semantic_runner --input-file path\to\items.jsonl
+```
+
+Defaults:
+
+- input file: [evals/semantic/input/items.jsonl](C:/Dev/rore/Pallium/evals/semantic/input/items.jsonl)
+- output runs: `evals/semantic/output/<run-id>/`
+- default run id shape: `<suite-name>__<provider>__<model>__<timestamp>`
+
+Each run writes by default:
+
+- `summary.json`
+- `results.jsonl` with one JSON record per input item
+
+Use `--split-output` when you also want one `*.result.json` file per input item for deeper debugging.
+
+Each input line in `items.jsonl` is one normalized source item. Each result record includes:
+
+- the input source item
+- the exact prompts used
+- raw LLM text
+- parsed JSON
+- normalized extraction
+- final promoted annotations, memory objects, relations, and index entries
+- any error details if the LLM path fails
+
+This is intended for debugging first and can later become regression input.
+
 ## Test With Bruno
 
 If you prefer request-driven manual testing, open the root `bruno/` collection
@@ -191,4 +233,3 @@ canonical planning surface for active work and sequencing.
 - Avoid duplicating source systems of record.
 
 This project uses [Minimap](https://github.com/rore/minimap) for repo-local roadmap and feature planning.
-
