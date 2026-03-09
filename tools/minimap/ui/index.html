@@ -35,6 +35,17 @@
               <button id="jump-to-editor" class="ghost-button mobile-nav-button" type="button" hidden>Open item</button>
             </div>
           </div>
+          <div class="board-controls" id="board-controls">
+            <div class="board-search-row">
+              <label class="board-search-field" for="board-search">
+                <span class="visually-hidden">Search roadmap</span>
+                <input id="board-search" type="search" placeholder="Search roadmap" autocomplete="off" spellcheck="false" />
+              </label>
+              <button id="board-filter-toggle" class="ghost-button board-filter-toggle" type="button" aria-expanded="false">Filters</button>
+              <button id="board-clear-filters" class="ghost-button board-clear-button" type="button">Clear</button>
+            </div>
+            <div id="board-filters" class="board-filters" hidden></div>
+          </div>
           <div id="board-groups" class="board-groups"></div>
         </section>
 

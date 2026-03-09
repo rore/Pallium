@@ -53,6 +53,34 @@ function parseScalar(rawValue) {
   return value;
 }
 
+function normalizeMetadataScalar(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  return String(value).trim();
+}
+
+function normalizeMetadataValues(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => normalizeMetadataScalar(entry))
+      .filter(Boolean);
+  }
+
+  const normalized = normalizeMetadataScalar(value);
+  return normalized ? [normalized] : [];
+}
+
+function normalizeSearchText(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function formatScalar(value) {
   if (value === null || value === undefined || value === "") {
     return '""';
@@ -71,6 +99,36 @@ function shouldKeepOptionalValue(value) {
   return !(value === null || value === undefined || value === "");
 }
 
+function parseEntryValue(rawLines) {
+  const [firstLine, ...rest] = rawLines;
+  const keyMatch = firstLine.match(/^([A-Za-z0-9_-]+):(.*)$/);
+
+  if (!keyMatch) {
+    throw new AppError("Invalid frontmatter format.", 422, "parse_error");
+  }
+
+  const inlineValue = keyMatch[2].trim();
+
+  if (rest.length === 0) {
+    return parseScalar(keyMatch[2]);
+  }
+
+  if (inlineValue !== "") {
+    return undefined;
+  }
+
+  const listValues = [];
+  for (const line of rest) {
+    const listMatch = line.match(/^\s*[-]\s+(.*)$/);
+    if (!listMatch) {
+      return undefined;
+    }
+    listValues.push(parseScalar(listMatch[1]));
+  }
+
+  return listValues;
+}
+
 function parseFrontmatterBlock(rawFrontmatter) {
   const lines = rawFrontmatter.split(/\r?\n/);
   const entries = [];
@@ -83,7 +141,6 @@ function parseFrontmatterBlock(rawFrontmatter) {
       current = {
         key: keyMatch[1],
         rawLines: [line],
-        value: parseScalar(keyMatch[2]),
       };
       entries.push(current);
       continue;
@@ -96,7 +153,112 @@ function parseFrontmatterBlock(rawFrontmatter) {
     current.rawLines.push(line);
   }
 
+  for (const entry of entries) {
+    entry.value = parseEntryValue(entry.rawLines);
+  }
+
   return entries;
+}
+
+function buildSearchText(itemRecord) {
+  const parts = [
+    itemRecord.id,
+    itemRecord.kind,
+  ];
+
+  for (const [key, value] of Object.entries(itemRecord.parsed.metadataValues)) {
+    parts.push(key);
+    parts.push(...normalizeMetadataValues(value));
+  }
+
+  for (const segment of itemRecord.parsed.segments) {
+    parts.push(segment.heading);
+    parts.push(itemRecord.parsed.sections[segment.heading] ?? "");
+  }
+
+  return normalizeSearchText(parts.join("\n"));
+}
+
+function normalizeSummaryMetadata(itemRecord) {
+  const metadata = {};
+
+  for (const [key, value] of Object.entries(itemRecord.parsed.metadataValues)) {
+    if (Array.isArray(value)) {
+      const normalized = normalizeMetadataValues(value);
+      if (normalized.length > 0) {
+        metadata[key] = normalized;
+      }
+      continue;
+    }
+
+    const normalized = normalizeMetadataScalar(value);
+    if (normalized) {
+      metadata[key] = normalized;
+    }
+  }
+
+  metadata.kind = itemRecord.kind;
+  return metadata;
+}
+
+function makeItemSummary(itemRecord) {
+  const metadata = normalizeSummaryMetadata(itemRecord);
+  return {
+    id: itemRecord.id,
+    title: itemRecord.parsed.frontmatter.title,
+    status: itemRecord.parsed.frontmatter.status,
+    priority: itemRecord.parsed.frontmatter.priority,
+    commitment: itemRecord.parsed.frontmatter.commitment,
+    milestone: itemRecord.parsed.frontmatter.milestone ?? "",
+    kind: itemRecord.kind,
+    metadata,
+    searchText: buildSearchText(itemRecord),
+  };
+}
+
+function makeBoardItemSummary(itemSummary) {
+  return {
+    id: itemSummary.id,
+    title: itemSummary.title,
+    status: itemSummary.status,
+    priority: itemSummary.priority,
+    commitment: itemSummary.commitment,
+    milestone: itemSummary.milestone,
+    kind: itemSummary.kind,
+  };
+}
+
+const FILTER_FACET_EXCLUDED_KEYS = new Set(["id", "title"]);
+const MAX_FILTER_VALUES = 8;
+
+function buildAvailableFilters(itemSummaries) {
+  const facets = new Map();
+
+  for (const summary of Object.values(itemSummaries)) {
+    for (const [key, rawValue] of Object.entries(summary.metadata || {})) {
+      const values = normalizeMetadataValues(rawValue);
+      if (values.length === 0) {
+        continue;
+      }
+
+      if (!facets.has(key)) {
+        facets.set(key, new Set());
+      }
+
+      const set = facets.get(key);
+      for (const value of values) {
+        set.add(value);
+      }
+    }
+  }
+
+  return Array.from(facets.entries())
+    .map(([key, values]) => ({
+      key,
+      values: Array.from(values).sort((left, right) => left.localeCompare(right)),
+    }))
+    .filter((facet) => facet.values.length > 1 && facet.values.length <= MAX_FILTER_VALUES && !FILTER_FACET_EXCLUDED_KEYS.has(facet.key))
+    .sort((left, right) => left.key.localeCompare(right.key));
 }
 
 export function parseItemText(text, sourcePath = "item.md") {
@@ -111,8 +273,13 @@ export function parseItemText(text, sourcePath = "item.md") {
   const body = text.slice(frontmatterMatch[0].length);
   const frontmatterEntries = parseFrontmatterBlock(rawFrontmatter);
   const frontmatter = {};
+  const metadataValues = {};
 
   for (const entry of frontmatterEntries) {
+    if (entry.value !== undefined) {
+      metadataValues[entry.key] = entry.value;
+    }
+
     if (EDITABLE_FRONTMATTER_KEYS.includes(entry.key)) {
       frontmatter[entry.key] = entry.value;
     }
@@ -151,6 +318,7 @@ export function parseItemText(text, sourcePath = "item.md") {
     rawText: text,
     prefix,
     frontmatter,
+    metadataValues,
     frontmatterEntries,
     sections,
     segments,
@@ -389,18 +557,6 @@ async function loadItemIndex(roadmapRoot) {
   return index;
 }
 
-function makeItemSummary(itemRecord) {
-  return {
-    id: itemRecord.id,
-    title: itemRecord.parsed.frontmatter.title,
-    status: itemRecord.parsed.frontmatter.status,
-    priority: itemRecord.parsed.frontmatter.priority,
-    commitment: itemRecord.parsed.frontmatter.commitment,
-    milestone: itemRecord.parsed.frontmatter.milestone ?? "",
-    kind: itemRecord.kind,
-  };
-}
-
 export async function loadWorkspace(repoRoot) {
   const workspace = await resolveRoadmapRoot(repoRoot);
   const boardPath = path.join(workspace.resolvedPath, "board.md");
@@ -419,9 +575,9 @@ export async function loadWorkspace(repoRoot) {
         throw new AppError(`Board references missing item "${id}".`, 422, "parse_error");
       }
 
-      const summary = makeItemSummary(item);
+      const summary = itemSummaries[id] || makeItemSummary(item);
       itemSummaries[id] = summary;
-      return summary;
+      return makeBoardItemSummary(summary);
     }),
   }));
 
@@ -438,6 +594,7 @@ export async function loadWorkspace(repoRoot) {
     boardGroups,
     scopeText,
     items: itemSummaries,
+    availableFilters: buildAvailableFilters(itemSummaries),
   };
 }
 

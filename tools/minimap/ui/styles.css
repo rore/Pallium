@@ -1405,3 +1405,118 @@ textarea {
     justify-content: flex-start;
   }
 }
+
+.board-controls {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px 0;
+}
+
+.board-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.board-search-field {
+  display: block;
+}
+
+.board-search-field input {
+  min-height: 36px;
+  padding: 0.52rem 0.8rem;
+  font-size: 0.9rem;
+}
+
+.board-filter-toggle,
+.board-clear-button {
+  min-height: 36px;
+  padding: 0.52rem 0.8rem;
+  box-shadow: none;
+  font-size: 0.82rem;
+}
+
+.board-filter-toggle.is-active {
+  border-color: rgba(44, 108, 255, 0.24);
+  background: rgba(44, 108, 255, 0.08);
+  color: var(--accent-strong);
+}
+
+.board-filters {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  margin: 0 -12px;
+  border-top: 1px solid rgba(63, 82, 118, 0.08);
+  background: linear-gradient(180deg, rgba(244, 247, 254, 0.92), rgba(255, 255, 255, 0.66));
+}
+
+.board-filters[hidden] {
+  display: none;
+}
+
+.filter-group {
+  display: grid;
+  gap: 5px;
+}
+
+.filter-group-label {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.filter-chip-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.filter-chip {
+  border: 1px solid rgba(63, 82, 118, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--muted);
+  padding: 0.32rem 0.62rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.filter-chip:hover {
+  transform: translateY(-1px);
+}
+
+.filter-chip.is-active {
+  background: linear-gradient(135deg, rgba(44, 108, 255, 0.16), rgba(35, 82, 212, 0.08));
+  border-color: rgba(44, 108, 255, 0.22);
+  color: var(--accent-strong);
+}
+
+.filter-chip:disabled,
+.board-search-field input:disabled,
+.board-filter-toggle:disabled,
+.board-clear-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.board-empty-hint {
+  margin-top: 6px;
+  font-size: 0.82rem;
+}
+
+@media (max-width: 760px) {
+  .board-search-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .board-search-field {
+    grid-column: 1 / -1;
+  }
+}
+
+

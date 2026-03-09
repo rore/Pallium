@@ -10,6 +10,9 @@ const state = {
   workspace: null,
   selectedItemId: null,
   currentItem: null,
+  searchQuery: "",
+  activeFilters: {},
+  filtersExpanded: false,
   collapsedGroups: new Set(),
   scopeCollapsed: loadStoredScopePreference(),
   scopeWidth: loadStoredScopeWidth(),
@@ -30,6 +33,10 @@ const boardGroupsElement = document.querySelector("#board-groups");
 const boardEditButton = document.querySelector("#board-edit-button");
 const boardSaveButton = document.querySelector("#board-save-button");
 const boardCancelButton = document.querySelector("#board-cancel-button");
+const boardSearchInput = document.querySelector("#board-search");
+const boardFilterToggleButton = document.querySelector("#board-filter-toggle");
+const boardClearFiltersButton = document.querySelector("#board-clear-filters");
+const boardFiltersElement = document.querySelector("#board-filters");
 const scopePanelElement = document.querySelector("#scope-panel");
 const scopeContentElement = document.querySelector("#scope-content");
 const scopeTextElement = document.querySelector("#scope-text");
@@ -249,8 +256,123 @@ function getBoardItemById(itemId) {
   return state.workspace?.items?.[itemId] ?? null;
 }
 
+function normalizeSearchQuery(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function normalizeFilterValues(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry).trim()).filter(Boolean);
+  }
+
+  const normalized = String(value ?? "").trim();
+  return normalized ? [normalized] : [];
+}
+
+function normalizeFilterMap(filters) {
+  const normalized = {};
+
+  for (const [key, values] of Object.entries(filters || {})) {
+    const cleanKey = String(key || "").trim();
+    const cleanValues = Array.from(new Set(normalizeFilterValues(values))).sort((left, right) => left.localeCompare(right));
+    if (!cleanKey || cleanValues.length === 0) {
+      continue;
+    }
+    normalized[cleanKey] = cleanValues;
+  }
+
+  return normalized;
+}
+
+function parseRouteFilters(params) {
+  const filters = {};
+
+  for (const token of params.getAll("f")) {
+    const separatorIndex = token.indexOf(":");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = token.slice(0, separatorIndex).trim();
+    const value = token.slice(separatorIndex + 1).trim();
+    if (!key || !value) {
+      continue;
+    }
+
+    if (!filters[key]) {
+      filters[key] = [];
+    }
+    filters[key].push(value);
+  }
+
+  return normalizeFilterMap(filters);
+}
+
+function serializeRouteFilters(params, filters) {
+  const normalized = normalizeFilterMap(filters);
+  const keys = Object.keys(normalized).sort((left, right) => left.localeCompare(right));
+
+  for (const key of keys) {
+    for (const value of normalized[key]) {
+      params.append("f", `${key}:${value}`);
+    }
+  }
+}
+
+function isSearchActive() {
+  return Boolean(state.searchQuery) || Object.keys(state.activeFilters).length > 0;
+}
+
+function itemMatchesCurrentFilters(itemId) {
+  const item = getBoardItemById(itemId);
+  if (!item) {
+    return false;
+  }
+
+  if (state.searchQuery && !String(item.searchText || "").includes(state.searchQuery)) {
+    return false;
+  }
+
+  for (const [key, selectedValues] of Object.entries(state.activeFilters)) {
+    const itemValues = normalizeFilterValues(item.metadata?.[key]);
+    if (!selectedValues.some((value) => itemValues.includes(value))) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function getVisibleBoardGroups(workspace = state.workspace) {
+  if (!workspace) {
+    return [];
+  }
+
+  return workspace.boardGroups
+    .map((group, index) => ({
+      name: group.name,
+      originalIndex: index,
+      items: isSearchActive() ? group.items.filter((item) => itemMatchesCurrentFilters(item.id)) : group.items,
+    }))
+    .filter((group) => group.items.length > 0 || !isSearchActive());
+}
+
+function getVisibleBoardItemIds(workspace = state.workspace) {
+  return getVisibleBoardGroups(workspace).flatMap((group) => group.items.map((item) => item.id));
+}
+
 function getFirstBoardItemId(workspace = state.workspace) {
   return workspace?.boardGroups.flatMap((group) => group.items).at(0)?.id ?? null;
+}
+
+function getFirstVisibleBoardItemId(workspace = state.workspace) {
+  return getVisibleBoardItemIds(workspace).at(0) ?? null;
+}
+
+function humanizeFilterKey(key) {
+  return String(key || "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
 function renderBadges(item) {
@@ -269,7 +391,19 @@ function updateDocumentTitle() {
 function updateWorkspaceSummary() {
   const groups = state.workspace?.boardGroups.length ?? 0;
   const items = getBoardItems().length;
-  workspaceSummaryElement.textContent = state.workspace ? `${items} items / ${groups} groups` : "Unavailable";
+
+  if (!state.workspace) {
+    workspaceSummaryElement.textContent = "Unavailable";
+    return;
+  }
+
+  if (isSearchActive()) {
+    const visibleItems = getVisibleBoardItemIds().length;
+    workspaceSummaryElement.textContent = `${visibleItems} shown / ${items} items / ${groups} groups`;
+    return;
+  }
+
+  workspaceSummaryElement.textContent = `${items} items / ${groups} groups`;
 }
 
 function normalizeEditorMode(mode) {
@@ -282,6 +416,8 @@ function readRouteState() {
   return {
     itemId: params.get("item") || "",
     mode: normalizeEditorMode(params.get("mode") || "preview"),
+    query: normalizeSearchQuery(params.get("q") || ""),
+    filters: parseRouteFilters(params),
   };
 }
 
@@ -296,6 +432,12 @@ function buildRouteHash(itemId = state.selectedItemId, mode = state.editorMode) 
   if (normalizedMode !== "preview") {
     params.set("mode", normalizedMode);
   }
+
+  if (state.searchQuery) {
+    params.set("q", state.searchQuery);
+  }
+
+  serializeRouteFilters(params, state.activeFilters);
 
   const serialized = params.toString();
   return serialized ? `#${serialized}` : "";
@@ -337,11 +479,76 @@ function syncMobileNavigation() {
   jumpToEditorButton.disabled = !stacked || !hasItem || state.boardEditMode;
 }
 
+function renderSearchControls() {
+  if (!boardSearchInput || !boardFilterToggleButton || !boardFiltersElement || !boardClearFiltersButton) {
+    return;
+  }
+
+  const facets = state.workspace?.availableFilters ?? [];
+  const activeFilterKeys = Object.keys(state.activeFilters);
+  const activeFilterCount = activeFilterKeys.reduce((count, key) => count + (state.activeFilters[key]?.length || 0), 0);
+  const showFilters = facets.length > 0 && state.filtersExpanded;
+
+  boardSearchInput.value = state.searchQuery;
+  boardSearchInput.disabled = !state.workspace || state.boardEditMode;
+  boardFilterToggleButton.disabled = facets.length === 0 || state.boardEditMode;
+  boardFilterToggleButton.textContent = activeFilterCount > 0 ? `Filters (${activeFilterCount})` : 'Filters';
+  boardFilterToggleButton.setAttribute('aria-expanded', showFilters ? 'true' : 'false');
+  boardFilterToggleButton.classList.toggle('is-active', showFilters || activeFilterCount > 0);
+  boardClearFiltersButton.disabled = !isSearchActive() || state.boardEditMode;
+
+  boardFiltersElement.hidden = !showFilters;
+  boardFiltersElement.innerHTML = showFilters
+    ? facets.map((facet) => {
+        const activeValues = new Set(state.activeFilters[facet.key] || []);
+        const chips = facet.values.map((value) => `
+          <button class="filter-chip${activeValues.has(value) ? " is-active" : ""}" data-filter-key="${escapeHtml(facet.key)}" data-filter-value="${escapeHtml(value)}" type="button" ${state.boardEditMode ? "disabled" : ""}>${escapeHtml(value)}</button>
+        `).join("");
+
+        return `
+          <section class="filter-group">
+            <div class="filter-group-label">${escapeHtml(humanizeFilterKey(facet.key))}</div>
+            <div class="filter-chip-row">${chips}</div>
+          </section>
+        `;
+      }).join("")
+    : '';
+
+  if (!showFilters) {
+    return;
+  }
+
+  for (const button of boardFiltersElement.querySelectorAll("[data-filter-key]")) {
+    button.addEventListener("click", () => {
+      const key = button.dataset.filterKey;
+      const value = button.dataset.filterValue;
+      const nextFilters = normalizeFilterMap({ ...state.activeFilters });
+      const values = new Set(nextFilters[key] || []);
+
+      if (values.has(value)) {
+        values.delete(value);
+      } else {
+        values.add(value);
+      }
+
+      if (values.size === 0) {
+        delete nextFilters[key];
+      } else {
+        nextFilters[key] = Array.from(values).sort((left, right) => left.localeCompare(right));
+      }
+
+      state.activeFilters = normalizeFilterMap(nextFilters);
+      state.filtersExpanded = Object.keys(state.activeFilters).length > 0 || state.filtersExpanded;
+      void syncVisibleSelection({ replaceRoute: true });
+    });
+  }
+}
 function renderBoardChrome() {
   boardEditButton.hidden = state.boardEditMode;
   boardSaveButton.hidden = !state.boardEditMode;
   boardCancelButton.hidden = !state.boardEditMode;
   boardSaveButton.disabled = !state.boardDirty;
+  renderSearchControls();
 }
 
 function renderScopeChrome() {
@@ -636,7 +843,21 @@ function renderBoardReadMode() {
     return;
   }
 
-  const html = state.workspace.boardGroups.map((group, index) => {
+  const visibleGroups = getVisibleBoardGroups();
+  const filtered = isSearchActive();
+
+  if (visibleGroups.length === 0) {
+    boardGroupsElement.innerHTML = `
+      <div class="empty-state">
+        <div>No roadmap items match the current search.</div>
+        <div class="board-empty-hint">Clear the query or filters to see the full board again.</div>
+      </div>
+    `;
+    syncMobileNavigation();
+    return;
+  }
+
+  const html = visibleGroups.map((group) => {
     const collapsed = state.collapsedGroups.has(group.name);
     const items = group.items.map((item) => {
       const active = item.id === state.selectedItemId ? " board-item-active" : "";
@@ -653,7 +874,7 @@ function renderBoardReadMode() {
     }).join("");
 
     return `
-      <section class="board-group${collapsed ? " board-group-collapsed" : ""}" data-group-index="${index}">
+      <section class="board-group${collapsed ? " board-group-collapsed" : ""}" data-group-index="${group.originalIndex}">
         <div class="board-group-header">
           <button class="collapse-toggle" data-group-toggle="${escapeHtml(group.name)}" type="button" aria-expanded="${collapsed ? "false" : "true"}">
             <span class="collapse-icon">${collapsed ? "+" : "-"}</span>
@@ -661,8 +882,8 @@ function renderBoardReadMode() {
             <span class="group-count">${group.items.length}</span>
           </button>
           <div class="group-actions">
-            <button class="order-button" data-move-group="up" data-group-index="${index}" type="button" ${index === 0 ? "disabled" : ""}>Up</button>
-            <button class="order-button" data-move-group="down" data-group-index="${index}" type="button" ${index === state.workspace.boardGroups.length - 1 ? "disabled" : ""}>Down</button>
+            <button class="order-button" data-move-group="up" data-group-index="${group.originalIndex}" type="button" ${(filtered || group.originalIndex === 0) ? "disabled" : ""}>Up</button>
+            <button class="order-button" data-move-group="down" data-group-index="${group.originalIndex}" type="button" ${(filtered || group.originalIndex === state.workspace.boardGroups.length - 1) ? "disabled" : ""}>Down</button>
           </div>
         </div>
         <div class="board-item-list" ${collapsed ? "hidden" : ""}>${items}</div>
@@ -999,34 +1220,53 @@ function resetAncillaryEditModes() {
   state.scopeDirty = false;
 }
 
+async function syncVisibleSelection(options = {}) {
+  const visibleItemIds = getVisibleBoardItemIds();
+  const preferredItemId = options.preferredItemId || "";
+
+  syncWorkspaceChrome();
+  renderBoard();
+
+  if (visibleItemIds.length === 0) {
+    resetEditor();
+    if (options.syncRoute !== false) {
+      syncRouteState({ replace: options.replaceRoute !== false });
+    }
+    return;
+  }
+
+  const nextItemId = [preferredItemId, state.selectedItemId, visibleItemIds[0]].find((itemId) => itemId && visibleItemIds.includes(itemId)) || visibleItemIds[0];
+  const shouldReloadItem = options.forceReloadItem === true || nextItemId !== state.selectedItemId || !state.currentItem;
+  if (shouldReloadItem) {
+    await loadItem(nextItemId, true, {
+      syncRoute: options.syncRoute,
+      replaceRoute: options.replaceRoute === true,
+    });
+    return;
+  }
+
+  if (options.syncRoute !== false) {
+    syncRouteState({ replace: options.replaceRoute !== false });
+  }
+}
+
 async function applyRouteStateFromLocation() {
   const route = readRouteState();
-  const routeItemId = route.itemId || "";
-  const currentItemId = state.selectedItemId || "";
-
-  if (routeItemId && routeItemId !== currentItemId) {
-    await loadWorkspace(routeItemId, {
-      preferredMode: route.mode,
-      syncRoute: false,
-    });
-    return;
-  }
-
-  if (!routeItemId && currentItemId) {
-    await loadWorkspace(undefined, {
-      preferredMode: route.mode,
-      syncRoute: false,
-    });
-    return;
-  }
+  state.searchQuery = route.query;
+  state.activeFilters = route.filters;
+  state.filtersExpanded = Object.keys(route.filters).length > 0;
 
   const nextMode = normalizeEditorMode(route.mode);
   if (nextMode !== state.editorMode) {
     state.editorMode = nextMode;
     applyEditorMode();
   }
-}
 
+  await syncVisibleSelection({
+    preferredItemId: route.itemId || state.selectedItemId,
+    replaceRoute: true,
+  });
+}
 async function loadWorkspace(preferredItemId = state.selectedItemId, options = {}) {
   try {
     const workspace = await fetchJson("/api/workspace");
@@ -1034,23 +1274,15 @@ async function loadWorkspace(preferredItemId = state.selectedItemId, options = {
     state.workspace = workspace;
     state.editorMode = normalizeEditorMode(options.preferredMode ?? state.editorMode);
     roadmapPathElement.textContent = workspace.roadmapPath;
-    syncWorkspaceChrome();
-    renderBoard();
     renderScope();
     setBanner("");
 
-    const itemIdToLoad = preferredItemId && workspace.items?.[preferredItemId] ? preferredItemId : getFirstBoardItemId(workspace);
-    if (itemIdToLoad) {
-      await loadItem(itemIdToLoad, false, {
-        syncRoute: options.syncRoute,
-        replaceRoute: options.replaceRoute,
-      });
-    } else {
-      resetEditor();
-      if (options.syncRoute !== false) {
-        syncRouteState({ replace: options.replaceRoute !== false });
-      }
-    }
+    await syncVisibleSelection({
+      preferredItemId: preferredItemId && workspace.items?.[preferredItemId] ? preferredItemId : getFirstVisibleBoardItemId(workspace) || getFirstBoardItemId(workspace),
+      syncRoute: options.syncRoute,
+      replaceRoute: options.replaceRoute,
+      forceReloadItem: options.forceReloadItem === true || Boolean(preferredItemId),
+    });
   } catch (error) {
     state.workspace = null;
     roadmapPathElement.textContent = "Unavailable";
@@ -1281,6 +1513,27 @@ scopeToggleButton.addEventListener("click", () => {
 
 scopeResizerElement.addEventListener("pointerdown", beginScopeResize);
 
+boardSearchInput.addEventListener("input", () => {
+  state.searchQuery = normalizeSearchQuery(boardSearchInput.value);
+  void syncVisibleSelection({ replaceRoute: true });
+});
+
+boardFilterToggleButton.addEventListener("click", () => {
+  if (!state.workspace?.availableFilters?.length || state.boardEditMode) {
+    return;
+  }
+
+  state.filtersExpanded = !state.filtersExpanded;
+  renderBoardChrome();
+});
+
+boardClearFiltersButton.addEventListener("click", () => {
+  state.searchQuery = "";
+  state.activeFilters = {};
+  state.filtersExpanded = false;
+  void syncVisibleSelection({ replaceRoute: true });
+});
+
 jumpToBoardButton.addEventListener("click", () => {
   scrollPanelIntoView(boardPanelElement);
 });
@@ -1328,17 +1581,19 @@ stackedLayoutMedia.addEventListener("change", () => {
   renderScopeChrome();
   syncMobileNavigation();
 });
-
 resetEditor();
 const initialRoute = readRouteState();
 state.editorMode = initialRoute.mode;
+state.searchQuery = initialRoute.query;
+state.activeFilters = initialRoute.filters;
+state.filtersExpanded = Object.keys(initialRoute.filters).length > 0;
 renderScopeChrome();
 applyEditorMode();
 void loadWorkspace(initialRoute.itemId || state.selectedItemId, {
   preferredMode: initialRoute.mode,
   syncRoute: false,
 }).then(() => {
-  if (initialRoute.itemId || initialRoute.mode !== "preview") {
+  if (initialRoute.itemId || initialRoute.mode !== "preview" || initialRoute.query || Object.keys(initialRoute.filters).length > 0) {
     void applyRouteStateFromLocation();
     return;
   }
@@ -1347,3 +1602,9 @@ void loadWorkspace(initialRoute.itemId || state.selectedItemId, {
     syncRouteState({ replace: true });
   }
 });
+
+
+
+
+
+
