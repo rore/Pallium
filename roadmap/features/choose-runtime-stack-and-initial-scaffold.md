@@ -1,7 +1,7 @@
 ---
 id: choose-runtime-stack-and-initial-scaffold
 title: Choose the runtime stack and initial scaffold
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: Phase 0
@@ -9,11 +9,11 @@ milestone: Phase 0
 
 ## Summary
 
-Choose the initial Python runtime and local-first storage approach, then scaffold the first repo modules around that choice.
+The initial runtime, storage approach, and module scaffold are now in place for the first executable slice.
 
 ## Why
 
-The repo is still pre-implementation. Picking a simple stack early will make the first code cuts concrete and keep the walking skeleton coherent.
+Picking a simple stack early made the first code cuts concrete and kept the walking skeleton coherent.
 
 ## In Scope
 
@@ -36,4 +36,6 @@ The repo is still pre-implementation. Picking a simple stack early will make the
 
 ## Notes
 
-Sources: `roadmap/scope.md`, `docs/context/vision.md`, `docs/context/architecture.md`
+Status: completed with FastAPI, SQLAlchemy, SQLite, pytest, and a repo-local venv workflow.
+
+Sources: roadmap/scope.md, docs/context/vision.md, docs/context/architecture.md

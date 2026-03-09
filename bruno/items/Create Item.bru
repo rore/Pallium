@@ -1,0 +1,27 @@
+meta {
+  name: Create Item
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/items
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "source_type": "decision_note",
+    "source_id": "decision-001",
+    "content_type": "text/plain",
+    "content": "Decision: use event timestamp watermarking for exports to avoid skipped records during lag.",
+    "metadata": {
+      "topic": "watermarking"
+    }
+  }
+}

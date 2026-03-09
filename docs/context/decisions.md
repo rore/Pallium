@@ -78,6 +78,26 @@ Why:
 - exercises both write and read paths from the start
 - avoids building storage and retrieval without proving actual use
 
+### 2026-03-09 - Keep external dependencies behind replaceable abstractions
+
+The first slice should isolate external dependencies behind thin interfaces.
+
+Why:
+
+- keeps the core and API independent of SQLite-specific logic
+- preserves the ability to add Postgres later without changing core flow
+- applies the same design posture to retrieval and semantic processing
+
+### 2026-03-09 - First executable slice delivered and verified
+
+The first walking skeleton now exists and has been verified locally.
+
+What was proven:
+
+- POST /items persists source items and derived artifacts
+- POST /query returns evidence-backed memory results
+- the simulation script exercises the live HTTP path end to end
+
 ## Open
 
 ### Ingestion policy

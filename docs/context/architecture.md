@@ -2,7 +2,7 @@
 
 ## Top-Level Shape
 
-Pallium should begin as a single local-first service with clear internal
+Pallium currently runs as a single local-first service with clear internal
 module boundaries.
 
 Main layers:
@@ -14,17 +14,31 @@ Main layers:
 5. Retrieval layer
 6. Optional background jobs
 
-## API Layer
+## Implemented First Slice
 
-Owns the write and read surfaces for downstream producers and consumers.
+Implemented HTTP endpoints:
 
-Expected first endpoints:
+- POST /items
+- POST /query
 
-- `POST /items`
-- `POST /items/batch`
-- `POST /query`
-- `GET /items/{id}`
-- `GET /objects/{id}`
+Implemented abstractions:
+
+- storage provider boundary
+- retrieval provider boundary
+- semantic plugin boundary
+
+Implemented storage and retrieval behavior:
+
+- SQLite-backed storage provider
+- lexical retrieval over indexed text views
+- evidence resolution from memory objects back to source items
+
+Implemented semantic behavior:
+
+- one deterministic in-repo plugin
+- one summary annotation per ingested source item
+- one promoted discussion_summary memory object per ingested source item
+- one supported_by relation from memory object to source item
 
 ## Generic Core
 
@@ -44,13 +58,13 @@ Core responsibilities:
 
 Core entities:
 
-- `SourceItem`
-- `Annotation`
-- `Relation`
-- `IndexEntry`
-- `MemoryObject`
+- SourceItem
+- Annotation
+- Relation
+- IndexEntry
+- MemoryObject
 
-The core should not know what a decision, incident, requirement, or pattern is.
+The core does not know what a decision, incident, requirement, or pattern is.
 
 ## Semantic Use-Case Layer
 
@@ -64,22 +78,22 @@ Responsibilities:
 - retrieval policy hints
 - result shaping
 
-The semantic layer should declare types through schema metadata rather than by
-requiring core-level domain tables.
+Typed semantic artifacts are declared through schema metadata rather than
+core-level domain tables.
 
-Expected generic fields for typed semantic artifacts:
+Current generic fields for typed semantic artifacts:
 
-- `type`
-- `schema_id`
-- `schema_version`
-- `payload`
+- type
+- schema_id
+- schema_version
+- payload
 
-The first implementation should use a simple in-repo code plugin pattern,
-not a dynamic plugin marketplace.
+The first implementation uses a simple in-repo code plugin pattern, not a
+dynamic plugin marketplace.
 
 ## Producers and Consumers
 
-Pallium should not depend on built-in connectors first.
+Pallium does not depend on built-in connectors first.
 
 Typical producers:
 
@@ -94,51 +108,59 @@ Typical consumers:
 - internal tools
 - lightweight admin or review UIs
 
-The first walking skeleton should include a simulated generic agent consumer so
+The first walking skeleton includes a simulated generic agent consumer so
 write and read behavior are exercised end to end.
 
 ## Base Memory Flow
 
-1. Producer submits a normalized `SourceItem`
-2. Core persists raw item and provenance
-3. Semantic layer creates `Annotation`s
-4. Semantic layer may promote some outputs into durable `MemoryObject`s
-5. Core creates `Relation`s and `IndexEntry`s
+1. Producer submits a normalized SourceItem
+2. Core persists the raw item and provenance
+3. Semantic layer creates Annotation objects
+4. Semantic layer promotes a MemoryObject
+5. Core stores Relation and IndexEntry objects
 6. Consumer queries Pallium
-7. Retrieval combines structured, lexical, and optional semantic signals
+7. Retrieval combines lexical signals with evidence lookups
 8. Pallium returns compact evidence-backed results
 
 ## Retrieval Model
 
-Preferred order of importance:
+Current first-slice order of importance:
+
+1. lexical retrieval
+2. evidence resolution through relations
+
+Target later direction:
 
 1. structured filters
 2. relations or entity links
 3. lexical retrieval
 4. optional vector retrieval
 
-Returned results should stay compact and cite supporting evidence.
+Returned results stay compact and cite supporting evidence.
 
 ## Storage and Jobs
 
-The first implementation should keep storage simple and local-first.
+The first implementation keeps storage simple and local-first.
 
-- one database
+- one database implementation today: SQLite
 - no separate graph database requirement
 - no separate vector database requirement
-- background jobs only where needed for processing or later consolidation
+- no background jobs yet
+
+The abstraction boundaries are intentionally thin so SQLite can be replaced by
+Postgres later without changing the API or core flow.
 
 ## Tiered Memory Extension
 
-Tiered memory is an optional extension over the base flow.
+Tiered memory remains an optional extension over the base flow.
 
-It adds:
+It will add:
 
 - periodic consolidation jobs
-- higher-level synthetic `MemoryObject`s
+- higher-level synthetic MemoryObject instances
 - links from consolidated memory to lower-level evidence
 
-This should remain additive:
+This remains additive:
 
 - never replace lower-level evidence
 - always retain support links

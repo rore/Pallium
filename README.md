@@ -28,7 +28,7 @@ Pallium is not intended to be:
 
 ## Current Direction
 
-The first implementation is being built as a walking skeleton:
+The current implementation is a walking skeleton with:
 
 - one local-first service
 - one generic core
@@ -60,7 +60,7 @@ The core owns storage and orchestration. Semantic layers define meaning.
 
 ## Tiered Memory
 
-Tiered memory is an intended extension, not a v1 requirement.
+Tiered memory is an intended extension, not part of the first executable slice.
 
 The idea is to periodically consolidate lower-level memory into higher-level
 reusable memory objects such as topic summaries or recurring patterns, while
@@ -68,19 +68,61 @@ keeping all lower-level evidence intact.
 
 ## Status
 
-This repository is still pre-implementation.
+The first executable slice is implemented and verified.
 
 What exists now:
 
-- project context and architecture docs
-- design documents for the core model and tiered memory direction
-- roadmap and feature planning via Minimap
+- Python project scaffold
+- FastAPI application wiring
+- generic core models and orchestration service
+- semantic plugin interface plus a deterministic demo plugin
+- retrieval interface plus lexical retrieval implementation
+- storage abstraction plus SQLite implementation
+- simulation script and pytest coverage
+- project context, designs, and roadmap docs
 
-What comes next:
+Verified locally:
 
-- define the first core model and API contracts
-- choose the initial Python stack and scaffold the service
-- add a simulated end-to-end agent-memory workflow
+- pytest passes
+- the live HTTP simulation ingests sample items and returns evidence-backed
+  discussion_summary results
+
+## Run Locally
+
+From the repo root:
+
+```powershell
+& "C:\Users\I347041\AppData\Roaming\uv\python\cpython-3.14-windows-x86_64-none\python.exe" -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .[dev]
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+In a second terminal:
+
+```powershell
+.\.venv\Scripts\python.exe examples\agent_memory_simulation.py
+```
+
+## Test With Bruno
+
+If you prefer request-driven manual testing, open the root `bruno/` collection
+in Bruno.
+
+1. Start the API locally:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+2. Select the `local` environment.
+3. Run `items/Create Item`.
+4. Run `query/Query Items`.
+
+The collection matches the current first-slice HTTP surface:
+
+- `POST /items`
+- `POST /query`
 
 ## Repository Guide
 
@@ -101,7 +143,7 @@ What comes next:
 
 ## Planning Model
 
-This repo uses Minimap for roadmap and feature planning. `roadmap/` is the
+This repo uses Minimap for roadmap and feature planning. roadmap/ is the
 canonical planning surface for active work and sequencing.
 
 ## Notes For Contributors

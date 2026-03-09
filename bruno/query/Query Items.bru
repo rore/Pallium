@@ -1,0 +1,22 @@
+meta {
+  name: Query Items
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/query
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "text": "why do we use event timestamp watermarking?",
+    "limit": 5
+  }
+}

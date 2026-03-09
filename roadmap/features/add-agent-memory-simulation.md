@@ -1,7 +1,7 @@
 ---
 id: add-agent-memory-simulation
 title: Add an end-to-end generic agent-memory simulation
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: Phase 2
@@ -9,11 +9,11 @@ milestone: Phase 2
 
 ## Summary
 
-Add a small end-to-end simulation of a generic agent that uses Pallium as its unstructured memory layer.
+A small end-to-end simulation now exercises Pallium as a generic agent memory layer through the real HTTP API.
 
 ## Why
 
-The walking skeleton should prove a real usage loop instead of only exposing storage and retrieval primitives in isolation.
+The walking skeleton needed to prove a real usage loop instead of only exposing storage and retrieval primitives in isolation.
 
 ## In Scope
 
@@ -36,4 +36,6 @@ The walking skeleton should prove a real usage loop instead of only exposing sto
 
 ## Notes
 
-Sources: `roadmap/scope.md`, `docs/context/architecture.md`, `docs/designs/004-reference-consumer-analysis.md`
+Status: completed and verified against a running local FastAPI server.
+
+Sources: roadmap/scope.md, docs/context/architecture.md, docs/designs/004-reference-consumer-analysis.md

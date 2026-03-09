@@ -1,14 +1,14 @@
-This minimap workspace turns Pallium's early context docs into one shared roadmap board for humans and agents.
+This minimap workspace tracks Pallium after the first executable slice.
 
 Current focus:
-- lock the first implementation baseline around a Python walking skeleton
-- keep the architecture as a single local-first service with all major layers present
-- make the first end-to-end slice prove a generic agent-memory workflow
+- strengthen retrieval beyond the initial lexical-only implementation
+- preserve the generic-core and replaceable-provider boundaries as the system grows
+- keep the next steps grounded in the working agent-memory slice
 
 Concrete next steps:
-- define the minimal core model and write and query contracts
-- choose the initial Python stack and scaffold the service modules
-- add a simulated generic agent usage that writes to and reads from Pallium end to end
+- add structured retrieval over source metadata and memory object fields
+- make relation-aware retrieval explicit instead of only using evidence lookup
+- clarify the next contract decisions for ingestion policy and memory lifecycle
 
 Still out of scope for this phase:
 - turning Pallium into an agent runtime or workflow engine

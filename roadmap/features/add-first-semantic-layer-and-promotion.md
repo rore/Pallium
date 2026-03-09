@@ -1,7 +1,7 @@
 ---
 id: add-first-semantic-layer-and-promotion
 title: Add the first semantic layer and promotion flow
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: Phase 2
@@ -9,7 +9,7 @@ milestone: Phase 2
 
 ## Summary
 
-Add the first reference semantic layer that turns base annotations into durable memory objects and makes those objects retrievable as evidence-backed agent memory.
+The first reference semantic layer now turns ingested source items into a summary annotation and a promoted durable memory object.
 
 ## Why
 
@@ -19,7 +19,7 @@ The generic core only becomes useful once it can host at least one semantic laye
 
 - define the first semantic layer boundary against the generic core
 - define the first typed annotation and memory-object schemas through schema metadata
-- implement promotion rules from annotations or candidates into durable memory objects
+- implement promotion rules from source items into durable memory objects
 - support retrieval packaging for the first semantic layer
 
 ## Out of Scope
@@ -36,4 +36,6 @@ The generic core only becomes useful once it can host at least one semantic laye
 
 ## Notes
 
-Sources: `roadmap/scope.md`, `docs/context/vision.md`, `docs/context/architecture.md`
+Status: completed with a deterministic demo plugin that creates summary annotations and discussion_summary memory objects.
+
+Sources: roadmap/scope.md, docs/context/vision.md, docs/context/architecture.md

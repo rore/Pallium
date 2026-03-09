@@ -1,7 +1,7 @@
 ---
 id: build-structured-retrieval-foundation
 title: Build the structured retrieval foundation
-status: queued
+status: in_progress
 priority: high
 commitment: committed
 milestone: Phase 3
@@ -9,16 +9,16 @@ milestone: Phase 3
 
 ## Summary
 
-Build the first retrieval foundation around structured filters, relations, and lexical search, keeping embeddings optional and additive.
+Build the next retrieval layer around structured filters, explicit relation-aware retrieval, and lexical search, keeping embeddings optional and additive.
 
 ## Why
 
-Retrieval quality will determine whether Pallium is useful. The project direction is structured-first and evidence-backed, so the first retrieval layer should reflect that before any semantic enhancement is added.
+The first slice already proves lexical retrieval and evidence lookup. The next step is to strengthen retrieval quality without breaking the generic-core and replaceable-provider direction.
 
 ## In Scope
 
 - structured filtering over core entities and metadata
-- relation-aware retrieval where applicable
+- relation-aware retrieval beyond basic evidence resolution
 - lexical retrieval over selected text views
 - retrieval packaging that stays compact and cited
 
@@ -36,4 +36,6 @@ Retrieval quality will determine whether Pallium is useful. The project directio
 
 ## Notes
 
-Sources: `roadmap/scope.md`, `docs/context/vision.md`, `roadmap/ideas/idea-optional-embedding-provider-support.md`
+Status: next active engineering focus after the first executable slice.
+
+Sources: roadmap/scope.md, docs/context/vision.md, roadmap/ideas/idea-optional-embedding-provider-support.md
