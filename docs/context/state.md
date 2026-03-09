@@ -18,17 +18,25 @@
 - architecture direction: single local-first service with clear module boundaries
 - development style: walking skeleton before deeper hardening
 - first consumer proof: simulated generic agent-memory workflow
-- current slice includes API, core service, semantic plugin, retrieval provider, SQLite storage provider, simulation script, Bruno collection, and pytest coverage
-- current semantic behavior includes typed `decision` promotion plus fallback `discussion_summary`
+- current slice includes API, core service, semantic plugins, LLM provider adapters, retrieval provider, SQLite storage provider, simulation script, Bruno collection, and pytest coverage
+- current semantic behavior includes deterministic and LLM-backed `decision` promotion, with `discussion_summary` used only for non-decision extraction results
+- the LLM-backed path no longer falls back to deterministic extraction on provider or parsing failure
 
 ## Verification Notes
 
 - pytest passes locally in the repo venv
-- the live HTTP flow succeeds against a fresh temporary database
+- the live HTTP flow succeeds against a fresh temporary database with the deterministic plugin
+- the live HTTP flow also succeeds with the LLM-backed plugin against a local fake OpenAI-compatible provider
+- a real OpenAI-backed run also succeeded against a fresh temporary database
 - the current query contract returns decision memory hits, discussion-summary hits, and source hits
+
+## Context Memory Note
+
+- record important problem-and-solution pairs in `docs/context/lessons.md` so future sessions do not rediscover them
 
 ## Reference Points
 
 - current queue and sequencing: roadmap/board.md
 - accepted architecture and decisions: docs/context/architecture.md, docs/context/decisions.md
 - fuller design rationale: docs/designs/
+

@@ -1,5 +1,27 @@
 from __future__ import annotations
 
+from fastapi.testclient import TestClient
+import pytest
+
+from app.config import AppConfig
+from app.main import create_app
+from providers.llm.base import LLMJsonResponse, LLMProviderError
+
+
+class StubLLMProvider:
+    def __init__(self, parsed_json: dict[str, object] | None = None, error: Exception | None = None) -> None:
+        self._parsed_json = parsed_json
+        self._error = error
+
+    def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+        if self._error is not None:
+            raise self._error
+        assert self._parsed_json is not None
+        return LLMJsonResponse(
+            raw_text=str(self._parsed_json),
+            parsed_json=self._parsed_json,
+        )
+
 
 def test_post_items_creates_fallback_summary_artifacts(client) -> None:
     response = client.post(
@@ -84,3 +106,84 @@ def test_post_query_returns_decision_memory_and_source_hits(client) -> None:
     assert source_hit["source_type"] == "decision_note"
     assert source_hit["source_id"] == "decision-1"
     assert source_hit["content"]
+
+
+def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: str) -> None:
+    monkeypatch.setattr(
+        "app.dependencies.build_llm_provider",
+        lambda config: StubLLMProvider(
+            {
+                "summary": "Decision discussion about watermarking.",
+                "candidate_type": "decision",
+                "decision_text": "use event timestamp watermarking",
+                "rationale_text": "to avoid skipped records during lag",
+            }
+        ),
+    )
+    llm_client = TestClient(
+        create_app(
+            AppConfig(
+                storage_backend="sqlite",
+                sqlite_url=test_db_url,
+                default_use_case="llm_agent_memory",
+                llm_provider="openai_compatible",
+                llm_model="fake-model",
+                llm_base_url="http://fake-provider.local",
+            )
+        )
+    )
+
+    create_response = llm_client.post(
+        "/items",
+        json={
+            "source_type": "decision_note",
+            "source_id": "decision-llm-1",
+            "content_type": "text/plain",
+            "content": "An LLM should identify this as a decision about watermarking.",
+        },
+    )
+    assert create_response.status_code == 200
+    assert len(create_response.json()["annotation_ids"]) == 2
+
+    query_response = llm_client.post(
+        "/query",
+        json={"text": "what did we decide about watermarking?", "limit": 5},
+    )
+    assert query_response.status_code == 200
+    payload = query_response.json()
+    memory_hit = next(result for result in payload["results"] if result["result_kind"] == "memory_hit")
+    assert memory_hit["type"] == "decision"
+    assert memory_hit["payload"]["decision"] == "use event timestamp watermarking"
+    assert any(result["result_kind"] == "source_hit" for result in payload["results"])
+
+
+def test_llm_plugin_path_returns_server_error_when_provider_fails(monkeypatch, test_db_url: str) -> None:
+    monkeypatch.setattr(
+        "app.dependencies.build_llm_provider",
+        lambda config: StubLLMProvider(error=LLMProviderError("provider failed")),
+    )
+    llm_client = TestClient(
+        create_app(
+            AppConfig(
+                storage_backend="sqlite",
+                sqlite_url=test_db_url,
+                default_use_case="llm_agent_memory",
+                llm_provider="openai_compatible",
+                llm_model="fake-model",
+                llm_base_url="http://fake-provider.local",
+            )
+        ),
+        raise_server_exceptions=False,
+    )
+
+    create_response = llm_client.post(
+        "/items",
+        json={
+            "source_type": "decision_note",
+            "source_id": "decision-llm-error-1",
+            "content_type": "text/plain",
+            "content": "Decision: use event timestamp watermarking for exports to avoid skipped records.",
+        },
+    )
+
+    assert create_response.status_code == 500

@@ -129,6 +129,16 @@ Why:
 - proves that typed promotion works before semantic quality becomes the main variable
 - keeps the next LLM milestone focused on extraction quality against a stable contract
 
+### 2026-03-09 - Use provider-neutral prompts for structured semantic extraction
+
+The first LLM-backed semantic milestone should work across both OpenAI-compatible and Claude-style APIs through a shared Pallium-side extraction contract.
+
+Why:
+
+- avoids provider lock-in through JSON mode or tool-calling features
+- keeps the semantic plugin unaware of provider wire formats
+- makes semantic quality comparable across providers under one extraction contract
+
 ## Open
 
 ### Ingestion policy

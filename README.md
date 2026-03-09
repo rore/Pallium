@@ -32,10 +32,11 @@ The current implementation is a walking skeleton with:
 
 - one local-first service
 - one generic core
-- one semantic layer interface with a simple in-repo plugin pattern
+- one semantic layer interface with in-repo plugin implementations
 - one storage layer
 - one mixed retrieval path over memory and source evidence
 - one deterministic typed-memory path for `decision`
+- one LLM-backed semantic path compatible with OpenAI-compatible and Claude-style APIs
 - one simulated generic agent consumer for end-to-end proof
 
 The current top-level architecture is:
@@ -43,9 +44,10 @@ The current top-level architecture is:
 1. API layer
 2. Generic core
 3. Semantic layer
-4. Storage layer
-5. Retrieval layer
-6. Optional background jobs
+4. Provider layer
+5. Storage layer
+6. Retrieval layer
+7. Optional background jobs
 
 ## Core Concepts
 
@@ -69,24 +71,26 @@ keeping all lower-level evidence intact.
 
 ## Status
 
-The first typed-memory milestone is implemented and verified.
+The LLM-backed semantic milestone is implemented and verified.
 
 What exists now:
 
 - Python project scaffold
 - FastAPI application wiring
 - generic core models and orchestration service
-- semantic plugin interface plus a deterministic demo plugin
+- semantic plugin interface plus deterministic and LLM-backed plugins
+- LLM provider abstraction plus OpenAI-compatible and Claude adapters
 - storage abstraction plus SQLite implementation
 - mixed retrieval over promoted memory and raw source evidence
-- deterministic promotion of `decision` memory objects and fallback `discussion_summary`
+- deterministic and LLM-backed promotion of `decision` memory objects, with `discussion_summary` used only when extraction itself produces a non-decision result
 - simulation script, Bruno collection, and pytest coverage
 - project context, designs, and roadmap docs
 
 Verified locally:
 
 - pytest passes
-- the live HTTP flow returns decision memory hits, discussion-summary hits, and source hits with evidence
+- the live HTTP flow works with the deterministic plugin
+- the live HTTP flow also works with the LLM-backed plugin against a local fake OpenAI-compatible provider
 
 ## Run Locally
 
@@ -105,17 +109,48 @@ In a second terminal:
 .\.venv\Scripts\python.exe examples\agent_memory_simulation.py
 ```
 
+## Local Config File
+
+Pallium can now read a local config file for developer-friendly setup.
+
+Supported behavior:
+
+- default local file: `.env.local`
+- optional override path: `PALLIUM_ENV_FILE`
+- environment variables still take precedence over file values
+
+To start quickly:
+
+1. Copy [.env.example](C:/Dev/rore/Pallium/.env.example) to `.env.local`
+2. Fill in the values you want
+3. Start the API normally
+
+Example `.env.local` for OpenAI-compatible testing:
+
+```env
+PALLIUM_DEFAULT_USE_CASE=llm_agent_memory
+PALLIUM_LLM_PROVIDER=openai_compatible
+PALLIUM_LLM_MODEL=gpt-4.1-mini
+PALLIUM_LLM_BASE_URL=https://api.openai.com/v1
+PALLIUM_LLM_API_KEY=your-key
+```
+
+For Claude-compatible endpoints, switch the provider and model, for example:
+
+```env
+PALLIUM_DEFAULT_USE_CASE=llm_agent_memory
+PALLIUM_LLM_PROVIDER=anthropic_claude
+PALLIUM_LLM_MODEL=claude-3-5-sonnet-latest
+PALLIUM_LLM_BASE_URL=https://api.anthropic.com/v1
+PALLIUM_LLM_API_KEY=your-key
+```
+
 ## Test With Bruno
 
 If you prefer request-driven manual testing, open the root `bruno/` collection
 in Bruno.
 
-1. Start the API locally:
-
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
+1. Start the API locally.
 2. Select the `local` environment.
 3. Run `items/Create Item`.
 4. Run `query/Query Items`.
@@ -156,3 +191,4 @@ canonical planning surface for active work and sequencing.
 - Avoid duplicating source systems of record.
 
 This project uses [Minimap](https://github.com/rore/minimap) for repo-local roadmap and feature planning.
+

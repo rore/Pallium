@@ -10,11 +10,12 @@ Main layers:
 1. API layer
 2. Generic core
 3. Semantic use-case layer
-4. Storage layer
-5. Retrieval layer
-6. Optional background jobs
+4. Provider layer
+5. Storage layer
+6. Retrieval layer
+7. Optional background jobs
 
-## Implemented Typed-Memory Slice
+## Implemented Semantic Slice
 
 Implemented HTTP endpoints:
 
@@ -26,6 +27,7 @@ Implemented abstractions:
 - storage provider boundary
 - retrieval provider boundary
 - semantic plugin boundary
+- LLM provider boundary
 
 Implemented storage and retrieval behavior:
 
@@ -38,11 +40,18 @@ Implemented storage and retrieval behavior:
 Implemented semantic behavior:
 
 - one deterministic in-repo plugin
+- one LLM-backed plugin using a provider abstraction
 - one summary annotation per ingested source item
-- one typed_candidate annotation when decision rules match
+- one typed_candidate annotation when decision rules or LLM extraction match
 - one promoted decision memory object for decision-like inputs
 - fallback discussion_summary promotion for non-decision inputs
 - one supported_by relation from memory object to source item
+
+Implemented provider behavior:
+
+- one OpenAI-compatible adapter
+- one Anthropic Claude adapter
+- prompt-driven JSON output strategy with Pallium-side parsing and validation
 
 ## Generic Core
 
@@ -114,6 +123,20 @@ dynamic plugin marketplace.
 
 Promotion language should stay disciplined: a semantic plugin applies promotion
 rules and decides whether extracted signals become durable memory objects.
+
+## Provider Layer
+
+The provider layer abstracts external model APIs from the semantic layer.
+
+Responsibilities:
+
+- send provider-specific HTTP requests
+- extract text content from provider responses
+- parse provider text into a JSON object
+- leave semantic validation to Pallium code
+
+The current provider contract is compatible with both OpenAI-compatible and
+Claude-style APIs without exposing those wire formats to the semantic plugin.
 
 ## Producers and Consumers
 
@@ -203,3 +226,4 @@ This remains additive:
 - never replace lower-level evidence
 - always retain support links
 - keep consolidated objects queryable through the same retrieval APIs
+

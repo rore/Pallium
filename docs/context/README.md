@@ -8,6 +8,7 @@ Use it for:
 - accepted top-level architecture
 - durable decisions
 - lightweight implementation handoff state
+- important problems and solutions worth remembering across sessions
 
 For broader docs ownership, see ../README.md.
 
@@ -26,8 +27,13 @@ For broader docs ownership, see ../README.md.
 - state.md
   Small repo and handoff snapshot. Not a queue or planning document.
 
+- lessons.md
+  Durable notes about important implementation problems, debugging traps, and
+  the solutions or operating rules that should not be rediscovered.
+
 ## Conventions
 
 - Keep these files short and high-signal.
 - Put queue, sequencing, and phase status in roadmap/.
 - Put deeper proposals and tradeoffs in docs/designs/.
+- If a problem/solution pair is likely to save future debugging time, record it in lessons.md.

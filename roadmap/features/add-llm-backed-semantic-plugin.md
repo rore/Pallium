@@ -1,7 +1,7 @@
 ---
 id: add-llm-backed-semantic-plugin
 title: Add an LLM-backed semantic plugin
-status: next
+status: done
 priority: high
 commitment: committed
 milestone: Phase 3
@@ -17,9 +17,10 @@ The typed-memory architecture is now proven. The next risk to reduce is semantic
 
 ## In Scope
 
-- introduce an LLM provider abstraction for semantic extraction
-- implement an LLM-backed plugin that can emit summary, typed_candidate, and promoted decision memory
-- compare LLM-backed decision promotion against the deterministic baseline on the same sample domain
+- an LLM provider abstraction for semantic extraction
+- OpenAI-compatible and Claude provider adapters
+- an LLM-backed plugin that can emit summary, typed_candidate, and promoted decision memory
+- comparison of the LLM-backed path against the deterministic baseline on the same sample domain
 
 ## Out of Scope
 
@@ -35,4 +36,5 @@ The typed-memory architecture is now proven. The next risk to reduce is semantic
 
 ## Notes
 
-This is the next quality-focused milestone after validating typed memory with deterministic rules.
+Status: completed and verified with pytest, a live deterministic simulation, and a live LLM-backed simulation against a local fake OpenAI-compatible provider.
+
