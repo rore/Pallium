@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, Relation, SourceItem
+from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
 
 
 @dataclass(frozen=True)
@@ -67,7 +67,7 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def search_index_entries(self, tokens: list[str], limit: int) -> list[IndexSearchHit]:
+    def search_index_entries(self, tokens: list[str], limit: int, filters: QueryFilters | None = None) -> list[IndexSearchHit]:
         raise NotImplementedError
 
     @abstractmethod

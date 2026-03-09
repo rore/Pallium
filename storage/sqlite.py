@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import timezone
 
-from sqlalchemy import Column, DateTime, String, Text, create_engine, select
+from sqlalchemy import Column, DateTime, String, Text, create_engine, select, text
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
-from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, Relation, SourceItem
+from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
 from storage.base import IndexSearchHit, StorageProvider
 
 
@@ -23,6 +24,14 @@ class SourceItemRecord(Base):
     content_type = Column(String, nullable=False)
     content = Column(Text, nullable=False)
     metadata_json = Column(Text, nullable=True)
+    occurred_at = Column(DateTime(timezone=True), nullable=True)
+    actor_ref = Column(String, nullable=True)
+    role = Column(String, nullable=True)
+    container_ref = Column(String, nullable=True)
+    thread_ref = Column(String, nullable=True)
+    session_ref = Column(String, nullable=True)
+    source_ref = Column(String, nullable=True)
+    artifact_kind = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 
@@ -71,11 +80,23 @@ class IndexEntryRecord(Base):
 
 
 class SQLiteStorageProvider(StorageProvider):
+    _SOURCE_ITEM_MIGRATIONS = {
+        "occurred_at": "ALTER TABLE source_items ADD COLUMN occurred_at DATETIME",
+        "actor_ref": "ALTER TABLE source_items ADD COLUMN actor_ref VARCHAR",
+        "role": "ALTER TABLE source_items ADD COLUMN role VARCHAR",
+        "container_ref": "ALTER TABLE source_items ADD COLUMN container_ref VARCHAR",
+        "thread_ref": "ALTER TABLE source_items ADD COLUMN thread_ref VARCHAR",
+        "session_ref": "ALTER TABLE source_items ADD COLUMN session_ref VARCHAR",
+        "source_ref": "ALTER TABLE source_items ADD COLUMN source_ref VARCHAR",
+        "artifact_kind": "ALTER TABLE source_items ADD COLUMN artifact_kind VARCHAR",
+    }
+
     def __init__(self, database_url: str) -> None:
         connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
         self._engine = create_engine(database_url, future=True, connect_args=connect_args)
         self._session_factory = sessionmaker(self._engine, expire_on_commit=False, class_=Session)
         Base.metadata.create_all(self._engine)
+        self._ensure_source_item_columns()
 
     def find_source_item(self, source_type: str, source_id: str) -> SourceItem | None:
         with self._session_factory() as session:
@@ -97,6 +118,14 @@ class SQLiteStorageProvider(StorageProvider):
             content_type=source_item.content_type,
             content=source_item.content,
             metadata_json=self._dumps(source_item.metadata),
+            occurred_at=source_item.occurred_at,
+            actor_ref=source_item.actor_ref,
+            role=source_item.role,
+            container_ref=source_item.container_ref,
+            thread_ref=source_item.thread_ref,
+            session_ref=source_item.session_ref,
+            source_ref=source_item.source_ref,
+            artifact_kind=source_item.artifact_kind,
             created_at=source_item.created_at,
         )
         with self._session_factory.begin() as session:
@@ -216,7 +245,7 @@ class SQLiteStorageProvider(StorageProvider):
             ).all()
         return [self._to_index_entry(record) for record in records]
 
-    def search_index_entries(self, tokens: list[str], limit: int) -> list[IndexSearchHit]:
+    def search_index_entries(self, tokens: list[str], limit: int, filters: QueryFilters | None = None) -> list[IndexSearchHit]:
         with self._session_factory() as session:
             records = session.scalars(
                 select(IndexEntryRecord).where(IndexEntryRecord.index_type == "lexical")
@@ -224,6 +253,8 @@ class SQLiteStorageProvider(StorageProvider):
         hits: list[IndexSearchHit] = []
         unique_tokens = set(tokens)
         for record in records:
+            if not self._matches_filters(record.target_kind, record.target_id, filters):
+                continue
             text_tokens = set(TOKEN_PATTERN.findall(record.text_view.lower()))
             score = len(unique_tokens.intersection(text_tokens))
             if score > 0:
@@ -253,17 +284,63 @@ class SQLiteStorageProvider(StorageProvider):
             records = session.scalars(
                 select(SourceItemRecord).where(SourceItemRecord.id.in_(source_ids))
             ).all()
-        return [
-            EvidenceReference(
-                source_item_id=record.id,
-                source_type=record.source_type,
-                source_id=record.source_id,
-            )
-            for record in records
-        ]
+        return [self._to_evidence_reference(record) for record in records]
+
+    def _matches_filters(self, target_kind: str, target_id: str, filters: QueryFilters | None) -> bool:
+        if filters is None:
+            return True
+        if target_kind == "source_item":
+            return self._source_item_matches_filters(self.get_source_item(target_id), filters)
+        if target_kind == "memory_object":
+            evidence = self.get_evidence_for_memory_object(target_id)
+            return any(self._evidence_matches_filters(item, filters) for item in evidence)
+        return True
+
+    def _source_item_matches_filters(self, source_item: SourceItem, filters: QueryFilters) -> bool:
+        if filters.source_type is not None and source_item.source_type != filters.source_type:
+            return False
+        if filters.role is not None and source_item.role != filters.role:
+            return False
+        if filters.artifact_kind is not None and source_item.artifact_kind != filters.artifact_kind:
+            return False
+        if filters.container_ref is not None and source_item.container_ref != filters.container_ref:
+            return False
+        if filters.thread_ref is not None and source_item.thread_ref != filters.thread_ref:
+            return False
+        if filters.session_ref is not None and source_item.session_ref != filters.session_ref:
+            return False
+        return True
+
+    def _evidence_matches_filters(self, evidence: EvidenceReference, filters: QueryFilters) -> bool:
+        if filters.source_type is not None and evidence.source_type != filters.source_type:
+            return False
+        if filters.role is not None and evidence.role != filters.role:
+            return False
+        if filters.artifact_kind is not None and evidence.artifact_kind != filters.artifact_kind:
+            return False
+        if filters.container_ref is not None and evidence.container_ref != filters.container_ref:
+            return False
+        if filters.thread_ref is not None and evidence.thread_ref != filters.thread_ref:
+            return False
+        if filters.session_ref is not None and evidence.session_ref != filters.session_ref:
+            return False
+        return True
+
+    def _ensure_source_item_columns(self) -> None:
+        with self._engine.begin() as connection:
+            existing_columns = {
+                row[1]
+                for row in connection.execute(text("PRAGMA table_info(source_items)"))
+            }
+            for column_name, migration_sql in self._SOURCE_ITEM_MIGRATIONS.items():
+                if column_name not in existing_columns:
+                    connection.execute(text(migration_sql))
 
     @staticmethod
     def _to_source_item(record: SourceItemRecord) -> SourceItem:
+        occurred_at = record.occurred_at
+        if occurred_at is not None and occurred_at.tzinfo is None:
+            occurred_at = occurred_at.replace(tzinfo=timezone.utc)
         return SourceItem(
             id=record.id,
             source_type=record.source_type,
@@ -271,6 +348,14 @@ class SQLiteStorageProvider(StorageProvider):
             content_type=record.content_type,
             content=record.content,
             metadata=SQLiteStorageProvider._loads(record.metadata_json),
+            occurred_at=occurred_at,
+            actor_ref=record.actor_ref,
+            role=record.role,
+            container_ref=record.container_ref,
+            thread_ref=record.thread_ref,
+            session_ref=record.session_ref,
+            source_ref=record.source_ref,
+            artifact_kind=record.artifact_kind,
             created_at=record.created_at,
         )
 
@@ -316,6 +401,25 @@ class SQLiteStorageProvider(StorageProvider):
             target_id=record.target_id,
             index_type=record.index_type,
             text_view=record.text_view,
+        )
+
+    @staticmethod
+    def _to_evidence_reference(record: SourceItemRecord) -> EvidenceReference:
+        occurred_at = record.occurred_at
+        if occurred_at is not None and occurred_at.tzinfo is None:
+            occurred_at = occurred_at.replace(tzinfo=timezone.utc)
+        return EvidenceReference(
+            source_item_id=record.id,
+            source_type=record.source_type,
+            source_id=record.source_id,
+            occurred_at=occurred_at,
+            actor_ref=record.actor_ref,
+            role=record.role,
+            container_ref=record.container_ref,
+            thread_ref=record.thread_ref,
+            session_ref=record.session_ref,
+            source_ref=record.source_ref,
+            artifact_kind=record.artifact_kind,
         )
 
     @staticmethod

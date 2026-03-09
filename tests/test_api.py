@@ -28,10 +28,17 @@ def test_post_items_creates_fallback_summary_artifacts(client) -> None:
         "/items",
         json={
             "source_type": "chat_thread",
-            "source_id": "thread-123",
+            "source_id": "thread-123-msg-1",
             "content_type": "text/plain",
             "content": "We should use event time for watermarking. It avoids skipped records.",
             "metadata": {"topic": "exports"},
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "slack:C123",
+            "thread_ref": "slack:C123:1730000000.000100",
+            "session_ref": "agent-session-1",
+            "actor_ref": "slack:U123",
+            "source_ref": "https://example.test/message/1",
         },
     )
 
@@ -45,7 +52,7 @@ def test_post_items_creates_fallback_summary_artifacts(client) -> None:
 
     query_response = client.post(
         "/query",
-        json={"text": "event time watermarking", "limit": 5},
+        json={"text": "event time watermarking", "limit": 5, "thread_ref": "slack:C123:1730000000.000100"},
     )
     assert query_response.status_code == 200
     memory_hits = [
@@ -60,6 +67,10 @@ def test_post_items_is_idempotent_on_source_reference(client) -> None:
         "source_id": "decision-1",
         "content_type": "text/plain",
         "content": "Decision: use event timestamp watermarking for exports to avoid skipped records.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "thread_ref": "thread-1",
+        "session_ref": "session-1",
     }
 
     first_response = client.post("/items", json=request)
@@ -72,7 +83,7 @@ def test_post_items_is_idempotent_on_source_reference(client) -> None:
     assert second_response.json() == first_response.json()
 
 
-def test_post_query_returns_decision_memory_and_source_hits(client) -> None:
+def test_post_query_returns_compact_decision_memory_and_source_hits(client) -> None:
     client.post(
         "/items",
         json={
@@ -80,12 +91,19 @@ def test_post_query_returns_decision_memory_and_source_hits(client) -> None:
             "source_id": "decision-1",
             "content_type": "text/plain",
             "content": "Decision: use event timestamp watermarking for exports to avoid skipped records during lag.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "slack:C123",
+            "thread_ref": "slack:C123:1730000000.000100",
+            "session_ref": "agent-session-1",
+            "actor_ref": "agent:assistant",
+            "source_ref": "https://example.test/message/decision-1",
         },
     )
 
     response = client.post(
         "/query",
-        json={"text": "what did we decide about watermarking?", "limit": 5},
+        json={"text": "what did we decide about watermarking?", "limit": 5, "artifact_kind": "assistant_output"},
     )
 
     assert response.status_code == 200
@@ -101,12 +119,95 @@ def test_post_query_returns_decision_memory_and_source_hits(client) -> None:
     assert memory_hit["payload"]["decision_evidence_text"] == "Decision: use event timestamp watermarking for exports to avoid skipped records during lag"
     assert memory_hit["payload"]["rationale"] == "to avoid skipped records during lag"
     assert len(memory_hit["evidence"]) == 1
+    assert memory_hit["evidence"][0]["thread_ref"] == "slack:C123:1730000000.000100"
 
     source_hit = next(result for result in payload["results"] if result["result_kind"] == "source_hit")
     assert source_hit["source_item_id"]
     assert source_hit["source_type"] == "decision_note"
     assert source_hit["source_id"] == "decision-1"
-    assert source_hit["content"]
+    assert source_hit["excerpt"]
+    assert "content" not in source_hit
+    assert source_hit["artifact_kind"] == "assistant_output"
+    assert source_hit["role"] == "assistant"
+    assert source_hit["thread_ref"] == "slack:C123:1730000000.000100"
+    assert source_hit["session_ref"] == "agent-session-1"
+    assert source_hit["source_ref"] == "https://example.test/message/decision-1"
+
+
+def test_post_query_applies_structured_filters(client) -> None:
+    user_message = {
+        "source_type": "chat_message",
+        "source_id": "msg-1",
+        "content_type": "text/plain",
+        "content": "Can we use event timestamp watermarking?",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "slack:C123",
+        "thread_ref": "thread-a",
+        "session_ref": "session-a",
+        "actor_ref": "slack:U123",
+    }
+    assistant_note = {
+        "source_type": "decision_note",
+        "source_id": "note-1",
+        "content_type": "text/plain",
+        "content": "Decision: use event timestamp watermarking for exports to avoid skipped records.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "slack:C123",
+        "thread_ref": "thread-a",
+        "session_ref": "session-a",
+        "actor_ref": "agent:assistant",
+    }
+    other_thread = {
+        "source_type": "chat_message",
+        "source_id": "msg-2",
+        "content_type": "text/plain",
+        "content": "We should keep retry backoff capped at 30 seconds.",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "slack:C123",
+        "thread_ref": "thread-b",
+        "session_ref": "session-b",
+        "actor_ref": "slack:U234",
+    }
+
+    for item in (user_message, assistant_note, other_thread):
+        assert client.post("/items", json=item).status_code == 200
+
+    filtered = client.post(
+        "/query",
+        json={
+            "text": "event timestamp watermarking",
+            "limit": 10,
+            "thread_ref": "thread-a",
+            "session_ref": "session-a",
+            "container_ref": "slack:C123",
+        },
+    )
+    assert filtered.status_code == 200
+    filtered_results = filtered.json()["results"]
+    assert filtered_results
+    assert all(item.get("thread_ref") in (None, "thread-a") for item in filtered_results)
+    assert any(item["result_kind"] == "source_hit" and item["source_id"] == "msg-1" for item in filtered_results)
+    assert not any(item["result_kind"] == "source_hit" and item["source_id"] == "msg-2" for item in filtered_results)
+
+    assistant_only = client.post(
+        "/query",
+        json={
+            "text": "event timestamp watermarking",
+            "limit": 10,
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+        },
+    )
+    assert assistant_only.status_code == 200
+    assistant_results = assistant_only.json()["results"]
+    assert assistant_results
+    assert all(item.get("artifact_kind") in (None, "assistant_output") for item in assistant_results)
+    source_hits = [item for item in assistant_results if item["result_kind"] == "source_hit"]
+    assert source_hits
+    assert all(item["role"] == "assistant" for item in source_hits)
 
 
 def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: str) -> None:
@@ -142,6 +243,9 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
             "source_id": "decision-llm-1",
             "content_type": "text/plain",
             "content": "An LLM should identify this as a decision about watermarking.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "thread_ref": "thread-llm",
         },
     )
     assert create_response.status_code == 200
@@ -149,7 +253,7 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
 
     query_response = llm_client.post(
         "/query",
-        json={"text": "what did we decide about watermarking?", "limit": 5},
+        json={"text": "what did we decide about watermarking?", "limit": 5, "thread_ref": "thread-llm"},
     )
     assert query_response.status_code == 200
     payload = query_response.json()

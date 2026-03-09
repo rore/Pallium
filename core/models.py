@@ -21,6 +21,14 @@ class SourceItem:
     content_type: str
     content: str
     metadata: dict[str, Any] | None = None
+    occurred_at: datetime | None = None
+    actor_ref: str | None = None
+    role: str | None = None
+    container_ref: str | None = None
+    thread_ref: str | None = None
+    session_ref: str | None = None
+    source_ref: str | None = None
+    artifact_kind: str | None = None
     id: str = field(default_factory=new_id)
     created_at: datetime = field(default_factory=utc_now)
 
@@ -70,6 +78,24 @@ class EvidenceReference:
     source_item_id: str
     source_type: str
     source_id: str
+    occurred_at: datetime | None = None
+    actor_ref: str | None = None
+    role: str | None = None
+    container_ref: str | None = None
+    thread_ref: str | None = None
+    session_ref: str | None = None
+    source_ref: str | None = None
+    artifact_kind: str | None = None
+
+
+@dataclass(frozen=True)
+class QueryFilters:
+    source_type: str | None = None
+    role: str | None = None
+    artifact_kind: str | None = None
+    container_ref: str | None = None
+    thread_ref: str | None = None
+    session_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -83,5 +109,12 @@ class QueryResultItem:
     source_item_id: str | None = None
     source_type: str | None = None
     source_id: str | None = None
-    content: str | None = None
-    metadata: dict[str, Any] | None = None
+    excerpt: str | None = None
+    occurred_at: datetime | None = None
+    actor_ref: str | None = None
+    role: str | None = None
+    container_ref: str | None = None
+    thread_ref: str | None = None
+    session_ref: str | None = None
+    source_ref: str | None = None
+    artifact_kind: str | None = None

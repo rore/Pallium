@@ -35,6 +35,7 @@ Implemented storage and retrieval behavior:
 - lexical retrieval over indexed text views
 - indexing for both SourceItem and MemoryObject
 - mixed query results with explicit result kinds
+- compact source-hit cards with explicit event refs instead of raw full content
 - evidence resolution from memory objects back to source items
 
 Implemented semantic behavior:
@@ -59,7 +60,7 @@ The core is domain-agnostic.
 
 Core responsibilities:
 
-- accept normalized source items
+- accept normalized source items and generic agent events
 - persist source items
 - persist annotations
 - persist relations
@@ -160,15 +161,15 @@ write and read behavior are exercised end to end.
 
 ## Base Memory Flow
 
-1. Producer submits a normalized SourceItem
-2. Core persists the raw item and provenance
+1. Producer submits a normalized SourceItem or assistant artifact event
+2. Core persists the raw item, explicit refs, and provenance
 3. Core creates a lexical index entry for the source item
 4. Semantic layer creates Annotation objects
 5. Semantic layer may promote one or more MemoryObject instances
 6. Core stores Relation and IndexEntry objects for promoted memory
 7. Consumer queries Pallium
 8. Retrieval returns mixed memory and source evidence hits
-9. Pallium returns compact evidence-backed results
+9. Pallium returns compact evidence-backed results with structured refs for agent consumers
 
 ## Retrieval Model
 

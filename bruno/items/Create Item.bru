@@ -16,12 +16,19 @@ headers {
 
 body:json {
   {
-    "source_type": "decision_note",
-    "source_id": "decision-001",
+    "source_type": "assistant_artifact",
+    "source_id": "artifact-001",
     "content_type": "text/plain",
     "content": "Decision: use event timestamp watermarking for exports to avoid skipped records during lag.",
     "metadata": {
       "topic": "watermarking"
-    }
+    },
+    "artifact_kind": "assistant_output",
+    "role": "assistant",
+    "container_ref": "slack:C123",
+    "thread_ref": "slack:C123:1730000000.000100",
+    "session_ref": "agent-session-1",
+    "actor_ref": "agent:assistant",
+    "source_ref": "https://example.test/slack/artifact-001"
   }
 }

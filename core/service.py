@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 
-from core.contracts import IngestResult, QueryResult, build_source_item
-from core.models import IndexEntry
+from core.contracts import IngestResult, QueryResult, build_query_filters, build_source_item
+from core.models import IndexEntry, QueryFilters
 from retrieval.base import RetrievalProvider
 from semantic.base import SemanticPlugin
 from storage.base import StorageProvider
@@ -37,6 +37,15 @@ class PalliumService:
         content: str,
         metadata: dict | None,
         use_case: str | None,
+        *,
+        occurred_at=None,
+        actor_ref: str | None = None,
+        role: str | None = None,
+        container_ref: str | None = None,
+        thread_ref: str | None = None,
+        session_ref: str | None = None,
+        source_ref: str | None = None,
+        artifact_kind: str | None = None,
     ) -> IngestResult:
         existing_source_item = self._storage.find_source_item(source_type=source_type, source_id=source_id)
         if existing_source_item is not None:
@@ -71,6 +80,14 @@ class PalliumService:
             content_type=content_type,
             content=content,
             metadata=metadata,
+            occurred_at=occurred_at,
+            actor_ref=actor_ref,
+            role=role,
+            container_ref=container_ref,
+            thread_ref=thread_ref,
+            session_ref=session_ref,
+            source_ref=source_ref,
+            artifact_kind=artifact_kind,
         )
         self._storage.create_source_item(source_item)
 
@@ -100,5 +117,24 @@ class PalliumService:
             index_entry_ids=[source_index_entry.id, *[item.id for item in derived.index_entries]],
         )
 
-    def query(self, text: str, limit: int) -> QueryResult:
-        return QueryResult(results=self._retrieval.query(text=text, limit=limit))
+    def query(
+        self,
+        text: str,
+        limit: int,
+        *,
+        source_type: str | None = None,
+        role: str | None = None,
+        artifact_kind: str | None = None,
+        container_ref: str | None = None,
+        thread_ref: str | None = None,
+        session_ref: str | None = None,
+    ) -> QueryResult:
+        filters: QueryFilters | None = build_query_filters(
+            source_type=source_type,
+            role=role,
+            artifact_kind=artifact_kind,
+            container_ref=container_ref,
+            thread_ref=thread_ref,
+            session_ref=session_ref,
+        )
+        return QueryResult(results=self._retrieval.query(text=text, limit=limit, filters=filters))

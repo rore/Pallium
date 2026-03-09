@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.models import Annotation, IndexEntry, MemoryObject, Relation, SourceItem
+from core.models import Annotation, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
 from storage.sqlite import SQLiteStorageProvider
 
 
@@ -12,6 +12,13 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         content_type="text/plain",
         content="Event timestamp watermarking avoids skipped records.",
         metadata={"topic": "exports"},
+        artifact_kind="message",
+        role="user",
+        container_ref="slack:C123",
+        thread_ref="thread-a",
+        session_ref="session-a",
+        actor_ref="slack:U123",
+        source_ref="https://example.test/thread-1",
     )
     storage.create_source_item(source_item)
 
@@ -49,13 +56,42 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     )
     storage.create_index_entry(index_entry)
 
-    assert storage.get_source_item(source_item.id).id == source_item.id
+    source_index_entry = IndexEntry(
+        target_kind="source_item",
+        target_id=source_item.id,
+        index_type="lexical",
+        text_view="event timestamp watermarking avoids skipped records",
+    )
+    storage.create_index_entry(source_index_entry)
+
+    loaded_source = storage.get_source_item(source_item.id)
+    assert loaded_source.id == source_item.id
+    assert loaded_source.thread_ref == "thread-a"
+    assert loaded_source.session_ref == "session-a"
+    assert loaded_source.artifact_kind == "message"
     assert storage.get_annotation(annotation.id).id == annotation.id
     assert storage.get_memory_object(memory_object.id).id == memory_object.id
 
     hits = storage.search_index_entries(["event", "watermarking"], limit=5)
     assert hits
     assert hits[0].target_id == memory_object.id
+
+    filtered_hits = storage.search_index_entries(
+        ["event", "watermarking"],
+        limit=5,
+        filters=QueryFilters(thread_ref="thread-a", role="user", artifact_kind="message"),
+    )
+    assert filtered_hits
+
+    no_hits = storage.search_index_entries(
+        ["event", "watermarking"],
+        limit=5,
+        filters=QueryFilters(thread_ref="thread-b"),
+    )
+    assert no_hits == []
+
     evidence = storage.get_evidence_for_memory_object(memory_object.id)
     assert len(evidence) == 1
     assert evidence[0].source_item_id == source_item.id
+    assert evidence[0].thread_ref == "thread-a"
+    assert evidence[0].source_ref == "https://example.test/thread-1"

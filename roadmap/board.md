@@ -1,7 +1,12 @@
 # Next
 - add-tiered-memory-extension
 
+# Ideas
+- idea-evidence-backed-agent-memory
+- idea-optional-embedding-provider-support
+
 # Done
+- add-agent-event-contract-and-compact-query-results
 - add-llm-backed-semantic-plugin
 - add-first-typed-memory-decision
 - define-core-model-and-api-contracts
@@ -10,7 +15,3 @@
 - add-first-semantic-layer-and-promotion
 - add-agent-memory-simulation
 - build-structured-retrieval-foundation
-
-# Ideas
-- idea-evidence-backed-agent-memory
-- idea-optional-embedding-provider-support

@@ -78,3 +78,14 @@ The runtime cost is mostly network and provider latency, not local Python execut
 
 Solution:
 Run semantic eval with bounded concurrency and keep the output order stable. Use `--max-concurrency` for faster bakeoffs while still writing `results.jsonl` in deterministic input/prompt order.
+
+## 2026-03-09 - Agent runtimes produce atomic events, not thread-native documents
+
+Problem:
+It is easy to design ingestion around whole threads or whole conversations, but real agent runtimes often emit one message or one assistant artifact at a time.
+
+Why:
+Upstream systems already own thread hydration, session tracking, and transcript collection. If Pallium assumes thread-native ingest, it either duplicates that work or loses stable event identity.
+
+Solution:
+Treat message events and assistant artifacts as atomic `SourceItem`s. Keep thread, session, container, actor, and source references explicit on the item, and let higher-level memory form through promotion and relations rather than thread reconstruction.

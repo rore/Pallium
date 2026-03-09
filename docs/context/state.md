@@ -19,6 +19,7 @@
 - development style: walking skeleton before deeper hardening
 - first consumer proof: simulated generic agent-memory workflow
 - current slice includes API, core service, semantic plugins, LLM provider adapters, retrieval provider, SQLite storage provider, simulation script, Bruno collection, and pytest coverage
+- ingest now supports explicit event refs for messages and assistant artifacts, and query returns compact source-hit cards with structured refs
 - current semantic behavior includes deterministic and LLM-backed `decision` promotion, with `discussion_summary` used only for non-decision extraction results
 - semantic eval uses a single JSONL input file and now defaults to `results.jsonl` plus `summary.json`, with split per-input artifacts only when explicitly requested
 - semantic eval now supports bounded concurrency for faster prompt bakeoffs while preserving deterministic result order

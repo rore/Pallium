@@ -35,6 +35,8 @@ The current implementation is a walking skeleton with:
 - one semantic layer interface with in-repo plugin implementations
 - one storage layer
 - one mixed retrieval path over memory and source evidence
+- explicit event refs for message and assistant-artifact ingest
+- compact source-hit cards for agent consumers
 - one deterministic typed-memory path for `decision`
 - one LLM-backed semantic path compatible with OpenAI-compatible and Claude-style APIs
 - one semantic eval harness that records raw LLM output, normalized extraction, and promoted artifacts
@@ -61,6 +63,8 @@ The generic core currently centers on five primitives:
 - MemoryObject
 
 The core owns storage and orchestration. Semantic layers define meaning.
+
+Source items can now also carry explicit event refs such as `thread_ref`, `session_ref`, `container_ref`, `actor_ref`, `source_ref`, `role`, `artifact_kind`, and `occurred_at`.
 
 ## Tiered Memory
 
@@ -206,8 +210,8 @@ in Bruno.
 
 The current collection matches the active HTTP surface:
 
-- `POST /items`
-- `POST /query` returning mixed `memory_hit` and `source_hit` results
+- `POST /items` with explicit event refs for agent-produced messages and artifacts
+- `POST /query` returning mixed `memory_hit` and compact `source_hit` results
 
 ## Repository Guide
 
