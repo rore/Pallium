@@ -1,4 +1,9 @@
 # Next
+- add-investigation-outcome-memory
+- add-semantic-regression-set
+- add-memory-lifecycle-basics
+
+# Later
 - add-tiered-memory-extension
 
 # Ideas
