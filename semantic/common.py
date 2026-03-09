@@ -16,12 +16,28 @@ DECISION_PATTERNS = (
     re.compile(r"\bchosen approach[:\s]+(?P<body>.+)", re.IGNORECASE),
     re.compile(r"\bwe will use\s+(?P<body>.+)", re.IGNORECASE),
 )
+INVESTIGATION_PATTERNS = (
+    re.compile(r"\broot cause[:\s]+(?P<body>.+)", re.IGNORECASE),
+    re.compile(r"\binvestigation found(?: that)?\s+(?P<body>.+)", re.IGNORECASE),
+    re.compile(r"\binvestigation concluded(?: that)?\s+(?P<body>.+)", re.IGNORECASE),
+    re.compile(r"\banalysis found(?: that)?\s+(?P<body>.+)", re.IGNORECASE),
+    re.compile(r"\bfindings?[:\s]+(?P<body>.+)", re.IGNORECASE),
+    re.compile(r"\boutcome[:\s]+(?P<body>.+)", re.IGNORECASE),
+    re.compile(r"\bwe found that\s+(?P<body>.+)", re.IGNORECASE),
+)
 RATIONALE_SPLITTERS = (
     " because ",
     " to avoid ",
     " to prevent ",
     " so that ",
 )
+INVESTIGATION_RATIONALE_SPLITTERS = (
+    " caused by ",
+    " due to ",
+    " because ",
+)
+INVESTIGATION_SOURCE_TYPES = {"investigation_summary", "assistant_artifact", "tool_summary", "incident_note", "assistant_output"}
+INVESTIGATION_ARTIFACT_KINDS = {"assistant_output", "tool_use_summary"}
 
 
 @dataclass(frozen=True)
@@ -30,9 +46,10 @@ class SemanticExtraction:
     candidate_type: str | None = None
     decision_text: str | None = None
     decision_evidence_text: str | None = None
+    investigation_text: str | None = None
+    investigation_evidence_text: str | None = None
     rationale_text: str | None = None
     matched_phrase: str | None = None
-
 
 
 def summarize_content(content: str) -> str:
@@ -45,15 +62,12 @@ def summarize_content(content: str) -> str:
     return text[:200].strip()
 
 
-
 def normalize_for_index(text: str) -> str:
     return " ".join(TOKEN_PATTERN.findall(text.lower()))
 
 
-
 def strip_terminal_punctuation(text: str) -> str:
     return text.strip().rstrip(" .!?;:")
-
 
 
 def extract_decision_candidate(content: str) -> dict[str, str | None] | None:
@@ -88,21 +102,68 @@ def extract_decision_candidate(content: str) -> dict[str, str | None] | None:
     return None
 
 
+def extract_investigation_candidate(source_item: SourceItem) -> dict[str, str | None] | None:
+    source_type = source_item.source_type.lower()
+    artifact_kind = (source_item.artifact_kind or "").lower()
+    if source_type not in INVESTIGATION_SOURCE_TYPES and artifact_kind not in INVESTIGATION_ARTIFACT_KINDS:
+        return None
 
-def deterministic_extraction(content: str) -> SemanticExtraction:
-    summary = summarize_content(content)
-    candidate = extract_decision_candidate(content)
-    if candidate is None:
-        return SemanticExtraction(summary=summary)
-    return SemanticExtraction(
-        summary=summary,
-        candidate_type="decision",
-        decision_text=candidate["decision_text"],
-        decision_evidence_text=candidate["decision_evidence_text"],
-        rationale_text=candidate["rationale_text"],
-        matched_phrase=candidate["matched_phrase"],
-    )
+    content = source_item.content
+    for pattern in INVESTIGATION_PATTERNS:
+        match = pattern.search(content)
+        if not match:
+            continue
+        body = strip_terminal_punctuation(match.group("body"))
+        if not body:
+            continue
 
+        lowered = body.lower()
+        investigation_text = body
+        rationale_text: str | None = None
+
+        for splitter in INVESTIGATION_RATIONALE_SPLITTERS:
+            index = lowered.find(splitter)
+            if index == -1:
+                continue
+            investigation_text = strip_terminal_punctuation(body[:index])
+            remainder = strip_terminal_punctuation(body[index + len(splitter) :])
+            rationale_text = f"{splitter.strip()} {remainder}" if remainder else splitter.strip()
+            break
+
+        return {
+            "investigation_text": investigation_text,
+            "investigation_evidence_text": strip_terminal_punctuation(match.group(0)),
+            "rationale_text": rationale_text,
+            "matched_phrase": match.group(0).split(match.group("body"))[0].strip(),
+        }
+
+    return None
+
+
+def deterministic_extraction(source_item: SourceItem) -> SemanticExtraction:
+    summary = summarize_content(source_item.content)
+    decision_candidate = extract_decision_candidate(source_item.content)
+    if decision_candidate is not None:
+        return SemanticExtraction(
+            summary=summary,
+            candidate_type="decision",
+            decision_text=decision_candidate["decision_text"],
+            decision_evidence_text=decision_candidate["decision_evidence_text"],
+            rationale_text=decision_candidate["rationale_text"],
+            matched_phrase=decision_candidate["matched_phrase"],
+        )
+
+    investigation_candidate = extract_investigation_candidate(source_item)
+    if investigation_candidate is not None:
+        return SemanticExtraction(
+            summary=summary,
+            candidate_type="investigation_outcome",
+            investigation_text=investigation_candidate["investigation_text"],
+            investigation_evidence_text=investigation_candidate["investigation_evidence_text"],
+            rationale_text=investigation_candidate["rationale_text"],
+            matched_phrase=investigation_candidate["matched_phrase"],
+        )
+    return SemanticExtraction(summary=summary)
 
 
 def build_process_result(
@@ -164,6 +225,49 @@ def build_process_result(
                 extraction.summary,
                 extraction.decision_text or "",
                 extraction.decision_evidence_text or "",
+                extraction.rationale_text or "",
+            )
+            if part
+        )
+    elif extraction.candidate_type == "investigation_outcome" and extraction.investigation_text and extraction.investigation_evidence_text:
+        candidate_payload = {
+            "candidate_type": "investigation_outcome",
+            "investigation_text": extraction.investigation_text,
+            "investigation_evidence_text": extraction.investigation_evidence_text,
+            "rationale_text": extraction.rationale_text,
+        }
+        if semantic_metadata:
+            candidate_payload["semantic_provenance"] = semantic_metadata
+        if extraction.matched_phrase:
+            candidate_payload["matched_phrase"] = extraction.matched_phrase
+        annotations.append(
+            Annotation(
+                source_item_id=source_item.id,
+                type="typed_candidate",
+                schema_id=f"{schema_prefix}.typed_candidate",
+                schema_version="v1",
+                payload=candidate_payload,
+            )
+        )
+        memory_object = MemoryObject(
+            type="investigation_outcome",
+            schema_id=f"{schema_prefix}.investigation_outcome",
+            schema_version="v1",
+            payload={
+                "investigation_outcome": extraction.investigation_text,
+                "investigation_evidence_text": extraction.investigation_evidence_text,
+                "rationale": extraction.rationale_text,
+                "source_type": source_item.source_type,
+                "source_id": source_item.source_id,
+                **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
+            },
+        )
+        index_source = " ".join(
+            part
+            for part in (
+                extraction.summary,
+                extraction.investigation_text or "",
+                extraction.investigation_evidence_text or "",
                 extraction.rationale_text or "",
             )
             if part

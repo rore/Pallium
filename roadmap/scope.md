@@ -1,14 +1,14 @@
-This minimap workspace tracks Pallium after the agent-event contract milestone.
+This minimap workspace tracks Pallium after typed investigation memory, a committed semantic regression set, and minimal lifecycle handling.
 
 Current focus:
-- improve semantic quality over the new message-event and assistant-artifact inputs
-- add richer typed memory so important non-decision knowledge does not collapse into `discussion_summary`
-- keep the generic event contract and compact query shape stable while the semantic layer grows
+- improve semantic precision using the committed regression set and baseline metrics
+- keep the generic event contract and compact query shape stable while semantic quality improves
+- defer higher-level memory work until typed-memory quality is strong enough to support consolidation safely
 
 Concrete next steps:
-- add a second typed memory class, likely `investigation_outcome`
-- establish a committed semantic regression set over message and assistant-artifact inputs
-- add minimal memory lifecycle handling so stale or superseded knowledge can be managed safely
+- reduce the remaining false positives in typed-memory extraction
+- decide when the current semantic baseline is strong enough for tiered memory work
+- keep prompt and model changes measurable against the committed regression batch
 
 Still out of scope for this phase:
 - turning Pallium into an agent runtime or workflow engine

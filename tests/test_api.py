@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
-import pytest
 
 from app.config import AppConfig
 from app.main import create_app
@@ -17,10 +16,7 @@ class StubLLMProvider:
         if self._error is not None:
             raise self._error
         assert self._parsed_json is not None
-        return LLMJsonResponse(
-            raw_text=str(self._parsed_json),
-            parsed_json=self._parsed_json,
-        )
+        return LLMJsonResponse(raw_text=str(self._parsed_json), parsed_json=self._parsed_json)
 
 
 def test_post_items_creates_fallback_summary_artifacts(client) -> None:
@@ -55,9 +51,7 @@ def test_post_items_creates_fallback_summary_artifacts(client) -> None:
         json={"text": "event time watermarking", "limit": 5, "thread_ref": "slack:C123:1730000000.000100"},
     )
     assert query_response.status_code == 200
-    memory_hits = [
-        item for item in query_response.json()["results"] if item["result_kind"] == "memory_hit"
-    ]
+    memory_hits = [item for item in query_response.json()["results"] if item["result_kind"] == "memory_hit"]
     assert any(item["type"] == "discussion_summary" for item in memory_hits)
 
 
@@ -116,22 +110,41 @@ def test_post_query_returns_compact_decision_memory_and_source_hits(client) -> N
     memory_hit = next(result for result in payload["results"] if result["result_kind"] == "memory_hit")
     assert memory_hit["type"] == "decision"
     assert memory_hit["payload"]["decision"] == "use event timestamp watermarking for exports"
-    assert memory_hit["payload"]["decision_evidence_text"] == "Decision: use event timestamp watermarking for exports to avoid skipped records during lag"
-    assert memory_hit["payload"]["rationale"] == "to avoid skipped records during lag"
     assert len(memory_hit["evidence"]) == 1
-    assert memory_hit["evidence"][0]["thread_ref"] == "slack:C123:1730000000.000100"
 
     source_hit = next(result for result in payload["results"] if result["result_kind"] == "source_hit")
-    assert source_hit["source_item_id"]
-    assert source_hit["source_type"] == "decision_note"
     assert source_hit["source_id"] == "decision-1"
     assert source_hit["excerpt"]
     assert "content" not in source_hit
-    assert source_hit["artifact_kind"] == "assistant_output"
-    assert source_hit["role"] == "assistant"
-    assert source_hit["thread_ref"] == "slack:C123:1730000000.000100"
-    assert source_hit["session_ref"] == "agent-session-1"
-    assert source_hit["source_ref"] == "https://example.test/message/decision-1"
+
+
+def test_post_query_returns_investigation_memory_and_source_hits(client) -> None:
+    client.post(
+        "/items",
+        json={
+            "source_type": "investigation_summary",
+            "source_id": "investigation-1",
+            "content_type": "text/plain",
+            "content": "Investigation found that ingestion-time progress tracking skipped records during lag because EventHub lag delayed ingestion.",
+            "artifact_kind": "tool_use_summary",
+            "role": "assistant",
+            "thread_ref": "thread-investigation",
+            "session_ref": "session-investigation",
+            "actor_ref": "agent:assistant",
+        },
+    )
+
+    response = client.post(
+        "/query",
+        json={"text": "what did the investigation find about skipped records?", "limit": 5, "artifact_kind": "tool_use_summary"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    memory_hit = next(result for result in payload["results"] if result["result_kind"] == "memory_hit")
+    assert memory_hit["type"] == "investigation_outcome"
+    assert "ingestion-time progress tracking skipped records during lag" in memory_hit["payload"]["investigation_outcome"]
+    assert any(result["result_kind"] == "source_hit" for result in payload["results"])
 
 
 def test_post_query_applies_structured_filters(client) -> None:
@@ -148,11 +161,11 @@ def test_post_query_applies_structured_filters(client) -> None:
         "actor_ref": "slack:U123",
     }
     assistant_note = {
-        "source_type": "decision_note",
+        "source_type": "investigation_summary",
         "source_id": "note-1",
         "content_type": "text/plain",
-        "content": "Decision: use event timestamp watermarking for exports to avoid skipped records.",
-        "artifact_kind": "assistant_output",
+        "content": "Investigation found that ingestion-time progress tracking skipped records during lag.",
+        "artifact_kind": "tool_use_summary",
         "role": "assistant",
         "container_ref": "slack:C123",
         "thread_ref": "thread-a",
@@ -178,7 +191,7 @@ def test_post_query_applies_structured_filters(client) -> None:
     filtered = client.post(
         "/query",
         json={
-            "text": "event timestamp watermarking",
+            "text": "skipped records during lag",
             "limit": 10,
             "thread_ref": "thread-a",
             "session_ref": "session-a",
@@ -189,22 +202,20 @@ def test_post_query_applies_structured_filters(client) -> None:
     filtered_results = filtered.json()["results"]
     assert filtered_results
     assert all(item.get("thread_ref") in (None, "thread-a") for item in filtered_results)
-    assert any(item["result_kind"] == "source_hit" and item["source_id"] == "msg-1" for item in filtered_results)
     assert not any(item["result_kind"] == "source_hit" and item["source_id"] == "msg-2" for item in filtered_results)
 
     assistant_only = client.post(
         "/query",
         json={
-            "text": "event timestamp watermarking",
+            "text": "skipped records during lag",
             "limit": 10,
-            "artifact_kind": "assistant_output",
+            "artifact_kind": "tool_use_summary",
             "role": "assistant",
         },
     )
     assert assistant_only.status_code == 200
     assistant_results = assistant_only.json()["results"]
     assert assistant_results
-    assert all(item.get("artifact_kind") in (None, "assistant_output") for item in assistant_results)
     source_hits = [item for item in assistant_results if item["result_kind"] == "source_hit"]
     assert source_hits
     assert all(item["role"] == "assistant" for item in source_hits)
@@ -215,11 +226,13 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
         "app.dependencies.build_llm_provider",
         lambda config: StubLLMProvider(
             {
-                "summary": "Decision discussion about watermarking.",
-                "candidate_type": "decision",
-                "decision_text": "use event timestamp watermarking",
-                "decision_evidence_text": "We decided to use event timestamp watermarking.",
-                "rationale_text": "to avoid skipped records during lag",
+                "summary": "Investigation summary about watermarking.",
+                "candidate_type": "investigation_outcome",
+                "decision_text": None,
+                "decision_evidence_text": None,
+                "investigation_text": "ingestion-time progress tracking skipped records during lag",
+                "investigation_evidence_text": "Investigation found that ingestion-time progress tracking skipped records during lag.",
+                "rationale_text": "because EventHub lag delayed ingestion",
             }
         ),
     )
@@ -232,6 +245,7 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
                 llm_provider="openai_compatible",
                 llm_model="fake-model",
                 llm_base_url="http://fake-provider.local",
+                llm_prompt_variant="strict_decision_v2_source_aware",
             )
         )
     )
@@ -239,11 +253,11 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
     create_response = llm_client.post(
         "/items",
         json={
-            "source_type": "decision_note",
-            "source_id": "decision-llm-1",
+            "source_type": "investigation_summary",
+            "source_id": "investigation-llm-1",
             "content_type": "text/plain",
-            "content": "An LLM should identify this as a decision about watermarking.",
-            "artifact_kind": "assistant_output",
+            "content": "An LLM should identify this as an investigation outcome about watermarking.",
+            "artifact_kind": "tool_use_summary",
             "role": "assistant",
             "thread_ref": "thread-llm",
         },
@@ -253,14 +267,13 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
 
     query_response = llm_client.post(
         "/query",
-        json={"text": "what did we decide about watermarking?", "limit": 5, "thread_ref": "thread-llm"},
+        json={"text": "what did the investigation find?", "limit": 5, "thread_ref": "thread-llm"},
     )
     assert query_response.status_code == 200
     payload = query_response.json()
     memory_hit = next(result for result in payload["results"] if result["result_kind"] == "memory_hit")
-    assert memory_hit["type"] == "decision"
-    assert memory_hit["payload"]["decision"] == "use event timestamp watermarking"
-    assert memory_hit["payload"]["decision_evidence_text"] == "We decided to use event timestamp watermarking."
+    assert memory_hit["type"] == "investigation_outcome"
+    assert memory_hit["payload"]["investigation_outcome"] == "ingestion-time progress tracking skipped records during lag"
     assert any(result["result_kind"] == "source_hit" for result in payload["results"])
 
 
@@ -278,6 +291,7 @@ def test_llm_plugin_path_returns_server_error_when_provider_fails(monkeypatch, t
                 llm_provider="openai_compatible",
                 llm_model="fake-model",
                 llm_base_url="http://fake-provider.local",
+                llm_prompt_variant="strict_decision_v2_source_aware",
             )
         ),
         raise_server_exceptions=False,

@@ -1,10 +1,10 @@
 ---
 id: add-memory-lifecycle-basics
 title: Add basic memory lifecycle handling
-status: queued
+status: done
 priority: medium
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary
@@ -36,4 +36,5 @@ Now that Pallium accepts repeated event streams and assistant artifacts, memory 
 
 ## Notes
 
-Sources: `roadmap/scope.md`, `docs/context/lessons.md`, `docs/context/architecture.md`
+Completed on 2026-03-09.
+The first maintenance path is internal and code-driven rather than exposed as a public API.

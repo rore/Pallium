@@ -50,6 +50,7 @@ class MemoryObject:
     schema_id: str
     schema_version: str
     payload: dict[str, Any]
+    lifecycle: str = "active"
     id: str = field(default_factory=new_id)
     created_at: datetime = field(default_factory=utc_now)
 

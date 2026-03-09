@@ -47,6 +47,10 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def update_memory_object_lifecycle(self, memory_object_id: str, lifecycle: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def list_memory_objects_for_source_item(self, source_item_id: str) -> list[MemoryObject]:
         raise NotImplementedError
 

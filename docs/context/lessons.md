@@ -22,18 +22,6 @@ That makes it hard to tell whether Pallium actually used the LLM path, and it ca
 Solution:
 The LLM-backed plugin should not fall back to deterministic extraction. If the LLM path fails, treat it as an LLM-backed processing failure and surface it clearly.
 
-
-## 2026-03-09 - LLM decision extraction is still too permissive
-
-Problem:
-A 10-item semantic eval batch against a real OpenAI model promoted almost every item to `decision`, including discussion and investigation-style inputs.
-
-Why:
-The current prompt and validation contract make it too easy for the model to classify general conclusions or observations as formal decisions.
-
-Solution:
-Tighten the decision prompt and add stricter promotion validation before relying on LLM-produced `decision` memory at scale.
-
 ## 2026-03-09 - GPT-5 mini rejects forced temperature 0 on chat completions
 
 Problem:
@@ -45,25 +33,13 @@ The provider hardcoded `temperature: 0`, and this model only accepts its default
 Solution:
 Do not force `temperature` in the OpenAI-compatible provider unless the target model explicitly supports it.
 
-
-## 2026-03-09 - Stricter decision prompt reduces false positives substantially
-
-Problem:
-The baseline LLM prompt promoted too many discussions and findings into `decision` memory objects.
-
-Why:
-The prompt did not clearly distinguish committed choices from preferences, findings, or agreed needs.
-
-Solution:
-Add a stricter decision-only prompt variant with explicit non-decision cases. In the 40-item GPT-5 mini comparison run, this reduced false positives from 8 to 2 while keeping false negatives at 0.
-
 ## 2026-03-09 - Prompt provenance must be stored with LLM-derived memory
 
 Problem:
-Prompt changes can alter semantic behavior, but without recorded prompt provenance it becomes difficult to tell which stored memory objects were created under which prompt contract.
+Prompt changes alter semantic behavior, but without recorded prompt provenance it becomes difficult to tell which stored memory objects were created under which prompt contract.
 
 Why:
-LLM prompt logic is part of the semantic package, not just ephemeral runtime configuration. Maintenance, cleanup, and reprocessing become much harder if prompt variants and schema versions are invisible in stored artifacts.
+LLM prompt logic is part of the semantic package, not just ephemeral runtime configuration.
 
 Solution:
 Store prompt schema id, prompt schema version, and prompt variant in LLM-derived artifacts and eval traces.
@@ -74,10 +50,10 @@ Problem:
 Prompt bakeoffs and larger semantic eval batches became too slow for fast iteration when every LLM call ran sequentially.
 
 Why:
-The runtime cost is mostly network and provider latency, not local Python execution. Running prompt variants over tens of items multiplies the total wall-clock time quickly.
+The runtime cost is mostly network and provider latency.
 
 Solution:
-Run semantic eval with bounded concurrency and keep the output order stable. Use `--max-concurrency` for faster bakeoffs while still writing `results.jsonl` in deterministic input/prompt order.
+Run semantic eval with bounded concurrency and keep the output order stable.
 
 ## 2026-03-09 - Agent runtimes produce atomic events, not thread-native documents
 
@@ -85,7 +61,54 @@ Problem:
 It is easy to design ingestion around whole threads or whole conversations, but real agent runtimes often emit one message or one assistant artifact at a time.
 
 Why:
-Upstream systems already own thread hydration, session tracking, and transcript collection. If Pallium assumes thread-native ingest, it either duplicates that work or loses stable event identity.
+Upstream systems already own thread hydration, session tracking, and transcript collection.
 
 Solution:
-Treat message events and assistant artifacts as atomic `SourceItem`s. Keep thread, session, container, actor, and source references explicit on the item, and let higher-level memory form through promotion and relations rather than thread reconstruction.
+Treat message events and assistant artifacts as atomic `SourceItem`s. Keep thread, session, container, actor, and source references explicit on the item.
+
+## 2026-03-09 - Investigation memory needs its own typed path
+
+Problem:
+Important findings and root-cause conclusions were collapsing into `discussion_summary` because only `decision` had a first-class typed memory path.
+
+Why:
+Many high-value agent events are explicit findings or diagnostic outcomes rather than committed choices.
+
+Solution:
+Promote a second typed memory class, `investigation_outcome`, in both deterministic and LLM-backed extraction.
+
+## 2026-03-09 - A committed semantic regression set is necessary product infrastructure
+
+Problem:
+Ad hoc eval batches made it too easy to change prompts and extraction behavior without a stable quality reference.
+
+Why:
+Semantic quality is one of Pallium's main product risks, and it changes independently of API or storage behavior.
+
+Solution:
+Keep one committed labeled JSONL regression batch and record baseline metrics for the chosen model and prompt path.
+
+## 2026-03-09 - Current typed-memory baseline is good but still over-promotes a few cases
+
+Problem:
+The real `gpt-5-mini` regression run on the 30-item committed batch did not collapse everything into one type, but it still produced three false positives.
+
+Why:
+The current prompt remains slightly too eager on:
+- agreed need statements
+- operational status statements
+- detected backlog/symptom notifications
+
+Solution:
+Keep `strict_decision_v2_source_aware` as the current default because it is materially better than the looser prompt, but use the committed regression set to keep tightening abstention on non-decision, non-investigation events.
+
+## 2026-03-09 - Lifecycle filtering should hide stale promoted memory without deleting evidence
+
+Problem:
+As repeated agent events accumulate, old promoted memory can become stale or superseded.
+
+Why:
+Deleting stale memory would lose provenance, but surfacing it as current would reduce trust.
+
+Solution:
+Keep raw evidence intact, add minimal `active` vs `superseded` lifecycle on promoted memory, and filter superseded memory from default retrieval.

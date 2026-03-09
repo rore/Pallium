@@ -11,67 +11,69 @@ from semantic.base import SemanticPlugin
 from semantic.common import SemanticExtraction, build_process_result
 
 
-DEFAULT_PROMPT_VARIANT = "baseline"
-PROMPT_SCHEMA_ID = "decision_extraction"
-PROMPT_SCHEMA_VERSION = "v2"
+DEFAULT_PROMPT_VARIANT = "strict_decision_v2_source_aware"
+PROMPT_SCHEMA_ID = "typed_memory_extraction"
+PROMPT_SCHEMA_VERSION = "v3"
 PROMPT_VARIANTS: dict[str, str] = {
-    "baseline": """You extract reusable memory from technical discussions.
-Return exactly one JSON object and no extra prose.""",
-    "strict_decision_v1": """You extract reusable memory from technical discussions.
-Return exactly one JSON object and no extra prose.
+    "baseline": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
 
-Classify candidate_type as "decision" only when the text explicitly records a committed choice that has already been made.
-Do not mark a decision for hypotheses, preferences, suggestions, observations, diagnoses, risks, next steps, or statements that something is needed.
-If the text discusses options or leans toward an approach without an explicit committed choice, candidate_type must be null.
-If the text reports an investigation finding or root cause without an explicit committed choice, candidate_type must be null.
-If the text says the team agreed that something is needed, but did not choose a concrete action or approach, candidate_type must be null.
-When candidate_type is "decision", decision_text must restate the committed choice only, not an inferred fix or recommendation.
-When candidate_type is "decision", decision_evidence_text must be an exact quote or close paraphrase of the source phrase that proves the decision was explicitly made. If you cannot point to explicit decision evidence, candidate_type must be null.""",
-    "strict_decision_v2_source_aware": """You extract reusable memory from technical discussions.
-Return exactly one JSON object and no extra prose.
+Use candidate_type as one of: decision, investigation_outcome, or null.""",
+    "strict_decision_v1": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
 
-Your task is conservative decision extraction.
+Classify candidate_type as \"decision\" only when the source explicitly records a committed choice that has already been made.
+Classify candidate_type as \"investigation_outcome\" only when the source explicitly records an established finding, root cause, conclusion, or diagnostic outcome.
+Use null for hypotheses, preferences, proposals, observations, symptoms, risks, next steps, recommendations, or statements that something is needed.
+If the text discusses options without an explicit choice, candidate_type must be null.
+If the text reports symptoms without an explicit finding or conclusion, candidate_type must be null.
+When candidate_type is \"decision\", decision_text and decision_evidence_text must be populated and the investigation fields must be null.
+When candidate_type is \"investigation_outcome\", investigation_text and investigation_evidence_text must be populated and the decision fields must be null.
+If you cannot quote explicit evidence for the chosen candidate_type, candidate_type must be null.""",
+    "strict_decision_v2_source_aware": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
+
+Your task is conservative typed-memory extraction.
 A decision exists only when the source explicitly states that a concrete choice has already been made.
-Strong positive decision signals include phrases like: "Decision:", "we decided", "we chose", "chosen approach", or "we will use".
+An investigation_outcome exists only when the source explicitly states an established finding, root cause, conclusion, or diagnostic outcome.
 If those signals are absent, candidate_type should usually be null.
 
 Source-type guidance:
-- For `investigation_summary`, `incident_note`, `status_update`, and `research_note`, default to candidate_type null unless the text explicitly contains a clear decision signal.
-- For `chat_thread` and `meeting_summary`, do not mark a decision when the text only shows discussion, preference, leaning, proposal, agreement that something is needed, or identification of a problem.
-- For `decision_note`, still require explicit committed-choice wording rather than inferred intent.
+- For `decision_note`, require explicit committed-choice wording rather than inferred intent.
+- For `investigation_summary`, `incident_note`, `tool_summary`, and `assistant_artifact`, allow investigation_outcome only when the finding is explicit and already established.
+- For `chat_message`, `meeting_summary`, `status_update`, and `notification`, default to null unless the text explicitly records a committed choice or an established finding.
 
-Do not convert findings, recommendations, proposed fixes, root causes, next steps, or identified blockers into decisions.
-When candidate_type is "decision", decision_text must restate the chosen action only, and decision_evidence_text must quote the exact phrase that proves the decision was made. If no explicit proof phrase exists, candidate_type must be null.""",
-    "strict_decision_v3_checklist": """You extract reusable memory from technical discussions.
-Return exactly one JSON object and no extra prose.
+Do not convert findings into decisions.
+Do not convert recommendations, proposals, preferred options, symptoms, action items, or agreed needs into typed memory.
+When candidate_type is `decision`, decision_text must restate the chosen action only and decision_evidence_text must quote the phrase proving the choice was made.
+When candidate_type is `investigation_outcome`, investigation_text must restate the established finding only and investigation_evidence_text must quote the phrase proving the finding or conclusion.
+If no explicit proof phrase exists, candidate_type must be null.""",
+    "strict_decision_v3_checklist": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
 
-Before choosing candidate_type, apply this checklist internally:
-1. Does the source explicitly say a choice was made already?
-2. Is the choice concrete rather than a preference, suggestion, observation, or need?
-3. Can you quote the exact decision evidence from the source?
-Only if all three answers are yes may candidate_type be "decision".
+Before setting candidate_type, apply this checklist internally:
+1. Does the source explicitly record a committed choice or an established finding?
+2. Is the statement concrete rather than a proposal, preference, symptom, observation, or need?
+3. Can you quote the exact evidence phrase from the source?
+Only if all three answers are yes may candidate_type be non-null.
 
 Use candidate_type null for:
 - option comparisons
-- tentative language such as "may", "might", "could", "should", "prefer", or "seems"
-- investigation findings or root causes
-- statements that the team needs something
-- identified blockers or action items without a chosen solution
-- summary statements that imply a conclusion but do not explicitly record a committed choice
+- tentative language such as may, might, could, should, prefer, or seems
+- problem statements without a conclusion
+- recommendations or next steps
+- agreement that something is needed
+- summaries that imply a conclusion but do not explicitly record one
 
-When candidate_type is "decision":
-- decision_text must be a concise restatement of the committed choice
-- decision_evidence_text must be a verbatim quote or extremely close extract of the decision phrase from the source
-- rationale_text should be null unless the source explicitly states the reason
-If you are not certain the source contains an explicit committed choice, return candidate_type null.""",
+When candidate_type is `decision`, fill only the decision fields.
+When candidate_type is `investigation_outcome`, fill only the investigation fields.
+If you are not certain the source contains explicit evidence, return candidate_type null.""",
 }
 
 SCHEMA_DESCRIPTION = json.dumps(
     {
         "summary": "string",
-        "candidate_type": "decision or null",
+        "candidate_type": "decision, investigation_outcome, or null",
         "decision_text": "string or null",
         "decision_evidence_text": "string or null",
+        "investigation_text": "string or null",
+        "investigation_evidence_text": "string or null",
         "rationale_text": "string or null",
     },
     indent=2,
@@ -141,7 +143,6 @@ class LLMAgentMemoryPlugin(SemanticPlugin):
         return self.analyze_item(source_item).process_result
 
 
-
 def build_analysis_request(source_item: SourceItem, *, prompt_variant: str = DEFAULT_PROMPT_VARIANT) -> LLMAnalysisRequest:
     resolved_prompt_variant = _resolve_prompt_variant(prompt_variant)
     metadata_text = json.dumps(source_item.metadata or {}, sort_keys=True)
@@ -154,6 +155,8 @@ def build_analysis_request(source_item: SourceItem, *, prompt_variant: str = DEF
             f"Source type: {source_item.source_type}\n"
             f"Source id: {source_item.source_id}\n"
             f"Content type: {source_item.content_type}\n"
+            f"Artifact kind: {source_item.artifact_kind or 'null'}\n"
+            f"Role: {source_item.role or 'null'}\n"
             f"Metadata: {metadata_text}\n"
             f"Content:\n{source_item.content}"
         ),
@@ -161,10 +164,8 @@ def build_analysis_request(source_item: SourceItem, *, prompt_variant: str = DEF
     )
 
 
-
 def list_prompt_variants() -> list[str]:
     return list(PROMPT_VARIANTS.keys())
-
 
 
 def _resolve_prompt_variant(prompt_variant: str) -> str:
@@ -173,17 +174,18 @@ def _resolve_prompt_variant(prompt_variant: str) -> str:
     return prompt_variant
 
 
-
 def _normalize_extraction(payload: dict[str, Any]) -> SemanticExtraction:
     summary = _normalize_required_string(payload.get("summary"), field_name="summary")
     candidate_type = _normalize_optional_string(payload.get("candidate_type"), field_name="candidate_type")
     decision_text = _normalize_optional_string(payload.get("decision_text"), field_name="decision_text")
     decision_evidence_text = _normalize_optional_string(payload.get("decision_evidence_text"), field_name="decision_evidence_text")
+    investigation_text = _normalize_optional_string(payload.get("investigation_text"), field_name="investigation_text")
+    investigation_evidence_text = _normalize_optional_string(payload.get("investigation_evidence_text"), field_name="investigation_evidence_text")
     rationale_text = _normalize_optional_string(payload.get("rationale_text"), field_name="rationale_text")
 
     if candidate_type is not None:
         candidate_type = candidate_type.lower()
-        if candidate_type != "decision":
+        if candidate_type not in {"decision", "investigation_outcome"}:
             candidate_type = None
 
     return SemanticExtraction(
@@ -191,9 +193,10 @@ def _normalize_extraction(payload: dict[str, Any]) -> SemanticExtraction:
         candidate_type=candidate_type,
         decision_text=decision_text,
         decision_evidence_text=decision_evidence_text,
+        investigation_text=investigation_text,
+        investigation_evidence_text=investigation_evidence_text,
         rationale_text=rationale_text,
     )
-
 
 
 def _normalize_required_string(value: Any, *, field_name: str) -> str:
@@ -203,7 +206,6 @@ def _normalize_required_string(value: Any, *, field_name: str) -> str:
     if not normalized:
         raise ValueError(f"{field_name} must not be empty")
     return normalized
-
 
 
 def _normalize_optional_string(value: Any, *, field_name: str) -> str | None:

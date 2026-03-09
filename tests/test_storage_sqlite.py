@@ -32,10 +32,10 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     storage.create_annotation(annotation)
 
     memory_object = MemoryObject(
-        type="discussion_summary",
-        schema_id="demo.discussion_summary",
+        type="investigation_outcome",
+        schema_id="demo.investigation_outcome",
         schema_version="v1",
-        payload={"summary": "Event timestamp watermarking avoids skipped records."},
+        payload={"investigation_outcome": "ingestion-time progress tracking skipped records during lag"},
     )
     storage.create_memory_object(memory_object)
 
@@ -52,7 +52,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         target_kind="memory_object",
         target_id=memory_object.id,
         index_type="lexical",
-        text_view="event timestamp watermarking avoids skipped records",
+        text_view="ingestion time progress tracking skipped records during lag",
     )
     storage.create_index_entry(index_entry)
 
@@ -70,11 +70,16 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     assert loaded_source.session_ref == "session-a"
     assert loaded_source.artifact_kind == "message"
     assert storage.get_annotation(annotation.id).id == annotation.id
-    assert storage.get_memory_object(memory_object.id).id == memory_object.id
+    assert storage.get_memory_object(memory_object.id).lifecycle == "active"
 
-    hits = storage.search_index_entries(["event", "watermarking"], limit=5)
+    hits = storage.search_index_entries(["skipped", "lag"], limit=5)
     assert hits
     assert hits[0].target_id == memory_object.id
+
+    storage.update_memory_object_lifecycle(memory_object.id, "superseded")
+    assert storage.get_memory_object(memory_object.id).lifecycle == "superseded"
+    hits_after_supersede = storage.search_index_entries(["skipped", "lag"], limit=5)
+    assert all(hit.target_id != memory_object.id for hit in hits_after_supersede)
 
     filtered_hits = storage.search_index_entries(
         ["event", "watermarking"],

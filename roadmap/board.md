@@ -1,9 +1,4 @@
 # Next
-- add-investigation-outcome-memory
-- add-semantic-regression-set
-- add-memory-lifecycle-basics
-
-# Later
 - add-tiered-memory-extension
 
 # Ideas
@@ -11,6 +6,9 @@
 - idea-optional-embedding-provider-support
 
 # Done
+- add-memory-lifecycle-basics
+- add-semantic-regression-set
+- add-investigation-outcome-memory
 - add-agent-event-contract-and-compact-query-results
 - add-llm-backed-semantic-plugin
 - add-first-typed-memory-decision

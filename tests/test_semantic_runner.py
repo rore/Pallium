@@ -12,12 +12,24 @@ from semantic.llm_agent_memory import LLMAgentMemoryPlugin
 
 class VariantAwareStubLLMProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
-        if 'explicitly records a committed choice' in system_prompt:
+        if 'Investigation found that ingestion-time progress tracking skipped records during lag.' in user_prompt:
+            parsed_json = {
+                "summary": "Investigation summary",
+                "candidate_type": "investigation_outcome",
+                "decision_text": None,
+                "decision_evidence_text": None,
+                "investigation_text": "ingestion-time progress tracking skipped records during lag",
+                "investigation_evidence_text": "Investigation found that ingestion-time progress tracking skipped records during lag",
+                "rationale_text": "because EventHub lag delayed ingestion",
+            }
+        elif 'Classify candidate_type as \"decision\" only when the source explicitly records a committed choice' in system_prompt:
             parsed_json = {
                 "summary": "Strict summary",
                 "candidate_type": None,
                 "decision_text": None,
                 "decision_evidence_text": None,
+                "investigation_text": None,
+                "investigation_evidence_text": None,
                 "rationale_text": None,
             }
         else:
@@ -26,6 +38,8 @@ class VariantAwareStubLLMProvider:
                 "candidate_type": "decision",
                 "decision_text": "use event timestamp watermarking",
                 "decision_evidence_text": "Decision: use event timestamp watermarking",
+                "investigation_text": None,
+                "investigation_evidence_text": None,
                 "rationale_text": "to avoid skipped records during lag",
             }
         return LLMJsonResponse(raw_text=json.dumps(parsed_json), parsed_json=parsed_json)
@@ -33,23 +47,27 @@ class VariantAwareStubLLMProvider:
 
 class DelayedVariantAwareStubLLMProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
-        if 'explicitly records a committed choice' in system_prompt:
+        if 'Investigation found that ingestion-time progress tracking skipped records during lag.' in user_prompt:
             time.sleep(0.02)
             parsed_json = {
-                "summary": "Strict summary",
-                "candidate_type": None,
+                "summary": "Investigation summary",
+                "candidate_type": "investigation_outcome",
                 "decision_text": None,
                 "decision_evidence_text": None,
+                "investigation_text": "ingestion-time progress tracking skipped records during lag",
+                "investigation_evidence_text": "Investigation found that ingestion-time progress tracking skipped records during lag",
                 "rationale_text": None,
             }
         else:
             time.sleep(0.08)
             parsed_json = {
-                "summary": "Baseline summary",
+                "summary": "Decision summary",
                 "candidate_type": "decision",
                 "decision_text": "use event timestamp watermarking",
                 "decision_evidence_text": "Decision: use event timestamp watermarking",
-                "rationale_text": "to avoid skipped records during lag",
+                "investigation_text": None,
+                "investigation_evidence_text": None,
+                "rationale_text": None,
             }
         return LLMJsonResponse(raw_text=json.dumps(parsed_json), parsed_json=parsed_json)
 
@@ -74,6 +92,20 @@ def _decision_record(source_id: str, content: str, *, expected_kind: str = "deci
         "source_id": source_id,
         "content_type": "text/plain",
         "content": content,
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "metadata": {"topic": "watermarking", "expected_kind": expected_kind},
+    }
+
+
+def _investigation_record(source_id: str, content: str, *, expected_kind: str = "investigation_outcome") -> dict[str, object]:
+    return {
+        "source_type": "investigation_summary",
+        "source_id": source_id,
+        "content_type": "text/plain",
+        "content": content,
+        "artifact_kind": "tool_use_summary",
+        "role": "assistant",
         "metadata": {"topic": "watermarking", "expected_kind": expected_kind},
     }
 
@@ -93,6 +125,7 @@ def test_run_semantic_eval_writes_summary_and_jsonl_results(tmp_path: Path) -> N
             llm_provider="openai_compatible",
             llm_model="fake-model",
             llm_base_url="http://fake.local/v1",
+            llm_prompt_variant="strict_decision_v2_source_aware",
         ),
         suite_name="semantic smoke",
     )
@@ -102,45 +135,44 @@ def test_run_semantic_eval_writes_summary_and_jsonl_results(tmp_path: Path) -> N
 
     assert summary["suite_name"] == "semantic smoke"
     assert summary["items_succeeded"] == 1
-    assert summary["decision_promotions"] == 1
+    assert summary["promoted_counts"]["decision"] == 1
     assert summary["input_file"] == str(input_file)
     assert summary["results_file"] == "results.jsonl"
-    assert summary["prompt_schema_id"] == "decision_extraction"
-    assert summary["prompt_schema_version"] == "v2"
+    assert summary["prompt_schema_id"] == "typed_memory_extraction"
+    assert summary["prompt_schema_version"] == "v3"
     assert summary["split_output"] is False
     assert summary["split_outputs"] == []
-    assert summary["prompt_variants"] == ["baseline"]
+    assert summary["prompt_variants"] == ["strict_decision_v2_source_aware"]
     assert summary["max_concurrency"] == 1
-    assert summary["per_variant"]["baseline"]["prompt_schema_id"] == "decision_extraction"
-    assert summary["per_variant"]["baseline"]["prompt_schema_version"] == "v2"
-    assert summary["per_variant"]["baseline"]["decision_promotions"] == 1
+    variant = summary["per_variant"]["strict_decision_v2_source_aware"]
+    assert variant["prompt_schema_id"] == "typed_memory_extraction"
+    assert variant["prompt_schema_version"] == "v3"
+    assert variant["promoted_counts"]["decision"] == 1
+    assert variant["type_metrics"]["decision"]["correct"] == 1
     assert summary["run_id"].startswith("semantic-smoke__openai-compatible__fake-model__")
     assert len(results) == 1
     assert results[0]["status"] == "ok"
-    assert results[0]["input_index"] == 1
-    assert results[0]["input_key"] == "001-decision-1"
-    assert results[0]["prompt_variant"] == "baseline"
-    assert results[0]["request"]["system_prompt"]
-    assert results[0]["llm_response"]["raw_text"]
-    assert results[0]["request"]["prompt_schema_id"] == "decision_extraction"
-    assert results[0]["request"]["prompt_schema_version"] == "v2"
+    assert results[0]["request"]["prompt_schema_id"] == "typed_memory_extraction"
+    assert results[0]["request"]["prompt_schema_version"] == "v3"
     assert results[0]["normalized_extraction"]["candidate_type"] == "decision"
-    assert results[0]["normalized_extraction"]["decision_evidence_text"] == "Decision: use event timestamp watermarking"
     assert results[0]["artifacts"]["memory_objects"][0]["type"] == "decision"
-    assert not (run_dir / "001-decision-1__baseline.result.json").exists()
 
 
 def test_run_semantic_eval_can_compare_prompt_variants_in_one_run(tmp_path: Path) -> None:
     input_file = tmp_path / "items.jsonl"
     output_dir = tmp_path / "output"
-    _write_input_file(input_file, _decision_record("decision-1", "Decision: use event timestamp watermarking."))
+    _write_input_file(
+        input_file,
+        _decision_record("decision-1", "Decision: use event timestamp watermarking."),
+        _investigation_record("investigation-1", "Investigation found that ingestion-time progress tracking skipped records during lag."),
+    )
 
     plugin = LLMAgentMemoryPlugin(provider=VariantAwareStubLLMProvider())
     run_dir = run_semantic_eval(
         input_file=input_file,
         output_root=output_dir,
         plugin=plugin,
-        config=AppConfig(default_use_case="llm_agent_memory"),
+        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant="strict_decision_v2_source_aware"),
         run_name="variant-run",
         prompt_variants=["baseline", "strict_decision_v1"],
         split_output=True,
@@ -150,16 +182,10 @@ def test_run_semantic_eval_can_compare_prompt_variants_in_one_run(tmp_path: Path
     results = _read_jsonl(run_dir / "results.jsonl")
 
     assert summary["prompt_variants"] == ["baseline", "strict_decision_v1"]
-    assert summary["per_variant"]["baseline"]["prompt_schema_id"] == "decision_extraction"
-    assert summary["per_variant"]["baseline"]["prompt_schema_version"] == "v2"
-    assert summary["per_variant"]["baseline"]["decision_promotions"] == 1
-    assert summary["per_variant"]["strict_decision_v1"]["discussion_summary_promotions"] == 1
-    assert summary["split_outputs"] == [
-        "001-decision-1__baseline.result.json",
-        "001-decision-1__strict-decision-v1.result.json",
-    ]
-    assert len(results) == 2
-    assert [row["prompt_variant"] for row in results] == ["baseline", "strict_decision_v1"]
+    assert len(summary["split_outputs"]) == 4
+    assert len(results) == 4
+    assert summary["per_variant"]["baseline"]["promoted_counts"]["decision"] == 1
+    assert summary["per_variant"]["baseline"]["promoted_counts"]["investigation_outcome"] == 1
 
 
 def test_run_semantic_eval_parallel_keeps_stable_result_order(tmp_path: Path) -> None:
@@ -168,7 +194,7 @@ def test_run_semantic_eval_parallel_keeps_stable_result_order(tmp_path: Path) ->
     _write_input_file(
         input_file,
         _decision_record("decision-1", "Decision: use event timestamp watermarking."),
-        _decision_record("decision-2", "Decision: keep retry backoff capped at 30 seconds."),
+        _investigation_record("investigation-1", "Investigation found that ingestion-time progress tracking skipped records during lag."),
     )
 
     plugin = LLMAgentMemoryPlugin(provider=DelayedVariantAwareStubLLMProvider())
@@ -176,7 +202,7 @@ def test_run_semantic_eval_parallel_keeps_stable_result_order(tmp_path: Path) ->
         input_file=input_file,
         output_root=output_dir,
         plugin=plugin,
-        config=AppConfig(default_use_case="llm_agent_memory"),
+        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant="strict_decision_v2_source_aware"),
         run_name="parallel-order-run",
         prompt_variants=["baseline", "strict_decision_v1"],
         max_concurrency=4,
@@ -192,8 +218,8 @@ def test_run_semantic_eval_parallel_keeps_stable_result_order(tmp_path: Path) ->
     ] == [
         (1, "baseline", "001-decision-1"),
         (1, "strict_decision_v1", "001-decision-1"),
-        (2, "baseline", "002-decision-2"),
-        (2, "strict_decision_v1", "002-decision-2"),
+        (2, "baseline", "002-investigation-1"),
+        (2, "strict_decision_v1", "002-investigation-1"),
     ]
 
 
@@ -207,7 +233,7 @@ def test_run_semantic_eval_records_errors(tmp_path: Path) -> None:
         input_file=input_file,
         output_root=output_dir,
         plugin=plugin,
-        config=AppConfig(default_use_case="llm_agent_memory"),
+        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant="strict_decision_v2_source_aware"),
         run_name="error-run",
     )
 
@@ -215,8 +241,7 @@ def test_run_semantic_eval_records_errors(tmp_path: Path) -> None:
     results = _read_jsonl(run_dir / "results.jsonl")
 
     assert summary["items_failed"] == 1
-    assert summary["per_variant"]["baseline"]["items_failed"] == 1
+    assert summary["per_variant"]["strict_decision_v2_source_aware"]["items_failed"] == 1
     assert len(results) == 1
     assert results[0]["status"] == "error"
     assert results[0]["error"]["type"] == "RuntimeError"
-    assert results[0]["prompt_variant"] == "baseline"

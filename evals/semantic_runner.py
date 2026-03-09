@@ -19,6 +19,7 @@ from semantic.llm_agent_memory import LLMAgentMemoryPlugin, PROMPT_SCHEMA_ID, PR
 DEFAULT_INPUT_FILE = Path("evals/semantic/input/items.jsonl")
 DEFAULT_OUTPUT_DIR = Path("evals/semantic/output")
 SANITIZE_PATTERN = re.compile(r"[^a-z0-9]+")
+TRACKED_TYPED_KINDS = ("decision", "investigation_outcome")
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,6 @@ class EvalResult:
     promoted_type: str | None
 
 
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run LLM semantic evaluation over input fixtures.")
     parser.add_argument("--input-file", type=Path, default=DEFAULT_INPUT_FILE)
@@ -45,7 +45,7 @@ def main() -> int:
     parser.add_argument("--use-case", default="llm_agent_memory")
     parser.add_argument("--suite-name", default="semantic-eval")
     parser.add_argument("--run-name", default=None)
-    parser.add_argument("--prompt-variants", default="baseline")
+    parser.add_argument("--prompt-variants", default=None)
     parser.add_argument("--max-concurrency", type=int, default=1)
     parser.add_argument("--split-output", action="store_true")
     args = parser.parse_args()
@@ -56,7 +56,11 @@ def main() -> int:
     if not isinstance(plugin, LLMAgentMemoryPlugin):
         raise ValueError(f"Use case '{args.use_case}' is not an LLM-backed semantic plugin")
 
-    prompt_variants = [item.strip() for item in args.prompt_variants.split(",") if item.strip()]
+    prompt_variants = (
+        [item.strip() for item in args.prompt_variants.split(",") if item.strip()]
+        if args.prompt_variants
+        else [plugin.prompt_variant]
+    )
     run_dir = run_semantic_eval(
         input_file=args.input_file,
         output_root=args.output_dir,
@@ -70,7 +74,6 @@ def main() -> int:
     )
     print(run_dir)
     return 0
-
 
 
 def run_semantic_eval(
@@ -122,27 +125,13 @@ def run_semantic_eval(
         "items_total": len(tasks),
         "items_succeeded": 0,
         "items_failed": 0,
-        "decision_promotions": 0,
-        "discussion_summary_promotions": 0,
+        "promoted_counts": {"decision": 0, "investigation_outcome": 0, "discussion_summary": 0},
         "split_outputs": [],
         "per_variant": {},
     }
 
     for variant in resolved_variants:
-        summary["per_variant"][variant] = {
-            "prompt_schema_id": PROMPT_SCHEMA_ID,
-            "prompt_schema_version": PROMPT_SCHEMA_VERSION,
-            "items_total": len(records),
-            "items_succeeded": 0,
-            "items_failed": 0,
-            "decision_promotions": 0,
-            "discussion_summary_promotions": 0,
-            "expected_decision": 0,
-            "expected_non_decision": 0,
-            "correct": 0,
-            "false_positive": 0,
-            "false_negative": 0,
-        }
+        summary["per_variant"][variant] = _empty_variant_summary(items_total=len(records))
 
     with results_path.open("w", encoding="utf-8") as results_file:
         for result in results:
@@ -150,20 +139,14 @@ def run_semantic_eval(
             payload = result.payload
             variant_summary = summary["per_variant"][task.prompt_variant]
             expected_kind = _expected_kind(task.source_item)
-            if expected_kind == "decision":
-                variant_summary["expected_decision"] += 1
-            elif expected_kind is not None:
-                variant_summary["expected_non_decision"] += 1
 
             if payload["status"] == "ok":
                 summary["items_succeeded"] += 1
                 variant_summary["items_succeeded"] += 1
-                if result.promoted_type == "decision":
-                    summary["decision_promotions"] += 1
-                    variant_summary["decision_promotions"] += 1
-                elif result.promoted_type == "discussion_summary":
-                    summary["discussion_summary_promotions"] += 1
-                    variant_summary["discussion_summary_promotions"] += 1
+                if result.promoted_type in summary["promoted_counts"]:
+                    summary["promoted_counts"][result.promoted_type] += 1
+                if result.promoted_type in variant_summary["promoted_counts"]:
+                    variant_summary["promoted_counts"][result.promoted_type] += 1
                 _update_expected_metrics(variant_summary, expected_kind=expected_kind, predicted_type=result.promoted_type)
             else:
                 summary["items_failed"] += 1
@@ -181,7 +164,6 @@ def run_semantic_eval(
     return run_dir
 
 
-
 def _build_tasks(*, records: list[dict[str, Any]], prompt_variants: list[str]) -> list[EvalTask]:
     tasks: list[EvalTask] = []
     for index, payload in enumerate(records, start=1):
@@ -191,6 +173,14 @@ def _build_tasks(*, records: list[dict[str, Any]], prompt_variants: list[str]) -
             content_type=payload["content_type"],
             content=payload["content"],
             metadata=payload.get("metadata"),
+            occurred_at=_parse_datetime(payload.get("occurred_at")),
+            actor_ref=payload.get("actor_ref"),
+            role=payload.get("role"),
+            container_ref=payload.get("container_ref"),
+            thread_ref=payload.get("thread_ref"),
+            session_ref=payload.get("session_ref"),
+            source_ref=payload.get("source_ref"),
+            artifact_kind=payload.get("artifact_kind"),
         )
         input_key = _build_input_key(index=index, source_id=source_item.source_id)
         for prompt_order, variant in enumerate(prompt_variants):
@@ -206,7 +196,6 @@ def _build_tasks(*, records: list[dict[str, Any]], prompt_variants: list[str]) -
     return tasks
 
 
-
 def _execute_tasks(*, tasks: list[EvalTask], plugin: LLMAgentMemoryPlugin, max_concurrency: int) -> list[EvalResult]:
     if max_concurrency == 1:
         return [_evaluate_task(task, plugin) for task in tasks]
@@ -219,7 +208,6 @@ def _execute_tasks(*, tasks: list[EvalTask], plugin: LLMAgentMemoryPlugin, max_c
 
     results.sort(key=lambda item: (item.task.input_index, item.task.prompt_order))
     return results
-
 
 
 def _evaluate_task(task: EvalTask, plugin: LLMAgentMemoryPlugin) -> EvalResult:
@@ -252,7 +240,6 @@ def _evaluate_task(task: EvalTask, plugin: LLMAgentMemoryPlugin) -> EvalResult:
         return EvalResult(task=task, payload=payload, promoted_type=None)
 
 
-
 def _load_input_records(input_file: Path) -> Iterable[dict[str, Any]]:
     for line in input_file.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
@@ -261,17 +248,14 @@ def _load_input_records(input_file: Path) -> Iterable[dict[str, Any]]:
         yield json.loads(stripped)
 
 
-
 def _build_run_id(*, suite_name: str, provider: str | None, model: str | None) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     parts = [suite_name, provider or "unknown-provider", model or "unknown-model", timestamp]
     return "__".join(_slugify(part) for part in parts)
 
 
-
 def _build_input_key(*, index: int, source_id: str) -> str:
     return f"{index:03d}-{_slugify(source_id)}"
-
 
 
 def _expected_kind(source_item: Any) -> str | None:
@@ -279,31 +263,54 @@ def _expected_kind(source_item: Any) -> str | None:
     expected_kind = metadata.get("expected_kind")
     if not isinstance(expected_kind, str):
         return None
-    return expected_kind.strip() or None
+    normalized = expected_kind.strip()
+    return normalized or None
 
+
+def _empty_variant_summary(*, items_total: int) -> dict[str, Any]:
+    return {
+        "prompt_schema_id": PROMPT_SCHEMA_ID,
+        "prompt_schema_version": PROMPT_SCHEMA_VERSION,
+        "items_total": items_total,
+        "items_succeeded": 0,
+        "items_failed": 0,
+        "overall_correct": 0,
+        "promoted_counts": {"decision": 0, "investigation_outcome": 0, "discussion_summary": 0},
+        "expected_counts": {"decision": 0, "investigation_outcome": 0, "discussion_summary": 0},
+        "type_metrics": {
+            kind: {"expected": 0, "predicted": 0, "correct": 0, "false_positive": 0, "false_negative": 0}
+            for kind in TRACKED_TYPED_KINDS
+        },
+    }
 
 
 def _update_expected_metrics(variant_summary: dict[str, Any], *, expected_kind: str | None, predicted_type: str | None) -> None:
-    if expected_kind is None or predicted_type is None:
-        return
-    if expected_kind == "decision" and predicted_type == "decision":
-        variant_summary["correct"] += 1
-        return
-    if expected_kind != "decision" and predicted_type != "decision":
-        variant_summary["correct"] += 1
-        return
-    if expected_kind != "decision" and predicted_type == "decision":
-        variant_summary["false_positive"] += 1
-        return
-    if expected_kind == "decision" and predicted_type != "decision":
-        variant_summary["false_negative"] += 1
+    if expected_kind is not None and expected_kind in variant_summary["expected_counts"]:
+        variant_summary["expected_counts"][expected_kind] += 1
 
+    for kind in TRACKED_TYPED_KINDS:
+        expected = expected_kind == kind
+        predicted = predicted_type == kind
+        if expected:
+            variant_summary["type_metrics"][kind]["expected"] += 1
+        if predicted:
+            variant_summary["type_metrics"][kind]["predicted"] += 1
+        if expected and predicted:
+            variant_summary["type_metrics"][kind]["correct"] += 1
+        elif not expected and predicted:
+            variant_summary["type_metrics"][kind]["false_positive"] += 1
+        elif expected and not predicted:
+            variant_summary["type_metrics"][kind]["false_negative"] += 1
+
+    if expected_kind is None:
+        return
+    if predicted_type == expected_kind:
+        variant_summary["overall_correct"] += 1
 
 
 def _slugify(value: str) -> str:
     normalized = SANITIZE_PATTERN.sub("-", value.strip().lower()).strip("-")
     return normalized or "unknown"
-
 
 
 def _serialize(value: Any) -> Any:
@@ -316,6 +323,15 @@ def _serialize(value: Any) -> Any:
     if hasattr(value, "isoformat"):
         return value.isoformat()
     return value
+
+
+def _parse_datetime(value: Any):
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("occurred_at must be an ISO datetime string")
+    normalized = value.replace("Z", "+00:00")
+    return datetime.fromisoformat(normalized)
 
 
 if __name__ == "__main__":

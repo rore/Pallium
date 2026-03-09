@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from core.contracts import IngestResult, QueryResult, build_query_filters, build_source_item
-from core.models import IndexEntry, QueryFilters
+from core.models import IndexEntry, QueryFilters, Relation
 from retrieval.base import RetrievalProvider
 from semantic.base import SemanticPlugin
 from storage.base import StorageProvider
@@ -138,3 +138,21 @@ class PalliumService:
             session_ref=session_ref,
         )
         return QueryResult(results=self._retrieval.query(text=text, limit=limit, filters=filters))
+
+    def supersede_memory_object(self, superseded_id: str, replacement_id: str) -> None:
+        superseded = self._storage.get_memory_object(superseded_id)
+        replacement = self._storage.get_memory_object(replacement_id)
+        if superseded.type != replacement.type:
+            raise ValueError("Supersession requires matching memory object types")
+        if superseded.lifecycle == "superseded":
+            return
+        self._storage.update_memory_object_lifecycle(superseded_id, "superseded")
+        self._storage.create_relation(
+            Relation(
+                from_kind="memory_object",
+                from_id=replacement_id,
+                relation_type="supersedes",
+                to_kind="memory_object",
+                to_id=superseded_id,
+            )
+        )

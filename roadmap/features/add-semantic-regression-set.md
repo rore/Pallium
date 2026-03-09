@@ -1,10 +1,10 @@
 ---
 id: add-semantic-regression-set
 title: Add a committed semantic regression set
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary
@@ -36,4 +36,6 @@ Semantic quality is now the main product risk. The eval harness exists, but the 
 
 ## Notes
 
-Sources: `docs/context/lessons.md`, `docs/context/state.md`, `README.md`
+Completed on 2026-03-09.
+Current recorded baseline: `gpt-5-mini` + `strict_decision_v2_source_aware` at `27 / 30` overall correct.
+See `evals/semantic/baseline.md`.

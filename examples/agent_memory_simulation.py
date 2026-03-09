@@ -23,22 +23,22 @@ SAMPLE_ITEMS = [
         "source_ref": "https://example.test/slack/thread-001-msg-1",
     },
     {
-        "source_type": "chat_message",
-        "source_id": "thread-001-msg-2",
+        "source_type": "tool_summary",
+        "source_id": "artifact-001",
         "content_type": "text/plain",
-        "content": "Event time seems safer because ingestion time can skip records when EventHub lag spikes.",
+        "content": "Investigation found that ingestion-time progress tracking skipped records during lag because EventHub lag delayed ingestion.",
         "metadata": {"topic": "watermarking"},
-        "artifact_kind": "message",
-        "role": "user",
+        "artifact_kind": "tool_use_summary",
+        "role": "assistant",
         "container_ref": "slack:C123",
         "thread_ref": "slack:C123:1730000000.000100",
         "session_ref": "agent-session-1",
-        "actor_ref": "slack:U456",
-        "source_ref": "https://example.test/slack/thread-001-msg-2",
+        "actor_ref": "agent:assistant",
+        "source_ref": "https://example.test/slack/artifact-001",
     },
     {
         "source_type": "assistant_artifact",
-        "source_id": "artifact-001",
+        "source_id": "artifact-002",
         "content_type": "text/plain",
         "content": "Decision: use event timestamp watermarking for exports to avoid skipped records during lag.",
         "metadata": {"topic": "watermarking"},
@@ -48,7 +48,7 @@ SAMPLE_ITEMS = [
         "thread_ref": "slack:C123:1730000000.000100",
         "session_ref": "agent-session-1",
         "actor_ref": "agent:assistant",
-        "source_ref": "https://example.test/slack/artifact-001",
+        "source_ref": "https://example.test/slack/artifact-002",
     },
 ]
 
@@ -69,7 +69,7 @@ def main() -> int:
         result = _post("/items", item)
         print(f"ingested {item['source_id']}: {result['memory_object_ids']}")
 
-    query_result = _post(
+    decision_query = _post(
         "/query",
         {
             "text": "why did we choose event timestamp watermarking?",
@@ -78,7 +78,20 @@ def main() -> int:
             "session_ref": "agent-session-1",
         },
     )
-    print(json.dumps(query_result, indent=2))
+    print("decision query")
+    print(json.dumps(decision_query, indent=2))
+
+    investigation_query = _post(
+        "/query",
+        {
+            "text": "what did the investigation find about skipped records?",
+            "limit": 6,
+            "thread_ref": "slack:C123:1730000000.000100",
+            "session_ref": "agent-session-1",
+        },
+    )
+    print("investigation query")
+    print(json.dumps(investigation_query, indent=2))
     return 0
 
 

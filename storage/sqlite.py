@@ -55,6 +55,7 @@ class MemoryObjectRecord(Base):
     schema_id = Column(String, nullable=False)
     schema_version = Column(String, nullable=False)
     payload_json = Column(Text, nullable=False)
+    lifecycle = Column(String, nullable=False, default="active")
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 
@@ -90,6 +91,9 @@ class SQLiteStorageProvider(StorageProvider):
         "source_ref": "ALTER TABLE source_items ADD COLUMN source_ref VARCHAR",
         "artifact_kind": "ALTER TABLE source_items ADD COLUMN artifact_kind VARCHAR",
     }
+    _MEMORY_OBJECT_MIGRATIONS = {
+        "lifecycle": "ALTER TABLE memory_objects ADD COLUMN lifecycle VARCHAR DEFAULT 'active'",
+    }
 
     def __init__(self, database_url: str) -> None:
         connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
@@ -97,6 +101,7 @@ class SQLiteStorageProvider(StorageProvider):
         self._session_factory = sessionmaker(self._engine, expire_on_commit=False, class_=Session)
         Base.metadata.create_all(self._engine)
         self._ensure_source_item_columns()
+        self._ensure_memory_object_columns()
 
     def find_source_item(self, source_type: str, source_id: str) -> SourceItem | None:
         with self._session_factory() as session:
@@ -172,6 +177,7 @@ class SQLiteStorageProvider(StorageProvider):
             schema_id=memory_object.schema_id,
             schema_version=memory_object.schema_version,
             payload_json=self._dumps(memory_object.payload) or "{}",
+            lifecycle=memory_object.lifecycle,
             created_at=memory_object.created_at,
         )
         with self._session_factory.begin() as session:
@@ -183,6 +189,13 @@ class SQLiteStorageProvider(StorageProvider):
             if record is None:
                 raise KeyError(memory_object_id)
             return self._to_memory_object(record)
+
+    def update_memory_object_lifecycle(self, memory_object_id: str, lifecycle: str) -> None:
+        with self._session_factory.begin() as session:
+            record = session.get(MemoryObjectRecord, memory_object_id)
+            if record is None:
+                raise KeyError(memory_object_id)
+            record.lifecycle = lifecycle
 
     def list_memory_objects_for_source_item(self, source_item_id: str) -> list[MemoryObject]:
         with self._session_factory() as session:
@@ -287,6 +300,10 @@ class SQLiteStorageProvider(StorageProvider):
         return [self._to_evidence_reference(record) for record in records]
 
     def _matches_filters(self, target_kind: str, target_id: str, filters: QueryFilters | None) -> bool:
+        if target_kind == "memory_object":
+            memory_object = self.get_memory_object(target_id)
+            if memory_object.lifecycle != "active":
+                return False
         if filters is None:
             return True
         if target_kind == "source_item":
@@ -336,6 +353,16 @@ class SQLiteStorageProvider(StorageProvider):
                 if column_name not in existing_columns:
                     connection.execute(text(migration_sql))
 
+    def _ensure_memory_object_columns(self) -> None:
+        with self._engine.begin() as connection:
+            existing_columns = {
+                row[1]
+                for row in connection.execute(text("PRAGMA table_info(memory_objects)"))
+            }
+            for column_name, migration_sql in self._MEMORY_OBJECT_MIGRATIONS.items():
+                if column_name not in existing_columns:
+                    connection.execute(text(migration_sql))
+
     @staticmethod
     def _to_source_item(record: SourceItemRecord) -> SourceItem:
         occurred_at = record.occurred_at
@@ -379,6 +406,7 @@ class SQLiteStorageProvider(StorageProvider):
             schema_id=record.schema_id,
             schema_version=record.schema_version,
             payload=SQLiteStorageProvider._loads(record.payload_json),
+            lifecycle=record.lifecycle or "active",
             created_at=record.created_at,
         )
 

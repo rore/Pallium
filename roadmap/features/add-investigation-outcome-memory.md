@@ -1,10 +1,10 @@
 ---
 id: add-investigation-outcome-memory
 title: Add investigation outcome memory
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary
@@ -36,4 +36,5 @@ The current semantic layer can promote `decision`, but many high-value agent eve
 
 ## Notes
 
+Completed on 2026-03-09.
 Sources: `roadmap/scope.md`, `docs/context/architecture.md`, `docs/context/lessons.md`
