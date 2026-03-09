@@ -66,6 +66,23 @@ Core entities:
 
 The core does not know what a decision, incident, requirement, or pattern is.
 
+## Target Model Refinement
+
+The intended long-term shape is:
+
+- SourceItem is the evidence layer
+- Annotation is broad and additive
+- MemoryObject is promoted reusable knowledge
+- Relation keeps evidence and linkage explicit
+- IndexEntry can target both SourceItem and MemoryObject
+
+Important implications:
+
+- a source item does not always become memory
+- a source item may produce zero, one, or multiple memory objects
+- a memory object should be able to link to one or more supporting source items
+- later, higher-level memory objects may also be backed by multiple lower-level memory objects
+
 ## Semantic Use-Case Layer
 
 The semantic layer defines meaning for a given use case.
@@ -90,6 +107,9 @@ Current generic fields for typed semantic artifacts:
 
 The first implementation uses a simple in-repo code plugin pattern, not a
 dynamic plugin marketplace.
+
+Promotion language should stay disciplined: a semantic plugin applies promotion
+rules and decides whether extracted signals become durable memory objects.
 
 ## Producers and Consumers
 
@@ -116,10 +136,10 @@ write and read behavior are exercised end to end.
 1. Producer submits a normalized SourceItem
 2. Core persists the raw item and provenance
 3. Semantic layer creates Annotation objects
-4. Semantic layer promotes a MemoryObject
+4. Semantic layer may promote one or more MemoryObject instances
 5. Core stores Relation and IndexEntry objects
 6. Consumer queries Pallium
-7. Retrieval combines lexical signals with evidence lookups
+7. Retrieval combines lexical signals with evidence lookups today, and will later combine structured filters and relation-aware retrieval
 8. Pallium returns compact evidence-backed results
 
 ## Retrieval Model
@@ -137,6 +157,21 @@ Target later direction:
 4. optional vector retrieval
 
 Returned results stay compact and cite supporting evidence.
+
+The intended index model allows retrieval over both raw evidence and promoted
+memory.
+
+## Relation Model
+
+Relations should stay explicit and boring early on.
+
+Stable early relation types:
+
+- annotates
+- supported_by
+- mentions
+- relates_to
+- derived_from
 
 ## Storage and Jobs
 

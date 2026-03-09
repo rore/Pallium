@@ -98,6 +98,27 @@ What was proven:
 - POST /query returns evidence-backed memory results
 - the simulation script exercises the live HTTP path end to end
 
+### 2026-03-09 - Memory objects are explicitly evidence-backed
+
+The intended model is that memory objects always point to one or more
+supporting source items.
+
+Why:
+
+- keeps durable memory grounded in evidence
+- supports later many-to-many evidence relationships without changing the core shape
+- prepares the model for later synthesis and consolidation
+
+### 2026-03-09 - Promotion is plugin-driven and selective
+
+A source item does not automatically become a memory object.
+
+Why:
+
+- preserves the distinction between evidence, interpretation, and durable memory
+- keeps the generic core disciplined
+- avoids turning the system into a store of low-value promoted summaries
+
 ## Open
 
 ### Ingestion policy
