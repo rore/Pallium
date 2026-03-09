@@ -68,3 +68,13 @@ LLM prompt logic is part of the semantic package, not just ephemeral runtime con
 Solution:
 Store prompt schema id, prompt schema version, and prompt variant in LLM-derived artifacts and eval traces.
 
+## 2026-03-09 - Semantic eval speed is dominated by remote LLM latency
+
+Problem:
+Prompt bakeoffs and larger semantic eval batches became too slow for fast iteration when every LLM call ran sequentially.
+
+Why:
+The runtime cost is mostly network and provider latency, not local Python execution. Running prompt variants over tens of items multiplies the total wall-clock time quickly.
+
+Solution:
+Run semantic eval with bounded concurrency and keep the output order stable. Use `--max-concurrency` for faster bakeoffs while still writing `results.jsonl` in deterministic input/prompt order.

@@ -162,11 +162,18 @@ To run a different batch file:
 .\.venv\Scripts\python.exe -m evals.semantic_runner --input-file path\to\items.jsonl
 ```
 
+To speed up larger comparisons with bounded concurrency:
+
+```powershell
+.\.venv\Scripts\python.exe -m evals.semantic_runner --prompt-variants baseline,strict_decision_v2_source_aware --max-concurrency 4
+```
+
 Defaults:
 
 - input file: [evals/semantic/input/items.jsonl](C:/Dev/rore/Pallium/evals/semantic/input/items.jsonl)
 - output runs: `evals/semantic/output/<run-id>/`
 - default run id shape: `<suite-name>__<provider>__<model>__<timestamp>`
+- default concurrency: `1` (increase with `--max-concurrency` for faster prompt bakeoffs)
 
 Each run writes by default:
 

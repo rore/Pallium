@@ -3,7 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from dataclasses import asdict, is_dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -11,12 +12,30 @@ from typing import Any, Iterable
 from app.config import AppConfig
 from app.dependencies import build_semantic_plugins
 from core.contracts import build_source_item
+from core.models import SourceItem
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin, PROMPT_SCHEMA_ID, PROMPT_SCHEMA_VERSION
 
 
 DEFAULT_INPUT_FILE = Path("evals/semantic/input/items.jsonl")
 DEFAULT_OUTPUT_DIR = Path("evals/semantic/output")
 SANITIZE_PATTERN = re.compile(r"[^a-z0-9]+")
+
+
+@dataclass(frozen=True)
+class EvalTask:
+    input_index: int
+    input_key: str
+    prompt_order: int
+    prompt_variant: str
+    source_item: SourceItem
+
+
+@dataclass(frozen=True)
+class EvalResult:
+    task: EvalTask
+    payload: dict[str, Any]
+    promoted_type: str | None
+
 
 
 def main() -> int:
@@ -27,6 +46,7 @@ def main() -> int:
     parser.add_argument("--suite-name", default="semantic-eval")
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--prompt-variants", default="baseline")
+    parser.add_argument("--max-concurrency", type=int, default=1)
     parser.add_argument("--split-output", action="store_true")
     args = parser.parse_args()
 
@@ -45,10 +65,12 @@ def main() -> int:
         suite_name=args.suite_name,
         run_name=args.run_name,
         prompt_variants=prompt_variants,
+        max_concurrency=args.max_concurrency,
         split_output=args.split_output,
     )
     print(run_dir)
     return 0
+
 
 
 def run_semantic_eval(
@@ -60,10 +82,13 @@ def run_semantic_eval(
     suite_name: str = "semantic-eval",
     run_name: str | None = None,
     prompt_variants: list[str] | None = None,
+    max_concurrency: int = 1,
     split_output: bool = False,
 ) -> Path:
     if not input_file.exists():
         raise FileNotFoundError(f"Input file does not exist: {input_file}")
+    if max_concurrency < 1:
+        raise ValueError("max_concurrency must be at least 1")
 
     resolved_variants = prompt_variants or [plugin.prompt_variant]
     run_id = run_name or _build_run_id(
@@ -74,6 +99,10 @@ def run_semantic_eval(
     run_dir = output_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     results_path = run_dir / "results.jsonl"
+
+    records = list(_load_input_records(input_file))
+    tasks = _build_tasks(records=records, prompt_variants=resolved_variants)
+    results = _execute_tasks(tasks=tasks, plugin=plugin, max_concurrency=max_concurrency)
 
     summary = {
         "suite_name": suite_name,
@@ -87,9 +116,10 @@ def run_semantic_eval(
         "prompt_variants": resolved_variants,
         "prompt_schema_id": PROMPT_SCHEMA_ID,
         "prompt_schema_version": PROMPT_SCHEMA_VERSION,
+        "max_concurrency": max_concurrency,
         "results_file": results_path.name,
         "split_output": split_output,
-        "items_total": 0,
+        "items_total": len(tasks),
         "items_succeeded": 0,
         "items_failed": 0,
         "decision_promotions": 0,
@@ -98,7 +128,6 @@ def run_semantic_eval(
         "per_variant": {},
     }
 
-    records = list(_load_input_records(input_file))
     for variant in resolved_variants:
         summary["per_variant"][variant] = {
             "prompt_schema_id": PROMPT_SCHEMA_ID,
@@ -116,71 +145,112 @@ def run_semantic_eval(
         }
 
     with results_path.open("w", encoding="utf-8") as results_file:
-        for index, payload in enumerate(records, start=1):
-            source_item = build_source_item(
-                source_type=payload["source_type"],
-                source_id=payload["source_id"],
-                content_type=payload["content_type"],
-                content=payload["content"],
-                metadata=payload.get("metadata"),
-            )
-            input_key = _build_input_key(index=index, source_id=source_item.source_id)
-            expected_kind = _expected_kind(source_item)
+        for result in results:
+            task = result.task
+            payload = result.payload
+            variant_summary = summary["per_variant"][task.prompt_variant]
+            expected_kind = _expected_kind(task.source_item)
+            if expected_kind == "decision":
+                variant_summary["expected_decision"] += 1
+            elif expected_kind is not None:
+                variant_summary["expected_non_decision"] += 1
 
-            for variant in resolved_variants:
-                variant_plugin = plugin.with_prompt_variant(variant)
-                output_payload: dict[str, Any] = {
-                    "input_index": index,
-                    "input_key": input_key,
-                    "prompt_variant": variant,
-                    "status": "ok",
-                    "source_item": _serialize(source_item),
-                }
-                summary["items_total"] += 1
-                variant_summary = summary["per_variant"][variant]
-                if expected_kind == "decision":
-                    variant_summary["expected_decision"] += 1
-                elif expected_kind is not None:
-                    variant_summary["expected_non_decision"] += 1
+            if payload["status"] == "ok":
+                summary["items_succeeded"] += 1
+                variant_summary["items_succeeded"] += 1
+                if result.promoted_type == "decision":
+                    summary["decision_promotions"] += 1
+                    variant_summary["decision_promotions"] += 1
+                elif result.promoted_type == "discussion_summary":
+                    summary["discussion_summary_promotions"] += 1
+                    variant_summary["discussion_summary_promotions"] += 1
+                _update_expected_metrics(variant_summary, expected_kind=expected_kind, predicted_type=result.promoted_type)
+            else:
+                summary["items_failed"] += 1
+                variant_summary["items_failed"] += 1
 
-                try:
-                    trace = variant_plugin.analyze_item(source_item)
-                    output_payload["request"] = _serialize(trace.request)
-                    output_payload["llm_response"] = {
-                        "raw_text": trace.response.raw_text,
-                        "parsed_json": trace.response.parsed_json,
-                    }
-                    output_payload["normalized_extraction"] = _serialize(trace.extraction)
-                    output_payload["artifacts"] = _serialize(trace.process_result)
-                    promoted_type = trace.process_result.memory_objects[0].type
-                    if promoted_type == "decision":
-                        summary["decision_promotions"] += 1
-                        variant_summary["decision_promotions"] += 1
-                    elif promoted_type == "discussion_summary":
-                        summary["discussion_summary_promotions"] += 1
-                        variant_summary["discussion_summary_promotions"] += 1
-                    summary["items_succeeded"] += 1
-                    variant_summary["items_succeeded"] += 1
-                    _update_expected_metrics(variant_summary, expected_kind=expected_kind, predicted_type=promoted_type)
-                except Exception as exc:
-                    output_payload["status"] = "error"
-                    output_payload["error"] = {
-                        "type": type(exc).__name__,
-                        "message": str(exc),
-                    }
-                    summary["items_failed"] += 1
-                    variant_summary["items_failed"] += 1
+            results_file.write(json.dumps(payload) + "\n")
 
-                results_file.write(json.dumps(output_payload) + "\n")
-
-                if split_output:
-                    output_name = f"{input_key}__{_slugify(variant)}.result.json"
-                    output_path = run_dir / output_name
-                    output_path.write_text(json.dumps(output_payload, indent=2), encoding="utf-8")
-                    summary["split_outputs"].append(output_name)
+            if split_output:
+                output_name = f"{task.input_key}__{_slugify(task.prompt_variant)}.result.json"
+                output_path = run_dir / output_name
+                output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                summary["split_outputs"].append(output_name)
 
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return run_dir
+
+
+
+def _build_tasks(*, records: list[dict[str, Any]], prompt_variants: list[str]) -> list[EvalTask]:
+    tasks: list[EvalTask] = []
+    for index, payload in enumerate(records, start=1):
+        source_item = build_source_item(
+            source_type=payload["source_type"],
+            source_id=payload["source_id"],
+            content_type=payload["content_type"],
+            content=payload["content"],
+            metadata=payload.get("metadata"),
+        )
+        input_key = _build_input_key(index=index, source_id=source_item.source_id)
+        for prompt_order, variant in enumerate(prompt_variants):
+            tasks.append(
+                EvalTask(
+                    input_index=index,
+                    input_key=input_key,
+                    prompt_order=prompt_order,
+                    prompt_variant=variant,
+                    source_item=source_item,
+                )
+            )
+    return tasks
+
+
+
+def _execute_tasks(*, tasks: list[EvalTask], plugin: LLMAgentMemoryPlugin, max_concurrency: int) -> list[EvalResult]:
+    if max_concurrency == 1:
+        return [_evaluate_task(task, plugin) for task in tasks]
+
+    results: list[EvalResult] = []
+    with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
+        futures = [executor.submit(_evaluate_task, task, plugin) for task in tasks]
+        for future in as_completed(futures):
+            results.append(future.result())
+
+    results.sort(key=lambda item: (item.task.input_index, item.task.prompt_order))
+    return results
+
+
+
+def _evaluate_task(task: EvalTask, plugin: LLMAgentMemoryPlugin) -> EvalResult:
+    variant_plugin = plugin.with_prompt_variant(task.prompt_variant)
+    payload: dict[str, Any] = {
+        "input_index": task.input_index,
+        "input_key": task.input_key,
+        "prompt_variant": task.prompt_variant,
+        "status": "ok",
+        "source_item": _serialize(task.source_item),
+    }
+
+    try:
+        trace = variant_plugin.analyze_item(task.source_item)
+        payload["request"] = _serialize(trace.request)
+        payload["llm_response"] = {
+            "raw_text": trace.response.raw_text,
+            "parsed_json": trace.response.parsed_json,
+        }
+        payload["normalized_extraction"] = _serialize(trace.extraction)
+        payload["artifacts"] = _serialize(trace.process_result)
+        promoted_type = trace.process_result.memory_objects[0].type
+        return EvalResult(task=task, payload=payload, promoted_type=promoted_type)
+    except Exception as exc:
+        payload["error"] = {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        }
+        payload["status"] = "error"
+        return EvalResult(task=task, payload=payload, promoted_type=None)
+
 
 
 def _load_input_records(input_file: Path) -> Iterable[dict[str, Any]]:
@@ -191,14 +261,17 @@ def _load_input_records(input_file: Path) -> Iterable[dict[str, Any]]:
         yield json.loads(stripped)
 
 
+
 def _build_run_id(*, suite_name: str, provider: str | None, model: str | None) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     parts = [suite_name, provider or "unknown-provider", model or "unknown-model", timestamp]
     return "__".join(_slugify(part) for part in parts)
 
 
+
 def _build_input_key(*, index: int, source_id: str) -> str:
     return f"{index:03d}-{_slugify(source_id)}"
+
 
 
 def _expected_kind(source_item: Any) -> str | None:
@@ -209,8 +282,9 @@ def _expected_kind(source_item: Any) -> str | None:
     return expected_kind.strip() or None
 
 
-def _update_expected_metrics(variant_summary: dict[str, Any], *, expected_kind: str | None, predicted_type: str) -> None:
-    if expected_kind is None:
+
+def _update_expected_metrics(variant_summary: dict[str, Any], *, expected_kind: str | None, predicted_type: str | None) -> None:
+    if expected_kind is None or predicted_type is None:
         return
     if expected_kind == "decision" and predicted_type == "decision":
         variant_summary["correct"] += 1
@@ -225,9 +299,11 @@ def _update_expected_metrics(variant_summary: dict[str, Any], *, expected_kind: 
         variant_summary["false_negative"] += 1
 
 
+
 def _slugify(value: str) -> str:
     normalized = SANITIZE_PATTERN.sub("-", value.strip().lower()).strip("-")
     return normalized or "unknown"
+
 
 
 def _serialize(value: Any) -> Any:

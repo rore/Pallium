@@ -21,6 +21,7 @@
 - current slice includes API, core service, semantic plugins, LLM provider adapters, retrieval provider, SQLite storage provider, simulation script, Bruno collection, and pytest coverage
 - current semantic behavior includes deterministic and LLM-backed `decision` promotion, with `discussion_summary` used only for non-decision extraction results
 - semantic eval uses a single JSONL input file and now defaults to `results.jsonl` plus `summary.json`, with split per-input artifacts only when explicitly requested
+- semantic eval now supports bounded concurrency for faster prompt bakeoffs while preserving deterministic result order
 - LLM-derived semantic artifacts now carry prompt schema id/version and prompt variant provenance for later maintenance
 - token budget is now treated as an explicit semantic design concern alongside prompt quality
 - the LLM-backed path no longer falls back to deterministic extraction on provider or parsing failure
@@ -28,6 +29,7 @@
 ## Verification Notes
 
 - pytest passes locally in the repo venv
+- semantic eval runner is verified with bounded concurrency and still writes results in deterministic input/prompt order
 - the live HTTP flow succeeds against a fresh temporary database with the deterministic plugin
 - the live HTTP flow also succeeds with the LLM-backed plugin against a local fake OpenAI-compatible provider
 - a real OpenAI-backed run also succeeded against a fresh temporary database

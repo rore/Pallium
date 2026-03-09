@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from app.config import AppConfig
@@ -20,6 +21,29 @@ class VariantAwareStubLLMProvider:
                 "rationale_text": None,
             }
         else:
+            parsed_json = {
+                "summary": "Baseline summary",
+                "candidate_type": "decision",
+                "decision_text": "use event timestamp watermarking",
+                "decision_evidence_text": "Decision: use event timestamp watermarking",
+                "rationale_text": "to avoid skipped records during lag",
+            }
+        return LLMJsonResponse(raw_text=json.dumps(parsed_json), parsed_json=parsed_json)
+
+
+class DelayedVariantAwareStubLLMProvider:
+    def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+        if 'explicitly records a committed choice' in system_prompt:
+            time.sleep(0.02)
+            parsed_json = {
+                "summary": "Strict summary",
+                "candidate_type": None,
+                "decision_text": None,
+                "decision_evidence_text": None,
+                "rationale_text": None,
+            }
+        else:
+            time.sleep(0.08)
             parsed_json = {
                 "summary": "Baseline summary",
                 "candidate_type": "decision",
@@ -86,6 +110,7 @@ def test_run_semantic_eval_writes_summary_and_jsonl_results(tmp_path: Path) -> N
     assert summary["split_output"] is False
     assert summary["split_outputs"] == []
     assert summary["prompt_variants"] == ["baseline"]
+    assert summary["max_concurrency"] == 1
     assert summary["per_variant"]["baseline"]["prompt_schema_id"] == "decision_extraction"
     assert summary["per_variant"]["baseline"]["prompt_schema_version"] == "v2"
     assert summary["per_variant"]["baseline"]["decision_promotions"] == 1
@@ -134,7 +159,42 @@ def test_run_semantic_eval_can_compare_prompt_variants_in_one_run(tmp_path: Path
         "001-decision-1__strict-decision-v1.result.json",
     ]
     assert len(results) == 2
-    assert {row["prompt_variant"] for row in results} == {"baseline", "strict_decision_v1"}
+    assert [row["prompt_variant"] for row in results] == ["baseline", "strict_decision_v1"]
+
+
+def test_run_semantic_eval_parallel_keeps_stable_result_order(tmp_path: Path) -> None:
+    input_file = tmp_path / "items.jsonl"
+    output_dir = tmp_path / "output"
+    _write_input_file(
+        input_file,
+        _decision_record("decision-1", "Decision: use event timestamp watermarking."),
+        _decision_record("decision-2", "Decision: keep retry backoff capped at 30 seconds."),
+    )
+
+    plugin = LLMAgentMemoryPlugin(provider=DelayedVariantAwareStubLLMProvider())
+    run_dir = run_semantic_eval(
+        input_file=input_file,
+        output_root=output_dir,
+        plugin=plugin,
+        config=AppConfig(default_use_case="llm_agent_memory"),
+        run_name="parallel-order-run",
+        prompt_variants=["baseline", "strict_decision_v1"],
+        max_concurrency=4,
+    )
+
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    results = _read_jsonl(run_dir / "results.jsonl")
+
+    assert summary["max_concurrency"] == 4
+    assert [
+        (row["input_index"], row["prompt_variant"], row["input_key"])
+        for row in results
+    ] == [
+        (1, "baseline", "001-decision-1"),
+        (1, "strict_decision_v1", "001-decision-1"),
+        (2, "baseline", "002-decision-2"),
+        (2, "strict_decision_v1", "002-decision-2"),
+    ]
 
 
 def test_run_semantic_eval_records_errors(tmp_path: Path) -> None:
