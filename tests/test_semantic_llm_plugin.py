@@ -51,6 +51,9 @@ def test_llm_plugin_promotes_decision_memory_from_valid_extraction() -> None:
     assert result.memory_objects[0].payload["decision"] == "use event timestamp watermarking"
     assert result.memory_objects[0].payload["decision_evidence_text"] == "Decision: use event timestamp watermarking"
     assert result.annotations[1].payload["decision_evidence_text"] == "Decision: use event timestamp watermarking"
+    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_id"] == "decision_extraction"
+    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_version"] == "v2"
+    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_variant"] == "baseline"
 
 
 def test_llm_plugin_uses_discussion_summary_when_decision_lacks_evidence_text() -> None:
@@ -110,6 +113,8 @@ def test_build_analysis_request_uses_requested_prompt_variant() -> None:
     request = build_analysis_request(source_item, prompt_variant="strict_decision_v1")
 
     assert request.prompt_variant == "strict_decision_v1"
+    assert request.prompt_schema_id == "decision_extraction"
+    assert request.prompt_schema_version == "v2"
     assert 'Classify candidate_type as "decision" only when the text explicitly records a committed choice' in request.system_prompt
     assert 'decision_evidence_text' in request.schema_description
 

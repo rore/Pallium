@@ -109,14 +109,19 @@ def build_process_result(
     source_item: SourceItem,
     extraction: SemanticExtraction,
     schema_prefix: str,
+    semantic_metadata: dict[str, str] | None = None,
 ) -> ProcessResult:
+    summary_payload = {"text": extraction.summary}
+    if semantic_metadata:
+        summary_payload["semantic_provenance"] = semantic_metadata
+
     annotations = [
         Annotation(
             source_item_id=source_item.id,
             type="summary",
             schema_id="core.summary",
             schema_version="v1",
-            payload={"text": extraction.summary},
+            payload=summary_payload,
         )
     ]
 
@@ -127,6 +132,8 @@ def build_process_result(
             "decision_evidence_text": extraction.decision_evidence_text,
             "rationale_text": extraction.rationale_text,
         }
+        if semantic_metadata:
+            candidate_payload["semantic_provenance"] = semantic_metadata
         if extraction.matched_phrase:
             candidate_payload["matched_phrase"] = extraction.matched_phrase
         annotations.append(
@@ -148,6 +155,7 @@ def build_process_result(
                 "rationale": extraction.rationale_text,
                 "source_type": source_item.source_type,
                 "source_id": source_item.source_id,
+                **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
             },
         )
         index_source = " ".join(
@@ -169,6 +177,7 @@ def build_process_result(
                 "summary": extraction.summary,
                 "source_type": source_item.source_type,
                 "source_id": source_item.source_id,
+                **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
             },
         )
         index_source = extraction.summary

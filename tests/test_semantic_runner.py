@@ -81,9 +81,13 @@ def test_run_semantic_eval_writes_summary_and_jsonl_results(tmp_path: Path) -> N
     assert summary["decision_promotions"] == 1
     assert summary["input_file"] == str(input_file)
     assert summary["results_file"] == "results.jsonl"
+    assert summary["prompt_schema_id"] == "decision_extraction"
+    assert summary["prompt_schema_version"] == "v2"
     assert summary["split_output"] is False
     assert summary["split_outputs"] == []
     assert summary["prompt_variants"] == ["baseline"]
+    assert summary["per_variant"]["baseline"]["prompt_schema_id"] == "decision_extraction"
+    assert summary["per_variant"]["baseline"]["prompt_schema_version"] == "v2"
     assert summary["per_variant"]["baseline"]["decision_promotions"] == 1
     assert summary["run_id"].startswith("semantic-smoke__openai-compatible__fake-model__")
     assert len(results) == 1
@@ -93,6 +97,8 @@ def test_run_semantic_eval_writes_summary_and_jsonl_results(tmp_path: Path) -> N
     assert results[0]["prompt_variant"] == "baseline"
     assert results[0]["request"]["system_prompt"]
     assert results[0]["llm_response"]["raw_text"]
+    assert results[0]["request"]["prompt_schema_id"] == "decision_extraction"
+    assert results[0]["request"]["prompt_schema_version"] == "v2"
     assert results[0]["normalized_extraction"]["candidate_type"] == "decision"
     assert results[0]["normalized_extraction"]["decision_evidence_text"] == "Decision: use event timestamp watermarking"
     assert results[0]["artifacts"]["memory_objects"][0]["type"] == "decision"
@@ -119,6 +125,8 @@ def test_run_semantic_eval_can_compare_prompt_variants_in_one_run(tmp_path: Path
     results = _read_jsonl(run_dir / "results.jsonl")
 
     assert summary["prompt_variants"] == ["baseline", "strict_decision_v1"]
+    assert summary["per_variant"]["baseline"]["prompt_schema_id"] == "decision_extraction"
+    assert summary["per_variant"]["baseline"]["prompt_schema_version"] == "v2"
     assert summary["per_variant"]["baseline"]["decision_promotions"] == 1
     assert summary["per_variant"]["strict_decision_v1"]["discussion_summary_promotions"] == 1
     assert summary["split_outputs"] == [

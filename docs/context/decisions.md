@@ -139,6 +139,26 @@ Why:
 - keeps the semantic plugin unaware of provider wire formats
 - makes semantic quality comparable across providers under one extraction contract
 
+### 2026-03-09 - Treat token budget as a first-class semantic design constraint
+
+Prompt and response size should be managed deliberately as the semantic layer evolves.
+
+Why:
+
+- source item content is often the dominant token cost in extraction runs
+- prompt growth can quietly make evals and production ingestion expensive
+- explicit token-budget awareness helps balance precision against operating cost
+
+### 2026-03-09 - Store prompt provenance with LLM-derived semantic artifacts
+
+LLM-derived annotations, memory objects, and eval traces should record the prompt schema id, prompt schema version, and prompt variant that produced them.
+
+Why:
+
+- makes later maintenance and cleanup possible when prompts change
+- supports comparing semantic behavior across prompt revisions
+- keeps stored derived memory auditable instead of treating prompts as invisible runtime state
+
 ## Open
 
 ### Ingestion policy

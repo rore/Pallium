@@ -57,3 +57,14 @@ The prompt did not clearly distinguish committed choices from preferences, findi
 Solution:
 Add a stricter decision-only prompt variant with explicit non-decision cases. In the 40-item GPT-5 mini comparison run, this reduced false positives from 8 to 2 while keeping false negatives at 0.
 
+## 2026-03-09 - Prompt provenance must be stored with LLM-derived memory
+
+Problem:
+Prompt changes can alter semantic behavior, but without recorded prompt provenance it becomes difficult to tell which stored memory objects were created under which prompt contract.
+
+Why:
+LLM prompt logic is part of the semantic package, not just ephemeral runtime configuration. Maintenance, cleanup, and reprocessing become much harder if prompt variants and schema versions are invisible in stored artifacts.
+
+Solution:
+Store prompt schema id, prompt schema version, and prompt variant in LLM-derived artifacts and eval traces.
+

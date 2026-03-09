@@ -11,7 +11,7 @@ from typing import Any, Iterable
 from app.config import AppConfig
 from app.dependencies import build_semantic_plugins
 from core.contracts import build_source_item
-from semantic.llm_agent_memory import LLMAgentMemoryPlugin
+from semantic.llm_agent_memory import LLMAgentMemoryPlugin, PROMPT_SCHEMA_ID, PROMPT_SCHEMA_VERSION
 
 
 DEFAULT_INPUT_FILE = Path("evals/semantic/input/items.jsonl")
@@ -85,6 +85,8 @@ def run_semantic_eval(
         "use_case": plugin.name,
         "input_file": str(input_file),
         "prompt_variants": resolved_variants,
+        "prompt_schema_id": PROMPT_SCHEMA_ID,
+        "prompt_schema_version": PROMPT_SCHEMA_VERSION,
         "results_file": results_path.name,
         "split_output": split_output,
         "items_total": 0,
@@ -99,6 +101,8 @@ def run_semantic_eval(
     records = list(_load_input_records(input_file))
     for variant in resolved_variants:
         summary["per_variant"][variant] = {
+            "prompt_schema_id": PROMPT_SCHEMA_ID,
+            "prompt_schema_version": PROMPT_SCHEMA_VERSION,
             "items_total": len(records),
             "items_succeeded": 0,
             "items_failed": 0,
