@@ -35,6 +35,7 @@ The current implementation is a walking skeleton with:
 - one semantic layer interface with a simple in-repo plugin pattern
 - one storage layer
 - one mixed retrieval path over memory and source evidence
+- one deterministic typed-memory path for `decision`
 - one simulated generic agent consumer for end-to-end proof
 
 The current top-level architecture is:
@@ -68,7 +69,7 @@ keeping all lower-level evidence intact.
 
 ## Status
 
-The mixed retrieval foundation is implemented and verified.
+The first typed-memory milestone is implemented and verified.
 
 What exists now:
 
@@ -78,13 +79,14 @@ What exists now:
 - semantic plugin interface plus a deterministic demo plugin
 - storage abstraction plus SQLite implementation
 - mixed retrieval over promoted memory and raw source evidence
+- deterministic promotion of `decision` memory objects and fallback `discussion_summary`
 - simulation script, Bruno collection, and pytest coverage
 - project context, designs, and roadmap docs
 
 Verified locally:
 
 - pytest passes
-- the live HTTP flow returns both memory hits and source hits with evidence
+- the live HTTP flow returns decision memory hits, discussion-summary hits, and source hits with evidence
 
 ## Run Locally
 

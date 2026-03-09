@@ -119,6 +119,16 @@ Why:
 - keeps answers grounded in raw evidence
 - reduces the risk that retrieval overfits to promoted summaries only
 
+### 2026-03-09 - Validate typed memory before LLM extraction
+
+The next semantic milestone should introduce deterministic typed memory for `decision` before adding an LLM-backed semantic plugin.
+
+Why:
+
+- separates architecture risk from LLM-quality risk
+- proves that typed promotion works before semantic quality becomes the main variable
+- keeps the next LLM milestone focused on extraction quality against a stable contract
+
 ## Open
 
 ### Ingestion policy

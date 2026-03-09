@@ -14,7 +14,7 @@ Main layers:
 5. Retrieval layer
 6. Optional background jobs
 
-## Implemented Retrieval Slice
+## Implemented Typed-Memory Slice
 
 Implemented HTTP endpoints:
 
@@ -39,7 +39,9 @@ Implemented semantic behavior:
 
 - one deterministic in-repo plugin
 - one summary annotation per ingested source item
-- one promoted discussion_summary memory object per ingested source item
+- one typed_candidate annotation when decision rules match
+- one promoted decision memory object for decision-like inputs
+- fallback discussion_summary promotion for non-decision inputs
 - one supported_by relation from memory object to source item
 
 ## Generic Core

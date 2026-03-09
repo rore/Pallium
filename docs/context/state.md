@@ -19,12 +19,13 @@
 - development style: walking skeleton before deeper hardening
 - first consumer proof: simulated generic agent-memory workflow
 - current slice includes API, core service, semantic plugin, retrieval provider, SQLite storage provider, simulation script, Bruno collection, and pytest coverage
+- current semantic behavior includes typed `decision` promotion plus fallback `discussion_summary`
 
 ## Verification Notes
 
 - pytest passes locally in the repo venv
 - the live HTTP flow succeeds against a fresh temporary database
-- the current query contract returns both memory hits and source hits
+- the current query contract returns decision memory hits, discussion-summary hits, and source hits
 
 ## Reference Points
 

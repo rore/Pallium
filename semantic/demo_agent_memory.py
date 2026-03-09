@@ -9,6 +9,19 @@ from semantic.base import SemanticPlugin
 
 SENTENCE_PATTERN = re.compile(r"(?<=[.!?])\s+")
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+DECISION_PATTERNS = (
+    re.compile(r"\bdecision:\s*(?P<body>.+)", re.IGNORECASE),
+    re.compile(r"\bwe decided(?: to)?\s+(?P<body>.+)", re.IGNORECASE),
+    re.compile(r"\bwe chose\s+(?P<body>.+)", re.IGNORECASE),
+    re.compile(r"\bchosen approach[:\s]+(?P<body>.+)", re.IGNORECASE),
+    re.compile(r"\bwe will use\s+(?P<body>.+)", re.IGNORECASE),
+)
+RATIONALE_SPLITTERS = (
+    " because ",
+    " to avoid ",
+    " to prevent ",
+    " so that ",
+)
 
 
 def _summarize(content: str) -> str:
@@ -25,28 +38,101 @@ def _normalize_for_index(text: str) -> str:
     return " ".join(TOKEN_PATTERN.findall(text.lower()))
 
 
+def _strip_terminal_punctuation(text: str) -> str:
+    return text.strip().rstrip(" .!?;:")
+
+
+def _extract_decision_candidate(content: str) -> dict[str, str | None] | None:
+    for pattern in DECISION_PATTERNS:
+        match = pattern.search(content)
+        if not match:
+            continue
+        body = _strip_terminal_punctuation(match.group("body"))
+        if not body:
+            continue
+
+        lowered = body.lower()
+        decision_text = body
+        rationale_text: str | None = None
+
+        for splitter in RATIONALE_SPLITTERS:
+            index = lowered.find(splitter)
+            if index == -1:
+                continue
+            decision_text = _strip_terminal_punctuation(body[:index])
+            remainder = _strip_terminal_punctuation(body[index + len(splitter) :])
+            rationale_text = f"{splitter.strip()} {remainder}" if remainder else splitter.strip()
+            break
+
+        return {
+            "decision_text": decision_text,
+            "rationale_text": rationale_text,
+            "matched_phrase": match.group(0).split(match.group("body"))[0].strip(),
+        }
+
+    return None
+
+
 class DemoAgentMemoryPlugin(SemanticPlugin):
     name = "demo_agent_memory"
 
     def process_item(self, source_item: SourceItem) -> ProcessResult:
         summary = _summarize(source_item.content)
-        annotation = Annotation(
-            source_item_id=source_item.id,
-            type="summary",
-            schema_id="core.summary",
-            schema_version="v1",
-            payload={"text": summary},
-        )
-        memory_object = MemoryObject(
-            type="discussion_summary",
-            schema_id="demo.discussion_summary",
-            schema_version="v1",
-            payload={
-                "summary": summary,
-                "source_type": source_item.source_type,
-                "source_id": source_item.source_id,
-            },
-        )
+        annotations = [
+            Annotation(
+                source_item_id=source_item.id,
+                type="summary",
+                schema_id="core.summary",
+                schema_version="v1",
+                payload={"text": summary},
+            )
+        ]
+
+        candidate = _extract_decision_candidate(source_item.content)
+        if candidate is not None:
+            annotations.append(
+                Annotation(
+                    source_item_id=source_item.id,
+                    type="typed_candidate",
+                    schema_id="demo.typed_candidate",
+                    schema_version="v1",
+                    payload={
+                        "candidate_type": "decision",
+                        "decision_text": candidate["decision_text"],
+                        "rationale_text": candidate["rationale_text"],
+                        "matched_phrase": candidate["matched_phrase"],
+                    },
+                )
+            )
+            memory_object = MemoryObject(
+                type="decision",
+                schema_id="demo.decision",
+                schema_version="v1",
+                payload={
+                    "decision": candidate["decision_text"],
+                    "rationale": candidate["rationale_text"],
+                    "source_type": source_item.source_type,
+                    "source_id": source_item.source_id,
+                },
+            )
+            index_source = " ".join(
+                part
+                for part in (summary, candidate["decision_text"] or "", candidate["rationale_text"] or "")
+                if part
+            )
+        else:
+            memory_object = MemoryObject(
+                type="discussion_summary",
+                schema_id="demo.discussion_summary",
+                schema_version="v1",
+                payload={
+                    "summary": summary,
+                    "source_type": source_item.source_type,
+                    "source_id": source_item.source_id,
+                },
+            )
+            index_source = summary
+
         relation = Relation(
             from_kind="memory_object",
             from_id=memory_object.id,
@@ -58,10 +144,10 @@ class DemoAgentMemoryPlugin(SemanticPlugin):
             target_kind="memory_object",
             target_id=memory_object.id,
             index_type="lexical",
-            text_view=_normalize_for_index(summary),
+            text_view=_normalize_for_index(index_source),
         )
         return ProcessResult(
-            annotations=[annotation],
+            annotations=annotations,
             memory_objects=[memory_object],
             relations=[relation],
             index_entries=[index_entry],

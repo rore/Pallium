@@ -1,7 +1,9 @@
-# Now
+# Next
+- add-llm-backed-semantic-plugin
 - add-tiered-memory-extension
 
 # Done
+- add-first-typed-memory-decision
 - define-core-model-and-api-contracts
 - choose-runtime-stack-and-initial-scaffold
 - implement-source-item-persistence-and-primitives

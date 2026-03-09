@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-def test_post_items_creates_artifacts(client) -> None:
+def test_post_items_creates_fallback_summary_artifacts(client) -> None:
     response = client.post(
         "/items",
         json={
@@ -21,6 +21,16 @@ def test_post_items_creates_artifacts(client) -> None:
     assert len(payload["relation_ids"]) == 1
     assert len(payload["index_entry_ids"]) == 2
 
+    query_response = client.post(
+        "/query",
+        json={"text": "event time watermarking", "limit": 5},
+    )
+    assert query_response.status_code == 200
+    memory_hits = [
+        item for item in query_response.json()["results"] if item["result_kind"] == "memory_hit"
+    ]
+    assert any(item["type"] == "discussion_summary" for item in memory_hits)
+
 
 def test_post_items_is_idempotent_on_source_reference(client) -> None:
     request = {
@@ -35,23 +45,25 @@ def test_post_items_is_idempotent_on_source_reference(client) -> None:
 
     assert first_response.status_code == 200
     assert second_response.status_code == 200
+    assert len(first_response.json()["annotation_ids"]) == 2
+    assert len(first_response.json()["memory_object_ids"]) == 1
     assert second_response.json() == first_response.json()
 
 
-def test_post_query_returns_mixed_results(client) -> None:
+def test_post_query_returns_decision_memory_and_source_hits(client) -> None:
     client.post(
         "/items",
         json={
             "source_type": "decision_note",
             "source_id": "decision-1",
             "content_type": "text/plain",
-            "content": "Decision: use event timestamp watermarking for exports to avoid skipped records.",
+            "content": "Decision: use event timestamp watermarking for exports to avoid skipped records during lag.",
         },
     )
 
     response = client.post(
         "/query",
-        json={"text": "why do we use event timestamp watermarking?", "limit": 5},
+        json={"text": "what did we decide about watermarking?", "limit": 5},
     )
 
     assert response.status_code == 200
@@ -62,8 +74,9 @@ def test_post_query_returns_mixed_results(client) -> None:
     assert "source_hit" in result_kinds
 
     memory_hit = next(result for result in payload["results"] if result["result_kind"] == "memory_hit")
-    assert memory_hit["type"] == "discussion_summary"
-    assert memory_hit["payload"]
+    assert memory_hit["type"] == "decision"
+    assert memory_hit["payload"]["decision"] == "use event timestamp watermarking for exports"
+    assert memory_hit["payload"]["rationale"] == "to avoid skipped records during lag"
     assert len(memory_hit["evidence"]) == 1
 
     source_hit = next(result for result in payload["results"] if result["result_kind"] == "source_hit")
