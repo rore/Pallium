@@ -31,6 +31,10 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def list_source_items_for_thread(self, container_ref: str, thread_ref: str) -> list[SourceItem]:
+        raise NotImplementedError
+
+    @abstractmethod
     def get_annotation(self, annotation_id: str) -> Annotation:
         raise NotImplementedError
 

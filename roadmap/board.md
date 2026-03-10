@@ -12,6 +12,7 @@
 - idea-optional-reranker-support
 
 # Done
+- add-conversation-thread-aggregate
 - add-recurring-question-value-benchmark
 - add-agent-conversation-memory-test-bed
 - add-agent-conversation-memory-package

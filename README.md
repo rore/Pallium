@@ -14,6 +14,7 @@ Current implemented shape:
 
 - one local-first FastAPI service
 - one generic core
+- one reusable capability layer with thread aggregation
 - semantic plugins with deterministic and LLM-backed paths
 - an explicit `agent_conversation_memory` runtime package over the LLM-backed semantic path
 - provider abstraction for OpenAI-compatible and Claude-style APIs
@@ -24,10 +25,12 @@ Current implemented shape:
 - typed memory for:
   - `decision`
   - `investigation_outcome`
+  - `thread_summary`
   - fallback `discussion_summary`
 - minimal memory lifecycle with `active` and `superseded`
 - committed semantic regression set and eval harness
 - realistic agent-conversation scenario test bed and runner
+- recurring-question value benchmark
 - simulation script, Bruno collection, and pytest coverage
 
 ## Core Concepts
@@ -44,6 +47,7 @@ Important current behavior:
 
 - source items are the evidence layer
 - semantic plugins promote reusable memory from source items
+- thread aggregation now exists as a reusable capability above atomic source items
 - memory objects are evidence-backed through explicit relations
 - retrieval returns compact cards rather than raw source payloads by default
 - superseded memory is filtered from default retrieval, while raw evidence remains intact
@@ -69,6 +73,7 @@ Current semantic output supports:
 
 - `decision`
 - `investigation_outcome`
+- `thread_summary`
 - `discussion_summary`
 
 The LLM-backed path records semantic provenance with each derived artifact:
@@ -85,7 +90,7 @@ Default LLM prompt path:
 
 ## Semantic Regression
 
-Pallium now includes a committed semantic regression batch at [C:/Dev/rore/Pallium/evals/semantic/input/items.jsonl](C:/Dev/rore/Pallium/evals/semantic/input/items.jsonl).
+Pallium includes a committed semantic regression batch at [C:/Dev/rore/Pallium/evals/semantic/input/items.jsonl](C:/Dev/rore/Pallium/evals/semantic/input/items.jsonl).
 
 Latest recorded baseline:
 
@@ -101,7 +106,7 @@ See [C:/Dev/rore/Pallium/evals/semantic/baseline.md](C:/Dev/rore/Pallium/evals/s
 
 ## Agent Conversation Test Bed
 
-Pallium now also includes a realistic agent-conversation scenario harness built around a neutral public-safe sample domain: library reservation and catalog sync.
+Pallium includes a realistic agent-conversation scenario harness built around a neutral public-safe sample domain: library reservation and catalog sync.
 
 Run it with:
 
@@ -119,11 +124,11 @@ The scenarios compare:
 - baseline current-thread context only
 - current-thread context plus Pallium memory-backed retrieval
 
-This harness is the realistic proof layer for the `agent_conversation_memory` package and the input to the later recurring-question value benchmark.
+Thread-level summaries now sit between atomic events and future tiered memory, so recurring-question cases can recall one evidence-backed `thread_summary` instead of only several lower-level items.
 
 ## Recurring-Question Value Benchmark
 
-Pallium now also includes a user-facing recurring-question benchmark that compares final downstream answers between:
+Pallium also includes a user-facing recurring-question benchmark that compares final downstream answers between:
 
 - baseline current-thread context only
 - current-thread context plus Pallium memory-backed retrieval
@@ -140,6 +145,7 @@ Each run writes:
 - `results.jsonl`
 
 The committed benchmark is the first user-facing proof layer for whether Pallium improves recurring-question handling before higher-level memory is added.
+
 ## Run Locally
 
 From the repo root:
@@ -226,4 +232,3 @@ Use `--split-output` only when you want per-input debug files.
 - [C:/Dev/rore/Pallium/docs/context/architecture.md](C:/Dev/rore/Pallium/docs/context/architecture.md)
 - [C:/Dev/rore/Pallium/docs/context/state.md](C:/Dev/rore/Pallium/docs/context/state.md)
 - [C:/Dev/rore/Pallium/roadmap/board.md](C:/Dev/rore/Pallium/roadmap/board.md)
-

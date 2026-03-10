@@ -8,11 +8,12 @@ Main layers:
 
 1. API layer
 2. Generic core
-3. Semantic use-case layer
-4. Provider layer
-5. Storage layer
-6. Retrieval layer
-7. Optional background jobs
+3. Reusable capability layer
+4. Semantic use-case layer
+5. Provider layer
+6. Storage layer
+7. Retrieval layer
+8. Optional background jobs
 
 ## Implemented Core and Retrieval Slice
 
@@ -57,19 +58,18 @@ Design implications:
 - vector retrieval is additive, not a replacement for lexical retrieval
 - fusion should be explicit rather than implicit score blending
 - retrieval should stay debuggable so Pallium can explain whether a hit came from lexical retrieval, vector retrieval, or fusion
-- both SourceItem and MemoryObject remain first-class retrieval targets
+- both `SourceItem` and `MemoryObject` remain first-class retrieval targets
 
 Current intended fusion baseline:
 
 - Reciprocal Rank Fusion (RRF) first
 - weighted blending only later if labeled evaluation justifies it
+
 ## Implemented Semantic Behavior
 
 Implemented semantic behavior now includes:
 
 - an explicit `agent_conversation_memory` runtime package over the current LLM-backed semantic path
-- a first concrete product slice focused on agent-mediated conversations
-
 - deterministic and LLM-backed semantic plugins
 - one summary annotation per ingested source item
 - one typed candidate annotation when extraction matches a typed memory path
@@ -77,7 +77,6 @@ Implemented semantic behavior now includes:
   - `decision`
   - `investigation_outcome`
 - fallback `discussion_summary` for non-typed extraction results
-- one `supported_by` relation from memory object to source item
 - prompt provenance attached to LLM-derived annotations and memory objects
 
 Prompt provenance fields currently tracked:
@@ -104,6 +103,43 @@ Important model properties:
 - a source item may produce zero, one, or multiple memory objects over time
 - memory objects are evidence-backed and may point to one or more supporting source items
 - relations stay explicit and boring early on
+
+## Reusable Capabilities
+
+Pallium now has its first reusable capability between the generic core and semantic packages: thread aggregation.
+
+Current thread-capability behavior:
+
+- atomic ingest remains the source-item unit
+- items can be grouped by `container_ref + thread_ref`
+- the capability rebuilds a deterministic thread aggregate as new items arrive
+- semantic packages can consume that aggregate without making thread a universal core entity
+
+The first package using this capability is `agent_conversation_memory`, which produces a queryable `thread_summary` memory object.
+
+## Agent Conversation Memory Package
+
+The first concrete product package is now agent conversation memory.
+
+That package reuses the generic core and existing typed-memory path. It should be treated as the first semantic package proving value on top of Pallium, not as the definition of the platform itself.
+
+Current package boundary:
+
+- primary evidence units:
+  - `artifact_kind="message"` with `role="user"`
+  - `artifact_kind="assistant_output"` with `role="assistant"`
+- primary value targets:
+  - recurring-question recall
+  - cross-thread continuity
+  - assistant consistency
+- explicit non-goals for the package:
+  - all workplace chat
+  - arbitrary ambient messages that never flowed through the agent
+  - full transcript replay as the default retrieval shape
+
+The package reuses the current typed-memory extraction path rather than introducing a separate semantic engine.
+
+It now also uses the shared thread aggregation capability to build one active `thread_summary` memory object per `container_ref + thread_ref`. Each thread summary is evidence-backed, lifecycle-managed through supersession, and can carry forward active `decision` and `investigation_outcome` conclusions from that conversation thread.
 
 ## Lifecycle
 
@@ -141,32 +177,14 @@ Current chosen path:
 - prompt schema: `typed_memory_extraction`
 - prompt schema version: `v4`
 
-## Agent Conversation Memory Package
-
-The first concrete product package is now agent conversation memory.
-
-That package reuses the generic core and existing typed-memory path. It should be treated as the first semantic package proving value on top of Pallium, not as the definition of the platform itself.
-
-Current package boundary:
-
-- primary evidence units:
-  - `artifact_kind="message"` with `role="user"`
-  - `artifact_kind="assistant_output"` with `role="assistant"`
-- primary value targets:
-  - recurring-question recall
-  - cross-thread continuity
-  - assistant consistency
-- explicit non-goals for the package:
-  - all workplace chat
-  - arbitrary ambient messages that never flowed through the agent
-  - full transcript replay as the default retrieval shape
-
-The package reuses the current typed-memory extraction path rather than introducing a separate semantic engine.
-
 ## Tiered Memory
 
-Tiered memory remains an intended extension, not part of the current executable slice.
+Tiered memory remains the next intended extension, not part of the current executable slice.
 
-It should build on top of the stronger lower-level memory model now in place rather than replacing it.
+It should build over:
 
+- `thread_summary`
+- `decision`
+- `investigation_outcome`
 
+rather than jumping directly from raw atomic events to higher-level memory.

@@ -83,9 +83,9 @@ class AppConfig:
                 packages[package_name] = SemanticPackageConfig(
                     name=current.name,
                     implementation=current.implementation,
-                    llm_provider=current.llm_provider or LEGACY_PROVIDER_KEY,
-                    model=current.model or self.llm_model,
-                    prompt_variant=current.prompt_variant or self.llm_prompt_variant,
+                    llm_provider=LEGACY_PROVIDER_KEY,
+                    model=self.llm_model or current.model,
+                    prompt_variant=self.llm_prompt_variant or current.prompt_variant,
                 )
 
         object.__setattr__(self, "llm_providers", providers)
@@ -358,4 +358,6 @@ def _as_optional_string(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
 

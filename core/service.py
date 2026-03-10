@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import re
 
-from core.contracts import IngestResult, QueryResult, build_query_filters, build_source_item
-from core.models import IndexEntry, QueryFilters, Relation
+from capabilities.thread_aggregation import build_thread_aggregate
+from core.contracts import IngestResult, ProcessResult, QueryResult, build_query_filters, build_source_item
+from core.models import IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
 from retrieval.base import RetrievalProvider
-from semantic.base import SemanticPlugin
+from semantic.base import SemanticPlugin, ThreadAggregationSemanticPlugin
 from storage.base import StorageProvider
 
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+THREAD_CONCLUSION_TYPES = {"decision", "investigation_outcome"}
+THREAD_SUMMARY_TYPE = "thread_summary"
 
 
 def _normalize_for_index(text: str) -> str:
@@ -100,21 +103,26 @@ class PalliumService:
         self._storage.create_index_entry(source_index_entry)
 
         derived = plugin.process_item(source_item)
-        for annotation in derived.annotations:
-            self._storage.create_annotation(annotation)
-        for memory_object in derived.memory_objects:
-            self._storage.create_memory_object(memory_object)
-        for relation in derived.relations:
-            self._storage.create_relation(relation)
-        for index_entry in derived.index_entries:
-            self._storage.create_index_entry(index_entry)
+        self._persist_process_result(derived)
+
+        thread_result = self._maybe_rebuild_thread_summary(plugin=plugin, source_item=source_item)
+
+        annotation_ids = [item.id for item in derived.annotations]
+        memory_object_ids = [item.id for item in derived.memory_objects]
+        relation_ids = [item.id for item in derived.relations]
+        index_entry_ids = [source_index_entry.id, *[item.id for item in derived.index_entries]]
+        if thread_result is not None:
+            annotation_ids.extend(item.id for item in thread_result.annotations)
+            memory_object_ids.extend(item.id for item in thread_result.memory_objects)
+            relation_ids.extend(item.id for item in thread_result.relations)
+            index_entry_ids.extend(item.id for item in thread_result.index_entries)
 
         return IngestResult(
             source_item_id=source_item.id,
-            annotation_ids=[item.id for item in derived.annotations],
-            memory_object_ids=[item.id for item in derived.memory_objects],
-            relation_ids=[item.id for item in derived.relations],
-            index_entry_ids=[source_index_entry.id, *[item.id for item in derived.index_entries]],
+            annotation_ids=annotation_ids,
+            memory_object_ids=memory_object_ids,
+            relation_ids=relation_ids,
+            index_entry_ids=index_entry_ids,
         )
 
     def query(
@@ -156,3 +164,78 @@ class PalliumService:
                 to_id=superseded_id,
             )
         )
+
+    def _persist_process_result(self, result: ProcessResult) -> None:
+        for annotation in result.annotations:
+            self._storage.create_annotation(annotation)
+        for memory_object in result.memory_objects:
+            self._storage.create_memory_object(memory_object)
+        for relation in result.relations:
+            self._storage.create_relation(relation)
+        for index_entry in result.index_entries:
+            self._storage.create_index_entry(index_entry)
+
+    def _maybe_rebuild_thread_summary(
+        self,
+        *,
+        plugin: SemanticPlugin,
+        source_item: SourceItem,
+    ) -> ProcessResult | None:
+        if not isinstance(plugin, ThreadAggregationSemanticPlugin):
+            return None
+        if not plugin.supports_thread_aggregation(source_item):
+            return None
+        if not source_item.container_ref or not source_item.thread_ref:
+            return None
+
+        thread_items = [
+            item
+            for item in self._storage.list_source_items_for_thread(source_item.container_ref, source_item.thread_ref)
+            if plugin.supports_thread_aggregation(item)
+        ]
+        if not thread_items:
+            return None
+
+        active_thread_summary_ids = self._find_active_thread_summary_ids(plugin, thread_items)
+        aggregate = build_thread_aggregate(thread_items)
+        conclusions = self._collect_thread_conclusions(thread_items)
+        thread_result = plugin.build_thread_summary(aggregate, conclusions)
+        self._persist_process_result(thread_result)
+
+        if thread_result.memory_objects:
+            new_thread_summary_id = thread_result.memory_objects[0].id
+            for superseded_id in active_thread_summary_ids:
+                if superseded_id != new_thread_summary_id:
+                    self.supersede_memory_object(superseded_id, new_thread_summary_id)
+
+        return thread_result
+
+    def _find_active_thread_summary_ids(
+        self,
+        plugin: ThreadAggregationSemanticPlugin,
+        thread_items: list[SourceItem],
+    ) -> list[str]:
+        seen: set[str] = set()
+        ids: list[str] = []
+        for source_item in thread_items:
+            for memory_object in self._storage.list_memory_objects_for_source_item(source_item.id):
+                if memory_object.type != THREAD_SUMMARY_TYPE or memory_object.lifecycle != "active":
+                    continue
+                if memory_object.schema_id != plugin.thread_summary_schema_id:
+                    continue
+                if memory_object.id in seen:
+                    continue
+                seen.add(memory_object.id)
+                ids.append(memory_object.id)
+        return ids
+
+    def _collect_thread_conclusions(self, thread_items: list[SourceItem]) -> list[MemoryObject]:
+        conclusions: dict[str, MemoryObject] = {}
+        for source_item in thread_items:
+            for memory_object in self._storage.list_memory_objects_for_source_item(source_item.id):
+                if memory_object.lifecycle != "active":
+                    continue
+                if memory_object.type not in THREAD_CONCLUSION_TYPES:
+                    continue
+                conclusions[memory_object.id] = memory_object
+        return list(conclusions.values())

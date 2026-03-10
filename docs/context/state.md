@@ -23,7 +23,9 @@
 - semantic behavior now includes:
   - `decision`
   - `investigation_outcome`
+  - `thread_summary`
   - fallback `discussion_summary`
+- reusable thread aggregation capability now exists for `agent_conversation_memory`
 - semantic eval uses one committed JSONL regression batch and one baseline metrics document
 - runtime can now select `agent_conversation_memory` as an explicit use-case entry point
 - LLM-derived semantic artifacts carry prompt schema id/version and prompt variant provenance
@@ -32,12 +34,13 @@
   - `superseded`
 - superseded memory is hidden from default retrieval while evidence remains searchable
 - realistic agent-conversation scenarios now exist under `evals/agent_conversation/`
-- committed examples/tests now use a neutral library reservation and catalog sync sample domain
 - recurring-question benchmark now exists under `evals/recurring_question/`
+- committed examples/tests use a neutral library reservation and catalog sync sample domain
 
 ## Verification Notes
 
-- `pytest` passes locally: `35 passed`
+- `pytest` passes locally: `39 passed`
+- thread aggregation tests pass locally
 - live scenario harness run succeeded locally:
   - `evals/agent_conversation/output/local-agent-conversation-smoke`
   - `2` value scenarios found expected memory
@@ -64,4 +67,3 @@
 - accepted architecture and decisions: `docs/context/architecture.md`, `docs/context/decisions.md`
 - fuller design rationale: `docs/designs/`
 - semantic baseline: `evals/semantic/baseline.md`
-

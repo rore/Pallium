@@ -9,7 +9,7 @@ milestone: Next
 
 ## Summary
 
-Add the first bounded consolidation flow that creates a higher-level evidence-backed memory object from lower-level memories so recurring questions can be answered from one compact pattern instead of many raw items.
+Add the first bounded consolidation flow that creates a higher-level evidence-backed memory object from thread-level and lower-level memory so recurring questions can be answered from one compact pattern instead of many raw items.
 
 ## Why
 
@@ -17,7 +17,7 @@ Pallium starts to become clearly more valuable than raw retrieval-and-synthesis 
 
 ## In Scope
 
-- add a bounded consolidation path over lower-level memory objects
+- add a bounded consolidation path over `thread_summary`, `decision`, and `investigation_outcome`
 - produce at least one higher-level memory type such as `pattern_memory`
 - keep consolidated objects evidence-backed and linked to lower-level support
 - make consolidated objects queryable through the normal retrieval model
@@ -37,6 +37,7 @@ Pallium starts to become clearly more valuable than raw retrieval-and-synthesis 
 2. Consolidated objects link back to supporting lower-level evidence.
 3. Retrieval can include consolidated memory without breaking direct-memory retrieval.
 4. At least one concrete recurring-question example is documented where the downstream agent can use one consolidated memory object plus evidence instead of many low-level items.
+5. The first consolidation flow operates over `thread_summary`, `decision`, and `investigation_outcome` rather than raw atomic events alone.
 
 ## Notes
 

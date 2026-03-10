@@ -143,6 +143,16 @@ class SQLiteStorageProvider(StorageProvider):
                 raise KeyError(source_item_id)
             return self._to_source_item(record)
 
+    def list_source_items_for_thread(self, container_ref: str, thread_ref: str) -> list[SourceItem]:
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(SourceItemRecord).where(
+                    SourceItemRecord.container_ref == container_ref,
+                    SourceItemRecord.thread_ref == thread_ref,
+                )
+            ).all()
+        return [self._to_source_item(record) for record in records]
+
     def create_annotation(self, annotation: Annotation) -> None:
         record = AnnotationRecord(
             id=annotation.id,
@@ -461,3 +471,4 @@ class SQLiteStorageProvider(StorageProvider):
         if not value:
             return {}
         return json.loads(value)
+
