@@ -1,5 +1,4 @@
 # Next
-- add-recurring-question-value-benchmark
 - add-tiered-memory-extension
 
 # Ideas
@@ -7,6 +6,7 @@
 - idea-optional-embedding-provider-support
 
 # Done
+- add-recurring-question-value-benchmark
 - add-agent-conversation-memory-test-bed
 - add-agent-conversation-memory-package
 - add-memory-lifecycle-basics

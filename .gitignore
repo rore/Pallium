@@ -10,3 +10,6 @@ pallium.egg-info/
 evals/semantic/output/
 
 evals/agent_conversation/output/
+
+evals/recurring_question/output/
+

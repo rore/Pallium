@@ -119,6 +119,25 @@ The scenarios compare:
 
 This harness is the realistic proof layer for the `agent_conversation_memory` package and the input to the later recurring-question value benchmark.
 
+## Recurring-Question Value Benchmark
+
+Pallium now also includes a user-facing recurring-question benchmark that compares final downstream answers between:
+
+- baseline current-thread context only
+- current-thread context plus Pallium memory-backed retrieval
+
+Run it with:
+
+```powershell
+.\.venv\Scripts\python.exe -m evals.recurring_question_benchmark
+```
+
+Each run writes:
+
+- `summary.json`
+- `results.jsonl`
+
+The committed benchmark is the first user-facing proof layer for whether Pallium improves recurring-question handling before higher-level memory is added.
 ## Run Locally
 
 From the repo root:
@@ -172,6 +191,9 @@ Use `--split-output` only when you want per-input debug files.
 - [C:/Dev/rore/Pallium/docs/context/architecture.md](C:/Dev/rore/Pallium/docs/context/architecture.md)
 - [C:/Dev/rore/Pallium/docs/context/state.md](C:/Dev/rore/Pallium/docs/context/state.md)
 - [C:/Dev/rore/Pallium/roadmap/board.md](C:/Dev/rore/Pallium/roadmap/board.md)
+
+
+
 
 
 

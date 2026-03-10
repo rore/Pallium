@@ -17,7 +17,6 @@
 - first implementation language: Python
 - architecture direction: single local-first service with clear module boundaries
 - development style: walking skeleton before deeper hardening
-- first consumer proof: simulated generic agent-memory workflow
 - first concrete product package: `agent_conversation_memory`
 - ingest supports explicit event refs for messages and assistant artifacts
 - query returns compact source-hit cards with structured refs
@@ -34,16 +33,21 @@
 - superseded memory is hidden from default retrieval while evidence remains searchable
 - realistic agent-conversation scenarios now exist under `evals/agent_conversation/`
 - committed examples/tests now use a neutral library reservation and catalog sync sample domain
+- recurring-question benchmark now exists under `evals/recurring_question/`
 
 ## Verification Notes
 
-- `pytest` passes locally: `31 passed`
+- `pytest` passes locally: `35 passed`
 - live scenario harness run succeeded locally:
   - `evals/agent_conversation/output/local-agent-conversation-smoke`
   - `2` value scenarios found expected memory
   - `1` low-value scenario correctly added no memory signal
+- live recurring-question benchmark run succeeded locally:
+  - `evals/recurring_question/output/local-recurring-question-smoke`
+  - `2` value scenarios where memory-backed won
+  - `1` non-value scenario where memory-backed correctly did not win
 - semantic regression baseline remains the committed real OpenAI run on the current batch
-- current recorded baseline on `gpt-5-mini` with `strict_typed_memory_v4_evidence_guarded` is:
+- current recorded semantic baseline on `gpt-5-mini` with `strict_typed_memory_v4_evidence_guarded` is:
   - `30 / 30` overall correct
   - `0` decision false positives
   - `0` investigation false positives
@@ -52,6 +56,7 @@
 ## Context Memory Note
 
 - record important problem-and-solution pairs in `docs/context/lessons.md` so future sessions do not rediscover them
+- local `.env.local` can still override code defaults such as the active prompt variant during live runs
 
 ## Reference Points
 
