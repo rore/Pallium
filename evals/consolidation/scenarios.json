@@ -1,0 +1,216 @@
+[
+  {
+    "scenario_id": "thread-local-safe",
+    "description": "One thread contains an investigation outcome and a decision about reservation ordering.",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "cons-thread-1-msg-1",
+        "content_type": "text/plain",
+        "content": "Why are some library holds disappearing after catalog sync delays?",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-cons-001",
+        "session_ref": "agent-session-cons-001",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://consolidation/thread-1-msg-1",
+        "occurred_at": "2026-03-10T08:00:00Z",
+        "metadata": {"topic": "reservation_ordering"}
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "cons-thread-1-artifact-1",
+        "content_type": "text/plain",
+        "content": "Investigation found that arrival-time ordering skipped hold updates during catalog sync delays.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-cons-001",
+        "session_ref": "agent-session-cons-001",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://consolidation/thread-1-artifact-1",
+        "occurred_at": "2026-03-10T08:01:00Z",
+        "metadata": {"topic": "reservation_ordering"}
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "cons-thread-1-artifact-2",
+        "content_type": "text/plain",
+        "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-cons-001",
+        "session_ref": "agent-session-cons-001",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://consolidation/thread-1-artifact-2",
+        "occurred_at": "2026-03-10T08:02:00Z",
+        "metadata": {"topic": "reservation_ordering"}
+      }
+    ],
+    "current_query": {
+      "text": "Why do we use item event time for reservation ordering?",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    }
+  },
+  {
+    "scenario_id": "cross-thread-linked",
+    "description": "Related investigation and decision are split across two threads in the same container.",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "cons-thread-2-msg-1",
+        "content_type": "text/plain",
+        "content": "Why are duplicate holds appearing after catalog sync delays?",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-cons-002",
+        "session_ref": "agent-session-cons-002",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://consolidation/thread-2-msg-1",
+        "occurred_at": "2026-03-10T10:00:00Z",
+        "metadata": {"topic": "reservation_ordering"}
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "cons-thread-2-artifact-1",
+        "content_type": "text/plain",
+        "content": "Investigation found that arrival-time ordering applied stale hold updates during catalog sync delays.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-cons-002",
+        "session_ref": "agent-session-cons-002",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://consolidation/thread-2-artifact-1",
+        "occurred_at": "2026-03-10T10:01:00Z",
+        "metadata": {"topic": "reservation_ordering"}
+      },
+      {
+        "source_type": "chat_message",
+        "source_id": "cons-thread-3-msg-1",
+        "content_type": "text/plain",
+        "content": "What reservation ordering should we use after the duplicate-hold investigation?",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-cons-003",
+        "session_ref": "agent-session-cons-003",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://consolidation/thread-3-msg-1",
+        "occurred_at": "2026-03-10T12:00:00Z",
+        "metadata": {"topic": "reservation_ordering"}
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "cons-thread-3-artifact-1",
+        "content_type": "text/plain",
+        "content": "Decision: use item event time for reservation ordering to prevent duplicate holds after sync delays.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-cons-003",
+        "session_ref": "agent-session-cons-003",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://consolidation/thread-3-artifact-1",
+        "occurred_at": "2026-03-10T12:01:00Z",
+        "metadata": {"topic": "reservation_ordering"}
+      }
+    ],
+    "current_query": {
+      "text": "What did we previously conclude about duplicate holds after catalog sync delays?",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    }
+  },
+  {
+    "scenario_id": "same-container-noise-guard",
+    "description": "An unrelated notification-batching thread exists in the same container and should not leak into reservation-ordering patterns.",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "cons-thread-4-msg-1",
+        "content_type": "text/plain",
+        "content": "Why are duplicate holds appearing after catalog sync delays?",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-cons-004",
+        "session_ref": "agent-session-cons-004",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://consolidation/thread-4-msg-1",
+        "occurred_at": "2026-03-10T13:00:00Z",
+        "metadata": {"topic": "reservation_ordering"}
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "cons-thread-4-artifact-1",
+        "content_type": "text/plain",
+        "content": "Investigation found that arrival-time ordering applied stale hold updates during catalog sync delays.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-cons-004",
+        "session_ref": "agent-session-cons-004",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://consolidation/thread-4-artifact-1",
+        "occurred_at": "2026-03-10T13:01:00Z",
+        "metadata": {"topic": "reservation_ordering"}
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "cons-thread-4-artifact-2",
+        "content_type": "text/plain",
+        "content": "Decision: use item event time for reservation ordering to prevent duplicate holds after sync delays.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-cons-004",
+        "session_ref": "agent-session-cons-004",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://consolidation/thread-4-artifact-2",
+        "occurred_at": "2026-03-10T13:02:00Z",
+        "metadata": {"topic": "reservation_ordering"}
+      },
+      {
+        "source_type": "chat_message",
+        "source_id": "cons-thread-5-msg-1",
+        "content_type": "text/plain",
+        "content": "Why are overdue notice emails sent in batches?",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-cons-005",
+        "session_ref": "agent-session-cons-005",
+        "actor_ref": "user:circulation-manager",
+        "source_ref": "memory://consolidation/thread-5-msg-1",
+        "occurred_at": "2026-03-10T13:03:00Z",
+        "metadata": {"topic": "notification_batching"}
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "cons-thread-5-artifact-1",
+        "content_type": "text/plain",
+        "content": "Decision: send overdue notices in 30-minute batches to avoid staff inbox spam.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-cons-005",
+        "session_ref": "agent-session-cons-005",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://consolidation/thread-5-artifact-1",
+        "occurred_at": "2026-03-10T13:04:00Z",
+        "metadata": {"topic": "notification_batching"}
+      }
+    ],
+    "current_query": {
+      "text": "What did we previously conclude about duplicate holds after catalog sync delays?",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    },
+    "unexpected_terms": ["30-minute batches", "staff inbox spam"]
+  }
+]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from capabilities.consolidation import ConsolidationGroup, ConsolidationPolicy
 from capabilities.thread_aggregation import ThreadAggregate
 from core.contracts import ProcessResult
 from core.models import MemoryObject, SourceItem
@@ -27,4 +28,24 @@ class ThreadAggregationSemanticPlugin(SemanticPlugin):
 
     @abstractmethod
     def build_thread_summary(self, aggregate: ThreadAggregate, conclusions: list[MemoryObject]) -> ProcessResult:
+        raise NotImplementedError
+
+
+class ConsolidationSemanticPlugin(SemanticPlugin):
+    @property
+    @abstractmethod
+    def consolidation_policy(self) -> ConsolidationPolicy | None:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def pattern_memory_schema_id(self) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
+    def supports_consolidation(self, memory_object: MemoryObject) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def build_pattern_memory(self, group: ConsolidationGroup) -> ProcessResult:
         raise NotImplementedError

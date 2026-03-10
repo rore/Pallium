@@ -7,26 +7,23 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from capabilities.consolidation import ConsolidationPolicy, DEFAULT_CONSOLIDATION_STRATEGIES
+
 
 DEFAULT_ENV_FILE = ".env.local"
 DEFAULT_CONFIG_FILE = "pallium.local.toml"
 LEGACY_PROVIDER_KEY = "legacy_default"
 
 
-def _default_semantic_packages() -> dict[str, "SemanticPackageConfig"]:
-    return {
-        "demo_agent_memory": SemanticPackageConfig(name="demo_agent_memory", implementation="demo_agent_memory"),
-        "llm_agent_memory": SemanticPackageConfig(
-            name="llm_agent_memory",
-            implementation="llm_agent_memory",
-            prompt_variant="strict_typed_memory_v4_evidence_guarded",
-        ),
-        "agent_conversation_memory": SemanticPackageConfig(
-            name="agent_conversation_memory",
-            implementation="agent_conversation_memory",
-            prompt_variant="strict_typed_memory_v4_evidence_guarded",
-        ),
-    }
+DEFAULT_AGENT_CONVERSATION_CONSOLIDATION = ConsolidationPolicy(
+    enabled_strategies=DEFAULT_CONSOLIDATION_STRATEGIES,
+    default_strategy="thread_summary_anchored",
+    max_candidates_per_run=24,
+    max_group_size=4,
+    same_container_required=True,
+    time_window_hours=168,
+    lexical_overlap_threshold=2,
+)
 
 
 @dataclass(frozen=True)
@@ -46,6 +43,24 @@ class SemanticPackageConfig:
     llm_provider: str | None = None
     model: str | None = None
     prompt_variant: str | None = None
+    consolidation: ConsolidationPolicy | None = None
+
+
+def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
+    return {
+        "demo_agent_memory": SemanticPackageConfig(name="demo_agent_memory", implementation="demo_agent_memory"),
+        "llm_agent_memory": SemanticPackageConfig(
+            name="llm_agent_memory",
+            implementation="llm_agent_memory",
+            prompt_variant="strict_typed_memory_v4_evidence_guarded",
+        ),
+        "agent_conversation_memory": SemanticPackageConfig(
+            name="agent_conversation_memory",
+            implementation="agent_conversation_memory",
+            prompt_variant="strict_typed_memory_v4_evidence_guarded",
+            consolidation=DEFAULT_AGENT_CONVERSATION_CONSOLIDATION,
+        ),
+    }
 
 
 @dataclass(frozen=True)
@@ -86,6 +101,7 @@ class AppConfig:
                     llm_provider=LEGACY_PROVIDER_KEY,
                     model=self.llm_model or current.model,
                     prompt_variant=self.llm_prompt_variant or current.prompt_variant,
+                    consolidation=current.consolidation,
                 )
 
         object.__setattr__(self, "llm_providers", providers)
@@ -310,12 +326,14 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
                 continue
             package_name = str(name).strip().lower()
             current = packages.get(package_name, SemanticPackageConfig(name=package_name, implementation=package_name))
+            consolidation = _build_consolidation_policy(raw_value.get("consolidation"), current.consolidation)
             packages[package_name] = SemanticPackageConfig(
                 name=package_name,
                 implementation=_as_string(raw_value.get("implementation", current.implementation)),
                 llm_provider=_as_optional_string(raw_value.get("llm_provider", current.llm_provider)),
                 model=_as_optional_string(raw_value.get("model", current.model)),
                 prompt_variant=_as_optional_string(raw_value.get("prompt_variant", current.prompt_variant)),
+                consolidation=consolidation,
             )
 
     prefix = "PALLIUM_PACKAGE__"
@@ -335,6 +353,7 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
             "llm_provider": current.llm_provider,
             "model": current.model,
             "prompt_variant": current.prompt_variant,
+            "consolidation": current.consolidation,
         }
         if field_name == "implementation":
             updated["implementation"] = env_value
@@ -349,6 +368,28 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
     return packages
 
 
+def _build_consolidation_policy(raw_value: Any, current: ConsolidationPolicy | None) -> ConsolidationPolicy | None:
+    if raw_value is None:
+        return current
+    if not isinstance(raw_value, dict):
+        return current
+    base = current or ConsolidationPolicy()
+    enabled = raw_value.get("enabled_strategies", base.enabled_strategies)
+    if isinstance(enabled, list):
+        enabled_strategies = tuple(str(item).strip() for item in enabled if str(item).strip()) or base.enabled_strategies
+    else:
+        enabled_strategies = base.enabled_strategies
+    return ConsolidationPolicy(
+        enabled_strategies=enabled_strategies,
+        default_strategy=_as_string(raw_value.get("default_strategy", base.default_strategy)) or base.default_strategy,
+        max_candidates_per_run=int(raw_value.get("max_candidates_per_run", base.max_candidates_per_run)),
+        max_group_size=int(raw_value.get("max_group_size", base.max_group_size)),
+        same_container_required=bool(raw_value.get("same_container_required", base.same_container_required)),
+        time_window_hours=int(raw_value.get("time_window_hours", base.time_window_hours)),
+        lexical_overlap_threshold=int(raw_value.get("lexical_overlap_threshold", base.lexical_overlap_threshold)),
+    )
+
+
 def _as_string(value: Any) -> str:
     return str(value).strip() if value is not None else ""
 
@@ -358,6 +399,3 @@ def _as_optional_string(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
-
-
-

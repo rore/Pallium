@@ -14,7 +14,7 @@ Current implemented shape:
 
 - one local-first FastAPI service
 - one generic core
-- one reusable capability layer with thread aggregation
+- one reusable capability layer with thread aggregation and bounded consolidation
 - semantic plugins with deterministic and LLM-backed paths
 - an explicit `agent_conversation_memory` runtime package over the LLM-backed semantic path
 - provider abstraction for OpenAI-compatible and Claude-style APIs
@@ -22,10 +22,11 @@ Current implemented shape:
 - mixed retrieval over memory hits and compact source hits
 - explicit event refs for message and assistant-artifact ingest
 - first concrete product package: agent conversation memory over user messages and final assistant outputs
-- typed memory for:
+- typed and higher-level memory for:
   - `decision`
   - `investigation_outcome`
   - `thread_summary`
+  - `pattern_memory`
   - fallback `discussion_summary`
 - minimal memory lifecycle with `active` and `superseded`
 - committed semantic regression set and eval harness
@@ -48,6 +49,7 @@ Important current behavior:
 - source items are the evidence layer
 - semantic plugins promote reusable memory from source items
 - thread aggregation now exists as a reusable capability above atomic source items
+- bounded consolidation now exists as a reusable capability above lower-level memory
 - memory objects are evidence-backed through explicit relations
 - retrieval returns compact cards rather than raw source payloads by default
 - superseded memory is filtered from default retrieval, while raw evidence remains intact
@@ -124,7 +126,7 @@ The scenarios compare:
 - baseline current-thread context only
 - current-thread context plus Pallium memory-backed retrieval
 
-Thread-level summaries now sit between atomic events and future tiered memory, so recurring-question cases can recall one evidence-backed `thread_summary` instead of only several lower-level items.
+Thread-level summaries now sit between atomic events and higher-level memory, and bounded consolidation can now produce one evidence-backed `pattern_memory` over `thread_summary`, `decision`, and `investigation_outcome`.
 
 ## Recurring-Question Value Benchmark
 
@@ -145,6 +147,44 @@ Each run writes:
 - `results.jsonl`
 
 The committed benchmark is the first user-facing proof layer for whether Pallium improves recurring-question handling before higher-level memory is added.
+
+## Tiered Memory and Strategy Comparison
+
+Pallium now includes the first bounded tiered-memory capability.
+
+It can build one higher-level `pattern_memory` over:
+
+- `thread_summary`
+- `decision`
+- `investigation_outcome`
+
+Three bounded selection/grouping strategies are implemented and comparable:
+
+- `thread_local_carry_forward`
+- `container_topic_window`
+- `thread_summary_anchored`
+
+Current package default:
+
+- `thread_summary_anchored`
+
+Why this default:
+
+- keeps thread summaries as the main interpretable unit
+- allows bounded cross-thread carry-forward
+- stayed conservative on the current false-merge guard scenario
+
+Run the comparison harness with:
+
+```powershell
+.\.venv\Scripts\python.exe -m evals.consolidation_strategy_runner
+```
+
+Each run writes:
+
+- `summary.json`
+- `results.jsonl`
+
 
 ## Run Locally
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -23,6 +23,7 @@ def main() -> int:
     parser.add_argument("--scenario-file", type=Path, default=DEFAULT_SCENARIO_FILE)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--run-name", default=None)
+    parser.add_argument("--consolidation-strategy", default=None)
     args = parser.parse_args()
 
     run_dir = run_agent_conversation_scenarios(
@@ -30,6 +31,7 @@ def main() -> int:
         output_root=args.output_dir,
         config=AppConfig.from_env(),
         run_name=args.run_name,
+        consolidation_strategy=args.consolidation_strategy,
     )
     print(run_dir)
     return 0
@@ -41,9 +43,10 @@ def run_agent_conversation_scenarios(
     output_root: Path,
     config: AppConfig,
     run_name: str | None = None,
+    consolidation_strategy: str | None = None,
 ) -> Path:
     scenarios = _load_scenarios(scenario_file)
-    run_id = run_name or _build_run_id()
+    run_id = run_name or _build_run_id(consolidation_strategy)
     run_dir = output_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     results_path = run_dir / "results.jsonl"
@@ -53,6 +56,7 @@ def run_agent_conversation_scenarios(
         "created_at": datetime.now(timezone.utc).isoformat(),
         "scenario_file": str(scenario_file),
         "results_file": results_path.name,
+        "consolidation_strategy": consolidation_strategy,
         "scenarios_total": len(scenarios),
         "value_scenarios": 0,
         "non_value_scenarios": 0,
@@ -62,7 +66,7 @@ def run_agent_conversation_scenarios(
 
     with results_path.open("w", encoding="utf-8") as results_file:
         for scenario in scenarios:
-            result = _run_scenario(scenario=scenario, config=config)
+            result = _run_scenario(scenario=scenario, config=config, consolidation_strategy=consolidation_strategy)
             if result["expected_value"]:
                 summary["value_scenarios"] += 1
                 if result["expected_memory_types_found"]:
@@ -78,7 +82,7 @@ def run_agent_conversation_scenarios(
     return run_dir
 
 
-def _run_scenario(*, scenario: dict[str, Any], config: AppConfig) -> dict[str, Any]:
+def _run_scenario(*, scenario: dict[str, Any], config: AppConfig, consolidation_strategy: str | None) -> dict[str, Any]:
     with TemporaryDirectory() as temp_dir:
         database_url = f"sqlite:///{Path(temp_dir) / 'scenario.db'}"
         scenario_config = replace(
@@ -90,6 +94,13 @@ def _run_scenario(*, scenario: dict[str, Any], config: AppConfig) -> dict[str, A
             for event in scenario.get("prior_events", []):
                 response = client.post("/items", json=event)
                 response.raise_for_status()
+
+            consolidation_result = None
+            if consolidation_strategy:
+                consolidation_result = client.app.state.pallium_service.run_consolidation_pass(
+                    use_case="agent_conversation_memory",
+                    strategy_name=consolidation_strategy,
+                )
 
             query_response = client.post("/query", json=scenario["current_query"])
             query_response.raise_for_status()
@@ -121,6 +132,33 @@ def _run_scenario(*, scenario: dict[str, Any], config: AppConfig) -> dict[str, A
         "expected_memory_types_found": expected_memory_types_found,
         "memory_was_expected": expected_value and expected_memory_types_found,
         "memory_was_unnecessary": (not expected_value) and (not memory_hits),
+        "consolidation_strategy": consolidation_strategy,
+        "consolidation_run": _serialize_consolidation_result(consolidation_result),
+    }
+
+
+def _serialize_consolidation_result(result: Any) -> dict[str, Any] | None:
+    if result is None:
+        return None
+    return {
+        "package_name": result.package_name,
+        "strategy_name": result.strategy_name,
+        "strategy_version": result.strategy_version,
+        "candidate_count": result.candidate_count,
+        "selected_candidate_ids": list(result.selected_candidate_ids),
+        "groups": [
+            {
+                "strategy_name": group.strategy_name,
+                "strategy_version": group.strategy_version,
+                "group_key": group.group_key,
+                "selected_candidate_ids": list(group.selected_candidate_ids),
+                "selected_source_item_ids": list(group.selected_source_item_ids),
+                "candidate_thread_refs": list(group.candidate_thread_refs),
+                "created_pattern_memory_ids": list(group.created_pattern_memory_ids),
+                "superseded_pattern_memory_ids": list(group.superseded_pattern_memory_ids),
+            }
+            for group in result.groups
+        ],
     }
 
 
@@ -128,9 +166,10 @@ def _load_scenarios(path: Path) -> list[dict[str, Any]]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _build_run_id() -> str:
+def _build_run_id(consolidation_strategy: str | None) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"agent-conversation-test-bed__{timestamp}"
+    strategy_suffix = f"__{consolidation_strategy}" if consolidation_strategy else ""
+    return f"agent-conversation-test-bed{strategy_suffix}__{timestamp}"
 
 
 if __name__ == "__main__":

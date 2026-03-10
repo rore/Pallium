@@ -207,6 +207,16 @@ class SQLiteStorageProvider(StorageProvider):
                 raise KeyError(memory_object_id)
             record.lifecycle = lifecycle
 
+    def list_memory_objects(self, memory_types: list[str] | None = None, lifecycle: str | None = None) -> list[MemoryObject]:
+        with self._session_factory() as session:
+            statement = select(MemoryObjectRecord)
+            if memory_types:
+                statement = statement.where(MemoryObjectRecord.type.in_(memory_types))
+            if lifecycle is not None:
+                statement = statement.where(MemoryObjectRecord.lifecycle == lifecycle)
+            records = session.scalars(statement).all()
+        return [self._to_memory_object(record) for record in records]
+
     def list_memory_objects_for_source_item(self, source_item_id: str) -> list[MemoryObject]:
         with self._session_factory() as session:
             relation_records = session.scalars(
@@ -471,4 +481,3 @@ class SQLiteStorageProvider(StorageProvider):
         if not value:
             return {}
         return json.loads(value)
-

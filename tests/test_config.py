@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -27,6 +27,15 @@ def test_app_config_loads_from_toml_and_env_overrides(monkeypatch, tmp_path: Pat
         llm_provider = "openai"
         model = "file-model"
         prompt_variant = "strict_decision_v1"
+
+        [semantic_packages.agent_conversation_memory.consolidation]
+        enabled_strategies = ["thread_local_carry_forward", "thread_summary_anchored"]
+        default_strategy = "thread_summary_anchored"
+        max_candidates_per_run = 12
+        max_group_size = 3
+        same_container_required = true
+        time_window_hours = 48
+        lexical_overlap_threshold = 1
         """.strip(),
         encoding="utf-8",
     )
@@ -39,8 +48,13 @@ def test_app_config_loads_from_toml_and_env_overrides(monkeypatch, tmp_path: Pat
 
     assert config.default_use_case == "agent_conversation_memory"
     assert config.sqlite_url == "sqlite:///./configured.db"
-    assert config.package_config("agent_conversation_memory").model == "env-model"
-    assert config.package_config("agent_conversation_memory").prompt_variant == "strict_decision_v1"
+    package = config.package_config("agent_conversation_memory")
+    assert package.model == "env-model"
+    assert package.prompt_variant == "strict_decision_v1"
+    assert package.consolidation is not None
+    assert package.consolidation.enabled_strategies == ("thread_local_carry_forward", "thread_summary_anchored")
+    assert package.consolidation.default_strategy == "thread_summary_anchored"
+    assert package.consolidation.max_candidates_per_run == 12
     provider = config.provider_config("openai")
     assert provider.kind == "openai_compatible"
     assert provider.base_url == "https://file.example/v1"
@@ -94,4 +108,3 @@ def test_legacy_env_values_still_map_to_llm_packages(monkeypatch, tmp_path: Path
     assert provider.base_url == "https://legacy.example/v1"
     assert provider.api_key == "legacy-key"
     assert provider.timeout_seconds == 33.0
-

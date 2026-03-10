@@ -179,12 +179,34 @@ Current chosen path:
 
 ## Tiered Memory
 
-Tiered memory remains the next intended extension, not part of the current executable slice.
+Tiered memory is now implemented as a reusable consolidation capability between the core and semantic packages.
 
-It should build over:
+Current behavior:
 
-- `thread_summary`
-- `decision`
-- `investigation_outcome`
+- first higher-level memory type: `pattern_memory`
+- first eligible lower-level inputs:
+  - `thread_summary`
+  - `decision`
+  - `investigation_outcome`
+- consolidation remains bounded and additive
+- higher-level memory is evidence-backed and lifecycle-managed
+- retrieval can return `pattern_memory` as a normal `memory_hit`
 
-rather than jumping directly from raw atomic events to higher-level memory.
+Current strategy hooks:
+
+- `select_candidates`
+- `group_candidates`
+- `synthesize_group`
+- `promote_group`
+
+Implemented strategies for `agent_conversation_memory`:
+
+- `thread_local_carry_forward`
+- `container_topic_window`
+- `thread_summary_anchored`
+
+Current package default:
+
+- `thread_summary_anchored`
+
+The current default was chosen because it keeps thread summaries as the main interpretable unit, allows bounded cross-thread carry-forward, and stayed conservative on the current false-merge guard scenario.

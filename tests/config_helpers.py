@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 from app.config import AppConfig, LLMProviderConfig, SemanticPackageConfig
+from capabilities.consolidation import ConsolidationPolicy, DEFAULT_CONSOLIDATION_STRATEGIES
 
 
 DEFAULT_PROMPT_VARIANT = "strict_typed_memory_v4_evidence_guarded"
+DEFAULT_CONSOLIDATION_POLICY = ConsolidationPolicy(
+    enabled_strategies=DEFAULT_CONSOLIDATION_STRATEGIES,
+    default_strategy="thread_summary_anchored",
+    max_candidates_per_run=24,
+    max_group_size=4,
+    same_container_required=True,
+    time_window_hours=168,
+    lexical_overlap_threshold=2,
+)
 
 
 def build_llm_test_config(
@@ -43,6 +53,7 @@ def build_llm_test_config(
                 llm_provider=provider_name,
                 model=model,
                 prompt_variant=prompt_variant,
+                consolidation=DEFAULT_CONSOLIDATION_POLICY,
             ),
         },
     )

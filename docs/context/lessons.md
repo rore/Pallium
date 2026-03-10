@@ -157,3 +157,25 @@ The prompt asked for a concise future-recall summary but did not explicitly forb
 
 Solution:
 Use a stricter thread-summary prompt that allows only explicit facts from thread items and carried conclusions, says unresolved threads must stay unresolved, caps the summary to about two sentences / 60 words, and bounds the thread material included in the prompt to protect token budget.
+
+## 2026-03-10 - Container-level lexical overlap can false-merge unrelated memories
+
+Problem:
+A broad same-container consolidation strategy initially merged unrelated conversation memory because generic discussion words created accidental lexical overlap.
+
+Why:
+Container-scoped grouping is useful for cross-thread carry-forward, but low-signal tokens like generic conversation words can make unrelated threads appear connected.
+
+Solution:
+Keep the first tiered-memory strategies conservative, add consolidation-specific stopword filtering and minimum token length rules, and require stronger overlap before broad same-container grouping is allowed.
+
+## 2026-03-10 - Live consolidation comparisons need defensive cleanup
+
+Problem:
+A live OpenAI-backed consolidation comparison failed on provider `503` and left the temporary SQLite file locked during teardown.
+
+Why:
+The comparison harness was disposing the storage engine only on the success path.
+
+Solution:
+Always dispose the temporary storage engine in a `finally` block so failed live comparison runs still clean up correctly.

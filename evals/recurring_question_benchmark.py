@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -47,6 +47,7 @@ def main() -> int:
     parser.add_argument("--scenario-file", type=Path, default=DEFAULT_SCENARIO_FILE)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--run-name", default=None)
+    parser.add_argument("--consolidation-strategy", default=None)
     args = parser.parse_args()
 
     run_dir = run_recurring_question_benchmark(
@@ -54,6 +55,7 @@ def main() -> int:
         output_root=args.output_dir,
         config=AppConfig.from_env(),
         run_name=args.run_name,
+        consolidation_strategy=args.consolidation_strategy,
     )
     print(run_dir)
     return 0
@@ -66,6 +68,7 @@ def run_recurring_question_benchmark(
     config: AppConfig,
     run_name: str | None = None,
     answer_provider: LLMProvider | None = None,
+    consolidation_strategy: str | None = None,
 ) -> Path:
     scenarios = _load_scenarios(scenario_file)
     default_package = config.package_config(config.default_use_case)
@@ -76,7 +79,7 @@ def run_recurring_question_benchmark(
     else:
         provider = answer_provider
 
-    run_id = run_name or _build_run_id(config)
+    run_id = run_name or _build_run_id(config, consolidation_strategy)
     run_dir = output_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     results_path = run_dir / "results.jsonl"
@@ -89,6 +92,7 @@ def run_recurring_question_benchmark(
         "provider": config.llm_provider_for_default_use_case,
         "model": config.llm_model_for_default_use_case,
         "prompt_variant": config.llm_prompt_variant_for_default_use_case,
+        "consolidation_strategy": consolidation_strategy,
         "scenarios_total": len(scenarios),
         "value_scenarios": 0,
         "non_value_scenarios": 0,
@@ -98,7 +102,12 @@ def run_recurring_question_benchmark(
 
     with results_path.open("w", encoding="utf-8") as results_file:
         for scenario in scenarios:
-            result = _run_scenario(scenario=scenario, config=config, answer_provider=provider)
+            result = _run_scenario(
+                scenario=scenario,
+                config=config,
+                answer_provider=provider,
+                consolidation_strategy=consolidation_strategy,
+            )
             if result["expected_value"]:
                 summary["value_scenarios"] += 1
                 if result["winner"] == "memory_backed":
@@ -113,7 +122,13 @@ def run_recurring_question_benchmark(
     return run_dir
 
 
-def _run_scenario(*, scenario: dict[str, Any], config: AppConfig, answer_provider: LLMProvider) -> dict[str, Any]:
+def _run_scenario(
+    *,
+    scenario: dict[str, Any],
+    config: AppConfig,
+    answer_provider: LLMProvider,
+    consolidation_strategy: str | None,
+) -> dict[str, Any]:
     with TemporaryDirectory() as temp_dir:
         database_url = f"sqlite:///{Path(temp_dir) / 'recurring-question.db'}"
         scenario_config = replace(
@@ -125,6 +140,13 @@ def _run_scenario(*, scenario: dict[str, Any], config: AppConfig, answer_provide
             for event in scenario.get("prior_events", []):
                 response = client.post("/items", json=event)
                 response.raise_for_status()
+
+            consolidation_result = None
+            if consolidation_strategy:
+                consolidation_result = client.app.state.pallium_service.run_consolidation_pass(
+                    use_case="agent_conversation_memory",
+                    strategy_name=consolidation_strategy,
+                )
 
             query_response = client.post("/query", json=scenario["current_query"])
             query_response.raise_for_status()
@@ -186,6 +208,8 @@ def _run_scenario(*, scenario: dict[str, Any], config: AppConfig, answer_provide
         "baseline_context": scenario.get("current_thread_context", []),
         "memory_backed_retrieval": memory_payload["results"],
         "returned_memory_types": returned_memory_types,
+        "consolidation_strategy": consolidation_strategy,
+        "consolidation_run": _serialize_consolidation_result(consolidation_result),
         "baseline_answer": baseline_answer,
         "memory_backed_answer": memory_answer,
         "rubric": {
@@ -195,6 +219,31 @@ def _run_scenario(*, scenario: dict[str, Any], config: AppConfig, answer_provide
         },
         "winner": comparison["winner"],
         "why": comparison["why"],
+    }
+
+
+def _serialize_consolidation_result(result: Any) -> dict[str, Any] | None:
+    if result is None:
+        return None
+    return {
+        "package_name": result.package_name,
+        "strategy_name": result.strategy_name,
+        "strategy_version": result.strategy_version,
+        "candidate_count": result.candidate_count,
+        "selected_candidate_ids": list(result.selected_candidate_ids),
+        "groups": [
+            {
+                "strategy_name": group.strategy_name,
+                "strategy_version": group.strategy_version,
+                "group_key": group.group_key,
+                "selected_candidate_ids": list(group.selected_candidate_ids),
+                "selected_source_item_ids": list(group.selected_source_item_ids),
+                "candidate_thread_refs": list(group.candidate_thread_refs),
+                "created_pattern_memory_ids": list(group.created_pattern_memory_ids),
+                "superseded_pattern_memory_ids": list(group.superseded_pattern_memory_ids),
+            }
+            for group in result.groups
+        ],
     }
 
 
@@ -413,12 +462,14 @@ def _load_scenarios(path: Path) -> list[dict[str, Any]]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _build_run_id(config: AppConfig) -> str:
+def _build_run_id(config: AppConfig, consolidation_strategy: str | None) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     provider = (config.llm_provider_for_default_use_case or "provider").replace("_", "-")
     model = (config.llm_model_for_default_use_case or "model").replace("/", "-").replace(".", "-")
-    return f"recurring-question-benchmark__{provider}__{model}__{timestamp}"
+    strategy_suffix = f"__{consolidation_strategy}" if consolidation_strategy else ""
+    return f"recurring-question-benchmark__{provider}__{model}{strategy_suffix}__{timestamp}"
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

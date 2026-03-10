@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from api.routes import create_router
-from app.config import AppConfig, LLMProviderConfig, SemanticPackageConfig
+from app.config import AppConfig, SemanticPackageConfig
 from core.service import PalliumService
 from providers.llm.anthropic_claude import AnthropicClaudeLLMProvider
 from providers.llm.base import LLMProvider
@@ -77,7 +77,11 @@ def _build_plugin_for_package(*, config: AppConfig, package_config: SemanticPack
         prompt_variant = package_config.prompt_variant or "strict_typed_memory_v4_evidence_guarded"
         if implementation == "llm_agent_memory":
             return LLMAgentMemoryPlugin(provider=provider, prompt_variant=prompt_variant)
-        return AgentConversationMemoryPlugin(provider=provider, prompt_variant=prompt_variant)
+        return AgentConversationMemoryPlugin(
+            provider=provider,
+            prompt_variant=prompt_variant,
+            consolidation_config=package_config.consolidation,
+        )
 
     raise ValueError(f"Unsupported semantic package implementation: {implementation}")
 

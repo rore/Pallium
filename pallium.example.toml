@@ -1,4 +1,4 @@
-default_use_case = "agent_conversation_memory"
+﻿default_use_case = "agent_conversation_memory"
 
 [storage]
 backend = "sqlite"
@@ -24,3 +24,12 @@ implementation = "agent_conversation_memory"
 llm_provider = "openai"
 model = "gpt-5-mini"
 prompt_variant = "strict_typed_memory_v4_evidence_guarded"
+
+[semantic_packages.agent_conversation_memory.consolidation]
+enabled_strategies = ["thread_local_carry_forward", "container_topic_window", "thread_summary_anchored"]
+default_strategy = "thread_summary_anchored"
+max_candidates_per_run = 24
+max_group_size = 4
+same_container_required = true
+time_window_hours = 168
+lexical_overlap_threshold = 2

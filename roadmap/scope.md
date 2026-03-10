@@ -1,30 +1,31 @@
-Pallium now has a realistic agent-conversation test bed, a recurring-question value benchmark, and a reusable thread aggregation capability over a neutral public-safe sample domain.
+Pallium now has its first higher-level memory layer for the `agent_conversation_memory` package: bounded, evidence-backed `pattern_memory` built over `thread_summary`, `decision`, and `investigation_outcome`.
 
 Current focus:
-- use the benchmark results to judge whether higher-level memory actually improves recurring-question answers before adding more capability
-- keep semantic quality measurable against the committed regression batch while tiered memory is added
-- preserve the current first-package boundary: memory over agent-mediated conversations, not ambient workplace chat
-- keep the platform framing explicit: Pallium stays a generic memory engine even while the first package remains narrow
-- treat thread aggregation as the first reusable capability between the generic core and semantic packages
-- treat hybrid retrieval as the target retrieval architecture, while slicing its delivery so it does not block the first tiered-memory value step
+- keep the first-package value claim explicit: Pallium improves cross-thread and cross-session recurring-question handling, not broad workspace search
+- treat tiered memory as a reusable capability between the generic core and semantic packages, with package-owned strategy policy
+- use the recorded strategy comparison to keep consolidation conservative and interpretable
+- preserve the current default package strategy: `thread_summary_anchored`
+- keep semantic quality measurable against the committed regression batch while higher-level memory grows
+- move the next retrieval work into explainability and text-view modeling before vector and fusion slices
 
 Concrete next steps:
-- add the first bounded consolidation flow that produces a higher-level evidence-backed memory object such as `pattern_memory`
-- make that consolidation operate over:
-  - `thread_summary`
-  - `decision`
-  - `investigation_outcome`
-- after that, add hybrid-retrieval groundwork in slices:
-  - retrieval trace and text-view modeling
-  - vector retrieval provider support
-  - RRF-based hybrid fusion
-- rerun the recurring-question benchmark against both higher-level memory and later hybrid retrieval improvements
+- add retrieval trace and text-view modeling so Pallium can explain why a hit appeared and prepare cleanly for hybrid retrieval
+- then add a vector retrieval provider behind the existing retrieval boundary
+- then add RRF-based hybrid retrieval fusion over lexical and vector candidates
+- keep reranking as a later optional extension after hybrid retrieval is measurable
+
+What tiered memory now provides:
+- a reusable consolidation capability with explicit strategy hooks
+- three bounded selection/grouping strategies for comparison:
+  - `thread_local_carry_forward`
+  - `container_topic_window`
+  - `thread_summary_anchored`
+- evidence-backed `pattern_memory` as a normal retrievable memory type
+- lifecycle-managed higher-level memory built over meaningful conversation units rather than raw atomic events
 
 Still out of scope for this phase:
-- turning Pallium into an agent runtime or workflow engine
-- connector-framework-first scope
-- broad ingestion of ambient team chat that never flowed through the downstream agent
-- claiming whole-team knowledge coverage from an agent-mediated conversation subset
-- full raw-content expansion endpoints as part of the default query path
-- making embeddings the only retrieval foundation
-- deep autonomous multi-level clustering
+- global autonomous clustering over the full memory store
+- vector-assisted consolidation selection
+- public API expansion for consolidation control
+- replacing lower-level memory with only higher-level summaries
+- broad ambient-workspace knowledge coverage beyond agent-mediated conversation memory

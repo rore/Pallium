@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import re
 
+from capabilities.consolidation import ConsolidationCapability, ConsolidationRunGroupResult, ConsolidationRunResult
 from capabilities.thread_aggregation import build_thread_aggregate
 from core.contracts import IngestResult, ProcessResult, QueryResult, build_query_filters, build_source_item
 from core.models import IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
 from retrieval.base import RetrievalProvider
-from semantic.base import SemanticPlugin, ThreadAggregationSemanticPlugin
+from semantic.base import ConsolidationSemanticPlugin, SemanticPlugin, ThreadAggregationSemanticPlugin
 from storage.base import StorageProvider
 
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 THREAD_CONCLUSION_TYPES = {"decision", "investigation_outcome"}
 THREAD_SUMMARY_TYPE = "thread_summary"
+PATTERN_MEMORY_TYPE = "pattern_memory"
 
 
 def _normalize_for_index(text: str) -> str:
@@ -31,6 +33,7 @@ class PalliumService:
         self._retrieval = retrieval
         self._semantic_plugins = semantic_plugins
         self._default_use_case = default_use_case
+        self._consolidation_capability = ConsolidationCapability()
 
     def ingest_item(
         self,
@@ -147,6 +150,83 @@ class PalliumService:
         )
         return QueryResult(results=self._retrieval.query(text=text, limit=limit, filters=filters))
 
+    def run_consolidation_pass(
+        self,
+        *,
+        use_case: str | None = None,
+        strategy_name: str | None = None,
+    ) -> ConsolidationRunResult | None:
+        plugin_name = use_case or self._default_use_case
+        plugin = self._semantic_plugins[plugin_name]
+        if not isinstance(plugin, ConsolidationSemanticPlugin):
+            return None
+        policy = plugin.consolidation_policy
+        if policy is None:
+            return None
+
+        resolved_strategy_name = strategy_name or policy.default_strategy
+        if resolved_strategy_name not in policy.enabled_strategies:
+            raise ValueError(f"Strategy '{resolved_strategy_name}' is not enabled for package '{plugin_name}'")
+
+        strategy = self._consolidation_capability.resolve_strategy(resolved_strategy_name)
+        candidates = self._consolidation_capability.select_candidates(
+            storage=self._storage,
+            plugin=plugin,
+            strategy=strategy,
+            policy=policy,
+        )
+        groups = self._consolidation_capability.group_candidates(
+            strategy=strategy,
+            candidates=candidates,
+            policy=policy,
+        )
+
+        group_results: list[ConsolidationRunGroupResult] = []
+        for group in groups:
+            synthesized = self._consolidation_capability.synthesize_group(plugin=plugin, group=group)
+            if not synthesized.memory_objects:
+                continue
+            pattern_memory = synthesized.memory_objects[0]
+            promoted = ProcessResult(
+                annotations=synthesized.annotations,
+                memory_objects=synthesized.memory_objects,
+                relations=[
+                    *synthesized.relations,
+                    *self._build_pattern_relations(pattern_memory.id, group),
+                ],
+                index_entries=synthesized.index_entries,
+            )
+            self._persist_process_result(promoted)
+
+            superseded_ids: list[str] = []
+            for active_pattern_id in self._find_active_pattern_memory_ids(plugin, group):
+                if active_pattern_id == pattern_memory.id:
+                    continue
+                self.supersede_memory_object(active_pattern_id, pattern_memory.id)
+                superseded_ids.append(active_pattern_id)
+
+            group_results.append(
+                ConsolidationRunGroupResult(
+                    strategy_name=group.strategy_name,
+                    strategy_version=group.strategy_version,
+                    group_key=group.group_key,
+                    selected_candidate_ids=group.candidate_ids,
+                    selected_source_item_ids=group.supporting_source_ids,
+                    candidate_thread_refs=tuple(candidate.thread_ref for candidate in group.candidates),
+                    created_pattern_memory_ids=tuple(memory.id for memory in synthesized.memory_objects if memory.type == PATTERN_MEMORY_TYPE),
+                    superseded_pattern_memory_ids=tuple(superseded_ids),
+                )
+            )
+
+        return ConsolidationRunResult(
+            package_name=plugin_name,
+            strategy_name=strategy.name,
+            strategy_version=strategy.version,
+            candidate_count=len(candidates),
+            selected_candidate_ids=tuple(candidate.memory_object.id for candidate in candidates),
+            groups=tuple(group_results),
+        )
+
     def supersede_memory_object(self, superseded_id: str, replacement_id: str) -> None:
         superseded = self._storage.get_memory_object(superseded_id)
         replacement = self._storage.get_memory_object(replacement_id)
@@ -239,3 +319,43 @@ class PalliumService:
                     continue
                 conclusions[memory_object.id] = memory_object
         return list(conclusions.values())
+
+    def _build_pattern_relations(self, pattern_memory_id: str, group) -> list[Relation]:
+        relations = [
+            Relation(
+                from_kind="memory_object",
+                from_id=pattern_memory_id,
+                relation_type="supported_by",
+                to_kind="source_item",
+                to_id=source_item_id,
+            )
+            for source_item_id in group.supporting_source_ids
+        ]
+        relations.extend(
+            Relation(
+                from_kind="memory_object",
+                from_id=pattern_memory_id,
+                relation_type="consolidates",
+                to_kind="memory_object",
+                to_id=candidate_id,
+            )
+            for candidate_id in group.candidate_ids
+        )
+        return relations
+
+    def _find_active_pattern_memory_ids(
+        self,
+        plugin: ConsolidationSemanticPlugin,
+        group,
+    ) -> list[str]:
+        ids: list[str] = []
+        for memory_object in self._storage.list_memory_objects(memory_types=[PATTERN_MEMORY_TYPE], lifecycle="active"):
+            if memory_object.schema_id != plugin.pattern_memory_schema_id:
+                continue
+            provenance = memory_object.payload.get("consolidation_provenance", {})
+            if provenance.get("strategy_name") != group.strategy_name:
+                continue
+            if memory_object.payload.get("group_key") != group.group_key:
+                continue
+            ids.append(memory_object.id)
+        return ids

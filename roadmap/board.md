@@ -1,8 +1,7 @@
 # Next
-- add-tiered-memory-extension
+- add-retrieval-trace-and-text-view-model
 
 # Later
-- add-retrieval-trace-and-text-view-model
 - add-vector-retrieval-provider
 - add-hybrid-retrieval-fusion
 
@@ -12,6 +11,7 @@
 - idea-optional-reranker-support
 
 # Done
+- add-tiered-memory-extension
 - add-conversation-thread-aggregate
 - add-recurring-question-value-benchmark
 - add-agent-conversation-memory-test-bed

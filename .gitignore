@@ -1,4 +1,4 @@
-tools/minimap/.minimap-stdout.log
+﻿tools/minimap/.minimap-stdout.log
 tools/minimap/.minimap-stderr.log
 __pycache__/
 .pytest_cache/
@@ -15,4 +15,8 @@ evals/recurring_question/output/
 
 
 pallium.local.toml
+
+
+evals/consolidation/output/
+thread-evolution-demo*.db
 
