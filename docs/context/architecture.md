@@ -120,6 +120,8 @@ Current chosen path:
 
 The first concrete product package is now agent conversation memory.
 
+That package reuses the generic core and existing typed-memory path. It should be treated as the first semantic package proving value on top of Pallium, not as the definition of the platform itself.
+
 Current package boundary:
 
 - primary evidence units:
@@ -141,3 +143,4 @@ The package reuses the current typed-memory extraction path rather than introduc
 Tiered memory remains an intended extension, not part of the current executable slice.
 
 It should build on top of the stronger lower-level memory model now in place rather than replacing it.
+

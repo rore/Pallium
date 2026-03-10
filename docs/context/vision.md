@@ -11,6 +11,10 @@ to downstream consumers.
 One important internal use case is team knowledge support for an agent, but the
 project itself should remain generic and open-source friendly.
 
+The first concrete semantic package is `agent_conversation_memory`. That package
+is intentionally narrower than Pallium itself and is the first product slice
+being used to prove value.
+
 ## What Pallium Is Not
 
 Pallium is not:
@@ -62,3 +66,4 @@ Pallium is not:
 11. Build iteratively around a walking skeleton.
     Prefer a thin end-to-end system with all major layers present over a large
     upfront design freeze.
+

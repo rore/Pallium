@@ -6,6 +6,8 @@ Pallium is a generic memory engine for agents.
 
 It stores selected source items, derives reusable knowledge through extensible semantic layers, and returns compact evidence-backed memory objects to consumers.
 
+The current product focus is the first semantic package, `agent_conversation_memory`. That narrows the first value claim, not the scope of the Pallium platform itself.
+
 ## What Exists Now
 
 Current implemented shape:
@@ -224,10 +226,4 @@ Use `--split-output` only when you want per-input debug files.
 - [C:/Dev/rore/Pallium/docs/context/architecture.md](C:/Dev/rore/Pallium/docs/context/architecture.md)
 - [C:/Dev/rore/Pallium/docs/context/state.md](C:/Dev/rore/Pallium/docs/context/state.md)
 - [C:/Dev/rore/Pallium/roadmap/board.md](C:/Dev/rore/Pallium/roadmap/board.md)
-
-
-
-
-
-
 

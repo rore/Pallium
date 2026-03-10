@@ -3,7 +3,8 @@ Pallium now has a realistic agent-conversation test bed and a recurring-question
 Current focus:
 - use the benchmark results to judge whether higher-level memory actually improves recurring-question answers before adding more capability
 - keep semantic quality measurable against the committed regression batch while tiered memory is added
-- preserve the current product boundary: memory over agent-mediated conversations, not ambient workplace chat
+- preserve the current first-package boundary: memory over agent-mediated conversations, not ambient workplace chat
+- keep the platform framing explicit: Pallium stays a generic memory engine even while the first package remains narrow
 
 Concrete next steps:
 - add the first bounded consolidation flow that produces a higher-level evidence-backed memory object such as `pattern_memory`
@@ -18,3 +19,4 @@ Still out of scope for this phase:
 - full raw-content expansion endpoints as part of the default query path
 - making embeddings the only retrieval foundation
 - deep autonomous multi-level clustering
+
