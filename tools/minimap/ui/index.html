@@ -29,20 +29,24 @@
               <h2>Board</h2>
             </div>
             <div class="panel-actions">
+              <button id="board-view-toggle" class="ghost-button board-view-toggle" type="button" aria-expanded="false">Group by</button>
               <button id="board-edit-button" class="ghost-button" type="button">Edit</button>
               <button id="board-save-button" class="ghost-button" type="button" hidden>Save</button>
               <button id="board-cancel-button" class="ghost-button" type="button" hidden>Cancel</button>
               <button id="jump-to-editor" class="ghost-button mobile-nav-button" type="button" hidden>Open item</button>
             </div>
           </div>
+          <div id="board-lens-switcher" class="board-lens-panel" hidden></div>
           <div class="board-controls" id="board-controls">
-            <div class="board-search-row">
+            <div class="board-toolbar-row">
               <label class="board-search-field" for="board-search">
                 <span class="visually-hidden">Search roadmap</span>
-                <input id="board-search" type="search" placeholder="Search roadmap" autocomplete="off" spellcheck="false" />
+                <input id="board-search" type="search" placeholder="Search" autocomplete="off" spellcheck="false" />
               </label>
-              <button id="board-filter-toggle" class="ghost-button board-filter-toggle" type="button" aria-expanded="false">Filters</button>
-              <button id="board-clear-filters" class="ghost-button board-clear-button" type="button">Clear</button>
+              <div class="board-control-actions">
+                <button id="board-filter-toggle" class="ghost-button board-filter-toggle" type="button" aria-expanded="false">Filters</button>
+                <button id="board-clear-filters" class="ghost-button board-clear-button" type="button">Clear</button>
+              </div>
             </div>
             <div id="board-filters" class="board-filters" hidden></div>
           </div>
@@ -63,13 +67,15 @@
             </div>
           </div>
 
-          <div class="editor-tabs" role="tablist" aria-label="Item editor modes">
+          <div class="editor-tabs" id="editor-tabs" role="tablist" aria-label="Item editor modes">
             <button class="editor-tab is-active" id="tab-preview" data-editor-mode="preview" type="button" role="tab" aria-selected="true">Preview</button>
             <button class="editor-tab" id="tab-structured" data-editor-mode="structured" type="button" role="tab" aria-selected="false">Edit</button>
             <button class="editor-tab" id="tab-raw" data-editor-mode="raw" type="button" role="tab" aria-selected="false">Raw</button>
           </div>
 
           <div class="editor-panels">
+            <section id="setup-view" class="editor-pane setup-view" hidden></section>
+
             <form id="item-form" class="item-form editor-pane" data-mode-pane="structured">
               <details class="metadata-details">
                 <summary id="metadata-toggle" class="metadata-summary">
@@ -165,3 +171,4 @@
     <script type="module" src="/app.js"></script>
   </body>
 </html>
+
