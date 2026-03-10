@@ -37,5 +37,5 @@ Semantic quality is now the main product risk. The eval harness exists, but the 
 ## Notes
 
 Completed on 2026-03-09.
-Current recorded baseline: `gpt-5-mini` + `strict_decision_v2_source_aware` at `27 / 30` overall correct.
+Current recorded baseline: `gpt-5-mini` + `strict_typed_memory_v4_evidence_guarded` at `30 / 30` overall correct.
 See `evals/semantic/baseline.md`.

@@ -1,19 +1,19 @@
 ---
 id: add-tiered-memory-extension
-title: Add the optional tiered-memory extension
+title: Prove user value with the first tiered-memory layer
 status: queued
-priority: medium
+priority: high
 commitment: committed
 milestone: Next
 ---
 
 ## Summary
 
-Add the first bounded consolidation flow that periodically creates higher-level evidence-backed memory objects from lower-level memories.
+Add the first bounded consolidation flow that creates a higher-level evidence-backed memory object from lower-level memories so recurring questions can be answered from one compact pattern instead of many raw items.
 
 ## Why
 
-Tiered memory is one of the most differentiated long-term ideas in Pallium, but it should arrive after the base memory engine and first semantic layer are stable.
+Pallium starts to become clearly more valuable than raw retrieval-and-synthesis when it can return a learned higher-level pattern that a downstream agent would not reliably or efficiently reconstruct from source search every time.
 
 ## In Scope
 
@@ -21,6 +21,7 @@ Tiered memory is one of the most differentiated long-term ideas in Pallium, but 
 - produce at least one higher-level memory type such as `pattern_memory`
 - keep consolidated objects evidence-backed and linked to lower-level support
 - make consolidated objects queryable through the normal retrieval model
+- show at least one recurring-question flow where consolidated memory reduces noisy low-level retrieval
 
 ## Out of Scope
 
@@ -28,12 +29,14 @@ Tiered memory is one of the most differentiated long-term ideas in Pallium, but 
 - replacing lower-level memory with summaries
 - deep multi-level hierarchy
 - opaque synthesis without evidence links
+- broad productization of many consolidation types in one step
 
 ## Done When
 
 1. A bounded consolidation job produces at least one useful higher-level memory object type.
 2. Consolidated objects link back to supporting lower-level evidence.
 3. Retrieval can include consolidated memory without breaking direct-memory retrieval.
+4. At least one concrete recurring-question example is documented where the downstream agent can use one consolidated memory object plus evidence instead of many low-level items.
 
 ## Notes
 

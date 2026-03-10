@@ -1,5 +1,6 @@
 # Next
 - add-tiered-memory-extension
+- add-recurring-question-value-benchmark
 
 # Ideas
 - idea-evidence-backed-agent-memory
