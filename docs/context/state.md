@@ -29,6 +29,7 @@
 - semantic eval uses one committed JSONL regression batch and one baseline metrics document
 - runtime can now select `agent_conversation_memory` as an explicit use-case entry point
 - LLM-derived semantic artifacts carry prompt schema id/version and prompt variant provenance
+- thread summaries now use an explicit-only, token-bounded prompt contract
 - minimal lifecycle handling now exists for promoted memory:
   - `active`
   - `superseded`
@@ -55,6 +56,7 @@
   - `0` decision false positives
   - `0` investigation false positives
   - `0` false negatives
+- unresolved thread summary overreach was observed in a live thread-evolution run and tightened with a stricter `thread_summary_extraction` v2 prompt before rerunning
 
 ## Context Memory Note
 

@@ -146,3 +146,14 @@ Each semantic package is effectively its own runtime product surface and needs p
 Solution:
 Use pallium.local.toml for named provider blocks and per-package semantic config, and reserve .env.local for secrets and temporary overrides.
 
+
+## 2026-03-10 - Thread summaries must be explicit-only and token-bounded
+
+Problem:
+The first `thread_summary` prompt overreached on unresolved threads and generated recommendations and likely causes that were not actually stated in the thread.
+
+Why:
+The prompt asked for a concise future-recall summary but did not explicitly forbid inference, and it left the model too much room to turn an open question into a diagnosis or next-step plan. It also had no explicit budget guard for long thread material.
+
+Solution:
+Use a stricter thread-summary prompt that allows only explicit facts from thread items and carried conclusions, says unresolved threads must stay unresolved, caps the summary to about two sentences / 60 words, and bounds the thread material included in the prompt to protect token budget.

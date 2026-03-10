@@ -12,17 +12,22 @@ from semantic.llm_agent_memory import LLMAgentMemoryPlugin
 
 
 THREAD_SUMMARY_PROMPT_SCHEMA_ID = "thread_summary_extraction"
-THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v1"
+THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v2"
 THREAD_SUMMARY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string"}, indent=2)
 THREAD_SUMMARY_SYSTEM_PROMPT = (
-    "You summarize one completed agent-mediated conversation thread for future recall. "
-    "Return exactly one JSON object and no extra prose. The summary must be concise, evidence-aware, and preserve the thread's main conclusion."
+    "Summarize one agent-mediated conversation thread for future recall. "
+    "Return exactly one JSON object and no extra prose. "
+    "Use only facts that are explicitly present in the thread items or carried conclusions. "
+    "Do not infer causes, recommendations, next steps, risks, or unresolved conclusions that are not stated. "
+    "If the thread is unresolved, say only that it is unresolved. "
+    "Keep the summary concise: at most two sentences and roughly 60 words."
 )
 SUPPORTED_THREAD_ARTIFACTS = {
     ("message", "user"),
     ("assistant_output", "assistant"),
 }
 CARRIED_CONCLUSION_TYPES = {"decision", "investigation_outcome"}
+THREAD_SUMMARY_MAX_TEXT_CHARS = 4000
 
 
 class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin):
@@ -64,15 +69,21 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin):
             if text:
                 conclusion_lines.append(f"- {conclusion.type}: {text}")
 
+        thread_material = aggregate.aggregate_text
+        if len(thread_material) > THREAD_SUMMARY_MAX_TEXT_CHARS:
+            thread_material = thread_material[:THREAD_SUMMARY_MAX_TEXT_CHARS].rstrip() + "\n[thread items truncated for token budget]"
+
         response = self._provider.generate_json(
             system_prompt=THREAD_SUMMARY_SYSTEM_PROMPT,
             user_prompt=(
+                "Summarize this thread conservatively for later recall. "
+                "Use only explicit information from the provided content.\n\n"
                 f"Container ref: {aggregate.container_ref}\n"
                 f"Thread ref: {aggregate.thread_ref}\n"
                 f"Session ref: {aggregate.session_ref or 'null'}\n"
                 f"Latest occurred at: {aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else 'null'}\n"
                 f"Carried conclusions:\n{chr(10).join(conclusion_lines) if conclusion_lines else '- none'}\n\n"
-                f"Thread items:\n{aggregate.aggregate_text}"
+                f"Thread items:\n{thread_material}"
             ),
             schema_description=THREAD_SUMMARY_SCHEMA_DESCRIPTION,
         )
