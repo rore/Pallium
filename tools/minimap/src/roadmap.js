@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const REQUIRED_FRONTMATTER_KEYS = ["id", "title", "status", "priority", "commitment"];
 export const OPTIONAL_FRONTMATTER_KEYS = ["milestone"];
@@ -12,6 +13,24 @@ export const KNOWN_SECTIONS = [
   "Done When",
   "Notes",
 ];
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const TEMPLATE_ROADMAP_ROOT = path.join(__dirname, "..", "templates", "roadmap");
+const STARTER_FILE_NAMES = ["board.md", "scope.md"];
+const STARTER_DIRECTORY_NAMES = ["features", "ideas"];
+const STARTER_CONFIG_EXAMPLE = `{\n  "roadmapPath": "roadmap",\n  "lenses": {\n    "fields": {\n      "status": { "order": ["queued", "in-progress", "blocked", "done"], "draggable": true }\n    }\n  }\n}`;
+const DEFAULT_LENS_FIELD_ORDER = {
+  commitment: ["committed", "uncommitted"],
+  priority: ["high", "medium", "low"],
+  kind: ["feature", "idea"],
+  status: ["queued", "in-progress", "blocked", "done"],
+};
+const DEFAULT_DRAGGABLE_LENS_FIELDS = new Set(["status", "commitment", "priority", "kind"]);
+const FILTER_FACET_EXCLUDED_KEYS = new Set(["id", "title"]);
+const LENS_EXCLUDED_KEYS = new Set(["id", "title", "labels"]);
+const MAX_FILTER_VALUES = 8;
+const MAX_GENERIC_LENS_VALUES = 8;
 
 export class AppError extends Error {
   constructor(message, statusCode, code, details = null) {
@@ -72,6 +91,27 @@ function normalizeMetadataValues(value) {
   return normalized ? [normalized] : [];
 }
 
+function uniqueSortedValues(values) {
+  return Array.from(new Set(values.map((value) => String(value).trim()).filter(Boolean)))
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function uniqueValuesInOrder(values) {
+  const seen = new Set();
+  const ordered = [];
+
+  for (const value of values) {
+    const normalized = String(value).trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    ordered.push(normalized);
+  }
+
+  return ordered;
+}
+
 function normalizeSearchText(value) {
   return String(value ?? "")
     .toLowerCase()
@@ -79,6 +119,69 @@ function normalizeSearchText(value) {
     .replace(/\r/g, "\n")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function stripMarkdownForExcerpt(value) {
+  return String(value ?? "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^[>\-*+]\s+/gm, "")
+    .replace(/^\d+[.)]\s+/gm, "")
+    .replace(/[\*_~]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function clampExcerpt(value, maxLength = 150) {
+  if (!value || value.length <= maxLength) {
+    return value;
+  }
+
+  const clipped = value.slice(0, Math.max(0, maxLength - 1)).trim().replace(/[.,;:!?-]+$/, "");
+  return clipped ? `${clipped}?` : value.slice(0, maxLength - 1).trimEnd() + "?";
+}
+
+function buildItemOverview(itemRecord) {
+  const preferredHeadings = ["Summary", "Goal", "Why", "In Scope", "Acceptance criteria", "Done When", "Notes"];
+  const segments = itemRecord.parsed.segments.map((segment) => ({
+    heading: segment.heading,
+    content: itemRecord.parsed.sections[segment.heading] ?? "",
+  }));
+
+  let selected = segments.find((segment) => segment.heading === "Summary" && stripMarkdownForExcerpt(segment.content));
+  if (!selected) {
+    selected = segments.find((segment) => preferredHeadings.includes(segment.heading) && stripMarkdownForExcerpt(segment.content));
+  }
+  if (!selected) {
+    selected = segments.find((segment) => stripMarkdownForExcerpt(segment.content));
+  }
+
+  return {
+    heading: selected?.heading ?? "",
+    excerpt: selected ? clampExcerpt(stripMarkdownForExcerpt(selected.content)) : "",
+  };
+}
+
+function naturalValueCompare(left, right) {
+  return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function sortValuesByPreferredOrder(values, preferredOrder = [], fallbackCompare = naturalValueCompare) {
+  const orderIndex = new Map(preferredOrder.map((value, index) => [String(value), index]));
+
+  return [...values].sort((left, right) => {
+    const leftIndex = orderIndex.has(String(left)) ? orderIndex.get(String(left)) : Number.POSITIVE_INFINITY;
+    const rightIndex = orderIndex.has(String(right)) ? orderIndex.get(String(right)) : Number.POSITIVE_INFINITY;
+
+    if (leftIndex !== rightIndex) {
+      return leftIndex - rightIndex;
+    }
+
+    return fallbackCompare(left, right);
+  });
 }
 
 function formatScalar(value) {
@@ -97,6 +200,14 @@ function formatScalar(value) {
 
 function shouldKeepOptionalValue(value) {
   return !(value === null || value === undefined || value === "");
+}
+
+function isScalarLikeValue(value) {
+  return value === null || value === undefined || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+
+function isFrontmatterKeyName(key) {
+  return /^[A-Za-z0-9_-]+$/.test(String(key || "").trim());
 }
 
 function parseEntryValue(rawLines) {
@@ -203,6 +314,7 @@ function normalizeSummaryMetadata(itemRecord) {
 
 function makeItemSummary(itemRecord) {
   const metadata = normalizeSummaryMetadata(itemRecord);
+  const overview = buildItemOverview(itemRecord);
   return {
     id: itemRecord.id,
     title: itemRecord.parsed.frontmatter.title,
@@ -212,6 +324,8 @@ function makeItemSummary(itemRecord) {
     milestone: itemRecord.parsed.frontmatter.milestone ?? "",
     kind: itemRecord.kind,
     metadata,
+    overviewHeading: overview.heading,
+    overviewExcerpt: overview.excerpt,
     searchText: buildSearchText(itemRecord),
   };
 }
@@ -225,11 +339,10 @@ function makeBoardItemSummary(itemSummary) {
     commitment: itemSummary.commitment,
     milestone: itemSummary.milestone,
     kind: itemSummary.kind,
+    overviewHeading: itemSummary.overviewHeading,
+    overviewExcerpt: itemSummary.overviewExcerpt,
   };
 }
-
-const FILTER_FACET_EXCLUDED_KEYS = new Set(["id", "title"]);
-const MAX_FILTER_VALUES = 8;
 
 function buildAvailableFilters(itemSummaries) {
   const facets = new Map();
@@ -259,6 +372,141 @@ function buildAvailableFilters(itemSummaries) {
     }))
     .filter((facet) => facet.values.length > 1 && facet.values.length <= MAX_FILTER_VALUES && !FILTER_FACET_EXCLUDED_KEYS.has(facet.key))
     .sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function normalizeLensFieldConfig(rawConfig) {
+  if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) {
+    return {};
+  }
+
+  const normalized = {};
+
+  for (const [field, options] of Object.entries(rawConfig)) {
+    const key = String(field || "").trim();
+    if (!isFrontmatterKeyName(key) || !options || typeof options !== "object" || Array.isArray(options)) {
+      continue;
+    }
+
+    const entry = {};
+    if (Array.isArray(options.order)) {
+      const order = uniqueValuesInOrder(options.order);
+      if (order.length > 0) {
+        entry.order = order;
+      }
+    }
+
+    if (typeof options.draggable === "boolean") {
+      entry.draggable = options.draggable;
+    }
+
+    if (Object.keys(entry).length > 0) {
+      normalized[key] = entry;
+    }
+  }
+
+  return normalized;
+}
+
+function normalizeLensConfig(config) {
+  return {
+    fields: normalizeLensFieldConfig(config?.lenses?.fields),
+  };
+}
+
+function getConfiguredLensField(workspaceConfig, field) {
+  return workspaceConfig?.lenses?.fields?.[field] || null;
+}
+
+function getLensFieldOrder(workspaceConfig, field) {
+  const configured = getConfiguredLensField(workspaceConfig, field);
+  if (configured?.order?.length) {
+    return configured.order;
+  }
+
+  return DEFAULT_LENS_FIELD_ORDER[field] || [];
+}
+
+function isLensFieldDraggable(workspaceConfig, field) {
+  const configured = getConfiguredLensField(workspaceConfig, field);
+  if (typeof configured?.draggable === "boolean") {
+    return configured.draggable;
+  }
+
+  return DEFAULT_DRAGGABLE_LENS_FIELDS.has(field);
+}
+
+function humanizeLensKey(key) {
+  return String(key || "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+export function deriveAvailableLenses(itemSummaries, workspaceConfig = { lenses: { fields: {} } }) {
+  const fieldStats = new Map();
+
+  for (const summary of Object.values(itemSummaries)) {
+    for (const [key, rawValue] of Object.entries(summary.metadata || {})) {
+      const normalizedKey = String(key || "").trim();
+      if (!normalizedKey || LENS_EXCLUDED_KEYS.has(normalizedKey)) {
+        continue;
+      }
+
+      const values = normalizeMetadataValues(rawValue);
+      if (values.length === 0) {
+        continue;
+      }
+
+      if (!fieldStats.has(normalizedKey)) {
+        fieldStats.set(normalizedKey, {
+          valueSet: new Set(),
+          multiValue: false,
+        });
+      }
+
+      const stats = fieldStats.get(normalizedKey);
+      if (Array.isArray(rawValue) || values.length > 1) {
+        stats.multiValue = true;
+      }
+
+      for (const value of values) {
+        stats.valueSet.add(value);
+      }
+    }
+  }
+
+  const builtInOrder = ["status", "commitment", "priority", "kind", "milestone"];
+  const lenses = [{ key: "board", label: "Board", kind: "board", draggable: false, values: [] }];
+
+  for (const field of builtInOrder) {
+    const stats = fieldStats.get(field);
+    if (!stats || stats.valueSet.size < 2) {
+      continue;
+    }
+
+    lenses.push({
+      key: field,
+      label: humanizeLensKey(field),
+      kind: "derived",
+      draggable: field !== "milestone" && isLensFieldDraggable(workspaceConfig, field),
+      values: sortValuesByPreferredOrder(Array.from(stats.valueSet), getLensFieldOrder(workspaceConfig, field)),
+    });
+  }
+
+  for (const [field, stats] of Array.from(fieldStats.entries()).sort((left, right) => left[0].localeCompare(right[0]))) {
+    if (builtInOrder.includes(field) || stats.multiValue || stats.valueSet.size < 2 || stats.valueSet.size > MAX_GENERIC_LENS_VALUES) {
+      continue;
+    }
+
+    lenses.push({
+      key: field,
+      label: humanizeLensKey(field),
+      kind: "derived",
+      draggable: isLensFieldDraggable(workspaceConfig, field),
+      values: sortValuesByPreferredOrder(Array.from(stats.valueSet), getLensFieldOrder(workspaceConfig, field)),
+    });
+  }
+
+  return lenses;
 }
 
 export function parseItemText(text, sourcePath = "item.md") {
@@ -337,8 +585,9 @@ function renderSection(heading, content, eol) {
 
 export function serializeItem(parsedItem, updates) {
   const eol = parsedItem.eol;
-  const metadata = { ...parsedItem.frontmatter, ...(updates.metadata || {}) };
+  const metadata = { ...parsedItem.metadataValues, ...(updates.metadata || {}) };
   const sections = { ...parsedItem.sections, ...(updates.sections || {}) };
+  const updatedMetadataNames = new Set(Object.keys(updates.metadata || {}).filter((key) => key !== "kind"));
   const updatedSectionNames = new Set(Object.keys(updates.sections || {}));
   const seenKeys = new Set();
   const frontmatterLines = [];
@@ -350,6 +599,8 @@ export function serializeItem(parsedItem, updates) {
       if (shouldKeepOptionalValue(metadata[entry.key])) {
         frontmatterLines.push(`${entry.key}: ${formatScalar(metadata[entry.key])}`);
       }
+    } else if (updatedMetadataNames.has(entry.key) && isScalarLikeValue(metadata[entry.key])) {
+      frontmatterLines.push(`${entry.key}: ${formatScalar(metadata[entry.key])}`);
     } else {
       frontmatterLines.push(...entry.rawLines);
     }
@@ -366,6 +617,14 @@ export function serializeItem(parsedItem, updates) {
     if (!seenKeys.has(key) && shouldKeepOptionalValue(metadata[key])) {
       frontmatterLines.push(`${key}: ${formatScalar(metadata[key])}`);
     }
+  }
+
+  for (const key of updatedMetadataNames) {
+    if (seenKeys.has(key) || !isFrontmatterKeyName(key) || !isScalarLikeValue(metadata[key])) {
+      continue;
+    }
+    frontmatterLines.push(`${key}: ${formatScalar(metadata[key])}`);
+    seenKeys.add(key);
   }
 
   const bodyParts = [parsedItem.prefix];
@@ -422,9 +681,64 @@ async function fileExists(filePath) {
   }
 }
 
-export async function resolveRoadmapRoot(repoRoot) {
-  const configPath = path.join(repoRoot, "roadmap.config.json");
+async function safeStat(targetPath) {
+  try {
+    return await fs.stat(targetPath);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+function normalizeRepoRelativePath(repoRoot, targetPath) {
+  return path.relative(path.resolve(repoRoot), path.resolve(targetPath)).replaceAll('\\', '/');
+}
+
+function normalizeDisplayPath(value) {
+  return String(value || '').replaceAll('\\', '/');
+}
+
+function buildExpectedWorkspaceEntries(roadmapPath) {
+  const base = normalizeDisplayPath(roadmapPath);
+  return [
+    `${base}/board.md`,
+    `${base}/scope.md`,
+    `${base}/features/`,
+    `${base}/ideas/`,
+  ];
+}
+
+function buildConfigErrorDetails(repoRoot, configPath, extra = {}) {
+  return {
+    configPath: configPath ? normalizeRepoRelativePath(repoRoot, configPath) : null,
+    configMode: "override",
+    canInitialize: false,
+    suggestedConfig: STARTER_CONFIG_EXAMPLE,
+    ...extra,
+  };
+}
+
+function buildWorkspaceSetupDetails(repoRoot, workspace, extra = {}) {
+  return {
+    configPath: workspace.configPath ? normalizeRepoRelativePath(repoRoot, workspace.configPath) : null,
+    configMode: workspace.configPath ? "override" : "default",
+    roadmapPath: normalizeDisplayPath(workspace.roadmapPath),
+    resolvedPath: normalizeRepoRelativePath(repoRoot, workspace.resolvedPath),
+    expectedEntries: buildExpectedWorkspaceEntries(workspace.roadmapPath),
+    missingEntries: [],
+    canInitialize: true,
+    ...extra,
+  };
+}
+
+async function readRoadmapConfig(repoRoot) {
+  const resolvedRepoRoot = path.resolve(repoRoot);
+  const configPath = path.join(resolvedRepoRoot, "roadmap.config.json");
   let configuredPath = "roadmap";
+  let parsedConfig = null;
   const hasConfig = await fileExists(configPath);
 
   if (hasConfig) {
@@ -433,42 +747,116 @@ export async function resolveRoadmapRoot(repoRoot) {
     try {
       rawConfig = await fs.readFile(configPath, "utf8");
     } catch {
-      throw new AppError("Could not read roadmap.config.json.", 500, "config_error");
+      throw new AppError("Could not read roadmap.config.json.", 500, "config_error", buildConfigErrorDetails(resolvedRepoRoot, configPath));
     }
-
-    let config;
 
     try {
-      config = JSON.parse(rawConfig);
+      parsedConfig = JSON.parse(rawConfig);
     } catch {
-      throw new AppError("roadmap.config.json must contain valid JSON.", 422, "config_error");
+      throw new AppError("roadmap.config.json must contain valid JSON.", 422, "config_error", buildConfigErrorDetails(resolvedRepoRoot, configPath));
     }
 
-    if (typeof config.roadmapPath !== "string" || config.roadmapPath.trim() === "") {
-      throw new AppError('roadmap.config.json must define a non-empty string "roadmapPath".', 422, "config_error");
+    if (typeof parsedConfig.roadmapPath !== "string" || parsedConfig.roadmapPath.trim() === "") {
+      throw new AppError('roadmap.config.json must define a non-empty string "roadmapPath".', 422, "config_error", buildConfigErrorDetails(resolvedRepoRoot, configPath));
     }
 
-    configuredPath = config.roadmapPath;
+    configuredPath = parsedConfig.roadmapPath;
   }
 
-  const resolvedPath = path.resolve(repoRoot, configuredPath);
-  const relative = path.relative(path.resolve(repoRoot), resolvedPath);
+  const resolvedPath = path.resolve(resolvedRepoRoot, configuredPath);
+  const relative = path.relative(resolvedRepoRoot, resolvedPath);
 
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new AppError("Configured roadmapPath must stay inside the repo root.", 422, "config_error");
-  }
-
-  if (!(await fileExists(resolvedPath))) {
-    throw new AppError(`Roadmap path not found: ${configuredPath}`, 404, "setup_error", {
-      roadmapPath: configuredPath,
-    });
+    throw new AppError("Configured roadmapPath must stay inside the repo root.", 422, "config_error", buildConfigErrorDetails(resolvedRepoRoot, configPath, {
+      roadmapPath: normalizeDisplayPath(configuredPath),
+      resolvedPath: normalizeDisplayPath(resolvedPath),
+    }));
   }
 
   return {
+    repoRoot: resolvedRepoRoot,
     configPath: hasConfig ? configPath : null,
     roadmapPath: configuredPath,
     resolvedPath,
+    lenses: normalizeLensConfig(parsedConfig),
   };
+}
+
+async function validateWorkspaceShape(repoRoot, workspace) {
+  const rootStat = await safeStat(workspace.resolvedPath);
+
+  if (!rootStat) {
+    throw new AppError(`Roadmap path not found: ${workspace.roadmapPath}`, 404, "setup_error", buildWorkspaceSetupDetails(repoRoot, workspace, {
+      reason: "missing_root",
+      missingEntries: [normalizeDisplayPath(workspace.roadmapPath)],
+    }));
+  }
+
+  if (!rootStat.isDirectory()) {
+    throw new AppError(`Roadmap path must be a directory: ${workspace.roadmapPath}`, 422, "setup_error", buildWorkspaceSetupDetails(repoRoot, workspace, {
+      reason: "invalid_root",
+      canInitialize: false,
+    }));
+  }
+
+  const missingEntries = [];
+
+  for (const directoryName of STARTER_DIRECTORY_NAMES) {
+    const targetPath = path.join(workspace.resolvedPath, directoryName);
+    const stats = await safeStat(targetPath);
+
+    if (!stats) {
+      missingEntries.push(`${normalizeDisplayPath(workspace.roadmapPath)}/${directoryName}/`);
+      continue;
+    }
+
+    if (!stats.isDirectory()) {
+      throw new AppError(`Roadmap workspace expects ${directoryName}/ to be a directory.`, 422, "setup_error", buildWorkspaceSetupDetails(repoRoot, workspace, {
+        reason: "invalid_entry",
+        canInitialize: false,
+        invalidEntries: [`${normalizeDisplayPath(workspace.roadmapPath)}/${directoryName}/`],
+      }));
+    }
+  }
+
+  for (const fileName of STARTER_FILE_NAMES) {
+    const targetPath = path.join(workspace.resolvedPath, fileName);
+    const stats = await safeStat(targetPath);
+
+    if (!stats) {
+      missingEntries.push(`${normalizeDisplayPath(workspace.roadmapPath)}/${fileName}`);
+      continue;
+    }
+
+    if (!stats.isFile()) {
+      throw new AppError(`Roadmap workspace expects ${fileName} to be a file.`, 422, "setup_error", buildWorkspaceSetupDetails(repoRoot, workspace, {
+        reason: "invalid_entry",
+        canInitialize: false,
+        invalidEntries: [`${normalizeDisplayPath(workspace.roadmapPath)}/${fileName}`],
+      }));
+    }
+  }
+
+  if (missingEntries.length > 0) {
+    throw new AppError("Roadmap workspace is incomplete.", 404, "setup_error", buildWorkspaceSetupDetails(repoRoot, workspace, {
+      reason: "missing_entries",
+      missingEntries,
+    }));
+  }
+}
+
+async function ensureStarterFile(templateName, targetPath) {
+  if (await fileExists(targetPath)) {
+    return;
+  }
+
+  const templatePath = path.join(TEMPLATE_ROADMAP_ROOT, templateName);
+  const templateText = await fs.readFile(templatePath, "utf8");
+  await fs.writeFile(targetPath, templateText, "utf8");
+}
+
+export async function resolveRoadmapRoot(repoRoot) {
+  return readRoadmapConfig(repoRoot);
 }
 
 export function parseBoardText(text, sourcePath = "board.md") {
@@ -559,6 +947,7 @@ async function loadItemIndex(roadmapRoot) {
 
 export async function loadWorkspace(repoRoot) {
   const workspace = await resolveRoadmapRoot(repoRoot);
+  await validateWorkspaceShape(repoRoot, workspace);
   const boardPath = path.join(workspace.resolvedPath, "board.md");
   const scopePath = path.join(workspace.resolvedPath, "scope.md");
   const boardText = await readUtf8(boardPath, "Missing roadmap board.md file.");
@@ -595,9 +984,33 @@ export async function loadWorkspace(repoRoot) {
     scopeText,
     items: itemSummaries,
     availableFilters: buildAvailableFilters(itemSummaries),
+    availableLenses: deriveAvailableLenses(itemSummaries, workspace),
   };
 }
 
+export async function initializeWorkspace(repoRoot) {
+  const workspace = await readRoadmapConfig(repoRoot);
+  const rootStat = await safeStat(workspace.resolvedPath);
+
+  if (rootStat && !rootStat.isDirectory()) {
+    throw new AppError(`Roadmap path must be a directory: ${workspace.roadmapPath}`, 422, "setup_error", buildWorkspaceSetupDetails(repoRoot, workspace, {
+      reason: "invalid_root",
+      canInitialize: false,
+    }));
+  }
+
+  await fs.mkdir(workspace.resolvedPath, { recursive: true });
+
+  for (const directoryName of STARTER_DIRECTORY_NAMES) {
+    await fs.mkdir(path.join(workspace.resolvedPath, directoryName), { recursive: true });
+  }
+
+  for (const fileName of STARTER_FILE_NAMES) {
+    await ensureStarterFile(fileName, path.join(workspace.resolvedPath, fileName));
+  }
+
+  return loadWorkspace(repoRoot);
+}
 export async function readItemById(repoRoot, id) {
   const workspace = await resolveRoadmapRoot(repoRoot);
   const itemIndex = await loadItemIndex(workspace.resolvedPath);
@@ -653,7 +1066,7 @@ export async function saveItemById(repoRoot, id, payload) {
 
   const metadata = payload.metadata || {};
   const sections = payload.sections || {};
-  const nextMetadata = {};
+  const nextMetadata = { ...item.parsed.metadataValues };
   const nextSections = { ...item.parsed.sections };
 
   for (const key of REQUIRED_FRONTMATTER_KEYS) {
@@ -662,6 +1075,14 @@ export async function saveItemById(repoRoot, id, payload) {
 
   for (const key of OPTIONAL_FRONTMATTER_KEYS) {
     nextMetadata[key] = metadata[key] ?? item.parsed.frontmatter[key] ?? "";
+  }
+
+  for (const [key, value] of Object.entries(metadata)) {
+    if (key === "id" || key === "kind" || !isFrontmatterKeyName(key) || !isScalarLikeValue(value)) {
+      continue;
+    }
+
+    nextMetadata[key] = value;
   }
 
   for (const [heading, value] of Object.entries(sections)) {
@@ -673,7 +1094,21 @@ export async function saveItemById(repoRoot, id, payload) {
     sections: nextSections,
   });
 
+  const nextKind = metadata.kind === "feature" || metadata.kind === "idea" ? metadata.kind : item.kind;
+  const destinationPath = nextKind === item.kind
+    ? item.filePath
+    : path.join(workspace.resolvedPath, nextKind === "feature" ? "features" : "ideas", path.basename(item.filePath));
+
+  if (destinationPath !== item.filePath && await fileExists(destinationPath)) {
+    throw new AppError(`Roadmap item "${id}" already exists at the target kind path.`, 400, "bad_request");
+  }
+
   await fs.writeFile(item.filePath, serialized, "utf8");
+
+  if (destinationPath !== item.filePath) {
+    await fs.rename(item.filePath, destinationPath);
+  }
+
   return readItemById(repoRoot, id);
 }
 
@@ -737,3 +1172,15 @@ export async function saveBoardByGroups(repoRoot, groupsPayload) {
   await fs.writeFile(boardPath, serialized, "utf8");
   return loadWorkspace(repoRoot);
 }
+
+
+
+
+
+
+
+
+
+
+
+

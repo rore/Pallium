@@ -511,6 +511,37 @@ function humanizeFilterKey(key) {
     .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
+function stripMarkdownToPlainText(value) {
+  return String(value ?? "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^[>\-*+]\s+/gm, "")
+    .replace(/^\d+[.)]\s+/gm, "")
+    .replace(/[\\*_~]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hasUnsavedCurrentItemChanges() {
+
+  return state.dirtyStructured || state.dirtyRaw;
+}
+
+function confirmDiscardCurrentItemChanges(nextItemId) {
+  if (!state.currentItem || !hasUnsavedCurrentItemChanges() || nextItemId === state.selectedItemId) {
+    return true;
+  }
+
+  if (state.dirtyRaw) {
+    return window.confirm("Discard unsaved raw markdown changes and open another item?");
+  }
+
+  return window.confirm("Discard unsaved item changes and open another item?");
+}
+
 function isSetupMode() {
   return Boolean(state.setupState);
 }
@@ -946,8 +977,8 @@ function renderScopeChrome() {
 
 function renderEditorChrome() {
   const setupMode = isSetupMode();
+  const hasItem = Boolean(state.currentItem && state.selectedItemId);
   editorPanelElement.dataset.editorMode = state.editorMode;
-  saveButton.textContent = "Save";
   saveButton.hidden = setupMode;
   editorTabsElement.hidden = setupMode;
 
@@ -955,7 +986,19 @@ function renderEditorChrome() {
     for (const pane of modePanes) {
       pane.hidden = true;
     }
+    return;
   }
+
+  if (state.editorMode === "preview") {
+    saveButton.textContent = "Edit";
+    saveButton.disabled = !hasItem;
+    return;
+  }
+
+  saveButton.textContent = "Save";
+  saveButton.disabled = state.editorMode === "raw"
+    ? !hasItem || !state.dirtyRaw
+    : !hasItem || !state.dirtyStructured;
 }
 
 function syncWorkspaceChrome() {
@@ -1281,6 +1324,7 @@ function renderBoardReadMode() {
       const active = item.id === state.selectedItemId ? " board-item-active" : "";
       const kindChip = activeLens?.key === "kind" ? "" : `<span class="board-item-kind">${escapeHtml(item.kind)}</span>`;
       const dragHint = allowDerivedDrag ? '<span class="board-item-drag">Move</span>' : "";
+      const overview = item.overviewExcerpt ? `<span class="board-item-overview">${escapeHtml(item.overviewExcerpt)}</span>` : "";
       return `
         <button class="board-item${active}${allowDerivedDrag ? " board-item-draggable" : ""}" data-item-id="${escapeHtml(item.id)}" type="button" aria-pressed="${item.id === state.selectedItemId ? "true" : "false"}" ${allowDerivedDrag ? 'draggable="true"' : ""}>
           <span class="board-item-top">
@@ -1288,6 +1332,7 @@ function renderBoardReadMode() {
             <span class="board-item-meta">${kindChip}${dragHint}</span>
           </span>
           <span class="board-item-id">${escapeHtml(item.id)}</span>
+          ${overview}
           <span class="badge-row">${renderBadges(item, activeLens?.key)}</span>
         </button>
       `;
@@ -1326,10 +1371,7 @@ function renderBoardReadMode() {
         return;
       }
 
-      await loadItem(button.dataset.itemId);
-      if (isStackedLayout()) {
-        scrollPanelIntoView(editorPanelElement);
-      }
+      await openBoardItemPreview(button.dataset.itemId);
     });
   }
 
@@ -1590,6 +1632,8 @@ function setDirtyState(kind, value) {
   if (kind === "raw") {
     state.dirtyRaw = value;
   }
+
+  renderEditorChrome();
 }
 
 function autosizeTextarea(textarea) {
@@ -1623,7 +1667,7 @@ function resetEditor() {
   sectionsContainer.innerHTML = "";
   rawTextElement.value = "";
   previewElement.className = "preview-surface preview-empty";
-  previewElement.innerHTML = "Preview the current item or switch to Edit to change its core fields.";
+  previewElement.innerHTML = "Choose an item from the board to read it here.";
   autosizeStructuredTextareas();
   syncMobileNavigation();
 }
@@ -1713,28 +1757,30 @@ function getStructuredMetadata() {
 function renderPreview() {
   if (!state.currentItem) {
     previewElement.className = "preview-surface preview-empty";
-    previewElement.innerHTML = "Preview the current item or switch to Edit to change its core fields.";
+    previewElement.innerHTML = "Choose an item from the board to read it here.";
     return;
   }
 
   const metadata = getStructuredMetadata();
   const sections = getStructuredSections();
   const orderedSections = getStructuredSectionHeadings().filter((heading) => Object.hasOwn(sections, heading));
-  const sectionHtml = orderedSections.map((heading) => `
-    <section class="preview-section">
-      <h3>${escapeHtml(heading)}</h3>
-      <div class="preview-markdown">${renderMarkdownToHtml(sections[heading] || "") || '<p class="muted">Empty section.</p>'}</div>
-    </section>
-  `).join("");
   const previewBadges = [metadata.status, metadata.priority, metadata.commitment, metadata.milestone]
     .filter(Boolean)
     .map((value) => `<span class="badge">${escapeHtml(value)}</span>`)
     .join("");
+  const sectionHtml = orderedSections.map((heading) => `
+    <section class="preview-section">
+      <div class="preview-section-header">
+        <h3>${escapeHtml(heading)}</h3>
+      </div>
+      <div class="preview-markdown">${renderMarkdownToHtml(sections[heading] || "") || '<p class="muted">Empty section.</p>'}</div>
+    </section>
+  `).join("");
 
-  previewElement.className = "preview-surface";
+  previewElement.className = "preview-surface preview-reading";
   previewElement.innerHTML = `
     ${previewBadges ? `<div class="preview-meta">${previewBadges}</div>` : ""}
-    <div class="preview-body">${sectionHtml}</div>
+    <div class="preview-body">${sectionHtml || '<p class="muted">This item does not have any readable sections yet.</p>'}</div>
   `;
 }
 
@@ -1742,7 +1788,6 @@ function renderItem(item) {
   state.currentItem = item;
   state.dirtyStructured = false;
   state.dirtyRaw = false;
-  saveButton.disabled = false;
   editorTitleElement.textContent = item.metadata.title;
   editorSubtitleElement.textContent = item.filePath;
   fields.id.value = item.metadata.id || "";
@@ -1872,6 +1917,9 @@ async function loadWorkspace(preferredItemId = state.selectedItemId, options = {
 
 async function loadItem(itemId, rerenderBoard = true, options = {}) {
   try {
+    if (options.mode) {
+      state.editorMode = normalizeEditorMode(options.mode);
+    }
     const item = await fetchJson(`/api/items/${encodeURIComponent(itemId)}`);
     state.selectedItemId = itemId;
     renderItem(item);
@@ -1887,6 +1935,30 @@ async function loadItem(itemId, rerenderBoard = true, options = {}) {
     setBanner(error.message, "error");
   }
 }
+async function openBoardItemPreview(itemId) {
+  if (!itemId) {
+    return;
+  }
+
+  if (itemId === state.selectedItemId && state.currentItem) {
+    switchEditorMode("preview", { replaceRoute: false });
+    syncRouteState();
+    if (isStackedLayout()) {
+      scrollPanelIntoView(editorPanelElement);
+    }
+    return;
+  }
+
+  if (!confirmDiscardCurrentItemChanges(itemId)) {
+    return;
+  }
+
+  await loadItem(itemId, true, { mode: "preview" });
+  if (isStackedLayout()) {
+    scrollPanelIntoView(editorPanelElement);
+  }
+}
+
 async function initializeWorkspaceFromSetup() {
   if (!state.setupState?.canInitialize) {
     return;
@@ -2078,6 +2150,11 @@ async function saveScopeDraft() {
 }
 
 saveButton.addEventListener("click", () => {
+  if (state.editorMode === "preview") {
+    switchEditorMode("structured");
+    return;
+  }
+
   void saveCurrentItem();
 });
 
