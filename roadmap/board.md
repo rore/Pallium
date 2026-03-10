@@ -1,9 +1,15 @@
 # Next
 - add-tiered-memory-extension
 
+# Later
+- add-retrieval-trace-and-text-view-model
+- add-vector-retrieval-provider
+- add-hybrid-retrieval-fusion
+
 # Ideas
 - idea-evidence-backed-agent-memory
 - idea-optional-embedding-provider-support
+- idea-optional-reranker-support
 
 # Done
 - add-recurring-question-value-benchmark

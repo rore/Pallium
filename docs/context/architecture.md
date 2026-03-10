@@ -38,6 +38,31 @@ Implemented storage and retrieval behavior:
 - evidence resolution from memory objects back to source items
 - lifecycle-aware retrieval that excludes superseded memory by default
 
+## Target Retrieval Architecture
+
+The current executable slice is structured-plus-lexical retrieval. The target retrieval architecture is hybrid retrieval.
+
+Target query flow:
+
+1. structured narrowing
+2. lexical retrieval over named text views
+3. vector retrieval over selected text views
+4. explicit fusion
+5. optional reranking
+6. compact, evidence-backed result packaging
+
+Design implications:
+
+- lexical retrieval remains mandatory because technical memory includes exact names, IDs, acronyms, and rare terms
+- vector retrieval is additive, not a replacement for lexical retrieval
+- fusion should be explicit rather than implicit score blending
+- retrieval should stay debuggable so Pallium can explain whether a hit came from lexical retrieval, vector retrieval, or fusion
+- both SourceItem and MemoryObject remain first-class retrieval targets
+
+Current intended fusion baseline:
+
+- Reciprocal Rank Fusion (RRF) first
+- weighted blending only later if labeled evaluation justifies it
 ## Implemented Semantic Behavior
 
 Implemented semantic behavior now includes:
@@ -143,4 +168,5 @@ The package reuses the current typed-memory extraction path rather than introduc
 Tiered memory remains an intended extension, not part of the current executable slice.
 
 It should build on top of the stronger lower-level memory model now in place rather than replacing it.
+
 
