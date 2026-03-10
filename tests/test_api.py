@@ -26,8 +26,8 @@ def test_post_items_creates_fallback_summary_artifacts(client) -> None:
             "source_type": "chat_thread",
             "source_id": "thread-123-msg-1",
             "content_type": "text/plain",
-            "content": "We should use event time for watermarking. It avoids skipped records.",
-            "metadata": {"topic": "exports"},
+            "content": "We should use item event time for reservation ordering. It avoids missed hold updates.",
+            "metadata": {"topic": "reservation ordering"},
             "artifact_kind": "message",
             "role": "user",
             "container_ref": "slack:C123",
@@ -48,7 +48,7 @@ def test_post_items_creates_fallback_summary_artifacts(client) -> None:
 
     query_response = client.post(
         "/query",
-        json={"text": "event time watermarking", "limit": 5, "thread_ref": "slack:C123:1730000000.000100"},
+        json={"text": "item item event time reservation ordering", "limit": 5, "thread_ref": "slack:C123:1730000000.000100"},
     )
     assert query_response.status_code == 200
     memory_hits = [item for item in query_response.json()["results"] if item["result_kind"] == "memory_hit"]
@@ -60,7 +60,7 @@ def test_post_items_is_idempotent_on_source_reference(client) -> None:
         "source_type": "decision_note",
         "source_id": "decision-1",
         "content_type": "text/plain",
-        "content": "Decision: use event timestamp watermarking for exports to avoid skipped records.",
+        "content": "Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates.",
         "artifact_kind": "assistant_output",
         "role": "assistant",
         "thread_ref": "thread-1",
@@ -84,7 +84,7 @@ def test_post_query_returns_compact_decision_memory_and_source_hits(client) -> N
             "source_type": "decision_note",
             "source_id": "decision-1",
             "content_type": "text/plain",
-            "content": "Decision: use event timestamp watermarking for exports to avoid skipped records during lag.",
+            "content": "Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates during sync delays.",
             "artifact_kind": "assistant_output",
             "role": "assistant",
             "container_ref": "slack:C123",
@@ -97,7 +97,7 @@ def test_post_query_returns_compact_decision_memory_and_source_hits(client) -> N
 
     response = client.post(
         "/query",
-        json={"text": "what did we decide about watermarking?", "limit": 5, "artifact_kind": "assistant_output"},
+        json={"text": "what did we decide about reservation ordering?", "limit": 5, "artifact_kind": "assistant_output"},
     )
 
     assert response.status_code == 200
@@ -109,7 +109,7 @@ def test_post_query_returns_compact_decision_memory_and_source_hits(client) -> N
 
     memory_hit = next(result for result in payload["results"] if result["result_kind"] == "memory_hit")
     assert memory_hit["type"] == "decision"
-    assert memory_hit["payload"]["decision"] == "use event timestamp watermarking for exports"
+    assert memory_hit["payload"]["decision"] == "use item item event time reservation ordering for reservation ordering"
     assert len(memory_hit["evidence"]) == 1
 
     source_hit = next(result for result in payload["results"] if result["result_kind"] == "source_hit")
@@ -125,7 +125,7 @@ def test_post_query_returns_investigation_memory_and_source_hits(client) -> None
             "source_type": "investigation_summary",
             "source_id": "investigation-1",
             "content_type": "text/plain",
-            "content": "Investigation found that ingestion-time progress tracking skipped records during lag because EventHub lag delayed ingestion.",
+            "content": "Investigation found that arrival-time ordering missed hold updates during sync delays because the catalog provider delivered updates late.",
             "artifact_kind": "tool_use_summary",
             "role": "assistant",
             "thread_ref": "thread-investigation",
@@ -136,14 +136,14 @@ def test_post_query_returns_investigation_memory_and_source_hits(client) -> None
 
     response = client.post(
         "/query",
-        json={"text": "what did the investigation find about skipped records?", "limit": 5, "artifact_kind": "tool_use_summary"},
+        json={"text": "what did the investigation find about missed hold updates?", "limit": 5, "artifact_kind": "tool_use_summary"},
     )
 
     assert response.status_code == 200
     payload = response.json()
     memory_hit = next(result for result in payload["results"] if result["result_kind"] == "memory_hit")
     assert memory_hit["type"] == "investigation_outcome"
-    assert "ingestion-time progress tracking skipped records during lag" in memory_hit["payload"]["investigation_outcome"]
+    assert "arrival-time ordering missed hold updates during sync delays" in memory_hit["payload"]["investigation_outcome"]
     assert any(result["result_kind"] == "source_hit" for result in payload["results"])
 
 
@@ -152,7 +152,7 @@ def test_post_query_applies_structured_filters(client) -> None:
         "source_type": "chat_message",
         "source_id": "msg-1",
         "content_type": "text/plain",
-        "content": "Can we use event timestamp watermarking?",
+        "content": "Can we use item item event time reservation ordering?",
         "artifact_kind": "message",
         "role": "user",
         "container_ref": "slack:C123",
@@ -164,7 +164,7 @@ def test_post_query_applies_structured_filters(client) -> None:
         "source_type": "investigation_summary",
         "source_id": "note-1",
         "content_type": "text/plain",
-        "content": "Investigation found that ingestion-time progress tracking skipped records during lag.",
+        "content": "Investigation found that arrival-time ordering missed hold updates during sync delays.",
         "artifact_kind": "tool_use_summary",
         "role": "assistant",
         "container_ref": "slack:C123",
@@ -191,7 +191,7 @@ def test_post_query_applies_structured_filters(client) -> None:
     filtered = client.post(
         "/query",
         json={
-            "text": "skipped records during lag",
+            "text": "missed hold updates during sync delays",
             "limit": 10,
             "thread_ref": "thread-a",
             "session_ref": "session-a",
@@ -207,7 +207,7 @@ def test_post_query_applies_structured_filters(client) -> None:
     assistant_only = client.post(
         "/query",
         json={
-            "text": "skipped records during lag",
+            "text": "missed hold updates during sync delays",
             "limit": 10,
             "artifact_kind": "tool_use_summary",
             "role": "assistant",
@@ -226,13 +226,13 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
         "app.dependencies.build_llm_provider",
         lambda config: StubLLMProvider(
             {
-                "summary": "Investigation summary about watermarking.",
+                "summary": "Investigation summary about reservation ordering.",
                 "candidate_type": "investigation_outcome",
                 "decision_text": None,
                 "decision_evidence_text": None,
-                "investigation_text": "ingestion-time progress tracking skipped records during lag",
-                "investigation_evidence_text": "Investigation found that ingestion-time progress tracking skipped records during lag.",
-                "rationale_text": "because EventHub lag delayed ingestion",
+                "investigation_text": "arrival-time ordering missed hold updates during sync delays",
+                "investigation_evidence_text": "Investigation found that arrival-time ordering missed hold updates during sync delays.",
+                "rationale_text": "because the catalog provider delivered updates late",
             }
         ),
     )
@@ -256,7 +256,7 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
             "source_type": "investigation_summary",
             "source_id": "investigation-llm-1",
             "content_type": "text/plain",
-            "content": "An LLM should identify this as an investigation outcome about watermarking.",
+            "content": "An LLM should identify this as an investigation outcome about reservation ordering.",
             "artifact_kind": "tool_use_summary",
             "role": "assistant",
             "thread_ref": "thread-llm",
@@ -273,7 +273,7 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
     payload = query_response.json()
     memory_hit = next(result for result in payload["results"] if result["result_kind"] == "memory_hit")
     assert memory_hit["type"] == "investigation_outcome"
-    assert memory_hit["payload"]["investigation_outcome"] == "ingestion-time progress tracking skipped records during lag"
+    assert memory_hit["payload"]["investigation_outcome"] == "arrival-time ordering missed hold updates during sync delays"
     assert any(result["result_kind"] == "source_hit" for result in payload["results"])
 
 
@@ -284,13 +284,13 @@ def test_agent_conversation_memory_package_path_preserves_public_api_shape(monke
         "app.dependencies.build_llm_provider",
         lambda config: StubLLMProvider(
             {
-                "summary": "Prior assistant conclusion about watermarking.",
+                "summary": "Prior assistant conclusion about reservation ordering.",
                 "candidate_type": "decision",
-                "decision_text": "use event timestamp watermarking for exports",
-                "decision_evidence_text": "Decision: use event timestamp watermarking for exports to avoid skipped records.",
+                "decision_text": "use item item event time reservation ordering for reservation ordering",
+                "decision_evidence_text": "Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates.",
                 "investigation_text": None,
                 "investigation_evidence_text": None,
-                "rationale_text": "to avoid skipped records",
+                "rationale_text": "to avoid missed hold updates",
             }
         ),
     )
@@ -314,7 +314,7 @@ def test_agent_conversation_memory_package_path_preserves_public_api_shape(monke
             "source_type": "assistant_artifact",
             "source_id": "assistant-output-1",
             "content_type": "text/plain",
-            "content": "Decision: use event timestamp watermarking for exports to avoid skipped records.",
+            "content": "Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates.",
             "artifact_kind": "assistant_output",
             "role": "assistant",
             "thread_ref": "thread-assistant",
@@ -329,7 +329,7 @@ def test_agent_conversation_memory_package_path_preserves_public_api_shape(monke
             "source_type": "chat_message",
             "source_id": "user-message-1",
             "content_type": "text/plain",
-            "content": "Why do we use event timestamp watermarking?",
+            "content": "Why do we use item item event time reservation ordering?",
             "artifact_kind": "message",
             "role": "user",
             "thread_ref": "thread-user",
@@ -340,7 +340,7 @@ def test_agent_conversation_memory_package_path_preserves_public_api_shape(monke
 
     query_response = client.post(
         "/query",
-        json={"text": "why did we choose event timestamp watermarking?", "limit": 5},
+        json={"text": "why did we choose item item event time reservation ordering?", "limit": 5},
     )
     assert query_response.status_code == 200
     payload = query_response.json()
@@ -374,7 +374,7 @@ def test_llm_plugin_path_returns_server_error_when_provider_fails(monkeypatch, t
             "source_type": "decision_note",
             "source_id": "decision-llm-error-1",
             "content_type": "text/plain",
-            "content": "Decision: use event timestamp watermarking for exports to avoid skipped records.",
+            "content": "Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates.",
         },
     )
 

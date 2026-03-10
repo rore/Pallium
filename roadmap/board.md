@@ -1,13 +1,13 @@
 # Next
-- add-agent-conversation-memory-test-bed
-- add-tiered-memory-extension
 - add-recurring-question-value-benchmark
+- add-tiered-memory-extension
 
 # Ideas
 - idea-evidence-backed-agent-memory
 - idea-optional-embedding-provider-support
 
 # Done
+- add-agent-conversation-memory-test-bed
 - add-agent-conversation-memory-package
 - add-memory-lifecycle-basics
 - add-semantic-regression-set

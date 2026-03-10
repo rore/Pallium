@@ -23,6 +23,7 @@ Current implemented shape:
   - fallback `discussion_summary`
 - minimal memory lifecycle with `active` and `superseded`
 - committed semantic regression set and eval harness
+- realistic agent-conversation scenario test bed and runner
 - simulation script, Bruno collection, and pytest coverage
 
 ## Core Concepts
@@ -93,6 +94,28 @@ Latest recorded baseline:
 - false negatives: `0`
 
 See [C:/Dev/rore/Pallium/evals/semantic/baseline.md](C:/Dev/rore/Pallium/evals/semantic/baseline.md).
+
+## Agent Conversation Test Bed
+
+Pallium now also includes a realistic agent-conversation scenario harness built around a neutral public-safe sample domain: library reservation and catalog sync.
+
+Run it with:
+
+```powershell
+.\.venv\Scripts\python.exe -m evals.agent_conversation_runner
+```
+
+Each run writes:
+
+- `summary.json`
+- `results.jsonl`
+
+The scenarios compare:
+
+- baseline current-thread context only
+- current-thread context plus Pallium memory-backed retrieval
+
+This harness is the realistic proof layer for the `agent_conversation_memory` package and the input to the later recurring-question value benchmark.
 
 ## Run Locally
 

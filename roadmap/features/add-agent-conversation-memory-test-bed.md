@@ -1,7 +1,7 @@
 ---
 id: add-agent-conversation-memory-test-bed
 title: Add a realistic agent conversation memory test bed
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: Next
@@ -71,3 +71,6 @@ Suggested first scenario set:
 3. Prior assistant answer reused to answer a repeated question with less noise.
 
 Sources: `roadmap/scope.md`, `roadmap/features/add-recurring-question-value-benchmark.md`, `docs/context/architecture.md`, downstream-agent analysis (internal only)
+
+
+Completed on 2026-03-10. The repo now includes a realistic scenario fixture set and runner under `evals/agent_conversation/`, and all committed examples/tests use the neutral library reservation and catalog sync sample domain.

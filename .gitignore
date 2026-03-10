@@ -8,3 +8,5 @@ pallium.db
 pallium.egg-info/
 .env.local
 evals/semantic/output/
+
+evals/agent_conversation/output/

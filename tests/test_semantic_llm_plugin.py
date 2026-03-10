@@ -25,15 +25,15 @@ def test_llm_plugin_promotes_decision_memory_from_valid_extraction() -> None:
     plugin = LLMAgentMemoryPlugin(
         provider=StubLLMProvider(
             response=LLMJsonResponse(
-                raw_text='{"summary":"Decision discussion","candidate_type":"decision","decision_text":"use event timestamp watermarking","decision_evidence_text":"Decision: use event timestamp watermarking","investigation_text":null,"investigation_evidence_text":null,"rationale_text":"to avoid skipped records"}',
+                raw_text='{"summary":"Decision discussion","candidate_type":"decision","decision_text":"use item item event time reservation ordering","decision_evidence_text":"Decision: use item item event time reservation ordering","investigation_text":null,"investigation_evidence_text":null,"rationale_text":"to avoid missed hold updates"}',
                 parsed_json={
                     "summary": "Decision discussion",
                     "candidate_type": "decision",
-                    "decision_text": "use event timestamp watermarking",
-                    "decision_evidence_text": "Decision: use event timestamp watermarking",
+                    "decision_text": "use item item event time reservation ordering",
+                    "decision_evidence_text": "Decision: use item item event time reservation ordering",
                     "investigation_text": None,
                     "investigation_evidence_text": None,
-                    "rationale_text": "to avoid skipped records",
+                    "rationale_text": "to avoid missed hold updates",
                 },
             )
         )
@@ -42,7 +42,7 @@ def test_llm_plugin_promotes_decision_memory_from_valid_extraction() -> None:
         source_type="decision_note",
         source_id="decision-123",
         content_type="text/plain",
-        content="Decision: use event timestamp watermarking for exports to avoid skipped records.",
+        content="Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates.",
     )
 
     result = plugin.process_item(source_item)
@@ -50,8 +50,8 @@ def test_llm_plugin_promotes_decision_memory_from_valid_extraction() -> None:
     assert len(result.annotations) == 2
     assert result.memory_objects[0].type == "decision"
     assert result.memory_objects[0].schema_id == "llm.decision"
-    assert result.memory_objects[0].payload["decision"] == "use event timestamp watermarking"
-    assert result.memory_objects[0].payload["decision_evidence_text"] == "Decision: use event timestamp watermarking"
+    assert result.memory_objects[0].payload["decision"] == "use item item event time reservation ordering"
+    assert result.memory_objects[0].payload["decision_evidence_text"] == "Decision: use item item event time reservation ordering"
     assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_id"] == "typed_memory_extraction"
     assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_version"] == "v4"
     assert result.memory_objects[0].payload["semantic_provenance"]["prompt_variant"] == "strict_typed_memory_v4_evidence_guarded"
@@ -61,15 +61,15 @@ def test_llm_plugin_promotes_investigation_outcome_from_valid_extraction() -> No
     plugin = LLMAgentMemoryPlugin(
         provider=StubLLMProvider(
             response=LLMJsonResponse(
-                raw_text='{"summary":"Investigation summary","candidate_type":"investigation_outcome","decision_text":null,"decision_evidence_text":null,"investigation_text":"ingestion-time progress tracking skipped records during lag","investigation_evidence_text":"Investigation found that ingestion-time progress tracking skipped records during lag","rationale_text":"because EventHub lag delayed ingestion"}',
+                raw_text='{"summary":"Investigation summary","candidate_type":"investigation_outcome","decision_text":null,"decision_evidence_text":null,"investigation_text":"arrival-time ordering missed hold updates during sync delays","investigation_evidence_text":"Investigation found that arrival-time ordering missed hold updates during sync delays","rationale_text":"because the catalog provider delivered updates late"}',
                 parsed_json={
                     "summary": "Investigation summary",
                     "candidate_type": "investigation_outcome",
                     "decision_text": None,
                     "decision_evidence_text": None,
-                    "investigation_text": "ingestion-time progress tracking skipped records during lag",
-                    "investigation_evidence_text": "Investigation found that ingestion-time progress tracking skipped records during lag",
-                    "rationale_text": "because EventHub lag delayed ingestion",
+                    "investigation_text": "arrival-time ordering missed hold updates during sync delays",
+                    "investigation_evidence_text": "Investigation found that arrival-time ordering missed hold updates during sync delays",
+                    "rationale_text": "because the catalog provider delivered updates late",
                 },
             )
         )
@@ -78,7 +78,7 @@ def test_llm_plugin_promotes_investigation_outcome_from_valid_extraction() -> No
         source_type="investigation_summary",
         source_id="investigation-123",
         content_type="text/plain",
-        content="Investigation found that ingestion-time progress tracking skipped records during lag.",
+        content="Investigation found that arrival-time ordering missed hold updates during sync delays.",
         artifact_kind="tool_use_summary",
     )
 
@@ -86,21 +86,21 @@ def test_llm_plugin_promotes_investigation_outcome_from_valid_extraction() -> No
 
     assert len(result.annotations) == 2
     assert result.memory_objects[0].type == "investigation_outcome"
-    assert result.memory_objects[0].payload["investigation_outcome"] == "ingestion-time progress tracking skipped records during lag"
-    assert result.memory_objects[0].payload["investigation_evidence_text"] == "Investigation found that ingestion-time progress tracking skipped records during lag"
+    assert result.memory_objects[0].payload["investigation_outcome"] == "arrival-time ordering missed hold updates during sync delays"
+    assert result.memory_objects[0].payload["investigation_evidence_text"] == "Investigation found that arrival-time ordering missed hold updates during sync delays"
 
 
 def test_llm_plugin_uses_discussion_summary_when_typed_output_lacks_evidence_text() -> None:
     plugin = LLMAgentMemoryPlugin(
         provider=StubLLMProvider(
             response=LLMJsonResponse(
-                raw_text='{"summary":"We discussed watermarking","candidate_type":"investigation_outcome","decision_text":null,"decision_evidence_text":null,"investigation_text":"ingestion-time progress tracking skipped records","investigation_evidence_text":null,"rationale_text":null}',
+                raw_text='{"summary":"We discussed reservation ordering","candidate_type":"investigation_outcome","decision_text":null,"decision_evidence_text":null,"investigation_text":"arrival-time ordering missed hold updates","investigation_evidence_text":null,"rationale_text":null}',
                 parsed_json={
-                    "summary": "We discussed watermarking",
+                    "summary": "We discussed reservation ordering",
                     "candidate_type": "investigation_outcome",
                     "decision_text": None,
                     "decision_evidence_text": None,
-                    "investigation_text": "ingestion-time progress tracking skipped records",
+                    "investigation_text": "arrival-time ordering missed hold updates",
                     "investigation_evidence_text": None,
                     "rationale_text": None,
                 },
@@ -111,7 +111,7 @@ def test_llm_plugin_uses_discussion_summary_when_typed_output_lacks_evidence_tex
         source_type="chat_thread",
         source_id="thread-123",
         content_type="text/plain",
-        content="We discussed watermarking options today.",
+        content="We discussed reservation ordering options today.",
     )
 
     result = plugin.process_item(source_item)
@@ -125,12 +125,12 @@ def test_llm_plugin_rejects_weak_decision_evidence_and_falls_back_to_discussion_
     plugin = LLMAgentMemoryPlugin(
         provider=StubLLMProvider(
             response=LLMJsonResponse(
-                raw_text='{"summary":"Playbook note","candidate_type":"decision","decision_text":"create a clearer operator playbook","decision_evidence_text":"The team agreed that we need a clearer operator playbook for export incidents.","investigation_text":null,"investigation_evidence_text":null,"rationale_text":null}',
+                raw_text='{"summary":"Playbook note","candidate_type":"decision","decision_text":"create a clearer librarian playbook","decision_evidence_text":"The team agreed that we need a clearer librarian playbook for catalog sync incidents.","investigation_text":null,"investigation_evidence_text":null,"rationale_text":null}',
                 parsed_json={
                     "summary": "Playbook note",
                     "candidate_type": "decision",
-                    "decision_text": "create a clearer operator playbook",
-                    "decision_evidence_text": "The team agreed that we need a clearer operator playbook for export incidents.",
+                    "decision_text": "create a clearer librarian playbook",
+                    "decision_evidence_text": "The team agreed that we need a clearer librarian playbook for catalog sync incidents.",
                     "investigation_text": None,
                     "investigation_evidence_text": None,
                     "rationale_text": None,
@@ -142,7 +142,7 @@ def test_llm_plugin_rejects_weak_decision_evidence_and_falls_back_to_discussion_
         source_type="meeting_summary",
         source_id="discussion-guard-1",
         content_type="text/plain",
-        content="The team agreed that we need a clearer operator playbook for export incidents.",
+        content="The team agreed that we need a clearer librarian playbook for catalog sync incidents.",
         artifact_kind="assistant_output",
     )
 
@@ -156,14 +156,14 @@ def test_llm_plugin_rejects_weak_investigation_evidence_and_falls_back_to_discus
     plugin = LLMAgentMemoryPlugin(
         provider=StubLLMProvider(
             response=LLMJsonResponse(
-                raw_text='{"summary":"Status update","candidate_type":"investigation_outcome","decision_text":null,"decision_evidence_text":null,"investigation_text":"export lag increased after the broker restart","investigation_evidence_text":"Export lag increased after the broker restart, and we should watch it closely tonight.","rationale_text":null}',
+                raw_text='{"summary":"Status update","candidate_type":"investigation_outcome","decision_text":null,"decision_evidence_text":null,"investigation_text":"catalog sync delay increased after the provider restart","investigation_evidence_text":"Catalog sync delay increased after the provider restart, and we should watch it closely tonight.","rationale_text":null}',
                 parsed_json={
                     "summary": "Status update",
                     "candidate_type": "investigation_outcome",
                     "decision_text": None,
                     "decision_evidence_text": None,
-                    "investigation_text": "export lag increased after the broker restart",
-                    "investigation_evidence_text": "Export lag increased after the broker restart, and we should watch it closely tonight.",
+                    "investigation_text": "catalog sync delay increased after the provider restart",
+                    "investigation_evidence_text": "Catalog sync delay increased after the provider restart, and we should watch it closely tonight.",
                     "rationale_text": None,
                 },
             )
@@ -173,7 +173,7 @@ def test_llm_plugin_rejects_weak_investigation_evidence_and_falls_back_to_discus
         source_type="status_update",
         source_id="discussion-guard-2",
         content_type="text/plain",
-        content="Export lag increased after the broker restart, and we should watch it closely tonight.",
+        content="Catalog sync delay increased after the provider restart, and we should watch it closely tonight.",
         artifact_kind="notification",
     )
 
@@ -189,7 +189,7 @@ def test_llm_plugin_raises_on_invalid_output() -> None:
         source_type="decision_note",
         source_id="decision-456",
         content_type="text/plain",
-        content="Decision: use event timestamp watermarking for exports to avoid skipped records.",
+        content="Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates.",
     )
 
     with pytest.raises(LLMProviderError):
@@ -201,7 +201,7 @@ def test_build_analysis_request_uses_requested_prompt_variant() -> None:
         source_type="chat_thread",
         source_id="thread-789",
         content_type="text/plain",
-        content="We need to decide whether export watermarking should use ingestion time or event time.",
+        content="We need to decide whether reservation ordering should use arrival time or item event time.",
         artifact_kind="message",
         role="user",
     )
@@ -235,7 +235,7 @@ def test_llm_plugin_with_prompt_variant_uses_variant_prompt() -> None:
         source_type="investigation_summary",
         source_id="investigation-999",
         content_type="text/plain",
-        content="Investigation found that ingestion-time progress tracking skipped records during lag.",
+        content="Investigation found that arrival-time ordering missed hold updates during sync delays.",
         artifact_kind="tool_use_summary",
     )
 

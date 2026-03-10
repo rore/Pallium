@@ -10,8 +10,8 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         source_type="chat_thread",
         source_id="thread-1",
         content_type="text/plain",
-        content="Event timestamp watermarking avoids skipped records.",
-        metadata={"topic": "exports"},
+        content="Item event time reservation ordering avoids missed hold updates.",
+        metadata={"topic": "reservation ordering"},
         artifact_kind="message",
         role="user",
         container_ref="slack:C123",
@@ -27,7 +27,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         type="summary",
         schema_id="core.summary",
         schema_version="v1",
-        payload={"text": "Event timestamp watermarking avoids skipped records."},
+        payload={"text": "Item event time reservation ordering avoids missed hold updates."},
     )
     storage.create_annotation(annotation)
 
@@ -35,7 +35,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         type="investigation_outcome",
         schema_id="demo.investigation_outcome",
         schema_version="v1",
-        payload={"investigation_outcome": "ingestion-time progress tracking skipped records during lag"},
+        payload={"investigation_outcome": "arrival-time ordering missed hold updates during sync delays"},
     )
     storage.create_memory_object(memory_object)
 
@@ -52,7 +52,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         target_kind="memory_object",
         target_id=memory_object.id,
         index_type="lexical",
-        text_view="ingestion time progress tracking skipped records during lag",
+        text_view="arrival time progress tracking missed hold updates during sync delays",
     )
     storage.create_index_entry(index_entry)
 
@@ -60,7 +60,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         target_kind="source_item",
         target_id=source_item.id,
         index_type="lexical",
-        text_view="event timestamp watermarking avoids skipped records",
+        text_view="item event time reservation ordering avoids missed hold updates",
     )
     storage.create_index_entry(source_index_entry)
 
@@ -72,24 +72,24 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     assert storage.get_annotation(annotation.id).id == annotation.id
     assert storage.get_memory_object(memory_object.id).lifecycle == "active"
 
-    hits = storage.search_index_entries(["skipped", "lag"], limit=5)
+    hits = storage.search_index_entries(["missed", "delays"], limit=5)
     assert hits
     assert hits[0].target_id == memory_object.id
 
     storage.update_memory_object_lifecycle(memory_object.id, "superseded")
     assert storage.get_memory_object(memory_object.id).lifecycle == "superseded"
-    hits_after_supersede = storage.search_index_entries(["skipped", "lag"], limit=5)
+    hits_after_supersede = storage.search_index_entries(["missed", "delays"], limit=5)
     assert all(hit.target_id != memory_object.id for hit in hits_after_supersede)
 
     filtered_hits = storage.search_index_entries(
-        ["event", "watermarking"],
+        ["item", "reservation", "ordering"],
         limit=5,
         filters=QueryFilters(thread_ref="thread-a", role="user", artifact_kind="message"),
     )
     assert filtered_hits
 
     no_hits = storage.search_index_entries(
-        ["event", "watermarking"],
+        ["item", "reservation", "ordering"],
         limit=5,
         filters=QueryFilters(thread_ref="thread-b"),
     )

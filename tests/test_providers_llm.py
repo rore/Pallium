@@ -9,10 +9,10 @@ from providers.llm.openai_compatible import OpenAICompatibleLLMProvider
 
 
 EXPECTED_OBJECT = {
-    "summary": "Use event timestamp watermarking.",
+    "summary": "Use item event time reservation ordering.",
     "candidate_type": "decision",
-    "decision_text": "use event timestamp watermarking",
-    "rationale_text": "to avoid skipped records during lag",
+    "decision_text": "use item event time reservation ordering",
+    "rationale_text": "to avoid missed hold updates during sync delays",
 }
 
 

@@ -32,10 +32,16 @@
   - `active`
   - `superseded`
 - superseded memory is hidden from default retrieval while evidence remains searchable
+- realistic agent-conversation scenarios now exist under `evals/agent_conversation/`
+- committed examples/tests now use a neutral library reservation and catalog sync sample domain
 
 ## Verification Notes
 
-- `pytest` passes locally: `27 passed`
+- `pytest` passes locally: `31 passed`
+- live scenario harness run succeeded locally:
+  - `evals/agent_conversation/output/local-agent-conversation-smoke`
+  - `2` value scenarios found expected memory
+  - `1` low-value scenario correctly added no memory signal
 - semantic regression baseline remains the committed real OpenAI run on the current batch
 - current recorded baseline on `gpt-5-mini` with `strict_typed_memory_v4_evidence_guarded` is:
   - `30 / 30` overall correct

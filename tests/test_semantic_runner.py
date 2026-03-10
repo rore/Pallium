@@ -12,15 +12,15 @@ from semantic.llm_agent_memory import LLMAgentMemoryPlugin
 
 class VariantAwareStubLLMProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
-        if 'Investigation found that ingestion-time progress tracking skipped records during lag.' in user_prompt:
+        if 'Investigation found that arrival-time ordering missed hold updates during sync delays.' in user_prompt:
             parsed_json = {
                 "summary": "Investigation summary",
                 "candidate_type": "investigation_outcome",
                 "decision_text": None,
                 "decision_evidence_text": None,
-                "investigation_text": "ingestion-time progress tracking skipped records during lag",
-                "investigation_evidence_text": "Investigation found that ingestion-time progress tracking skipped records during lag",
-                "rationale_text": "because EventHub lag delayed ingestion",
+                "investigation_text": "arrival-time ordering missed hold updates during sync delays",
+                "investigation_evidence_text": "Investigation found that arrival-time ordering missed hold updates during sync delays",
+                "rationale_text": "because the catalog provider delivered updates late",
             }
         elif 'Classify candidate_type as \"decision\" only when the source explicitly records a committed choice' in system_prompt:
             parsed_json = {
@@ -36,26 +36,26 @@ class VariantAwareStubLLMProvider:
             parsed_json = {
                 "summary": "Baseline summary",
                 "candidate_type": "decision",
-                "decision_text": "use event timestamp watermarking",
-                "decision_evidence_text": "Decision: use event timestamp watermarking",
+                "decision_text": "use item item event time reservation ordering",
+                "decision_evidence_text": "Decision: use item item event time reservation ordering",
                 "investigation_text": None,
                 "investigation_evidence_text": None,
-                "rationale_text": "to avoid skipped records during lag",
+                "rationale_text": "to avoid missed hold updates during sync delays",
             }
         return LLMJsonResponse(raw_text=json.dumps(parsed_json), parsed_json=parsed_json)
 
 
 class DelayedVariantAwareStubLLMProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
-        if 'Investigation found that ingestion-time progress tracking skipped records during lag.' in user_prompt:
+        if 'Investigation found that arrival-time ordering missed hold updates during sync delays.' in user_prompt:
             time.sleep(0.02)
             parsed_json = {
                 "summary": "Investigation summary",
                 "candidate_type": "investigation_outcome",
                 "decision_text": None,
                 "decision_evidence_text": None,
-                "investigation_text": "ingestion-time progress tracking skipped records during lag",
-                "investigation_evidence_text": "Investigation found that ingestion-time progress tracking skipped records during lag",
+                "investigation_text": "arrival-time ordering missed hold updates during sync delays",
+                "investigation_evidence_text": "Investigation found that arrival-time ordering missed hold updates during sync delays",
                 "rationale_text": None,
             }
         else:
@@ -63,8 +63,8 @@ class DelayedVariantAwareStubLLMProvider:
             parsed_json = {
                 "summary": "Decision summary",
                 "candidate_type": "decision",
-                "decision_text": "use event timestamp watermarking",
-                "decision_evidence_text": "Decision: use event timestamp watermarking",
+                "decision_text": "use item item event time reservation ordering",
+                "decision_evidence_text": "Decision: use item item event time reservation ordering",
                 "investigation_text": None,
                 "investigation_evidence_text": None,
                 "rationale_text": None,
@@ -94,7 +94,7 @@ def _decision_record(source_id: str, content: str, *, expected_kind: str = "deci
         "content": content,
         "artifact_kind": "assistant_output",
         "role": "assistant",
-        "metadata": {"topic": "watermarking", "expected_kind": expected_kind},
+        "metadata": {"topic": "reservation ordering", "expected_kind": expected_kind},
     }
 
 
@@ -106,14 +106,14 @@ def _investigation_record(source_id: str, content: str, *, expected_kind: str = 
         "content": content,
         "artifact_kind": "tool_use_summary",
         "role": "assistant",
-        "metadata": {"topic": "watermarking", "expected_kind": expected_kind},
+        "metadata": {"topic": "reservation ordering", "expected_kind": expected_kind},
     }
 
 
 def test_run_semantic_eval_writes_summary_and_jsonl_results(tmp_path: Path) -> None:
     input_file = tmp_path / "items.jsonl"
     output_dir = tmp_path / "output"
-    _write_input_file(input_file, _decision_record("decision-1", "Decision: use event timestamp watermarking."))
+    _write_input_file(input_file, _decision_record("decision-1", "Decision: use item item event time reservation ordering."))
 
     plugin = LLMAgentMemoryPlugin(provider=VariantAwareStubLLMProvider())
     run_dir = run_semantic_eval(
@@ -163,8 +163,8 @@ def test_run_semantic_eval_can_compare_prompt_variants_in_one_run(tmp_path: Path
     output_dir = tmp_path / "output"
     _write_input_file(
         input_file,
-        _decision_record("decision-1", "Decision: use event timestamp watermarking."),
-        _investigation_record("investigation-1", "Investigation found that ingestion-time progress tracking skipped records during lag."),
+        _decision_record("decision-1", "Decision: use item item event time reservation ordering."),
+        _investigation_record("investigation-1", "Investigation found that arrival-time ordering missed hold updates during sync delays."),
     )
 
     plugin = LLMAgentMemoryPlugin(provider=VariantAwareStubLLMProvider())
@@ -193,8 +193,8 @@ def test_run_semantic_eval_parallel_keeps_stable_result_order(tmp_path: Path) ->
     output_dir = tmp_path / "output"
     _write_input_file(
         input_file,
-        _decision_record("decision-1", "Decision: use event timestamp watermarking."),
-        _investigation_record("investigation-1", "Investigation found that ingestion-time progress tracking skipped records during lag."),
+        _decision_record("decision-1", "Decision: use item item event time reservation ordering."),
+        _investigation_record("investigation-1", "Investigation found that arrival-time ordering missed hold updates during sync delays."),
     )
 
     plugin = LLMAgentMemoryPlugin(provider=DelayedVariantAwareStubLLMProvider())
@@ -226,7 +226,7 @@ def test_run_semantic_eval_parallel_keeps_stable_result_order(tmp_path: Path) ->
 def test_run_semantic_eval_records_errors(tmp_path: Path) -> None:
     input_file = tmp_path / "items.jsonl"
     output_dir = tmp_path / "output"
-    _write_input_file(input_file, _decision_record("decision-2", "Decision: use event timestamp watermarking."))
+    _write_input_file(input_file, _decision_record("decision-2", "Decision: use item item event time reservation ordering."))
 
     plugin = LLMAgentMemoryPlugin(provider=ErrorLLMProvider())
     run_dir = run_semantic_eval(

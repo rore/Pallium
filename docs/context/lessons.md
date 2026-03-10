@@ -123,3 +123,14 @@ Deleting stale memory would lose provenance, but surfacing it as current would r
 
 Solution:
 Keep raw evidence intact, add minimal `active` vs `superseded` lifecycle on promoted memory, and filter superseded memory from default retrieval.
+
+## 2026-03-10 - Committed sample domains must stay neutral and public-safe
+
+Problem:
+Examples, tests, eval fixtures, and manual request collections started drifting into workplace-adjacent terminology.
+
+Why:
+Even when the product is shaped by an internal downstream use case, committed sample content is part of the public artifact surface and can leak internal context or make the project look narrower than it is.
+
+Solution:
+Keep committed examples and fixtures on a neutral public-safe sample domain. The current repo baseline uses library reservation and catalog sync examples, and new fixtures should follow that pattern unless there is an explicit decision to change the public sample domain.
