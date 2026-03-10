@@ -1,4 +1,6 @@
 # Next
+- add-agent-conversation-memory-package
+- add-agent-conversation-memory-test-bed
 - add-tiered-memory-extension
 - add-recurring-question-value-benchmark
 
