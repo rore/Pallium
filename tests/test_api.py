@@ -224,7 +224,7 @@ def test_post_query_applies_structured_filters(client) -> None:
 def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: str) -> None:
     monkeypatch.setattr(
         "app.dependencies.build_llm_provider",
-        lambda config: StubLLMProvider(
+        lambda config, **_: StubLLMProvider(
             {
                 "summary": "Investigation summary about reservation ordering.",
                 "candidate_type": "investigation_outcome",
@@ -282,7 +282,7 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
 def test_agent_conversation_memory_package_path_preserves_public_api_shape(monkeypatch, test_db_url: str) -> None:
     monkeypatch.setattr(
         "app.dependencies.build_llm_provider",
-        lambda config: StubLLMProvider(
+        lambda config, **_: StubLLMProvider(
             {
                 "summary": "Prior assistant conclusion about reservation ordering.",
                 "candidate_type": "decision",
@@ -351,7 +351,7 @@ def test_agent_conversation_memory_package_path_preserves_public_api_shape(monke
 def test_llm_plugin_path_returns_server_error_when_provider_fails(monkeypatch, test_db_url: str) -> None:
     monkeypatch.setattr(
         "app.dependencies.build_llm_provider",
-        lambda config: StubLLMProvider(error=LLMProviderError("provider failed")),
+        lambda config, **_: StubLLMProvider(error=LLMProviderError("provider failed")),
     )
     llm_client = TestClient(
         create_app(
@@ -379,3 +379,5 @@ def test_llm_plugin_path_returns_server_error_when_provider_fails(monkeypatch, t
     )
 
     assert create_response.status_code == 500
+
+

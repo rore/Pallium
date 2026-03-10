@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from api.routes import create_router
-from app.config import AppConfig
+from app.config import AppConfig, LLMProviderConfig, SemanticPackageConfig
 from core.service import PalliumService
 from providers.llm.anthropic_claude import AnthropicClaudeLLMProvider
 from providers.llm.base import LLMProvider
@@ -22,46 +22,64 @@ def build_storage_provider(config: AppConfig) -> StorageProvider:
     return SQLiteStorageProvider(database_url=config.sqlite_url)
 
 
-def build_llm_provider(config: AppConfig) -> LLMProvider | None:
-    if not config.llm_provider:
-        return None
-    if not config.llm_model or not config.llm_base_url:
-        raise ValueError("LLM provider configuration requires model and base URL")
+def build_llm_provider(config: AppConfig, *, provider_name: str, model: str) -> LLMProvider:
+    provider_config = config.provider_config(provider_name)
+    if not provider_config.base_url:
+        raise ValueError(f"LLM provider '{provider_name}' requires a base URL")
 
-    provider_name = config.llm_provider.lower()
-    if provider_name == "openai_compatible":
+    provider_kind = provider_config.kind.lower()
+    if provider_kind == "openai_compatible":
         return OpenAICompatibleLLMProvider(
-            model=config.llm_model,
-            base_url=config.llm_base_url,
-            api_key=config.llm_api_key,
-            timeout_seconds=config.llm_timeout_seconds,
+            model=model,
+            base_url=provider_config.base_url,
+            api_key=provider_config.api_key,
+            timeout_seconds=provider_config.timeout_seconds,
         )
-    if provider_name in {"anthropic_claude", "claude", "anthropic"}:
+    if provider_kind in {"anthropic_claude", "claude", "anthropic"}:
         return AnthropicClaudeLLMProvider(
-            model=config.llm_model,
-            base_url=config.llm_base_url,
-            api_key=config.llm_api_key,
-            timeout_seconds=config.llm_timeout_seconds,
+            model=model,
+            base_url=provider_config.base_url,
+            api_key=provider_config.api_key,
+            timeout_seconds=provider_config.timeout_seconds,
         )
 
-    raise ValueError(f"Unsupported LLM provider: {config.llm_provider}")
+    raise ValueError(f"Unsupported LLM provider kind: {provider_config.kind}")
 
 
 def build_semantic_plugins(config: AppConfig) -> dict[str, SemanticPlugin]:
-    demo_plugin = DemoAgentMemoryPlugin()
-    plugins: dict[str, SemanticPlugin] = {demo_plugin.name: demo_plugin}
+    plugins: dict[str, SemanticPlugin] = {}
 
-    llm_provider = build_llm_provider(config)
-    if llm_provider is not None:
-        llm_plugin = LLMAgentMemoryPlugin(provider=llm_provider, prompt_variant=config.llm_prompt_variant)
-        plugins[llm_plugin.name] = llm_plugin
-        agent_conversation_plugin = AgentConversationMemoryPlugin(
-            provider=llm_provider,
-            prompt_variant=config.llm_prompt_variant,
-        )
-        plugins[agent_conversation_plugin.name] = agent_conversation_plugin
+    for package_name, package_config in config.semantic_packages.items():
+        plugin = _build_plugin_for_package(config=config, package_config=package_config)
+        if plugin is not None:
+            plugins[package_name] = plugin
+
+    if "demo_agent_memory" not in plugins:
+        demo_plugin = DemoAgentMemoryPlugin()
+        plugins[demo_plugin.name] = demo_plugin
 
     return plugins
+
+
+def _build_plugin_for_package(*, config: AppConfig, package_config: SemanticPackageConfig) -> SemanticPlugin | None:
+    implementation = package_config.implementation
+    if implementation == "demo_agent_memory":
+        return DemoAgentMemoryPlugin()
+
+    if implementation in {"llm_agent_memory", "agent_conversation_memory"}:
+        if not package_config.llm_provider or not package_config.model:
+            return None
+        provider = build_llm_provider(
+            config,
+            provider_name=package_config.llm_provider,
+            model=package_config.model,
+        )
+        prompt_variant = package_config.prompt_variant or "strict_typed_memory_v4_evidence_guarded"
+        if implementation == "llm_agent_memory":
+            return LLMAgentMemoryPlugin(provider=provider, prompt_variant=prompt_variant)
+        return AgentConversationMemoryPlugin(provider=provider, prompt_variant=prompt_variant)
+
+    raise ValueError(f"Unsupported semantic package implementation: {implementation}")
 
 
 def build_retrieval_provider(storage: StorageProvider) -> RetrievalProvider:

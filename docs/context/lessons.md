@@ -134,3 +134,15 @@ Even when the product is shaped by an internal downstream use case, committed sa
 
 Solution:
 Keep committed examples and fixtures on a neutral public-safe sample domain. The current repo baseline uses library reservation and catalog sync examples, and new fixtures should follow that pattern unless there is an explicit decision to change the public sample domain.
+
+## 2026-03-10 - Package-scoped config should live in TOML, not flat env vars
+
+Problem:
+A single global env-based LLM configuration does not scale once multiple semantic packages need different models and prompt variants.
+
+Why:
+Each semantic package is effectively its own runtime product surface and needs package-specific model and prompt settings.
+
+Solution:
+Use pallium.local.toml for named provider blocks and per-package semantic config, and reserve .env.local for secrets and temporary overrides.
+

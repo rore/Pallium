@@ -56,11 +56,7 @@ def main() -> int:
     if not isinstance(plugin, LLMAgentMemoryPlugin):
         raise ValueError(f"Use case '{args.use_case}' is not an LLM-backed semantic plugin")
 
-    prompt_variants = (
-        [item.strip() for item in args.prompt_variants.split(",") if item.strip()]
-        if args.prompt_variants
-        else [plugin.prompt_variant]
-    )
+    prompt_variants = [item.strip() for item in args.prompt_variants.split(",") if item.strip()] if args.prompt_variants else [plugin.prompt_variant]
     run_dir = run_semantic_eval(
         input_file=args.input_file,
         output_root=args.output_dir,
@@ -94,10 +90,12 @@ def run_semantic_eval(
         raise ValueError("max_concurrency must be at least 1")
 
     resolved_variants = prompt_variants or [plugin.prompt_variant]
+    package_config = config.semantic_packages.get(plugin.name)
+    provider_config = config.llm_providers.get(package_config.llm_provider) if package_config and package_config.llm_provider else None
     run_id = run_name or _build_run_id(
         suite_name=suite_name,
-        provider=config.llm_provider,
-        model=config.llm_model,
+        provider=provider_config.kind if provider_config else None,
+        model=package_config.model if package_config else None,
     )
     run_dir = output_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -111,9 +109,9 @@ def run_semantic_eval(
         "suite_name": suite_name,
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "provider": config.llm_provider,
-        "model": config.llm_model,
-        "base_url": config.llm_base_url,
+        "provider": provider_config.kind if provider_config else None,
+        "model": package_config.model if package_config else None,
+        "base_url": provider_config.base_url if provider_config else None,
         "use_case": plugin.name,
         "input_file": str(input_file),
         "prompt_variants": resolved_variants,

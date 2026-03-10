@@ -56,7 +56,7 @@ class StubAgentConversationLLMProvider:
 def test_agent_conversation_runner_outputs_expected_shape(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "app.dependencies.build_llm_provider",
-        lambda config: StubAgentConversationLLMProvider(),
+        lambda config, **_: StubAgentConversationLLMProvider(),
     )
 
     run_dir = run_agent_conversation_scenarios(
@@ -89,7 +89,7 @@ def test_agent_conversation_runner_outputs_expected_shape(monkeypatch, tmp_path:
 def test_cross_thread_value_scenario_returns_expected_memory(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "app.dependencies.build_llm_provider",
-        lambda config: StubAgentConversationLLMProvider(),
+        lambda config, **_: StubAgentConversationLLMProvider(),
     )
 
     run_dir = run_agent_conversation_scenarios(
@@ -120,7 +120,7 @@ def test_cross_thread_value_scenario_returns_expected_memory(monkeypatch, tmp_pa
 def test_same_thread_low_value_scenario_adds_little_or_nothing(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "app.dependencies.build_llm_provider",
-        lambda config: StubAgentConversationLLMProvider(),
+        lambda config, **_: StubAgentConversationLLMProvider(),
     )
 
     run_dir = run_agent_conversation_scenarios(
@@ -150,7 +150,7 @@ def test_same_thread_low_value_scenario_adds_little_or_nothing(monkeypatch, tmp_
 def test_repeated_answer_consistency_scenario_returns_prior_assistant_memory(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "app.dependencies.build_llm_provider",
-        lambda config: StubAgentConversationLLMProvider(),
+        lambda config, **_: StubAgentConversationLLMProvider(),
     )
 
     run_dir = run_agent_conversation_scenarios(
@@ -175,3 +175,4 @@ def test_repeated_answer_consistency_scenario_returns_prior_assistant_memory(mon
 
     assert repeat_case["expected_memory_types_found"] is True
     assert "decision" in repeat_case["returned_memory_types"]
+

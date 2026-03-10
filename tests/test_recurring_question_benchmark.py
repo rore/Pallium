@@ -91,7 +91,7 @@ def _read_jsonl(path: Path) -> list[dict[str, object]]:
 
 
 def test_recurring_question_benchmark_outputs_expected_shape(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config: StubSemanticLLMProvider())
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: StubSemanticLLMProvider())
 
     run_dir = run_recurring_question_benchmark(
         scenario_file=Path("evals/recurring_question/scenarios.json"),
@@ -120,7 +120,7 @@ def test_recurring_question_benchmark_outputs_expected_shape(monkeypatch, tmp_pa
 
 
 def test_cross_thread_scenario_marks_memory_backed_as_winner(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config: StubSemanticLLMProvider())
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: StubSemanticLLMProvider())
 
     run_dir = run_recurring_question_benchmark(
         scenario_file=Path("evals/recurring_question/scenarios.json"),
@@ -144,7 +144,7 @@ def test_cross_thread_scenario_marks_memory_backed_as_winner(monkeypatch, tmp_pa
 
 
 def test_same_thread_low_value_does_not_mark_memory_as_winner(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config: StubSemanticLLMProvider())
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: StubSemanticLLMProvider())
 
     run_dir = run_recurring_question_benchmark(
         scenario_file=Path("evals/recurring_question/scenarios.json"),
@@ -167,7 +167,7 @@ def test_same_thread_low_value_does_not_mark_memory_as_winner(monkeypatch, tmp_p
 
 
 def test_repeated_answer_consistency_rewards_prior_conclusion_carry_forward(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config: StubSemanticLLMProvider())
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: StubSemanticLLMProvider())
 
     run_dir = run_recurring_question_benchmark(
         scenario_file=Path("evals/recurring_question/scenarios.json"),
@@ -187,3 +187,4 @@ def test_repeated_answer_consistency_rewards_prior_conclusion_carry_forward(monk
 
     assert repeated["winner"] == "memory_backed"
     assert repeated["rubric"]["memory_backed"]["consistency"] == 2
+

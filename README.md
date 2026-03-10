@@ -157,18 +157,51 @@ In another terminal:
 
 ## Local Config
 
-Create [C:/Dev/rore/Pallium/.env.local](C:/Dev/rore/Pallium/.env.local) from [C:/Dev/rore/Pallium/.env.example](C:/Dev/rore/Pallium/.env.example).
+Use a structured local config file for package and provider setup:
 
-Example OpenAI-compatible setup:
+- copy [C:/Dev/rore/Pallium/pallium.example.toml](C:/Dev/rore/Pallium/pallium.example.toml) to `pallium.local.toml`
+- copy [C:/Dev/rore/Pallium/.env.example](C:/Dev/rore/Pallium/.env.example) to [C:/Dev/rore/Pallium/.env.local](C:/Dev/rore/Pallium/.env.local) for secrets and one-off overrides
+
+Recommended split:
+
+- `pallium.local.toml`
+  - default package
+  - storage backend
+  - named LLM providers
+  - package-specific model and prompt configuration
+- `.env.local`
+  - API keys
+  - temporary overrides
+
+Example `pallium.local.toml`:
+
+```toml
+default_use_case = "agent_conversation_memory"
+
+[storage]
+backend = "sqlite"
+sqlite_url = "sqlite:///./pallium.db"
+
+[llm_providers.openai]
+kind = "openai_compatible"
+base_url = "https://api.openai.com/v1"
+api_key_env = "PALLIUM_OPENAI_API_KEY"
+timeout_seconds = 30
+
+[semantic_packages.agent_conversation_memory]
+implementation = "agent_conversation_memory"
+llm_provider = "openai"
+model = "gpt-5-mini"
+prompt_variant = "strict_typed_memory_v4_evidence_guarded"
+```
+
+Example `.env.local`:
 
 ```env
-PALLIUM_DEFAULT_USE_CASE=agent_conversation_memory
-PALLIUM_LLM_PROVIDER=openai_compatible
-PALLIUM_LLM_MODEL=gpt-5-mini
-PALLIUM_LLM_BASE_URL=https://api.openai.com/v1
-PALLIUM_LLM_API_KEY=your-key
-PALLIUM_LLM_PROMPT_VARIANT=strict_typed_memory_v4_evidence_guarded
+PALLIUM_OPENAI_API_KEY=your-key
 ```
+
+Environment variables still override both `.env.local` and `pallium.local.toml`.
 
 ## LLM Semantic Eval Harness
 
@@ -191,6 +224,7 @@ Use `--split-output` only when you want per-input debug files.
 - [C:/Dev/rore/Pallium/docs/context/architecture.md](C:/Dev/rore/Pallium/docs/context/architecture.md)
 - [C:/Dev/rore/Pallium/docs/context/state.md](C:/Dev/rore/Pallium/docs/context/state.md)
 - [C:/Dev/rore/Pallium/roadmap/board.md](C:/Dev/rore/Pallium/roadmap/board.md)
+
 
 
 

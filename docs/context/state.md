@@ -56,7 +56,7 @@
 ## Context Memory Note
 
 - record important problem-and-solution pairs in `docs/context/lessons.md` so future sessions do not rediscover them
-- local `.env.local` can still override code defaults such as the active prompt variant during live runs
+- local config now uses `pallium.local.toml` for package/provider structure and `.env.local` for secrets or one-off overrides
 
 ## Reference Points
 
@@ -64,3 +64,4 @@
 - accepted architecture and decisions: `docs/context/architecture.md`, `docs/context/decisions.md`
 - fuller design rationale: `docs/designs/`
 - semantic baseline: `evals/semantic/baseline.md`
+
