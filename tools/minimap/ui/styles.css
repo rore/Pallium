@@ -507,32 +507,36 @@ h3 {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 6px;
+  gap: 8px;
+  margin-bottom: 5px;
 }
 
 .board-item-title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--font-display);
-  font-size: 0.95rem;
+  font-size: 0.92rem;
   font-weight: 730;
-  line-height: 1.18;
+  line-height: 1.14;
+  letter-spacing: -0.018em;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  max-height: calc(1.38em * 3);
+  -webkit-line-clamp: 3;
+  max-height: calc(1.14em * 3);
   overflow: hidden;
 }
 
 .board-item-meta {
   display: inline-flex;
-  align-items: center;
-  gap: 5px;
+  align-items: flex-start;
+  gap: 4px;
   flex-shrink: 0;
 }
 
 .board-item-kind {
   flex-shrink: 0;
-  padding-inline: 0.6rem;
+  padding: 0.22rem 0.52rem;
+  font-size: 0.68rem;
   background: rgba(21, 32, 51, 0.06);
   color: var(--muted);
 }
@@ -577,11 +581,11 @@ h3 {
 .board-item-overview {
   display: block;
   display: -webkit-box;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   color: var(--muted);
-  font-size: 0.76rem;
-  line-height: 1.38;
-  -webkit-line-clamp: 3;
+  font-size: 0.74rem;
+  line-height: 1.34;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -646,9 +650,10 @@ h3 {
 }
 
 .scope-panel.scope-collapsed .panel-header {
-  align-items: stretch;
+  align-items: center;
   flex-direction: column;
-  padding: 14px 10px;
+  gap: 10px;
+  padding: 16px 10px 14px;
 }
 
 .scope-panel.scope-collapsed .panel-header-main {
@@ -657,7 +662,8 @@ h3 {
 }
 
 .scope-panel.scope-collapsed .panel-header-main .muted,
-.scope-panel.scope-collapsed .scope-content {
+.scope-panel.scope-collapsed .scope-content,
+.scope-panel.scope-collapsed #scope-edit-button {
   display: none;
 }
 
@@ -671,6 +677,11 @@ h3 {
 
 .scope-panel.scope-collapsed h2 {
   font-size: 1rem;
+}
+
+.scope-panel.scope-collapsed .panel-actions {
+  width: 100%;
+  justify-content: center;
 }
 
 .scope-panel.scope-collapsed .scope-toggle-button {

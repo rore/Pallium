@@ -960,13 +960,13 @@ function renderScopeChrome() {
   scopePanelElement.classList.toggle("scope-editing", state.scopeEditMode);
   scopeSubtitleElement.textContent = "";
   scopeSubtitleElement.hidden = true;
-  scopeEditButton.hidden = setupMode || state.scopeEditMode;
+  scopeEditButton.hidden = setupMode || state.scopeEditMode || state.scopeCollapsed;
   scopeSaveButton.hidden = setupMode || !state.scopeEditMode;
   scopeCancelButton.hidden = setupMode || !state.scopeEditMode;
   scopeSaveButton.disabled = !state.scopeDirty;
   scopeToggleButton.hidden = setupMode || state.scopeEditMode;
   scopeToggleButton.disabled = setupMode || state.scopeEditMode;
-  scopeToggleButton.textContent = state.scopeCollapsed ? "Expand" : "Collapse";
+  scopeToggleButton.textContent = state.scopeCollapsed ? "Open" : "Collapse";
   scopeToggleButton.setAttribute("aria-expanded", state.scopeCollapsed ? "false" : "true");
   scopeResizerElement.hidden = !showResizer;
   scopeResizerElement.setAttribute("aria-hidden", showResizer ? "false" : "true");
@@ -1326,9 +1326,9 @@ function renderBoardReadMode() {
       const dragHint = allowDerivedDrag ? '<span class="board-item-drag">Move</span>' : "";
       const overview = item.overviewExcerpt ? `<span class="board-item-overview">${escapeHtml(item.overviewExcerpt)}</span>` : "";
       return `
-        <button class="board-item${active}${allowDerivedDrag ? " board-item-draggable" : ""}" data-item-id="${escapeHtml(item.id)}" type="button" aria-pressed="${item.id === state.selectedItemId ? "true" : "false"}" ${allowDerivedDrag ? 'draggable="true"' : ""}>
+        <button class="board-item${active}${allowDerivedDrag ? " board-item-draggable" : ""}" data-item-id="${escapeHtml(item.id)}" type="button" title="${escapeHtml(item.title)}" aria-label="Open ${escapeHtml(item.title)}" aria-pressed="${item.id === state.selectedItemId ? "true" : "false"}" ${allowDerivedDrag ? 'draggable="true"' : ""}>
           <span class="board-item-top">
-            <span class="board-item-title">${escapeHtml(item.title)}</span>
+            <span class="board-item-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
             <span class="board-item-meta">${kindChip}${dragHint}</span>
           </span>
           <span class="board-item-id">${escapeHtml(item.id)}</span>
@@ -1479,7 +1479,7 @@ function renderBoardEditMode() {
             <div class="board-edit-item" data-board-item-row="${escapeHtml(item.id)}">
               <div class="board-edit-item-main">
                 <div class="board-item-top">
-                  <span class="board-item-title">${escapeHtml(item.title)}</span>
+                  <span class="board-item-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
                   <span class="board-item-kind">${escapeHtml(item.kind)}</span>
                 </div>
                 <span class="board-item-id">${escapeHtml(item.id)}</span>
