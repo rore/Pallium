@@ -4,7 +4,7 @@ title: Add the optional tiered-memory extension
 status: queued
 priority: medium
 commitment: committed
-milestone: Later
+milestone: Next
 ---
 
 ## Summary
