@@ -11,10 +11,12 @@ Current implemented shape:
 - one local-first FastAPI service
 - one generic core
 - semantic plugins with deterministic and LLM-backed paths
+- an explicit `agent_conversation_memory` runtime package over the LLM-backed semantic path
 - provider abstraction for OpenAI-compatible and Claude-style APIs
 - SQLite-backed storage behind a storage boundary
 - mixed retrieval over memory hits and compact source hits
 - explicit event refs for message and assistant-artifact ingest
+- first concrete product package: agent conversation memory over user messages and final assistant outputs
 - typed memory for:
   - `decision`
   - `investigation_outcome`
@@ -42,6 +44,21 @@ Important current behavior:
 - superseded memory is filtered from default retrieval, while raw evidence remains intact
 
 ## Semantic Direction
+
+Current semantic package focus:
+
+- `agent_conversation_memory` as the first explicit product package
+- MVP evidence model:
+  - `artifact_kind="message"` with `role="user"`
+  - `artifact_kind="assistant_output"` with `role="assistant"`
+- target value questions:
+  - what did we already conclude?
+  - why did we choose this?
+  - have we answered this before?
+  - what prior agent-conversation context should carry into this new thread?
+- out of scope for this package:
+  - ambient workplace chat that never flowed through an agent
+  - full transcript replay as the default retrieval goal
 
 Current semantic output supports:
 
@@ -101,7 +118,7 @@ Create [C:/Dev/rore/Pallium/.env.local](C:/Dev/rore/Pallium/.env.local) from [C:
 Example OpenAI-compatible setup:
 
 ```env
-PALLIUM_DEFAULT_USE_CASE=llm_agent_memory
+PALLIUM_DEFAULT_USE_CASE=agent_conversation_memory
 PALLIUM_LLM_PROVIDER=openai_compatible
 PALLIUM_LLM_MODEL=gpt-5-mini
 PALLIUM_LLM_BASE_URL=https://api.openai.com/v1

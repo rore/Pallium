@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-03-09
+2026-03-10
 
 ## Repo Snapshot
 
@@ -18,6 +18,7 @@
 - architecture direction: single local-first service with clear module boundaries
 - development style: walking skeleton before deeper hardening
 - first consumer proof: simulated generic agent-memory workflow
+- first concrete product package: `agent_conversation_memory`
 - ingest supports explicit event refs for messages and assistant artifacts
 - query returns compact source-hit cards with structured refs
 - semantic behavior now includes:
@@ -25,6 +26,7 @@
   - `investigation_outcome`
   - fallback `discussion_summary`
 - semantic eval uses one committed JSONL regression batch and one baseline metrics document
+- runtime can now select `agent_conversation_memory` as an explicit use-case entry point
 - LLM-derived semantic artifacts carry prompt schema id/version and prompt variant provenance
 - minimal lifecycle handling now exists for promoted memory:
   - `active`
@@ -33,8 +35,8 @@
 
 ## Verification Notes
 
-- `pytest` passes locally: `25 passed`
-- semantic regression run against the real OpenAI path succeeded on the committed batch
+- `pytest` passes locally: `27 passed`
+- semantic regression baseline remains the committed real OpenAI run on the current batch
 - current recorded baseline on `gpt-5-mini` with `strict_typed_memory_v4_evidence_guarded` is:
   - `30 / 30` overall correct
   - `0` decision false positives

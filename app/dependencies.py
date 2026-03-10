@@ -9,6 +9,7 @@ from providers.llm.openai_compatible import OpenAICompatibleLLMProvider
 from retrieval.base import RetrievalProvider
 from retrieval.lexical import LexicalRetrievalProvider
 from semantic.base import SemanticPlugin
+from semantic.agent_conversation_memory import AgentConversationMemoryPlugin
 from semantic.demo_agent_memory import DemoAgentMemoryPlugin
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin
 from storage.base import StorageProvider
@@ -54,6 +55,11 @@ def build_semantic_plugins(config: AppConfig) -> dict[str, SemanticPlugin]:
     if llm_provider is not None:
         llm_plugin = LLMAgentMemoryPlugin(provider=llm_provider, prompt_variant=config.llm_prompt_variant)
         plugins[llm_plugin.name] = llm_plugin
+        agent_conversation_plugin = AgentConversationMemoryPlugin(
+            provider=llm_provider,
+            prompt_variant=config.llm_prompt_variant,
+        )
+        plugins[agent_conversation_plugin.name] = agent_conversation_plugin
 
     return plugins
 

@@ -1,7 +1,7 @@
 ---
 id: add-agent-conversation-memory-package
 title: Add the first agent conversation memory package
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: Next
@@ -47,6 +47,10 @@ This is the first value slice that can be judged honestly without pretending Pal
 4. The package's value claim is narrow and testable: improved downstream answers from prior agent-mediated conversations, not full-team knowledge coverage.
 
 ## Notes
+
+Completed on 2026-03-10.
+The runtime now exposes `agent_conversation_memory` as a first-class use-case entry point while reusing the current LLM-backed typed-memory path.
+
 
 Current known shape:
 

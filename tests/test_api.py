@@ -277,6 +277,77 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
     assert any(result["result_kind"] == "source_hit" for result in payload["results"])
 
 
+
+
+def test_agent_conversation_memory_package_path_preserves_public_api_shape(monkeypatch, test_db_url: str) -> None:
+    monkeypatch.setattr(
+        "app.dependencies.build_llm_provider",
+        lambda config: StubLLMProvider(
+            {
+                "summary": "Prior assistant conclusion about watermarking.",
+                "candidate_type": "decision",
+                "decision_text": "use event timestamp watermarking for exports",
+                "decision_evidence_text": "Decision: use event timestamp watermarking for exports to avoid skipped records.",
+                "investigation_text": None,
+                "investigation_evidence_text": None,
+                "rationale_text": "to avoid skipped records",
+            }
+        ),
+    )
+    client = TestClient(
+        create_app(
+            AppConfig(
+                storage_backend="sqlite",
+                sqlite_url=test_db_url,
+                default_use_case="agent_conversation_memory",
+                llm_provider="openai_compatible",
+                llm_model="fake-model",
+                llm_base_url="http://fake-provider.local",
+                llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
+            )
+        )
+    )
+
+    create_response = client.post(
+        "/items",
+        json={
+            "source_type": "assistant_artifact",
+            "source_id": "assistant-output-1",
+            "content_type": "text/plain",
+            "content": "Decision: use event timestamp watermarking for exports to avoid skipped records.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "thread_ref": "thread-assistant",
+            "session_ref": "session-assistant",
+        },
+    )
+    assert create_response.status_code == 200
+
+    user_message_response = client.post(
+        "/items",
+        json={
+            "source_type": "chat_message",
+            "source_id": "user-message-1",
+            "content_type": "text/plain",
+            "content": "Why do we use event timestamp watermarking?",
+            "artifact_kind": "message",
+            "role": "user",
+            "thread_ref": "thread-user",
+            "session_ref": "session-user",
+        },
+    )
+    assert user_message_response.status_code == 200
+
+    query_response = client.post(
+        "/query",
+        json={"text": "why did we choose event timestamp watermarking?", "limit": 5},
+    )
+    assert query_response.status_code == 200
+    payload = query_response.json()
+    assert any(item["result_kind"] == "memory_hit" for item in payload["results"])
+    assert any(item["result_kind"] == "source_hit" for item in payload["results"])
+
+
 def test_llm_plugin_path_returns_server_error_when_provider_fails(monkeypatch, test_db_url: str) -> None:
     monkeypatch.setattr(
         "app.dependencies.build_llm_provider",

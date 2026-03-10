@@ -42,6 +42,9 @@ Implemented storage and retrieval behavior:
 
 Implemented semantic behavior now includes:
 
+- an explicit `agent_conversation_memory` runtime package over the current LLM-backed semantic path
+- a first concrete product slice focused on agent-mediated conversations
+
 - deterministic and LLM-backed semantic plugins
 - one summary annotation per ingested source item
 - one typed candidate annotation when extraction matches a typed memory path
@@ -112,6 +115,26 @@ Current chosen path:
 - prompt variant: `strict_typed_memory_v4_evidence_guarded`
 - prompt schema: `typed_memory_extraction`
 - prompt schema version: `v4`
+
+## Agent Conversation Memory Package
+
+The first concrete product package is now agent conversation memory.
+
+Current package boundary:
+
+- primary evidence units:
+  - `artifact_kind="message"` with `role="user"`
+  - `artifact_kind="assistant_output"` with `role="assistant"`
+- primary value targets:
+  - recurring-question recall
+  - cross-thread continuity
+  - assistant consistency
+- explicit non-goals for the package:
+  - all workplace chat
+  - arbitrary ambient messages that never flowed through the agent
+  - full transcript replay as the default retrieval shape
+
+The package reuses the current typed-memory extraction path rather than introducing a separate semantic engine.
 
 ## Tiered Memory
 
