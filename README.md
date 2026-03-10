@@ -1,3 +1,5 @@
+![Pallium Banner](assets/logo/pallium_banner_high.png)
+
 # Pallium
 
 Pallium is a generic memory engine for agents.
@@ -170,3 +172,5 @@ Use `--split-output` only when you want per-input debug files.
 - [C:/Dev/rore/Pallium/docs/context/architecture.md](C:/Dev/rore/Pallium/docs/context/architecture.md)
 - [C:/Dev/rore/Pallium/docs/context/state.md](C:/Dev/rore/Pallium/docs/context/state.md)
 - [C:/Dev/rore/Pallium/roadmap/board.md](C:/Dev/rore/Pallium/roadmap/board.md)
+
+
