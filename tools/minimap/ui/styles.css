@@ -659,6 +659,18 @@ h3 {
   box-shadow: var(--shadow-soft);
 }
 
+.board-column-reorder-dropzone {
+  transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.board-column-reorder-dropzone.is-drop-target {
+  transform: translateY(-1px);
+}
+
+.board-column-reorderable.is-dragging {
+  opacity: 0.72;
+}
+
 .board-column-heading {
   display: inline-flex;
   align-items: center;
@@ -770,6 +782,33 @@ h3 {
   font-weight: 800;
   letter-spacing: 0.08em;
   user-select: none;
+}
+
+.board-column-reorder-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-height: 28px;
+  border: 1px solid rgba(63, 82, 118, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--accent-strong);
+  box-shadow: var(--shadow-soft);
+  cursor: grab;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  user-select: none;
+}
+
+.board-column-reorder-handle:hover {
+  border-color: rgba(44, 108, 255, 0.22);
+  background: #ffffff;
+}
+
+.board-column-reorder-handle.is-dragging {
+  opacity: 0.56;
 }
 
 .board-column-card-drag.is-dragging {
@@ -1237,6 +1276,7 @@ textarea:focus,
 .board-item:focus-visible,
 .board-column-card-main:focus-visible,
 .board-column-card-drag:focus-visible,
+.board-column-reorder-handle:focus-visible,
 .metadata-summary:focus-visible {
   outline: 2px solid rgba(44, 108, 255, 0.28);
   outline-offset: 2px;

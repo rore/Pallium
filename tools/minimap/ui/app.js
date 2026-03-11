@@ -19,6 +19,7 @@ const state = {
   activeLens: DEFAULT_LENS_KEY,
   boardLayout: DEFAULT_BOARD_LAYOUT,
   dragItemId: null,
+  dragColumnIndex: null,
   dragClickSuppressUntil: 0,
   lensesExpanded: false,
   searchQuery: "",
@@ -538,6 +539,17 @@ function canDragItemsInColumnLayout(workspace = state.workspace) {
   }
 
   return Boolean(lens.kind === "derived" && lens.draggable);
+}
+
+function canReorderColumnsInColumnLayout(workspace = state.workspace) {
+  const lens = getActiveLensDefinition(workspace);
+  return Boolean(
+    lens
+    && lens.key === DEFAULT_LENS_KEY
+    && !state.boardEditMode
+    && isColumnsLayoutActive()
+    && !isSearchActive(),
+  );
 }
 
 function humanizeFilterKey(key) {
@@ -1537,7 +1549,8 @@ function buildBoardGroupsWithMovedItem(itemId, targetGroupIndex, boardGroups = b
 
 function clearBoardDragState() {
   state.dragItemId = null;
-  for (const dropZone of boardGroupsElement.querySelectorAll("[data-lens-drop-value], [data-board-drop-group-index]")) {
+  state.dragColumnIndex = null;
+  for (const dropZone of boardGroupsElement.querySelectorAll("[data-lens-drop-value], [data-board-drop-group-index], [data-board-column-drop-index]")) {
     dropZone.classList.remove("is-drop-target");
   }
   for (const element of boardGroupsElement.querySelectorAll(".is-dragging")) {
@@ -1655,6 +1668,7 @@ function renderBoardColumnsMode() {
   const activeLens = getActiveLensDefinition();
   const visibleGroups = getVisibleBoardGroups();
   const allowColumnDrag = canDragItemsInColumnLayout();
+  const allowColumnReorder = canReorderColumnsInColumnLayout();
   const boardGrouping = activeLens?.key === DEFAULT_LENS_KEY;
 
   if (visibleGroups.length === 0) {
@@ -1674,6 +1688,7 @@ function renderBoardColumnsMode() {
         ? `data-board-drop-group-index="${group.originalIndex}"`
         : (group.dropValue ? `data-lens-drop-value="${escapeHtml(group.dropValue)}"` : ""))
       : "";
+    const reorderAttributes = allowColumnReorder ? `data-board-column-drop-index="${group.originalIndex}"` : "";
 
     const cardsHtml = group.items.map((item) => {
       const activeClass = item.id === state.selectedItemId && state.editorOverlayOpen ? " board-column-card-active" : "";
@@ -1695,12 +1710,15 @@ function renderBoardColumnsMode() {
     }).join("");
 
     return `
-      <section class="board-column">
+      <section class="board-column${allowColumnReorder ? " board-column-reorderable" : ""}${reorderAttributes ? " board-column-reorder-dropzone" : ""}" ${reorderAttributes}>
         <div class="board-column-header">
           <div class="board-column-heading">
             <span class="board-column-name">${escapeHtml(group.name)}</span>
             <span class="group-count">${group.items.length}</span>
           </div>
+          ${allowColumnReorder
+            ? `<button class="board-column-reorder-handle" data-drag-column-index="${group.originalIndex}" draggable="true" type="button" aria-label="Reorder ${escapeHtml(group.name)} column" title="Drag to reorder ${escapeHtml(group.name)}">::</button>`
+            : ""}
         </div>
         <div class="board-column-list${dropAttributes ? " board-column-dropzone" : ""}" ${dropAttributes}>
           ${cardsHtml || '<div class="board-column-empty">No visible items.</div>'}
@@ -1732,23 +1750,94 @@ function renderBoardColumnsMode() {
     });
   }
 
-  if (!allowColumnDrag) {
+  if (allowColumnDrag) {
+    for (const handle of boardGroupsElement.querySelectorAll("[data-drag-item-id]")) {
+      handle.addEventListener("dragstart", (event) => {
+        const itemId = handle.dataset.dragItemId || "";
+        if (!itemId || state.dragColumnIndex !== null) {
+          event.preventDefault();
+          return;
+        }
+
+        state.dragItemId = itemId;
+        state.dragClickSuppressUntil = Date.now() + 350;
+        handle.classList.add("is-dragging");
+        event.dataTransfer?.setData("text/plain", itemId);
+        event.dataTransfer?.setData("application/x-minimap-item-id", itemId);
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = "move";
+        }
+      });
+
+      handle.addEventListener("dragend", () => {
+        state.dragClickSuppressUntil = Date.now() + 350;
+        clearBoardDragState();
+      });
+    }
+
+    for (const dropZone of boardGroupsElement.querySelectorAll("[data-board-drop-group-index], [data-lens-drop-value]")) {
+      dropZone.addEventListener("dragover", (event) => {
+        if (!state.dragItemId) {
+          return;
+        }
+
+        event.preventDefault();
+        dropZone.classList.add("is-drop-target");
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect = "move";
+        }
+      });
+
+      dropZone.addEventListener("dragleave", () => {
+        dropZone.classList.remove("is-drop-target");
+      });
+
+      dropZone.addEventListener("drop", (event) => {
+        if (!state.dragItemId) {
+          return;
+        }
+
+        event.preventDefault();
+        const itemId = event.dataTransfer?.getData("application/x-minimap-item-id")
+          || event.dataTransfer?.getData("text/plain")
+          || state.dragItemId
+          || "";
+        state.dragClickSuppressUntil = Date.now() + 350;
+        clearBoardDragState();
+        if (!itemId) {
+          return;
+        }
+
+        if (dropZone.dataset.boardDropGroupIndex) {
+          void persistBoardColumnMove(itemId, Number(dropZone.dataset.boardDropGroupIndex));
+          return;
+        }
+
+        if (dropZone.dataset.lensDropValue) {
+          void persistDerivedLensMove(itemId, dropZone.dataset.lensDropValue || "");
+        }
+      });
+    }
+  }
+
+  if (!allowColumnReorder) {
     return;
   }
 
-  for (const handle of boardGroupsElement.querySelectorAll("[data-drag-item-id]")) {
+  for (const handle of boardGroupsElement.querySelectorAll("[data-drag-column-index]")) {
     handle.addEventListener("dragstart", (event) => {
-      const itemId = handle.dataset.dragItemId || "";
-      if (!itemId) {
+      const columnIndex = Number(handle.dataset.dragColumnIndex);
+      if (!Number.isInteger(columnIndex) || state.dragItemId) {
         event.preventDefault();
         return;
       }
 
-      state.dragItemId = itemId;
+      state.dragColumnIndex = columnIndex;
       state.dragClickSuppressUntil = Date.now() + 350;
       handle.classList.add("is-dragging");
-      event.dataTransfer?.setData("text/plain", itemId);
-      event.dataTransfer?.setData("application/x-minimap-item-id", itemId);
+      handle.closest(".board-column")?.classList.add("is-dragging");
+      event.dataTransfer?.setData("text/plain", String(columnIndex));
+      event.dataTransfer?.setData("application/x-minimap-column-index", String(columnIndex));
       if (event.dataTransfer) {
         event.dataTransfer.effectAllowed = "move";
       }
@@ -1760,8 +1849,17 @@ function renderBoardColumnsMode() {
     });
   }
 
-  for (const dropZone of boardGroupsElement.querySelectorAll("[data-board-drop-group-index], [data-lens-drop-value]")) {
+  for (const dropZone of boardGroupsElement.querySelectorAll("[data-board-column-drop-index]")) {
     dropZone.addEventListener("dragover", (event) => {
+      if (!Number.isInteger(state.dragColumnIndex)) {
+        return;
+      }
+
+      const targetIndex = Number(dropZone.dataset.boardColumnDropIndex);
+      if (!Number.isInteger(targetIndex) || targetIndex === state.dragColumnIndex) {
+        return;
+      }
+
       event.preventDefault();
       dropZone.classList.add("is-drop-target");
       if (event.dataTransfer) {
@@ -1774,25 +1872,24 @@ function renderBoardColumnsMode() {
     });
 
     dropZone.addEventListener("drop", (event) => {
+      if (!Number.isInteger(state.dragColumnIndex)) {
+        return;
+      }
+
       event.preventDefault();
-      const itemId = event.dataTransfer?.getData("application/x-minimap-item-id")
-        || event.dataTransfer?.getData("text/plain")
-        || state.dragItemId
-        || "";
+      const fromIndex = Number(
+        event.dataTransfer?.getData("application/x-minimap-column-index")
+          || event.dataTransfer?.getData("text/plain")
+          || state.dragColumnIndex,
+      );
+      const toIndex = Number(dropZone.dataset.boardColumnDropIndex);
       state.dragClickSuppressUntil = Date.now() + 350;
       clearBoardDragState();
-      if (!itemId) {
+      if (!Number.isInteger(fromIndex) || !Number.isInteger(toIndex) || fromIndex === toIndex) {
         return;
       }
 
-      if (dropZone.dataset.boardDropGroupIndex) {
-        void persistBoardColumnMove(itemId, Number(dropZone.dataset.boardDropGroupIndex));
-        return;
-      }
-
-      if (dropZone.dataset.lensDropValue) {
-        void persistDerivedLensMove(itemId, dropZone.dataset.lensDropValue || "");
-      }
+      void persistGroupOrder(fromIndex, toIndex);
     });
   }
 }
