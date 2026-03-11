@@ -34,6 +34,7 @@ Current implemented shape:
 - committed semantic regression set and eval harness
 - realistic agent-conversation scenario test bed and runner
 - recurring-question value benchmark
+- memory-routing benchmark for routed retrieval policy
 - simulation script, Bruno collection, and pytest coverage
 
 ## Core Concepts
@@ -154,6 +155,24 @@ Each run writes:
 The committed benchmark is the first user-facing proof layer for whether Pallium improves recurring-question handling with current-thread context, lower-level memory, and later higher-level memory modes.
 
 The current package now also uses internal routed retrieval policy so broad recall, repeated-answer continuity, precise factual lookup, and evidence-trace questions can prefer different layers while remaining inspectable through `/query/debug`.
+
+## Memory Routing Benchmark
+
+Pallium now includes a dedicated benchmark for the current routed retrieval policy over broad recall, repeated-answer continuity, precise fact lookup, evidence-trace questions, and non-value guard cases.
+
+Run it with:
+
+```powershell
+.\.venv\Scripts\python.exe -m evals.memory_routing_benchmark
+```
+
+Each run writes:
+
+- `summary.json`
+- `results.jsonl`
+- `report.md`
+
+The current deterministic stub benchmark is intentionally diagnostic rather than purely celebratory: it confirms the main routing assumptions that already work and surfaces paraphrase cases where the heuristic policy still falls back to the wrong intent or layer.
 
 ## Tiered Memory and Strategy Comparison
 

@@ -151,6 +151,22 @@ def _build_answer_payload(user_prompt: str) -> dict[str, object]:
             'evidence_used': [],
         }
 
+    if 'from the duplicate-hold sync issue, what general lesson should we remember?' in lower:
+        if 'memory/pattern_memory' in lower and 'reservation_ordering_pattern' in lower:
+            return {
+                'answer': 'The general lesson is that catalog sync delays can produce duplicate holds when arrival-time ordering applies stale updates, so item event time ordering is the safer pattern to carry forward.',
+                'evidence_used': ['reservation_ordering_pattern', 'duplicate holds', 'item event time'],
+            }
+        if 'memory/decision' in lower or 'memory/investigation_outcome' in lower:
+            return {
+                'answer': 'We learned from the duplicate-hold issue that arrival-time ordering caused stale-update problems and item event time ordering fixed them.',
+                'evidence_used': ['arrival-time ordering caused stale-update problems', 'item event time ordering fixed them'],
+            }
+        return {
+            'answer': 'The current thread asks for a general lesson, but it does not include the earlier conclusion.',
+            'evidence_used': [],
+        }
+
     if 'have we already answered why overdue notices are batched?' in lower:
         if 'memory/continuity_memory' in lower:
             return {
@@ -169,6 +185,22 @@ def _build_answer_payload(user_prompt: str) -> dict[str, object]:
             }
         return {
             'answer': 'The current thread says the question is being asked again, but it does not include the earlier answer.',
+            'evidence_used': [],
+        }
+
+    if 'what answer should we carry forward for overdue notice batching?' in lower:
+        if 'memory/continuity_memory' in lower:
+            return {
+                'answer': 'Carry forward the prior answer: overdue notices are sent in 30-minute batches to avoid staff inbox spam.',
+                'evidence_used': ['continuity_memory', '30-minute batches', 'staff inbox spam'],
+            }
+        if 'memory/decision' in lower:
+            return {
+                'answer': 'The earlier answer was to send overdue notices in 30-minute batches to avoid staff inbox spam.',
+                'evidence_used': ['Decision: send overdue notices in 30-minute batches to avoid staff inbox spam.'],
+            }
+        return {
+            'answer': 'The current thread asks for a carry-forward answer, but it does not include the earlier conclusion.',
             'evidence_used': [],
         }
 
@@ -193,7 +225,33 @@ def _build_answer_payload(user_prompt: str) -> dict[str, object]:
             'evidence_used': [],
         }
 
+    if 'what exact batch interval did we choose for overdue notices?' in lower:
+        if 'memory/decision' in lower:
+            return {
+                'answer': 'We chose 30-minute batches for overdue notices.',
+                'evidence_used': ['30-minute batches'],
+            }
+        if 'memory/continuity_memory' in lower:
+            return {
+                'answer': 'The prior thread says batching should carry forward, but the exact interval is preserved more directly in the decision record.',
+                'evidence_used': ['continuity_memory'],
+            }
+        if 'memory/pattern_memory' in lower:
+            return {
+                'answer': 'We chose batched overdue notices, but the exact interval is less direct in the higher-level pattern.',
+                'evidence_used': ['notification_batching_pattern'],
+            }
+        return {
+            'answer': 'The current thread does not include the exact batch interval.',
+            'evidence_used': [],
+        }
+
     if 'what exact finding supported the ordering change?' in lower:
+        if 'source/assistant_artifact' in lower and 'arrival-time ordering applied stale hold updates' in lower:
+            return {
+                'answer': 'The exact finding was that arrival-time ordering applied stale hold updates during catalog sync delays.',
+                'evidence_used': ['assistant_artifact source evidence', 'arrival-time ordering applied stale hold updates'],
+            }
         if 'memory/investigation_outcome' in lower:
             return {
                 'answer': 'The exact finding was that arrival-time ordering applied stale hold updates during catalog sync delays.',
@@ -211,6 +269,22 @@ def _build_answer_payload(user_prompt: str) -> dict[str, object]:
             }
         return {
             'answer': 'The current thread does not include the exact investigation finding.',
+            'evidence_used': [],
+        }
+
+    if 'which prior message backed the ordering change?' in lower:
+        if 'source/assistant_artifact' in lower and 'arrival-time ordering applied stale hold updates' in lower:
+            return {
+                'answer': 'The prior supporting message was the investigation artifact stating that arrival-time ordering applied stale hold updates during catalog sync delays.',
+                'evidence_used': ['assistant_artifact source evidence', 'arrival-time ordering applied stale hold updates'],
+            }
+        if 'memory/investigation_outcome' in lower:
+            return {
+                'answer': 'The investigation outcome said that arrival-time ordering applied stale hold updates during catalog sync delays.',
+                'evidence_used': ['investigation_outcome'],
+            }
+        return {
+            'answer': 'The current thread asks for a supporting message, but it does not include the earlier evidence.',
             'evidence_used': [],
         }
 

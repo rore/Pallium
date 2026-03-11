@@ -23,3 +23,5 @@ thread-evolution-demo*.db
 
 evals/tiered_memory_validation/output/
 
+
+evals/memory_routing/output/

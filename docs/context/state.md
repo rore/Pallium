@@ -44,13 +44,14 @@
 - `agent_conversation_memory` now applies internal routed retrieval policy across higher-level memory, lower-level memory, and source evidence
 - realistic agent-conversation scenarios now exist under `evals/agent_conversation/`
 - recurring-question benchmark now exists under `evals/recurring_question/`
+- memory-routing benchmark now exists under `evals/memory_routing/`
 - consolidation strategy comparison harness now exists under `evals/consolidation/`
 - tiered-memory validation benchmark now exists under `evals/tiered_memory_validation/`
 - committed examples/tests use a neutral library reservation and catalog sync sample domain
 
 ## Verification Notes
 
-- `pytest` passes locally: `65 passed`
+- `pytest` passes locally: `74 passed`
 - focused retrieval-trace slice tests pass locally:
   - `tests/test_storage_sqlite.py`
   - `tests/test_api.py`
@@ -72,6 +73,11 @@
   - `evals/recurring_question/output/local-recurring-question-smoke`
   - `2` value scenarios where memory-backed won
   - `1` non-value scenario where memory-backed correctly did not win
+- deterministic memory-routing benchmark run succeeded locally:
+  - `evals/memory_routing/output/local-memory-routing-stub`
+  - `8 / 10` policy-success scenarios
+  - `0` false-merge failures
+  - `2` diagnostic failures on paraphrased broad-recall / evidence-trace queries
 - semantic regression baseline remains the committed real OpenAI run on the current batch
 - current recorded semantic baseline on `gpt-5-mini` with `strict_typed_memory_v4_evidence_guarded` is:
   - `30 / 30` overall correct
