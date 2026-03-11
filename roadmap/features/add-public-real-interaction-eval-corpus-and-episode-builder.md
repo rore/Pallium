@@ -1,10 +1,10 @@
 ---
 id: add-public-real-interaction-eval-corpus-and-episode-builder
 title: Add public real-interaction eval corpus and episode builder
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary

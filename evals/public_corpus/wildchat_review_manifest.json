@@ -1,0 +1,66 @@
+{
+  "corpus_name": "wildchat",
+  "default_query_limit": 6,
+  "filters": {
+    "language": "english",
+    "safe_only_when_available": true,
+    "multi_turn_only": true
+  },
+  "episodes": [
+    {
+      "episode_id": "wildchat-feed-ratio-recall",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wc-review-001",
+      "query_turn_index": 4,
+      "description": "Later in the same conversation, the user asks for the exact starter feed ratio again.",
+      "should_memory_help": true,
+      "expected_winning_layer": "lower_level_memory",
+      "acceptable_winning_layers": ["lower_level_memory", "source_evidence"],
+      "expected_memory_types": ["decision"],
+      "expected_answer_signals": ["1:2:2", "acidity drops"],
+      "review_notes": "Exact factual carry-forward should stay on lower-level memory or source evidence rather than higher-level synthesis."
+    },
+    {
+      "episode_id": "wildchat-rewrite-no-value-guard",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wc-review-002",
+      "query_turn_index": 2,
+      "current_context_turn_indices": [1, 2],
+      "description": "The current thread already includes the assistant rewrite, so memory should not materially help.",
+      "should_memory_help": false,
+      "overreach_guard": true,
+      "expected_answer_signals": ["gentle rewrite", "missed your call"],
+      "review_notes": "This is the first overreach/no-value guard for the public corpus slice."
+    },
+    {
+      "episode_id": "wildchat-handoff-carry-forward",
+      "episode_type": "later_session_carry_forward",
+      "source_conversation_ids": ["wc-review-003"],
+      "target_conversation_id": "wc-review-004",
+      "target_query_turn_index": 0,
+      "description": "A later session asks whether the handoff template answer was already given before.",
+      "should_memory_help": true,
+      "expected_winning_layer": "continuity_memory",
+      "acceptable_winning_layers": ["continuity_memory"],
+      "expected_higher_level_memory_types": ["continuity_memory"],
+      "expected_answer_signals": ["Done / Waiting / Next owner"],
+      "consolidation_strategy": "thread_summary_anchored",
+      "review_notes": "Repeated-answer carry-forward should prefer continuity memory over lower-level replay."
+    },
+    {
+      "episode_id": "wildchat-grocery-pattern-recall",
+      "episode_type": "later_session_carry_forward",
+      "source_conversation_ids": ["wc-review-005", "wc-review-006"],
+      "target_conversation_id": "wc-review-007",
+      "target_query_turn_index": 0,
+      "description": "A later session asks for the general lesson across two earlier grocery-planning conversations.",
+      "should_memory_help": true,
+      "expected_winning_layer": "pattern_memory",
+      "acceptable_winning_layers": ["pattern_memory"],
+      "expected_higher_level_memory_types": ["pattern_memory"],
+      "expected_answer_signals": ["backtracking", "store section"],
+      "consolidation_strategy": "container_topic_window",
+      "review_notes": "Broad recurring recall across two source threads should prefer pattern memory."
+    }
+  ]
+}

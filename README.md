@@ -217,6 +217,32 @@ Each run writes:
 - `results.jsonl`
 
 
+## Public Corpus Benchmark
+
+Pallium now includes a bounded public-corpus eval path for messy real user-assistant interactions without depending on private downstream traffic.
+
+Current first slice:
+
+- WildChat as the only required corpus
+- raw corpus stays outside the repo
+- a reviewed manifest defines the committed benchmark slice
+- a local builder normalizes selected conversations into the existing Pallium event contract
+- the benchmark reports whether misses look like retrieval recall, routed layer choice, result packaging/evidence, or overreach
+
+Build reviewed episodes from a local WildChat export with:
+
+```powershell
+.\.venv\Scripts\python.exe -m evals.public_corpus_builder --corpus-file C:\data\wildchat.jsonl --reviewed-manifest evals\public_corpus\wildchat_review_manifest.json --emit-candidates
+```
+
+Run the reviewed benchmark with:
+
+```powershell
+.\.venv\Scripts\python.exe -m evals.public_corpus_benchmark --corpus-file C:\data\wildchat.jsonl --reviewed-manifest evals\public_corpus\wildchat_review_manifest.json
+```
+
+The committed repo assets live under [C:/Dev/rore/Pallium/evals/public_corpus](C:/Dev/rore/Pallium/evals/public_corpus).
+
 ## Tiered-Memory Validation Benchmark
 
 Pallium includes a dedicated benchmark for deciding when higher-level `pattern_memory` is actually useful and which consolidation strategy is safest.

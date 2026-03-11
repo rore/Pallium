@@ -42,6 +42,7 @@
 - named text-view metadata now exists on `IndexEntry`
 - current lexical trace records matched tokens and selected text views across `SourceItem` and `MemoryObject` retrieval
 - `agent_conversation_memory` now applies internal routed retrieval policy across higher-level memory, lower-level memory, and source evidence
+- a bounded offline public-corpus eval path now exists for WildChat-shaped local exports with reviewed-manifest episode selection
 - realistic agent-conversation scenarios now exist under `evals/agent_conversation/`
 - recurring-question benchmark now exists under `evals/recurring_question/`
 - memory-routing benchmark now exists under `evals/memory_routing/`
@@ -65,6 +66,9 @@
   - `tests/test_api.py`
   - `tests/test_consolidation_strategy_runner.py`
   - `tests/test_agent_conversation_runner.py`
+- focused public-corpus slice tests pass locally:
+  - `tests/test_public_corpus_builder.py`
+  - `tests/test_public_corpus_benchmark.py`
 - live scenario harness run succeeded locally:
   - `evals/agent_conversation/output/local-agent-conversation-smoke`
   - `2` value scenarios found expected memory
@@ -128,13 +132,12 @@
 
 ## Next Hardening Direction
 
-- the next gating step is no longer a retrieval feature by default; it is a public real-interaction evaluation path
-- Pallium now needs a corpus-backed episode builder so the current memory stack can be tested against messy user-assistant conversations without depending on private downstream traffic
-- that eval layer should determine whether the next true bottleneck is:
+- the first bounded public real-interaction evaluation path now exists through a local WildChat export plus reviewed manifest selection
+- the next hardening question is whether running that path on real local WildChat data shows the true bottleneck is:
   - paraphrase and concept recall
   - routed layer choice
   - result packaging and evidence presentation
-- vector retrieval should follow only if that public-corpus eval shows lexical recall is the next real limitation
+- vector retrieval should follow only if the public-corpus eval shows lexical recall is the next real limitation
 
 ## LLM Resilience Notes
 

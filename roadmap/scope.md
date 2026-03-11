@@ -1,4 +1,4 @@
-Pallium now has a dedicated validation layer for tiered memory, a retrieval trace/debug path for lexical retrieval, and the current `agent_conversation_memory` package has recorded value for two bounded higher-level memory kinds: `pattern_memory` and `continuity_memory`. It also now applies package-owned internal routing over those layers without expanding the public query contract.
+Pallium now has a dedicated validation layer for tiered memory, a retrieval trace/debug path for lexical retrieval, package-owned internal routing over the current memory layers, and a bounded public-corpus evaluation path for messy real user-assistant interactions through local WildChat-shaped exports.
 
 Current focus:
 - preserve the current product claim: Pallium improves cross-thread and cross-session recurring-question handling, not broad workspace search
@@ -9,9 +9,8 @@ Current focus:
 - use the retrieval trace/debug path and the current routed package policy to inspect behavior as the eval corpus becomes more realistic
 
 Concrete next steps:
-- add a public real-interaction eval corpus and episode builder so Pallium can be tested against messy user/assistant conversations without requiring private traffic
-- then use that corpus to decide whether the next limiting factor is retrieval recall, routed layer choice, or result packaging
-- add a vector retrieval provider behind the existing retrieval boundary if the public-corpus eval shows paraphrase/concept recall is the next real bottleneck
+- run the public-corpus benchmark against a real local WildChat export and use the results to determine whether the next limiting factor is retrieval recall, routed layer choice, or result packaging
+- add a vector retrieval provider behind the existing retrieval boundary if that public-corpus eval shows paraphrase/concept recall is the next real bottleneck
 - then add RRF-based hybrid retrieval fusion over lexical and vector candidates if dual-mode retrieval is justified by that eval evidence
 - add a generic privacy-aware scope enforcement foundation before any later cross-container sharing work
 - then add an explicit shared-memory derivation path so broader reuse happens through separate shared derived memory rather than in-place widening of local memory
