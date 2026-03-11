@@ -17,7 +17,7 @@ Current implemented shape:
 - one reusable capability layer with thread aggregation and bounded consolidation
 - semantic plugins with deterministic and LLM-backed paths
 - an explicit `agent_conversation_memory` runtime package over the LLM-backed semantic path
-- provider abstraction for OpenAI-compatible and Claude-style APIs
+- provider abstraction for OpenAI-compatible and Claude-style APIs with conservative retries, backoff, request-id capture, and bounded concurrency
 - SQLite-backed storage behind a storage boundary
 - mixed retrieval over memory hits and compact source hits
 - explicit event refs for message and assistant-artifact ingest
@@ -235,6 +235,11 @@ kind = "openai_compatible"
 base_url = "https://api.openai.com/v1"
 api_key_env = "PALLIUM_OPENAI_API_KEY"
 timeout_seconds = 30
+max_attempts = 3
+base_backoff_ms = 250
+max_backoff_ms = 3000
+jitter_ratio = 0.2
+max_concurrency = 4
 
 [semantic_packages.agent_conversation_memory]
 implementation = "agent_conversation_memory"
@@ -250,6 +255,14 @@ PALLIUM_OPENAI_API_KEY=your-key
 ```
 
 Environment variables still override both `.env.local` and `pallium.local.toml`.
+
+Provider resilience defaults are configured per provider, not per package. Current default posture is conservative:
+
+- retry only transient failures
+- respect `Retry-After` when present
+- bounded exponential backoff with jitter
+- bounded in-process concurrency
+- fail fast on invalid successful responses and non-retryable request/auth errors
 
 ## LLM Semantic Eval Harness
 

@@ -21,6 +21,11 @@ def test_app_config_loads_from_toml_and_env_overrides(monkeypatch, tmp_path: Pat
         base_url = "https://file.example/v1"
         api_key_env = "PALLIUM_OPENAI_API_KEY"
         timeout_seconds = 45
+        max_attempts = 4
+        base_backoff_ms = 150
+        max_backoff_ms = 1200
+        jitter_ratio = 0.1
+        max_concurrency = 2
 
         [semantic_packages.agent_conversation_memory]
         implementation = "agent_conversation_memory"
@@ -60,6 +65,11 @@ def test_app_config_loads_from_toml_and_env_overrides(monkeypatch, tmp_path: Pat
     assert provider.base_url == "https://file.example/v1"
     assert provider.api_key == "file-key"
     assert provider.timeout_seconds == 45.0
+    assert provider.retry_policy.max_attempts == 4
+    assert provider.retry_policy.base_backoff_ms == 150
+    assert provider.retry_policy.max_backoff_ms == 1200
+    assert provider.retry_policy.jitter_ratio == 0.1
+    assert provider.retry_policy.max_concurrency == 2
 
 
 def test_build_semantic_plugins_exposes_agent_conversation_package(monkeypatch) -> None:
@@ -90,6 +100,7 @@ def test_legacy_env_values_still_map_to_llm_packages(monkeypatch, tmp_path: Path
                 "PALLIUM_LLM_API_KEY=legacy-key",
                 f"PALLIUM_LLM_PROMPT_VARIANT={DEFAULT_PROMPT_VARIANT}",
                 "PALLIUM_LLM_TIMEOUT_SECONDS=33",
+                "PALLIUM_PROVIDER__LEGACY_DEFAULT__MAX_ATTEMPTS=5",
             ]
         ),
         encoding="utf-8",
@@ -108,3 +119,4 @@ def test_legacy_env_values_still_map_to_llm_packages(monkeypatch, tmp_path: Path
     assert provider.base_url == "https://legacy.example/v1"
     assert provider.api_key == "legacy-key"
     assert provider.timeout_seconds == 33.0
+    assert provider.retry_policy.max_attempts == 5

@@ -9,6 +9,11 @@ kind = "openai_compatible"
 base_url = "https://api.openai.com/v1"
 api_key_env = "PALLIUM_OPENAI_API_KEY"
 timeout_seconds = 30
+max_attempts = 3
+base_backoff_ms = 250
+max_backoff_ms = 3000
+jitter_ratio = 0.2
+max_concurrency = 4
 
 [semantic_packages.demo_agent_memory]
 implementation = "demo_agent_memory"

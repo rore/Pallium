@@ -31,6 +31,7 @@
 - semantic eval uses one committed JSONL regression batch and one baseline metrics document
 - runtime can now select `agent_conversation_memory` as an explicit use-case entry point
 - LLM-derived semantic artifacts carry prompt schema id/version and prompt variant provenance
+- provider-level LLM resilience now includes conservative retries, backoff, request-id metadata, and bounded concurrency
 - thread summaries now use an explicit-only, token-bounded prompt contract
 - minimal lifecycle handling now exists for promoted memory:
   - `active`
@@ -43,7 +44,7 @@
 
 ## Verification Notes
 
-- `pytest` passes locally: `48 passed`
+- `pytest` passes locally: `63 passed`
 - thread aggregation tests pass locally
 - live scenario harness run succeeded locally:
   - `evals/agent_conversation/output/local-agent-conversation-smoke`
@@ -60,6 +61,7 @@
   - `0` investigation false positives
   - `0` false negatives
 - unresolved thread summary overreach was observed in a live thread-evolution run and tightened with a stricter `thread_summary_extraction` v2 prompt before rerunning
+- live OpenAI provider smoke call succeeded through the framework resilience layer and returned request-id metadata
 
 ## Context Memory Note
 
@@ -82,3 +84,11 @@
   - `container_topic_window`: most selective cross-thread grouping, no false merges after stopword filtering
   - `thread_summary_anchored`: broad useful pattern coverage with bounded cross-thread carry-forward and no false merges
 - a live OpenAI-backed consolidation comparison can still fail transiently on provider `503`; the deterministic stub harness is the current reproducible comparison baseline
+
+## LLM Resilience Notes
+
+- provider calls now retry only transient failures with bounded conservative backoff
+- OpenAI-compatible and Anthropic providers now capture request ids when available
+- `Retry-After` is honored when present
+- invalid successful responses remain fail-fast and are not retried
+- live eval/benchmark paths now use the same provider resilience path as normal semantic extraction

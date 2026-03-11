@@ -30,17 +30,21 @@ def build_llm_provider(config: AppConfig, *, provider_name: str, model: str) -> 
     provider_kind = provider_config.kind.lower()
     if provider_kind == "openai_compatible":
         return OpenAICompatibleLLMProvider(
+            provider_name=provider_name,
             model=model,
             base_url=provider_config.base_url,
             api_key=provider_config.api_key,
             timeout_seconds=provider_config.timeout_seconds,
+            retry_policy=provider_config.retry_policy,
         )
     if provider_kind in {"anthropic_claude", "claude", "anthropic"}:
         return AnthropicClaudeLLMProvider(
+            provider_name=provider_name,
             model=model,
             base_url=provider_config.base_url,
             api_key=provider_config.api_key,
             timeout_seconds=provider_config.timeout_seconds,
+            retry_policy=provider_config.retry_policy,
         )
 
     raise ValueError(f"Unsupported LLM provider kind: {provider_config.kind}")

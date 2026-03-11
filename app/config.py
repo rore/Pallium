@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from capabilities.consolidation import ConsolidationPolicy, DEFAULT_CONSOLIDATION_STRATEGIES
+from providers.llm.base import LLMRetryPolicy
 
 
 DEFAULT_ENV_FILE = ".env.local"
@@ -34,6 +35,7 @@ class LLMProviderConfig:
     api_key: str | None = None
     api_key_env: str | None = None
     timeout_seconds: float = 30.0
+    retry_policy: LLMRetryPolicy = field(default_factory=LLMRetryPolicy)
 
 
 @dataclass(frozen=True)
@@ -85,13 +87,15 @@ class AppConfig:
         providers = copy.deepcopy(self.llm_providers)
 
         if self.llm_provider and self.llm_base_url:
-            timeout_seconds = self.llm_timeout_seconds if self.llm_timeout_seconds is not None else 30.0
+            existing_legacy = providers.get(LEGACY_PROVIDER_KEY)
+            timeout_seconds = self.llm_timeout_seconds if self.llm_timeout_seconds is not None else (existing_legacy.timeout_seconds if existing_legacy else 30.0)
             providers[LEGACY_PROVIDER_KEY] = LLMProviderConfig(
                 name=LEGACY_PROVIDER_KEY,
                 kind=self.llm_provider,
                 base_url=self.llm_base_url,
                 api_key=self.llm_api_key,
                 timeout_seconds=timeout_seconds,
+                retry_policy=existing_legacy.retry_policy if existing_legacy else LLMRetryPolicy(),
             )
             for package_name in ("llm_agent_memory", "agent_conversation_memory"):
                 current = packages.get(package_name, SemanticPackageConfig(name=package_name, implementation=package_name))
@@ -285,6 +289,7 @@ def _build_provider_configs(config_data: dict[str, Any], env_values: dict[str, s
             "api_key": current.api_key,
             "api_key_env": current.api_key_env,
             "timeout_seconds": current.timeout_seconds,
+            "retry_policy": current.retry_policy,
         }
         if field_name == "kind":
             updated["kind"] = env_value
@@ -297,6 +302,16 @@ def _build_provider_configs(config_data: dict[str, Any], env_values: dict[str, s
             updated["api_key"] = env_values.get(env_value, updated["api_key"])
         elif field_name == "timeout_seconds":
             updated["timeout_seconds"] = float(env_value)
+        elif field_name == "max_attempts":
+            updated["retry_policy"] = _update_retry_policy(updated["retry_policy"], max_attempts=int(env_value))
+        elif field_name == "base_backoff_ms":
+            updated["retry_policy"] = _update_retry_policy(updated["retry_policy"], base_backoff_ms=int(env_value))
+        elif field_name == "max_backoff_ms":
+            updated["retry_policy"] = _update_retry_policy(updated["retry_policy"], max_backoff_ms=int(env_value))
+        elif field_name == "jitter_ratio":
+            updated["retry_policy"] = _update_retry_policy(updated["retry_policy"], jitter_ratio=float(env_value))
+        elif field_name == "max_concurrency":
+            updated["retry_policy"] = _update_retry_policy(updated["retry_policy"], max_concurrency=int(env_value))
         providers[provider_name] = LLMProviderConfig(**updated)
 
     return providers
@@ -314,6 +329,13 @@ def _provider_from_raw(name: str, raw_value: dict[str, Any], env_values: dict[st
         api_key=api_key,
         api_key_env=api_key_env,
         timeout_seconds=float(raw_value.get("timeout_seconds", 30.0)),
+        retry_policy=LLMRetryPolicy(
+            max_attempts=int(raw_value.get("max_attempts", 3)),
+            base_backoff_ms=int(raw_value.get("base_backoff_ms", 250)),
+            max_backoff_ms=int(raw_value.get("max_backoff_ms", 3000)),
+            jitter_ratio=float(raw_value.get("jitter_ratio", 0.2)),
+            max_concurrency=int(raw_value.get("max_concurrency", 4)),
+        ),
     )
 
 
@@ -399,3 +421,13 @@ def _as_optional_string(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _update_retry_policy(policy: LLMRetryPolicy, **updates: Any) -> LLMRetryPolicy:
+    return LLMRetryPolicy(
+        max_attempts=int(updates.get("max_attempts", policy.max_attempts)),
+        base_backoff_ms=int(updates.get("base_backoff_ms", policy.base_backoff_ms)),
+        max_backoff_ms=int(updates.get("max_backoff_ms", policy.max_backoff_ms)),
+        jitter_ratio=float(updates.get("jitter_ratio", policy.jitter_ratio)),
+        max_concurrency=int(updates.get("max_concurrency", policy.max_concurrency)),
+    )

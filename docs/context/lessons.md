@@ -179,3 +179,14 @@ The comparison harness was disposing the storage engine only on the success path
 
 Solution:
 Always dispose the temporary storage engine in a `finally` block so failed live comparison runs still clean up correctly.
+
+## 2026-03-11 - LLM access needs resilience at the provider layer, not ad hoc in callers
+
+Problem:
+Live semantic evaluation and benchmark runs can fail on transient provider errors such as `429` or `503`, and package code should not need to reimplement retries or rate-limit handling.
+
+Why:
+Retries, backoff, and request-id capture are framework concerns shared by semantic extraction, thread summary synthesis, pattern synthesis, and answer-generation benchmarks.
+
+Solution:
+Keep resilience in the provider layer with conservative retries, bounded backoff, `Retry-After` support, request-id capture, and bounded in-process concurrency. Package code should continue to call the same `generate_json(...)` contract.

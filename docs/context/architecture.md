@@ -27,7 +27,7 @@ Implemented abstractions:
 - storage provider boundary
 - retrieval provider boundary
 - semantic plugin boundary
-- LLM provider boundary
+- LLM provider boundary with shared retry, backoff, and call metadata
 
 Implemented storage and retrieval behavior:
 
@@ -84,6 +84,34 @@ Prompt provenance fields currently tracked:
 - `prompt_schema_id`
 - `prompt_schema_version`
 - `prompt_variant`
+
+## Provider Resilience
+
+The provider layer now includes a shared resilience policy for live LLM access.
+
+Current behavior:
+
+- conservative retries for transient failures only
+- bounded exponential backoff with jitter
+- `Retry-After` honored when present
+- request-id capture where vendors expose it
+- bounded in-process concurrency per provider
+- invalid successful responses remain fail-fast and are not retried
+
+Current retryable classes:
+
+- timeouts
+- transport / connection failures
+- `429`
+- `500`, `502`, `503`, `504`
+- Anthropic-style overload `529` treated as transient provider error
+
+Current non-retryable classes:
+
+- auth / request-shape failures such as `400`, `401`, `403`, `404`, `422`
+- invalid response bodies after a successful provider response
+
+Resilience is configured at the provider block level in `pallium.local.toml`, not per semantic package.
 
 ## Generic Core
 
