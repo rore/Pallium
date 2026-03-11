@@ -120,6 +120,7 @@ class QueryTraceResponse(BaseModel):
     limit: int
     filters: QueryTraceFiltersResponse | None = None
     stages: list[RetrievalStageTraceResponse]
+    routing: dict[str, Any] | None = None
 
 
 class QueryDebugResponse(BaseModel):

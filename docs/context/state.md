@@ -20,7 +20,7 @@
 - first concrete product package: `agent_conversation_memory`
 - ingest supports explicit event refs for messages and assistant artifacts
 - query returns compact source-hit cards with structured refs
-- debug query now exposes retrieval trace over the same compact result set
+- debug query now exposes retrieval trace plus package-owned routing trace over the same compact result set
 - semantic behavior now includes:
   - `decision`
   - `investigation_outcome`
@@ -29,7 +29,7 @@
   - `continuity_memory`
   - fallback `discussion_summary`
 - reusable thread aggregation capability now exists for `agent_conversation_memory`
-- reusable bounded consolidation capability now exists for higher-level `pattern_memory`
+- reusable bounded consolidation capability now exists for higher-level `pattern_memory` and `continuity_memory`
 - semantic eval uses one committed JSONL regression batch and one baseline metrics document
 - runtime can now select `agent_conversation_memory` as an explicit use-case entry point
 - LLM-derived semantic artifacts carry prompt schema id/version and prompt variant provenance
@@ -41,6 +41,7 @@
 - superseded memory is hidden from default retrieval while evidence remains searchable
 - named text-view metadata now exists on `IndexEntry`
 - current lexical trace records matched tokens and selected text views across `SourceItem` and `MemoryObject` retrieval
+- `agent_conversation_memory` now applies internal routed retrieval policy across higher-level memory, lower-level memory, and source evidence
 - realistic agent-conversation scenarios now exist under `evals/agent_conversation/`
 - recurring-question benchmark now exists under `evals/recurring_question/`
 - consolidation strategy comparison harness now exists under `evals/consolidation/`
@@ -55,6 +56,14 @@
   - `tests/test_api.py`
   - `tests/test_e2e.py`
 - thread aggregation tests pass locally
+- focused routing slice tests pass locally:
+  - `tests/test_agent_conversation_memory_routing.py`
+  - `tests/test_recurring_question_benchmark.py`
+  - `tests/test_tiered_memory_validation_runner.py`
+  - `tests/test_tiered_memory.py`
+  - `tests/test_api.py`
+  - `tests/test_consolidation_strategy_runner.py`
+  - `tests/test_agent_conversation_runner.py`
 - live scenario harness run succeeded locally:
   - `evals/agent_conversation/output/local-agent-conversation-smoke`
   - `2` value scenarios found expected memory
@@ -107,8 +116,8 @@
   - keep tiered memory in a reusable capability layer with package-owned policy
 - the main unresolved tiered-memory risk is still principled candidate selection and grouping
 - `pattern_memory` should be treated as the first higher-level type, not the final higher-level ontology
-- likely follow-up hardening after the current continuity-memory slice:
-  - retrieval-policy evaluation for when `pattern_memory`, `continuity_memory`, lower-level memory, or source evidence should win
+- likely follow-up hardening after the current internal-routing slice:
+  - richer per-result retrieval provenance so later vector and hybrid retrieval can flow through the same routed trace path
   - consolidation trace and merge rationale
 
 ## LLM Resilience Notes

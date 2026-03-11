@@ -40,6 +40,7 @@ Implemented storage and retrieval behavior:
 - compact source-hit cards with explicit event refs instead of raw full content
 - lifecycle-aware retrieval that excludes superseded memory by default
 - optional lexical retrieval trace on the debug query path, including matched tokens and selected text views
+- package-owned routed reranking on top of retrieval results for `agent_conversation_memory`, exposed only through the existing debug trace path
 - evidence resolution from memory objects back to source items
 
 ## Target Retrieval Architecture
@@ -177,6 +178,8 @@ The package reuses the current typed-memory extraction path rather than introduc
 
 It now also uses the shared thread aggregation capability to build one active `thread_summary` memory object per `container_ref + thread_ref`. Each thread summary is evidence-backed, lifecycle-managed through supersession, and can carry forward active `decision` and `investigation_outcome` conclusions from that conversation thread.
 
+The package now also owns an internal query-routing policy that reranks retrieved candidates across `pattern_memory`, `continuity_memory`, lower-level memory, and source evidence by question shape. That policy remains package semantics rather than generic retrieval behavior, and it is inspectable through `POST /query/debug` without changing the public `/query` contract.
+
 ## Lifecycle
 
 Promoted memory now has a minimal lifecycle model:
@@ -268,4 +271,4 @@ Current main unresolved risk:
 Current expected follow-up hardening:
 
 - richer consolidation trace and merge rationale
-- explicit retrieval-policy evaluation for when `pattern_memory` should win over lower-level memory or source evidence
+- richer per-result retrieval provenance so later vector and fusion retrieval can plug into the same routed trace path

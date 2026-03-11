@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 from collections import OrderedDict
+from typing import Iterable
 
 from capabilities.consolidation import ConsolidationGroup, ConsolidationPolicy
 from capabilities.thread_aggregation import ThreadAggregate
 from core.contracts import ProcessResult
 from core.indexing import build_index_entry
-from core.models import MemoryObject, Relation, SourceItem
+from core.models import MemoryObject, QueryResultItem, QueryTrace, Relation, SourceItem
 from providers.llm.base import LLMProvider
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
 from semantic.common import normalize_for_index
@@ -65,6 +66,88 @@ CONTINUITY_MEMORY_SYSTEM_PROMPT = (
 )
 CONTINUITY_MEMORY_MAX_TEXT_CHARS = 3000
 CONTINUITY_MEMORY_TEXT_VIEW = "memory_object.continuity_memory_context"
+ROUTING_POLICY_NAME = "agent_conversation_memory.intent_routing.v1"
+ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory"}
+ROUTING_LOWER_LEVEL_EXACT_TYPES = {"decision", "investigation_outcome"}
+ROUTING_SUMMARY_TYPES = {"thread_summary", "discussion_summary"}
+ROUTING_PREFERRED_LAYERS = {
+    "answer_continuity": ("continuity_memory", "lower_level_memory", "source_evidence", "pattern_memory"),
+    "broad_recall": ("pattern_memory", "lower_level_memory", "continuity_memory", "source_evidence"),
+    "precise_fact": ("lower_level_memory", "source_evidence", "continuity_memory", "pattern_memory"),
+    "evidence_trace": ("source_evidence", "lower_level_memory", "continuity_memory", "pattern_memory"),
+}
+ROUTING_LAYER_WEIGHTS = {
+    "answer_continuity": {"continuity_memory": 400, "lower_level_memory": 300, "source_evidence": 200, "pattern_memory": 120},
+    "broad_recall": {"pattern_memory": 400, "lower_level_memory": 300, "continuity_memory": 180, "source_evidence": 120},
+    "precise_fact": {"lower_level_memory": 420, "source_evidence": 320, "continuity_memory": 140, "pattern_memory": 60},
+    "evidence_trace": {"source_evidence": 460, "lower_level_memory": 360, "continuity_memory": 120, "pattern_memory": 40},
+}
+ROUTING_META_QUERY_TOKENS = {
+    "a",
+    "about",
+    "already",
+    "an",
+    "before",
+    "did",
+    "do",
+    "exact",
+    "have",
+    "i",
+    "need",
+    "previously",
+    "show",
+    "source",
+    "support",
+    "supported",
+    "the",
+    "this",
+    "trace",
+    "we",
+    "what",
+    "which",
+}
+ROUTING_WEAK_HIGHER_LEVEL_MATCH_PENALTY = {
+    "answer_continuity": 0,
+    "broad_recall": 260,
+    "precise_fact": 120,
+    "evidence_trace": 120,
+}
+ANSWER_CONTINUITY_CUES = (
+    "already answered",
+    "answered before",
+    "have we already",
+    "asked again",
+    "asking again",
+    "prior answer",
+    "carry forward",
+)
+BROAD_RECALL_CUES = (
+    "what did we previously conclude",
+    "what did we conclude before",
+    "what did we conclude",
+    "what did we learn",
+    "why did we choose",
+    "why do we use",
+)
+PRECISE_FACT_CUES = (
+    "what ordering",
+    "which ordering",
+    "what did we choose",
+    "what decision",
+    "exact choice",
+    "exact value",
+)
+EVIDENCE_TRACE_CUES = (
+    "exact finding",
+    "what exact finding",
+    "what evidence",
+    "show evidence",
+    "which source",
+    "source evidence",
+    "supported the",
+    "supporting evidence",
+    "trace",
+)
 
 
 class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, ConsolidationSemanticPlugin):
@@ -103,6 +186,48 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
 
     def process_item(self, source_item: SourceItem) -> ProcessResult:
         return self._delegate.process_item(source_item)
+
+    def route_query_results(
+        self,
+        *,
+        text: str,
+        requested_limit: int,
+        retrieval_result,
+    ) -> tuple[list[QueryResultItem], QueryTrace | None]:
+        intent = _classify_query_intent(text)
+        preferred_layers = ROUTING_PREFERRED_LAYERS[intent]
+        query_tokens = _routing_query_tokens(text)
+        scored_candidates = [
+            _score_routed_candidate(item, intent, query_tokens=query_tokens, lexical_rank=index)
+            for index, item in enumerate(retrieval_result.results, start=1)
+        ]
+        ranked_candidates = sorted(
+            scored_candidates,
+            key=lambda candidate: (candidate["routing_score"], candidate["lexical_score"]),
+            reverse=True,
+        )
+        for routing_rank, candidate in enumerate(ranked_candidates, start=1):
+            candidate["routing_rank"] = routing_rank
+        final_candidates = ranked_candidates[:requested_limit]
+        final_results = [candidate["item"] for candidate in final_candidates]
+
+        routed_trace = None
+        if retrieval_result.trace is not None:
+            routed_trace = QueryTrace(
+                query_text=retrieval_result.trace.query_text,
+                query_tokens=retrieval_result.trace.query_tokens,
+                limit=requested_limit,
+                filters=retrieval_result.trace.filters,
+                stages=retrieval_result.trace.stages,
+                routing=_build_routing_trace(
+                    intent=intent,
+                    preferred_layers=preferred_layers,
+                    ranked_candidates=ranked_candidates,
+                    final_candidates=final_candidates,
+                ),
+            )
+
+        return final_results, routed_trace
 
     def supports_thread_aggregation(self, source_item: SourceItem) -> bool:
         if not source_item.thread_ref or not source_item.container_ref:
@@ -397,6 +522,228 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             relations=[],
             index_entries=[index_entry],
         )
+
+
+def _classify_query_intent(text: str) -> str:
+    lowered = text.lower()
+    if any(cue in lowered for cue in EVIDENCE_TRACE_CUES):
+        return "evidence_trace"
+    if any(cue in lowered for cue in ANSWER_CONTINUITY_CUES):
+        return "answer_continuity"
+    if any(cue in lowered for cue in BROAD_RECALL_CUES) or lowered.startswith("why "):
+        return "broad_recall"
+    if any(cue in lowered for cue in PRECISE_FACT_CUES) or lowered.startswith(("what ", "which ", "when ")):
+        return "precise_fact"
+    return "broad_recall"
+
+
+def _score_routed_candidate(
+    item: QueryResultItem,
+    intent: str,
+    *,
+    query_tokens: tuple[str, ...],
+    lexical_rank: int,
+) -> dict[str, object]:
+    layer = _result_layer(item)
+    lexical_score = int(item.score)
+    overlap_tokens = _routing_overlap_tokens(item, query_tokens)
+    content_overlap_tokens = [token for token in overlap_tokens if token not in ROUTING_META_QUERY_TOKENS]
+    routing_score = (
+        ROUTING_LAYER_WEIGHTS[intent][layer]
+        + (lexical_score * 10)
+        + _specificity_bonus(item, intent)
+        + _routing_overlap_adjustment(layer, intent, content_overlap_tokens)
+    )
+    return {
+        "item": item,
+        "layer": layer,
+        "lexical_rank": lexical_rank,
+        "lexical_score": lexical_score,
+        "routing_score": routing_score,
+        "reason": _routing_reason(intent, layer, content_overlap_tokens),
+        "strategy_name": _routing_strategy_name(item),
+        "content_overlap_tokens": content_overlap_tokens,
+    }
+
+
+def _result_layer(item: QueryResultItem) -> str:
+    if item.result_kind == "source_hit":
+        return "source_evidence"
+    if item.type == "pattern_memory":
+        return "pattern_memory"
+    if item.type == "continuity_memory":
+        return "continuity_memory"
+    return "lower_level_memory"
+
+
+def _specificity_bonus(item: QueryResultItem, intent: str) -> int:
+    bonus = 0
+    if item.result_kind == "memory_hit" and item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+        bonus += 40 if intent in {"precise_fact", "evidence_trace"} else 20
+    if item.result_kind == "memory_hit" and item.type in ROUTING_SUMMARY_TYPES and intent in {"precise_fact", "evidence_trace"}:
+        bonus -= 30
+    if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "answer_continuity":
+        bonus += 25
+    if item.result_kind == "memory_hit" and item.type == "pattern_memory" and intent == "broad_recall":
+        bonus += 25
+    if item.result_kind == "source_hit" and intent == "evidence_trace":
+        bonus += 30 if item.artifact_kind == "assistant_output" else 10
+    return bonus
+
+
+def _routing_query_tokens(text: str) -> tuple[str, ...]:
+    normalized = normalize_for_index(text)
+    if not normalized:
+        return ()
+    return tuple(token for token in normalized.split() if token)
+
+
+def _routing_overlap_adjustment(layer: str, intent: str, content_overlap_tokens: Iterable[str]) -> int:
+    overlap_count = len(tuple(content_overlap_tokens))
+    if layer not in ROUTING_HIGHER_LEVEL_TYPES:
+        return 0
+    if overlap_count == 0:
+        return -ROUTING_WEAK_HIGHER_LEVEL_MATCH_PENALTY[intent]
+    return 0
+
+
+def _routing_overlap_tokens(item: QueryResultItem, query_tokens: tuple[str, ...]) -> list[str]:
+    if not query_tokens:
+        return []
+    item_tokens = set(_routing_item_tokens(item))
+    return sorted(token for token in set(query_tokens) if token in item_tokens)
+
+
+def _routing_item_tokens(item: QueryResultItem) -> tuple[str, ...]:
+    normalized = normalize_for_index(_routing_item_text(item))
+    if not normalized:
+        return ()
+    return tuple(token for token in normalized.split() if token)
+
+
+def _routing_item_text(item: QueryResultItem) -> str:
+    fragments: list[str] = []
+    if item.excerpt:
+        fragments.append(item.excerpt)
+    if item.payload:
+        if item.type == "decision":
+            fragments.extend(
+                str(item.payload.get(key) or "")
+                for key in ("decision", "decision_evidence_text", "rationale")
+            )
+        elif item.type == "investigation_outcome":
+            fragments.extend(
+                str(item.payload.get(key) or "")
+                for key in ("investigation_outcome", "investigation_evidence_text", "rationale")
+            )
+        elif item.type in ROUTING_HIGHER_LEVEL_TYPES:
+            fragments.extend(
+                str(item.payload.get(key) or "")
+                for key in ("summary", "pattern_label", "continuity_question", "carry_forward_answer")
+            )
+            for conclusion in item.payload.get("conclusions", []):
+                if isinstance(conclusion, dict):
+                    fragments.append(str(conclusion.get("text") or ""))
+        else:
+            fragments.append(json.dumps(item.payload, sort_keys=True))
+    return " ".join(fragment for fragment in fragments if fragment)
+
+
+def _routing_reason(intent: str, layer: str, content_overlap_tokens: list[str]) -> str:
+    weak_match_suffix = " Weak higher-level overlap kept it below better-grounded candidates." if not content_overlap_tokens and layer in ROUTING_HIGHER_LEVEL_TYPES else ""
+    if intent == "answer_continuity":
+        if layer == "continuity_memory":
+            return "Repeated-answer wording favors compact carry-forward memory."
+        if layer == "pattern_memory":
+            return "Broad pattern memory is demoted because the query is asking whether the answer was already given."
+        if layer == "lower_level_memory":
+            return "Exact lower-level memory remains a fallback behind continuity carry-forward."
+        return "Source evidence remains available, but routing prefers compact carry-forward first."
+    if intent == "broad_recall":
+        if layer == "pattern_memory":
+            return "Broad recall wording favors higher-level pattern memory." + weak_match_suffix
+        if layer == "continuity_memory":
+            return "Continuity memory is narrower than the broad prior-conclusion question." + weak_match_suffix
+        if layer == "lower_level_memory":
+            return "Lower-level memory stays relevant, but broader recall prefers a consolidated pattern when present."
+        return "Source evidence remains available, but compact prior-conclusion memory is preferred."
+    if intent == "precise_fact":
+        if layer == "lower_level_memory":
+            return "Precise factual wording favors exact lower-level memory over higher-level summaries."
+        if layer == "source_evidence":
+            return "Source evidence stays near the top for precise factual lookup."
+        if layer == "continuity_memory":
+            return "Continuity memory is demoted because it can blur exact factual lookup." + weak_match_suffix
+        return "Pattern memory is demoted because it can blur exact factual lookup." + weak_match_suffix
+    if layer == "source_evidence":
+        return "Evidence-trace wording favors raw supporting source evidence."
+    if layer == "lower_level_memory":
+        return "Lower-level memory stays close behind source evidence for evidence-trace questions."
+    if layer == "continuity_memory":
+        return "Continuity memory is demoted because evidence-trace questions need sharper provenance." + weak_match_suffix
+    return "Pattern memory is demoted because evidence-trace questions need sharper provenance." + weak_match_suffix
+
+
+def _routing_strategy_name(item: QueryResultItem) -> str | None:
+    if item.result_kind != "memory_hit" or not item.payload:
+        return None
+    provenance = item.payload.get("consolidation_provenance", {})
+    if not isinstance(provenance, dict):
+        return None
+    strategy_name = provenance.get("strategy_name")
+    return str(strategy_name) if isinstance(strategy_name, str) and strategy_name else None
+
+
+def _routing_result_id(item: QueryResultItem) -> str:
+    if item.result_kind == "memory_hit":
+        return f"memory_object:{item.memory_object_id}"
+    return f"source_item:{item.source_item_id}"
+
+
+def _build_routing_trace(
+    *,
+    intent: str,
+    preferred_layers: tuple[str, ...],
+    ranked_candidates: list[dict[str, object]],
+    final_candidates: list[dict[str, object]],
+) -> dict[str, object]:
+    selected_results = [_build_routing_trace_entry(candidate) for candidate in final_candidates]
+    demoted_higher_level_hits = [
+        _build_routing_trace_entry(candidate)
+        for candidate in ranked_candidates
+        if candidate["layer"] in ROUTING_HIGHER_LEVEL_TYPES
+        and int(candidate["routing_rank"]) > int(candidate["lexical_rank"])
+    ][:4]
+    return {
+        "policy_name": ROUTING_POLICY_NAME,
+        "query_intent": intent,
+        "preferred_layers": list(preferred_layers),
+        "selected_results": selected_results,
+        "demoted_higher_level_hits": demoted_higher_level_hits,
+    }
+
+
+def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object]:
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    entry = {
+        "result_id": _routing_result_id(item),
+        "result_kind": item.result_kind,
+        "memory_type": item.type,
+        "layer": candidate["layer"],
+        "lexical_rank": candidate["lexical_rank"],
+        "routing_rank": candidate["routing_rank"],
+        "lexical_score": candidate["lexical_score"],
+        "routing_score": candidate["routing_score"],
+        "reason": candidate["reason"],
+    }
+    content_overlap_tokens = list(candidate["content_overlap_tokens"])
+    if content_overlap_tokens:
+        entry["content_overlap_terms"] = content_overlap_tokens
+    strategy_name = candidate["strategy_name"]
+    if strategy_name is not None:
+        entry["strategy_name"] = strategy_name
+    return entry
 
 
 def _collect_conclusions(group: ConsolidationGroup) -> list[dict[str, str]]:

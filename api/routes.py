@@ -92,6 +92,7 @@ def _serialize_trace(trace: QueryTrace) -> dict[str, object]:
         "limit": trace.limit,
         "filters": filters,
         "stages": [_serialize_stage_trace(stage) for stage in trace.stages],
+        "routing": trace.routing,
     }
 
 

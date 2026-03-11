@@ -1,10 +1,10 @@
 ---
 id: add-internal-intent-aware-memory-routing
 title: Add internal intent-aware memory routing
-status: queued
+status: done
 priority: medium
 commitment: committed
-milestone: Later
+milestone: Done
 ---
 
 ## Summary
@@ -56,6 +56,17 @@ That does not require a public intent field yet, but it does require an explicit
 
 ## Notes
 
+Implemented result:
+
+- `agent_conversation_memory` now classifies queries into a small internal intent set:
+  - `answer_continuity`
+  - `broad_recall`
+  - `precise_fact`
+  - `evidence_trace`
+- the package now reranks overfetched retrieval candidates internally so broad recall, repeated-answer continuity, precise fact lookup, and evidence-trace questions can prefer different memory layers without changing the public `/query` contract
+- `/query/debug` now records routing policy name, classified intent, preferred layers, selected results, and demoted higher-level hits alongside the lexical retrieval trace
+- recurring-question and tiered-memory validation runs now record the routed policy rather than only a single global higher-level-memory preference
+
 Initial package-level intent model should stay small and evidence-driven. The first candidate set is:
 
 - `answer_continuity`
@@ -69,7 +80,3 @@ Design locks for this slice:
 - do not treat routing as a reason to expand the core query contract
 - do not let intent classification hide retrieval behavior; traceability is part of the feature
 
-Dependency note:
-
-- this feature should follow `add-retrieval-trace-and-text-view-model`
-- this feature should follow `add-continuity-memory-kind`

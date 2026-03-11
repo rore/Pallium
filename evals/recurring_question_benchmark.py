@@ -149,7 +149,7 @@ def _run_scenario(
                     strategy_name=consolidation_strategy,
                 )
 
-            query_response = client.post("/query", json=scenario["current_query"])
+            query_response = client.post("/query/debug", json=scenario["current_query"])
             query_response.raise_for_status()
             memory_payload = query_response.json()
             engine = getattr(client.app.state.pallium_service._storage, "_engine", None)
@@ -223,6 +223,9 @@ def _run_scenario(
         "expected_non_value_reason": scenario.get("expected_non_value_reason"),
         "baseline_context": scenario.get("current_thread_context", []),
         "memory_backed_retrieval": memory_payload["results"],
+        "query_trace": memory_payload.get("trace"),
+        "routing_intent": ((memory_payload.get("trace") or {}).get("routing") or {}).get("query_intent"),
+        "routing_preferred_layers": ((memory_payload.get("trace") or {}).get("routing") or {}).get("preferred_layers", []),
         "returned_memory_types": returned_memory_types,
         "higher_level_memory_types": higher_level_memory_types,
         "consolidation_strategy": consolidation_strategy,

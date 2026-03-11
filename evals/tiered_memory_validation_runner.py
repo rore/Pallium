@@ -215,7 +215,7 @@ def _run_memory_branch(
                         strategy_name=strategy_name,
                     )
 
-                query_response = client.post('/query', json=scenario['current_query'])
+                query_response = client.post('/query/debug', json=scenario['current_query'])
                 query_response.raise_for_status()
                 retrieval_payload = query_response.json()
             finally:
@@ -258,6 +258,9 @@ def _run_memory_branch(
     return {
         'strategy_name': strategy_name,
         'retrieval': retrieval_payload['results'],
+        'query_trace': retrieval_payload.get('trace'),
+        'routing_intent': ((retrieval_payload.get('trace') or {}).get('routing') or {}).get('query_intent'),
+        'routing_preferred_layers': ((retrieval_payload.get('trace') or {}).get('routing') or {}).get('preferred_layers', []),
         'returned_memory_types': sorted({item['type'] for item in memory_hits if item.get('type')}),
         'memory_hit_count': len(memory_hits),
         'higher_level_memory_present': bool(higher_level_hits),

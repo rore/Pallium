@@ -20,6 +20,7 @@ Current implemented shape:
 - provider abstraction for OpenAI-compatible and Claude-style APIs with conservative retries, backoff, request-id capture, and bounded concurrency
 - SQLite-backed storage behind a storage boundary
 - mixed retrieval over memory hits and compact source hits
+- package-owned internal routing over higher-level memory, lower-level memory, and source evidence
 - explicit event refs for message and assistant-artifact ingest
 - first concrete product package: agent conversation memory over user messages and final assistant outputs
 - typed and higher-level memory for:
@@ -53,6 +54,7 @@ Important current behavior:
 - bounded consolidation now exists as a reusable capability above lower-level memory
 - memory objects are evidence-backed through explicit relations
 - retrieval returns compact cards rather than raw source payloads by default
+- the current package can internally rerank retrieved candidates by question shape without changing the public `/query` contract
 - superseded memory is filtered from default retrieval, while raw evidence remains intact
 
 ## Semantic Direction
@@ -150,6 +152,8 @@ Each run writes:
 - `results.jsonl`
 
 The committed benchmark is the first user-facing proof layer for whether Pallium improves recurring-question handling with current-thread context, lower-level memory, and later higher-level memory modes.
+
+The current package now also uses internal routed retrieval policy so broad recall, repeated-answer continuity, precise factual lookup, and evidence-trace questions can prefer different layers while remaining inspectable through `/query/debug`.
 
 ## Tiered Memory and Strategy Comparison
 

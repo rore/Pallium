@@ -152,3 +152,4 @@ class QueryTrace:
     limit: int
     filters: QueryFilters | None
     stages: tuple[RetrievalStageTrace, ...]
+    routing: dict[str, Any] | None = None

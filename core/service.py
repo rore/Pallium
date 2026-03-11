@@ -150,12 +150,24 @@ class PalliumService:
             thread_ref=thread_ref,
             session_ref=session_ref,
         )
+        plugin = self._semantic_plugins[self._default_use_case]
+        route_query_results = getattr(plugin, 'route_query_results', None)
+        retrieval_limit = limit
+        if callable(route_query_results):
+            retrieval_limit = min(max(limit * 4, 12), 50)
         retrieval_result = self._retrieval.query(
             text=text,
-            limit=limit,
+            limit=retrieval_limit,
             filters=filters,
             include_trace=include_trace,
         )
+        if callable(route_query_results):
+            routed_results, routed_trace = route_query_results(
+                text=text,
+                requested_limit=limit,
+                retrieval_result=retrieval_result,
+            )
+            return QueryResult(results=routed_results, trace=routed_trace)
         return QueryResult(results=retrieval_result.results, trace=retrieval_result.trace)
 
     def run_consolidation_pass(
