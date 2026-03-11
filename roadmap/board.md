@@ -1,7 +1,8 @@
 # Next
-- add-vector-retrieval-provider
+- add-public-real-interaction-eval-corpus-and-episode-builder
 
 # Later
+- add-vector-retrieval-provider
 - add-hybrid-retrieval-fusion
 - add-privacy-aware-memory-scope-and-sharing-foundation
 - add-explicit-shared-memory-derivation

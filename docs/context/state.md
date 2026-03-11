@@ -126,6 +126,16 @@
   - richer per-result retrieval provenance so later vector and hybrid retrieval can flow through the same routed trace path
   - consolidation trace and merge rationale
 
+## Next Hardening Direction
+
+- the next gating step is no longer a retrieval feature by default; it is a public real-interaction evaluation path
+- Pallium now needs a corpus-backed episode builder so the current memory stack can be tested against messy user-assistant conversations without depending on private downstream traffic
+- that eval layer should determine whether the next true bottleneck is:
+  - paraphrase and concept recall
+  - routed layer choice
+  - result packaging and evidence presentation
+- vector retrieval should follow only if that public-corpus eval shows lexical recall is the next real limitation
+
 ## LLM Resilience Notes
 
 - provider calls now retry only transient failures with bounded conservative backoff
