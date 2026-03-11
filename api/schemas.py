@@ -84,3 +84,44 @@ class QueryResultResponse(BaseModel):
 
 class QueryResponse(BaseModel):
     results: list[QueryResultResponse]
+
+
+class QueryTraceFiltersResponse(BaseModel):
+    source_type: str | None = None
+    role: str | None = None
+    artifact_kind: ArtifactKind | None = None
+    container_ref: str | None = None
+    thread_ref: str | None = None
+    session_ref: str | None = None
+
+
+class RetrievalTraceHitResponse(BaseModel):
+    target_kind: str
+    target_id: str
+    index_entry_id: str
+    index_type: str
+    text_view_name: str
+    score: int
+    matched_tokens: list[str]
+    provider_name: str | None = None
+    provider_version: str | None = None
+
+
+class RetrievalStageTraceResponse(BaseModel):
+    stage_name: str
+    candidate_hits_considered: int
+    candidate_hits: list[RetrievalTraceHitResponse]
+    selected_hits: list[RetrievalTraceHitResponse]
+
+
+class QueryTraceResponse(BaseModel):
+    query_text: str
+    query_tokens: list[str]
+    limit: int
+    filters: QueryTraceFiltersResponse | None = None
+    stages: list[RetrievalStageTraceResponse]
+
+
+class QueryDebugResponse(BaseModel):
+    results: list[QueryResultResponse]
+    trace: QueryTraceResponse

@@ -37,6 +37,7 @@ def test_tiered_memory_validation_runner_outputs_summary_and_results(monkeypatch
     assert set(strategy_summaries) == {'thread_local_carry_forward', 'container_topic_window', 'thread_summary_anchored'}
     assert all('policy_successes' in item for item in summary['strategies'])
     assert strategy_summaries['container_topic_window']['helped_as_expected'] >= 1
+    assert strategy_summaries['thread_local_carry_forward']['continuity_memory_present'] >= 1
 
 
 def test_tiered_memory_validation_runner_captures_strategy_tradeoffs(monkeypatch, tmp_path: Path) -> None:
@@ -61,10 +62,13 @@ def test_tiered_memory_validation_runner_captures_strategy_tradeoffs(monkeypatch
 
     cross_thread = by_id['cross-thread-pattern-value']
     assert cross_thread['strategy_results']['container_topic_window']['wins_over_lower_level'] is True
+    assert cross_thread['strategy_results']['container_topic_window']['matches_expected_higher_level_types'] is True
     assert cross_thread['strategy_results']['thread_local_carry_forward']['wins_over_lower_level'] is False
 
     repeated_answer = by_id['repeated-answer-pattern-value']
     assert repeated_answer['strategy_results']['thread_local_carry_forward']['wins_over_lower_level'] is True
+    assert repeated_answer['strategy_results']['thread_local_carry_forward']['continuity_memory_present'] is True
+    assert repeated_answer['strategy_results']['thread_summary_anchored']['matches_expected_higher_level_types'] is True
 
     precise = by_id['precise-factual-lower-level']
     assert precise['strategy_results']['container_topic_window']['loses_to_lower_level'] is True

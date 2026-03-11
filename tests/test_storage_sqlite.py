@@ -53,6 +53,9 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         target_id=memory_object.id,
         index_type="lexical",
         text_view="arrival time progress tracking missed hold updates during sync delays",
+        text_view_name="memory_object.investigation_context",
+        provider_name="builtin",
+        provider_version="v1",
     )
     storage.create_index_entry(index_entry)
 
@@ -61,6 +64,9 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         target_id=source_item.id,
         index_type="lexical",
         text_view="item event time reservation ordering avoids missed hold updates",
+        text_view_name="source_item.content",
+        provider_name="builtin",
+        provider_version="v1",
     )
     storage.create_index_entry(source_index_entry)
 
@@ -72,9 +78,17 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     assert storage.get_annotation(annotation.id).id == annotation.id
     assert storage.get_memory_object(memory_object.id).lifecycle == "active"
 
+    loaded_index_entries = storage.list_index_entries_for_target("memory_object", memory_object.id)
+    assert len(loaded_index_entries) == 1
+    assert loaded_index_entries[0].text_view_name == "memory_object.investigation_context"
+    assert loaded_index_entries[0].provider_name == "builtin"
+    assert loaded_index_entries[0].provider_version == "v1"
+
     hits = storage.search_index_entries(["missed", "delays"], limit=5)
     assert hits
     assert hits[0].target_id == memory_object.id
+    assert hits[0].text_view_name == "memory_object.investigation_context"
+    assert set(hits[0].matched_tokens) == {"delays", "missed"}
 
     storage.update_memory_object_lifecycle(memory_object.id, "superseded")
     assert storage.get_memory_object(memory_object.id).lifecycle == "superseded"

@@ -1,10 +1,10 @@
 ---
 id: add-retrieval-trace-and-text-view-model
 title: Add retrieval trace and text-view modeling
-status: queued
+status: done
 priority: medium
 commitment: committed
-milestone: Later
+milestone: Done
 ---
 
 ## Summary
@@ -39,6 +39,12 @@ Hybrid retrieval will be difficult to trust or tune if Pallium cannot explain wh
 
 ## Notes
 
-This is the first retrieval slice that prepares Pallium for hybrid search without blocking current lexical-first behavior.
+Implemented result:
+
+- `IndexEntry` now carries `text_view_name`, `provider_name`, and `provider_version` metadata.
+- Pallium exposes a separate `POST /query/debug` path that returns the normal compact results plus lexical-stage retrieval trace.
+- `POST /query` remains the default compact query contract with no debug payload added.
+- The current trace records lexical candidate hits, selected hits, matched tokens, and text-view names across both `SourceItem` and `MemoryObject` retrieval targets.
+- Later vector and hybrid retrieval slices should extend the same trace model rather than redesigning `IndexEntry` or the debug path.
 
 Sources: `docs/designs/005-hybrid-retrieval-guidance.md`, `docs/context/architecture.md`

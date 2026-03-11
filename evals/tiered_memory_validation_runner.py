@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.config import AppConfig
 from app.main import create_app
-from evals.recurring_question_benchmark import _generate_answer, _score_answer
+from evals.recurring_question_benchmark import HIGHER_LEVEL_MEMORY_TYPES, _generate_answer, _score_answer
 from providers.llm.base import LLMProvider
 
 DEFAULT_SCENARIO_FILE = Path('evals/tiered_memory_validation/scenarios.json')
@@ -102,6 +102,8 @@ def run_tiered_memory_validation_benchmark(
         context_reduction = sum(int(row['strategy_results'][strategy_name]['context_reduction']) for row in strategy_rows)
         policy_successes = sum(1 for row in strategy_rows if row['strategy_results'][strategy_name]['policy_success'])
         evidence_preserved = sum(1 for row in strategy_rows if row['strategy_results'][strategy_name]['evidence_preserved'])
+        pattern_present = sum(1 for row in strategy_rows if row['strategy_results'][strategy_name]['pattern_memory_present'])
+        continuity_present = sum(1 for row in strategy_rows if row['strategy_results'][strategy_name]['continuity_memory_present'])
         summary['strategies'].append(
             {
                 'strategy_name': strategy_name,
@@ -114,6 +116,8 @@ def run_tiered_memory_validation_benchmark(
                 'context_reduction_total': context_reduction,
                 'policy_successes': policy_successes,
                 'evidence_preserved': evidence_preserved,
+                'pattern_memory_present': pattern_present,
+                'continuity_memory_present': continuity_present,
             }
         )
 
@@ -233,14 +237,21 @@ def _run_memory_branch(
         scenario_kind=scenario['scenario_kind'],
     )
     memory_hits = [item for item in retrieval_payload['results'] if item.get('result_kind') == 'memory_hit']
-    pattern_hits = [item for item in memory_hits if item.get('type') == 'pattern_memory']
-    pattern_payload_text = ' '.join(json.dumps(item.get('payload') or {}).lower() for item in pattern_hits)
+    higher_level_hits = [item for item in memory_hits if item.get('type') in HIGHER_LEVEL_MEMORY_TYPES]
+    higher_level_memory_types = sorted({item['type'] for item in higher_level_hits if item.get('type')})
+    pattern_hits = [item for item in higher_level_hits if item.get('type') == 'pattern_memory']
+    continuity_hits = [item for item in higher_level_hits if item.get('type') == 'continuity_memory']
+    higher_level_payload_text = ' '.join(json.dumps(item.get('payload') or {}).lower() for item in higher_level_hits)
     answer_text = f"{answer.get('answer', '')}\n{' '.join(answer.get('evidence_used', []))}".lower()
-    forbidden_terms = [term for term in scenario.get('forbidden_terms', []) if term.lower() in pattern_payload_text or term.lower() in answer_text]
-    expected_pattern_signals = [signal for signal in scenario.get('expected_pattern_signals', []) if signal.lower() in pattern_payload_text]
+    forbidden_terms = [term for term in scenario.get('forbidden_terms', []) if term.lower() in higher_level_payload_text or term.lower() in answer_text]
+    expected_pattern_signals = [signal for signal in scenario.get('expected_pattern_signals', []) if signal.lower() in higher_level_payload_text]
+    expected_higher_level_types = []
+    if strategy_name:
+        expected_higher_level_types = scenario.get('expected_higher_level_memory_types_by_strategy', {}).get(strategy_name, [])
+    expected_higher_level_types_found = all(item in higher_level_memory_types for item in expected_higher_level_types)
     evidence_preserved = True
-    if pattern_hits:
-        evidence_preserved = all(item.get('evidence') for item in pattern_hits)
+    if higher_level_hits:
+        evidence_preserved = all(item.get('evidence') for item in higher_level_hits)
         if consolidation_result is not None:
             evidence_preserved = evidence_preserved and all(group.selected_source_item_ids for group in consolidation_result.groups)
 
@@ -249,9 +260,16 @@ def _run_memory_branch(
         'retrieval': retrieval_payload['results'],
         'returned_memory_types': sorted({item['type'] for item in memory_hits if item.get('type')}),
         'memory_hit_count': len(memory_hits),
+        'higher_level_memory_present': bool(higher_level_hits),
+        'higher_level_memory_count': len(higher_level_hits),
+        'higher_level_memory_types': higher_level_memory_types,
+        'expected_higher_level_types': expected_higher_level_types,
+        'expected_higher_level_types_found': expected_higher_level_types_found,
         'pattern_memory_present': bool(pattern_hits),
+        'continuity_memory_present': bool(continuity_hits),
         'pattern_memory_count': len(pattern_hits),
-        'pattern_payloads': [item.get('payload') for item in pattern_hits],
+        'continuity_memory_count': len(continuity_hits),
+        'higher_level_memory_payloads': [item.get('payload') for item in higher_level_hits],
         'expected_pattern_signals_found': expected_pattern_signals,
         'false_merge_occurred': bool(forbidden_terms),
         'forbidden_terms_found': forbidden_terms,
@@ -281,10 +299,12 @@ def _evaluate_strategy_result(
     context_reduction = max(0, int(lower_level['memory_hit_count']) - int(strategy_branch['memory_hit_count']))
 
     tiered_bonus = 0
-    if strategy_branch['pattern_memory_present'] and not strategy_branch['false_merge_occurred']:
+    if strategy_branch['higher_level_memory_present'] and not strategy_branch['false_merge_occurred']:
+        if strategy_branch['expected_higher_level_types'] and strategy_branch['expected_higher_level_types_found']:
+            tiered_bonus += 1
         if expected_pattern_signals and pattern_signal_count == len(expected_pattern_signals):
             tiered_bonus += 1
-        if expected_pattern_group_count is not None and strategy_branch['pattern_memory_count'] == int(expected_pattern_group_count):
+        if expected_pattern_group_count is not None and strategy_branch['higher_level_memory_count'] == int(expected_pattern_group_count):
             tiered_bonus += 1
         if context_reduction > 0:
             tiered_bonus += 1
@@ -292,17 +312,22 @@ def _evaluate_strategy_result(
     effective_strategy_total = strategy_total + tiered_bonus
     matches_expected_pattern_shape = (
         expected_pattern_group_count is None
-        or strategy_branch['pattern_memory_count'] == int(expected_pattern_group_count)
+        or strategy_branch['higher_level_memory_count'] == int(expected_pattern_group_count)
     )
     matches_expected_pattern_signals = (
         not expected_pattern_signals
         or pattern_signal_count == len(expected_pattern_signals)
     )
+    matches_expected_higher_level_types = (
+        not strategy_branch['expected_higher_level_types']
+        or strategy_branch['expected_higher_level_types_found']
+    )
     eligible_to_win = (
-        strategy_branch['pattern_memory_present']
+        strategy_branch['higher_level_memory_present']
         and not strategy_branch['false_merge_occurred']
         and matches_expected_pattern_shape
         and matches_expected_pattern_signals
+        and matches_expected_higher_level_types
         and (not scenario.get('expected_good_strategies') or strategy_expected)
     )
     material_improvement = (
@@ -335,6 +360,7 @@ def _evaluate_strategy_result(
         'context_reduction': context_reduction,
         'matches_expected_pattern_shape': matches_expected_pattern_shape,
         'matches_expected_pattern_signals': matches_expected_pattern_signals,
+        'matches_expected_higher_level_types': matches_expected_higher_level_types,
         'eligible_to_win': eligible_to_win,
         'material_improvement': material_improvement,
         'policy_success': policy_success,
@@ -360,8 +386,9 @@ def _serialize_consolidation_result(result: Any) -> dict[str, Any] | None:
                 'selected_candidate_ids': list(group.selected_candidate_ids),
                 'selected_source_item_ids': list(group.selected_source_item_ids),
                 'candidate_thread_refs': list(group.candidate_thread_refs),
-                'created_pattern_memory_ids': list(group.created_pattern_memory_ids),
-                'superseded_pattern_memory_ids': list(group.superseded_pattern_memory_ids),
+                'created_memory_ids': list(group.created_memory_ids),
+                'created_memory_types': list(group.created_memory_types),
+                'superseded_memory_ids': list(group.superseded_memory_ids),
                 'merge_rationale': group.merge_rationale,
             }
             for group in result.groups
@@ -386,7 +413,3 @@ def _build_run_id(config: AppConfig) -> str:
 
 if __name__ == '__main__':
     raise SystemExit(main())
-
-
-
-

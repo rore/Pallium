@@ -1,9 +1,7 @@
 # Next
-- add-retrieval-trace-and-text-view-model
+- add-internal-intent-aware-memory-routing
 
 # Later
-- add-continuity-memory-kind
-- add-internal-intent-aware-memory-routing
 - add-vector-retrieval-provider
 - add-hybrid-retrieval-fusion
 - add-privacy-aware-memory-scope-and-sharing-foundation
@@ -16,6 +14,8 @@
 - idea-optional-reranker-support
 
 # Done
+- add-continuity-memory-kind
+- add-retrieval-trace-and-text-view-model
 - add-tiered-memory-validation-benchmark
 - add-tiered-memory-extension
 - add-conversation-thread-aggregate

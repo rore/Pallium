@@ -21,6 +21,7 @@ Implemented HTTP endpoints:
 
 - POST /items
 - POST /query
+- POST /query/debug
 
 Implemented abstractions:
 
@@ -33,11 +34,13 @@ Implemented storage and retrieval behavior:
 
 - SQLite-backed storage provider
 - lexical retrieval over indexed text views
+- named text-view metadata on `IndexEntry`
 - indexing for both `SourceItem` and `MemoryObject`
-- mixed query results with explicit result kinds
+- mixed retrieval over memory hits and compact source hits
 - compact source-hit cards with explicit event refs instead of raw full content
-- evidence resolution from memory objects back to source items
 - lifecycle-aware retrieval that excludes superseded memory by default
+- optional lexical retrieval trace on the debug query path, including matched tokens and selected text views
+- evidence resolution from memory objects back to source items
 
 ## Target Retrieval Architecture
 
@@ -59,6 +62,7 @@ Design implications:
 - fusion should be explicit rather than implicit score blending
 - retrieval should stay debuggable so Pallium can explain whether a hit came from lexical retrieval, vector retrieval, or fusion
 - both `SourceItem` and `MemoryObject` remain first-class retrieval targets
+- later vector and fusion slices should extend the current trace and text-view model rather than redesigning `IndexEntry`
 
 Current intended fusion baseline:
 
@@ -76,6 +80,9 @@ Implemented semantic behavior now includes:
 - promoted typed memory for:
   - `decision`
   - `investigation_outcome`
+- higher-level memory for:
+  - `pattern_memory`
+  - `continuity_memory`
 - fallback `discussion_summary` for non-typed extraction results
 - prompt provenance attached to LLM-derived annotations and memory objects
 
@@ -131,6 +138,7 @@ Important model properties:
 - a source item may produce zero, one, or multiple memory objects over time
 - memory objects are evidence-backed and may point to one or more supporting source items
 - relations stay explicit and boring early on
+- `IndexEntry` now models index type separately from named text view and provider/version metadata so later retrieval stages can reuse the same record shape
 
 ## Reusable Capabilities
 
@@ -211,14 +219,16 @@ Tiered memory is now implemented as a reusable consolidation capability between 
 
 Current behavior:
 
-- first higher-level memory type: `pattern_memory`
+- first higher-level memory kinds:
+  - `pattern_memory`
+  - `continuity_memory`
 - first eligible lower-level inputs:
   - `thread_summary`
   - `decision`
   - `investigation_outcome`
 - consolidation remains bounded and additive
 - higher-level memory is evidence-backed and lifecycle-managed
-- retrieval can return `pattern_memory` as a normal `memory_hit`
+- retrieval can return higher-level memory as a normal `memory_hit`
 
 Current strategy hooks:
 
@@ -237,7 +247,7 @@ Current package default:
 
 - `thread_summary_anchored`
 
-The current default was chosen because it keeps thread summaries as the main interpretable unit, allows bounded cross-thread carry-forward, and stayed conservative on the current false-merge guard scenario.
+The current default was chosen because it keeps thread summaries as the main interpretable unit, allows bounded cross-thread carry-forward, and stayed conservative on the current false-merge guard scenario. Current package policy now lets broader/cross-thread groups continue to produce `pattern_memory`, while bounded single-thread carry-forward groups can produce `continuity_memory`.
 
 Current architectural stance on tiered memory:
 
@@ -259,4 +269,3 @@ Current expected follow-up hardening:
 
 - richer consolidation trace and merge rationale
 - explicit retrieval-policy evaluation for when `pattern_memory` should win over lower-level memory or source evidence
-

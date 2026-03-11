@@ -71,6 +71,9 @@ class IndexEntry:
     target_id: str
     index_type: str
     text_view: str
+    text_view_name: str = "default"
+    provider_name: str | None = None
+    provider_version: str | None = None
     id: str = field(default_factory=new_id)
 
 
@@ -119,3 +122,33 @@ class QueryResultItem:
     session_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: str | None = None
+
+
+@dataclass(frozen=True)
+class RetrievalTraceHit:
+    target_kind: str
+    target_id: str
+    index_entry_id: str
+    index_type: str
+    text_view_name: str
+    score: int
+    matched_tokens: tuple[str, ...]
+    provider_name: str | None = None
+    provider_version: str | None = None
+
+
+@dataclass(frozen=True)
+class RetrievalStageTrace:
+    stage_name: str
+    candidate_hits_considered: int
+    candidate_hits: tuple[RetrievalTraceHit, ...]
+    selected_hits: tuple[RetrievalTraceHit, ...]
+
+
+@dataclass(frozen=True)
+class QueryTrace:
+    query_text: str
+    query_tokens: tuple[str, ...]
+    limit: int
+    filters: QueryFilters | None
+    stages: tuple[RetrievalStageTrace, ...]

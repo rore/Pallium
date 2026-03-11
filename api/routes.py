@@ -2,8 +2,97 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from api.schemas import ItemCreateRequest, ItemCreateResponse, QueryRequest, QueryResponse
+from api.schemas import (
+    ItemCreateRequest,
+    ItemCreateResponse,
+    QueryDebugResponse,
+    QueryRequest,
+    QueryResponse,
+)
+from core.models import QueryResultItem, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
 from core.service import PalliumService
+
+
+def _serialize_evidence(evidence) -> dict[str, object]:
+    return {
+        "source_item_id": evidence.source_item_id,
+        "source_type": evidence.source_type,
+        "source_id": evidence.source_id,
+        "occurred_at": evidence.occurred_at,
+        "actor_ref": evidence.actor_ref,
+        "role": evidence.role,
+        "container_ref": evidence.container_ref,
+        "thread_ref": evidence.thread_ref,
+        "session_ref": evidence.session_ref,
+        "source_ref": evidence.source_ref,
+        "artifact_kind": evidence.artifact_kind,
+    }
+
+
+def _serialize_result(item: QueryResultItem) -> dict[str, object]:
+    return {
+        "result_kind": item.result_kind,
+        "score": item.score,
+        "evidence": [_serialize_evidence(evidence) for evidence in item.evidence],
+        "memory_object_id": item.memory_object_id,
+        "type": item.type,
+        "payload": item.payload,
+        "source_item_id": item.source_item_id,
+        "source_type": item.source_type,
+        "source_id": item.source_id,
+        "excerpt": item.excerpt,
+        "occurred_at": item.occurred_at,
+        "actor_ref": item.actor_ref,
+        "role": item.role,
+        "container_ref": item.container_ref,
+        "thread_ref": item.thread_ref,
+        "session_ref": item.session_ref,
+        "source_ref": item.source_ref,
+        "artifact_kind": item.artifact_kind,
+    }
+
+
+def _serialize_trace_hit(hit: RetrievalTraceHit) -> dict[str, object]:
+    return {
+        "target_kind": hit.target_kind,
+        "target_id": hit.target_id,
+        "index_entry_id": hit.index_entry_id,
+        "index_type": hit.index_type,
+        "text_view_name": hit.text_view_name,
+        "score": hit.score,
+        "matched_tokens": list(hit.matched_tokens),
+        "provider_name": hit.provider_name,
+        "provider_version": hit.provider_version,
+    }
+
+
+def _serialize_stage_trace(stage: RetrievalStageTrace) -> dict[str, object]:
+    return {
+        "stage_name": stage.stage_name,
+        "candidate_hits_considered": stage.candidate_hits_considered,
+        "candidate_hits": [_serialize_trace_hit(hit) for hit in stage.candidate_hits],
+        "selected_hits": [_serialize_trace_hit(hit) for hit in stage.selected_hits],
+    }
+
+
+def _serialize_trace(trace: QueryTrace) -> dict[str, object]:
+    filters = None
+    if trace.filters is not None:
+        filters = {
+            "source_type": trace.filters.source_type,
+            "role": trace.filters.role,
+            "artifact_kind": trace.filters.artifact_kind,
+            "container_ref": trace.filters.container_ref,
+            "thread_ref": trace.filters.thread_ref,
+            "session_ref": trace.filters.session_ref,
+        }
+    return {
+        "query_text": trace.query_text,
+        "query_tokens": list(trace.query_tokens),
+        "limit": trace.limit,
+        "filters": filters,
+        "stages": [_serialize_stage_trace(stage) for stage in trace.stages],
+    }
 
 
 def create_router(service: PalliumService) -> APIRouter:
@@ -41,45 +130,26 @@ def create_router(service: PalliumService) -> APIRouter:
             thread_ref=request.thread_ref,
             session_ref=request.session_ref,
         )
-        return QueryResponse(
-            results=[
-                {
-                    "result_kind": item.result_kind,
-                    "score": item.score,
-                    "evidence": [
-                        {
-                            "source_item_id": evidence.source_item_id,
-                            "source_type": evidence.source_type,
-                            "source_id": evidence.source_id,
-                            "occurred_at": evidence.occurred_at,
-                            "actor_ref": evidence.actor_ref,
-                            "role": evidence.role,
-                            "container_ref": evidence.container_ref,
-                            "thread_ref": evidence.thread_ref,
-                            "session_ref": evidence.session_ref,
-                            "source_ref": evidence.source_ref,
-                            "artifact_kind": evidence.artifact_kind,
-                        }
-                        for evidence in item.evidence
-                    ],
-                    "memory_object_id": item.memory_object_id,
-                    "type": item.type,
-                    "payload": item.payload,
-                    "source_item_id": item.source_item_id,
-                    "source_type": item.source_type,
-                    "source_id": item.source_id,
-                    "excerpt": item.excerpt,
-                    "occurred_at": item.occurred_at,
-                    "actor_ref": item.actor_ref,
-                    "role": item.role,
-                    "container_ref": item.container_ref,
-                    "thread_ref": item.thread_ref,
-                    "session_ref": item.session_ref,
-                    "source_ref": item.source_ref,
-                    "artifact_kind": item.artifact_kind,
-                }
-                for item in result.results
-            ]
+        return QueryResponse(results=[_serialize_result(item) for item in result.results])
+
+    @router.post("/query/debug", response_model=QueryDebugResponse)
+    def query_items_debug(request: QueryRequest) -> QueryDebugResponse:
+        result = service.query(
+            request.text,
+            request.limit,
+            source_type=request.source_type,
+            role=request.role,
+            artifact_kind=request.artifact_kind,
+            container_ref=request.container_ref,
+            thread_ref=request.thread_ref,
+            session_ref=request.session_ref,
+            include_trace=True,
+        )
+        if result.trace is None:
+            raise ValueError("debug query must include retrieval trace")
+        return QueryDebugResponse(
+            results=[_serialize_result(item) for item in result.results],
+            trace=_serialize_trace(result.trace),
         )
 
     return router

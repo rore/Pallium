@@ -80,6 +80,9 @@
     "target_question": "What did we previously conclude about duplicate holds after catalog sync delays?",
     "preferred_branch": "tiered",
     "expected_good_strategies": ["container_topic_window"],
+    "expected_higher_level_memory_types_by_strategy": {
+      "container_topic_window": ["pattern_memory"]
+    },
     "expected_pattern_group_count": 1,
     "expected_answer_signals": ["duplicate holds", "catalog sync delays", "item event time"],
     "expected_pattern_signals": ["duplicate holds", "item event time"],
@@ -136,6 +139,10 @@
     "target_question": "Have we already answered why overdue notices are batched?",
     "preferred_branch": "tiered",
     "expected_good_strategies": ["thread_local_carry_forward", "thread_summary_anchored"],
+    "expected_higher_level_memory_types_by_strategy": {
+      "thread_local_carry_forward": ["continuity_memory"],
+      "thread_summary_anchored": ["continuity_memory"]
+    },
     "expected_pattern_group_count": 1,
     "expected_answer_signals": ["30-minute batches", "staff inbox spam"],
     "expected_pattern_signals": ["30-minute batches", "staff inbox spam"],

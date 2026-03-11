@@ -78,6 +78,9 @@ class IndexEntryRecord(Base):
     target_id = Column(String, nullable=False)
     index_type = Column(String, nullable=False)
     text_view = Column(Text, nullable=False)
+    text_view_name = Column(String, nullable=True)
+    provider_name = Column(String, nullable=True)
+    provider_version = Column(String, nullable=True)
 
 
 class SQLiteStorageProvider(StorageProvider):
@@ -94,6 +97,11 @@ class SQLiteStorageProvider(StorageProvider):
     _MEMORY_OBJECT_MIGRATIONS = {
         "lifecycle": "ALTER TABLE memory_objects ADD COLUMN lifecycle VARCHAR DEFAULT 'active'",
     }
+    _INDEX_ENTRY_MIGRATIONS = {
+        "text_view_name": "ALTER TABLE index_entries ADD COLUMN text_view_name VARCHAR",
+        "provider_name": "ALTER TABLE index_entries ADD COLUMN provider_name VARCHAR",
+        "provider_version": "ALTER TABLE index_entries ADD COLUMN provider_version VARCHAR",
+    }
 
     def __init__(self, database_url: str) -> None:
         connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
@@ -102,6 +110,7 @@ class SQLiteStorageProvider(StorageProvider):
         Base.metadata.create_all(self._engine)
         self._ensure_source_item_columns()
         self._ensure_memory_object_columns()
+        self._ensure_index_entry_columns()
 
     def find_source_item(self, source_type: str, source_id: str) -> SourceItem | None:
         with self._session_factory() as session:
@@ -264,6 +273,9 @@ class SQLiteStorageProvider(StorageProvider):
             target_id=index_entry.target_id,
             index_type=index_entry.index_type,
             text_view=index_entry.text_view,
+            text_view_name=index_entry.text_view_name,
+            provider_name=index_entry.provider_name,
+            provider_version=index_entry.provider_version,
         )
         with self._session_factory.begin() as session:
             session.add(record)
@@ -289,13 +301,20 @@ class SQLiteStorageProvider(StorageProvider):
             if not self._matches_filters(record.target_kind, record.target_id, filters):
                 continue
             text_tokens = set(TOKEN_PATTERN.findall(record.text_view.lower()))
-            score = len(unique_tokens.intersection(text_tokens))
+            matched_tokens = tuple(sorted(unique_tokens.intersection(text_tokens)))
+            score = len(matched_tokens)
             if score > 0:
                 hits.append(
                     IndexSearchHit(
                         target_kind=record.target_kind,
                         target_id=record.target_id,
+                        index_entry_id=record.id,
+                        index_type=record.index_type,
+                        text_view_name=record.text_view_name or "default",
                         score=score,
+                        matched_tokens=matched_tokens,
+                        provider_name=record.provider_name,
+                        provider_version=record.provider_version,
                     )
                 )
         hits.sort(key=lambda item: (item.score, 1 if item.target_kind == "memory_object" else 0), reverse=True)
@@ -383,6 +402,16 @@ class SQLiteStorageProvider(StorageProvider):
                 if column_name not in existing_columns:
                     connection.execute(text(migration_sql))
 
+    def _ensure_index_entry_columns(self) -> None:
+        with self._engine.begin() as connection:
+            existing_columns = {
+                row[1]
+                for row in connection.execute(text("PRAGMA table_info(index_entries)"))
+            }
+            for column_name, migration_sql in self._INDEX_ENTRY_MIGRATIONS.items():
+                if column_name not in existing_columns:
+                    connection.execute(text(migration_sql))
+
     @staticmethod
     def _to_source_item(record: SourceItemRecord) -> SourceItem:
         occurred_at = record.occurred_at
@@ -449,6 +478,9 @@ class SQLiteStorageProvider(StorageProvider):
             target_id=record.target_id,
             index_type=record.index_type,
             text_view=record.text_view,
+            text_view_name=record.text_view_name or "default",
+            provider_name=record.provider_name,
+            provider_version=record.provider_version,
         )
 
     @staticmethod

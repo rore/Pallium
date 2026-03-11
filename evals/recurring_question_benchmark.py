@@ -20,6 +20,7 @@ from providers.llm.base import LLMProvider
 DEFAULT_SCENARIO_FILE = Path("evals/recurring_question/scenarios.json")
 DEFAULT_OUTPUT_DIR = Path("evals/recurring_question/output")
 ANSWER_SCHEMA = '{"answer":"string","evidence_used":["string"]}'
+HIGHER_LEVEL_MEMORY_TYPES = {"pattern_memory", "continuity_memory"}
 TARGET_KEYWORD_STOPWORDS = {
     "a",
     "an",
@@ -172,8 +173,20 @@ def _run_scenario(
 
     memory_hits = [item for item in memory_payload["results"] if item["result_kind"] == "memory_hit"]
     returned_memory_types = sorted({item["type"] for item in memory_hits if item.get("type")})
+    higher_level_memory_types = sorted(
+        {item["type"] for item in memory_hits if item.get("type") in HIGHER_LEVEL_MEMORY_TYPES}
+    )
     expected_memory_types = scenario.get("expected_memory_types", [])
     expected_memory_types_found = all(item in returned_memory_types for item in expected_memory_types)
+    expected_higher_level_memory_types = []
+    if consolidation_strategy:
+        expected_higher_level_memory_types = scenario.get(
+            "expected_higher_level_memory_types_by_strategy",
+            {},
+        ).get(consolidation_strategy, [])
+    expected_higher_level_memory_types_found = all(
+        item in higher_level_memory_types for item in expected_higher_level_memory_types
+    )
 
     baseline_rubric = _score_answer(
         answer_payload=baseline_answer,
@@ -190,6 +203,7 @@ def _run_scenario(
     comparison = _compare_answers(
         expected_value=bool(scenario.get("expected_value")),
         expected_memory_types_found=expected_memory_types_found,
+        expected_higher_level_memory_types_found=expected_higher_level_memory_types_found,
         baseline_rubric=baseline_rubric,
         memory_rubric=memory_rubric,
         baseline_answer=baseline_answer,
@@ -204,10 +218,13 @@ def _run_scenario(
         "expected_value": bool(scenario.get("expected_value")),
         "expected_memory_types": expected_memory_types,
         "expected_memory_types_found": expected_memory_types_found,
+        "expected_higher_level_memory_types": expected_higher_level_memory_types,
+        "expected_higher_level_memory_types_found": expected_higher_level_memory_types_found,
         "expected_non_value_reason": scenario.get("expected_non_value_reason"),
         "baseline_context": scenario.get("current_thread_context", []),
         "memory_backed_retrieval": memory_payload["results"],
         "returned_memory_types": returned_memory_types,
+        "higher_level_memory_types": higher_level_memory_types,
         "consolidation_strategy": consolidation_strategy,
         "consolidation_run": _serialize_consolidation_result(consolidation_result),
         "baseline_answer": baseline_answer,
@@ -239,8 +256,9 @@ def _serialize_consolidation_result(result: Any) -> dict[str, Any] | None:
                 "selected_candidate_ids": list(group.selected_candidate_ids),
                 "selected_source_item_ids": list(group.selected_source_item_ids),
                 "candidate_thread_refs": list(group.candidate_thread_refs),
-                "created_pattern_memory_ids": list(group.created_pattern_memory_ids),
-                "superseded_pattern_memory_ids": list(group.superseded_pattern_memory_ids),
+                "created_memory_ids": list(group.created_memory_ids),
+                "created_memory_types": list(group.created_memory_types),
+                "superseded_memory_ids": list(group.superseded_memory_ids),
                 "merge_rationale": group.merge_rationale,
             }
             for group in result.groups
@@ -322,6 +340,7 @@ def _compare_answers(
     *,
     expected_value: bool,
     expected_memory_types_found: bool,
+    expected_higher_level_memory_types_found: bool,
     baseline_rubric: dict[str, Any],
     memory_rubric: dict[str, Any],
     baseline_answer: dict[str, Any],
@@ -338,7 +357,7 @@ def _compare_answers(
         memory_advantage += 1
     if len(memory_rubric["signal_matches"]) > len(baseline_rubric["signal_matches"]):
         memory_advantage += 1
-    if expected_value and expected_memory_types_found and memory_has_expected:
+    if expected_value and (expected_memory_types_found or expected_higher_level_memory_types_found) and memory_has_expected:
         memory_advantage += 1
 
     if expected_value and memory_advantage >= 2:
@@ -452,7 +471,13 @@ def _format_memory_results(results: list[dict[str, Any]]) -> str:
     for item in results[:4]:
         if item.get("result_kind") == "memory_hit":
             payload = item.get("payload") or {}
-            summary = payload.get("decision") or payload.get("investigation_outcome") or payload.get("summary") or json.dumps(payload)
+            summary = (
+                payload.get("carry_forward_answer")
+                or payload.get("decision")
+                or payload.get("investigation_outcome")
+                or payload.get("summary")
+                or json.dumps(payload)
+            )
             lines.append(f"- memory/{item.get('type')}: {summary}")
         else:
             lines.append(f"- source/{item.get('source_type')}:{item.get('source_id')}: {item.get('excerpt')}")
@@ -473,6 +498,3 @@ def _build_run_id(config: AppConfig, consolidation_strategy: str | None) -> str:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-

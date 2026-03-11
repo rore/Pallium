@@ -1,10 +1,10 @@
 ---
 id: add-continuity-memory-kind
 title: Add continuity memory kind
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Later
+milestone: Done
 ---
 
 ## Summary
@@ -56,13 +56,16 @@ That is enough evidence to add one second higher-level memory kind, but not yet 
 
 ## Notes
 
-Design locks for this slice:
+Implemented result:
 
-- do not model `strategy == memory kind`
-- do not move tiered memory into the core domain model
-- do not expand the public query API yet
+- `agent_conversation_memory` now emits `continuity_memory` as a second higher-level memory kind for bounded repeated-answer carry-forward.
+- generic consolidation now persists whichever higher-level kinds the package emits without moving those kinds into the core contract.
+- current package policy keeps broader or cross-thread groups on `pattern_memory`, while bounded same-thread carry-forward groups can emit `continuity_memory`.
+- recurring-question and tiered-memory validation coverage now distinguish `continuity_memory` from `pattern_memory` explicitly.
+
+Design locks that remain true after implementation:
+
+- do not let public `/query` semantics depend on raw strategy names
+- do not move higher-level memory kinds into the generic core domain model
 - keep `continuity_memory` bounded within the current within-container memory scope
-
-Dependency note:
-
-- this feature should follow `add-retrieval-trace-and-text-view-model` so the new higher-level kind is inspectable during evaluation
+- use the retrieval trace and named text-view model for later routing/debug work rather than redesigning the query contract

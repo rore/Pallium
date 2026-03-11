@@ -5,7 +5,8 @@ import re
 from capabilities.consolidation import ConsolidationCapability, ConsolidationRunGroupResult, ConsolidationRunResult
 from capabilities.thread_aggregation import build_thread_aggregate
 from core.contracts import IngestResult, ProcessResult, QueryResult, build_query_filters, build_source_item
-from core.models import IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
+from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
+from core.models import MemoryObject, QueryFilters, Relation, SourceItem
 from retrieval.base import RetrievalProvider
 from semantic.base import ConsolidationSemanticPlugin, SemanticPlugin, ThreadAggregationSemanticPlugin
 from storage.base import StorageProvider
@@ -14,7 +15,6 @@ from storage.base import StorageProvider
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 THREAD_CONCLUSION_TYPES = {"decision", "investigation_outcome"}
 THREAD_SUMMARY_TYPE = "thread_summary"
-PATTERN_MEMORY_TYPE = "pattern_memory"
 
 
 def _normalize_for_index(text: str) -> str:
@@ -97,11 +97,12 @@ class PalliumService:
         )
         self._storage.create_source_item(source_item)
 
-        source_index_entry = IndexEntry(
+        source_index_entry = build_index_entry(
             target_kind="source_item",
             target_id=source_item.id,
             index_type="lexical",
             text_view=_normalize_for_index(source_item.content),
+            text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW,
         )
         self._storage.create_index_entry(source_index_entry)
 
@@ -139,6 +140,7 @@ class PalliumService:
         container_ref: str | None = None,
         thread_ref: str | None = None,
         session_ref: str | None = None,
+        include_trace: bool = False,
     ) -> QueryResult:
         filters: QueryFilters | None = build_query_filters(
             source_type=source_type,
@@ -148,7 +150,13 @@ class PalliumService:
             thread_ref=thread_ref,
             session_ref=session_ref,
         )
-        return QueryResult(results=self._retrieval.query(text=text, limit=limit, filters=filters))
+        retrieval_result = self._retrieval.query(
+            text=text,
+            limit=limit,
+            filters=filters,
+            include_trace=include_trace,
+        )
+        return QueryResult(results=retrieval_result.results, trace=retrieval_result.trace)
 
     def run_consolidation_pass(
         self,
@@ -186,24 +194,24 @@ class PalliumService:
             synthesized = self._consolidation_capability.synthesize_group(plugin=plugin, group=group)
             if not synthesized.memory_objects:
                 continue
-            pattern_memory = synthesized.memory_objects[0]
             promoted = ProcessResult(
                 annotations=synthesized.annotations,
                 memory_objects=synthesized.memory_objects,
                 relations=[
                     *synthesized.relations,
-                    *self._build_pattern_relations(pattern_memory.id, group),
+                    *self._build_consolidation_relations(group, synthesized.memory_objects),
                 ],
                 index_entries=synthesized.index_entries,
             )
             self._persist_process_result(promoted)
 
             superseded_ids: list[str] = []
-            for active_pattern_id in self._find_active_pattern_memory_ids(plugin, group):
-                if active_pattern_id == pattern_memory.id:
-                    continue
-                self.supersede_memory_object(active_pattern_id, pattern_memory.id)
-                superseded_ids.append(active_pattern_id)
+            for memory_object in synthesized.memory_objects:
+                for active_memory_id in self._find_active_consolidated_memory_ids(group, memory_object):
+                    if active_memory_id == memory_object.id or active_memory_id in superseded_ids:
+                        continue
+                    self.supersede_memory_object(active_memory_id, memory_object.id)
+                    superseded_ids.append(active_memory_id)
 
             group_results.append(
                 ConsolidationRunGroupResult(
@@ -213,8 +221,9 @@ class PalliumService:
                     selected_candidate_ids=group.candidate_ids,
                     selected_source_item_ids=group.supporting_source_ids,
                     candidate_thread_refs=tuple(candidate.thread_ref for candidate in group.candidates),
-                    created_pattern_memory_ids=tuple(memory.id for memory in synthesized.memory_objects if memory.type == PATTERN_MEMORY_TYPE),
-                    superseded_pattern_memory_ids=tuple(superseded_ids),
+                    created_memory_ids=tuple(memory.id for memory in synthesized.memory_objects),
+                    created_memory_types=tuple(memory.type for memory in synthesized.memory_objects),
+                    superseded_memory_ids=tuple(superseded_ids),
                     merge_rationale=group.merge_rationale,
                 )
             )
@@ -321,37 +330,46 @@ class PalliumService:
                 conclusions[memory_object.id] = memory_object
         return list(conclusions.values())
 
-    def _build_pattern_relations(self, pattern_memory_id: str, group) -> list[Relation]:
-        relations = [
-            Relation(
-                from_kind="memory_object",
-                from_id=pattern_memory_id,
-                relation_type="supported_by",
-                to_kind="source_item",
-                to_id=source_item_id,
+    def _build_consolidation_relations(
+        self,
+        group,
+        memory_objects: list[MemoryObject],
+    ) -> list[Relation]:
+        relations: list[Relation] = []
+        for memory_object in memory_objects:
+            relations.extend(
+                Relation(
+                    from_kind="memory_object",
+                    from_id=memory_object.id,
+                    relation_type="supported_by",
+                    to_kind="source_item",
+                    to_id=source_item_id,
+                )
+                for source_item_id in group.supporting_source_ids
             )
-            for source_item_id in group.supporting_source_ids
-        ]
-        relations.extend(
-            Relation(
-                from_kind="memory_object",
-                from_id=pattern_memory_id,
-                relation_type="consolidates",
-                to_kind="memory_object",
-                to_id=candidate_id,
+            relations.extend(
+                Relation(
+                    from_kind="memory_object",
+                    from_id=memory_object.id,
+                    relation_type="consolidates",
+                    to_kind="memory_object",
+                    to_id=candidate_id,
+                )
+                for candidate_id in group.candidate_ids
             )
-            for candidate_id in group.candidate_ids
-        )
         return relations
 
-    def _find_active_pattern_memory_ids(
+    def _find_active_consolidated_memory_ids(
         self,
-        plugin: ConsolidationSemanticPlugin,
         group,
+        created_memory_object: MemoryObject,
     ) -> list[str]:
         ids: list[str] = []
-        for memory_object in self._storage.list_memory_objects(memory_types=[PATTERN_MEMORY_TYPE], lifecycle="active"):
-            if memory_object.schema_id != plugin.pattern_memory_schema_id:
+        for memory_object in self._storage.list_memory_objects(
+            memory_types=[created_memory_object.type],
+            lifecycle="active",
+        ):
+            if memory_object.schema_id != created_memory_object.schema_id:
                 continue
             provenance = memory_object.payload.get("consolidation_provenance", {})
             if provenance.get("strategy_name") != group.strategy_name:
@@ -360,5 +378,3 @@ class PalliumService:
                 continue
             ids.append(memory_object.id)
         return ids
-
-

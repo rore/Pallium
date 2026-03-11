@@ -3,13 +3,22 @@ from __future__ import annotations
 import re
 from datetime import timezone
 
-from core.models import EvidenceReference, QueryFilters, QueryResultItem, SourceItem
-from retrieval.base import RetrievalProvider
-from storage.base import StorageProvider
+from core.models import (
+    EvidenceReference,
+    QueryFilters,
+    QueryResultItem,
+    QueryTrace,
+    RetrievalStageTrace,
+    RetrievalTraceHit,
+    SourceItem,
+)
+from retrieval.base import RetrievalProvider, RetrievalQueryResult
+from storage.base import IndexSearchHit, StorageProvider
 
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 MAX_EXCERPT_LENGTH = 160
+LEXICAL_STAGE_NAME = "lexical"
 
 
 def _tokenize(text: str) -> list[str]:
@@ -42,16 +51,48 @@ def _build_evidence(source_item: SourceItem) -> EvidenceReference:
     )
 
 
+def _build_trace_hit(hit: IndexSearchHit) -> RetrievalTraceHit:
+    return RetrievalTraceHit(
+        target_kind=hit.target_kind,
+        target_id=hit.target_id,
+        index_entry_id=hit.index_entry_id,
+        index_type=hit.index_type,
+        text_view_name=hit.text_view_name,
+        score=hit.score,
+        matched_tokens=tuple(hit.matched_tokens),
+        provider_name=hit.provider_name,
+        provider_version=hit.provider_version,
+    )
+
+
 class LexicalRetrievalProvider(RetrievalProvider):
     def __init__(self, storage: StorageProvider) -> None:
         self._storage = storage
 
-    def query(self, text: str, limit: int, filters: QueryFilters | None = None) -> list[QueryResultItem]:
+    def query(
+        self,
+        text: str,
+        limit: int,
+        filters: QueryFilters | None = None,
+        *,
+        include_trace: bool = False,
+    ) -> RetrievalQueryResult:
         tokens = sorted(set(_tokenize(text)))
         if not tokens:
-            return []
+            trace = None
+            if include_trace:
+                trace = QueryTrace(
+                    query_text=text,
+                    query_tokens=tuple(),
+                    limit=limit,
+                    filters=filters,
+                    stages=tuple(),
+                )
+            return RetrievalQueryResult(results=[], trace=trace)
+
         hits = self._storage.search_index_entries(tokens=tokens, limit=limit * 4, filters=filters)
         results: list[QueryResultItem] = []
+        selected_hits: list[RetrievalTraceHit] = []
         seen: set[tuple[str, str]] = set()
 
         for hit in hits:
@@ -94,8 +135,30 @@ class LexicalRetrievalProvider(RetrievalProvider):
                         evidence=[_build_evidence(source_item)],
                     )
                 )
+            else:
+                continue
+
+            if include_trace:
+                selected_hits.append(_build_trace_hit(hit))
 
             if len(results) >= limit:
                 break
 
-        return results
+        trace = None
+        if include_trace:
+            trace = QueryTrace(
+                query_text=text,
+                query_tokens=tuple(tokens),
+                limit=limit,
+                filters=filters,
+                stages=(
+                    RetrievalStageTrace(
+                        stage_name=LEXICAL_STAGE_NAME,
+                        candidate_hits_considered=len(hits),
+                        candidate_hits=tuple(_build_trace_hit(hit) for hit in hits),
+                        selected_hits=tuple(selected_hits),
+                    ),
+                ),
+            )
+
+        return RetrievalQueryResult(results=results, trace=trace)

@@ -6,7 +6,8 @@ from collections import OrderedDict
 from capabilities.consolidation import ConsolidationGroup, ConsolidationPolicy
 from capabilities.thread_aggregation import ThreadAggregate
 from core.contracts import ProcessResult
-from core.models import IndexEntry, MemoryObject, Relation, SourceItem
+from core.indexing import build_index_entry
+from core.models import MemoryObject, Relation, SourceItem
 from providers.llm.base import LLMProvider
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
 from semantic.common import normalize_for_index
@@ -30,6 +31,7 @@ SUPPORTED_THREAD_ARTIFACTS = {
 }
 CARRIED_CONCLUSION_TYPES = {"decision", "investigation_outcome"}
 THREAD_SUMMARY_MAX_TEXT_CHARS = 4000
+THREAD_SUMMARY_TEXT_VIEW = "memory_object.thread_summary_context"
 PATTERN_MEMORY_PROMPT_SCHEMA_ID = "pattern_memory_extraction"
 PATTERN_MEMORY_PROMPT_SCHEMA_VERSION = "v1"
 PATTERN_MEMORY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "pattern_label": "string"}, indent=2)
@@ -42,6 +44,27 @@ PATTERN_MEMORY_SYSTEM_PROMPT = (
     "Keep the summary concise: at most two sentences and roughly 70 words."
 )
 PATTERN_MEMORY_MAX_TEXT_CHARS = 3500
+PATTERN_MEMORY_TEXT_VIEW = "memory_object.pattern_memory_context"
+CONTINUITY_MEMORY_PROMPT_SCHEMA_ID = "continuity_memory_extraction"
+CONTINUITY_MEMORY_PROMPT_SCHEMA_VERSION = "v1"
+CONTINUITY_MEMORY_SCHEMA_DESCRIPTION = json.dumps(
+    {
+        "summary": "string",
+        "continuity_question": "string",
+        "carry_forward_answer": "string",
+    },
+    indent=2,
+)
+CONTINUITY_MEMORY_SYSTEM_PROMPT = (
+    "Create one compact continuity memory from a bounded single-thread set of lower-level conversation memory. "
+    "Return exactly one JSON object and no extra prose. "
+    "Use only explicit facts from the supplied memory and carried conclusions. "
+    "Frame the output for repeated-answer continuity: what was already answered, and what concise answer should carry forward. "
+    "Do not invent recurrence beyond the supplied thread, and do not add recommendations, risks, or new conclusions. "
+    "Keep the summary concise: at most two sentences and roughly 70 words."
+)
+CONTINUITY_MEMORY_MAX_TEXT_CHARS = 3000
+CONTINUITY_MEMORY_TEXT_VIEW = "memory_object.continuity_memory_context"
 
 
 class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, ConsolidationSemanticPlugin):
@@ -73,6 +96,10 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
     @property
     def pattern_memory_schema_id(self) -> str:
         return "agent_conversation_memory.pattern_memory"
+
+    @property
+    def continuity_memory_schema_id(self) -> str:
+        return "agent_conversation_memory.continuity_memory"
 
     def process_item(self, source_item: SourceItem) -> ProcessResult:
         return self._delegate.process_item(source_item)
@@ -177,11 +204,12 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         index_source = " ".join(
             [summary, *[item["text"] for item in conclusion_payload if item.get("text")]]
         )
-        index_entry = IndexEntry(
+        index_entry = build_index_entry(
             target_kind="memory_object",
             target_id=memory_object.id,
             index_type="lexical",
             text_view=normalize_for_index(index_source),
+            text_view_name=THREAD_SUMMARY_TEXT_VIEW,
         )
         return ProcessResult(
             annotations=[],
@@ -189,6 +217,11 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             relations=relations,
             index_entries=[index_entry],
         )
+
+    def build_consolidated_memory(self, group: ConsolidationGroup) -> ProcessResult:
+        if _should_build_continuity_memory(group):
+            return self._build_continuity_memory(group)
+        return self.build_pattern_memory(group)
 
     def build_pattern_memory(self, group: ConsolidationGroup) -> ProcessResult:
         conclusion_payload = list(_collect_conclusions(group))
@@ -230,6 +263,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             "prompt_variant": self.prompt_variant,
         }
         consolidation_provenance = {
+            "memory_kind": "pattern_memory",
             "strategy_name": group.strategy_name,
             "strategy_version": group.strategy_version,
             "prompt_schema_id": PATTERN_MEMORY_PROMPT_SCHEMA_ID,
@@ -260,11 +294,102 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 *[conclusion["text"] for conclusion in conclusion_payload if conclusion.get("text")],
             ]
         )
-        index_entry = IndexEntry(
+        index_entry = build_index_entry(
             target_kind="memory_object",
             target_id=memory_object.id,
             index_type="lexical",
             text_view=normalize_for_index(index_source),
+            text_view_name=PATTERN_MEMORY_TEXT_VIEW,
+        )
+        return ProcessResult(
+            annotations=[],
+            memory_objects=[memory_object],
+            relations=[],
+            index_entries=[index_entry],
+        )
+
+
+    def _build_continuity_memory(self, group: ConsolidationGroup) -> ProcessResult:
+        conclusion_payload = list(_collect_conclusions(group))
+        support_lines = []
+        for candidate in group.candidates:
+            payload = candidate.memory_object.payload
+            candidate_text = payload.get("summary") or payload.get("decision") or payload.get("investigation_outcome") or ""
+            if candidate_text:
+                support_lines.append(f"- {candidate.memory_object.type}: {candidate_text}")
+
+        group_material = "\n".join(support_lines)
+        if len(group_material) > CONTINUITY_MEMORY_MAX_TEXT_CHARS:
+            group_material = group_material[:CONTINUITY_MEMORY_MAX_TEXT_CHARS].rstrip() + "\n[group material truncated for token budget]"
+
+        response = self._provider.generate_json(
+            system_prompt=CONTINUITY_MEMORY_SYSTEM_PROMPT,
+            user_prompt=(
+                "Create one compact repeated-answer continuity memory from this bounded single-thread memory set. "
+                "Use only explicit facts from the supplied memory and conclusions.\n\n"
+                f"Strategy: {group.strategy_name}\n"
+                f"Container ref: {group.container_ref or 'null'}\n"
+                f"Thread ref: {group.thread_ref or 'null'}\n"
+                f"Session ref: {group.session_ref or 'null'}\n"
+                f"Latest occurred at: {group.latest_occurred_at.isoformat()}\n"
+                f"Carried conclusions:\n{_format_conclusions(conclusion_payload)}\n\n"
+                f"Lower-level memory:\n{group_material}"
+            ),
+            schema_description=CONTINUITY_MEMORY_SCHEMA_DESCRIPTION,
+        )
+        parsed_summary = response.parsed_json.get("summary")
+        if not isinstance(parsed_summary, str) or not parsed_summary.strip():
+            raise ValueError("continuity memory extraction must return a non-empty summary string")
+        continuity_question = response.parsed_json.get("continuity_question")
+        if not isinstance(continuity_question, str) or not continuity_question.strip():
+            continuity_question = _default_continuity_question(group)
+        carry_forward_answer = response.parsed_json.get("carry_forward_answer")
+        if not isinstance(carry_forward_answer, str) or not carry_forward_answer.strip():
+            carry_forward_answer = _default_carry_forward_answer(conclusion_payload)
+
+        memory_object = MemoryObject(
+            type="continuity_memory",
+            schema_id=self.continuity_memory_schema_id,
+            schema_version="v1",
+            payload={
+                "summary": parsed_summary.strip(),
+                "continuity_question": continuity_question.strip(),
+                "carry_forward_answer": carry_forward_answer.strip(),
+                "conclusions": conclusion_payload,
+                "supporting_memory_ids": list(group.candidate_ids),
+                "latest_occurred_at": group.latest_occurred_at.isoformat(),
+                "container_ref": group.container_ref,
+                "thread_ref": group.thread_ref,
+                "session_ref": group.session_ref,
+                "group_key": group.group_key,
+                "semantic_provenance": {
+                    "semantic_plugin": self.name,
+                    "prompt_variant": self.prompt_variant,
+                },
+                "consolidation_provenance": {
+                    "memory_kind": "continuity_memory",
+                    "strategy_name": group.strategy_name,
+                    "strategy_version": group.strategy_version,
+                    "prompt_schema_id": CONTINUITY_MEMORY_PROMPT_SCHEMA_ID,
+                    "prompt_schema_version": CONTINUITY_MEMORY_PROMPT_SCHEMA_VERSION,
+                    "prompt_variant": self.prompt_variant,
+                },
+            },
+        )
+        index_source = " ".join(
+            [
+                parsed_summary.strip(),
+                continuity_question.strip(),
+                carry_forward_answer.strip(),
+                *[conclusion["text"] for conclusion in conclusion_payload if conclusion.get("text")],
+            ]
+        )
+        index_entry = build_index_entry(
+            target_kind="memory_object",
+            target_id=memory_object.id,
+            index_type="lexical",
+            text_view=normalize_for_index(index_source),
+            text_view_name=CONTINUITY_MEMORY_TEXT_VIEW,
         )
         return ProcessResult(
             annotations=[],
@@ -302,3 +427,30 @@ def _format_conclusions(conclusions: list[dict[str, str]]) -> str:
     if not conclusions:
         return "- none"
     return "\n".join(f"- {item['type']}: {item['text']}" for item in conclusions)
+
+
+def _is_single_thread_group(group: ConsolidationGroup) -> bool:
+    thread_refs = {candidate.thread_ref for candidate in group.candidates if candidate.thread_ref}
+    return bool(group.thread_ref) and len(thread_refs) <= 1
+
+
+def _should_build_continuity_memory(group: ConsolidationGroup) -> bool:
+    return group.strategy_name in {
+        "thread_local_carry_forward",
+        "thread_summary_anchored",
+    } and _is_single_thread_group(group)
+
+
+def _default_continuity_question(group: ConsolidationGroup) -> str:
+    for candidate in group.candidates:
+        if candidate.memory_object.type == "thread_summary":
+            summary = str(candidate.memory_object.payload.get("summary", "")).strip()
+            if summary:
+                return f"What prior answer should carry forward? {summary}"
+    return "What prior answer should carry forward from this conversation thread?"
+
+
+def _default_carry_forward_answer(conclusions: list[dict[str, str]]) -> str:
+    if conclusions:
+        return " ".join(item["text"] for item in conclusions)
+    return "A prior answer was recorded in this conversation thread."

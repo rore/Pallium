@@ -37,15 +37,10 @@ class ConsolidationSemanticPlugin(SemanticPlugin):
     def consolidation_policy(self) -> ConsolidationPolicy | None:
         raise NotImplementedError
 
-    @property
-    @abstractmethod
-    def pattern_memory_schema_id(self) -> str:
-        raise NotImplementedError
-
     @abstractmethod
     def supports_consolidation(self, memory_object: MemoryObject) -> bool:
         raise NotImplementedError
 
     @abstractmethod
-    def build_pattern_memory(self, group: ConsolidationGroup) -> ProcessResult:
+    def build_consolidated_memory(self, group: ConsolidationGroup) -> ProcessResult:
         raise NotImplementedError

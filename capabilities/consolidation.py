@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -104,8 +104,9 @@ class ConsolidationRunGroupResult:
     selected_candidate_ids: tuple[str, ...]
     selected_source_item_ids: tuple[str, ...]
     candidate_thread_refs: tuple[str | None, ...]
-    created_pattern_memory_ids: tuple[str, ...]
-    superseded_pattern_memory_ids: tuple[str, ...]
+    created_memory_ids: tuple[str, ...]
+    created_memory_types: tuple[str, ...]
+    superseded_memory_ids: tuple[str, ...]
     merge_rationale: dict[str, object] = field(default_factory=dict)
 
 
@@ -360,7 +361,7 @@ class ConsolidationCapability:
         plugin,
         group: ConsolidationGroup,
     ) -> ProcessResult:
-        return plugin.build_pattern_memory(group)
+        return plugin.build_consolidated_memory(group)
 
     def _build_candidate(self, storage: StorageProvider, memory_object: MemoryObject) -> ConsolidationCandidate | None:
         evidence = tuple(storage.get_evidence_for_memory_object(memory_object.id))
@@ -496,3 +497,19 @@ def _tokenize(text: str) -> list[str]:
 
 
 
+
+
+def _created_pattern_memory_ids(self) -> tuple[str, ...]:
+    return tuple(
+        memory_id
+        for memory_id, memory_type in zip(self.created_memory_ids, self.created_memory_types)
+        if memory_type == "pattern_memory"
+    )
+
+
+def _superseded_pattern_memory_ids(self) -> tuple[str, ...]:
+    return self.superseded_memory_ids
+
+
+ConsolidationRunGroupResult.created_pattern_memory_ids = property(_created_pattern_memory_ids)
+ConsolidationRunGroupResult.superseded_pattern_memory_ids = property(_superseded_pattern_memory_ids)

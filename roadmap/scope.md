@@ -1,16 +1,14 @@
-Pallium now has a dedicated validation layer for tiered memory, and the current `agent_conversation_memory` package has a recorded safety/value baseline for higher-level `pattern_memory`.
+Pallium now has a dedicated validation layer for tiered memory, a retrieval trace/debug path for lexical retrieval, and the current `agent_conversation_memory` package has recorded value for two bounded higher-level memory kinds: `pattern_memory` and `continuity_memory`.
 
 Current focus:
 - preserve the current product claim: Pallium improves cross-thread and cross-session recurring-question handling, not broad workspace search
 - keep `thread_summary_anchored` as the current package default because the validation benchmark shows it is conservative, interpretable, and broadly useful
 - use the tiered-memory validation benchmark to judge when higher-level memory should help and when lower-level memory should still win
 - keep tiered memory bounded, evidence-backed, and additive rather than operationalizing it as always-on behavior too early
-- move the next retrieval work into explainability and text-view modeling before broader retrieval or routing slices
+- use the new retrieval trace and named text-view model plus the new `continuity_memory` kind to guide retrieval-policy work before broader retrieval expansion
 
 Concrete next steps:
-- add retrieval trace and text-view modeling so Pallium can explain why a hit appeared and prepare later retrieval-policy work cleanly
-- then add `continuity_memory` as a second bounded higher-level memory kind and validate it separately from the current broad `pattern_memory` path
-- after multiple higher-level kinds exist, add internal intent-aware retrieval policy so the package can route broad recall, continuity, precise-fact, and evidence-trace questions without expanding the public API too early
+- add internal intent-aware retrieval policy so the package can route broad recall, continuity, precise-fact, and evidence-trace questions without expanding the public API too early
 - then add a vector retrieval provider behind the existing retrieval boundary
 - then add RRF-based hybrid retrieval fusion over lexical and vector candidates
 - add a generic privacy-aware scope enforcement foundation before any later cross-container sharing work
@@ -19,7 +17,7 @@ Concrete next steps:
 
 What the tiered-memory validation benchmark established:
 - broad recurring why-questions benefit most from consolidated `pattern_memory`
-- repeated-answer consistency also benefits from bounded higher-level memory, and this should be proved as its own memory kind before adding routed retrieval policy
+- repeated-answer consistency benefits from bounded `continuity_memory` carry-forward
 - same-thread and precise factual questions should not default to higher-level memory
 - exact factual and evidence-heavy questions should still prefer lower-level `decision` or `investigation_outcome`
 - the benchmark now records per-strategy trace data including merge rationale

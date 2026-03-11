@@ -4,7 +4,8 @@ import re
 from dataclasses import dataclass
 
 from core.contracts import ProcessResult
-from core.models import Annotation, IndexEntry, MemoryObject, Relation, SourceItem
+from core.indexing import build_index_entry
+from core.models import Annotation, MemoryObject, Relation, SourceItem
 
 
 SENTENCE_PATTERN = re.compile(r"(?<=[.!?])\s+")
@@ -194,6 +195,14 @@ def has_explicit_investigation_evidence(text: str | None) -> bool:
     return any(pattern.search(text) for pattern in INVESTIGATION_EVIDENCE_PATTERNS)
 
 
+def _memory_text_view_name(memory_type: str) -> str:
+    if memory_type == "decision":
+        return "memory_object.decision_context"
+    if memory_type == "investigation_outcome":
+        return "memory_object.investigation_context"
+    return "memory_object.summary"
+
+
 def build_process_result(
     source_item: SourceItem,
     extraction: SemanticExtraction,
@@ -331,11 +340,12 @@ def build_process_result(
         to_kind="source_item",
         to_id=source_item.id,
     )
-    index_entry = IndexEntry(
+    index_entry = build_index_entry(
         target_kind="memory_object",
         target_id=memory_object.id,
         index_type="lexical",
         text_view=normalize_for_index(index_source),
+        text_view_name=_memory_text_view_name(memory_object.type),
     )
     return ProcessResult(
         annotations=annotations,

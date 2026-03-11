@@ -7,7 +7,9 @@ from providers.llm.base import LLMJsonResponse
 
 class TieredMemorySemanticProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
-        if 'pattern_label' in schema_description:
+        if 'carry_forward_answer' in schema_description:
+            payload = _build_continuity_payload(user_prompt)
+        elif 'pattern_label' in schema_description:
             payload = _build_pattern_payload(user_prompt)
         elif 'Thread items:' in user_prompt:
             payload = _build_thread_summary_payload(user_prompt)
@@ -104,10 +106,36 @@ def _build_pattern_payload(user_prompt: str) -> dict[str, str]:
     }
 
 
+def _build_continuity_payload(user_prompt: str) -> dict[str, str]:
+    lower = user_prompt.lower()
+    if '30-minute batches' in lower or 'staff inbox spam' in lower:
+        return {
+            'summary': 'The prior thread already answered why overdue notices are batched.',
+            'continuity_question': 'Have we already answered why overdue notices are batched?',
+            'carry_forward_answer': 'Yes. We previously decided to send overdue notices in 30-minute batches to avoid staff inbox spam.',
+        }
+    if any(term in lower for term in ('duplicate holds', 'arrival-time ordering', 'item event time')):
+        return {
+            'summary': 'The prior thread already answered the reservation-ordering follow-up.',
+            'continuity_question': 'What did we previously conclude about duplicate holds after catalog sync delays?',
+            'carry_forward_answer': 'We concluded that arrival-time ordering applied stale hold updates during catalog sync delays, so item event time ordering should carry forward to prevent duplicate holds.',
+        }
+    return {
+        'summary': 'A prior thread already answered a repeated question.',
+        'continuity_question': 'What prior answer should carry forward from this conversation thread?',
+        'carry_forward_answer': 'A prior answer was already recorded in this conversation thread.',
+    }
+
+
 def _build_answer_payload(user_prompt: str) -> dict[str, object]:
     lower = user_prompt.lower()
 
     if 'what did we previously conclude about duplicate holds after catalog sync delays?' in lower:
+        if 'memory/continuity_memory' in lower:
+            return {
+                'answer': 'We previously concluded that arrival-time ordering applied stale hold updates during catalog sync delays, so item event time ordering should carry forward to prevent duplicate holds.',
+                'evidence_used': ['continuity_memory', 'arrival-time ordering applied stale hold updates', 'item event time ordering'],
+            }
         if 'memory/pattern_memory' in lower and 'reservation_ordering_pattern' in lower:
             return {
                 'answer': 'We previously concluded that catalog sync delays caused duplicate holds because arrival-time ordering applied stale hold updates, and we adopted item event time ordering to prevent duplicate holds.',
@@ -124,6 +152,11 @@ def _build_answer_payload(user_prompt: str) -> dict[str, object]:
         }
 
     if 'have we already answered why overdue notices are batched?' in lower:
+        if 'memory/continuity_memory' in lower:
+            return {
+                'answer': 'Yes. We already answered that overdue notices are sent in 30-minute batches to avoid staff inbox spam.',
+                'evidence_used': ['continuity_memory', '30-minute batches', 'staff inbox spam'],
+            }
         if 'memory/pattern_memory' in lower and 'notification_batching_pattern' in lower:
             return {
                 'answer': 'Yes. Prior conversation memory already concluded that overdue notices should be sent in 30-minute batches to avoid staff inbox spam.',
@@ -145,6 +178,11 @@ def _build_answer_payload(user_prompt: str) -> dict[str, object]:
                 'answer': 'We chose item event time for reservation ordering.',
                 'evidence_used': ['use item event time for reservation ordering'],
             }
+        if 'memory/continuity_memory' in lower:
+            return {
+                'answer': 'The prior thread says the ordering choice should carry forward, but it does not preserve the exact decision as directly as the lower-level record.',
+                'evidence_used': ['continuity_memory'],
+            }
         if 'memory/pattern_memory' in lower:
             return {
                 'answer': 'We changed reservation ordering after sync-delay problems, using a safer ordering approach.',
@@ -160,6 +198,11 @@ def _build_answer_payload(user_prompt: str) -> dict[str, object]:
             return {
                 'answer': 'The exact finding was that arrival-time ordering applied stale hold updates during catalog sync delays.',
                 'evidence_used': ['arrival-time ordering applied stale hold updates'],
+            }
+        if 'memory/continuity_memory' in lower:
+            return {
+                'answer': 'The prior thread says there was an earlier answer about sync-delay hold problems, but the exact investigation finding still comes through more precisely from the lower-level record.',
+                'evidence_used': ['continuity_memory'],
             }
         if 'memory/pattern_memory' in lower:
             return {
@@ -178,6 +221,11 @@ def _build_answer_payload(user_prompt: str) -> dict[str, object]:
         }
 
     if 'why do we use item event time for reservation ordering?' in lower:
+        if 'memory/continuity_memory' in lower:
+            return {
+                'answer': 'We use item event time for reservation ordering because the earlier thread already concluded that arrival-time ordering caused sync-delay hold problems, and that answer should carry forward.',
+                'evidence_used': ['continuity_memory', 'arrival-time ordering caused sync-delay hold problems'],
+            }
         if 'memory/pattern_memory' in lower and 'reservation_ordering_pattern' in lower:
             return {
                 'answer': 'We use item event time for reservation ordering because earlier catalog sync delays caused skipped or duplicate holds under arrival-time ordering, and the conversation pattern concluded that item event time ordering prevents that issue.',

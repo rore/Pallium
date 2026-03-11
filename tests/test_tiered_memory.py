@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -39,7 +39,7 @@ def _query(client: TestClient, payload: dict[str, object]) -> dict[str, object]:
     return response.json()
 
 
-def test_thread_local_strategy_groups_only_same_thread(monkeypatch, test_db_url: str) -> None:
+def test_thread_local_strategy_groups_only_same_thread_and_creates_continuity_memory(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
         _ingest_prior_events(client, 'thread-local-safe')
         result = client.app.state.pallium_service.run_consolidation_pass(
@@ -51,7 +51,7 @@ def test_thread_local_strategy_groups_only_same_thread(monkeypatch, test_db_url:
         assert len(result.groups) == 1
         group = result.groups[0]
         assert len({item for item in group.candidate_thread_refs if item}) == 1
-        assert group.created_pattern_memory_ids
+        assert group.created_memory_types == ('continuity_memory',)
 
 
 def test_container_topic_window_strategy_can_merge_cross_thread_related_memory(monkeypatch, test_db_url: str) -> None:
@@ -66,7 +66,7 @@ def test_container_topic_window_strategy_can_merge_cross_thread_related_memory(m
         assert len(result.groups) >= 1
         group = result.groups[0]
         assert len({item for item in group.candidate_thread_refs if item}) >= 2
-        assert group.created_pattern_memory_ids
+        assert 'pattern_memory' in group.created_memory_types
 
 
 def test_thread_summary_anchored_strategy_anchors_on_thread_summary(monkeypatch, test_db_url: str) -> None:
@@ -104,16 +104,20 @@ def test_unrelated_same_container_thread_does_not_false_merge(monkeypatch, test_
             assert term.lower() not in pattern_text
 
 
-def test_pattern_memory_preserves_evidence_and_query_integration(monkeypatch, test_db_url: str) -> None:
+def test_continuity_memory_preserves_evidence_and_query_integration(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
         scenario = _ingest_prior_events(client, 'thread-local-safe')
         result = client.app.state.pallium_service.run_consolidation_pass(
             use_case='agent_conversation_memory',
             strategy_name='thread_local_carry_forward',
         )
-        pattern_id = result.groups[0].created_pattern_memory_ids[0]
+        continuity_id = result.groups[0].created_memory_ids[0]
 
-        evidence = client.app.state.pallium_service._storage.get_evidence_for_memory_object(pattern_id)
+        continuity_memory = client.app.state.pallium_service._storage.get_memory_object(continuity_id)
+        assert continuity_memory.type == 'continuity_memory'
+        assert continuity_memory.payload['consolidation_provenance']['memory_kind'] == 'continuity_memory'
+
+        evidence = client.app.state.pallium_service._storage.get_evidence_for_memory_object(continuity_id)
         assert len(evidence) == 3
 
         payload = _query(client, scenario['current_query'])
@@ -122,19 +126,19 @@ def test_pattern_memory_preserves_evidence_and_query_integration(monkeypatch, te
             for item in payload['results']
             if item['result_kind'] == 'memory_hit'
         }
-        assert 'pattern_memory' in memory_types
+        assert 'continuity_memory' in memory_types
         assert 'decision' in memory_types
         assert 'investigation_outcome' in memory_types
 
 
-def test_rebuilding_same_group_supersedes_older_pattern_memory(monkeypatch, test_db_url: str) -> None:
+def test_rebuilding_same_group_supersedes_older_continuity_memory(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
         _ingest_prior_events(client, 'thread-local-safe')
         first = client.app.state.pallium_service.run_consolidation_pass(
             use_case='agent_conversation_memory',
             strategy_name='thread_local_carry_forward',
         )
-        first_pattern_id = first.groups[0].created_pattern_memory_ids[0]
+        first_continuity_id = first.groups[0].created_memory_ids[0]
 
         extra_event = {
             'source_type': 'assistant_artifact',
@@ -158,10 +162,10 @@ def test_rebuilding_same_group_supersedes_older_pattern_memory(monkeypatch, test
             use_case='agent_conversation_memory',
             strategy_name='thread_local_carry_forward',
         )
-        second_pattern_id = second.groups[0].created_pattern_memory_ids[0]
+        second_continuity_id = second.groups[0].created_memory_ids[0]
 
-        assert first_pattern_id != second_pattern_id
-        first_pattern = client.app.state.pallium_service._storage.get_memory_object(first_pattern_id)
-        second_pattern = client.app.state.pallium_service._storage.get_memory_object(second_pattern_id)
-        assert first_pattern.lifecycle == 'superseded'
-        assert second_pattern.lifecycle == 'active'
+        assert first_continuity_id != second_continuity_id
+        first_continuity = client.app.state.pallium_service._storage.get_memory_object(first_continuity_id)
+        second_continuity = client.app.state.pallium_service._storage.get_memory_object(second_continuity_id)
+        assert first_continuity.lifecycle == 'superseded'
+        assert second_continuity.lifecycle == 'active'

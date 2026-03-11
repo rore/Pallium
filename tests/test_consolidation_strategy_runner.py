@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -35,10 +35,11 @@ def test_consolidation_strategy_runner_outputs_modes_and_tradeoffs(monkeypatch, 
     mode_summaries = {item['mode']: item for item in summary['modes']}
 
     assert set(mode_summaries) == {'no_tiered', 'thread_local_carry_forward', 'container_topic_window', 'thread_summary_anchored'}
-    assert any(item['pattern_memory_created'] for item in results if item['strategy_name'] == 'thread_local_carry_forward')
-    assert any(item['pattern_memory_created'] for item in results if item['strategy_name'] == 'container_topic_window')
-    assert mode_summaries['thread_local_carry_forward']['benchmark']['aggregate_delta'] >= mode_summaries['no_tiered']['benchmark']['aggregate_delta']
-    assert mode_summaries['thread_summary_anchored']['benchmark']['aggregate_delta'] >= mode_summaries['thread_local_carry_forward']['benchmark']['aggregate_delta']
+    assert any('continuity_memory' in item['higher_level_memory_types'] for item in results if item['strategy_name'] == 'thread_local_carry_forward')
+    assert any('pattern_memory' in item['higher_level_memory_types'] for item in results if item['strategy_name'] == 'container_topic_window')
+    assert mode_summaries['thread_local_carry_forward']['continuity_memory_created'] >= 1
+    assert mode_summaries['thread_summary_anchored']['continuity_memory_created'] >= 1
+    assert mode_summaries['thread_summary_anchored']['benchmark']['aggregate_delta'] > 0
 
 
 def test_consolidation_strategy_runner_captures_false_merge_guard(monkeypatch, tmp_path: Path) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from core.models import QueryTrace
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -35,6 +36,7 @@ class IngestResult:
 @dataclass(frozen=True)
 class QueryResult:
     results: list
+    trace: QueryTrace | None = None
 
 
 def build_source_item(

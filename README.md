@@ -27,6 +27,7 @@ Current implemented shape:
   - `investigation_outcome`
   - `thread_summary`
   - `pattern_memory`
+  - `continuity_memory`
   - fallback `discussion_summary`
 - minimal memory lifecycle with `active` and `superseded`
 - committed semantic regression set and eval harness
@@ -76,6 +77,8 @@ Current semantic output supports:
 - `decision`
 - `investigation_outcome`
 - `thread_summary`
+- `pattern_memory`
+- `continuity_memory`
 - `discussion_summary`
 
 The LLM-backed path records semantic provenance with each derived artifact:
@@ -126,7 +129,7 @@ The scenarios compare:
 - baseline current-thread context only
 - current-thread context plus Pallium memory-backed retrieval
 
-Thread-level summaries now sit between atomic events and higher-level memory, and bounded consolidation can now produce one evidence-backed `pattern_memory` over `thread_summary`, `decision`, and `investigation_outcome`.
+Thread-level summaries now sit between atomic events and higher-level memory, and bounded consolidation can now produce evidence-backed higher-level memory over `thread_summary`, `decision`, and `investigation_outcome`: `pattern_memory` for broad recurring recall and `continuity_memory` for repeated-answer carry-forward.
 
 ## Recurring-Question Value Benchmark
 
@@ -152,11 +155,16 @@ The committed benchmark is the first user-facing proof layer for whether Pallium
 
 Pallium now includes the first bounded tiered-memory capability.
 
-It can build one higher-level `pattern_memory` over:
+It can build bounded higher-level memory over:
 
 - `thread_summary`
 - `decision`
 - `investigation_outcome`
+
+Current higher-level kinds:
+
+- `pattern_memory` for broad recurring cross-thread recall
+- `continuity_memory` for repeated-answer continuity and compact carry-forward
 
 Three bounded selection/grouping strategies are implemented and comparable:
 
@@ -212,9 +220,9 @@ The benchmark compares:
 
 Current recorded direction:
 
-- `container_topic_window` is strongest for broad cross-thread prior-conclusion questions
-- `thread_local_carry_forward` and `thread_summary_anchored` are better for repeated-answer continuity
-- precise factual and evidence-heavy questions should still prefer lower-level memory over `pattern_memory`
+- `container_topic_window` is strongest for broad cross-thread prior-conclusion questions and tends to produce `pattern_memory`
+- `thread_local_carry_forward` and bounded single-thread `thread_summary_anchored` are better for repeated-answer continuity and can produce `continuity_memory`
+- precise factual and evidence-heavy questions should still prefer lower-level memory over higher-level memory
 - all current strategies stayed false-merge-safe on the committed validation scenarios
 
 ## Run Locally

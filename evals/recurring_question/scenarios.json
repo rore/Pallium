@@ -127,6 +127,10 @@
     "target_question": "Have we already answered why overdue notices are batched?",
     "expected_value": true,
     "expected_memory_types": ["decision"],
+    "expected_higher_level_memory_types_by_strategy": {
+      "thread_local_carry_forward": ["continuity_memory"],
+      "thread_summary_anchored": ["continuity_memory"]
+    },
     "expected_answer_signals": [
       "30-minute batches",
       "staff inbox spam"

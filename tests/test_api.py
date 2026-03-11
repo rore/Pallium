@@ -102,6 +102,7 @@ def test_post_query_returns_compact_decision_memory_and_source_hits(client) -> N
 
     assert response.status_code == 200
     payload = response.json()
+    assert "trace" not in payload
     assert len(payload["results"]) >= 2
     result_kinds = {result["result_kind"] for result in payload["results"]}
     assert "memory_hit" in result_kinds
@@ -116,6 +117,42 @@ def test_post_query_returns_compact_decision_memory_and_source_hits(client) -> N
     assert source_hit["source_id"] == "decision-1"
     assert source_hit["excerpt"]
     assert "content" not in source_hit
+
+
+def test_post_query_debug_returns_trace_with_named_text_views(client) -> None:
+    client.post(
+        "/items",
+        json={
+            "source_type": "decision_note",
+            "source_id": "decision-debug-1",
+            "content_type": "text/plain",
+            "content": "Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates during sync delays.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "slack:C123",
+            "thread_ref": "thread-debug",
+            "session_ref": "session-debug",
+            "actor_ref": "agent:assistant",
+        },
+    )
+
+    response = client.post(
+        "/query/debug",
+        json={"text": "what did we decide about reservation ordering?", "limit": 5, "artifact_kind": "assistant_output"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["results"]) >= 2
+    assert payload["trace"]["query_tokens"]
+    assert payload["trace"]["stages"]
+
+    stage = payload["trace"]["stages"][0]
+    assert stage["stage_name"] == "lexical"
+    assert stage["candidate_hits_considered"] >= len(stage["selected_hits"])
+    assert any(hit["text_view_name"] == "memory_object.decision_context" for hit in stage["selected_hits"])
+    assert any(hit["text_view_name"] == "source_item.content" for hit in stage["selected_hits"])
+    assert any("reservation" in hit["matched_tokens"] for hit in stage["candidate_hits"])
 
 
 def test_post_query_returns_investigation_memory_and_source_hits(client) -> None:
@@ -277,8 +314,6 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
     assert any(result["result_kind"] == "source_hit" for result in payload["results"])
 
 
-
-
 def test_agent_conversation_memory_package_path_preserves_public_api_shape(monkeypatch, test_db_url: str) -> None:
     monkeypatch.setattr(
         "app.dependencies.build_llm_provider",
@@ -379,5 +414,3 @@ def test_llm_plugin_path_returns_server_error_when_provider_fails(monkeypatch, t
     )
 
     assert create_response.status_code == 500
-
-

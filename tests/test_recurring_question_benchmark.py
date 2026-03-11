@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -45,6 +45,7 @@ def test_recurring_question_benchmark_outputs_expected_shape(monkeypatch, tmp_pa
     assert len(results) == 3
     assert 'baseline_answer' in results[0]
     assert 'memory_backed_answer' in results[0]
+    assert 'higher_level_memory_types' in results[0]
     assert results[0]['rubric']['comparison']['winner']
 
 
@@ -100,7 +101,7 @@ def test_repeated_answer_consistency_rewards_prior_conclusion_carry_forward(monk
     assert repeated['rubric']['memory_backed']['consistency'] == 2
 
 
-def test_recurring_question_benchmark_can_run_with_consolidation_strategy(monkeypatch, tmp_path: Path) -> None:
+def test_recurring_question_benchmark_reports_continuity_memory_for_repeated_answer_strategy(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr('app.dependencies.build_llm_provider', lambda config, **_: TieredMemorySemanticProvider())
 
     run_dir = run_recurring_question_benchmark(
@@ -113,8 +114,9 @@ def test_recurring_question_benchmark_can_run_with_consolidation_strategy(monkey
     )
     summary = json.loads((run_dir / 'summary.json').read_text(encoding='utf-8'))
     results = _read_jsonl(run_dir / 'results.jsonl')
-    cross_thread = next(item for item in results if item['scenario_id'] == 'cross-thread-prior-conclusion')
+    repeated = next(item for item in results if item['scenario_id'] == 'repeated-answer-consistency')
 
     assert summary['consolidation_strategy'] == 'thread_summary_anchored'
-    assert cross_thread['consolidation_run'] is not None
-    assert any(item == 'pattern_memory' for item in cross_thread['returned_memory_types'])
+    assert repeated['consolidation_run'] is not None
+    assert 'continuity_memory' in repeated['higher_level_memory_types']
+    assert repeated['expected_higher_level_memory_types_found'] is True

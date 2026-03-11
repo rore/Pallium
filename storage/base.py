@@ -10,7 +10,13 @@ from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject,
 class IndexSearchHit:
     target_kind: str
     target_id: str
+    index_entry_id: str
+    index_type: str
+    text_view_name: str
     score: int
+    matched_tokens: tuple[str, ...]
+    provider_name: str | None = None
+    provider_version: str | None = None
 
 
 class StorageProvider(ABC):

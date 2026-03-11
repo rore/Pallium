@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.config import AppConfig
 from app.main import create_app
-from evals.recurring_question_benchmark import run_recurring_question_benchmark
+from evals.recurring_question_benchmark import HIGHER_LEVEL_MEMORY_TYPES, run_recurring_question_benchmark
 from providers.llm.base import LLMProvider
 
 
@@ -101,7 +101,9 @@ def run_consolidation_strategy_comparison(
 
             false_merges = sum(1 for item in mode_results if item['false_merge_occurred'])
             context_improvements = sum(1 for item in mode_results if item['improved_context_shape'])
-            created_patterns = sum(1 for item in mode_results if item['pattern_memory_created'])
+            higher_level_created = sum(1 for item in mode_results if item['higher_level_memory_created'])
+            pattern_created = sum(1 for item in mode_results if 'pattern_memory' in item['higher_level_memory_types'])
+            continuity_created = sum(1 for item in mode_results if 'continuity_memory' in item['higher_level_memory_types'])
             aggregate_delta = sum(
                 int(item['rubric']['memory_backed']['total']) - int(item['rubric']['baseline']['total'])
                 for item in benchmark_results
@@ -112,7 +114,9 @@ def run_consolidation_strategy_comparison(
                     'mode': mode_label,
                     'strategy_name': strategy_name,
                     'scenarios_total': len(mode_results),
-                    'pattern_memory_created': created_patterns,
+                    'higher_level_memory_created': higher_level_created,
+                    'pattern_memory_created': pattern_created,
+                    'continuity_memory_created': continuity_created,
                     'false_merges': false_merges,
                     'context_improvements': context_improvements,
                     'benchmark': {
@@ -185,12 +189,16 @@ def _run_consolidation_scenario(
 
     before_memory_types = _returned_memory_types(before_payload)
     after_memory_types = _returned_memory_types(after_payload)
-    pattern_hits = [item for item in after_payload['results'] if item.get('result_kind') == 'memory_hit' and item.get('type') == 'pattern_memory']
-    pattern_text = ' '.join(
+    higher_level_hits = [
+        item for item in after_payload['results']
+        if item.get('result_kind') == 'memory_hit' and item.get('type') in HIGHER_LEVEL_MEMORY_TYPES
+    ]
+    higher_level_memory_types = sorted({item.get('type') for item in higher_level_hits if item.get('type')})
+    higher_level_payload_text = ' '.join(
         json.dumps(item.get('payload') or {}).lower()
-        for item in pattern_hits
+        for item in higher_level_hits
     )
-    unexpected_terms = [term for term in scenario.get('unexpected_terms', []) if term.lower() in pattern_text]
+    unexpected_terms = [term for term in scenario.get('unexpected_terms', []) if term.lower() in higher_level_payload_text]
 
     return {
         'scenario_id': scenario['scenario_id'],
@@ -198,12 +206,13 @@ def _run_consolidation_scenario(
         'strategy_name': strategy_name or 'no_tiered',
         'before_memory_types': before_memory_types,
         'after_memory_types': after_memory_types,
-        'pattern_memory_created': bool(pattern_hits),
-        'pattern_memory_payloads': [item.get('payload') for item in pattern_hits],
+        'higher_level_memory_created': bool(higher_level_hits),
+        'higher_level_memory_types': higher_level_memory_types,
+        'higher_level_memory_payloads': [item.get('payload') for item in higher_level_hits],
         'consolidation_run': _serialize_consolidation_result(consolidation_result),
         'false_merge_occurred': bool(unexpected_terms),
         'unexpected_terms_found': unexpected_terms,
-        'improved_context_shape': (not pattern_hits and False) or (bool(pattern_hits) and len(before_memory_types) > 1),
+        'improved_context_shape': (not higher_level_hits and False) or (bool(higher_level_hits) and len(before_memory_types) > 1),
     }
 
 
@@ -224,8 +233,9 @@ def _serialize_consolidation_result(result: Any) -> dict[str, Any] | None:
                 'selected_candidate_ids': list(group.selected_candidate_ids),
                 'selected_source_item_ids': list(group.selected_source_item_ids),
                 'candidate_thread_refs': list(group.candidate_thread_refs),
-                'created_pattern_memory_ids': list(group.created_pattern_memory_ids),
-                'superseded_pattern_memory_ids': list(group.superseded_pattern_memory_ids),
+                'created_memory_ids': list(group.created_memory_ids),
+                'created_memory_types': list(group.created_memory_types),
+                'superseded_memory_ids': list(group.superseded_memory_ids),
                 'merge_rationale': group.merge_rationale,
             }
             for group in result.groups
@@ -258,6 +268,3 @@ def _build_run_id() -> str:
 
 if __name__ == '__main__':
     raise SystemExit(main())
-
-
-
