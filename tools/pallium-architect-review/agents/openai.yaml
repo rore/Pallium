@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pallium Architect Review"
+  short_description: "Review Pallium changes for value and fit"
+  default_prompt: "Use $pallium-architect-review to review this Pallium feature for product fit, architecture, and roadmap alignment."
