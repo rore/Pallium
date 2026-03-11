@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-03-10
+2026-03-11
 
 ## Repo Snapshot
 
@@ -101,4 +101,6 @@
 - `Retry-After` is honored when present
 - invalid successful responses remain fail-fast and are not retried
 - live eval/benchmark paths now use the same provider resilience path as normal semantic extraction
+
+
 

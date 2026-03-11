@@ -1,15 +1,18 @@
 Pallium now has its first higher-level memory layer for the `agent_conversation_memory` package: bounded, evidence-backed `pattern_memory` built over `thread_summary`, `decision`, and `investigation_outcome`.
 
 Current focus:
+- prove that tiered memory improves answers in the right cases and stays out of the way in the wrong ones
 - keep the first-package value claim explicit: Pallium improves cross-thread and cross-session recurring-question handling, not broad workspace search
 - treat tiered memory as a reusable capability between the generic core and semantic packages, with package-owned strategy policy
 - use the recorded strategy comparison to keep consolidation conservative and interpretable
 - preserve the current default package strategy: `thread_summary_anchored`
 - keep semantic quality measurable against the committed regression batch while higher-level memory grows
-- move the next retrieval work into explainability and text-view modeling before vector and fusion slices
+- validate tiered-memory usefulness and safety before changing the default consolidation posture
+- then move the next retrieval work into explainability and text-view modeling before vector and fusion slices
 
 Concrete next steps:
-- add retrieval trace and text-view modeling so Pallium can explain why a hit appeared and prepare cleanly for hybrid retrieval
+- add a tiered-memory validation benchmark that compares strategies, lower-level memory, and non-value cases
+- then add retrieval trace and text-view modeling so Pallium can explain why a hit appeared and prepare cleanly for hybrid retrieval
 - then add a vector retrieval provider behind the existing retrieval boundary
 - then add RRF-based hybrid retrieval fusion over lexical and vector candidates
 - keep reranking as a later optional extension after hybrid retrieval is measurable
