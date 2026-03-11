@@ -20,3 +20,6 @@ pallium.local.toml
 evals/consolidation/output/
 thread-evolution-demo*.db
 
+
+evals/tiered_memory_validation/output/
+
