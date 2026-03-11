@@ -172,7 +172,7 @@ Each run writes:
 - `results.jsonl`
 - `report.md`
 
-The current deterministic stub benchmark is intentionally diagnostic rather than purely celebratory: it confirms the main routing assumptions that already work and surfaces paraphrase cases where the heuristic policy still falls back to the wrong intent or layer.
+The current deterministic stub benchmark is intended to validate the routed policy end to end across broad recall, continuity, precise fact, evidence-trace, paraphrase, and guard scenarios before later retrieval expansion.
 
 ## Tiered Memory and Strategy Comparison
 

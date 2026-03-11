@@ -42,7 +42,7 @@ def test_memory_routing_benchmark_outputs_summary_results_and_report(monkeypatch
 
     assert summary['scenarios_total'] == 10
     assert len(results) == 10
-    assert summary['policy_successes'] >= 8
+    assert summary['policy_successes'] == 10
     assert '## Aggregate' in report
     assert summary['false_merge_failures'] == 0
 
@@ -62,11 +62,13 @@ def test_memory_routing_benchmark_captures_expected_layer_choices(monkeypatch, t
     assert results['broad-recall-cross-thread']['top_layer'] == 'pattern_memory'
     assert results['answer-continuity-repeat']['top_layer'] == 'continuity_memory'
     assert results['precise-fact-ordering']['top_layer'] == 'lower_level_memory'
+    assert results['broad-recall-paraphrase']['top_layer'] == 'pattern_memory'
     assert results['evidence-trace-exact']['top_layer'] == 'source_evidence'
+    assert results['evidence-trace-paraphrase-challenge']['top_layer'] == 'source_evidence'
     assert results['same-thread-low-value']['top_layer'] == 'none'
 
 
-def test_memory_routing_benchmark_exposes_challenging_evidence_trace_paraphrase(monkeypatch, tmp_path: Path) -> None:
+def test_memory_routing_benchmark_handles_evidence_trace_paraphrase(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr('app.dependencies.build_llm_provider', lambda config, **_: TieredMemorySemanticProvider())
 
     run_dir = run_memory_routing_benchmark(
@@ -79,7 +81,7 @@ def test_memory_routing_benchmark_exposes_challenging_evidence_trace_paraphrase(
     results = {item['scenario_id']: item for item in _read_jsonl(run_dir / 'results.jsonl')}
     challenge = results['evidence-trace-paraphrase-challenge']
 
-    assert challenge['intent_match'] is False
-    assert challenge['policy_success'] is False
+    assert challenge['intent_match'] is True
+    assert challenge['policy_success'] is True
     assert challenge['expected_intent'] == 'evidence_trace'
-    assert challenge['routing_intent'] == 'precise_fact'
+    assert challenge['routing_intent'] == 'evidence_trace'

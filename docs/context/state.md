@@ -75,9 +75,9 @@
   - `1` non-value scenario where memory-backed correctly did not win
 - deterministic memory-routing benchmark run succeeded locally:
   - `evals/memory_routing/output/local-memory-routing-stub`
-  - `8 / 10` policy-success scenarios
+  - `10 / 10` policy-success scenarios
   - `0` false-merge failures
-  - `2` diagnostic failures on paraphrased broad-recall / evidence-trace queries
+  - broad recall, continuity, precise fact, and evidence-trace scenarios all matched the current routed-policy expectations
 - semantic regression baseline remains the committed real OpenAI run on the current batch
 - current recorded semantic baseline on `gpt-5-mini` with `strict_typed_memory_v4_evidence_guarded` is:
   - `30 / 30` overall correct

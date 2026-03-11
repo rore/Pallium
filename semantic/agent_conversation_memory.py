@@ -128,6 +128,16 @@ BROAD_RECALL_CUES = (
     "what did we learn",
     "why did we choose",
     "why do we use",
+    "general lesson",
+    "what lesson",
+    "should we remember",
+    "what should we remember",
+)
+BROAD_RECALL_ABSTRACTION_CUES = (
+    "general lesson",
+    "what lesson",
+    "should we remember",
+    "what should we remember",
 )
 PRECISE_FACT_CUES = (
     "what ordering",
@@ -147,6 +157,9 @@ EVIDENCE_TRACE_CUES = (
     "supported the",
     "supporting evidence",
     "trace",
+    "which prior message",
+    "prior message",
+    "backed the",
 )
 
 
@@ -198,7 +211,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         preferred_layers = ROUTING_PREFERRED_LAYERS[intent]
         query_tokens = _routing_query_tokens(text)
         scored_candidates = [
-            _score_routed_candidate(item, intent, query_tokens=query_tokens, lexical_rank=index)
+            _score_routed_candidate(item, intent, query_text=text, query_tokens=query_tokens, lexical_rank=index)
             for index, item in enumerate(retrieval_result.results, start=1)
         ]
         ranked_candidates = sorted(
@@ -541,6 +554,7 @@ def _score_routed_candidate(
     item: QueryResultItem,
     intent: str,
     *,
+    query_text: str,
     query_tokens: tuple[str, ...],
     lexical_rank: int,
 ) -> dict[str, object]:
@@ -551,7 +565,7 @@ def _score_routed_candidate(
     routing_score = (
         ROUTING_LAYER_WEIGHTS[intent][layer]
         + (lexical_score * 10)
-        + _specificity_bonus(item, intent)
+        + _specificity_bonus(item, intent, query_text=query_text)
         + _routing_overlap_adjustment(layer, intent, content_overlap_tokens)
     )
     return {
@@ -576,7 +590,7 @@ def _result_layer(item: QueryResultItem) -> str:
     return "lower_level_memory"
 
 
-def _specificity_bonus(item: QueryResultItem, intent: str) -> int:
+def _specificity_bonus(item: QueryResultItem, intent: str, *, query_text: str) -> int:
     bonus = 0
     if item.result_kind == "memory_hit" and item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
         bonus += 40 if intent in {"precise_fact", "evidence_trace"} else 20
@@ -586,9 +600,16 @@ def _specificity_bonus(item: QueryResultItem, intent: str) -> int:
         bonus += 25
     if item.result_kind == "memory_hit" and item.type == "pattern_memory" and intent == "broad_recall":
         bonus += 25
+        if _query_contains_any(query_text, BROAD_RECALL_ABSTRACTION_CUES):
+            bonus += 45
     if item.result_kind == "source_hit" and intent == "evidence_trace":
         bonus += 30 if item.artifact_kind == "assistant_output" else 10
     return bonus
+
+
+def _query_contains_any(text: str, cues: Iterable[str]) -> bool:
+    lowered = text.lower()
+    return any(cue in lowered for cue in cues)
 
 
 def _routing_query_tokens(text: str) -> tuple[str, ...]:
