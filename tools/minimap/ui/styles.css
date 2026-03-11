@@ -147,11 +147,63 @@ h3 {
   justify-content: center;
   padding: 0.3rem 0.7rem;
   border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
   font-size: 0.76rem;
   font-weight: 700;
   line-height: 1;
+}
+
+.chip,
+.group-count {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.badge {
+  border: 1px solid rgba(63, 82, 118, 0.1);
+  background: rgba(21, 32, 51, 0.055);
+  color: var(--muted);
+}
+
+.badge-tone-neutral {
+  border-color: rgba(63, 82, 118, 0.1);
+  background: rgba(21, 32, 51, 0.055);
+  color: var(--muted);
+}
+
+.badge-tone-status-done {
+  border-color: rgba(21, 121, 90, 0.18);
+  background: rgba(21, 121, 90, 0.11);
+  color: var(--success);
+}
+
+.badge-tone-status-progress {
+  border-color: rgba(44, 108, 255, 0.18);
+  background: rgba(44, 108, 255, 0.1);
+  color: var(--accent-strong);
+}
+
+.badge-tone-status-blocked {
+  border-color: rgba(196, 61, 67, 0.18);
+  background: rgba(196, 61, 67, 0.1);
+  color: var(--danger);
+}
+
+.badge-tone-status-queued {
+  border-color: rgba(63, 82, 118, 0.12);
+  background: rgba(96, 112, 137, 0.09);
+  color: var(--muted);
+}
+
+.badge-tone-commitment-committed {
+  border-color: rgba(44, 108, 255, 0.16);
+  background: rgba(44, 108, 255, 0.08);
+  color: var(--accent-strong);
+}
+
+.badge-tone-commitment-uncommitted {
+  border-color: rgba(63, 82, 118, 0.1);
+  background: rgba(21, 32, 51, 0.045);
+  color: var(--muted);
 }
 
 .chip-muted {

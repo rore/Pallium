@@ -735,15 +735,63 @@ function renderSetupView() {
   }
 }
 
+function normalizeBadgeToken(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function getBadgeTone(field, value) {
+  const normalizedValue = normalizeBadgeToken(value);
+
+  if (field === "status") {
+    if (normalizedValue === "done") {
+      return "status-done";
+    }
+    if (normalizedValue === "blocked") {
+      return "status-blocked";
+    }
+    if (normalizedValue === "in-progress") {
+      return "status-progress";
+    }
+    if (normalizedValue === "queued") {
+      return "status-queued";
+    }
+  }
+
+  if (field === "commitment") {
+    if (normalizedValue === "committed") {
+      return "commitment-committed";
+    }
+    if (normalizedValue === "uncommitted") {
+      return "commitment-uncommitted";
+    }
+  }
+
+  return "neutral";
+}
+
+function renderBadge(value, field = "") {
+  const normalizedField = normalizeBadgeToken(field);
+  const tone = getBadgeTone(normalizedField, value);
+  const classes = ["badge", `badge-tone-${tone}`];
+  if (normalizedField) {
+    classes.push(`badge-field-${normalizedField}`);
+  }
+  return `<span class="${classes.join(" ")}">${escapeHtml(value)}</span>`;
+}
+
 function renderBadges(item, excludeKey = "") {
   return [
-    excludeKey === "status" ? "" : item.status,
-    excludeKey === "priority" ? "" : item.priority,
-    excludeKey === "commitment" ? "" : item.commitment,
-    excludeKey === "milestone" ? "" : item.milestone,
+    excludeKey === "status" ? null : { field: "status", value: item.status },
+    excludeKey === "priority" ? null : { field: "priority", value: item.priority },
+    excludeKey === "commitment" ? null : { field: "commitment", value: item.commitment },
+    excludeKey === "milestone" ? null : { field: "milestone", value: item.milestone },
   ]
-    .filter(Boolean)
-    .map((value) => `<span class="badge">${escapeHtml(value)}</span>`)
+    .filter((entry) => entry?.value)
+    .map((entry) => renderBadge(entry.value, entry.field))
     .join("");
 }
 
@@ -2226,9 +2274,14 @@ function renderPreview() {
   const metadata = getStructuredMetadata();
   const sections = getStructuredSections();
   const orderedSections = getStructuredSectionHeadings().filter((heading) => Object.hasOwn(sections, heading));
-  const previewBadges = [metadata.status, metadata.priority, metadata.commitment, metadata.milestone]
-    .filter(Boolean)
-    .map((value) => `<span class="badge">${escapeHtml(value)}</span>`)
+  const previewBadges = [
+    { field: "status", value: metadata.status },
+    { field: "priority", value: metadata.priority },
+    { field: "commitment", value: metadata.commitment },
+    { field: "milestone", value: metadata.milestone },
+  ]
+    .filter((entry) => entry.value)
+    .map((entry) => renderBadge(entry.value, entry.field))
     .join("");
   const sectionHtml = orderedSections.map((heading) => `
     <section class="preview-section">
