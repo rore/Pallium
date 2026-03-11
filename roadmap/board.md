@@ -1,5 +1,4 @@
 # Next
-- add-tiered-memory-validation-benchmark
 - add-retrieval-trace-and-text-view-model
 
 # Later
@@ -10,8 +9,10 @@
 - idea-evidence-backed-agent-memory
 - idea-optional-embedding-provider-support
 - idea-optional-reranker-support
+- idea-consolidation-trace-and-retrieval-policy-eval
 
 # Done
+- add-tiered-memory-validation-benchmark
 - add-tiered-memory-extension
 - add-conversation-thread-aggregate
 - add-recurring-question-value-benchmark
@@ -29,5 +30,3 @@
 - add-first-semantic-layer-and-promotion
 - add-agent-memory-simulation
 - build-structured-retrieval-foundation
-
-

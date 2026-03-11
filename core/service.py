@@ -215,6 +215,7 @@ class PalliumService:
                     candidate_thread_refs=tuple(candidate.thread_ref for candidate in group.candidates),
                     created_pattern_memory_ids=tuple(memory.id for memory in synthesized.memory_objects if memory.type == PATTERN_MEMORY_TYPE),
                     superseded_pattern_memory_ids=tuple(superseded_ids),
+                    merge_rationale=group.merge_rationale,
                 )
             )
 
@@ -359,3 +360,5 @@ class PalliumService:
                 continue
             ids.append(memory_object.id)
         return ids
+
+

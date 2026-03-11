@@ -1,0 +1,48 @@
+{
+  "run_id": "debug-tiered-memory-validation",
+  "created_at": "2026-03-11T12:31:24.163774+00:00",
+  "scenario_file": "evals\\tiered_memory_validation\\scenarios.json",
+  "results_file": "results.jsonl",
+  "provider": "openai_compatible",
+  "model": "fake-answer-model",
+  "prompt_variant": "strict_typed_memory_v4_evidence_guarded",
+  "scenarios_total": 6,
+  "strategies": [
+    {
+      "strategy_name": "thread_local_carry_forward",
+      "scenarios_total": 6,
+      "expected_to_help": 1,
+      "helped_as_expected": 3,
+      "wins_over_lower_level": 4,
+      "lower_level_beats_strategy": 1,
+      "false_merges": 0,
+      "context_reduction_total": 0,
+      "policy_successes": 3,
+      "evidence_preserved": 6
+    },
+    {
+      "strategy_name": "container_topic_window",
+      "scenarios_total": 6,
+      "expected_to_help": 1,
+      "helped_as_expected": 6,
+      "wins_over_lower_level": 1,
+      "lower_level_beats_strategy": 5,
+      "false_merges": 0,
+      "context_reduction_total": 0,
+      "policy_successes": 6,
+      "evidence_preserved": 6
+    },
+    {
+      "strategy_name": "thread_summary_anchored",
+      "scenarios_total": 6,
+      "expected_to_help": 1,
+      "helped_as_expected": 3,
+      "wins_over_lower_level": 4,
+      "lower_level_beats_strategy": 1,
+      "false_merges": 0,
+      "context_reduction_total": 0,
+      "policy_successes": 3,
+      "evidence_preserved": 6
+    }
+  ]
+}

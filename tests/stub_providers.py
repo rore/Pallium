@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 
@@ -81,7 +81,7 @@ def _build_thread_summary_payload(user_prompt: str) -> dict[str, str]:
 
 
 def _build_pattern_payload(user_prompt: str) -> dict[str, str]:
-    has_reservation = 'item event time' in user_prompt.lower() or 'arrival-time ordering' in user_prompt.lower()
+    has_reservation = any(term in user_prompt.lower() for term in ('item event time', 'arrival-time ordering', 'duplicate holds', 'stale hold updates'))
     has_notification = '30-minute batches' in user_prompt.lower() or 'staff inbox spam' in user_prompt.lower()
     if has_reservation and has_notification:
         return {
@@ -90,7 +90,7 @@ def _build_pattern_payload(user_prompt: str) -> dict[str, str]:
         }
     if has_reservation:
         return {
-            'summary': 'Catalog sync delays previously caused reservation ordering problems; item event time ordering was adopted to prevent skipped or duplicate holds.',
+            'summary': 'Catalog sync delays previously caused duplicate holds because arrival-time ordering applied stale hold updates; item event time ordering was adopted to prevent duplicate holds.',
             'pattern_label': 'reservation_ordering_pattern',
         }
     if has_notification:
@@ -106,8 +106,79 @@ def _build_pattern_payload(user_prompt: str) -> dict[str, str]:
 
 def _build_answer_payload(user_prompt: str) -> dict[str, object]:
     lower = user_prompt.lower()
+
+    if 'what did we previously conclude about duplicate holds after catalog sync delays?' in lower:
+        if 'memory/pattern_memory' in lower and 'reservation_ordering_pattern' in lower:
+            return {
+                'answer': 'We previously concluded that catalog sync delays caused duplicate holds because arrival-time ordering applied stale hold updates, and we adopted item event time ordering to prevent duplicate holds.',
+                'evidence_used': ['reservation_ordering_pattern', 'duplicate holds', 'item event time'],
+            }
+        if 'memory/decision' in lower or 'memory/investigation_outcome' in lower:
+            return {
+                'answer': 'We found that arrival-time ordering applied stale hold updates during catalog sync delays, and we chose item event time ordering to prevent duplicate holds.',
+                'evidence_used': ['arrival-time ordering applied stale hold updates', 'use item event time for reservation ordering'],
+            }
+        return {
+            'answer': 'The current thread says duplicate holds are happening again, but it does not include the earlier conclusion.',
+            'evidence_used': [],
+        }
+
+    if 'have we already answered why overdue notices are batched?' in lower:
+        if 'memory/pattern_memory' in lower and 'notification_batching_pattern' in lower:
+            return {
+                'answer': 'Yes. Prior conversation memory already concluded that overdue notices should be sent in 30-minute batches to avoid staff inbox spam.',
+                'evidence_used': ['notification_batching_pattern', '30-minute batches', 'staff inbox spam'],
+            }
+        if '30-minute batches' in lower:
+            return {
+                'answer': 'Yes. We previously decided to send overdue notices in 30-minute batches to avoid staff inbox spam.',
+                'evidence_used': ['Decision: send overdue notices in 30-minute batches to avoid staff inbox spam.'],
+            }
+        return {
+            'answer': 'The current thread says the question is being asked again, but it does not include the earlier answer.',
+            'evidence_used': [],
+        }
+
+    if 'what ordering did we choose for reservation updates?' in lower:
+        if 'memory/decision' in lower:
+            return {
+                'answer': 'We chose item event time for reservation ordering.',
+                'evidence_used': ['use item event time for reservation ordering'],
+            }
+        if 'memory/pattern_memory' in lower:
+            return {
+                'answer': 'We changed reservation ordering after sync-delay problems, using a safer ordering approach.',
+                'evidence_used': ['reservation_ordering_pattern'],
+            }
+        return {
+            'answer': 'The current thread does not contain the exact ordering choice.',
+            'evidence_used': [],
+        }
+
+    if 'what exact finding supported the ordering change?' in lower:
+        if 'memory/investigation_outcome' in lower:
+            return {
+                'answer': 'The exact finding was that arrival-time ordering applied stale hold updates during catalog sync delays.',
+                'evidence_used': ['arrival-time ordering applied stale hold updates'],
+            }
+        if 'memory/pattern_memory' in lower:
+            return {
+                'answer': 'The prior pattern says sync delays caused duplicate-hold problems, but it does not preserve the exact finding as clearly.',
+                'evidence_used': ['reservation_ordering_pattern'],
+            }
+        return {
+            'answer': 'The current thread does not include the exact investigation finding.',
+            'evidence_used': [],
+        }
+
+    if 'why is the rare-book reservation cutoff 48 hours?' in lower:
+        return {
+            'answer': 'The 48-hour cutoff reduces no-show holds before weekend pickups and gives the next patron time to collect the item.',
+            'evidence_used': [],
+        }
+
     if 'why do we use item event time for reservation ordering?' in lower:
-        if 'memory/pattern_memory' in lower and 'reservation ordering problems' in lower:
+        if 'memory/pattern_memory' in lower and 'reservation_ordering_pattern' in lower:
             return {
                 'answer': 'We use item event time for reservation ordering because earlier catalog sync delays caused skipped or duplicate holds under arrival-time ordering, and the conversation pattern concluded that item event time ordering prevents that issue.',
                 'evidence_used': ['reservation_ordering_pattern', 'catalog sync delays', 'skipped holds'],
@@ -122,24 +193,8 @@ def _build_answer_payload(user_prompt: str) -> dict[str, object]:
             'evidence_used': [],
         }
 
-    if 'have we already answered why overdue notices are batched?' in lower:
-        if 'memory/pattern_memory' in lower and '30-minute batches' in lower:
-            return {
-                'answer': 'Yes. Prior conversation memory already concluded that overdue notices should be sent in 30-minute batches to avoid staff inbox spam.',
-                'evidence_used': ['notification_batching_pattern', '30-minute batches', 'staff inbox spam'],
-            }
-        if '30-minute batches' in lower:
-            return {
-                'answer': 'Yes. We previously decided to send overdue notices in 30-minute batches to avoid staff inbox spam.',
-                'evidence_used': ['Decision: send overdue notices in 30-minute batches to avoid staff inbox spam.'],
-            }
-        return {
-            'answer': 'Yes, we already answered that overdue notices are batched.',
-            'evidence_used': [],
-        }
-
     return {
-        'answer': 'The 48-hour cutoff reduces no-show holds before weekend pickups and gives the next patron time to collect the item.',
+        'answer': 'The current thread context is sufficient for this question.',
         'evidence_used': [],
     }
 
@@ -159,5 +214,3 @@ def _extract_sentence_containing(text: str, phrase: str) -> str:
         if phrase in line:
             return line.rstrip('.')
     return phrase
-
-

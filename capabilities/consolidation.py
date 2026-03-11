@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
@@ -77,6 +77,7 @@ class ConsolidationGroup:
     thread_ref: str | None
     session_ref: str | None
     latest_occurred_at: datetime
+    merge_rationale: dict[str, object] = field(default_factory=dict)
 
     @property
     def candidate_ids(self) -> tuple[str, ...]:
@@ -105,6 +106,7 @@ class ConsolidationRunGroupResult:
     candidate_thread_refs: tuple[str | None, ...]
     created_pattern_memory_ids: tuple[str, ...]
     superseded_pattern_memory_ids: tuple[str, ...]
+    merge_rationale: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -171,6 +173,13 @@ class ThreadLocalCarryForwardStrategy(ConsolidationStrategy):
                     thread_ref=thread_ref,
                     session_ref=session_ref,
                     latest_occurred_at=latest,
+                    merge_rationale={
+                        "grouping_mode": "same_thread",
+                        "container_ref": container_ref,
+                        "thread_ref": thread_ref,
+                        "candidate_types": [candidate.memory_object.type for candidate in selected],
+                        "pattern_signal": "thread_local_pattern_signal",
+                    },
                 )
             )
         return groups
@@ -193,6 +202,7 @@ class ContainerTopicWindowStrategy(ConsolidationStrategy):
                 continue
             group_members = [anchor]
             anchor_threads = {anchor.thread_ref}
+            overlap_scores: dict[str, int] = {}
             for candidate in remaining:
                 if candidate.memory_object.id == anchor.memory_object.id or candidate.memory_object.id in consumed:
                     continue
@@ -200,12 +210,14 @@ class ContainerTopicWindowStrategy(ConsolidationStrategy):
                     continue
                 if _hours_between(anchor.latest_occurred_at, candidate.latest_occurred_at) > policy.time_window_hours:
                     continue
-                if _lexical_overlap(anchor.tokens, candidate.tokens) < policy.lexical_overlap_threshold:
+                overlap_score = _lexical_overlap(anchor.tokens, candidate.tokens)
+                if overlap_score < policy.lexical_overlap_threshold:
                     continue
                 if len(group_members) >= policy.max_group_size:
                     break
                 group_members.append(candidate)
                 anchor_threads.add(candidate.thread_ref)
+                overlap_scores[candidate.memory_object.id] = overlap_score
 
             if len(group_members) < 2 or len({item.thread_ref for item in group_members if item.thread_ref}) < 2:
                 continue
@@ -227,6 +239,14 @@ class ContainerTopicWindowStrategy(ConsolidationStrategy):
                     thread_ref=None,
                     session_ref=_representative_session_ref(ordered),
                     latest_occurred_at=latest,
+                    merge_rationale={
+                        "grouping_mode": "container_topic_window",
+                        "anchor_memory_id": anchor.memory_object.id,
+                        "grouped_thread_refs": sorted({candidate.thread_ref for candidate in ordered if candidate.thread_ref}),
+                        "overlap_scores": overlap_scores,
+                        "time_window_hours": policy.time_window_hours,
+                        "lexical_overlap_threshold": policy.lexical_overlap_threshold,
+                    },
                 )
             )
 
@@ -248,16 +268,19 @@ class ThreadSummaryAnchoredStrategy(ConsolidationStrategy):
 
         for anchor in _sort_candidates(anchors):
             members = [anchor]
+            overlap_scores: dict[str, int] = {}
             for candidate in _sort_candidates(typed):
                 if candidate.container_ref != anchor.container_ref and policy.same_container_required:
                     continue
                 if _hours_between(anchor.latest_occurred_at, candidate.latest_occurred_at) > policy.time_window_hours:
                     continue
-                if _lexical_overlap(anchor.tokens, candidate.tokens) < policy.lexical_overlap_threshold:
+                overlap_score = _lexical_overlap(anchor.tokens, candidate.tokens)
+                if overlap_score < policy.lexical_overlap_threshold:
                     continue
                 if len(members) >= policy.max_group_size:
                     break
                 members.append(candidate)
+                overlap_scores[candidate.memory_object.id] = overlap_score
 
             if len(members) < 2 or not _group_has_pattern_signal(members):
                 continue
@@ -275,6 +298,14 @@ class ThreadSummaryAnchoredStrategy(ConsolidationStrategy):
                     thread_ref=anchor.thread_ref,
                     session_ref=_representative_session_ref(ordered),
                     latest_occurred_at=latest,
+                    merge_rationale={
+                        "grouping_mode": "thread_summary_anchored",
+                        "anchor_memory_id": anchor.memory_object.id,
+                        "anchor_thread_ref": anchor.thread_ref,
+                        "attached_candidate_ids": [candidate.memory_object.id for candidate in ordered if candidate.memory_object.id != anchor.memory_object.id],
+                        "overlap_scores": overlap_scores,
+                        "lexical_overlap_threshold": policy.lexical_overlap_threshold,
+                    },
                 )
             )
 

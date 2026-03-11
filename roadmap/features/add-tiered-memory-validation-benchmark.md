@@ -1,10 +1,10 @@
 ---
 id: add-tiered-memory-validation-benchmark
 title: Add tiered-memory validation benchmark
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary
@@ -92,3 +92,12 @@ Scenario families to cover:
 - one-off issue with no recurrence where tiered memory should add little or nothing
 
 This feature should turn the current consolidation strategy comparison into a product-validation layer, not just an engineering harness.
+
+Recorded current findings:
+
+- `container_topic_window` is the best fit for broad cross-thread prior-conclusion scenarios because it can produce one combined `pattern_memory` when one bounded cross-thread pattern is expected.
+- `thread_local_carry_forward` is strongest for repeated-answer continuity that mostly lives within one thread and should remain the safety/control strategy.
+- `thread_summary_anchored` remains the best current package default because it balances usefulness, interpretability, and conservative grouping across the current scenario set.
+- precise factual and evidence-heavy questions should keep preferring lower-level `decision` / `investigation_outcome` over `pattern_memory`.
+- the benchmark now records `merge_rationale` so strategy behavior is inspectable rather than opaque.
+

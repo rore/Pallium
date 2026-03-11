@@ -146,7 +146,7 @@ Each run writes:
 - `summary.json`
 - `results.jsonl`
 
-The committed benchmark is the first user-facing proof layer for whether Pallium improves recurring-question handling before higher-level memory is added.
+The committed benchmark is the first user-facing proof layer for whether Pallium improves recurring-question handling with current-thread context, lower-level memory, and later higher-level memory modes.
 
 ## Tiered Memory and Strategy Comparison
 
@@ -185,6 +185,37 @@ Each run writes:
 - `summary.json`
 - `results.jsonl`
 
+
+## Tiered-Memory Validation Benchmark
+
+Pallium includes a dedicated benchmark for deciding when higher-level `pattern_memory` is actually useful and which consolidation strategy is safest.
+
+Run it with:
+
+```powershell
+.\.venv\Scripts\python.exe -m evals.tiered_memory_validation_runner
+```
+
+Each run writes:
+
+- `summary.json`
+- `results.jsonl`
+
+The benchmark compares:
+
+- baseline current-thread context only
+- lower-level memory without tiered consolidation
+- tiered memory with:
+  - `thread_local_carry_forward`
+  - `container_topic_window`
+  - `thread_summary_anchored`
+
+Current recorded direction:
+
+- `container_topic_window` is strongest for broad cross-thread prior-conclusion questions
+- `thread_local_carry_forward` and `thread_summary_anchored` are better for repeated-answer continuity
+- precise factual and evidence-heavy questions should still prefer lower-level memory over `pattern_memory`
+- all current strategies stayed false-merge-safe on the committed validation scenarios
 
 ## Run Locally
 
@@ -285,3 +316,5 @@ Use `--split-output` only when you want per-input debug files.
 - [C:/Dev/rore/Pallium/docs/context/architecture.md](C:/Dev/rore/Pallium/docs/context/architecture.md)
 - [C:/Dev/rore/Pallium/docs/context/state.md](C:/Dev/rore/Pallium/docs/context/state.md)
 - [C:/Dev/rore/Pallium/roadmap/board.md](C:/Dev/rore/Pallium/roadmap/board.md)
+
+

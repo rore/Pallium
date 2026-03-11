@@ -40,11 +40,12 @@
 - realistic agent-conversation scenarios now exist under `evals/agent_conversation/`
 - recurring-question benchmark now exists under `evals/recurring_question/`
 - consolidation strategy comparison harness now exists under `evals/consolidation/`
+- tiered-memory validation benchmark now exists under `evals/tiered_memory_validation/`
 - committed examples/tests use a neutral library reservation and catalog sync sample domain
 
 ## Verification Notes
 
-- `pytest` passes locally: `63 passed`
+- `pytest` passes locally: `65 passed`
 - thread aggregation tests pass locally
 - live scenario harness run succeeded locally:
   - `evals/agent_conversation/output/local-agent-conversation-smoke`
@@ -79,6 +80,12 @@
 
 - bounded tiered memory now produces `pattern_memory` over `thread_summary`, `decision`, and `investigation_outcome`
 - current package default strategy: `thread_summary_anchored`
+- deterministic tiered-memory validation benchmark recorded:
+  - `evals/tiered_memory_validation/output/local-tiered-memory-validation-stub`
+  - all three strategies stayed false-merge-safe on the current scenario set
+  - `container_topic_window` won the broad cross-thread prior-conclusion scenario
+  - `thread_local_carry_forward` and `thread_summary_anchored` won the repeated-answer continuity scenario
+  - lower-level memory correctly beat higher-level memory on precise factual and evidence-heavy questions
 - deterministic strategy-comparison run recorded:
   - `thread_local_carry_forward`: broad same-thread pattern coverage, no false merges
   - `container_topic_window`: most selective cross-thread grouping, no false merges after stopword filtering
@@ -101,6 +108,7 @@
 - `Retry-After` is honored when present
 - invalid successful responses remain fail-fast and are not retried
 - live eval/benchmark paths now use the same provider resilience path as normal semantic extraction
+
 
 
 

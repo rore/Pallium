@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
@@ -241,6 +241,7 @@ def _serialize_consolidation_result(result: Any) -> dict[str, Any] | None:
                 "candidate_thread_refs": list(group.candidate_thread_refs),
                 "created_pattern_memory_ids": list(group.created_pattern_memory_ids),
                 "superseded_pattern_memory_ids": list(group.superseded_pattern_memory_ids),
+                "merge_rationale": group.merge_rationale,
             }
             for group in result.groups
         ],
@@ -472,4 +473,6 @@ def _build_run_id(config: AppConfig, consolidation_strategy: str | None) -> str:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
 

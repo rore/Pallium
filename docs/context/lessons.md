@@ -206,3 +206,14 @@ Consolidate from trusted lower-level semantic units such as `thread_summary`, `d
 - minimum overlap requirements
 Only then synthesize higher-level memory inside that bounded set.
 
+
+## 2026-03-11 - Tiered-memory validation must separate broad recurring questions from precise factual ones
+
+Problem:
+A consolidation strategy can look helpful if it compresses lower-level memory, even when a precise factual or evidence-heavy question should still be answered from lower-level `decision` or `investigation_outcome`.
+
+Why:
+Context reduction alone is not the same as better retrieval policy. Broad recurring why-questions and repeated-answer continuity benefit from `pattern_memory`, but precise factual and evidence-heavy questions can lose useful precision if higher-level memory is allowed to dominate.
+
+Solution:
+Benchmark tiered memory in multiple modes: baseline, lower-level memory, and per-strategy higher-level memory. Score broad recurring questions separately from precise factual/evidence-heavy questions, and only count tiered memory as a win when it improves the intended question class without violating expected grouping shape.
