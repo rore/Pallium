@@ -238,3 +238,25 @@ Current package default:
 - `thread_summary_anchored`
 
 The current default was chosen because it keeps thread summaries as the main interpretable unit, allows bounded cross-thread carry-forward, and stayed conservative on the current false-merge guard scenario.
+
+Current architectural stance on tiered memory:
+
+- higher-level memory remains **promising but not yet fully product-proven**
+- consolidation should remain bounded and policy-controlled, not broad global clustering
+- grouping should stay symbolic-first:
+  - package boundary
+  - eligible lower-level types
+  - container and time constraints
+  - minimum overlap guards
+  - synthesis only inside that bounded set
+- `pattern_memory` is the first higher-level type, not the final higher-level ontology
+
+Current main unresolved risk:
+
+- principled candidate selection and grouping for consolidation
+
+Current expected follow-up hardening:
+
+- richer consolidation trace and merge rationale
+- explicit retrieval-policy evaluation for when `pattern_memory` should win over lower-level memory or source evidence
+

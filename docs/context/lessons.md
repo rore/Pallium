@@ -190,3 +190,19 @@ Retries, backoff, and request-id capture are framework concerns shared by semant
 
 Solution:
 Keep resilience in the provider layer with conservative retries, bounded backoff, `Retry-After` support, request-id capture, and bounded in-process concurrency. Package code should continue to call the same `generate_json(...)` contract.
+## 2026-03-11 - Tiered memory should consolidate from trusted intermediate units with symbolic guards first
+
+Problem:
+It is tempting to treat higher-level memory as broad semantic clustering over all stored events, but that creates the highest risk of false merges and misleading patterns.
+
+Why:
+Recent memory-system research and current Pallium experiments both point to the same weakness: principled grouping is the hardest part of consolidation, and broad semantic grouping alone is too fragile.
+
+Solution:
+Consolidate from trusted lower-level semantic units such as `thread_summary`, `decision`, and `investigation_outcome`, and keep grouping bounded by hard guards first:
+- same package
+- eligible memory types only
+- container and time constraints
+- minimum overlap requirements
+Only then synthesize higher-level memory inside that bounded set.
+

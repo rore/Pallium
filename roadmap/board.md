@@ -7,6 +7,7 @@
 
 # Ideas
 - idea-evidence-backed-agent-memory
+- idea-consolidation-trace-and-retrieval-policy-eval
 - idea-optional-embedding-provider-support
 - idea-optional-reranker-support
 
@@ -28,3 +29,4 @@
 - add-first-semantic-layer-and-promotion
 - add-agent-memory-simulation
 - build-structured-retrieval-foundation
+

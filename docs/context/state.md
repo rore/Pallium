@@ -84,6 +84,15 @@
   - `container_topic_window`: most selective cross-thread grouping, no false merges after stopword filtering
   - `thread_summary_anchored`: broad useful pattern coverage with bounded cross-thread carry-forward and no false merges
 - a live OpenAI-backed consolidation comparison can still fail transiently on provider `503`; the deterministic stub harness is the current reproducible comparison baseline
+- external tiered-memory research broadly validates the current Pallium direction:
+  - consolidate from trusted lower-level semantic units
+  - keep higher-level memory additive and evidence-backed
+  - keep tiered memory in a reusable capability layer with package-owned policy
+- the main unresolved tiered-memory risk is still principled candidate selection and grouping
+- `pattern_memory` should be treated as the first higher-level type, not the final higher-level ontology
+- likely follow-up hardening after the current retrieval slices:
+  - consolidation trace and merge rationale
+  - retrieval-policy evaluation for when higher-level memory should beat lower-level memory
 
 ## LLM Resilience Notes
 
@@ -92,3 +101,4 @@
 - `Retry-After` is honored when present
 - invalid successful responses remain fail-fast and are not retried
 - live eval/benchmark paths now use the same provider resilience path as normal semantic extraction
+

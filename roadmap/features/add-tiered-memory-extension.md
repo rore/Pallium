@@ -63,3 +63,10 @@ Recorded strategy outcome on the deterministic comparison harness:
   - matched the benchmark baseline while producing broader useful pattern coverage than the stricter container-only strategy
 
 The current default was chosen because it produced conservative, interpretable groups without false merges while keeping room for cross-thread carry-forward. Hybrid retrieval remains a later retrieval-layer concern, not part of this consolidation slice.
+
+Additional retained design understanding:
+- the broader field validates consolidation from trusted intermediate semantic units rather than directly from raw events
+- the main unresolved risk remains principled candidate selection and grouping
+- `pattern_memory` should be treated as the first higher-level type, not the final ontology
+- consolidation should remain explicit and bounded until retrieval-policy and product-value evidence are stronger
+
