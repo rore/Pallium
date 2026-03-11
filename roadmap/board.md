@@ -2,10 +2,10 @@
 - add-retrieval-trace-and-text-view-model
 
 # Later
-- add-vector-retrieval-provider
-- add-hybrid-retrieval-fusion
 - add-continuity-memory-kind
 - add-internal-intent-aware-memory-routing
+- add-vector-retrieval-provider
+- add-hybrid-retrieval-fusion
 - add-privacy-aware-memory-scope-and-sharing-foundation
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
