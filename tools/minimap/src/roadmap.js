@@ -30,7 +30,7 @@ const DEFAULT_DRAGGABLE_LENS_FIELDS = new Set(["status", "commitment", "priority
 const FILTER_FACET_EXCLUDED_KEYS = new Set(["id", "title"]);
 const LENS_EXCLUDED_KEYS = new Set(["id", "title", "labels"]);
 const MAX_FILTER_VALUES = 8;
-const MAX_GENERIC_LENS_VALUES = 8;
+const MAX_GENERIC_LENS_VALUES = 6;
 
 export class AppError extends Error {
   constructor(message, statusCode, code, details = null) {
@@ -395,6 +395,13 @@ function normalizeLensFieldConfig(rawConfig) {
       }
     }
 
+    if (Array.isArray(options.values)) {
+      const values = uniqueValuesInOrder(options.values);
+      if (values.length > 0) {
+        entry.values = values;
+      }
+    }
+
     if (typeof options.draggable === "boolean") {
       entry.draggable = options.draggable;
     }
@@ -423,7 +430,21 @@ function getLensFieldOrder(workspaceConfig, field) {
     return configured.order;
   }
 
+  if (configured?.values?.length) {
+    return configured.values;
+  }
+
   return DEFAULT_LENS_FIELD_ORDER[field] || [];
+}
+
+function getLensFieldDomain(workspaceConfig, field) {
+  const configured = getConfiguredLensField(workspaceConfig, field);
+  if (configured?.values?.length) {
+    return configured.values;
+  }
+
+  const order = getLensFieldOrder(workspaceConfig, field);
+  return order.length > 0 ? order : [];
 }
 
 function isLensFieldDraggable(workspaceConfig, field) {
@@ -475,11 +496,17 @@ export function deriveAvailableLenses(itemSummaries, workspaceConfig = { lenses:
   }
 
   const builtInOrder = ["status", "commitment", "priority", "kind", "milestone"];
+  const configuredFields = Object.keys(workspaceConfig?.lenses?.fields || {});
   const lenses = [{ key: "board", label: "Board", kind: "board", draggable: false, values: [] }];
 
   for (const field of builtInOrder) {
     const stats = fieldStats.get(field);
-    if (!stats || stats.valueSet.size < 2) {
+    const combinedValues = uniqueValuesInOrder([
+      ...getLensFieldDomain(workspaceConfig, field),
+      ...Array.from(stats?.valueSet || []),
+    ]);
+
+    if (combinedValues.length < 2) {
       continue;
     }
 
@@ -488,12 +515,46 @@ export function deriveAvailableLenses(itemSummaries, workspaceConfig = { lenses:
       label: humanizeLensKey(field),
       kind: "derived",
       draggable: field !== "milestone" && isLensFieldDraggable(workspaceConfig, field),
-      values: sortValuesByPreferredOrder(Array.from(stats.valueSet), getLensFieldOrder(workspaceConfig, field)),
+      values: sortValuesByPreferredOrder(combinedValues, getLensFieldOrder(workspaceConfig, field)),
+    });
+  }
+
+  for (const field of configuredFields.sort((left, right) => left.localeCompare(right))) {
+    if (builtInOrder.includes(field) || LENS_EXCLUDED_KEYS.has(field)) {
+      continue;
+    }
+
+    const stats = fieldStats.get(field);
+    if (stats?.multiValue) {
+      continue;
+    }
+
+    const combinedValues = uniqueValuesInOrder([
+      ...getLensFieldDomain(workspaceConfig, field),
+      ...Array.from(stats?.valueSet || []),
+    ]);
+
+    if (combinedValues.length < 2) {
+      continue;
+    }
+
+    lenses.push({
+      key: field,
+      label: humanizeLensKey(field),
+      kind: "derived",
+      draggable: isLensFieldDraggable(workspaceConfig, field),
+      values: sortValuesByPreferredOrder(combinedValues, getLensFieldOrder(workspaceConfig, field)),
     });
   }
 
   for (const [field, stats] of Array.from(fieldStats.entries()).sort((left, right) => left[0].localeCompare(right[0]))) {
-    if (builtInOrder.includes(field) || stats.multiValue || stats.valueSet.size < 2 || stats.valueSet.size > MAX_GENERIC_LENS_VALUES) {
+    if (
+      builtInOrder.includes(field)
+      || configuredFields.includes(field)
+      || stats.multiValue
+      || stats.valueSet.size < 2
+      || stats.valueSet.size > MAX_GENERIC_LENS_VALUES
+    ) {
       continue;
     }
 

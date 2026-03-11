@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   AppError,
+  initializeWorkspace,
   loadWorkspace,
   readItemById,
   saveBoardByGroups,
@@ -84,6 +85,12 @@ async function handleApi(request, response, pathname) {
 
   if (request.method === "GET" && pathname === "/api/workspace") {
     const workspace = await loadWorkspace(repoRoot);
+    sendJson(response, 200, workspace);
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/setup/initialize") {
+    const workspace = await initializeWorkspace(repoRoot);
     sendJson(response, 200, workspace);
     return true;
   }
@@ -248,3 +255,7 @@ listenOnAvailablePort(server, requestedPort)
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;
   });
+
+
+
+

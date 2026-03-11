@@ -5,6 +5,8 @@ const DEFAULT_SCOPE_WIDTH = 272;
 const MIN_SCOPE_WIDTH = 240;
 const MAX_SCOPE_WIDTH = 440;
 const DEFAULT_LENS_KEY = "board";
+const DEFAULT_BOARD_LAYOUT = "list";
+const BOARD_LAYOUTS = new Set(["list", "columns"]);
 const UNASSIGNED_GROUP_KEY = "__unassigned__";
 const UNASSIGNED_GROUP_LABEL = "Unassigned";
 const EDITOR_MODES = new Set(["preview", "structured", "raw"]);
@@ -15,6 +17,7 @@ const state = {
   selectedItemId: null,
   currentItem: null,
   activeLens: DEFAULT_LENS_KEY,
+  boardLayout: DEFAULT_BOARD_LAYOUT,
   dragItemId: null,
   dragClickSuppressUntil: 0,
   lensesExpanded: false,
@@ -45,6 +48,9 @@ const boardCancelButton = document.querySelector("#board-cancel-button");
 const boardSearchInput = document.querySelector("#board-search");
 const boardLensSwitcherElement = document.querySelector("#board-lens-switcher");
 const boardViewToggleButton = document.querySelector("#board-view-toggle");
+const boardLayoutControlsElement = document.querySelector("#board-layout-controls");
+const boardLayoutListButton = document.querySelector("#board-layout-list");
+const boardLayoutColumnsButton = document.querySelector("#board-layout-columns");
 const boardFilterToggleButton = document.querySelector("#board-filter-toggle");
 const boardClearFiltersButton = document.querySelector("#board-clear-filters");
 const boardFiltersElement = document.querySelector("#board-filters");
@@ -65,6 +71,12 @@ const repoNameElement = document.querySelector("#repo-name");
 const editorTitleElement = document.querySelector("#editor-title");
 const editorSubtitleElement = document.querySelector("#editor-subtitle");
 const editorPanelElement = document.querySelector("#editor-panel");
+const editorPanelAnchor = document.querySelector("#editor-panel-anchor");
+const editorOverlayElement = document.querySelector("#editor-overlay");
+const editorOverlaySlotElement = document.querySelector("#editor-overlay-slot");
+const editorOverlayBackdrop = document.querySelector("#editor-overlay-backdrop");
+const editorCancelButton = document.querySelector("#editor-cancel-button");
+const editorOverlayCloseButton = document.querySelector("#editor-overlay-close");
 const saveButton = document.querySelector("#save-button");
 const refreshButton = document.querySelector("#refresh-button");
 const statusBanner = document.querySelector("#status-banner");
@@ -85,6 +97,7 @@ const fields = {
   status: document.querySelector("#field-status"),
   priority: document.querySelector("#field-priority"),
   commitment: document.querySelector("#field-commitment"),
+  boardGroup: document.querySelector("#field-board-group"),
   milestone: document.querySelector("#field-milestone"),
 };
 
@@ -289,6 +302,14 @@ function isBoardLensActive(workspace = state.workspace) {
   return getActiveLensDefinition(workspace)?.key === DEFAULT_LENS_KEY;
 }
 
+function normalizeBoardLayout(value) {
+  return BOARD_LAYOUTS.has(String(value || "").trim()) ? String(value || "").trim() : DEFAULT_BOARD_LAYOUT;
+}
+
+function isColumnsLayoutActive() {
+  return normalizeBoardLayout(state.boardLayout) === "columns";
+}
+
 function normalizeSearchQuery(value) {
   return String(value ?? "").trim().toLowerCase();
 }
@@ -400,6 +421,7 @@ function getItemLensGroupValue(item, lensKey) {
 function buildDerivedVisibleGroups(workspace, lens) {
   const groups = new Map();
   const preferredValues = Array.isArray(lens?.values) ? lens.values : [];
+  const showEmptyGroups = isColumnsLayoutActive() && preferredValues.length > 0;
 
   preferredValues.forEach((value, index) => {
     groups.set(value, {
@@ -438,7 +460,7 @@ function buildDerivedVisibleGroups(workspace, lens) {
   }
 
   const visibleGroups = Array.from(groups.values())
-    .filter((group) => group.items.length > 0)
+    .filter((group) => group.items.length > 0 || showEmptyGroups)
     .sort((left, right) => {
       if (left.originalIndex !== right.originalIndex) {
         return left.originalIndex - right.originalIndex;
@@ -503,6 +525,19 @@ function getFirstVisibleBoardItemId(workspace = state.workspace) {
 function canDragItemsInActiveLens(workspace = state.workspace) {
   const lens = getActiveLensDefinition(workspace);
   return Boolean(lens && lens.kind === "derived" && lens.draggable && !state.boardEditMode);
+}
+
+function canDragItemsInColumnLayout(workspace = state.workspace) {
+  const lens = getActiveLensDefinition(workspace);
+  if (!lens || state.boardEditMode || !isColumnsLayoutActive()) {
+    return false;
+  }
+
+  if (lens.key === DEFAULT_LENS_KEY) {
+    return true;
+  }
+
+  return Boolean(lens.kind === "derived" && lens.draggable);
 }
 
 function humanizeFilterKey(key) {
@@ -758,6 +793,7 @@ function readRouteState() {
     itemId: params.get("item") || "",
     mode: normalizeEditorMode(params.get("mode") || "preview"),
     lens: params.get("lens") || DEFAULT_LENS_KEY,
+    layout: normalizeBoardLayout(params.get("layout") || DEFAULT_BOARD_LAYOUT),
     query: normalizeSearchQuery(params.get("q") || ""),
     filters: parseRouteFilters(params),
   };
@@ -765,19 +801,25 @@ function readRouteState() {
 
 function buildRouteHash(itemId = state.selectedItemId, mode = state.editorMode) {
   const params = new URLSearchParams();
+  const persistSelectedItem = !shouldUseEditorOverlay() || state.editorOverlayOpen;
 
-  if (itemId) {
+  if (persistSelectedItem && itemId) {
     params.set("item", itemId);
   }
 
   const normalizedMode = normalizeEditorMode(mode);
-  if (normalizedMode !== "preview") {
+  if (persistSelectedItem && normalizedMode !== "preview") {
     params.set("mode", normalizedMode);
   }
 
   const lensKey = normalizeLensKey(state.activeLens);
   if (lensKey !== DEFAULT_LENS_KEY) {
     params.set("lens", lensKey);
+  }
+
+  const layout = normalizeBoardLayout(state.boardLayout);
+  if (layout !== DEFAULT_BOARD_LAYOUT) {
+    params.set("layout", layout);
   }
 
   if (state.searchQuery) {
@@ -819,13 +861,114 @@ function scrollPanelIntoView(element) {
 
 function syncMobileNavigation() {
   const stacked = isStackedLayout();
-  const hasItem = Boolean(state.selectedItemId);
-  jumpToBoardButton.hidden = !stacked;
-  jumpToBoardButton.disabled = !stacked;
-  jumpToEditorButton.hidden = !stacked || !hasItem || state.boardEditMode;
-  jumpToEditorButton.disabled = !stacked || !hasItem || state.boardEditMode;
+  const hasInlineItem = Boolean(state.selectedItemId) && !shouldUseEditorOverlay();
+  jumpToBoardButton.hidden = !stacked || shouldUseEditorOverlay();
+  jumpToBoardButton.disabled = !stacked || shouldUseEditorOverlay();
+  jumpToEditorButton.hidden = !stacked || !hasInlineItem || state.boardEditMode;
+  jumpToEditorButton.disabled = !stacked || !hasInlineItem || state.boardEditMode;
 }
 
+function shouldUseEditorOverlay() {
+  return !isSetupMode() && isColumnsLayoutActive();
+}
+
+function renderEditorPresentation() {
+  const useOverlay = shouldUseEditorOverlay();
+  const showOverlay = useOverlay && state.editorOverlayOpen && Boolean(state.currentItem && state.selectedItemId);
+
+  if (useOverlay) {
+    if (editorOverlaySlotElement && editorPanelElement.parentElement !== editorOverlaySlotElement) {
+      editorOverlaySlotElement.appendChild(editorPanelElement);
+    }
+  } else if (editorPanelAnchor && editorPanelElement.parentElement !== layoutElement) {
+    layoutElement.insertBefore(editorPanelElement, editorPanelAnchor);
+  }
+
+  layoutElement.dataset.editorOverlayOpen = String(showOverlay);
+  document.body.dataset.editorOverlayOpen = String(showOverlay);
+  if (editorOverlayElement) {
+    editorOverlayElement.hidden = !showOverlay;
+    editorOverlayElement.setAttribute("aria-hidden", showOverlay ? "false" : "true");
+    editorOverlayElement.dataset.open = String(showOverlay);
+  }
+}
+
+function confirmCloseCurrentItem() {
+  if (!state.currentItem || !hasUnsavedCurrentItemChanges()) {
+    return true;
+  }
+
+  if (state.dirtyRaw) {
+    return window.confirm("Discard unsaved raw markdown changes and close the item?");
+  }
+
+  return window.confirm("Discard unsaved item changes and close the item?");
+}
+
+function closeEditorOverlay(force = false) {
+  if (!force && !confirmCloseCurrentItem()) {
+    return false;
+  }
+
+  state.editorOverlayOpen = false;
+  resetEditor();
+  syncWorkspaceChrome();
+  renderBoard();
+  syncRouteState({ replace: true });
+  return true;
+}
+
+function renderLayoutControls() {
+  if (!boardLayoutControlsElement || !boardLayoutListButton || !boardLayoutColumnsButton) {
+    return;
+  }
+
+  const hidden = isSetupMode() || state.boardEditMode || !state.workspace;
+  boardLayoutControlsElement.hidden = hidden;
+
+  if (hidden) {
+    return;
+  }
+
+  const activeLayout = normalizeBoardLayout(state.boardLayout);
+  const buttons = [
+    [boardLayoutListButton, "list"],
+    [boardLayoutColumnsButton, "columns"],
+  ];
+
+  for (const [button, layoutKey] of buttons) {
+    const active = layoutKey === activeLayout;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+    button.disabled = active;
+  }
+}
+
+function positionLensControls() {
+  if (!boardLensSwitcherElement || !boardViewToggleButton || !boardControlsElement || boardLensSwitcherElement.hidden) {
+    return;
+  }
+
+  if (window.innerWidth <= 760) {
+    boardLensSwitcherElement.style.left = "0px";
+    boardLensSwitcherElement.style.right = "0px";
+    boardLensSwitcherElement.style.top = "42px";
+    return;
+  }
+
+  boardLensSwitcherElement.style.right = "auto";
+
+  const controlsRect = boardControlsElement.getBoundingClientRect();
+  const triggerRect = boardViewToggleButton.getBoundingClientRect();
+  const desiredLeft = triggerRect.left - controlsRect.left;
+  const desiredTop = triggerRect.bottom - controlsRect.top + 6;
+  const panelWidth = boardLensSwitcherElement.offsetWidth;
+  const maxLeft = Math.max(0, controlsRect.width - panelWidth);
+  const clampedLeft = Math.min(Math.max(0, desiredLeft), maxLeft);
+
+  boardLensSwitcherElement.style.left = `${Math.round(clampedLeft)}px`;
+  boardLensSwitcherElement.style.top = `${Math.round(desiredTop)}px`;
+}
 
 function renderLensControls() {
   if (!boardLensSwitcherElement || !boardViewToggleButton) {
@@ -855,6 +998,9 @@ function renderLensControls() {
   if (!showLenses) {
     boardLensSwitcherElement.hidden = true;
     boardLensSwitcherElement.innerHTML = "";
+    boardLensSwitcherElement.style.left = "";
+    boardLensSwitcherElement.style.right = "";
+    boardLensSwitcherElement.style.top = "";
     return;
   }
 
@@ -864,6 +1010,7 @@ function renderLensControls() {
 
   boardLensSwitcherElement.hidden = false;
   boardLensSwitcherElement.innerHTML = `<div class="board-lens-buttons">${buttonsHtml}</div>`;
+  positionLensControls();
 
   for (const button of boardLensSwitcherElement.querySelectorAll("[data-lens-key]")) {
     button.addEventListener("click", () => {
@@ -939,14 +1086,17 @@ function renderSearchControls() {
     });
   }
 }
+
 function renderBoardChrome() {
   const setupMode = isSetupMode();
   const boardLensActive = isBoardLensActive();
-  boardEditButton.hidden = setupMode || state.boardEditMode || !boardLensActive;
+  const listLayoutActive = !isColumnsLayoutActive();
+  boardEditButton.hidden = setupMode || state.boardEditMode || !boardLensActive || !listLayoutActive;
   boardSaveButton.hidden = setupMode || !state.boardEditMode;
   boardCancelButton.hidden = setupMode || !state.boardEditMode;
   boardControlsElement.hidden = setupMode;
   boardSaveButton.disabled = !state.boardDirty;
+  renderLayoutControls();
   renderSearchControls();
 }
 
@@ -978,9 +1128,21 @@ function renderScopeChrome() {
 function renderEditorChrome() {
   const setupMode = isSetupMode();
   const hasItem = Boolean(state.currentItem && state.selectedItemId);
+  const useOverlay = shouldUseEditorOverlay() && state.editorOverlayOpen && hasItem;
+  const overlayPreview = useOverlay && state.editorMode === "preview";
   editorPanelElement.dataset.editorMode = state.editorMode;
   saveButton.hidden = setupMode;
   editorTabsElement.hidden = setupMode;
+
+  if (editorCancelButton) {
+    editorCancelButton.hidden = true;
+    editorCancelButton.disabled = true;
+  }
+
+  if (editorOverlayCloseButton) {
+    editorOverlayCloseButton.hidden = true;
+    editorOverlayCloseButton.disabled = true;
+  }
 
   if (setupMode) {
     for (const pane of modePanes) {
@@ -990,26 +1152,34 @@ function renderEditorChrome() {
   }
 
   if (state.editorMode === "preview") {
-    saveButton.textContent = "Edit";
+    saveButton.hidden = !overlayPreview;
+    saveButton.textContent = "Close";
     saveButton.disabled = !hasItem;
     return;
   }
 
+  const dirty = state.editorMode === "raw" ? state.dirtyRaw : state.dirtyStructured;
+  saveButton.hidden = false;
   saveButton.textContent = "Save";
-  saveButton.disabled = state.editorMode === "raw"
-    ? !hasItem || !state.dirtyRaw
-    : !hasItem || !state.dirtyStructured;
+  saveButton.disabled = !hasItem || !dirty;
+
+  if (editorCancelButton) {
+    editorCancelButton.hidden = !hasItem;
+    editorCancelButton.disabled = !hasItem;
+  }
 }
 
 function syncWorkspaceChrome() {
   const setupMode = isSetupMode();
   document.body.dataset.setupMode = String(setupMode);
   layoutElement.dataset.setupMode = String(setupMode);
+  layoutElement.dataset.boardLayout = normalizeBoardLayout(state.boardLayout);
   updateDocumentTitle();
   updateWorkspaceSummary();
   renderBoardChrome();
   renderScopeChrome();
   renderEditorChrome();
+  renderEditorPresentation();
   renderSetupView();
   syncMobileNavigation();
 }
@@ -1256,10 +1426,140 @@ function buildBoardGroupOptions(selectedIndex) {
     .join("");
 }
 
-function clearDerivedDragState() {
+function getBoardGroupIndexForItem(itemId, workspace = state.workspace) {
+  if (!workspace || !itemId) {
+    return -1;
+  }
+
+  return workspace.boardGroups.findIndex((group) => group.items.some((item) => item.id === itemId));
+}
+
+function renderBoardGroupField(itemId = state.selectedItemId) {
+  if (!fields.boardGroup) {
+    return;
+  }
+
+  const groups = state.workspace?.boardGroups ?? [];
+  const selectedIndex = getBoardGroupIndexForItem(itemId);
+
+  if (groups.length === 0) {
+    fields.boardGroup.innerHTML = '<option value="">No board groups</option>';
+    fields.boardGroup.disabled = true;
+    return;
+  }
+
+  const options = groups.map((group, index) => {
+    const label = group.name.trim() || `Group ${index + 1}`;
+    return `<option value="${index}">${escapeHtml(label)}</option>`;
+  }).join("");
+
+  fields.boardGroup.innerHTML = selectedIndex < 0
+    ? `<option value="" selected>Not on board</option>${options}`
+    : options;
+  fields.boardGroup.disabled = false;
+  fields.boardGroup.value = selectedIndex >= 0 ? String(selectedIndex) : "";
+}
+
+function buildBoardGroupsWithMovedItem(itemId, targetGroupIndex, boardGroups = buildBoardGroupsPayload()) {
+  if (!itemId || !Number.isInteger(targetGroupIndex) || targetGroupIndex < 0 || targetGroupIndex >= boardGroups.length) {
+    return null;
+  }
+
+  const sourceGroupIndex = boardGroups.findIndex((group) => group.itemIds.includes(itemId));
+  if (sourceGroupIndex < 0 || sourceGroupIndex === targetGroupIndex) {
+    return null;
+  }
+
+  const groups = boardGroups.map((group) => ({
+    ...group,
+    itemIds: [...group.itemIds],
+  }));
+
+  groups[sourceGroupIndex] = {
+    ...groups[sourceGroupIndex],
+    itemIds: groups[sourceGroupIndex].itemIds.filter((currentId) => currentId !== itemId),
+  };
+  groups[targetGroupIndex] = {
+    ...groups[targetGroupIndex],
+    itemIds: [...groups[targetGroupIndex].itemIds.filter((currentId) => currentId !== itemId), itemId],
+  };
+
+  return groups;
+}
+
+function clearBoardDragState() {
   state.dragItemId = null;
-  for (const dropZone of boardGroupsElement.querySelectorAll("[data-lens-drop-value]")) {
+  for (const dropZone of boardGroupsElement.querySelectorAll("[data-lens-drop-value], [data-board-drop-group-index]")) {
     dropZone.classList.remove("is-drop-target");
+  }
+  for (const element of boardGroupsElement.querySelectorAll(".is-dragging")) {
+    element.classList.remove("is-dragging");
+  }
+}
+
+function buildBoardCardBodyMarkup(item, activeLensKey, extraMetaHtml = "") {
+  const metaParts = [];
+  if (activeLensKey !== "kind") {
+    metaParts.push(`<span class="board-item-kind">${escapeHtml(item.kind)}</span>`);
+  }
+  if (extraMetaHtml) {
+    metaParts.push(extraMetaHtml);
+  }
+
+  const metaHtml = metaParts.length > 0 ? `<span class="board-item-meta">${metaParts.join("")}</span>` : "";
+  const overview = item.overviewExcerpt ? `<span class="board-item-overview">${escapeHtml(item.overviewExcerpt)}</span>` : "";
+
+  return `
+    <span class="board-item-top">
+      <span class="board-item-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
+      ${metaHtml}
+    </span>
+    <span class="board-item-id">${escapeHtml(item.id)}</span>
+    ${overview}
+    <span class="badge-row">${renderBadges(item, activeLensKey)}</span>
+  `;
+}
+
+function buildBoardGroupsPayload(boardGroups = state.workspace?.boardGroups ?? []) {
+  return boardGroups.map((group) => ({
+    name: group.name,
+    itemIds: group.items.map((item) => item.id),
+  }));
+}
+
+async function persistBoardColumnMove(itemId, targetGroupIndex) {
+  if (!state.workspace || !itemId || !Number.isInteger(targetGroupIndex) || targetGroupIndex < 0 || targetGroupIndex >= state.workspace.boardGroups.length) {
+    return;
+  }
+
+  const groups = buildBoardGroupsWithMovedItem(itemId, targetGroupIndex);
+  if (!groups) {
+    return;
+  }
+
+  setBanner("Updating board group...");
+
+  try {
+    const workspace = await fetchJson("/api/board", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groups }),
+    });
+
+    const keepItemOpen = !shouldUseEditorOverlay() || (state.editorOverlayOpen && state.selectedItemId === itemId);
+    state.workspace = workspace;
+    if (!keepItemOpen) {
+      state.editorOverlayOpen = false;
+    }
+    syncWorkspaceChrome();
+    await syncVisibleSelection({
+      preferredItemId: keepItemOpen ? itemId : "",
+      replaceRoute: true,
+      forceReloadItem: keepItemOpen,
+    });
+    setBanner("Board updated.", "success");
+  } catch (error) {
+    setBanner(error.message, "error");
   }
 }
 
@@ -1282,16 +1582,181 @@ async function persistDerivedLensMove(itemId, targetValue) {
       }),
     });
 
-    await loadWorkspace(itemId, { replaceRoute: true, forceReloadItem: true });
+    const keepItemOpen = !shouldUseEditorOverlay() || (state.editorOverlayOpen && state.selectedItemId === itemId);
+    if (!keepItemOpen) {
+      state.editorOverlayOpen = false;
+    }
+    await loadWorkspace(keepItemOpen ? itemId : "", {
+      replaceRoute: true,
+      forceReloadItem: keepItemOpen,
+      preferredLayout: state.boardLayout,
+      preferredLens: state.activeLens,
+    });
     setBanner(`${activeLens.label} updated.`, "success");
   } catch (error) {
     setBanner(error.message, "error");
   }
 }
 
+function renderBoardColumnsMode() {
+  if (!state.workspace) {
+    boardGroupsElement.innerHTML = "";
+    return;
+  }
+
+  const activeLens = getActiveLensDefinition();
+  const visibleGroups = getVisibleBoardGroups();
+  const allowColumnDrag = canDragItemsInColumnLayout();
+  const boardGrouping = activeLens?.key === DEFAULT_LENS_KEY;
+
+  if (visibleGroups.length === 0) {
+    boardGroupsElement.innerHTML = `
+      <div class="empty-state">
+        <div>No roadmap items match the current view.</div>
+        <div class="board-empty-hint">Clear the query or filters to see the full board again.</div>
+      </div>
+    `;
+    syncMobileNavigation();
+    return;
+  }
+
+  const columnsHtml = visibleGroups.map((group) => {
+    const dropAttributes = allowColumnDrag
+      ? (boardGrouping
+        ? `data-board-drop-group-index="${group.originalIndex}"`
+        : (group.dropValue ? `data-lens-drop-value="${escapeHtml(group.dropValue)}"` : ""))
+      : "";
+
+    const cardsHtml = group.items.map((item) => {
+      const activeClass = item.id === state.selectedItemId && state.editorOverlayOpen ? " board-column-card-active" : "";
+      const dragHandle = allowColumnDrag
+        ? `<span class="board-column-card-drag" data-drag-item-id="${escapeHtml(item.id)}" draggable="true" role="button" tabindex="0" aria-label="Move ${escapeHtml(item.title)}" title="Drag to move ${escapeHtml(item.title)}">::</span>`
+        : "";
+
+      return `
+        <article class="board-column-card${activeClass}" title="${escapeHtml(item.title)}">
+          <div class="board-column-card-main" data-item-dblopen="${escapeHtml(item.id)}" title="${escapeHtml(item.title)}">
+            ${buildBoardCardBodyMarkup(item, activeLens?.key)}
+          </div>
+          <div class="board-column-card-actions">
+            <button class="ghost-button board-column-card-open" data-item-open="${escapeHtml(item.id)}" type="button" aria-label="Open ${escapeHtml(item.title)}">Open</button>
+            ${dragHandle}
+          </div>
+        </article>
+      `;
+    }).join("");
+
+    return `
+      <section class="board-column">
+        <div class="board-column-header">
+          <div class="board-column-heading">
+            <span class="board-column-name">${escapeHtml(group.name)}</span>
+            <span class="group-count">${group.items.length}</span>
+          </div>
+        </div>
+        <div class="board-column-list${dropAttributes ? " board-column-dropzone" : ""}" ${dropAttributes}>
+          ${cardsHtml || '<div class="board-column-empty">No visible items.</div>'}
+        </div>
+      </section>
+    `;
+  }).join("");
+
+  boardGroupsElement.innerHTML = `<div class="board-columns">${columnsHtml}</div>`;
+  syncMobileNavigation();
+
+  for (const button of boardGroupsElement.querySelectorAll("[data-item-open]")) {
+    button.addEventListener("click", async () => {
+      if (Date.now() < state.dragClickSuppressUntil) {
+        return;
+      }
+
+      await openBoardItemPreview(button.dataset.itemOpen);
+    });
+  }
+
+  for (const panel of boardGroupsElement.querySelectorAll("[data-item-dblopen]")) {
+    panel.addEventListener("dblclick", async () => {
+      if (Date.now() < state.dragClickSuppressUntil) {
+        return;
+      }
+
+      await openBoardItemPreview(panel.dataset.itemDblopen);
+    });
+  }
+
+  if (!allowColumnDrag) {
+    return;
+  }
+
+  for (const handle of boardGroupsElement.querySelectorAll("[data-drag-item-id]")) {
+    handle.addEventListener("dragstart", (event) => {
+      const itemId = handle.dataset.dragItemId || "";
+      if (!itemId) {
+        event.preventDefault();
+        return;
+      }
+
+      state.dragItemId = itemId;
+      state.dragClickSuppressUntil = Date.now() + 350;
+      handle.classList.add("is-dragging");
+      event.dataTransfer?.setData("text/plain", itemId);
+      event.dataTransfer?.setData("application/x-minimap-item-id", itemId);
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+      }
+    });
+
+    handle.addEventListener("dragend", () => {
+      state.dragClickSuppressUntil = Date.now() + 350;
+      clearBoardDragState();
+    });
+  }
+
+  for (const dropZone of boardGroupsElement.querySelectorAll("[data-board-drop-group-index], [data-lens-drop-value]")) {
+    dropZone.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      dropZone.classList.add("is-drop-target");
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "move";
+      }
+    });
+
+    dropZone.addEventListener("dragleave", () => {
+      dropZone.classList.remove("is-drop-target");
+    });
+
+    dropZone.addEventListener("drop", (event) => {
+      event.preventDefault();
+      const itemId = event.dataTransfer?.getData("application/x-minimap-item-id")
+        || event.dataTransfer?.getData("text/plain")
+        || state.dragItemId
+        || "";
+      state.dragClickSuppressUntil = Date.now() + 350;
+      clearBoardDragState();
+      if (!itemId) {
+        return;
+      }
+
+      if (dropZone.dataset.boardDropGroupIndex) {
+        void persistBoardColumnMove(itemId, Number(dropZone.dataset.boardDropGroupIndex));
+        return;
+      }
+
+      if (dropZone.dataset.lensDropValue) {
+        void persistDerivedLensMove(itemId, dropZone.dataset.lensDropValue || "");
+      }
+    });
+  }
+}
+
 function renderBoardReadMode() {
   if (!state.workspace) {
     boardGroupsElement.innerHTML = "";
+    return;
+  }
+
+  if (isColumnsLayoutActive()) {
+    renderBoardColumnsMode();
     return;
   }
 
@@ -1322,18 +1787,10 @@ function renderBoardReadMode() {
     const collapsed = state.collapsedGroups.has(group.name);
     const items = group.items.map((item) => {
       const active = item.id === state.selectedItemId ? " board-item-active" : "";
-      const kindChip = activeLens?.key === "kind" ? "" : `<span class="board-item-kind">${escapeHtml(item.kind)}</span>`;
       const dragHint = allowDerivedDrag ? '<span class="board-item-drag">Move</span>' : "";
-      const overview = item.overviewExcerpt ? `<span class="board-item-overview">${escapeHtml(item.overviewExcerpt)}</span>` : "";
       return `
         <button class="board-item${active}${allowDerivedDrag ? " board-item-draggable" : ""}" data-item-id="${escapeHtml(item.id)}" type="button" title="${escapeHtml(item.title)}" aria-label="Open ${escapeHtml(item.title)}" aria-pressed="${item.id === state.selectedItemId ? "true" : "false"}" ${allowDerivedDrag ? 'draggable="true"' : ""}>
-          <span class="board-item-top">
-            <span class="board-item-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
-            <span class="board-item-meta">${kindChip}${dragHint}</span>
-          </span>
-          <span class="board-item-id">${escapeHtml(item.id)}</span>
-          ${overview}
-          <span class="badge-row">${renderBadges(item, activeLens?.key)}</span>
+          ${buildBoardCardBodyMarkup(item, activeLens?.key, dragHint)}
         </button>
       `;
     }).join("");
@@ -1424,7 +1881,7 @@ function renderBoardReadMode() {
       button.classList.remove("is-dragging");
       state.dragClickSuppressUntil = Date.now() + 350;
       if (!state.dragItemId || state.dragItemId === button.dataset.itemId) {
-        clearDerivedDragState();
+        clearBoardDragState();
       }
     });
   }
@@ -1449,7 +1906,7 @@ function renderBoardReadMode() {
         || state.dragItemId
         || "";
       state.dragClickSuppressUntil = Date.now() + 350;
-      clearDerivedDragState();
+      clearBoardDragState();
       if (!itemId) {
         return;
       }
@@ -1659,11 +2116,16 @@ function resetEditor() {
   state.currentItem = null;
   state.dirtyStructured = false;
   state.dirtyRaw = false;
+  state.editorOverlayOpen = false;
   editorTitleElement.textContent = "Item";
   editorSubtitleElement.textContent = "Choose an item from the board.";
   saveButton.disabled = true;
   state.selectedItemId = null;
   form.reset();
+  if (fields.boardGroup) {
+    fields.boardGroup.innerHTML = "";
+    fields.boardGroup.disabled = true;
+  }
   sectionsContainer.innerHTML = "";
   rawTextElement.value = "";
   previewElement.className = "preview-surface preview-empty";
@@ -1795,6 +2257,7 @@ function renderItem(item) {
   ensureSelectValue(fields.status, item.metadata.status || "queued");
   ensureSelectValue(fields.priority, item.metadata.priority || "medium");
   ensureSelectValue(fields.commitment, item.metadata.commitment || "uncommitted");
+  renderBoardGroupField(item.metadata.id || item.id);
   fields.milestone.value = item.metadata.milestone || "";
   renderStructuredSections(item);
   rawTextElement.value = item.rawText || "";
@@ -1830,6 +2293,7 @@ function resetAncillaryEditModes() {
 async function syncVisibleSelection(options = {}) {
   const visibleItemIds = getVisibleBoardItemIds();
   const preferredItemId = options.preferredItemId || "";
+  const useOverlay = shouldUseEditorOverlay();
 
   syncWorkspaceChrome();
   renderBoard();
@@ -1843,13 +2307,39 @@ async function syncVisibleSelection(options = {}) {
   }
 
   const nextItemId = [preferredItemId, state.selectedItemId, visibleItemIds[0]].find((itemId) => itemId && visibleItemIds.includes(itemId)) || visibleItemIds[0];
+  const shouldShowItem = !useOverlay || state.editorOverlayOpen || Boolean(preferredItemId) || options.forceReloadItem === true;
+
+  if (!shouldShowItem) {
+    if (useOverlay) {
+      resetEditor();
+      syncWorkspaceChrome();
+      renderBoard();
+    } else if (state.selectedItemId && !visibleItemIds.includes(state.selectedItemId)) {
+      resetEditor();
+      syncWorkspaceChrome();
+      renderBoard();
+    }
+
+    if (options.syncRoute !== false) {
+      syncRouteState({ replace: options.replaceRoute !== false });
+    }
+    return;
+  }
+
   const shouldReloadItem = options.forceReloadItem === true || nextItemId !== state.selectedItemId || !state.currentItem;
   if (shouldReloadItem) {
     await loadItem(nextItemId, true, {
       syncRoute: options.syncRoute,
       replaceRoute: options.replaceRoute === true,
+      openOverlay: useOverlay,
     });
     return;
+  }
+
+  if (useOverlay) {
+    state.editorOverlayOpen = true;
+    syncWorkspaceChrome();
+    renderBoard();
   }
 
   if (options.syncRoute !== false) {
@@ -1860,6 +2350,8 @@ async function syncVisibleSelection(options = {}) {
 async function applyRouteStateFromLocation() {
   const route = readRouteState();
   state.activeLens = normalizeLensKey(route.lens);
+  state.boardLayout = normalizeBoardLayout(route.layout);
+  state.editorOverlayOpen = route.layout === "columns" && Boolean(route.itemId);
   state.searchQuery = route.query;
   state.activeFilters = route.filters;
   state.filtersExpanded = Object.keys(route.filters).length > 0;
@@ -1882,13 +2374,15 @@ async function loadWorkspace(preferredItemId = state.selectedItemId, options = {
     state.setupState = null;
     state.workspace = workspace;
     state.activeLens = normalizeLensKey(options.preferredLens ?? state.activeLens, workspace);
+    state.boardLayout = normalizeBoardLayout(options.preferredLayout ?? state.boardLayout);
     state.editorMode = normalizeEditorMode(options.preferredMode ?? state.editorMode);
     roadmapPathElement.textContent = workspace.roadmapPath;
     renderScope();
     setBanner("");
 
+    const fallbackItemId = shouldUseEditorOverlay() ? "" : (getFirstVisibleBoardItemId(workspace) || getFirstBoardItemId(workspace));
     await syncVisibleSelection({
-      preferredItemId: preferredItemId && workspace.items?.[preferredItemId] ? preferredItemId : getFirstVisibleBoardItemId(workspace) || getFirstBoardItemId(workspace),
+      preferredItemId: preferredItemId && workspace.items?.[preferredItemId] ? preferredItemId : fallbackItemId,
       syncRoute: options.syncRoute,
       replaceRoute: options.replaceRoute,
       forceReloadItem: options.forceReloadItem === true || Boolean(preferredItemId),
@@ -1920,10 +2414,14 @@ async function loadItem(itemId, rerenderBoard = true, options = {}) {
     if (options.mode) {
       state.editorMode = normalizeEditorMode(options.mode);
     }
+    if (typeof options.openOverlay === "boolean") {
+      state.editorOverlayOpen = options.openOverlay;
+    }
     const item = await fetchJson(`/api/items/${encodeURIComponent(itemId)}`);
     state.selectedItemId = itemId;
     renderItem(item);
     applyEditorMode();
+    syncWorkspaceChrome();
     if (rerenderBoard) {
       renderBoard();
     }
@@ -1940,10 +2438,14 @@ async function openBoardItemPreview(itemId) {
     return;
   }
 
+  const useOverlay = shouldUseEditorOverlay();
   if (itemId === state.selectedItemId && state.currentItem) {
+    state.editorOverlayOpen = useOverlay;
     switchEditorMode("preview", { replaceRoute: false });
+    syncWorkspaceChrome();
+    renderBoard();
     syncRouteState();
-    if (isStackedLayout()) {
+    if (!useOverlay && isStackedLayout()) {
       scrollPanelIntoView(editorPanelElement);
     }
     return;
@@ -1953,8 +2455,8 @@ async function openBoardItemPreview(itemId) {
     return;
   }
 
-  await loadItem(itemId, true, { mode: "preview" });
-  if (isStackedLayout()) {
+  await loadItem(itemId, true, { mode: "preview", openOverlay: useOverlay });
+  if (!useOverlay && isStackedLayout()) {
     scrollPanelIntoView(editorPanelElement);
   }
 }
@@ -1993,6 +2495,26 @@ function collectPayload() {
     sections: getStructuredSections(),
   };
 }
+function cancelCurrentItemEdits() {
+  if (!state.currentItem) {
+    return;
+  }
+
+  if (state.editorMode === "preview") {
+    if (shouldUseEditorOverlay() && state.editorOverlayOpen) {
+      closeEditorOverlay();
+    }
+    return;
+  }
+
+  renderItem(state.currentItem);
+  state.dirtyStructured = false;
+  state.dirtyRaw = false;
+  state.editorMode = "preview";
+  applyEditorMode();
+  syncRouteState({ replace: true });
+}
+
 
 function currentModeFamily(mode) {
   return mode === "raw" ? "raw" : "structured";
@@ -2080,11 +2602,28 @@ async function saveCurrentItem() {
 
   try {
     const payload = state.editorMode === "raw" ? { rawText: rawTextElement.value } : collectPayload();
+    const nextBoardGroupIndex = state.editorMode === "structured" && fields.boardGroup && fields.boardGroup.value !== ""
+      ? Number(fields.boardGroup.value)
+      : -1;
+    const currentBoardGroupIndex = getBoardGroupIndexForItem(state.selectedItemId);
+
     await fetchJson(`/api/items/${encodeURIComponent(state.selectedItemId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+
+    if (state.editorMode === "structured" && Number.isInteger(nextBoardGroupIndex) && nextBoardGroupIndex >= 0 && nextBoardGroupIndex !== currentBoardGroupIndex) {
+      const groups = buildBoardGroupsWithMovedItem(state.selectedItemId, nextBoardGroupIndex);
+      if (groups) {
+        await fetchJson("/api/board", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ groups }),
+        });
+      }
+    }
+
     await loadWorkspace(state.selectedItemId);
     setBanner("Saved.", "success");
   } catch (error) {
@@ -2151,7 +2690,9 @@ async function saveScopeDraft() {
 
 saveButton.addEventListener("click", () => {
   if (state.editorMode === "preview") {
-    switchEditorMode("structured");
+    if (shouldUseEditorOverlay() && state.editorOverlayOpen) {
+      closeEditorOverlay();
+    }
     return;
   }
 
@@ -2209,6 +2750,27 @@ boardSearchInput.addEventListener("input", () => {
   void syncVisibleSelection({ replaceRoute: true });
 });
 
+boardLayoutListButton?.addEventListener("click", () => {
+  state.boardLayout = DEFAULT_BOARD_LAYOUT;
+  state.lensesExpanded = false;
+  syncWorkspaceChrome();
+  renderBoard();
+  void syncVisibleSelection({ replaceRoute: true });
+});
+
+boardLayoutColumnsButton?.addEventListener("click", () => {
+  if (!confirmCloseCurrentItem()) {
+    return;
+  }
+
+  state.boardLayout = "columns";
+  state.lensesExpanded = false;
+  resetEditor();
+  syncWorkspaceChrome();
+  renderBoard();
+  syncRouteState({ replace: true });
+});
+
 boardViewToggleButton.addEventListener("click", () => {
   if (!state.workspace || getAvailableLenses().length <= 1 || state.boardEditMode) {
     return;
@@ -2235,6 +2797,11 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.editorOverlayOpen && shouldUseEditorOverlay()) {
+    closeEditorOverlay();
+    return;
+  }
+
   if (event.key !== "Escape" || !state.lensesExpanded) {
     return;
   }
@@ -2272,6 +2839,18 @@ jumpToEditorButton.addEventListener("click", () => {
   }
 });
 
+editorOverlayBackdrop?.addEventListener("click", () => {
+  closeEditorOverlay();
+});
+
+editorOverlayCloseButton?.addEventListener("click", () => {
+  closeEditorOverlay();
+});
+
+editorCancelButton?.addEventListener("click", () => {
+  cancelCurrentItemEdits();
+});
+
 form.addEventListener("input", (event) => {
   if (event.target instanceof HTMLTextAreaElement) {
     autosizeTextarea(event.target);
@@ -2301,6 +2880,12 @@ window.addEventListener("hashchange", () => {
   void applyRouteStateFromLocation();
 });
 
+window.addEventListener("resize", () => {
+  if (state.lensesExpanded) {
+    positionLensControls();
+  }
+});
+
 desktopScopeLayoutMedia.addEventListener("change", () => {
   renderScopeChrome();
 });
@@ -2312,6 +2897,7 @@ stackedLayoutMedia.addEventListener("change", () => {
 resetEditor();
 const initialRoute = readRouteState();
 state.activeLens = initialRoute.lens;
+state.boardLayout = initialRoute.layout;
 state.editorMode = initialRoute.mode;
 state.searchQuery = initialRoute.query;
 state.activeFilters = initialRoute.filters;
@@ -2320,10 +2906,11 @@ renderScopeChrome();
 applyEditorMode();
 void loadWorkspace(initialRoute.itemId || state.selectedItemId, {
   preferredLens: initialRoute.lens,
+  preferredLayout: initialRoute.layout,
   preferredMode: initialRoute.mode,
   syncRoute: false,
 }).then(() => {
-  if (initialRoute.itemId || initialRoute.mode !== "preview" || initialRoute.lens !== DEFAULT_LENS_KEY || initialRoute.query || Object.keys(initialRoute.filters).length > 0) {
+  if (initialRoute.itemId || initialRoute.mode !== "preview" || initialRoute.lens !== DEFAULT_LENS_KEY || initialRoute.layout !== DEFAULT_BOARD_LAYOUT || initialRoute.query || Object.keys(initialRoute.filters).length > 0) {
     void applyRouteStateFromLocation();
     return;
   }

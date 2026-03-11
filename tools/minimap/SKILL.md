@@ -87,6 +87,8 @@ Rules:
 - headings are freeform board groups chosen by the repo
 - repos can group by status, release, milestone, stream, team, or any other planning model
 - `Now`, `Next`, and `Ideas` are examples, not required semantics
+- empty board groups are still canonical structure and should be preserved when they are meaningful to the repo
+- do not prune or delete an existing board group only because it currently has no items
 - bullet order is canonical display order within each group
 - bullet values are canonical item ids
 - titles and badges come from item files, not from `board.md`
