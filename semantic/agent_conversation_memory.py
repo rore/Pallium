@@ -167,6 +167,7 @@ ANSWER_CONTINUITY_CUES = (
     "carry forward",
 )
 BROAD_RECALL_CUES = (
+    "what public conclusion",
     "what did we previously conclude",
     "what did we conclude before",
     "what did we conclude",
@@ -195,6 +196,8 @@ PRECISE_FACT_CUES = (
 EVIDENCE_TRACE_CUES = (
     "exact finding",
     "what exact finding",
+    "which exact prior evidence",
+    "exact prior evidence",
     "what evidence",
     "show evidence",
     "which source",

@@ -45,13 +45,13 @@ def test_public_corpus_benchmark_reports_wildbench_failure_signal(monkeypatch, t
     assert summary['episodes_total'] == 4
     assert summary['should_memory_help_total'] == 3
     assert summary['no_value_guard_total'] == 1
-    assert summary['memory_backed_wins'] == 2
-    assert summary['policy_successes'] == 3
-    assert summary['failure_families']['retrieval_recall_failure'] == 1
+    assert summary['memory_backed_wins'] == 3
+    assert summary['policy_successes'] == 4
+    assert summary['failure_families']['retrieval_recall_failure'] == 0
 
     by_id = {item['episode_id']: item for item in results}
     assert by_id['wildbench-k8s-memory-cap-recall']['top_layer'] in {'lower_level_memory', 'source_evidence'}
     assert by_id['wildbench-kyoto-no-value-guard']['winner'] != 'memory_backed'
     assert by_id['wildbench-overlap-log-line']['top_layer'] in {'source_evidence', 'lower_level_memory'}
-    assert by_id['wildbench-scorecard-headings-recall']['failure_family'] == 'retrieval_recall_failure'
+    assert by_id['wildbench-scorecard-headings-recall']['failure_family'] is None
     assert by_id['wildbench-scorecard-headings-recall']['source_primary_tag'] == 'career'

@@ -25,3 +25,5 @@ evals/tiered_memory_validation/output/
 
 
 evals/memory_routing/output/
+evals/work_resumption/output/
+evals/developer_work_confidence/output/

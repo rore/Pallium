@@ -86,7 +86,7 @@ def _run_scenario(
         scenario_config = replace(config, sqlite_url=database_url, default_use_case="agent_conversation_memory")
         with TestClient(create_app(scenario_config)) as client:
             for event in scenario.get("prior_events", []):
-                response = client.post("/items", json=event)
+                response = client.post("/items", json=_with_default_visibility(event))
                 response.raise_for_status()
 
             consolidation_result = None
@@ -96,7 +96,7 @@ def _run_scenario(
                     strategy_name=consolidation_strategy,
                 )
 
-            query_response = client.post("/query/debug", json=scenario["current_query"])
+            query_response = client.post("/query/debug", json=_with_default_visibility(scenario["current_query"]))
             query_response.raise_for_status()
             memory_payload = query_response.json()
             engine = getattr(client.app.state.pallium_service._storage, "_engine", None)
@@ -224,6 +224,12 @@ def _run_scenario(
         },
         "consolidation_run": _serialize_consolidation_result(consolidation_result),
     }
+
+
+def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(payload)
+    updated.setdefault("visibility_context", {"kind": "public", "id": None})
+    return updated
 
 
 def _result_layer(item: dict[str, Any] | None) -> str:

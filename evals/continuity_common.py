@@ -11,6 +11,7 @@ CONTINUITY_FAILURE_FAMILIES = (
     "no_value_overreach_failure",
     "stale_memory_failure",
     "wrong_memory_selection_failure",
+    "privacy_leak_failure",
 )
 
 HIGHER_LEVEL_LAYERS = {"pattern_memory", "continuity_memory", "task_checkpoint"}

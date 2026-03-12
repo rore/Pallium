@@ -571,6 +571,8 @@ def _classify_failure_families(
         failures.append("stale_memory_failure")
     if guard_matches.get("wrong_thread_state"):
         failures.append("wrong_memory_selection_failure")
+    if guard_matches.get("privacy_leak"):
+        failures.append("privacy_leak_failure")
 
     if not bool(scenario.get("should_memory_help")):
         if comparison["winner"] == "memory_backed" or memory_rubric["overreach"] or forbidden_layers_hit or any(guard_matches.values()):
@@ -733,6 +735,11 @@ def _build_summary(
         "non_value_guard_successes": sum(1 for row in results if row["non_value_guard_success"]),
         "stale_guard_successes": sum(1 for row in results if row["stale_guard_success"]),
         "wrong_memory_guard_successes": sum(1 for row in results if row["wrong_memory_guard_success"]),
+        "privacy_guard_successes": sum(
+            1
+            for row in results
+            if "privacy_leak" in row["labels"]["must_not_introduce"] and "privacy_leak_failure" not in row["failure_families"]
+        ),
         "scenario_families": sorted(by_family),
         "scoring_dimensions": list(DIMENSION_ORDER),
         "failure_family_counts": family_counts,
@@ -794,6 +801,7 @@ def _build_report(*, summary: dict[str, Any], results: list[dict[str, Any]]) -> 
             f"- non-value guard successes: {summary['non_value_guard_successes']} / {summary['non_value_scenarios']}",
             f"- stale guard successes: {summary['stale_guard_successes']} / {summary['scenarios_total']}",
             f"- wrong-memory guard successes: {summary['wrong_memory_guard_successes']} / {summary['scenarios_total']}",
+            f"- privacy guard successes: {summary['privacy_guard_successes']}",
             f"- dominant tuning bottleneck: {summary['dominant_tuning_bottleneck'] or 'none'}",
         ]
     )

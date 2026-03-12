@@ -166,6 +166,62 @@ def _payload_for(*, scenario_id: str, branch: str) -> dict[str, object]:
             "freshness_notes": "",
         }
 
+    if scenario_id == "resume-exact-evidence-for-review-blocker":
+        if baseline:
+            return _empty_payload("The current thread asks for exact prior evidence, but it does not restate it.")
+        return {
+            "answer": "The exact prior evidence was the review progress artifact saying that admin toggle wiring was ready, but the branch kiosk fallback was still missing.",
+            "task_orientation": "",
+            "reused_findings": ["branch kiosk fallback is still missing"],
+            "blocker_state": "",
+            "preserved_progress": "",
+            "next_step": "",
+            "evidence_used": ["source evidence", "branch kiosk fallback is still missing"],
+            "freshness_notes": "",
+        }
+
+    if scenario_id == "public-query-must-not-leak-limited-rollout-state":
+        if baseline:
+            return _empty_payload("The rollout was paused before enablement.", task_orientation="LIB-241 rollout")
+        return {
+            "answer": "The public conclusion was to keep the LIB-241 rollout paused until retry-path coverage exists.",
+            "task_orientation": "LIB-241 rollout",
+            "reused_findings": ["keep the LIB-241 rollout paused", "retry-path coverage exists"],
+            "blocker_state": "",
+            "preserved_progress": "",
+            "next_step": "",
+            "evidence_used": ["decision"],
+            "freshness_notes": "",
+        }
+
+    if scenario_id == "limited-query-can-use-same-limited-rollout-state":
+        if baseline:
+            return _empty_payload("The rollout is still paused.", task_orientation="LIB-241 rollout")
+        return {
+            "answer": "In rollout channel alpha, LIB-241 is still blocked because partner approval code ALPHA-PRIVATE is pending, so wait for alpha approval and rerun rollout validation next.",
+            "task_orientation": "LIB-241 rollout in rollout channel alpha",
+            "reused_findings": ["ALPHA-PRIVATE is pending in rollout channel alpha"],
+            "blocker_state": "Partner approval code ALPHA-PRIVATE is still pending in rollout channel alpha.",
+            "preserved_progress": "",
+            "next_step": "Wait for alpha approval, then rerun rollout validation in rollout channel alpha.",
+            "evidence_used": ["task_checkpoint", "decision"],
+            "freshness_notes": "",
+        }
+
+    if scenario_id == "user-private-query-stays-isolated-from-limited-channel":
+        if baseline:
+            return _empty_payload("The rollout is still paused.", task_orientation="Private rollout follow-up")
+        return {
+            "answer": "For the private rollout follow-up, the remaining blocker is the USER-PRIVATE vendor approval reply, so wait for the vendor reply and then continue the private rollout checklist.",
+            "task_orientation": "Private rollout follow-up",
+            "reused_findings": ["USER-PRIVATE still needs the vendor approval reply"],
+            "blocker_state": "USER-PRIVATE still needs the vendor approval reply.",
+            "preserved_progress": "",
+            "next_step": "Wait for the vendor reply, then continue the private rollout checklist.",
+            "evidence_used": ["task_checkpoint", "decision"],
+            "freshness_notes": "",
+        }
+
     return {
         "answer": "Refresh the catalog service token first, then rerun the sync.",
         "task_orientation": "Catalog sync",
@@ -193,10 +249,11 @@ def test_work_resumption_benchmark_outputs_summary_results_and_report(monkeypatc
     results = _read_jsonl(run_dir / "results.jsonl")
     report = (run_dir / "report.md").read_text(encoding="utf-8")
 
-    assert summary["scenarios_total"] == 9
-    assert summary["value_scenarios"] == 7
+    assert summary["scenarios_total"] == 13
+    assert summary["value_scenarios"] == 11
     assert summary["non_value_scenarios"] == 2
-    assert len(results) == 9
+    assert len(results) == 13
+    assert summary["privacy_guard_successes"] == 3
     assert "## Failure Families" in report
     assert summary["dominant_tuning_bottleneck"] is None
     assert all(count == 0 for count in summary["failure_family_counts"].values())
@@ -235,6 +292,28 @@ def test_work_resumption_benchmark_captures_continuity_labels_and_guarded_succes
     assert wrong_thread["top_layer"] == "task_checkpoint"
     assert wrong_thread["wrong_memory_guard_success"] is True
     assert wrong_thread["failure_families"] == []
+
+    evidence_followup = results["resume-exact-evidence-for-review-blocker"]
+    assert evidence_followup["routing_intent"] == "evidence_trace"
+    assert evidence_followup["top_layer"] == "source_evidence"
+    assert evidence_followup["winner"] == "memory_backed"
+    assert evidence_followup["failure_families"] == []
+
+    public_guard = results["public-query-must-not-leak-limited-rollout-state"]
+    assert public_guard["routing_intent"] == "broad_recall"
+    assert public_guard["top_layer"] == "lower_level_memory"
+    assert public_guard["winner"] == "memory_backed"
+    assert public_guard["failure_families"] == []
+
+    limited_guard = results["limited-query-can-use-same-limited-rollout-state"]
+    assert limited_guard["top_layer"] == "task_checkpoint"
+    assert limited_guard["winner"] == "memory_backed"
+    assert limited_guard["failure_families"] == []
+
+    user_guard = results["user-private-query-stays-isolated-from-limited-channel"]
+    assert user_guard["top_layer"] == "task_checkpoint"
+    assert user_guard["winner"] == "memory_backed"
+    assert user_guard["failure_families"] == []
 
 
 def test_work_resumption_benchmark_keeps_no_value_continuation_guards(monkeypatch, tmp_path: Path) -> None:

@@ -23,7 +23,27 @@ LEXICAL_STAGE_NAME = "lexical"
 
 
 def _tokenize(text: str) -> list[str]:
-    return TOKEN_PATTERN.findall(text.lower())
+    tokens = TOKEN_PATTERN.findall(text.lower())
+    expanded: list[str] = []
+    seen: set[str] = set()
+    for token in tokens:
+        for variant in _token_variants(token):
+            if variant in seen:
+                continue
+            seen.add(variant)
+            expanded.append(variant)
+    return expanded
+
+
+def _token_variants(token: str) -> tuple[str, ...]:
+    variants = [token]
+    if len(token) > 4 and token.endswith("ies"):
+        variants.append(token[:-3] + "y")
+    elif len(token) > 5 and token.endswith("es") and not token.endswith(("ses", "xes", "zes")):
+        variants.append(token[:-2])
+    elif len(token) > 4 and token.endswith("s") and not token.endswith(("ss", "us", "is")):
+        variants.append(token[:-1])
+    return tuple(dict.fromkeys(variants))
 
 
 def _build_excerpt(text: str, *, max_length: int = MAX_EXCERPT_LENGTH) -> str:
