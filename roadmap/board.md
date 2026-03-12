@@ -10,6 +10,7 @@
 
 # Ideas
 - idea-evidence-backed-agent-memory
+- idea-developer-work-continuity-benchmark-expansion
 - idea-generic-memory-lifecycle-signals
 - idea-optional-embedding-provider-support
 - idea-optional-reranker-support
@@ -40,3 +41,4 @@
 - add-first-semantic-layer-and-promotion
 - add-agent-memory-simulation
 - build-structured-retrieval-foundation
+
