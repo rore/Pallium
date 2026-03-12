@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from core.models import QueryFilters, QueryResultItem, QueryTrace
+from core.visibility import VisibilityContext
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class RetrievalProvider(ABC):
         limit: int,
         filters: QueryFilters | None = None,
         *,
+        visibility_context: VisibilityContext | None = None,
         include_trace: bool = False,
     ) -> RetrievalQueryResult:
         raise NotImplementedError

@@ -1,5 +1,4 @@
 # Next
-- add-privacy-aware-memory-scope-and-sharing-foundation
 - add-conversation-agent-integration-readiness-scenario
 
 # Later
@@ -16,6 +15,7 @@
 - idea-optional-reranker-support
 
 # Done
+- add-privacy-aware-memory-scope-and-sharing-foundation
 - add-task-checkpoint-memory-kind
 - add-selected-agent-work-artifact-semantic-support
 - add-work-resumption-benchmark

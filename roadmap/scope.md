@@ -12,7 +12,7 @@ Current focus:
 
 Concrete next steps:
 - use the explicit work-resumption benchmark as a directional guide, not a neutral discovery engine, for whether the remaining continuity gaps are routing/layer choice, result packaging/evidence, or retrieval recall after `task_checkpoint` landed
-- add a generic privacy-aware scope enforcement foundation before any claim that Pallium is ready for real downstream integration testing
+- the generic privacy-aware scope enforcement foundation is now in place: `visibility_context` is persisted on source and memory, retrieval fails closed for the scope-aware package, derivation stays exact-match only, and debug trace now explains visibility exclusions
 - then define and pass one canonical integration-readiness scenario that proves both resumed-work value and fail-closed public/private separation inside Pallium before a live downstream adapter is treated as meaningful validation
 - add a vector retrieval provider behind the existing retrieval boundary only if the work-resumption and public-corpus evals show paraphrase or concept recall is the next real bottleneck after the task-continuity and privacy slices land
 - then add RRF-based hybrid retrieval fusion over lexical and vector candidates if dual-mode retrieval is justified by that evaluation evidence

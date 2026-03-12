@@ -22,7 +22,19 @@ def _build_client(monkeypatch, sqlite_url: str) -> TestClient:
         'app.dependencies.build_llm_provider',
         lambda config, **_: TieredMemorySemanticProvider(),
     )
-    return TestClient(create_app(build_llm_test_config(default_use_case='agent_conversation_memory', sqlite_url=sqlite_url)))
+    client = TestClient(create_app(build_llm_test_config(default_use_case='agent_conversation_memory', sqlite_url=sqlite_url)))
+    original_post = client.post
+
+    def post_with_public_visibility(url: str, *args, **kwargs):
+        payload = kwargs.get('json')
+        if isinstance(payload, dict) and url in {'/items', '/query', '/query/debug'} and 'visibility_context' not in payload:
+            payload = dict(payload)
+            payload['visibility_context'] = {'kind': 'public', 'id': None}
+            kwargs['json'] = payload
+        return original_post(url, *args, **kwargs)
+
+    client.post = post_with_public_visibility
+    return client
 
 
 def _ingest_prior_events(client: TestClient, scenario_id: str) -> dict[str, object]:

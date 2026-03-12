@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from app.config import AppConfig
 from app.dependencies import build_llm_provider
 from app.main import create_app
+from evals.continuity_common import CONTINUITY_FAILURE_FAMILIES, HIGHER_LEVEL_LAYERS, result_layer
 from evals.public_corpus_builder import (
     DEFAULT_REVIEW_MANIFEST,
     build_reviewed_episodes,
@@ -24,14 +25,6 @@ from evals.recurring_question_benchmark import _compare_answers, _generate_answe
 from providers.llm.base import LLMProvider
 
 DEFAULT_OUTPUT_DIR = Path("evals/public_corpus/output")
-HIGHER_LEVEL_LAYERS = {"pattern_memory", "continuity_memory", "task_checkpoint"}
-FAILURE_FAMILIES = (
-    "retrieval_recall_failure",
-    "routing_layer_choice_failure",
-    "result_packaging_evidence_failure",
-    "overreach_no_value_failure",
-)
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the reviewed public-corpus benchmark over a local public benchmark export.")
@@ -121,7 +114,7 @@ def _run_episode(
         scenario_config = replace(config, sqlite_url=database_url, default_use_case="agent_conversation_memory")
         with TestClient(create_app(scenario_config)) as client:
             for event in episode.get("prior_events", []):
-                response = client.post("/items", json=event)
+                response = client.post("/items", json=_with_default_visibility(event))
                 response.raise_for_status()
 
             consolidation_result = None
@@ -131,7 +124,7 @@ def _run_episode(
                     strategy_name=consolidation_strategy,
                 )
 
-            query_response = client.post("/query/debug", json=episode["current_query"])
+            query_response = client.post("/query/debug", json=_with_default_visibility(episode["current_query"]))
             query_response.raise_for_status()
             memory_payload = query_response.json()
             engine = getattr(client.app.state.pallium_service._storage, "_engine", None)
@@ -158,8 +151,8 @@ def _run_episode(
     higher_level_memory_types = sorted(item for item in returned_memory_types if item in HIGHER_LEVEL_LAYERS)
     routing = ((memory_payload.get("trace") or {}).get("routing") or {})
     top_result = memory_payload["results"][0] if memory_payload["results"] else None
-    top_layer = _result_layer(top_result)
-    available_layers = sorted({_result_layer(item) for item in memory_payload["results"]})
+    top_layer = result_layer(top_result)
+    available_layers = sorted({result_layer(item) for item in memory_payload["results"]})
 
     expected_winning_layer = episode.get("expected_winning_layer")
     acceptable_winning_layers = episode.get("acceptable_winning_layers") or ([expected_winning_layer] if expected_winning_layer else [])
@@ -262,8 +255,13 @@ def _run_episode(
     }
 
 
-def _classify_failure_family(
-    *,
+def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(payload)
+    updated.setdefault("visibility_context", {"kind": "public", "id": None})
+    return updated
+
+
+def _classify_failure_family(    *,
     should_memory_help: bool,
     winner: str,
     expected_layer_found: bool,
@@ -275,9 +273,9 @@ def _classify_failure_family(
     forbidden_terms_found: list[str],
 ) -> str | None:
     if forbidden_terms_found:
-        return "overreach_no_value_failure"
+        return "no_value_overreach_failure"
     if not should_memory_help:
-        return None if winner != "memory_backed" else "overreach_no_value_failure"
+        return None if winner != "memory_backed" else "no_value_overreach_failure"
     if not expected_layer_found and not expected_memory_types_found and (not higher_level_expectation_present or not expected_higher_level_memory_types_found):
         return "retrieval_recall_failure"
     if not top_layer_match:
@@ -285,20 +283,6 @@ def _classify_failure_family(
     if winner != "memory_backed" or not evidence_used_present:
         return "result_packaging_evidence_failure"
     return None
-
-
-def _result_layer(item: dict[str, Any] | None) -> str:
-    if item is None:
-        return "none"
-    if item.get("result_kind") == "source_hit":
-        return "source_evidence"
-    if item.get("type") == "pattern_memory":
-        return "pattern_memory"
-    if item.get("type") == "continuity_memory":
-        return "continuity_memory"
-    if item.get("type") == "task_checkpoint":
-        return "task_checkpoint"
-    return "lower_level_memory"
 
 
 def _find_forbidden_terms(*, forbidden_terms: list[str], retrieval_results: list[dict[str, Any]], answer_payload: dict[str, Any]) -> list[str]:
@@ -367,7 +351,7 @@ def _build_summary(
         "no_value_guard_total": sum(1 for row in results if not row["should_memory_help"]),
         "memory_backed_wins": sum(1 for row in results if row["winner"] == "memory_backed"),
         "policy_successes": sum(1 for row in results if row["policy_success"]),
-        "failure_families": {name: int(failure_counter.get(name, 0)) for name in FAILURE_FAMILIES},
+        "failure_families": {name: int(failure_counter.get(name, 0)) for name in CONTINUITY_FAILURE_FAMILIES},
         "by_episode_type": [],
         "by_primary_tag": [],
     }
@@ -381,7 +365,7 @@ def _build_summary(
                 "memory_backed_wins": sum(1 for row in rows if row["winner"] == "memory_backed"),
                 "failure_families": {
                     name: sum(1 for row in rows if row["failure_family"] == name)
-                    for name in FAILURE_FAMILIES
+                    for name in CONTINUITY_FAILURE_FAMILIES
                 },
             }
         )
@@ -394,7 +378,7 @@ def _build_summary(
                 "policy_successes": sum(1 for row in rows if row["policy_success"]),
                 "failure_families": {
                     name: sum(1 for row in rows if row["failure_family"] == name)
-                    for name in FAILURE_FAMILIES
+                    for name in CONTINUITY_FAILURE_FAMILIES
                 },
             }
         )
@@ -444,5 +428,9 @@ def _build_run_id(config: AppConfig, *, corpus_name: str) -> str:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+
+
 
 

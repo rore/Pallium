@@ -6,7 +6,8 @@ from capabilities.consolidation import ConsolidationCapability, ConsolidationRun
 from capabilities.thread_aggregation import build_thread_aggregate
 from core.contracts import IngestResult, ProcessResult, QueryResult, build_query_filters, build_source_item
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
-from core.models import MemoryObject, QueryFilters, Relation, SourceItem
+from core.models import MemoryObject, QueryFilters, QueryTrace, Relation, SourceItem
+from core.visibility import QueryVisibilityTrace, VisibilityContext, visibility_context_matches_exact
 from retrieval.base import RetrievalProvider
 from semantic.base import ConsolidationSemanticPlugin, SemanticPlugin, ThreadAggregationSemanticPlugin
 from storage.base import StorageProvider
@@ -19,6 +20,10 @@ THREAD_SUMMARY_TYPE = "thread_summary"
 
 def _normalize_for_index(text: str) -> str:
     return " ".join(TOKEN_PATTERN.findall(text.lower()))
+
+
+def _query_tokens(text: str) -> tuple[str, ...]:
+    return tuple(sorted(set(TOKEN_PATTERN.findall(text.lower()))))
 
 
 class PalliumService:
@@ -52,6 +57,7 @@ class PalliumService:
         session_ref: str | None = None,
         source_ref: str | None = None,
         artifact_kind: str | None = None,
+        visibility_context: VisibilityContext | None = None,
     ) -> IngestResult:
         existing_source_item = self._storage.find_source_item(source_type=source_type, source_id=source_id)
         if existing_source_item is not None:
@@ -94,6 +100,7 @@ class PalliumService:
             session_ref=session_ref,
             source_ref=source_ref,
             artifact_kind=artifact_kind,
+            visibility_context=visibility_context,
         )
         self._storage.create_source_item(source_item)
 
@@ -106,10 +113,12 @@ class PalliumService:
         )
         self._storage.create_index_entry(source_index_entry)
 
-        derived = plugin.process_item(source_item)
-        self._persist_process_result(derived)
-
-        thread_result = self._maybe_rebuild_thread_summary(plugin=plugin, source_item=source_item)
+        derived = ProcessResult(annotations=[], memory_objects=[], relations=[], index_entries=[])
+        thread_result = None
+        if not (plugin.requires_visibility_context and source_item.visibility_context is None):
+            derived = plugin.process_item(source_item)
+            self._persist_process_result(derived)
+            thread_result = self._maybe_rebuild_thread_summary(plugin=plugin, source_item=source_item)
 
         annotation_ids = [item.id for item in derived.annotations]
         memory_object_ids = [item.id for item in derived.memory_objects]
@@ -140,6 +149,7 @@ class PalliumService:
         container_ref: str | None = None,
         thread_ref: str | None = None,
         session_ref: str | None = None,
+        visibility_context: VisibilityContext | None = None,
         include_trace: bool = False,
     ) -> QueryResult:
         filters: QueryFilters | None = build_query_filters(
@@ -151,7 +161,24 @@ class PalliumService:
             session_ref=session_ref,
         )
         plugin = self._semantic_plugins[self._default_use_case]
-        route_query_results = getattr(plugin, 'route_query_results', None)
+        if plugin.requires_visibility_context and visibility_context is None:
+            trace = None
+            if include_trace:
+                trace = QueryTrace(
+                    query_text=text,
+                    query_tokens=_query_tokens(text),
+                    limit=limit,
+                    filters=filters,
+                    stages=tuple(),
+                    visibility=QueryVisibilityTrace(
+                        query_visibility_context=None,
+                        expanded_visibility_contexts=tuple(),
+                        fail_closed_reason="query_visibility_context_required",
+                    ),
+                )
+            return QueryResult(results=[], trace=trace)
+
+        route_query_results = getattr(plugin, "route_query_results", None)
         retrieval_limit = limit
         if callable(route_query_results):
             retrieval_limit = min(max(limit * 4, 12), 50)
@@ -159,6 +186,7 @@ class PalliumService:
             text=text,
             limit=retrieval_limit,
             filters=filters,
+            visibility_context=visibility_context if plugin.requires_visibility_context else None,
             include_trace=include_trace,
         )
         if callable(route_query_results):
@@ -295,6 +323,12 @@ class PalliumService:
             for item in self._storage.list_source_items_for_thread(source_item.container_ref, source_item.thread_ref)
             if plugin.supports_thread_aggregation(item)
         ]
+        if plugin.requires_visibility_context:
+            thread_items = [
+                item
+                for item in thread_items
+                if visibility_context_matches_exact(item.visibility_context, source_item.visibility_context)
+            ]
         if not thread_items:
             return None
 
@@ -380,6 +414,8 @@ class PalliumService:
             lifecycle="active",
         ):
             if memory_object.schema_id != created_memory_object.schema_id:
+                continue
+            if not visibility_context_matches_exact(memory_object.visibility_context, created_memory_object.visibility_context):
                 continue
             provenance = memory_object.payload.get("consolidation_provenance", {})
             if provenance.get("strategy_name") != group.strategy_name:

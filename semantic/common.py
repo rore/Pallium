@@ -260,6 +260,7 @@ def build_process_result(
                 "source_id": source_item.source_id,
                 **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
             },
+            visibility_context=source_item.visibility_context,
         )
         index_source = " ".join(
             part
@@ -308,6 +309,7 @@ def build_process_result(
                 "source_id": source_item.source_id,
                 **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
             },
+            visibility_context=source_item.visibility_context,
         )
         index_source = " ".join(
             part
@@ -330,6 +332,7 @@ def build_process_result(
                 "source_id": source_item.source_id,
                 **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
             },
+            visibility_context=source_item.visibility_context,
         )
         index_source = extraction.summary
 

@@ -354,7 +354,8 @@ def test_agent_conversation_memory_package_path_preserves_public_api_shape(monke
             "role": "assistant",
             "thread_ref": "thread-assistant",
             "session_ref": "session-assistant",
-        },
+                "visibility_context": {"kind": "public", "id": None},
+            },
     )
     assert create_response.status_code == 200
 
@@ -369,13 +370,14 @@ def test_agent_conversation_memory_package_path_preserves_public_api_shape(monke
             "role": "user",
             "thread_ref": "thread-user",
             "session_ref": "session-user",
-        },
+                "visibility_context": {"kind": "public", "id": None},
+            },
     )
     assert user_message_response.status_code == 200
 
     query_response = client.post(
         "/query",
-        json={"text": "why did we choose item item event time reservation ordering?", "limit": 5},
+        json={"text": "why did we choose item item event time reservation ordering?", "limit": 5, "visibility_context": {"kind": "public", "id": None}},
     )
     assert query_response.status_code == 200
     payload = query_response.json()
@@ -414,3 +416,6 @@ def test_llm_plugin_path_returns_server_error_when_provider_fails(monkeypatch, t
     )
 
     assert create_response.status_code == 500
+
+
+

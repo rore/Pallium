@@ -14,6 +14,7 @@ from evals.public_corpus_builder import (
 
 FIXTURE = Path('tests/fixtures/wildbench_export_sample.json')
 MANIFEST = Path('evals/public_corpus/wildbench_review_manifest.json')
+DEV_CONTINUATION_MANIFEST = Path('evals/public_corpus/wildbench_developer_continuation_manifest.json')
 
 
 def _json_default(value: object) -> str:
@@ -94,3 +95,14 @@ def test_wildbench_reviewed_episode_builder_emits_pallium_shaped_episodes() -> N
     source_evidence = by_id['wildbench-overlap-log-line']
     assert source_evidence['expected_winning_layer'] == 'source_evidence'
     assert source_evidence['reference_answer'] == "The exact log line was 'job already running, skipping new start'."
+
+
+def test_wildbench_developer_continuation_manifest_stays_small_and_coding_weighted() -> None:
+    conversations = load_public_corpus_conversations(FIXTURE, corpus_name='wildbench')
+    manifest = load_review_manifest(DEV_CONTINUATION_MANIFEST)
+    episodes = build_reviewed_episodes(conversations=conversations, manifest=manifest)
+
+    assert len(episodes) == 3
+    assert episodes[0]['episode_id'] == 'wildbench-k8s-memory-cap-recall'
+    assert 'wildbench-overlap-log-line' in {item['episode_id'] for item in episodes}
+    assert sum(1 for item in episodes if item['source_primary_tag'] == 'coding') == 2

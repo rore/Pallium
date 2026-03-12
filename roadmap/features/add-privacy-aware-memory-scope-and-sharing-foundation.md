@@ -1,10 +1,10 @@
 ---
 id: add-privacy-aware-memory-scope-and-sharing-foundation
 title: Add privacy-aware memory scope enforcement foundation
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary
@@ -60,6 +60,8 @@ For real downstream integration, especially where public and private memory can 
 
 ## Notes
 
+Status: completed with a generic `visibility_context` foundation in `core` and `capabilities`, scope-aware fail-closed enforcement in `agent_conversation_memory`, SQLite-backed visibility persistence, retrieval/debug visibility exclusion trace, and focused privacy regressions plus affected thread/consolidation/routing regression slices.
+
 Current design direction:
 
 - the consumer provides one current `visibility_context` on ingest and query; Pallium owns the built-in visibility expansion rules
@@ -68,3 +70,4 @@ Current design direction:
 - broader reuse should happen only through a later explicit shared-memory path, not by widening local memory objects in place
 - phase-1 derivation compatibility should stay exact-match only; do not attempt generalized narrowing or intersection yet
 - the full multi-phase design lives in `docs/designs/007-privacy-aware-scope-and-sharing.md`
+

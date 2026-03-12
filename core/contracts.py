@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from core.models import QueryTrace
 from dataclasses import dataclass
 from datetime import datetime
 
-from core.models import Annotation, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
+from core.models import Annotation, IndexEntry, MemoryObject, QueryFilters, QueryTrace, Relation, SourceItem
+from core.visibility import VisibilityContext
 
 
 @dataclass(frozen=True)
@@ -53,6 +53,7 @@ def build_source_item(
     session_ref: str | None = None,
     source_ref: str | None = None,
     artifact_kind: str | None = None,
+    visibility_context: VisibilityContext | None = None,
 ) -> SourceItem:
     return SourceItem(
         source_type=source_type,
@@ -68,6 +69,7 @@ def build_source_item(
         session_ref=session_ref,
         source_ref=source_ref,
         artifact_kind=artifact_kind,
+        visibility_context=visibility_context,
     )
 
 

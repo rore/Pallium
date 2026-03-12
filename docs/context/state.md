@@ -21,6 +21,7 @@
 - ingest supports explicit event refs for messages and assistant artifacts
 - query returns compact source-hit cards with structured refs
 - debug query now exposes retrieval trace plus package-owned routing trace over the same compact result set
+- generic `visibility_context` now exists on ingest, storage, query, evidence, and debug trace for privacy-aware scope enforcement
 - semantic behavior now includes:
   - `decision`
   - `investigation_outcome`
@@ -48,10 +49,11 @@
 - named text-view metadata now exists on `IndexEntry`
 - current lexical trace records matched tokens and selected text views across `SourceItem` and `MemoryObject` retrieval
 - `agent_conversation_memory` now applies internal routed retrieval policy across higher-level memory, lower-level memory, and source evidence
+- `agent_conversation_memory` is now scope-aware and fail-closed: query visibility is required, missing-visibility ingest stays non-promotable and non-retrievable in normal scoped queries, and public/private memory stays separated through exact-match-only derivation
 - a bounded offline public-corpus eval path now exists for WildChat reviewed-manifest selection plus a complementary WildBench reviewed task slice, with local helper workflows for both
 - realistic agent-conversation scenarios now exist under `evals/agent_conversation/`
 - recurring-question benchmark now exists under `evals/recurring_question/`
-- work-resumption benchmark now exists under `evals/work_resumption/`
+- authored developer-work continuity suite now exists under `evals/work_resumption/`
 - memory-routing benchmark now exists under `evals/memory_routing/`
 - consolidation strategy comparison harness now exists under `evals/consolidation/`
 - tiered-memory validation benchmark now exists under `evals/tiered_memory_validation/`
@@ -65,12 +67,15 @@
   - `tests/test_api.py`
   - `tests/test_e2e.py`
 - thread aggregation tests pass locally
+- focused privacy and scope-enforcement slices pass locally:
+  - `tests/test_visibility_scope.py`
+  - `tests/test_storage_sqlite.py`
 - focused routing and resumed-work slices pass locally:
   - `tests/test_thread_aggregation.py`
   - `tests/test_agent_conversation_memory_routing.py`
   - `tests/test_work_resumption_benchmark.py`
   - `tests/test_tiered_memory.py`
-- focused public-corpus slice tests pass locally:
+- focused public-corpus slice tests pass locally, including the small WildBench developer-continuation pack assets:
   - `tests/test_public_corpus_builder.py`
   - `tests/test_public_corpus_benchmark.py`
   - `tests/test_public_corpus_wildchat_local.py`
@@ -82,11 +87,11 @@
   - `evals/recurring_question/output/local-recurring-question-smoke`
   - `2` value scenarios where memory-backed won
   - `1` non-value scenario where memory-backed correctly did not win
-- deterministic work-resumption benchmark now exists as the committed continuity guardrail:
+- deterministic developer-work continuity benchmark now exists as the committed continuity guardrail:
   - `evals/work_resumption/`
-  - scenario families cover resumed investigation, debugging from partial findings, auth/tool-failure recovery, interrupted ticket work, and no-value continuation guards
+  - scenario families now cover resumed investigation, blocker recovery, implementation continuity, review continuity, wrong-memory or stale-memory guards, and stronger no-value continuation guards
   - the gap rollup is partly hypothesis-driven because scenario-authored `dimension_gap_targets` contribute to it, so benchmark results should be read as guidance rather than neutral proof
-  - the benchmark now exercises package-owned `task_checkpoint` memory for compact resumed-work continuity and is intended to guide the next remaining gaps in routing/layer choice, result packaging/evidence, or retrieval recall
+  - the benchmark now exercises package-owned `task_checkpoint` memory for compact resumed-work continuity and separates failures into retrieval recall, routing/layer choice, result packaging/evidence, compact task-state packaging, no-value overreach, and stale/wrong-memory guard misses
 - deterministic memory-routing benchmark run succeeded locally:
   - `evals/memory_routing/output/local-memory-routing-stub`
   - `10 / 10` policy-success scenarios
@@ -157,5 +162,6 @@
 - `Retry-After` is honored when present
 - invalid successful responses remain fail-fast and are not retried
 - live eval/benchmark paths now use the same provider resilience path as normal semantic extraction
+
 
 

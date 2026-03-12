@@ -42,6 +42,7 @@ Implemented storage and retrieval behavior:
 - optional lexical retrieval trace on the debug query path, including matched tokens and selected text views
 - package-owned routed reranking on top of retrieval results for `agent_conversation_memory`, exposed only through the existing debug trace path
 - evidence resolution from memory objects back to source items
+- generic `visibility_context` plumbing on `SourceItem`, `MemoryObject`, and query requests, with fail-closed retrieval enforcement for scope-aware packages before ranking and visibility exclusion trace on the debug path
 
 ## Target Retrieval Architecture
 
@@ -138,6 +139,7 @@ Important model properties:
 - a source item does not always become memory
 - a source item may produce zero, one, or multiple memory objects over time
 - memory objects are evidence-backed and may point to one or more supporting source items
+- generic visibility is separate from locality metadata; `container_ref`, `thread_ref`, and `session_ref` remain descriptive unless a package explicitly maps them into policy
 - relations stay explicit and boring early on
 - `IndexEntry` now models index type separately from named text view and provider/version metadata so later retrieval stages can reuse the same record shape
 
@@ -150,6 +152,7 @@ Current thread-capability behavior:
 - atomic ingest remains the source-item unit
 - items can be grouped by `container_ref + thread_ref`
 - the capability rebuilds a deterministic thread aggregate as new items arrive
+- when a package is visibility-aware, aggregation only combines exact same-visibility items
 - semantic packages can consume that aggregate without making thread a universal core entity
 
 The first package using this capability is `agent_conversation_memory`, which produces a queryable `thread_summary` memory object.
@@ -179,6 +182,8 @@ The package reuses the current typed-memory extraction path rather than introduc
 It now also uses the shared thread aggregation capability to build one active `thread_summary` memory object per `container_ref + thread_ref`. Each thread summary is evidence-backed, lifecycle-managed through supersession, and can carry forward active `decision` and `investigation_outcome` conclusions from that conversation thread.
 
 The package now also owns an internal query-routing policy that reranks retrieved candidates across `pattern_memory`, `continuity_memory`, lower-level memory, and source evidence by question shape. That policy remains package semantics rather than generic retrieval behavior, and it is inspectable through `POST /query/debug` without changing the public `/query` contract.
+
+`agent_conversation_memory` is now the first scope-aware package. It requires consumer-supplied `visibility_context` on ingest and query, preserves visibility on direct and higher-level memory, excludes missing-visibility evidence from promotion and normal retrieval, and relies on the core/capability layer for exact-match-only aggregation and consolidation.
 
 ## Lifecycle
 
@@ -238,6 +243,7 @@ Current behavior:
   - `decision`
   - `investigation_outcome`
 - consolidation remains bounded and additive
+- exact-match visibility compatibility is a hard precondition for consolidation groups in the scope-aware package
 - higher-level memory is evidence-backed and lifecycle-managed
 - retrieval can return higher-level memory as a normal `memory_hit`
 

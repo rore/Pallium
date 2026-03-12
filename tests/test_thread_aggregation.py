@@ -111,6 +111,18 @@ def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
     }
 
 
+def _write_public_visibility_scenario(target_path: Path, source_path: Path) -> Path:
+    scenarios = json.loads(source_path.read_text(encoding="utf-8"))
+    for scenario in scenarios:
+        for event in scenario.get("prior_events", []):
+            event.setdefault("visibility_context", {"kind": "public", "id": None})
+        current_query = scenario.get("current_query")
+        if isinstance(current_query, dict):
+            current_query.setdefault("visibility_context", {"kind": "public", "id": None})
+    target_path.write_text(json.dumps(scenarios), encoding="utf-8")
+    return target_path
+
+
 def _thread_test_config(test_db_url: str) -> AppConfig:
     return AppConfig(
         storage_backend="sqlite",
@@ -128,7 +140,19 @@ def _create_thread_client(monkeypatch, test_db_url: str) -> TestClient:
         "app.dependencies.build_llm_provider",
         lambda config, **_: ThreadAwareStubProvider(),
     )
-    return TestClient(create_app(_thread_test_config(test_db_url)))
+    client = TestClient(create_app(_thread_test_config(test_db_url)))
+    original_post = client.post
+
+    def post_with_public_visibility(url: str, *args, **kwargs):
+        payload = kwargs.get("json")
+        if isinstance(payload, dict) and url in {"/items", "/query", "/query/debug"} and "visibility_context" not in payload:
+            payload = dict(payload)
+            payload["visibility_context"] = {"kind": "public", "id": None}
+            kwargs["json"] = payload
+        return original_post(url, *args, **kwargs)
+
+    client.post = post_with_public_visibility
+    return client
 
 
 def test_thread_summary_is_created_and_superseded(monkeypatch, test_db_url: str) -> None:
@@ -466,7 +490,10 @@ def test_agent_conversation_runner_surfaces_thread_summary(monkeypatch, tmp_path
     )
 
     run_dir = run_agent_conversation_scenarios(
-        scenario_file=Path("evals/agent_conversation/scenarios.json"),
+        scenario_file=_write_public_visibility_scenario(
+            tmp_path / "agent_conversation_visibility_scenarios.json",
+            Path("evals/agent_conversation/scenarios.json"),
+        ),
         output_root=tmp_path / "output",
         config=AppConfig(
             storage_backend="sqlite",

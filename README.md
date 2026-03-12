@@ -163,35 +163,39 @@ The committed benchmark is the first user-facing proof layer for whether Pallium
 
 The current package now also uses internal routed retrieval policy so broad recall, repeated-answer continuity, resumed-work continuation, precise factual lookup, and evidence-trace questions can prefer different layers while remaining inspectable through `/query/debug`.
 
-## Work Resumption Benchmark
+## Developer-Work Continuity Benchmark
 
-Pallium now includes a bounded work-resumption benchmark for workflow continuity within the current `agent_conversation_memory` slice.
+Pallium now includes an authored developer-work continuity suite under `evals/work_resumption/` for workflow continuity within the current `agent_conversation_memory` slice.
 
 It measures whether retrieved memory and source evidence help an agent stay oriented across:
 
 - resumed investigation after a pause
-- debugging continued from partial findings
-- resumed work after auth or tool failure with partial progress preserved
+- blocker recovery after auth or tool failure
 - resumed implementation or ticket work after interruption
-- no-value continuation cases where the current thread should already be enough
+- review continuity after prior feedback
+- wrong-memory and stale-memory guard cases
+- stronger no-value continuation cases where the current thread should already be enough
 
-The benchmark scores:
+The benchmark scores and reports separately on:
 
 - task orientation
-- prior findings reuse
+- key findings reuse
 - blocker state carry-forward
 - preserved progress
 - next-step guidance
+- evidence packaging
+- freshness and wrong-memory guards
 
-The gap rollup is hypothesis-driven: scenario-authored `dimension_gap_targets` contribute to it, so the benchmark should be treated as a directional guide to the next continuity slice rather than a neutral discovery engine.
+The suite now rolls failures into explicit continuity families so the next tuning question is easier to read:
 
-It reports authored continuity-gap signals that can indicate the next hardening slice, such as:
-
-- routing or layer choice
-- result packaging or evidence
 - retrieval recall
+- routing or layer choice
+- compact task-state packaging
+- result packaging or evidence
+- no-value overreach
+- stale or wrong-memory selection
 
-That benchmark guidance first led to bounded selected work-artifact support, and it now also exercises compact `task_checkpoint` memory for resumed-work continuity without broadening into runtime-log ingest.
+That benchmark guidance now exercises package-owned `task_checkpoint` memory for compact resumed-work continuity without broadening into runtime-log ingest, and it makes the next bottleneck easier to distinguish before broader retrieval changes.
 
 Run it with:
 
@@ -276,9 +280,9 @@ Current public-corpus layer:
 - WildChat remains the primary realism corpus
 - WildBench is the complementary task-oriented benchmark source
 - raw corpora stay outside the repo
-- reviewed manifests define the committed benchmark slices
+- reviewed manifests define the committed benchmark slices, including a small WildBench developer-continuation pack
 - local helpers keep the full-corpus workflows reproducible without changing the public benchmark contract
-- the benchmark reports whether misses look like retrieval recall, routed layer choice, result packaging/evidence, or overreach
+- the benchmark reports the shared continuity failure taxonomy, including retrieval recall, routed layer choice, result packaging/evidence, compact task-state misses, and no-value overreach where applicable
 
 Recommended local WildChat layout:
 
@@ -449,4 +453,7 @@ Use `--split-output` only when you want per-input debug files.
 - [C:/Dev/rore/Pallium/docs/context/architecture.md](C:/Dev/rore/Pallium/docs/context/architecture.md)
 - [C:/Dev/rore/Pallium/docs/context/state.md](C:/Dev/rore/Pallium/docs/context/state.md)
 - [C:/Dev/rore/Pallium/roadmap/board.md](C:/Dev/rore/Pallium/roadmap/board.md)
+
+
+
 

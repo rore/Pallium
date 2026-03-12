@@ -40,68 +40,53 @@ def _extract_line(text: str, prefix: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _empty_payload(answer: str = "", *, task_orientation: str = "", blocker_state: str = "", next_step: str = "") -> dict[str, object]:
+    return {
+        "answer": answer,
+        "task_orientation": task_orientation,
+        "reused_findings": [],
+        "blocker_state": blocker_state,
+        "preserved_progress": "",
+        "next_step": next_step,
+        "evidence_used": [],
+        "freshness_notes": "",
+    }
+
+
 def _payload_for(*, scenario_id: str, branch: str) -> dict[str, object]:
     baseline = branch == "baseline"
 
     if scenario_id == "resume-investigation-after-pause":
         if baseline:
-            return {
-                "answer": "Resume the delayed catalog sync investigation first.",
-                "task_orientation": "Delayed catalog sync investigation",
-                "reused_findings": [],
-                "blocker_state": "",
-                "preserved_progress": "",
-                "next_step": "",
-                "evidence_used": [],
-            }
+            return _empty_payload("Resume the delayed catalog sync investigation first.", task_orientation="Delayed catalog sync investigation")
         return {
             "answer": "Resume the delayed catalog sync investigation from the duplicate-hold conclusion: arrival-time ordering reused stale hold state, so we switched to item event time.",
             "task_orientation": "Delayed catalog sync investigation and duplicate holds",
-            "reused_findings": [
-                "arrival-time ordering reused stale hold state",
-                "item event time",
-            ],
+            "reused_findings": ["arrival-time ordering reused stale hold state", "item event time"],
             "blocker_state": "",
             "preserved_progress": "",
             "next_step": "",
             "evidence_used": ["investigation_outcome", "decision"],
+            "freshness_notes": "",
         }
 
     if scenario_id == "debugging-continued-from-partial-findings":
         if baseline:
-            return {
-                "answer": "Resume duplicate-hold debugging on the delayed sync workers.",
-                "task_orientation": "Duplicate-hold debugging",
-                "reused_findings": [],
-                "blocker_state": "",
-                "preserved_progress": "",
-                "next_step": "",
-                "evidence_used": [],
-            }
+            return _empty_payload("Resume duplicate-hold debugging on the delayed sync workers.", task_orientation="Duplicate-hold debugging")
         return {
             "answer": "Resume duplicate-hold debugging on delayed sync workers from the warm-cache finding: local replay already confirmed the bug and narrowed it to cache invalidation, so compare invalidation between delayed and immediate workers next.",
             "task_orientation": "Duplicate-hold debugging on delayed sync workers",
-            "reused_findings": [
-                "reservation cache is warm",
-                "cache invalidation",
-            ],
+            "reused_findings": ["reservation cache is warm", "cache invalidation"],
             "blocker_state": "",
             "preserved_progress": "Local replay confirmed the bug and narrowed it to cache invalidation.",
             "next_step": "Compare cache invalidation between delayed and immediate sync workers.",
             "evidence_used": ["task_checkpoint", "investigation_outcome"],
+            "freshness_notes": "",
         }
 
     if scenario_id == "resume-after-auth-tool-failure":
         if baseline:
-            return {
-                "answer": "The retry is queued again.",
-                "task_orientation": "",
-                "reused_findings": [],
-                "blocker_state": "",
-                "preserved_progress": "",
-                "next_step": "",
-                "evidence_used": [],
-            }
+            return _empty_payload("The retry is queued again.")
         return {
             "answer": "Resume the catalog sync retry from batch 313 after refreshing the catalog service token; the prior run refreshed 312 reservation records before a 401 from the expired token.",
             "task_orientation": "Catalog sync retry",
@@ -109,30 +94,76 @@ def _payload_for(*, scenario_id: str, branch: str) -> dict[str, object]:
             "blocker_state": "401 because the service token expired",
             "preserved_progress": "Refreshed 312 reservation records and should rerun the sync from batch 313.",
             "next_step": "Refresh the catalog service token and rerun the sync from batch 313.",
-            "evidence_used": ["task_checkpoint", "assistant_artifact source evidence"],
+            "evidence_used": ["task_checkpoint"],
+            "freshness_notes": "The current blocker is still the expired token.",
         }
 
     if scenario_id == "resume-implementation-ticket-after-interruption":
         if baseline:
-            return {
-                "answer": "Resume ticket LIB-241.",
-                "task_orientation": "Ticket LIB-241",
-                "reused_findings": [],
-                "blocker_state": "",
-                "preserved_progress": "",
-                "next_step": "",
-                "evidence_used": [],
-            }
+            return _empty_payload("Resume ticket LIB-241.", task_orientation="Ticket LIB-241")
         return {
             "answer": "Resume ticket LIB-241 with the reservation ordering fix still behind the use_item_event_time flag: the schema change and backfill are done, and the next step is wiring the admin toggle plus retry-path coverage.",
             "task_orientation": "Ticket LIB-241 with the use_item_event_time flag",
-            "reused_findings": [
-                "reservation ordering fix",
-            ],
+            "reused_findings": ["reservation ordering fix"],
             "blocker_state": "",
             "preserved_progress": "Schema change and backfill done.",
             "next_step": "Wire the admin toggle and add retry-path coverage before enabling the flag.",
             "evidence_used": ["task_checkpoint", "decision"],
+            "freshness_notes": "",
+        }
+
+    if scenario_id == "resume-review-follow-up-after-feedback":
+        if baseline:
+            return _empty_payload("Resume the LIB-241 review follow-up.", task_orientation="Ticket LIB-241 review")
+        return {
+            "answer": "Resume the LIB-241 review follow-up with the branch kiosk constraint still in place: the admin toggle wiring is ready, but the branch kiosk fallback is still missing, so add that coverage before re-requesting review.",
+            "task_orientation": "Ticket LIB-241 review for branch kiosks",
+            "reused_findings": ["keep the use_item_event_time flag off", "branch kiosk fallback is still missing"],
+            "blocker_state": "Review is blocked because the branch kiosk fallback is still missing.",
+            "preserved_progress": "Admin toggle wiring is ready.",
+            "next_step": "Add the branch kiosk fallback coverage and re-request review before enabling the flag.",
+            "evidence_used": ["task_checkpoint", "decision"],
+            "freshness_notes": "The current review blocker is the missing branch kiosk fallback.",
+        }
+
+    if scenario_id == "prefer-fresh-blocker-over-stale-checkpoint":
+        if baseline:
+            return _empty_payload("The retry moved forward, but the visible thread does not show the latest blocker.")
+        return {
+            "answer": "The current blocker is no longer the expired token. The token is refreshed, the retry resumed from batch 313, and the latest blocker is a 429 after batch 417, so wait 15 minutes and resume from batch 418.",
+            "task_orientation": "Catalog sync retry",
+            "reused_findings": ["the service token is refreshed"],
+            "blocker_state": "429 because the retry window was exhausted after batch 417.",
+            "preserved_progress": "The sync resumed from batch 313 after the token refresh.",
+            "next_step": "Wait 15 minutes and resume from batch 418.",
+            "evidence_used": ["task_checkpoint"],
+            "freshness_notes": "The current blocker is 429 after auth refresh; the older 401 is stale.",
+        }
+
+    if scenario_id == "wrong-thread-implementation-guard":
+        if baseline:
+            return _empty_payload("Resume ticket LIB-241.", task_orientation="Ticket LIB-241")
+        return {
+            "answer": "Stay on ticket LIB-241: the use_item_event_time flag is still gated, the schema change and backfill are done, and the next step is wiring the admin toggle plus retry-path coverage.",
+            "task_orientation": "Ticket LIB-241 with the use_item_event_time flag",
+            "reused_findings": [],
+            "blocker_state": "",
+            "preserved_progress": "Schema change and backfill done.",
+            "next_step": "Wire the admin toggle and add retry-path coverage before enabling the flag.",
+            "evidence_used": ["task_checkpoint"],
+            "freshness_notes": "",
+        }
+
+    if scenario_id == "same-thread-review-no-value-guard":
+        return {
+            "answer": "Add the branch kiosk fallback coverage first, then ask for review again.",
+            "task_orientation": "",
+            "reused_findings": [],
+            "blocker_state": "branch kiosk fallback",
+            "preserved_progress": "",
+            "next_step": "Add the branch kiosk fallback coverage, then review again.",
+            "evidence_used": [],
+            "freshness_notes": "",
         }
 
     return {
@@ -143,6 +174,7 @@ def _payload_for(*, scenario_id: str, branch: str) -> dict[str, object]:
         "preserved_progress": "",
         "next_step": "Refresh the catalog service token, then rerun the sync.",
         "evidence_used": [],
+        "freshness_notes": "",
     }
 
 
@@ -161,15 +193,16 @@ def test_work_resumption_benchmark_outputs_summary_results_and_report(monkeypatc
     results = _read_jsonl(run_dir / "results.jsonl")
     report = (run_dir / "report.md").read_text(encoding="utf-8")
 
-    assert summary["scenarios_total"] == 5
-    assert summary["value_scenarios"] == 4
-    assert summary["non_value_scenarios"] == 1
-    assert len(results) == 5
-    assert "## Gap Signals" in report
-    assert summary["biggest_gap"] is None
+    assert summary["scenarios_total"] == 9
+    assert summary["value_scenarios"] == 7
+    assert summary["non_value_scenarios"] == 2
+    assert len(results) == 9
+    assert "## Failure Families" in report
+    assert summary["dominant_tuning_bottleneck"] is None
+    assert all(count == 0 for count in summary["failure_family_counts"].values())
 
 
-def test_work_resumption_benchmark_captures_memory_help_and_gap_signal(monkeypatch, tmp_path: Path) -> None:
+def test_work_resumption_benchmark_captures_continuity_labels_and_guarded_success(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: TieredMemorySemanticProvider())
 
     run_dir = run_work_resumption_benchmark(
@@ -184,25 +217,27 @@ def test_work_resumption_benchmark_captures_memory_help_and_gap_signal(monkeypat
     resumed = results["resume-investigation-after-pause"]
     assert resumed["winner"] == "memory_backed"
     assert resumed["expected_memory_types_found"] is True
+    assert resumed["labels"]["expected_intent"] == "broad_recall"
     assert resumed["top_layer"] == "lower_level_memory"
 
-    debugging = results["debugging-continued-from-partial-findings"]
-    assert debugging["winner"] == "memory_backed"
-    assert debugging["top_layer"] == "task_checkpoint"
-    assert debugging["gap_signals"] == []
-    assert debugging["missing_dimensions_after_memory"] == []
+    review = results["resume-review-follow-up-after-feedback"]
+    assert review["winner"] == "memory_backed"
+    assert review["top_layer"] == "task_checkpoint"
+    assert review["labels"]["scenario_family"] == "review_continuity"
+    assert review["failure_families"] == []
 
-    auth_retry = results["resume-after-auth-tool-failure"]
-    assert auth_retry["top_layer"] == "task_checkpoint"
-    assert "task_checkpoint" in auth_retry["returned_memory_types"]
-    assert auth_retry["gap_signals"] == []
+    stale = results["prefer-fresh-blocker-over-stale-checkpoint"]
+    assert stale["top_layer"] == "task_checkpoint"
+    assert stale["stale_guard_success"] is True
+    assert stale["failure_families"] == []
 
-    implementation = results["resume-implementation-ticket-after-interruption"]
-    assert implementation["top_layer"] == "task_checkpoint"
-    assert "task_checkpoint" in implementation["returned_memory_types"]
+    wrong_thread = results["wrong-thread-implementation-guard"]
+    assert wrong_thread["top_layer"] == "task_checkpoint"
+    assert wrong_thread["wrong_memory_guard_success"] is True
+    assert wrong_thread["failure_families"] == []
 
 
-def test_work_resumption_benchmark_keeps_no_value_continuation_guard(monkeypatch, tmp_path: Path) -> None:
+def test_work_resumption_benchmark_keeps_no_value_continuation_guards(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: TieredMemorySemanticProvider())
 
     run_dir = run_work_resumption_benchmark(
@@ -213,8 +248,13 @@ def test_work_resumption_benchmark_keeps_no_value_continuation_guard(monkeypatch
         answer_provider=StubWorkResumptionAnswerProvider(),
     )
     results = {item["scenario_id"]: item for item in _read_jsonl(run_dir / "results.jsonl")}
-    no_value = results["same-thread-no-value-continuation"]
 
-    assert no_value["winner"] == "baseline"
-    assert no_value["non_value_guard_success"] is True
-    assert no_value["rubric"]["memory_backed"]["overreach"] is False
+    auth_no_value = results["same-thread-no-value-continuation"]
+    assert auth_no_value["winner"] == "baseline"
+    assert auth_no_value["non_value_guard_success"] is True
+    assert auth_no_value["failure_families"] == []
+
+    review_no_value = results["same-thread-review-no-value-guard"]
+    assert review_no_value["winner"] == "baseline"
+    assert review_no_value["non_value_guard_success"] is True
+    assert review_no_value["failure_families"] == []

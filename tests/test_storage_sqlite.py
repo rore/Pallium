@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from core.models import Annotation, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
+from core.visibility import VisibilityContext
 from storage.sqlite import SQLiteStorageProvider
 
 
@@ -19,6 +20,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         session_ref="session-a",
         actor_ref="slack:U123",
         source_ref="https://example.test/thread-1",
+        visibility_context=VisibilityContext(kind="limited", id="channel-a"),
     )
     storage.create_source_item(source_item)
 
@@ -36,6 +38,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         schema_id="demo.investigation_outcome",
         schema_version="v1",
         payload={"investigation_outcome": "arrival-time ordering missed hold updates during sync delays"},
+        visibility_context=VisibilityContext(kind="limited", id="channel-a"),
     )
     storage.create_memory_object(memory_object)
 
@@ -75,6 +78,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     assert loaded_source.thread_ref == "thread-a"
     assert loaded_source.session_ref == "session-a"
     assert loaded_source.artifact_kind == "message"
+    assert loaded_source.visibility_context == VisibilityContext(kind="limited", id="channel-a")
     assert storage.get_annotation(annotation.id).id == annotation.id
     assert storage.get_memory_object(memory_object.id).lifecycle == "active"
 
@@ -84,29 +88,48 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     assert loaded_index_entries[0].provider_name == "builtin"
     assert loaded_index_entries[0].provider_version == "v1"
 
-    hits = storage.search_index_entries(["missed", "delays"], limit=5)
+    hits = storage.search_index_entries(["missed", "delays"], limit=5).hits
     assert hits
     assert hits[0].target_id == memory_object.id
     assert hits[0].text_view_name == "memory_object.investigation_context"
     assert set(hits[0].matched_tokens) == {"delays", "missed"}
 
+    limited_hits = storage.search_index_entries(
+        ["missed", "delays"],
+        limit=5,
+        visibility_contexts=(VisibilityContext(kind="public", id=None), VisibilityContext(kind="limited", id="channel-a")),
+        include_visibility_trace=True,
+    )
+    assert limited_hits.hits
+    assert limited_hits.visibility_exclusions == ()
+
+    public_hits = storage.search_index_entries(
+        ["missed", "delays"],
+        limit=5,
+        visibility_contexts=(VisibilityContext(kind="public", id=None),),
+        include_visibility_trace=True,
+    )
+    assert public_hits.hits == []
+    assert public_hits.visibility_exclusions
+    assert public_hits.visibility_exclusions[0].reason == "query_visibility_context_excludes_candidate"
+
     storage.update_memory_object_lifecycle(memory_object.id, "superseded")
     assert storage.get_memory_object(memory_object.id).lifecycle == "superseded"
-    hits_after_supersede = storage.search_index_entries(["missed", "delays"], limit=5)
+    hits_after_supersede = storage.search_index_entries(["missed", "delays"], limit=5).hits
     assert all(hit.target_id != memory_object.id for hit in hits_after_supersede)
 
     filtered_hits = storage.search_index_entries(
         ["item", "reservation", "ordering"],
         limit=5,
         filters=QueryFilters(thread_ref="thread-a", role="user", artifact_kind="message"),
-    )
+    ).hits
     assert filtered_hits
 
     no_hits = storage.search_index_entries(
         ["item", "reservation", "ordering"],
         limit=5,
         filters=QueryFilters(thread_ref="thread-b"),
-    )
+    ).hits
     assert no_hits == []
 
     evidence = storage.get_evidence_for_memory_object(memory_object.id)
@@ -114,3 +137,4 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     assert evidence[0].source_item_id == source_item.id
     assert evidence[0].thread_ref == "thread-a"
     assert evidence[0].source_ref == "https://example.test/thread-1"
+    assert evidence[0].visibility_context == VisibilityContext(kind="limited", id="channel-a")

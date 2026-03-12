@@ -8,7 +8,8 @@ from sqlalchemy import Column, DateTime, String, Text, create_engine, select, te
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
-from storage.base import IndexSearchHit, StorageProvider
+from core.visibility import VisibilityContext, VisibilityExclusion, visibility_context_is_visible
+from storage.base import IndexSearchHit, IndexSearchResult, StorageProvider
 
 
 Base = declarative_base()
@@ -32,6 +33,8 @@ class SourceItemRecord(Base):
     session_ref = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
     artifact_kind = Column(String, nullable=True)
+    visibility_kind = Column(String, nullable=True)
+    visibility_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 
@@ -56,6 +59,8 @@ class MemoryObjectRecord(Base):
     schema_version = Column(String, nullable=False)
     payload_json = Column(Text, nullable=False)
     lifecycle = Column(String, nullable=False, default="active")
+    visibility_kind = Column(String, nullable=True)
+    visibility_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 
@@ -93,9 +98,13 @@ class SQLiteStorageProvider(StorageProvider):
         "session_ref": "ALTER TABLE source_items ADD COLUMN session_ref VARCHAR",
         "source_ref": "ALTER TABLE source_items ADD COLUMN source_ref VARCHAR",
         "artifact_kind": "ALTER TABLE source_items ADD COLUMN artifact_kind VARCHAR",
+        "visibility_kind": "ALTER TABLE source_items ADD COLUMN visibility_kind VARCHAR",
+        "visibility_id": "ALTER TABLE source_items ADD COLUMN visibility_id VARCHAR",
     }
     _MEMORY_OBJECT_MIGRATIONS = {
         "lifecycle": "ALTER TABLE memory_objects ADD COLUMN lifecycle VARCHAR DEFAULT 'active'",
+        "visibility_kind": "ALTER TABLE memory_objects ADD COLUMN visibility_kind VARCHAR",
+        "visibility_id": "ALTER TABLE memory_objects ADD COLUMN visibility_id VARCHAR",
     }
     _INDEX_ENTRY_MIGRATIONS = {
         "text_view_name": "ALTER TABLE index_entries ADD COLUMN text_view_name VARCHAR",
@@ -125,6 +134,7 @@ class SQLiteStorageProvider(StorageProvider):
             return self._to_source_item(record)
 
     def create_source_item(self, source_item: SourceItem) -> None:
+        visibility_kind, visibility_id = self._split_visibility_context(source_item.visibility_context)
         record = SourceItemRecord(
             id=source_item.id,
             source_type=source_item.source_type,
@@ -140,6 +150,8 @@ class SQLiteStorageProvider(StorageProvider):
             session_ref=source_item.session_ref,
             source_ref=source_item.source_ref,
             artifact_kind=source_item.artifact_kind,
+            visibility_kind=visibility_kind,
+            visibility_id=visibility_id,
             created_at=source_item.created_at,
         )
         with self._session_factory.begin() as session:
@@ -190,6 +202,7 @@ class SQLiteStorageProvider(StorageProvider):
         return [self._to_annotation(record) for record in records]
 
     def create_memory_object(self, memory_object: MemoryObject) -> None:
+        visibility_kind, visibility_id = self._split_visibility_context(memory_object.visibility_context)
         record = MemoryObjectRecord(
             id=memory_object.id,
             type=memory_object.type,
@@ -197,6 +210,8 @@ class SQLiteStorageProvider(StorageProvider):
             schema_version=memory_object.schema_version,
             payload_json=self._dumps(memory_object.payload) or "{}",
             lifecycle=memory_object.lifecycle,
+            visibility_kind=visibility_kind,
+            visibility_id=visibility_id,
             created_at=memory_object.created_at,
         )
         with self._session_factory.begin() as session:
@@ -289,13 +304,21 @@ class SQLiteStorageProvider(StorageProvider):
                 )
             ).all()
         return [self._to_index_entry(record) for record in records]
-
-    def search_index_entries(self, tokens: list[str], limit: int, filters: QueryFilters | None = None) -> list[IndexSearchHit]:
+    def search_index_entries(
+        self,
+        tokens: list[str],
+        limit: int,
+        filters: QueryFilters | None = None,
+        *,
+        visibility_contexts: tuple[VisibilityContext, ...] | None = None,
+        include_visibility_trace: bool = False,
+    ) -> IndexSearchResult:
         with self._session_factory() as session:
             records = session.scalars(
                 select(IndexEntryRecord).where(IndexEntryRecord.index_type == "lexical")
             ).all()
         hits: list[IndexSearchHit] = []
+        exclusion_counts: dict[str, int] = {}
         unique_tokens = set(tokens)
         for record in records:
             if not self._matches_filters(record.target_kind, record.target_id, filters):
@@ -303,22 +326,37 @@ class SQLiteStorageProvider(StorageProvider):
             text_tokens = set(TOKEN_PATTERN.findall(record.text_view.lower()))
             matched_tokens = tuple(sorted(unique_tokens.intersection(text_tokens)))
             score = len(matched_tokens)
-            if score > 0:
-                hits.append(
-                    IndexSearchHit(
-                        target_kind=record.target_kind,
-                        target_id=record.target_id,
-                        index_entry_id=record.id,
-                        index_type=record.index_type,
-                        text_view_name=record.text_view_name or "default",
-                        score=score,
-                        matched_tokens=matched_tokens,
-                        provider_name=record.provider_name,
-                        provider_version=record.provider_version,
+            if score == 0:
+                continue
+            visibility_context = self._target_visibility_context(record.target_kind, record.target_id)
+            if not visibility_context_is_visible(visibility_context, visibility_contexts):
+                if include_visibility_trace and visibility_contexts is not None:
+                    reason = (
+                        "candidate_visibility_context_missing"
+                        if visibility_context is None
+                        else "query_visibility_context_excludes_candidate"
                     )
+                    exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
+                continue
+            hits.append(
+                IndexSearchHit(
+                    target_kind=record.target_kind,
+                    target_id=record.target_id,
+                    index_entry_id=record.id,
+                    index_type=record.index_type,
+                    text_view_name=record.text_view_name or "default",
+                    score=score,
+                    matched_tokens=matched_tokens,
+                    provider_name=record.provider_name,
+                    provider_version=record.provider_version,
                 )
+            )
         hits.sort(key=lambda item: (item.score, 1 if item.target_kind == "memory_object" else 0), reverse=True)
-        return hits[:limit]
+        exclusions = tuple(
+            VisibilityExclusion(reason=reason, count=count)
+            for reason, count in sorted(exclusion_counts.items())
+        )
+        return IndexSearchResult(hits=hits[:limit], visibility_exclusions=exclusions)
 
     def get_evidence_for_memory_object(self, memory_object_id: str) -> list[EvidenceReference]:
         with self._session_factory() as session:
@@ -351,6 +389,13 @@ class SQLiteStorageProvider(StorageProvider):
             evidence = self.get_evidence_for_memory_object(target_id)
             return any(self._evidence_matches_filters(item, filters) for item in evidence)
         return True
+
+    def _target_visibility_context(self, target_kind: str, target_id: str) -> VisibilityContext | None:
+        if target_kind == "source_item":
+            return self.get_source_item(target_id).visibility_context
+        if target_kind == "memory_object":
+            return self.get_memory_object(target_id).visibility_context
+        return None
 
     def _source_item_matches_filters(self, source_item: SourceItem, filters: QueryFilters) -> bool:
         if filters.source_type is not None and source_item.source_type != filters.source_type:
@@ -432,6 +477,7 @@ class SQLiteStorageProvider(StorageProvider):
             session_ref=record.session_ref,
             source_ref=record.source_ref,
             artifact_kind=record.artifact_kind,
+            visibility_context=SQLiteStorageProvider._build_visibility_context(record.visibility_kind, record.visibility_id),
             created_at=record.created_at,
         )
 
@@ -456,6 +502,7 @@ class SQLiteStorageProvider(StorageProvider):
             schema_version=record.schema_version,
             payload=SQLiteStorageProvider._loads(record.payload_json),
             lifecycle=record.lifecycle or "active",
+            visibility_context=SQLiteStorageProvider._build_visibility_context(record.visibility_kind, record.visibility_id),
             created_at=record.created_at,
         )
 
@@ -500,7 +547,20 @@ class SQLiteStorageProvider(StorageProvider):
             session_ref=record.session_ref,
             source_ref=record.source_ref,
             artifact_kind=record.artifact_kind,
+            visibility_context=SQLiteStorageProvider._build_visibility_context(record.visibility_kind, record.visibility_id),
         )
+
+    @staticmethod
+    def _split_visibility_context(visibility_context: VisibilityContext | None) -> tuple[str | None, str | None]:
+        if visibility_context is None:
+            return None, None
+        return visibility_context.kind, visibility_context.id
+
+    @staticmethod
+    def _build_visibility_context(kind: str | None, visibility_id: str | None) -> VisibilityContext | None:
+        if not kind:
+            return None
+        return VisibilityContext(kind=kind, id=visibility_id)
 
     @staticmethod
     def _dumps(value: dict | None) -> str | None:
@@ -513,3 +573,4 @@ class SQLiteStorageProvider(StorageProvider):
         if not value:
             return {}
         return json.loads(value)
+

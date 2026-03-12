@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
+from core.visibility import VisibilityContext, VisibilityExclusion
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,12 @@ class IndexSearchHit:
     matched_tokens: tuple[str, ...]
     provider_name: str | None = None
     provider_version: str | None = None
+
+
+@dataclass(frozen=True)
+class IndexSearchResult:
+    hits: list[IndexSearchHit]
+    visibility_exclusions: tuple[VisibilityExclusion, ...] = ()
 
 
 class StorageProvider(ABC):
@@ -85,7 +92,15 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def search_index_entries(self, tokens: list[str], limit: int, filters: QueryFilters | None = None) -> list[IndexSearchHit]:
+    def search_index_entries(
+        self,
+        tokens: list[str],
+        limit: int,
+        filters: QueryFilters | None = None,
+        *,
+        visibility_contexts: tuple[VisibilityContext, ...] | None = None,
+        include_visibility_trace: bool = False,
+    ) -> IndexSearchResult:
         raise NotImplementedError
 
     @abstractmethod

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from core.models import SourceItem
+from core.visibility import VisibilityContext, visibility_context_matches_exact
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,7 @@ class ThreadAggregate:
     source_item_ids: list[str]
     latest_occurred_at: datetime | None
     aggregate_text: str
+    visibility_context: VisibilityContext | None
 
 
 def build_thread_aggregate(source_items: list[SourceItem]) -> ThreadAggregate:
@@ -32,6 +34,11 @@ def build_thread_aggregate(source_items: list[SourceItem]) -> ThreadAggregate:
     first = ordered_items[0]
     if not first.container_ref or not first.thread_ref:
         raise ValueError("Thread aggregation requires container_ref and thread_ref")
+    if any(
+        not visibility_context_matches_exact(item.visibility_context, first.visibility_context)
+        for item in ordered_items[1:]
+    ):
+        raise ValueError("Thread aggregation requires exact visibility_context match")
 
     latest_item = ordered_items[-1]
     session_ref = latest_item.session_ref or next(
@@ -52,4 +59,5 @@ def build_thread_aggregate(source_items: list[SourceItem]) -> ThreadAggregate:
         source_item_ids=[item.id for item in ordered_items],
         latest_occurred_at=latest_item.occurred_at or latest_item.created_at,
         aggregate_text=aggregate_text,
+        visibility_context=first.visibility_context,
     )

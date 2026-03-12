@@ -238,6 +238,10 @@ WORK_RESUMPTION_BLOCKER_CUES = (
 class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, ConsolidationSemanticPlugin):
     name = "agent_conversation_memory"
 
+    @property
+    def requires_visibility_context(self) -> bool:
+        return True
+
     def __init__(
         self,
         provider: LLMProvider,
@@ -308,6 +312,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 limit=requested_limit,
                 filters=retrieval_result.trace.filters,
                 stages=retrieval_result.trace.stages,
+                visibility=retrieval_result.trace.visibility,
                 routing=_build_routing_trace(
                     intent=intent,
                     preferred_layers=preferred_layers,
@@ -321,10 +326,12 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
     def supports_thread_aggregation(self, source_item: SourceItem) -> bool:
         if not source_item.thread_ref or not source_item.container_ref:
             return False
+        if source_item.visibility_context is None:
+            return False
         return _supports_thread_aggregation(source_item)
 
     def supports_consolidation(self, memory_object: MemoryObject) -> bool:
-        return memory_object.type in {"thread_summary", "decision", "investigation_outcome"}
+        return memory_object.visibility_context is not None and memory_object.type in {"thread_summary", "decision", "investigation_outcome"}
 
     def build_thread_summary(self, aggregate: ThreadAggregate, conclusions: list[MemoryObject]) -> ProcessResult:
         carried_conclusions = sorted(
@@ -398,6 +405,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 "latest_occurred_at": aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else None,
                 "semantic_provenance": semantic_provenance,
             },
+            visibility_context=aggregate.visibility_context,
         )
         relations = [
             Relation(
@@ -541,6 +549,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                     "prompt_schema_version": TASK_CHECKPOINT_PROMPT_SCHEMA_VERSION,
                 },
             },
+            visibility_context=aggregate.visibility_context,
         )
         index_source = " ".join(
             [
@@ -633,6 +642,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 "semantic_provenance": semantic_provenance,
                 "consolidation_provenance": consolidation_provenance,
             },
+            visibility_context=group.visibility_context,
         )
         index_source = " ".join(
             [
@@ -721,6 +731,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                     "prompt_variant": self.prompt_variant,
                 },
             },
+            visibility_context=group.visibility_context,
         )
         index_source = " ".join(
             [

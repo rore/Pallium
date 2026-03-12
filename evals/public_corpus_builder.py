@@ -277,6 +277,7 @@ def _assemble_episode(
         "text": query_text,
         "limit": int(spec.get("query_limit", manifest.get("default_query_limit", DEFAULT_QUERY_LIMIT))),
         "container_ref": target_conversation["container_ref"],
+        "visibility_context": {"kind": "public", "id": None},
     }
     if spec["episode_type"] == "within_conversation_later_turn_recall":
         current_query["thread_ref"] = target_conversation["thread_ref"]
@@ -349,6 +350,7 @@ def _build_source_event(*, conversation: dict[str, Any], turn: dict[str, Any]) -
         "content_type": "text/plain",
         "content": turn["content"],
         "artifact_kind": artifact_kind,
+        "visibility_context": {"kind": "public", "id": None},
         "role": role,
         "container_ref": conversation["container_ref"],
         "thread_ref": conversation["thread_ref"],
@@ -734,5 +736,7 @@ def _iter_rows_from_file(path: Path) -> Iterator[dict[str, Any]]:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
 
 

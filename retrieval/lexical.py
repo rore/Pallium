@@ -12,6 +12,7 @@ from core.models import (
     RetrievalTraceHit,
     SourceItem,
 )
+from core.visibility import QueryVisibilityTrace, VisibilityContext, expand_visibility_context
 from retrieval.base import RetrievalProvider, RetrievalQueryResult
 from storage.base import IndexSearchHit, StorageProvider
 
@@ -48,6 +49,7 @@ def _build_evidence(source_item: SourceItem) -> EvidenceReference:
         session_ref=source_item.session_ref,
         source_ref=source_item.source_ref,
         artifact_kind=source_item.artifact_kind,
+        visibility_context=source_item.visibility_context,
     )
 
 
@@ -75,9 +77,11 @@ class LexicalRetrievalProvider(RetrievalProvider):
         limit: int,
         filters: QueryFilters | None = None,
         *,
+        visibility_context: VisibilityContext | None = None,
         include_trace: bool = False,
     ) -> RetrievalQueryResult:
         tokens = sorted(set(_tokenize(text)))
+        visible_contexts = expand_visibility_context(visibility_context) if visibility_context is not None else None
         if not tokens:
             trace = None
             if include_trace:
@@ -87,10 +91,25 @@ class LexicalRetrievalProvider(RetrievalProvider):
                     limit=limit,
                     filters=filters,
                     stages=tuple(),
+                    visibility=(
+                        QueryVisibilityTrace(
+                            query_visibility_context=visibility_context,
+                            expanded_visibility_contexts=visible_contexts or tuple(),
+                        )
+                        if visibility_context is not None
+                        else None
+                    ),
                 )
             return RetrievalQueryResult(results=[], trace=trace)
 
-        hits = self._storage.search_index_entries(tokens=tokens, limit=limit * 4, filters=filters)
+        search_result = self._storage.search_index_entries(
+            tokens=tokens,
+            limit=limit * 4,
+            filters=filters,
+            visibility_contexts=visible_contexts,
+            include_visibility_trace=include_trace,
+        )
+        hits = search_result.hits
         results: list[QueryResultItem] = []
         selected_hits: list[RetrievalTraceHit] = []
         seen: set[tuple[str, str]] = set()
@@ -112,6 +131,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
                         payload=memory_object.payload,
                         score=hit.score,
                         evidence=evidence,
+                        visibility_context=memory_object.visibility_context,
                     )
                 )
             elif hit.target_kind == "source_item":
@@ -133,6 +153,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
                         artifact_kind=source_item.artifact_kind,
                         score=hit.score,
                         evidence=[_build_evidence(source_item)],
+                        visibility_context=source_item.visibility_context,
                     )
                 )
             else:
@@ -158,6 +179,15 @@ class LexicalRetrievalProvider(RetrievalProvider):
                         candidate_hits=tuple(_build_trace_hit(hit) for hit in hits),
                         selected_hits=tuple(selected_hits),
                     ),
+                ),
+                visibility=(
+                    QueryVisibilityTrace(
+                        query_visibility_context=visibility_context,
+                        expanded_visibility_contexts=visible_contexts or tuple(),
+                        excluded_candidates=search_result.visibility_exclusions,
+                    )
+                    if visibility_context is not None or search_result.visibility_exclusions
+                    else None
                 ),
             )
 

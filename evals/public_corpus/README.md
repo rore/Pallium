@@ -5,6 +5,7 @@ This directory stores reviewed metadata for the public real-interaction eval lay
 What is committed:
 - `wildchat_review_manifest.json`: reviewed episode selections and labels for the primary WildChat-backed realism slice
 - `wildbench_review_manifest.json`: reviewed episode selections and labels for the complementary WildBench-backed task slice
+- `wildbench_developer_continuation_manifest.json`: small reviewed WildBench continuation/paraphrase pack for developer-work continuity pressure
 - small generated benchmark outputs written under `output/` when you run the builder or benchmark locally against bounded inputs
 - local-workflow code under `evals/public_corpus_wildchat_local.py` and `evals/public_corpus_wildbench_local.py`
 
@@ -27,7 +28,8 @@ How the two sources fit together:
   - retrieval recall
   - routing/layer choice
   - result packaging/evidence
-  - overreach/no-value
+  - compact task-state where applicable
+  - no-value overreach
 
 WildChat notes:
 - use the official dataset card for license and terms review before downloading locally: `https://huggingface.co/datasets/allenai/WildChat-4.8M`
@@ -61,7 +63,7 @@ After review, materialize that slice into a small local cache and benchmark it r
 
 WildBench notes:
 - use the official dataset card for license and terms review before downloading locally: `https://huggingface.co/datasets/allenai/WildBench`
-- WildBench is already benchmark-shaped, so keep the local helper small: reviewed candidate emission, reviewed-set materialization, and repeated benchmark runs
+- WildBench is already benchmark-shaped, so keep the local helper small: reviewed candidate emission, reviewed-set materialization, repeated benchmark runs, and small committed continuation packs when they add real signal
 - use it to pressure realistic external task prompts and paraphrased follow-ups, not to replace WildChat’s carry-forward realism slice
 
 Recommended local WildBench directory convention:
@@ -92,3 +94,5 @@ Notes:
 - `evals.public_corpus_builder` and `evals.public_corpus_benchmark` now work for both WildChat and WildBench reviewed-manifest inputs
 - for the larger WildChat corpus, prefer the WildChat local helper so repeated benchmark runs reuse a materialized review-set cache instead of rescanning the raw snapshot each time
 - for WildBench, keep the workflow small and benchmark-focused; do not build a broader multi-corpus platform in this phase
+
+

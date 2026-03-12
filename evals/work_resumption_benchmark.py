@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +14,13 @@ from fastapi.testclient import TestClient
 from app.config import AppConfig
 from app.dependencies import build_llm_provider
 from app.main import create_app
+from evals.continuity_common import (
+    CONTINUITY_FAILURE_FAMILIES,
+    dominant_bottleneck_implication,
+    dominant_tuning_bottleneck,
+    failure_family_counts,
+    result_layer,
+)
 from providers.llm.base import LLMProvider
 
 
@@ -28,28 +35,36 @@ CONTINUATION_SCHEMA = json.dumps(
         "preserved_progress": "string",
         "next_step": "string",
         "evidence_used": ["string"],
+        "freshness_notes": "string",
     },
     indent=2,
 )
 DIMENSION_ORDER = (
     "task_orientation",
-    "prior_findings_reused",
+    "key_findings",
     "blocker_state",
     "preserved_progress",
     "next_step_guidance",
+    "evidence",
+    "freshness",
 )
-DEFAULT_DIMENSION_GAP_TARGET = "result_packaging_or_evidence"
-GAP_IMPLICATIONS = {
-    "compact_task_state_memory": "The current benchmark points to compact task-state memory as the next slice for carrying forward progress, blocker state, and the next step without depending on transcript replay.",
-    "selected_work_artifact_support": "The current benchmark points to selected work-artifact support as the next slice when tool/auth failure state and partial progress need more deliberate promotion than generic source replay.",
-    "routing_or_layer_choice": "The current benchmark points to routing and layer choice as the next slice to tighten before broadening memory representation again.",
-    "result_packaging_or_evidence": "The current benchmark points to result packaging and evidence handling as the next slice to improve in continuation guidance for the downstream agent.",
-    "retrieval_recall": "The current benchmark points to retrieval recall as the next slice to improve before adding more memory structure.",
+TASK_STATE_DIMENSIONS = {"blocker_state", "preserved_progress", "next_step_guidance", "freshness"}
+LEGACY_DIMENSION_NAMES = {
+    "task_orientation": "task_orientation",
+    "prior_findings_reused": "key_findings",
+    "key_findings": "key_findings",
+    "blocker_state": "blocker_state",
+    "preserved_progress": "preserved_progress",
+    "next_step_guidance": "next_step_guidance",
+    "evidence_preserved": "evidence",
+    "evidence": "evidence",
+    "freshness_preserved": "freshness",
+    "freshness": "freshness",
 }
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run the work-resumption continuity benchmark.")
+    parser = argparse.ArgumentParser(description="Run the developer-work continuity benchmark.")
     parser.add_argument("--scenario-file", type=Path, default=DEFAULT_SCENARIO_FILE)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--run-name", default=None)
@@ -136,7 +151,7 @@ def _run_scenario(
         )
         with TestClient(create_app(scenario_config)) as client:
             for event in scenario.get("prior_events", []):
-                response = client.post("/items", json=event)
+                response = client.post("/items", json=_with_default_visibility(event))
                 response.raise_for_status()
 
             consolidation_result = None
@@ -146,7 +161,7 @@ def _run_scenario(
                     strategy_name=consolidation_strategy,
                 )
 
-            query_response = client.post("/query/debug", json=scenario["current_query"])
+            query_response = client.post("/query/debug", json=_with_default_visibility(scenario["current_query"]))
             query_response.raise_for_status()
             query_payload = query_response.json()
             engine = getattr(client.app.state.pallium_service._storage, "_engine", None)
@@ -170,62 +185,118 @@ def _run_scenario(
         branch="memory_backed",
     )
 
+    routing = ((query_payload.get("trace") or {}).get("routing") or {})
+    routing_intent = routing.get("query_intent")
+    intent_match = routing_intent == scenario.get("expected_intent") if scenario.get("expected_intent") else True
+
     memory_hits = [item for item in query_payload["results"] if item.get("result_kind") == "memory_hit"]
     source_hits = [item for item in query_payload["results"] if item.get("result_kind") == "source_hit"]
     returned_memory_types = sorted({item.get("type") for item in memory_hits if item.get("type")})
     expected_memory_types = scenario.get("expected_memory_types", [])
     expected_memory_types_found = all(item in returned_memory_types for item in expected_memory_types)
     top_result = query_payload["results"][0] if query_payload["results"] else None
-    top_layer = _result_layer(top_result)
-    expected_top_layers = list(scenario.get("acceptable_top_layers") or [])
-    if not expected_top_layers and scenario.get("expected_top_layer"):
-        expected_top_layers = [scenario["expected_top_layer"]]
-    top_layer_match = not expected_top_layers or top_layer in expected_top_layers
+    top_layer = result_layer(top_result)
+    expected_primary_layer = scenario.get("expected_primary_layer")
+    acceptable_layers = list(scenario.get("acceptable_layers", []))
+    top_layer_match = not acceptable_layers or top_layer in acceptable_layers
+    primary_layer_match = expected_primary_layer is None or top_layer == expected_primary_layer
+    forbidden_layers = list(scenario.get("forbidden_layers", []))
+    forbidden_layers_hit = [layer for layer in forbidden_layers if layer == top_layer]
 
     baseline_rubric = _score_continuation(
         continuation=baseline_continuation,
         expected_dimensions=scenario.get("expected_dimensions", {}),
+        must_preserve=scenario.get("must_preserve", []),
         forbidden_terms=scenario.get("forbidden_terms", []),
     )
     memory_rubric = _score_continuation(
         continuation=memory_backed_continuation,
         expected_dimensions=scenario.get("expected_dimensions", {}),
+        must_preserve=scenario.get("must_preserve", []),
         forbidden_terms=scenario.get("forbidden_terms", []),
     )
     comparison = _compare_continuations(
-        expected_value=bool(scenario.get("expected_value")),
+        should_memory_help=bool(scenario.get("should_memory_help")),
         baseline_rubric=baseline_rubric,
         memory_rubric=memory_rubric,
-        expected_memory_types_found=expected_memory_types_found,
-        top_layer_match=top_layer_match,
     )
-    gap_signal_counts = _infer_gap_signal_counts(
+
+    retrieval_text = _retrieval_text(query_payload["results"])
+    gap_breakdown = _dimension_gap_breakdown(
         scenario=scenario,
-        expected_value=bool(scenario.get("expected_value")),
         memory_rubric=memory_rubric,
-        query_payload=query_payload,
-        top_layer_match=top_layer_match,
+        retrieval_text=retrieval_text,
+        routing_failed=(not intent_match) or (not top_layer_match) or bool(forbidden_layers_hit),
     )
+    guard_matches = _guard_term_matches(
+        guard_terms=scenario.get("guard_terms", {}),
+        top_result=top_result,
+        continuation=memory_backed_continuation,
+    )
+    failure_families = _classify_failure_families(
+        scenario=scenario,
+        comparison=comparison,
+        memory_rubric=memory_rubric,
+        expected_memory_types_found=expected_memory_types_found,
+        intent_match=intent_match,
+        top_layer_match=top_layer_match,
+        forbidden_layers_hit=forbidden_layers_hit,
+        gap_breakdown=gap_breakdown,
+        guard_matches=guard_matches,
+    )
+    missing_dimensions_after_memory = _missing_dimensions(memory_rubric)
+    forbidden_terms_found = sorted({term for matches in guard_matches.values() for term in matches})
+    no_value_guard_success = (not bool(scenario.get("should_memory_help"))) and "no_value_overreach_failure" not in failure_families
+    stale_guard_success = (
+        "stale_state" not in scenario.get("must_not_introduce", [])
+        or "stale_memory_failure" not in failure_families
+    )
+    wrong_memory_guard_success = (
+        "wrong_thread_state" not in scenario.get("must_not_introduce", [])
+        or "wrong_memory_selection_failure" not in failure_families
+    )
+
+    labels = {
+        "scenario_family": scenario["scenario_family"],
+        "should_memory_help": bool(scenario.get("should_memory_help")),
+        "expected_intent": scenario.get("expected_intent"),
+        "expected_primary_layer": expected_primary_layer,
+        "acceptable_fallback_layers": list(scenario.get("acceptable_fallback_layers", [])),
+        "forbidden_layers": forbidden_layers,
+        "must_preserve": list(scenario.get("must_preserve", [])),
+        "must_not_introduce": list(scenario.get("must_not_introduce", [])),
+    }
 
     return {
         "scenario_id": scenario["scenario_id"],
         "scenario_family": scenario["scenario_family"],
         "scenario_kind": scenario["scenario_family"],
         "description": scenario["description"],
-        "expected_value": bool(scenario.get("expected_value")),
+        "labels": labels,
+        "should_memory_help": bool(scenario.get("should_memory_help")),
+        "expected_value": bool(scenario.get("should_memory_help")),
         "expected_non_value_reason": scenario.get("expected_non_value_reason"),
-        "expected_memory_types": expected_memory_types,
-        "expected_memory_types_found": expected_memory_types_found,
-        "expected_top_layers": expected_top_layers,
+        "expected_intent": scenario.get("expected_intent"),
+        "routing_intent": routing_intent,
+        "intent_match": intent_match,
+        "expected_primary_layer": expected_primary_layer,
+        "expected_top_layer": expected_primary_layer,
+        "acceptable_fallback_layers": list(scenario.get("acceptable_fallback_layers", [])),
+        "acceptable_layers": acceptable_layers,
+        "acceptable_top_layers": acceptable_layers,
+        "forbidden_layers": forbidden_layers,
+        "forbidden_layers_hit": forbidden_layers_hit,
         "top_layer": top_layer,
         "top_layer_match": top_layer_match,
+        "primary_layer_match": primary_layer_match,
+        "expected_memory_types": expected_memory_types,
+        "expected_memory_types_found": expected_memory_types_found,
         "returned_memory_types": returned_memory_types,
         "memory_hit_count": len(memory_hits),
         "source_hit_count": len(source_hits),
         "memory_backed_retrieval": query_payload["results"],
         "query_trace": query_payload.get("trace"),
-        "routing_intent": ((query_payload.get("trace") or {}).get("routing") or {}).get("query_intent"),
-        "routing_preferred_layers": ((query_payload.get("trace") or {}).get("routing") or {}).get("preferred_layers", []),
+        "routing_preferred_layers": routing.get("preferred_layers", []),
         "baseline_continuation": baseline_continuation,
         "memory_backed_continuation": memory_backed_continuation,
         "rubric": {
@@ -235,10 +306,15 @@ def _run_scenario(
         },
         "winner": comparison["winner"],
         "why": comparison["why"],
-        "missing_dimensions_after_memory": _missing_dimensions(memory_rubric),
-        "gap_signals": sorted(gap_signal_counts),
-        "gap_signal_counts": dict(gap_signal_counts),
-        "non_value_guard_success": (not bool(scenario.get("expected_value"))) and not memory_rubric["overreach"],
+        "missing_dimensions_after_memory": missing_dimensions_after_memory,
+        "dimension_gap_breakdown": gap_breakdown,
+        "failure_families": failure_families,
+        "gap_signals": failure_families,
+        "guard_matches": guard_matches,
+        "forbidden_terms_found": forbidden_terms_found,
+        "non_value_guard_success": no_value_guard_success,
+        "stale_guard_success": stale_guard_success,
+        "wrong_memory_guard_success": wrong_memory_guard_success,
         "consolidation_strategy": consolidation_strategy,
         "consolidation_run": _serialize_consolidation_result(consolidation_result),
     }
@@ -272,6 +348,7 @@ def _generate_continuation(
         "- preserved_progress: partial progress already completed and worth preserving\n"
         "- next_step: the best next step supported by the supplied context\n"
         "- evidence_used: short list of prior memory or source evidence actually used\n"
+        "- freshness_notes: what current or freshest prior state matters now\n"
         "If the current-thread context is already sufficient, do not force older memory into the answer."
     )
     response = answer_provider.generate_json(
@@ -294,9 +371,9 @@ def _generate_continuation(
         "preserved_progress": _normalize_string(parsed.get("preserved_progress")),
         "next_step": _normalize_string(parsed.get("next_step")),
         "evidence_used": [_normalize_string(item) for item in evidence_used if _normalize_string(item)],
+        "freshness_notes": _normalize_string(parsed.get("freshness_notes")),
         "raw_text": response.raw_text,
     }
-
 
 def _normalize_string(value: Any) -> str:
     if value is None:
@@ -308,33 +385,45 @@ def _score_continuation(
     *,
     continuation: dict[str, Any],
     expected_dimensions: dict[str, list[str]],
+    must_preserve: list[str],
     forbidden_terms: list[str],
 ) -> dict[str, Any]:
     dimensions: dict[str, Any] = {}
+    normalized_must_preserve = set(must_preserve)
     for dimension in DIMENSION_ORDER:
-        expected_signals = expected_dimensions.get(dimension, [])
-        applicable = bool(expected_signals)
+        expected_signals = list(expected_dimensions.get(dimension, []))
+        applicable = dimension in normalized_must_preserve or bool(expected_signals)
         haystack = _dimension_text(dimension, continuation)
         matches = [signal for signal in expected_signals if signal.lower() in haystack.lower()]
         missing = [signal for signal in expected_signals if signal not in matches]
+        if not applicable:
+            score = None
+        elif expected_signals:
+            score = _score_signal_coverage(matches, expected_signals)
+        elif dimension == "evidence":
+            score = 2 if continuation["evidence_used"] else 0
+        elif dimension == "freshness":
+            score = 2 if continuation["freshness_notes"] else 0
+        else:
+            score = 2 if haystack.strip() else 0
         dimensions[dimension] = {
             "applicable": applicable,
             "expected_signals": expected_signals,
             "matches": matches,
             "missing": missing,
-            "score": _score_signal_coverage(matches, expected_signals) if applicable else None,
+            "score": score,
         }
 
     combined = _combined_continuation_text(continuation)
     overreach_terms = [term for term in forbidden_terms if term.lower() in combined]
     applicable_dimensions = [item for item in dimensions.values() if item["applicable"]]
-    total = sum(int(item["score"]) for item in applicable_dimensions)
+    total = sum(int(item["score"] or 0) for item in applicable_dimensions)
     evidence_grounding = 2 if continuation["evidence_used"] else 0
     return {
         "dimensions": dimensions,
         "applicable_dimensions": len(applicable_dimensions),
-        "fully_covered_dimensions": sum(1 for item in applicable_dimensions if int(item["score"]) == 2),
-        "partially_covered_dimensions": sum(1 for item in applicable_dimensions if int(item["score"]) == 1),
+        "fully_covered_dimensions": sum(1 for item in applicable_dimensions if int(item["score"] or 0) == 2),
+        "partially_covered_dimensions": sum(1 for item in applicable_dimensions if int(item["score"] or 0) == 1),
         "total": total,
         "evidence_grounding": evidence_grounding,
         "overreach": bool(overreach_terms),
@@ -345,13 +434,17 @@ def _score_continuation(
 def _dimension_text(dimension: str, continuation: dict[str, Any]) -> str:
     if dimension == "task_orientation":
         return f"{continuation['answer']}\n{continuation['task_orientation']}"
-    if dimension == "prior_findings_reused":
+    if dimension == "key_findings":
         return f"{continuation['answer']}\n{' '.join(continuation['reused_findings'])}"
     if dimension == "blocker_state":
         return f"{continuation['answer']}\n{continuation['blocker_state']}"
     if dimension == "preserved_progress":
         return f"{continuation['answer']}\n{continuation['preserved_progress']}"
-    return f"{continuation['answer']}\n{continuation['next_step']}"
+    if dimension == "next_step_guidance":
+        return f"{continuation['answer']}\n{continuation['next_step']}"
+    if dimension == "evidence":
+        return f"{continuation['answer']}\n{' '.join(continuation['evidence_used'])}"
+    return f"{continuation['answer']}\n{continuation['freshness_notes']}\n{continuation['blocker_state']}\n{continuation['next_step']}"
 
 
 def _score_signal_coverage(matches: list[str], expected_signals: list[str]) -> int:
@@ -366,11 +459,9 @@ def _score_signal_coverage(matches: list[str], expected_signals: list[str]) -> i
 
 def _compare_continuations(
     *,
-    expected_value: bool,
+    should_memory_help: bool,
     baseline_rubric: dict[str, Any],
     memory_rubric: dict[str, Any],
-    expected_memory_types_found: bool,
-    top_layer_match: bool,
 ) -> dict[str, Any]:
     baseline_total = int(baseline_rubric["total"])
     memory_total = int(memory_rubric["total"])
@@ -382,7 +473,7 @@ def _compare_continuations(
         > int(baseline_rubric["dimensions"][dimension]["score"] or 0)
     ]
 
-    if not expected_value:
+    if not should_memory_help:
         if memory_rubric["overreach"]:
             why = "Current-thread context was already sufficient, and the memory-backed branch overreached by replaying unnecessary prior detail."
         else:
@@ -394,18 +485,15 @@ def _compare_continuations(
         }
 
     if memory_total > baseline_total and improved_dimensions:
-        why = "Memory-backed continuation preserved more of the prior work state than baseline."
-        if not expected_memory_types_found and not top_layer_match:
-            why = "Memory-backed continuation improved, but routing still relied on a weaker layer than expected."
         return {
             "winner": "memory_backed",
-            "why": why,
+            "why": "Memory-backed continuation preserved more of the prior developer-work state than baseline.",
             "improved_dimensions": improved_dimensions,
         }
     if memory_total == baseline_total:
         return {
             "winner": "tie",
-            "why": "Both branches preserved a comparable amount of work continuity.",
+            "why": "Both branches preserved a comparable amount of continuity signal.",
             "improved_dimensions": improved_dimensions,
         }
     return {
@@ -423,36 +511,96 @@ def _missing_dimensions(rubric: dict[str, Any]) -> list[str]:
     ]
 
 
-def _infer_gap_signal_counts(
+def _dimension_gap_breakdown(
     *,
     scenario: dict[str, Any],
-    expected_value: bool,
     memory_rubric: dict[str, Any],
-    query_payload: dict[str, Any],
-    top_layer_match: bool,
-) -> Counter[str]:
-    counts: Counter[str] = Counter()
-    if not expected_value:
-        if memory_rubric["overreach"]:
-            counts["overreach_in_no_value_case"] += 1
-        return counts
+    retrieval_text: str,
+    routing_failed: bool,
+) -> dict[str, list[str]]:
+    retrieval_gaps: list[str] = []
+    compact_task_state_gaps: list[str] = []
+    packaging_gaps: list[str] = []
 
-    retrieval_text = _retrieval_text(query_payload["results"])
-    retrieval_signals = scenario.get("retrieval_signals", {})
-    dimension_gap_targets = scenario.get("dimension_gap_targets", {})
     for dimension in _missing_dimensions(memory_rubric):
-        expected_signals = retrieval_signals.get(dimension) or scenario.get("expected_dimensions", {}).get(dimension, [])
+        expected_signals = scenario.get("retrieval_signals", {}).get(dimension) or scenario.get("expected_dimensions", {}).get(dimension, [])
         if expected_signals and not any(signal.lower() in retrieval_text for signal in expected_signals):
-            counts["retrieval_recall"] += 1
+            retrieval_gaps.append(dimension)
             continue
-        if not top_layer_match:
-            counts["routing_or_layer_choice"] += 1
+        if not routing_failed and scenario.get("expected_primary_layer") == "task_checkpoint" and dimension in TASK_STATE_DIMENSIONS:
+            compact_task_state_gaps.append(dimension)
             continue
-        targets = dimension_gap_targets.get(dimension) or [DEFAULT_DIMENSION_GAP_TARGET]
-        for target in targets:
-            counts[target] += 1
-    return counts
+        packaging_gaps.append(dimension)
 
+    return {
+        "missing": _missing_dimensions(memory_rubric),
+        "retrieval_recall": retrieval_gaps,
+        "compact_task_state": compact_task_state_gaps,
+        "result_packaging_evidence": packaging_gaps,
+    }
+
+
+def _guard_term_matches(
+    *,
+    guard_terms: dict[str, list[str]],
+    top_result: dict[str, Any] | None,
+    continuation: dict[str, Any],
+) -> dict[str, list[str]]:
+    combined = json.dumps(top_result or {}, sort_keys=True).lower() + "\n" + _combined_continuation_text(continuation)
+    return {
+        guard: [term for term in terms if term.lower() in combined]
+        for guard, terms in guard_terms.items()
+    }
+
+
+def _classify_failure_families(
+    *,
+    scenario: dict[str, Any],
+    comparison: dict[str, Any],
+    memory_rubric: dict[str, Any],
+    expected_memory_types_found: bool,
+    intent_match: bool,
+    top_layer_match: bool,
+    forbidden_layers_hit: list[str],
+    gap_breakdown: dict[str, list[str]],
+    guard_matches: dict[str, list[str]],
+) -> list[str]:
+    failures: list[str] = []
+
+    if guard_matches.get("stale_state"):
+        failures.append("stale_memory_failure")
+    if guard_matches.get("wrong_thread_state"):
+        failures.append("wrong_memory_selection_failure")
+
+    if not bool(scenario.get("should_memory_help")):
+        if comparison["winner"] == "memory_backed" or memory_rubric["overreach"] or forbidden_layers_hit or any(guard_matches.values()):
+            failures.append("no_value_overreach_failure")
+        return _ordered_failure_families(failures)
+
+    if gap_breakdown["retrieval_recall"] or not expected_memory_types_found:
+        failures.append("retrieval_recall_failure")
+    if not intent_match or not top_layer_match or forbidden_layers_hit:
+        failures.append("routing_layer_choice_failure")
+    if gap_breakdown["compact_task_state"]:
+        failures.append("compact_task_state_failure")
+
+    evidence_required = "evidence" in scenario.get("must_preserve", [])
+    evidence_score = int(memory_rubric["dimensions"]["evidence"]["score"] or 0) if memory_rubric["dimensions"]["evidence"]["applicable"] else 0
+    packaging_failure = bool(gap_breakdown["result_packaging_evidence"]) or (evidence_required and evidence_score < 2) or comparison["winner"] != "memory_backed"
+    if packaging_failure and "retrieval_recall_failure" not in failures and "routing_layer_choice_failure" not in failures and "compact_task_state_failure" not in failures:
+        failures.append("result_packaging_evidence_failure")
+
+    return _ordered_failure_families(failures)
+
+
+def _ordered_failure_families(families: list[str]) -> list[str]:
+    unique = set(families)
+    return [name for name in CONTINUITY_FAILURE_FAMILIES if name in unique]
+
+def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(payload)
+    updated.setdefault("visibility_context", {"kind": "public", "id": None})
+    return updated
 
 def _retrieval_text(results: list[dict[str, Any]]) -> str:
     parts: list[str] = []
@@ -491,10 +639,11 @@ def _format_retrieval_results(results: list[dict[str, Any]]) -> str:
                     payload.get("current_state"),
                     payload.get("blocker_state"),
                     payload.get("next_step"),
-                    '; '.join(str(value) for value in findings[:2]),
-                    '; '.join(str(value) for value in evidence[:2]),
+                    "; ".join(str(value) for value in findings[:2]),
+                    "; ".join(str(value) for value in evidence[:2]),
+                    payload.get("freshness_signal"),
                 ]
-                summary = ' | '.join(str(value).strip() for value in checkpoint_fields if str(value).strip())
+                summary = " | ".join(str(value).strip() for value in checkpoint_fields if str(value).strip())
             else:
                 summary = (
                     payload.get("carry_forward_answer")
@@ -519,22 +668,9 @@ def _combined_continuation_text(continuation: dict[str, Any]) -> str:
             continuation["preserved_progress"],
             continuation["next_step"],
             " ".join(continuation["evidence_used"]),
+            continuation["freshness_notes"],
         ]
     ).lower()
-
-
-def _result_layer(item: dict[str, Any] | None) -> str:
-    if item is None:
-        return "none"
-    if item.get("result_kind") == "source_hit":
-        return "source_evidence"
-    if item.get("type") == "pattern_memory":
-        return "pattern_memory"
-    if item.get("type") == "continuity_memory":
-        return "continuity_memory"
-    if item.get("type") == "task_checkpoint":
-        return "task_checkpoint"
-    return "lower_level_memory"
 
 
 def _build_summary(
@@ -546,9 +682,8 @@ def _build_summary(
     results_file: str,
     consolidation_strategy: str | None,
 ) -> dict[str, Any]:
-    gap_counts: Counter[str] = Counter()
-    for row in results:
-        gap_counts.update(row.get("gap_signal_counts", {}))
+    family_counts = failure_family_counts(results)
+    dominant_bottleneck = dominant_tuning_bottleneck(family_counts)
 
     dimension_summary = []
     for dimension in DIMENSION_ORDER:
@@ -579,7 +714,6 @@ def _build_summary(
     for row in results:
         by_family[row["scenario_family"]].append(row)
 
-    biggest_gap = _biggest_gap(gap_counts)
     return {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -590,56 +724,46 @@ def _build_summary(
         "prompt_variant": config.llm_prompt_variant_for_default_use_case,
         "consolidation_strategy": consolidation_strategy,
         "scenarios_total": len(results),
-        "value_scenarios": sum(1 for row in results if row["expected_value"]),
-        "non_value_scenarios": sum(1 for row in results if not row["expected_value"]),
+        "value_scenarios": sum(1 for row in results if row["should_memory_help"]),
+        "non_value_scenarios": sum(1 for row in results if not row["should_memory_help"]),
         "memory_backed_wins": sum(1 for row in results if row["winner"] == "memory_backed"),
-        "top_layer_matches": sum(1 for row in results if row["top_layer_match"]),
+        "intent_matches": sum(1 for row in results if row["intent_match"]),
+        "primary_layer_matches": sum(1 for row in results if row["primary_layer_match"]),
+        "acceptable_layer_matches": sum(1 for row in results if row["top_layer_match"]),
         "non_value_guard_successes": sum(1 for row in results if row["non_value_guard_success"]),
-        "overreach_failures": gap_counts.get("overreach_in_no_value_case", 0),
+        "stale_guard_successes": sum(1 for row in results if row["stale_guard_success"]),
+        "wrong_memory_guard_successes": sum(1 for row in results if row["wrong_memory_guard_success"]),
         "scenario_families": sorted(by_family),
         "scoring_dimensions": list(DIMENSION_ORDER),
-        "gap_signal_counts": dict(gap_counts),
-        "biggest_gap": biggest_gap,
-        "biggest_gap_implication": _gap_implication(biggest_gap),
+        "failure_family_counts": family_counts,
+        "gap_signal_counts": family_counts,
+        "dominant_tuning_bottleneck": dominant_bottleneck,
+        "biggest_gap": dominant_bottleneck,
+        "dominant_bottleneck_implication": dominant_bottleneck_implication(dominant_bottleneck),
+        "biggest_gap_implication": dominant_bottleneck_implication(dominant_bottleneck),
         "dimension_summary": dimension_summary,
         "by_family": [
             {
                 "scenario_family": family,
                 "scenarios_total": len(rows),
                 "memory_backed_wins": sum(1 for row in rows if row["winner"] == "memory_backed"),
-                "top_layer_matches": sum(1 for row in rows if row["top_layer_match"]),
+                "intent_matches": sum(1 for row in rows if row["intent_match"]),
+                "primary_layer_matches": sum(1 for row in rows if row["primary_layer_match"]),
+                "acceptable_layer_matches": sum(1 for row in rows if row["top_layer_match"]),
+                "failure_family_counts": failure_family_counts(rows),
             }
             for family, rows in sorted(by_family.items())
         ],
     }
 
 
-def _biggest_gap(gap_counts: Counter[str]) -> str | list[str] | None:
-    filtered = {key: value for key, value in gap_counts.items() if key != "overreach_in_no_value_case" and value > 0}
-    if not filtered:
-        return None
-    highest = max(filtered.values())
-    winners = sorted(key for key, value in filtered.items() if value == highest)
-    if len(winners) == 1:
-        return winners[0]
-    return winners
-
-
-def _gap_implication(biggest_gap: str | list[str] | None) -> str | None:
-    if biggest_gap is None:
-        return None
-    if isinstance(biggest_gap, list):
-        return "Multiple gap signals tied for the highest score, so the next slice should stay benchmark-guided rather than assuming one missing capability."
-    return GAP_IMPLICATIONS.get(biggest_gap)
-
-
 def _build_report(*, summary: dict[str, Any], results: list[dict[str, Any]]) -> str:
     lines = [
-        "# Work Resumption Benchmark Report",
+        "# Developer-Work Continuity Benchmark Report",
         "",
         f"Run ID: `{summary['run_id']}`",
         "",
-        "## Scenario Families Added",
+        "## Scenario Families In Suite",
         "",
     ]
     for family in summary["scenario_families"]:
@@ -664,30 +788,29 @@ def _build_report(*, summary: dict[str, Any], results: list[dict[str, Any]]) -> 
             f"- value scenarios: {summary['value_scenarios']}",
             f"- non-value scenarios: {summary['non_value_scenarios']}",
             f"- memory-backed wins: {summary['memory_backed_wins']} / {summary['value_scenarios']}",
-            f"- top-layer matches: {summary['top_layer_matches']} / {summary['scenarios_total']}",
+            f"- intent matches: {summary['intent_matches']} / {summary['scenarios_total']}",
+            f"- primary-layer matches: {summary['primary_layer_matches']} / {summary['scenarios_total']}",
+            f"- acceptable-layer matches: {summary['acceptable_layer_matches']} / {summary['scenarios_total']}",
             f"- non-value guard successes: {summary['non_value_guard_successes']} / {summary['non_value_scenarios']}",
-            f"- highest-scoring gap signal: {summary['biggest_gap'] or 'none'}",
+            f"- stale guard successes: {summary['stale_guard_successes']} / {summary['scenarios_total']}",
+            f"- wrong-memory guard successes: {summary['wrong_memory_guard_successes']} / {summary['scenarios_total']}",
+            f"- dominant tuning bottleneck: {summary['dominant_tuning_bottleneck'] or 'none'}",
         ]
     )
-    if summary["biggest_gap_implication"]:
-        lines.append(f"- current implication: {summary['biggest_gap_implication']}")
+    if summary["dominant_bottleneck_implication"]:
+        lines.append(f"- current implication: {summary['dominant_bottleneck_implication']}")
 
-    lines.append("- note: the gap rollup is hypothesis-driven because scenario-authored `dimension_gap_targets` contribute to it.")
-    lines.extend(["", "## Gap Signals", ""])
-    if not summary["gap_signal_counts"]:
-        lines.append("- none")
-    else:
-        for gap, count in sorted(summary["gap_signal_counts"].items()):
-            lines.append(f"- `{gap}`: {count}")
+    lines.extend(["", "## Failure Families", ""])
+    for name, count in summary["failure_family_counts"].items():
+        lines.append(f"- `{name}`: {count}")
 
     lines.extend(["", "## Scenario Results", ""])
     for row in results:
         lines.append(
-            f"- `{row['scenario_id']}`: winner `{row['winner']}`, top layer `{row['top_layer']}`, "
-            f"missing after memory {row['missing_dimensions_after_memory'] or 'none'}, gap signals {row['gap_signals'] or 'none'}"
+            f"- `{row['scenario_id']}`: winner `{row['winner']}`, intent `{row['routing_intent']}`, top layer `{row['top_layer']}`, "
+            f"missing after memory {row['missing_dimensions_after_memory'] or 'none'}, failures {row['failure_families'] or 'none'}"
         )
     return "\n".join(lines) + "\n"
-
 
 def _serialize_consolidation_result(result: Any) -> dict[str, Any] | None:
     if result is None:
@@ -717,7 +840,76 @@ def _serialize_consolidation_result(result: Any) -> dict[str, Any] | None:
 
 
 def _load_scenarios(path: Path) -> list[dict[str, Any]]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    raw_scenarios = json.loads(path.read_text(encoding="utf-8"))
+    return [_normalize_scenario(item) for item in raw_scenarios]
+
+
+def _normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
+    expected_dimensions = _normalize_dimension_signals(raw.get("expected_dimensions", {}))
+    retrieval_signals = _normalize_dimension_signals(raw.get("retrieval_signals", {}))
+    should_memory_help = bool(raw.get("should_memory_help", raw.get("expected_value")))
+    expected_primary_layer = raw.get("expected_primary_layer", raw.get("expected_top_layer"))
+    acceptable_fallback_layers = list(raw.get("acceptable_fallback_layers") or [])
+    if not acceptable_fallback_layers and raw.get("acceptable_top_layers"):
+        acceptable_fallback_layers = [
+            item
+            for item in raw.get("acceptable_top_layers", [])
+            if item != expected_primary_layer
+        ]
+    acceptable_layers: list[str] = []
+    if expected_primary_layer:
+        acceptable_layers.append(expected_primary_layer)
+    for layer in acceptable_fallback_layers:
+        if layer not in acceptable_layers:
+            acceptable_layers.append(layer)
+
+    guard_terms = {
+        key: [str(item).strip() for item in values if str(item).strip()]
+        for key, values in (raw.get("guard_terms", {}) or {}).items()
+    }
+    forbidden_terms = [str(item).strip() for item in raw.get("forbidden_terms", []) if str(item).strip()]
+    for values in guard_terms.values():
+        for term in values:
+            if term not in forbidden_terms:
+                forbidden_terms.append(term)
+
+    must_preserve = list(raw.get("must_preserve") or [])
+    if not must_preserve:
+        must_preserve = [dimension for dimension in DIMENSION_ORDER if expected_dimensions.get(dimension)]
+
+    scenario = dict(raw)
+    scenario.update(
+        {
+            "should_memory_help": should_memory_help,
+            "expected_value": should_memory_help,
+            "expected_primary_layer": expected_primary_layer,
+            "expected_top_layer": expected_primary_layer,
+            "acceptable_fallback_layers": acceptable_fallback_layers,
+            "acceptable_layers": acceptable_layers,
+            "acceptable_top_layers": acceptable_layers,
+            "expected_dimensions": expected_dimensions,
+            "retrieval_signals": retrieval_signals,
+            "must_preserve": must_preserve,
+            "must_not_introduce": list(raw.get("must_not_introduce", [])),
+            "forbidden_layers": list(raw.get("forbidden_layers", [])),
+            "guard_terms": guard_terms,
+            "forbidden_terms": forbidden_terms,
+        }
+    )
+    return scenario
+
+
+def _normalize_dimension_signals(raw_dimensions: dict[str, Any]) -> dict[str, list[str]]:
+    normalized: dict[str, list[str]] = {dimension: [] for dimension in DIMENSION_ORDER}
+    for key, value in raw_dimensions.items():
+        dimension = LEGACY_DIMENSION_NAMES.get(key)
+        if dimension is None:
+            continue
+        if isinstance(value, list):
+            normalized[dimension] = [str(item).strip() for item in value if str(item).strip()]
+        elif value not in (None, ""):
+            normalized[dimension] = [str(value).strip()]
+    return normalized
 
 
 def _build_run_id(config: AppConfig, consolidation_strategy: str | None) -> str:

@@ -11,6 +11,22 @@ from api.schemas import (
 )
 from core.models import QueryResultItem, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
 from core.service import PalliumService
+from core.visibility import QueryVisibilityTrace, VisibilityContext, VisibilityExclusion
+
+
+def _serialize_visibility_context(visibility_context: VisibilityContext | None) -> dict[str, object] | None:
+    if visibility_context is None:
+        return None
+    return {
+        "kind": visibility_context.kind,
+        "id": visibility_context.id,
+    }
+
+
+def _deserialize_visibility_context(payload) -> VisibilityContext | None:
+    if payload is None:
+        return None
+    return VisibilityContext(kind=payload.kind, id=payload.id)
 
 
 def _serialize_evidence(evidence) -> dict[str, object]:
@@ -26,6 +42,7 @@ def _serialize_evidence(evidence) -> dict[str, object]:
         "session_ref": evidence.session_ref,
         "source_ref": evidence.source_ref,
         "artifact_kind": evidence.artifact_kind,
+        "visibility_context": _serialize_visibility_context(evidence.visibility_context),
     }
 
 
@@ -49,6 +66,7 @@ def _serialize_result(item: QueryResultItem) -> dict[str, object]:
         "session_ref": item.session_ref,
         "source_ref": item.source_ref,
         "artifact_kind": item.artifact_kind,
+        "visibility_context": _serialize_visibility_context(item.visibility_context),
     }
 
 
@@ -75,6 +93,28 @@ def _serialize_stage_trace(stage: RetrievalStageTrace) -> dict[str, object]:
     }
 
 
+def _serialize_visibility_exclusion(exclusion: VisibilityExclusion) -> dict[str, object]:
+    return {
+        "reason": exclusion.reason,
+        "count": exclusion.count,
+    }
+
+
+def _serialize_visibility_trace(trace: QueryVisibilityTrace) -> dict[str, object]:
+    return {
+        "query_visibility_context": _serialize_visibility_context(trace.query_visibility_context),
+        "expanded_visibility_contexts": [
+            _serialize_visibility_context(item)
+            for item in trace.expanded_visibility_contexts
+        ],
+        "excluded_candidates": [
+            _serialize_visibility_exclusion(item)
+            for item in trace.excluded_candidates
+        ],
+        "fail_closed_reason": trace.fail_closed_reason,
+    }
+
+
 def _serialize_trace(trace: QueryTrace) -> dict[str, object]:
     filters = None
     if trace.filters is not None:
@@ -93,6 +133,7 @@ def _serialize_trace(trace: QueryTrace) -> dict[str, object]:
         "filters": filters,
         "stages": [_serialize_stage_trace(stage) for stage in trace.stages],
         "routing": trace.routing,
+        "visibility": _serialize_visibility_trace(trace.visibility) if trace.visibility is not None else None,
     }
 
 
@@ -116,6 +157,7 @@ def create_router(service: PalliumService) -> APIRouter:
             session_ref=request.session_ref,
             source_ref=request.source_ref,
             artifact_kind=request.artifact_kind,
+            visibility_context=_deserialize_visibility_context(request.visibility_context),
         )
         return ItemCreateResponse(**result.as_dict())
 
@@ -130,6 +172,7 @@ def create_router(service: PalliumService) -> APIRouter:
             container_ref=request.container_ref,
             thread_ref=request.thread_ref,
             session_ref=request.session_ref,
+            visibility_context=_deserialize_visibility_context(request.visibility_context),
         )
         return QueryResponse(results=[_serialize_result(item) for item in result.results])
 
@@ -144,6 +187,7 @@ def create_router(service: PalliumService) -> APIRouter:
             container_ref=request.container_ref,
             thread_ref=request.thread_ref,
             session_ref=request.session_ref,
+            visibility_context=_deserialize_visibility_context(request.visibility_context),
             include_trace=True,
         )
         if result.trace is None:
@@ -154,3 +198,6 @@ def create_router(service: PalliumService) -> APIRouter:
         )
 
     return router
+
+
+

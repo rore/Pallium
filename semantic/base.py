@@ -11,6 +11,10 @@ from core.models import MemoryObject, SourceItem
 class SemanticPlugin(ABC):
     name: str
 
+    @property
+    def requires_visibility_context(self) -> bool:
+        return False
+
     @abstractmethod
     def process_item(self, source_item: SourceItem) -> ProcessResult:
         raise NotImplementedError

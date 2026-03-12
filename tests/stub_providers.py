@@ -70,6 +70,18 @@ def _build_item_extraction_payload(user_prompt: str) -> dict[str, object]:
 
 def _build_thread_summary_payload(user_prompt: str) -> dict[str, str]:
     lower = user_prompt.lower()
+    if 'branch kiosk fallback' in lower and 're-request review' in lower:
+        return {
+            'summary': 'The thread kept the use_item_event_time flag off for branch kiosks, confirmed the admin toggle wiring was ready, and still needs branch kiosk fallback coverage before review can pass.'
+        }
+    if 'retry window was exhausted' in lower and 'batch 418' in lower:
+        return {
+            'summary': 'The latest catalog sync retry resumed after auth refresh, but is now blocked by a 429 retry-window limit and should resume from batch 418 after waiting 15 minutes.'
+        }
+    if 'notify_digest_v2' in lower and 'scheduled-job backoff' in lower:
+        return {
+            'summary': 'Ticket LIB-314 kept the notification digest fix behind notify_digest_v2 and still needs scheduled-job backoff before enablement.'
+        }
     if 'investigation found' in lower and 'decision:' in lower:
         return {
             'summary': 'The thread found that arrival-time ordering caused hold problems during catalog sync delays and decided to use item event time ordering.'
@@ -99,6 +111,60 @@ def _build_thread_summary_payload(user_prompt: str) -> dict[str, str]:
 
 def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
     lower = user_prompt.lower()
+    if 'retry window was exhausted' in lower and 'batch 418' in lower:
+        return {
+            'summary': 'Catalog sync retry resumed after auth refresh and is now blocked by a retry-window limit.',
+            'task': 'Resume the catalog sync retry from the latest blocker state.',
+            'current_state': 'The token is refreshed, the sync resumed from batch 313, and the latest blocker is a 429 after batch 417.',
+            'key_findings': [
+                'the service token is refreshed',
+                'catalog API returned 429 because the retry window was exhausted',
+            ],
+            'blocker_state': 'Catalog API returned 429 because the retry window was exhausted after batch 417.',
+            'next_step': 'Wait 15 minutes and resume from batch 418 with the refreshed token.',
+            'evidence': [
+                'Progress update: the service token is refreshed and the sync resumed from batch 313.',
+                'Blocked: catalog API returned 429 after batch 417 because the retry window was exhausted.',
+                'Next step: wait 15 minutes, resume from batch 418, and keep the refreshed token.',
+            ],
+            'freshness_signal': 'The current blocker is 429 after auth refresh; the older 401 is stale.',
+        }
+    if 'branch kiosk fallback' in lower and 're-request review' in lower:
+        return {
+            'summary': 'Ticket LIB-241 review is narrowed to the missing branch kiosk fallback before the next review pass.',
+            'task': 'Resume the LIB-241 review follow-up.',
+            'current_state': 'The admin toggle wiring is ready, but review is still blocked on branch kiosk fallback coverage.',
+            'key_findings': [
+                'keep the use_item_event_time flag off for branch kiosks until retry-path coverage exists',
+                'branch kiosk fallback is still missing',
+            ],
+            'blocker_state': 'Review is blocked because the branch kiosk fallback is still missing.',
+            'next_step': 'Add the branch kiosk fallback coverage and re-request review before enabling the flag.',
+            'evidence': [
+                'Decision: keep the use_item_event_time flag off for branch kiosks until retry-path coverage exists.',
+                'Review progress: admin toggle wiring is ready, but the branch kiosk fallback is still missing.',
+                'Next step: add the branch kiosk fallback coverage and re-request review before enabling the flag.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T12:02:00+00:00.',
+        }
+    if 'notify_digest_v2' in lower and 'scheduled-job backoff' in lower:
+        return {
+            'summary': 'Ticket LIB-314 is a different work item and still needs scheduled-job backoff before enablement.',
+            'task': 'Resume ticket LIB-314 for the notification digest fix.',
+            'current_state': 'The UI copy and migrations are done, and notify_digest_v2 remains gated.',
+            'key_findings': [
+                'keep the notification digest fix behind the notify_digest_v2 flag',
+                'ticket LIB-314 has the UI copy and migrations done',
+            ],
+            'blocker_state': '',
+            'next_step': 'Wire scheduled-job backoff before enabling notify_digest_v2.',
+            'evidence': [
+                'Decision: keep the notification digest fix behind the notify_digest_v2 flag.',
+                'Partial progress: ticket LIB-314 has the UI copy and migrations done.',
+                'Next step: wire scheduled-job backoff before enabling notify_digest_v2.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T15:32:00+00:00.',
+        }
     if 'service token expired' in lower and 'batch 313' in lower:
         return {
             'summary': 'Catalog sync retry is paused at an auth failure after partial progress, with a clear restart point.',
@@ -191,6 +257,60 @@ def _build_pattern_payload(user_prompt: str) -> dict[str, str]:
 
 def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
     lower = user_prompt.lower()
+    if 'retry window was exhausted' in lower and 'batch 418' in lower:
+        return {
+            'summary': 'Catalog sync retry resumed after auth refresh and is now blocked by a retry-window limit.',
+            'task': 'Resume the catalog sync retry from the latest blocker state.',
+            'current_state': 'The token is refreshed, the sync resumed from batch 313, and the latest blocker is a 429 after batch 417.',
+            'key_findings': [
+                'the service token is refreshed',
+                'catalog API returned 429 because the retry window was exhausted',
+            ],
+            'blocker_state': 'Catalog API returned 429 because the retry window was exhausted after batch 417.',
+            'next_step': 'Wait 15 minutes and resume from batch 418 with the refreshed token.',
+            'evidence': [
+                'Progress update: the service token is refreshed and the sync resumed from batch 313.',
+                'Blocked: catalog API returned 429 after batch 417 because the retry window was exhausted.',
+                'Next step: wait 15 minutes, resume from batch 418, and keep the refreshed token.',
+            ],
+            'freshness_signal': 'The current blocker is 429 after auth refresh; the older 401 is stale.',
+        }
+    if 'branch kiosk fallback' in lower and 're-request review' in lower:
+        return {
+            'summary': 'Ticket LIB-241 review is narrowed to the missing branch kiosk fallback before the next review pass.',
+            'task': 'Resume the LIB-241 review follow-up.',
+            'current_state': 'The admin toggle wiring is ready, but review is still blocked on branch kiosk fallback coverage.',
+            'key_findings': [
+                'keep the use_item_event_time flag off for branch kiosks until retry-path coverage exists',
+                'branch kiosk fallback is still missing',
+            ],
+            'blocker_state': 'Review is blocked because the branch kiosk fallback is still missing.',
+            'next_step': 'Add the branch kiosk fallback coverage and re-request review before enabling the flag.',
+            'evidence': [
+                'Decision: keep the use_item_event_time flag off for branch kiosks until retry-path coverage exists.',
+                'Review progress: admin toggle wiring is ready, but the branch kiosk fallback is still missing.',
+                'Next step: add the branch kiosk fallback coverage and re-request review before enabling the flag.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T12:02:00+00:00.',
+        }
+    if 'notify_digest_v2' in lower and 'scheduled-job backoff' in lower:
+        return {
+            'summary': 'Ticket LIB-314 is a different work item and still needs scheduled-job backoff before enablement.',
+            'task': 'Resume ticket LIB-314 for the notification digest fix.',
+            'current_state': 'The UI copy and migrations are done, and notify_digest_v2 remains gated.',
+            'key_findings': [
+                'keep the notification digest fix behind the notify_digest_v2 flag',
+                'ticket LIB-314 has the UI copy and migrations done',
+            ],
+            'blocker_state': '',
+            'next_step': 'Wire scheduled-job backoff before enabling notify_digest_v2.',
+            'evidence': [
+                'Decision: keep the notification digest fix behind the notify_digest_v2 flag.',
+                'Partial progress: ticket LIB-314 has the UI copy and migrations done.',
+                'Next step: wire scheduled-job backoff before enabling notify_digest_v2.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T15:32:00+00:00.',
+        }
     if 'reservation cache is warm' in lower and 'compare cache invalidation' in lower:
         return {
             'summary': 'Duplicate-hold debugging is narrowed to warm-cache invalidation on delayed sync workers.',
@@ -759,6 +879,7 @@ def _build_public_corpus_answer_payload(user_prompt: str) -> dict[str, object]:
         'answer': 'The current thread context is sufficient for this question.',
         'evidence_used': [],
     }
+
 
 
 

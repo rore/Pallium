@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from core.visibility import QueryVisibilityTrace, VisibilityContext
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -29,6 +31,7 @@ class SourceItem:
     session_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: str | None = None
+    visibility_context: VisibilityContext | None = None
     id: str = field(default_factory=new_id)
     created_at: datetime = field(default_factory=utc_now)
 
@@ -51,6 +54,7 @@ class MemoryObject:
     schema_version: str
     payload: dict[str, Any]
     lifecycle: str = "active"
+    visibility_context: VisibilityContext | None = None
     id: str = field(default_factory=new_id)
     created_at: datetime = field(default_factory=utc_now)
 
@@ -90,6 +94,7 @@ class EvidenceReference:
     session_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: str | None = None
+    visibility_context: VisibilityContext | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +127,7 @@ class QueryResultItem:
     session_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: str | None = None
+    visibility_context: VisibilityContext | None = None
 
 
 @dataclass(frozen=True)
@@ -153,3 +159,4 @@ class QueryTrace:
     filters: QueryFilters | None
     stages: tuple[RetrievalStageTrace, ...]
     routing: dict[str, Any] | None = None
+    visibility: QueryVisibilityTrace | None = None
