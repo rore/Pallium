@@ -79,16 +79,16 @@ def _payload_for(*, scenario_id: str, branch: str) -> dict[str, object]:
                 "evidence_used": [],
             }
         return {
-            "answer": "Stay oriented on duplicate-hold debugging for delayed sync workers. The prior finding was that the reservation cache is warm and cache invalidation is the likely path.",
+            "answer": "Resume duplicate-hold debugging on delayed sync workers from the warm-cache finding: local replay already confirmed the bug and narrowed it to cache invalidation, so compare invalidation between delayed and immediate workers next.",
             "task_orientation": "Duplicate-hold debugging on delayed sync workers",
             "reused_findings": [
                 "reservation cache is warm",
                 "cache invalidation",
             ],
             "blocker_state": "",
-            "preserved_progress": "Local replay confirmed the bug.",
-            "next_step": "",
-            "evidence_used": ["investigation_outcome", "assistant_artifact"],
+            "preserved_progress": "Local replay confirmed the bug and narrowed it to cache invalidation.",
+            "next_step": "Compare cache invalidation between delayed and immediate sync workers.",
+            "evidence_used": ["task_checkpoint", "investigation_outcome"],
         }
 
     if scenario_id == "resume-after-auth-tool-failure":
@@ -103,13 +103,13 @@ def _payload_for(*, scenario_id: str, branch: str) -> dict[str, object]:
                 "evidence_used": [],
             }
         return {
-            "answer": "Refresh the catalog service token before the next catalog sync retry because the last run hit a 401 and the service token expired.",
+            "answer": "Resume the catalog sync retry from batch 313 after refreshing the catalog service token; the prior run refreshed 312 reservation records before a 401 from the expired token.",
             "task_orientation": "Catalog sync retry",
             "reused_findings": [],
             "blocker_state": "401 because the service token expired",
-            "preserved_progress": "Refreshed 312 reservation records.",
-            "next_step": "Refresh the catalog service token, then retry the sync.",
-            "evidence_used": ["assistant_artifact source evidence"],
+            "preserved_progress": "Refreshed 312 reservation records and should rerun the sync from batch 313.",
+            "next_step": "Refresh the catalog service token and rerun the sync from batch 313.",
+            "evidence_used": ["task_checkpoint", "assistant_artifact source evidence"],
         }
 
     if scenario_id == "resume-implementation-ticket-after-interruption":
@@ -124,15 +124,15 @@ def _payload_for(*, scenario_id: str, branch: str) -> dict[str, object]:
                 "evidence_used": [],
             }
         return {
-            "answer": "Resume ticket LIB-241 with the reservation ordering fix still behind the use_item_event_time flag.",
-            "task_orientation": "Ticket LIB-241 and the use_item_event_time flag",
+            "answer": "Resume ticket LIB-241 with the reservation ordering fix still behind the use_item_event_time flag: the schema change and backfill are done, and the next step is wiring the admin toggle plus retry-path coverage.",
+            "task_orientation": "Ticket LIB-241 with the use_item_event_time flag",
             "reused_findings": [
                 "reservation ordering fix",
             ],
             "blocker_state": "",
             "preserved_progress": "Schema change and backfill done.",
-            "next_step": "",
-            "evidence_used": ["decision", "assistant_artifact"],
+            "next_step": "Wire the admin toggle and add retry-path coverage before enabling the flag.",
+            "evidence_used": ["task_checkpoint", "decision"],
         }
 
     return {
@@ -166,7 +166,7 @@ def test_work_resumption_benchmark_outputs_summary_results_and_report(monkeypatc
     assert summary["non_value_scenarios"] == 1
     assert len(results) == 5
     assert "## Gap Signals" in report
-    assert summary["biggest_gap"] == "compact_task_state_memory"
+    assert summary["biggest_gap"] is None
 
 
 def test_work_resumption_benchmark_captures_memory_help_and_gap_signal(monkeypatch, tmp_path: Path) -> None:
@@ -188,15 +188,18 @@ def test_work_resumption_benchmark_captures_memory_help_and_gap_signal(monkeypat
 
     debugging = results["debugging-continued-from-partial-findings"]
     assert debugging["winner"] == "memory_backed"
-    assert "compact_task_state_memory" in debugging["gap_signals"]
-    assert "next_step_guidance" in debugging["missing_dimensions_after_memory"]
+    assert debugging["top_layer"] == "task_checkpoint"
+    assert debugging["gap_signals"] == []
+    assert debugging["missing_dimensions_after_memory"] == []
 
     auth_retry = results["resume-after-auth-tool-failure"]
-    assert auth_retry["top_layer"] == "source_evidence"
-    assert "selected_work_artifact_support" in auth_retry["gap_signals"]
+    assert auth_retry["top_layer"] == "task_checkpoint"
+    assert "task_checkpoint" in auth_retry["returned_memory_types"]
+    assert auth_retry["gap_signals"] == []
 
     implementation = results["resume-implementation-ticket-after-interruption"]
-    assert "thread_summary" in implementation["returned_memory_types"]
+    assert implementation["top_layer"] == "task_checkpoint"
+    assert "task_checkpoint" in implementation["returned_memory_types"]
 
 
 def test_work_resumption_benchmark_keeps_no_value_continuation_guard(monkeypatch, tmp_path: Path) -> None:

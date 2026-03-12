@@ -183,13 +183,13 @@
     },
     "target_question": "What finding should orient us in duplicate-hold debugging, what progress do we already have, and what should we try next?",
     "expected_value": true,
-    "expected_top_layer": "lower_level_memory",
+    "expected_top_layer": "task_checkpoint",
     "acceptable_top_layers": [
-      "lower_level_memory",
-      "source_evidence"
+      "task_checkpoint"
     ],
     "expected_memory_types": [
-      "investigation_outcome"
+      "investigation_outcome",
+      "task_checkpoint"
     ],
     "expected_dimensions": {
       "task_orientation": [
@@ -230,10 +230,10 @@
         "result_packaging_or_evidence"
       ],
       "preserved_progress": [
-        "compact_task_state_memory"
+        "result_packaging_or_evidence"
       ],
       "next_step_guidance": [
-        "compact_task_state_memory"
+        "result_packaging_or_evidence"
       ]
     },
     "forbidden_terms": []
@@ -309,11 +309,13 @@
     },
     "target_question": "What blocker did we hit, what progress was preserved, and what should we do next on the catalog sync retry?",
     "expected_value": true,
-    "expected_top_layer": "source_evidence",
+    "expected_top_layer": "task_checkpoint",
     "acceptable_top_layers": [
-      "source_evidence"
+      "task_checkpoint"
     ],
-    "expected_memory_types": [],
+    "expected_memory_types": [
+      "task_checkpoint"
+    ],
     "expected_dimensions": {
       "task_orientation": [
         "catalog sync retry"
@@ -351,13 +353,13 @@
         "result_packaging_or_evidence"
       ],
       "blocker_state": [
-        "selected_work_artifact_support"
+        "result_packaging_or_evidence"
       ],
       "preserved_progress": [
-        "selected_work_artifact_support"
+        "result_packaging_or_evidence"
       ],
       "next_step_guidance": [
-        "compact_task_state_memory"
+        "result_packaging_or_evidence"
       ]
     },
     "forbidden_terms": []
@@ -433,13 +435,13 @@
     },
     "target_question": "What state were we in on ticket LIB-241 and what should I do next?",
     "expected_value": true,
-    "expected_top_layer": "lower_level_memory",
+    "expected_top_layer": "task_checkpoint",
     "acceptable_top_layers": [
-      "lower_level_memory",
-      "source_evidence"
+      "task_checkpoint"
     ],
     "expected_memory_types": [
-      "decision"
+      "decision",
+      "task_checkpoint"
     ],
     "expected_dimensions": {
       "task_orientation": [
@@ -478,10 +480,10 @@
         "result_packaging_or_evidence"
       ],
       "preserved_progress": [
-        "compact_task_state_memory"
+        "result_packaging_or_evidence"
       ],
       "next_step_guidance": [
-        "compact_task_state_memory"
+        "result_packaging_or_evidence"
       ]
     },
     "forbidden_terms": []

@@ -25,6 +25,7 @@
   - `decision`
   - `investigation_outcome`
   - `thread_summary`
+  - `task_checkpoint`
   - `pattern_memory`
   - `continuity_memory`
   - fallback `discussion_summary`
@@ -32,6 +33,7 @@
 - `agent_conversation_memory` now accepts a bounded evidence set beyond user messages and final assistant outputs:
   - selected assistant-originated `tool_use_summary` artifacts for explicit progress or blocker state
   - selected assistant-originated `todo_snapshot` artifacts for explicit next-step state
+  - those bounded artifacts can now be promoted into a compact `task_checkpoint` for resumed-work continuity
   - raw tool logs, raw MCP events, and exhaustive runtime notifications remain out of scope
 - reusable bounded consolidation capability now exists for higher-level `pattern_memory` and `continuity_memory`
 - semantic eval uses one committed JSONL regression batch and one baseline metrics document
@@ -63,15 +65,11 @@
   - `tests/test_api.py`
   - `tests/test_e2e.py`
 - thread aggregation tests pass locally
-- focused routing slice tests pass locally:
+- focused routing and resumed-work slices pass locally:
+  - `tests/test_thread_aggregation.py`
   - `tests/test_agent_conversation_memory_routing.py`
-  - `tests/test_recurring_question_benchmark.py`
   - `tests/test_work_resumption_benchmark.py`
-  - `tests/test_tiered_memory_validation_runner.py`
   - `tests/test_tiered_memory.py`
-  - `tests/test_api.py`
-  - `tests/test_consolidation_strategy_runner.py`
-  - `tests/test_agent_conversation_runner.py`
 - focused public-corpus slice tests pass locally:
   - `tests/test_public_corpus_builder.py`
   - `tests/test_public_corpus_benchmark.py`
@@ -88,7 +86,7 @@
   - `evals/work_resumption/`
   - scenario families cover resumed investigation, debugging from partial findings, auth/tool-failure recovery, interrupted ticket work, and no-value continuation guards
   - the gap rollup is partly hypothesis-driven because scenario-authored `dimension_gap_targets` contribute to it, so benchmark results should be read as guidance rather than neutral proof
-  - the benchmark is intended to guide which continuity capability currently scores highest as the next missing slice after bounded selected work-artifact support: compact task-state memory, routing/layer choice, result packaging/evidence, or retrieval recall
+  - the benchmark now exercises package-owned `task_checkpoint` memory for compact resumed-work continuity and is intended to guide the next remaining gaps in routing/layer choice, result packaging/evidence, or retrieval recall
 - deterministic memory-routing benchmark run succeeded locally:
   - `evals/memory_routing/output/local-memory-routing-stub`
   - `10 / 10` policy-success scenarios
@@ -120,6 +118,7 @@
 - bounded tiered memory now produces higher-level memory over `thread_summary`, `decision`, and `investigation_outcome`
   - `pattern_memory` for broad recurring recall
   - `continuity_memory` for repeated-answer carry-forward
+  - `task_checkpoint` for compact resumed-work continuity when selected work artifacts provide explicit progress, blocker, or next-step state
 - current package default strategy: `thread_summary_anchored`
 - deterministic tiered-memory validation benchmark recorded:
   - `evals/tiered_memory_validation/output/local-tiered-memory-validation-stub`

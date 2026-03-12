@@ -39,6 +39,61 @@ def _run_debug_query(client: TestClient, payload: dict[str, object]) -> dict[str
     return response.json()
 
 
+def _ingest_resumption_work(client: TestClient, *, thread_ref: str) -> None:
+    for payload in (
+        {
+            'source_type': 'chat_message',
+            'source_id': f'{thread_ref}-msg-1',
+            'content_type': 'text/plain',
+            'content': 'The catalog sync retry is queued again.',
+            'artifact_kind': 'message',
+            'role': 'user',
+            'container_ref': 'chat:library-help',
+            'thread_ref': thread_ref,
+            'session_ref': 'agent-session-routing-work-001',
+            'occurred_at': '2026-03-11T09:59:00Z',
+        },
+        {
+            'source_type': 'assistant_artifact',
+            'source_id': f'{thread_ref}-artifact-1',
+            'content_type': 'text/plain',
+            'content': 'Partial progress: refreshed 312 reservation records before the catalog sync tool failed.',
+            'artifact_kind': 'tool_use_summary',
+            'role': 'assistant',
+            'container_ref': 'chat:library-help',
+            'thread_ref': thread_ref,
+            'session_ref': 'agent-session-routing-work-001',
+            'occurred_at': '2026-03-11T10:00:00Z',
+        },
+        {
+            'source_type': 'assistant_artifact',
+            'source_id': f'{thread_ref}-artifact-2',
+            'content_type': 'text/plain',
+            'content': 'Blocked: catalog API returned 401 because the service token expired.',
+            'artifact_kind': 'tool_use_summary',
+            'role': 'assistant',
+            'container_ref': 'chat:library-help',
+            'thread_ref': thread_ref,
+            'session_ref': 'agent-session-routing-work-001',
+            'occurred_at': '2026-03-11T10:01:00Z',
+        },
+        {
+            'source_type': 'assistant_artifact',
+            'source_id': f'{thread_ref}-artifact-3',
+            'content_type': 'text/plain',
+            'content': 'Next step: refresh the catalog service token and rerun the sync from batch 313.',
+            'artifact_kind': 'todo_snapshot',
+            'role': 'assistant',
+            'container_ref': 'chat:library-help',
+            'thread_ref': thread_ref,
+            'session_ref': 'agent-session-routing-work-001',
+            'occurred_at': '2026-03-11T10:02:00Z',
+        },
+    ):
+        response = client.post('/items', json=payload)
+        assert response.status_code == 200
+
+
 def test_broad_recall_routes_pattern_memory_first(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
         scenario = _ingest_prior_events(client, 'cross-thread-pattern-value')
@@ -116,50 +171,14 @@ def test_evidence_trace_routes_source_evidence_first(monkeypatch, test_db_url: s
         )
 
 
-def test_work_resumption_routes_selected_work_artifacts_to_source_evidence_first(monkeypatch, test_db_url: str) -> None:
+def test_work_resumption_routes_task_checkpoint_first(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
-        for payload in (
-            {
-                'source_type': 'chat_message',
-                'source_id': 'resume-msg-1',
-                'content_type': 'text/plain',
-                'content': 'The catalog sync retry is queued again.',
-                'artifact_kind': 'message',
-                'role': 'user',
-                'container_ref': 'chat:library-help',
-                'thread_ref': 'chat:library-help:thread-routing-work-001',
-                'session_ref': 'agent-session-routing-work-001',
-            },
-            {
-                'source_type': 'assistant_artifact',
-                'source_id': 'resume-work-1',
-                'content_type': 'text/plain',
-                'content': 'Blocked: catalog API returned 401 because the service token expired.',
-                'artifact_kind': 'tool_use_summary',
-                'role': 'assistant',
-                'container_ref': 'chat:library-help',
-                'thread_ref': 'chat:library-help:thread-routing-work-001',
-                'session_ref': 'agent-session-routing-work-001',
-            },
-            {
-                'source_type': 'assistant_artifact',
-                'source_id': 'resume-work-2',
-                'content_type': 'text/plain',
-                'content': 'Next step: refresh the catalog service token and rerun the sync from batch 313.',
-                'artifact_kind': 'todo_snapshot',
-                'role': 'assistant',
-                'container_ref': 'chat:library-help',
-                'thread_ref': 'chat:library-help:thread-routing-work-001',
-                'session_ref': 'agent-session-routing-work-001',
-            },
-        ):
-            response = client.post('/items', json=payload)
-            assert response.status_code == 200
+        _ingest_resumption_work(client, thread_ref='chat:library-help:thread-routing-work-001')
 
         payload = _run_debug_query(
             client,
             {
-                'text': 'What blocker did we hit and what should we do next on the catalog sync retry?',
+                'text': 'What blocker did we hit, what progress was preserved, and what should we do next on the catalog sync retry?',
                 'limit': 6,
                 'container_ref': 'chat:library-help',
             },
@@ -167,11 +186,37 @@ def test_work_resumption_routes_selected_work_artifacts_to_source_evidence_first
         routing = payload['trace']['routing']
 
         assert routing['query_intent'] == 'work_resumption'
+        assert routing['preferred_layers'][0] == 'task_checkpoint'
+        assert payload['results'][0]['result_kind'] == 'memory_hit'
+        assert payload['results'][0]['type'] == 'task_checkpoint'
+        checkpoint_payload = payload['results'][0]['payload']
+        assert 'service token expired' in checkpoint_payload['blocker_state'].lower()
+        assert 'refresh the catalog service token' in checkpoint_payload['next_step'].lower()
+        assert any(
+            item['result_kind'] == 'source_hit' and item['artifact_kind'] in {'tool_use_summary', 'todo_snapshot'}
+            for item in payload['results']
+        )
+
+
+def test_evidence_trace_with_task_checkpoint_still_prefers_source_evidence(monkeypatch, test_db_url: str) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest_resumption_work(client, thread_ref='chat:library-help:thread-routing-work-002')
+
+        payload = _run_debug_query(
+            client,
+            {
+                'text': 'What evidence shows the catalog service token expired on the catalog sync retry?',
+                'limit': 6,
+                'container_ref': 'chat:library-help',
+            },
+        )
+        routing = payload['trace']['routing']
+
+        assert routing['query_intent'] == 'evidence_trace'
         assert routing['preferred_layers'][0] == 'source_evidence'
         assert payload['results'][0]['result_kind'] == 'source_hit'
-        assert payload['results'][0]['artifact_kind'] in {'tool_use_summary', 'todo_snapshot'}
         assert any(
-            item['result_kind'] == 'memory_hit' and item['type'] == 'thread_summary'
+            item['result_kind'] == 'memory_hit' and item['type'] == 'task_checkpoint'
             for item in payload['results']
         )
 

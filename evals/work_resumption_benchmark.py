@@ -85,7 +85,12 @@ def run_work_resumption_benchmark(
     else:
         provider = answer_provider
 
-    run_id = run_name or _build_run_id(config, consolidation_strategy)
+    effective_consolidation_strategy = consolidation_strategy
+    if effective_consolidation_strategy is None:
+        consolidation_policy = default_package.consolidation
+        effective_consolidation_strategy = consolidation_policy.default_strategy if consolidation_policy is not None else None
+
+    run_id = run_name or _build_run_id(config, effective_consolidation_strategy)
     run_dir = output_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     results_path = run_dir / "results.jsonl"
@@ -97,7 +102,7 @@ def run_work_resumption_benchmark(
                 scenario=scenario,
                 config=config,
                 answer_provider=provider,
-                consolidation_strategy=consolidation_strategy,
+                consolidation_strategy=effective_consolidation_strategy,
             )
             results.append(result)
             results_file.write(json.dumps(result) + "\n")
@@ -108,7 +113,7 @@ def run_work_resumption_benchmark(
         config=config,
         run_id=run_id,
         results_file=results_path.name,
-        consolidation_strategy=consolidation_strategy,
+        consolidation_strategy=effective_consolidation_strategy,
     )
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     (run_dir / "report.md").write_text(_build_report(summary=summary, results=results), encoding="utf-8")
@@ -478,13 +483,26 @@ def _format_retrieval_results(results: list[dict[str, Any]]) -> str:
     for item in results[:6]:
         if item.get("result_kind") == "memory_hit":
             payload = item.get("payload") or {}
-            summary = (
-                payload.get("carry_forward_answer")
-                or payload.get("decision")
-                or payload.get("investigation_outcome")
-                or payload.get("summary")
-                or json.dumps(payload)
-            )
+            if item.get("type") == "task_checkpoint":
+                findings = payload.get("key_findings") or []
+                evidence = payload.get("evidence") or []
+                checkpoint_fields = [
+                    payload.get("task"),
+                    payload.get("current_state"),
+                    payload.get("blocker_state"),
+                    payload.get("next_step"),
+                    '; '.join(str(value) for value in findings[:2]),
+                    '; '.join(str(value) for value in evidence[:2]),
+                ]
+                summary = ' | '.join(str(value).strip() for value in checkpoint_fields if str(value).strip())
+            else:
+                summary = (
+                    payload.get("carry_forward_answer")
+                    or payload.get("decision")
+                    or payload.get("investigation_outcome")
+                    or payload.get("summary")
+                    or json.dumps(payload)
+                )
             lines.append(f"- memory/{item.get('type')}: {summary}")
         else:
             lines.append(f"- source/{item.get('source_type')}:{item.get('source_id')}: {item.get('excerpt')}")
@@ -514,6 +532,8 @@ def _result_layer(item: dict[str, Any] | None) -> str:
         return "pattern_memory"
     if item.get("type") == "continuity_memory":
         return "continuity_memory"
+    if item.get("type") == "task_checkpoint":
+        return "task_checkpoint"
     return "lower_level_memory"
 
 

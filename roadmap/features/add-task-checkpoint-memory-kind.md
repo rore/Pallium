@@ -1,10 +1,10 @@
 ---
 id: add-task-checkpoint-memory-kind
 title: Add task checkpoint memory kind
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary
@@ -50,4 +50,16 @@ An agent often needs not only "what did we conclude before" but also "where were
 
 ## Notes
 
-This slice should stay deliberately small. The goal is better orientation across resumed work, not a broad ontology for every possible task state.
+Implemented result:
+
+- `agent_conversation_memory` now emits package-owned `task_checkpoint` memory for compact resumed-work continuity.
+- `task_checkpoint` stays additive and evidence-backed: it captures task, current state, key findings, blocker state, next step, evidence, and a freshness signal without widening the public query contract.
+- internal routing now prefers `task_checkpoint` for resumed-work questions while still letting lower-level memory or source evidence win on precise factual and evidence-trace queries.
+- the work-resumption benchmark and focused routing tests now exercise `task_checkpoint` directly alongside the existing bounded selected work-artifact support and lower-level evidence paths.
+
+Design locks that remain true after implementation:
+
+- do not move resumed-work semantics into the generic core contract
+- do not ingest raw tool logs or raw MCP events
+- do not turn `task_checkpoint` into a workflow engine or task graph
+- keep bounded selected work-artifact support as the evidence source rather than replacing it

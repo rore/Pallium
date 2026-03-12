@@ -19,7 +19,7 @@ from providers.llm.base import LLMProvider
 
 DEFAULT_SCENARIO_FILE = Path("evals/memory_routing/scenarios.json")
 DEFAULT_OUTPUT_DIR = Path("evals/memory_routing/output")
-HIGHER_LEVEL_LAYERS = {"pattern_memory", "continuity_memory"}
+HIGHER_LEVEL_LAYERS = {"pattern_memory", "continuity_memory", "task_checkpoint"}
 
 
 def main() -> int:
@@ -130,7 +130,7 @@ def _run_scenario(
     returned_memory_types = sorted(
         {item.get("type") for item in memory_payload["results"] if item.get("result_kind") == "memory_hit" and item.get("type")}
     )
-    higher_level_memory_types = sorted(item for item in returned_memory_types if item in {"pattern_memory", "continuity_memory"})
+    higher_level_memory_types = sorted(item for item in returned_memory_types if item in {"pattern_memory", "continuity_memory", "task_checkpoint"})
 
     intent_match = routing.get("query_intent") == scenario["expected_intent"]
     top_layer_match = top_layer in expected_top_layers
@@ -235,6 +235,8 @@ def _result_layer(item: dict[str, Any] | None) -> str:
         return "pattern_memory"
     if item.get("type") == "continuity_memory":
         return "continuity_memory"
+    if item.get("type") == "task_checkpoint":
+        return "task_checkpoint"
     return "lower_level_memory"
 
 

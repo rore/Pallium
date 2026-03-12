@@ -7,7 +7,9 @@ from providers.llm.base import LLMJsonResponse
 
 class TieredMemorySemanticProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
-        if 'carry_forward_answer' in schema_description:
+        if 'freshness_signal' in schema_description:
+            payload = _build_task_checkpoint_payload(user_prompt)
+        elif 'carry_forward_answer' in schema_description:
             payload = _build_continuity_payload(user_prompt)
         elif 'pattern_label' in schema_description:
             payload = _build_pattern_payload(user_prompt)
@@ -95,6 +97,74 @@ def _build_thread_summary_payload(user_prompt: str) -> dict[str, str]:
     return {'summary': 'Unresolved.'}
 
 
+def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
+    lower = user_prompt.lower()
+    if 'service token expired' in lower and 'batch 313' in lower:
+        return {
+            'summary': 'Catalog sync retry is paused at an auth failure after partial progress, with a clear restart point.',
+            'task': 'Resume the catalog sync retry.',
+            'current_state': 'Refreshed 312 reservation records before a 401 from the expired catalog service token; resume from batch 313 after auth is refreshed.',
+            'key_findings': [
+                'catalog API returned 401 because the service token expired',
+                'refreshed 312 reservation records before the failure',
+            ],
+            'blocker_state': 'Catalog API returned 401 because the service token expired.',
+            'next_step': 'Refresh the catalog service token and rerun the sync from batch 313.',
+            'evidence': [
+                'Partial progress: refreshed 312 reservation records before the catalog sync tool failed.',
+                'Blocked: catalog API returned 401 because the service token expired.',
+                'Next step: refresh the catalog service token and rerun the sync from batch 313.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
+        }
+    if 'reservation cache is warm' in lower and 'compare cache invalidation' in lower:
+        return {
+            'summary': 'Duplicate-hold debugging already has a narrowed hypothesis, preserved progress, and a next comparison step.',
+            'task': 'Resume duplicate-hold debugging on delayed sync workers.',
+            'current_state': 'Local replay confirmed the bug and narrowed it to cache invalidation on delayed sync workers.',
+            'key_findings': [
+                'reservation cache is warm',
+                'cache invalidation',
+            ],
+            'blocker_state': '',
+            'next_step': 'Compare cache invalidation between delayed and immediate sync workers.',
+            'evidence': [
+                'Investigation found that duplicate holds only reproduce on delayed sync workers when the reservation cache is warm.',
+                'Partial progress: local replay confirmed the bug and narrowed it to cache invalidation on delayed sync workers.',
+                'Next step: compare cache invalidation between delayed and immediate sync workers.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T09:02:00Z.',
+        }
+    if 'schema change and backfill done' in lower and 'admin toggle' in lower:
+        return {
+            'summary': 'Ticket LIB-241 is partway done and can resume from the remaining flag-enable work.',
+            'task': 'Resume ticket LIB-241 with the use_item_event_time flag still gated.',
+            'current_state': 'The reservation ordering fix stays behind the use_item_event_time flag, and the schema change plus backfill are already done.',
+            'key_findings': [
+                'reservation ordering fix',
+                'ticket LIB-241 has the schema change and backfill done',
+            ],
+            'blocker_state': '',
+            'next_step': 'Wire the admin toggle and add retry-path coverage before enabling the flag.',
+            'evidence': [
+                'Decision: keep the reservation ordering fix behind the use_item_event_time flag.',
+                'Partial progress: ticket LIB-241 has the schema change and backfill done.',
+                'Next step: wire the admin toggle and add retry-path coverage before enabling the flag.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T11:02:00Z.',
+        }
+    return {
+        'summary': 'Resume the previously recorded work from this thread.',
+        'task': 'Resume the previously recorded work from this thread.',
+        'current_state': '',
+        'key_findings': [],
+        'blocker_state': '',
+        'next_step': '',
+        'evidence': [],
+        'freshness_signal': 'Latest explicit update time was not recorded.',
+    }
+
+
 def _build_pattern_payload(user_prompt: str) -> dict[str, str]:
     has_reservation = any(term in user_prompt.lower() for term in ('item event time', 'arrival-time ordering', 'duplicate holds', 'stale hold updates'))
     has_notification = '30-minute batches' in user_prompt.lower() or 'staff inbox spam' in user_prompt.lower()
@@ -116,6 +186,91 @@ def _build_pattern_payload(user_prompt: str) -> dict[str, str]:
     return {
         'summary': 'A bounded pattern was recorded from prior conversation memory.',
         'pattern_label': 'generic_pattern',
+    }
+
+
+def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
+    lower = user_prompt.lower()
+    if 'reservation cache is warm' in lower and 'compare cache invalidation' in lower:
+        return {
+            'summary': 'Duplicate-hold debugging is narrowed to warm-cache invalidation on delayed sync workers.',
+            'task': 'Resume duplicate-hold debugging on delayed sync workers.',
+            'current_state': 'Local replay confirmed the bug on delayed sync workers and narrowed the issue to cache invalidation with a warm reservation cache.',
+            'key_findings': [
+                'duplicate holds only reproduce on delayed sync workers when the reservation cache is warm',
+                'local replay narrowed the issue to cache invalidation',
+            ],
+            'blocker_state': '',
+            'next_step': 'Compare cache invalidation between delayed and immediate sync workers.',
+            'evidence': [
+                'Investigation found that duplicate holds only reproduce on delayed sync workers when the reservation cache is warm.',
+                'Partial progress: local replay confirmed the bug and narrowed it to cache invalidation on delayed sync workers.',
+                'Next step: compare cache invalidation between delayed and immediate sync workers.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T09:02:00+00:00.',
+        }
+    if 'service token expired' in lower and 'batch 313' in lower:
+        return {
+            'summary': 'Catalog sync retry is blocked on an expired service token after partial progress through batch 312.',
+            'task': 'Resume the catalog sync retry.',
+            'current_state': '312 reservation records were refreshed before the retry failed with a 401 from the catalog API.',
+            'key_findings': [
+                '312 reservation records were already refreshed',
+                'the catalog API returned 401 because the service token expired',
+            ],
+            'blocker_state': 'Catalog API returned 401 because the service token expired.',
+            'next_step': 'Refresh the catalog service token and rerun the sync from batch 313.',
+            'evidence': [
+                'Partial progress: refreshed 312 reservation records before the catalog sync tool failed.',
+                'Blocked: catalog API returned 401 because the service token expired.',
+                'Next step: refresh the catalog service token and rerun the sync from batch 313.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00+00:00.',
+        }
+    if 'schema change and backfill done' in lower and 'admin toggle' in lower:
+        return {
+            'summary': 'Ticket LIB-241 kept the reservation ordering fix behind the use_item_event_time flag and still needs enablement work.',
+            'task': 'Resume ticket LIB-241 for the reservation ordering fix.',
+            'current_state': 'The schema change and backfill are done, and the flag remains off pending the remaining enablement steps.',
+            'key_findings': [
+                'keep the reservation ordering fix behind the use_item_event_time flag',
+                'ticket LIB-241 already has the schema change and backfill done',
+            ],
+            'blocker_state': '',
+            'next_step': 'Wire the admin toggle and add retry-path coverage before enabling the flag.',
+            'evidence': [
+                'Decision: keep the reservation ordering fix behind the use_item_event_time flag.',
+                'Partial progress: ticket LIB-241 has the schema change and backfill done.',
+                'Next step: wire the admin toggle and add retry-path coverage before enabling the flag.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T11:02:00+00:00.',
+        }
+    if 'arrival-time ordering' in lower and 'item event time' in lower:
+        return {
+            'summary': 'The delayed catalog sync investigation concluded that stale hold state under arrival-time ordering caused duplicate holds.',
+            'task': 'Resume the delayed catalog sync investigation.',
+            'current_state': 'The prior investigation and decision already identified the stale-state cause and the chosen fix.',
+            'key_findings': [
+                'arrival-time ordering reused stale hold state during delayed catalog sync',
+                'item event time was chosen for reservation ordering',
+            ],
+            'blocker_state': '',
+            'next_step': '',
+            'evidence': [
+                'Investigation found that arrival-time ordering reused stale hold state during delayed catalog sync and created duplicate holds.',
+                'Decision: use item event time for reservation ordering to avoid duplicate holds after delayed catalog sync.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T08:02:00+00:00.',
+        }
+    return {
+        'summary': 'A compact task checkpoint was recorded for resumed work.',
+        'task': 'Resume the previously recorded work item.',
+        'current_state': 'Prior task state was recorded for later continuation.',
+        'key_findings': ['Prior task context exists.'],
+        'blocker_state': '',
+        'next_step': '',
+        'evidence': ['Prior task context exists.'],
+        'freshness_signal': 'Latest explicit update time was not recorded.',
     }
 
 
@@ -354,7 +509,9 @@ def _extract_sentence_containing(text: str, phrase: str) -> str:
 
 class PublicCorpusSemanticProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
-        if 'carry_forward_answer' in schema_description:
+        if 'freshness_signal' in schema_description:
+            payload = _build_public_corpus_task_checkpoint_payload(user_prompt)
+        elif 'carry_forward_answer' in schema_description:
             payload = _build_public_corpus_continuity_payload(user_prompt)
         elif 'pattern_label' in schema_description:
             payload = _build_public_corpus_pattern_payload(user_prompt)
@@ -454,6 +611,31 @@ def _build_public_corpus_pattern_payload(user_prompt: str) -> dict[str, str]:
     return {
         'summary': 'A bounded pattern was recorded from prior conversation memory.',
         'pattern_label': 'generic_pattern',
+    }
+
+
+def _build_public_corpus_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
+    lower = user_prompt.lower()
+    if 'done / waiting / next owner' in lower:
+        return {
+            'summary': 'The handoff template choice should carry forward for resumed work.',
+            'task': 'Reuse the short handoff template.',
+            'current_state': 'A concise three-line template was already chosen for follow-up updates.',
+            'key_findings': ["Use the three-line handoff template 'Done / Waiting / Next owner'."],
+            'blocker_state': '',
+            'next_step': 'Use the same three-line template in the next handoff.',
+            'evidence': ["The thread chose the 'Done / Waiting / Next owner' handoff template for short updates."],
+            'freshness_signal': 'Latest explicit update time was not recorded.',
+        }
+    return {
+        'summary': 'A compact task checkpoint was recorded for resumed work.',
+        'task': 'Resume the previously recorded work item.',
+        'current_state': 'Prior task state was recorded for later continuation.',
+        'key_findings': ['Prior task context exists.'],
+        'blocker_state': '',
+        'next_step': '',
+        'evidence': ['Prior task context exists.'],
+        'freshness_signal': 'Latest explicit update time was not recorded.',
     }
 
 

@@ -83,23 +83,48 @@ CONTINUITY_MEMORY_SYSTEM_PROMPT = (
 )
 CONTINUITY_MEMORY_MAX_TEXT_CHARS = 3000
 CONTINUITY_MEMORY_TEXT_VIEW = "memory_object.continuity_memory_context"
+TASK_CHECKPOINT_PROMPT_SCHEMA_ID = "task_checkpoint_extraction"
+TASK_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v1"
+TASK_CHECKPOINT_SCHEMA_DESCRIPTION = json.dumps(
+    {
+        "summary": "string",
+        "task": "string",
+        "current_state": "string",
+        "key_findings": ["string"],
+        "blocker_state": "string",
+        "next_step": "string",
+        "evidence": ["string"],
+        "freshness_signal": "string",
+    },
+    indent=2,
+)
+TASK_CHECKPOINT_SYSTEM_PROMPT = (
+    "Create one compact resumed-work task checkpoint from a bounded single-thread set of lower-level conversation memory. "
+    "Return exactly one JSON object and no extra prose. "
+    "Use only explicit facts from the supplied memory, carried conclusions, and selected work artifacts. "
+    "Capture the task, the current state, key findings, blocker or failed-attempt state when present, the next supported step when present, and a concise freshness signal. "
+    "Do not turn this into a workflow graph, transcript replay, or speculative recommendation. "
+    "Keep the summary concise: at most two sentences and roughly 80 words."
+)
+TASK_CHECKPOINT_MAX_TEXT_CHARS = 3200
+TASK_CHECKPOINT_TEXT_VIEW = "memory_object.task_checkpoint_context"
 ROUTING_POLICY_NAME = "agent_conversation_memory.intent_routing.v1"
-ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory"}
+ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory", "task_checkpoint"}
 ROUTING_LOWER_LEVEL_EXACT_TYPES = {"decision", "investigation_outcome"}
 ROUTING_SUMMARY_TYPES = {"thread_summary", "discussion_summary"}
 ROUTING_PREFERRED_LAYERS = {
-    "answer_continuity": ("continuity_memory", "lower_level_memory", "source_evidence", "pattern_memory"),
-    "broad_recall": ("pattern_memory", "lower_level_memory", "continuity_memory", "source_evidence"),
-    "work_resumption": ("source_evidence", "lower_level_memory", "continuity_memory", "pattern_memory"),
-    "precise_fact": ("lower_level_memory", "source_evidence", "continuity_memory", "pattern_memory"),
-    "evidence_trace": ("source_evidence", "lower_level_memory", "continuity_memory", "pattern_memory"),
+    "answer_continuity": ("continuity_memory", "lower_level_memory", "source_evidence", "task_checkpoint", "pattern_memory"),
+    "broad_recall": ("pattern_memory", "lower_level_memory", "continuity_memory", "task_checkpoint", "source_evidence"),
+    "work_resumption": ("task_checkpoint", "source_evidence", "lower_level_memory", "continuity_memory", "pattern_memory"),
+    "precise_fact": ("lower_level_memory", "source_evidence", "continuity_memory", "task_checkpoint", "pattern_memory"),
+    "evidence_trace": ("source_evidence", "lower_level_memory", "continuity_memory", "task_checkpoint", "pattern_memory"),
 }
 ROUTING_LAYER_WEIGHTS = {
-    "answer_continuity": {"continuity_memory": 400, "lower_level_memory": 300, "source_evidence": 200, "pattern_memory": 120},
-    "broad_recall": {"pattern_memory": 400, "lower_level_memory": 300, "continuity_memory": 180, "source_evidence": 120},
-    "work_resumption": {"source_evidence": 430, "lower_level_memory": 330, "continuity_memory": 150, "pattern_memory": 70},
-    "precise_fact": {"lower_level_memory": 420, "source_evidence": 320, "continuity_memory": 140, "pattern_memory": 60},
-    "evidence_trace": {"source_evidence": 460, "lower_level_memory": 360, "continuity_memory": 120, "pattern_memory": 40},
+    "answer_continuity": {"continuity_memory": 400, "lower_level_memory": 300, "source_evidence": 200, "task_checkpoint": 140, "pattern_memory": 120},
+    "broad_recall": {"pattern_memory": 400, "lower_level_memory": 300, "continuity_memory": 180, "task_checkpoint": 150, "source_evidence": 120},
+    "work_resumption": {"task_checkpoint": 470, "source_evidence": 390, "lower_level_memory": 310, "continuity_memory": 180, "pattern_memory": 70},
+    "precise_fact": {"lower_level_memory": 420, "source_evidence": 320, "continuity_memory": 140, "task_checkpoint": 110, "pattern_memory": 60},
+    "evidence_trace": {"source_evidence": 460, "lower_level_memory": 360, "continuity_memory": 120, "task_checkpoint": 90, "pattern_memory": 40},
 }
 ROUTING_META_QUERY_TOKENS = {
     "a",
@@ -198,6 +223,17 @@ WORK_RESUMPTION_NEXT_STEP_CUES = (
     "do next",
     "try next",
 )
+WORK_RESUMPTION_PROGRESS_CUES = (
+    "what progress",
+    "progress was preserved",
+    "what state were we in",
+)
+WORK_RESUMPTION_BLOCKER_CUES = (
+    "what blocker",
+    "blocked",
+    "failure",
+    "failed",
+)
 
 class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, ConsolidationSemanticPlugin):
     name = "agent_conversation_memory"
@@ -232,6 +268,10 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
     @property
     def continuity_memory_schema_id(self) -> str:
         return "agent_conversation_memory.continuity_memory"
+
+    @property
+    def task_checkpoint_schema_id(self) -> str:
+        return "agent_conversation_memory.task_checkpoint"
 
     def process_item(self, source_item: SourceItem) -> ProcessResult:
         return self._delegate.process_item(source_item)
@@ -344,7 +384,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             }
             for conclusion in carried_conclusions
         ]
-        memory_object = MemoryObject(
+        thread_summary_memory = MemoryObject(
             type="thread_summary",
             schema_id=self.thread_summary_schema_id,
             schema_version="v1",
@@ -362,7 +402,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         relations = [
             Relation(
                 from_kind="memory_object",
-                from_id=memory_object.id,
+                from_id=thread_summary_memory.id,
                 relation_type="supported_by",
                 to_kind="source_item",
                 to_id=source_item_id,
@@ -372,7 +412,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         relations.extend(
             Relation(
                 from_kind="memory_object",
-                from_id=memory_object.id,
+                from_id=thread_summary_memory.id,
                 relation_type="relates_to",
                 to_kind="memory_object",
                 to_id=conclusion.id,
@@ -386,20 +426,144 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 *[item["text"] for item in selected_work_artifacts if item.get("text")],
             ]
         )
+        thread_summary_index_entry = build_index_entry(
+            target_kind="memory_object",
+            target_id=thread_summary_memory.id,
+            index_type="lexical",
+            text_view=normalize_for_index(index_source),
+            text_view_name=THREAD_SUMMARY_TEXT_VIEW,
+        )
+        memory_objects = [thread_summary_memory]
+        index_entries = [thread_summary_index_entry]
+
+        if _should_build_task_checkpoint(selected_work_artifacts):
+            task_checkpoint_memory, task_checkpoint_index_entry = self._build_task_checkpoint_memory(
+                aggregate=aggregate,
+                summary=summary,
+                conclusion_payload=conclusion_payload,
+                selected_work_artifacts=selected_work_artifacts,
+            )
+            memory_objects.append(task_checkpoint_memory)
+            index_entries.append(task_checkpoint_index_entry)
+            relations.extend(
+                Relation(
+                    from_kind="memory_object",
+                    from_id=task_checkpoint_memory.id,
+                    relation_type="supported_by",
+                    to_kind="source_item",
+                    to_id=source_item_id,
+                )
+                for source_item_id in aggregate.source_item_ids
+            )
+            relations.extend(
+                Relation(
+                    from_kind="memory_object",
+                    from_id=task_checkpoint_memory.id,
+                    relation_type="relates_to",
+                    to_kind="memory_object",
+                    to_id=conclusion.id,
+                )
+                for conclusion in carried_conclusions
+            )
+        return ProcessResult(
+            annotations=[],
+            memory_objects=memory_objects,
+            relations=relations,
+            index_entries=index_entries,
+        )
+
+    def _build_task_checkpoint_memory(
+        self,
+        *,
+        aggregate: ThreadAggregate,
+        summary: str,
+        conclusion_payload: list[dict[str, str]],
+        selected_work_artifacts: list[dict[str, str]],
+    ) -> tuple[MemoryObject, object]:
+        checkpoint_material = "\n".join(
+            [
+                f"Thread summary: {summary}",
+                f"Carried conclusions:\n{_format_conclusions(conclusion_payload)}",
+                f"Selected work artifacts:\n{_format_selected_work_artifacts(selected_work_artifacts)}",
+            ]
+        )
+        if len(checkpoint_material) > TASK_CHECKPOINT_MAX_TEXT_CHARS:
+            checkpoint_material = checkpoint_material[:TASK_CHECKPOINT_MAX_TEXT_CHARS].rstrip() + "\n[task checkpoint context truncated for token budget]"
+
+        response = self._provider.generate_json(
+            system_prompt=TASK_CHECKPOINT_SYSTEM_PROMPT,
+            user_prompt=(
+                "Create one compact resumed-work checkpoint from this thread context. "
+                "Use only explicit information from the provided summary, conclusions, and selected work artifacts.\n\n"
+                f"Container ref: {aggregate.container_ref}\n"
+                f"Thread ref: {aggregate.thread_ref}\n"
+                f"Session ref: {aggregate.session_ref or 'null'}\n"
+                f"Latest occurred at: {aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else 'null'}\n\n"
+                f"{checkpoint_material}"
+            ),
+            schema_description=TASK_CHECKPOINT_SCHEMA_DESCRIPTION,
+        )
+        parsed_summary = response.parsed_json.get("summary")
+        if not isinstance(parsed_summary, str) or not parsed_summary.strip():
+            raise ValueError("task checkpoint extraction must return a non-empty summary string")
+        parsed_summary = parsed_summary.strip()
+        task = str(response.parsed_json.get("task") or "").strip() or _default_task_checkpoint_task(summary, conclusion_payload)
+        current_state = str(response.parsed_json.get("current_state") or "").strip() or _default_task_checkpoint_state(summary, selected_work_artifacts)
+        key_findings = _parse_string_list(response.parsed_json.get("key_findings")) or _default_task_checkpoint_findings(conclusion_payload, selected_work_artifacts)
+        blocker_state = str(response.parsed_json.get("blocker_state") or "").strip() or _default_task_checkpoint_blocker(selected_work_artifacts)
+        next_step = str(response.parsed_json.get("next_step") or "").strip() or _default_task_checkpoint_next_step(selected_work_artifacts)
+        evidence = _parse_string_list(response.parsed_json.get("evidence")) or _default_task_checkpoint_evidence(conclusion_payload, selected_work_artifacts, summary)
+        freshness_signal = str(response.parsed_json.get("freshness_signal") or "").strip() or _default_task_checkpoint_freshness_signal(aggregate.latest_occurred_at)
+
+        memory_object = MemoryObject(
+            type="task_checkpoint",
+            schema_id=self.task_checkpoint_schema_id,
+            schema_version="v1",
+            payload={
+                "summary": parsed_summary,
+                "task": task,
+                "current_state": current_state,
+                "key_findings": key_findings,
+                "blocker_state": blocker_state,
+                "next_step": next_step,
+                "evidence": evidence,
+                "freshness_signal": freshness_signal,
+                "conclusions": conclusion_payload,
+                "selected_work_artifacts": selected_work_artifacts,
+                "latest_occurred_at": aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else None,
+                "container_ref": aggregate.container_ref,
+                "thread_ref": aggregate.thread_ref,
+                "session_ref": aggregate.session_ref,
+                "semantic_provenance": {
+                    "semantic_plugin": self.name,
+                    "prompt_variant": self.prompt_variant,
+                    "prompt_schema_id": TASK_CHECKPOINT_PROMPT_SCHEMA_ID,
+                    "prompt_schema_version": TASK_CHECKPOINT_PROMPT_SCHEMA_VERSION,
+                },
+            },
+        )
+        index_source = " ".join(
+            [
+                parsed_summary,
+                task,
+                current_state,
+                blocker_state,
+                next_step,
+                freshness_signal,
+                *key_findings,
+                *evidence,
+                *[item["text"] for item in conclusion_payload if item.get("text")],
+                *[item["text"] for item in selected_work_artifacts if item.get("text")],
+            ]
+        )
         index_entry = build_index_entry(
             target_kind="memory_object",
             target_id=memory_object.id,
             index_type="lexical",
             text_view=normalize_for_index(index_source),
-            text_view_name=THREAD_SUMMARY_TEXT_VIEW,
+            text_view_name=TASK_CHECKPOINT_TEXT_VIEW,
         )
-        return ProcessResult(
-            annotations=[],
-            memory_objects=[memory_object],
-            relations=relations,
-            index_entries=[index_entry],
-        )
-
+        return memory_object, index_entry
     def build_consolidated_memory(self, group: ConsolidationGroup) -> ProcessResult:
         if _should_build_continuity_memory(group):
             return self._build_continuity_memory(group)
@@ -632,6 +796,8 @@ def _result_layer(item: QueryResultItem) -> str:
         return "pattern_memory"
     if item.type == "continuity_memory":
         return "continuity_memory"
+    if item.type == "task_checkpoint":
+        return "task_checkpoint"
     return "lower_level_memory"
 
 
@@ -644,6 +810,17 @@ def _specificity_bonus(item: QueryResultItem, intent: str, *, query_text: str) -
     if item.result_kind == "memory_hit" and item.type == "thread_summary" and intent == "work_resumption":
         if _memory_hit_has_selected_work_artifacts(item):
             bonus += 35
+    if item.result_kind == "memory_hit" and item.type == "task_checkpoint":
+        if intent == "work_resumption":
+            bonus += 55
+            if _query_contains_any(query_text, WORK_RESUMPTION_NEXT_STEP_CUES) and str(item.payload.get("next_step") or "").strip():
+                bonus += 25
+            if _query_contains_any(query_text, WORK_RESUMPTION_PROGRESS_CUES) and str(item.payload.get("current_state") or "").strip():
+                bonus += 20
+            if _query_contains_any(query_text, WORK_RESUMPTION_BLOCKER_CUES) and str(item.payload.get("blocker_state") or "").strip():
+                bonus += 25
+        elif intent in {"precise_fact", "evidence_trace"}:
+            bonus -= 35
     if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "answer_continuity":
         bonus += 25
     if item.result_kind == "memory_hit" and item.type == "pattern_memory" and intent == "broad_recall":
@@ -708,6 +885,22 @@ def _routing_item_text(item: QueryResultItem) -> str:
                 str(item.payload.get(key) or "")
                 for key in ("investigation_outcome", "investigation_evidence_text", "rationale")
             )
+        elif item.type == "task_checkpoint":
+            fragments.extend(
+                str(item.payload.get(key) or "")
+                for key in ("summary", "task", "current_state", "blocker_state", "next_step", "freshness_signal")
+            )
+            for field in ("key_findings", "evidence"):
+                values = item.payload.get(field, [])
+                if isinstance(values, list):
+                    fragments.extend(str(value or "") for value in values)
+            for work_artifact in item.payload.get("selected_work_artifacts", []):
+                if isinstance(work_artifact, dict):
+                    fragments.append(str(work_artifact.get("signal_type") or ""))
+                    fragments.append(str(work_artifact.get("text") or ""))
+            for conclusion in item.payload.get("conclusions", []):
+                if isinstance(conclusion, dict):
+                    fragments.append(str(conclusion.get("text") or ""))
         elif item.type in ROUTING_HIGHER_LEVEL_TYPES:
             fragments.extend(
                 str(item.payload.get(key) or "")
@@ -734,6 +927,8 @@ def _routing_reason(intent: str, layer: str, content_overlap_tokens: list[str]) 
     if intent == "answer_continuity":
         if layer == "continuity_memory":
             return "Repeated-answer wording favors compact carry-forward memory."
+        if layer == "task_checkpoint":
+            return "Task checkpoints are narrower than repeated-answer carry-forward memory." + weak_match_suffix
         if layer == "pattern_memory":
             return "Broad pattern memory is demoted because the query is asking whether the answer was already given."
         if layer == "lower_level_memory":
@@ -744,10 +939,14 @@ def _routing_reason(intent: str, layer: str, content_overlap_tokens: list[str]) 
             return "Broad recall wording favors higher-level pattern memory." + weak_match_suffix
         if layer == "continuity_memory":
             return "Continuity memory is narrower than the broad prior-conclusion question." + weak_match_suffix
+        if layer == "task_checkpoint":
+            return "Task checkpoints are narrower than the broad prior-conclusion question." + weak_match_suffix
         if layer == "lower_level_memory":
             return "Lower-level memory stays relevant, but broader recall prefers a consolidated pattern when present."
         return "Source evidence remains available, but compact prior-conclusion memory is preferred."
     if intent == "work_resumption":
+        if layer == "task_checkpoint":
+            return "Resume-oriented wording favors compact task checkpoints that preserve task state, blockers, and next steps." + weak_match_suffix
         if layer == "source_evidence":
             return "Resume-oriented wording favors exact prior work artifacts and source evidence."
         if layer == "lower_level_memory":
@@ -760,6 +959,8 @@ def _routing_reason(intent: str, layer: str, content_overlap_tokens: list[str]) 
             return "Precise factual wording favors exact lower-level memory over higher-level summaries."
         if layer == "source_evidence":
             return "Source evidence stays near the top for precise factual lookup."
+        if layer == "task_checkpoint":
+            return "Task checkpoints are demoted because they compress state instead of preserving exact factual detail." + weak_match_suffix
         if layer == "continuity_memory":
             return "Continuity memory is demoted because it can blur exact factual lookup." + weak_match_suffix
         return "Pattern memory is demoted because it can blur exact factual lookup." + weak_match_suffix
@@ -767,6 +968,8 @@ def _routing_reason(intent: str, layer: str, content_overlap_tokens: list[str]) 
         return "Evidence-trace wording favors raw supporting source evidence."
     if layer == "lower_level_memory":
         return "Lower-level memory stays close behind source evidence for evidence-trace questions."
+    if layer == "task_checkpoint":
+        return "Task checkpoints are demoted because evidence-trace questions need sharper provenance." + weak_match_suffix
     if layer == "continuity_memory":
         return "Continuity memory is demoted because evidence-trace questions need sharper provenance." + weak_match_suffix
     return "Pattern memory is demoted because evidence-trace questions need sharper provenance." + weak_match_suffix
@@ -890,6 +1093,112 @@ def _default_carry_forward_answer(conclusions: list[dict[str, str]]) -> str:
     return "A prior answer was recorded in this conversation thread."
 
 
+def _parse_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    parsed: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text and text not in parsed:
+            parsed.append(text)
+    return parsed
+
+
+def _should_build_task_checkpoint(selected_work_artifacts: list[dict[str, str]]) -> bool:
+    signal_types = {item.get("signal_type") for item in selected_work_artifacts if item.get("text")}
+    return bool(signal_types.intersection({"progress_update", "blocker", "next_step"}))
+
+
+def _strip_work_signal_prefix(text: str) -> str:
+    stripped = text.strip()
+    lowered = stripped.lower()
+    for prefix, _signal_type in WORK_SIGNAL_PREFIX_TO_TYPE:
+        if lowered.startswith(prefix):
+            return stripped[len(prefix):].strip()
+    return stripped
+
+
+def _signal_texts(selected_work_artifacts: list[dict[str, str]], signal_type: str) -> list[str]:
+    values: list[str] = []
+    for item in selected_work_artifacts:
+        if item.get("signal_type") != signal_type:
+            continue
+        text = _strip_work_signal_prefix(str(item.get("text") or ""))
+        if text and text not in values:
+            values.append(text)
+    return values
+
+
+def _default_task_checkpoint_task(summary: str, conclusions: list[dict[str, str]]) -> str:
+    for conclusion in conclusions:
+        text = str(conclusion.get("text") or "").strip()
+        if text:
+            return text
+    if summary:
+        return summary
+    return "Resume the previously recorded task from this thread."
+
+
+def _default_task_checkpoint_state(summary: str, selected_work_artifacts: list[dict[str, str]]) -> str:
+    fragments: list[str] = []
+    progress_updates = _signal_texts(selected_work_artifacts, "progress_update")
+    blockers = _signal_texts(selected_work_artifacts, "blocker")
+    if progress_updates:
+        fragments.append(progress_updates[0])
+    if blockers:
+        fragments.append(blockers[0])
+    if not fragments:
+        next_steps = _signal_texts(selected_work_artifacts, "next_step")
+        if next_steps:
+            fragments.append(f"Pending: {next_steps[0]}")
+    if fragments:
+        return " ".join(fragments)
+    return summary
+
+
+def _default_task_checkpoint_findings(conclusions: list[dict[str, str]], selected_work_artifacts: list[dict[str, str]]) -> list[str]:
+    findings: list[str] = []
+    for conclusion in conclusions:
+        text = str(conclusion.get("text") or "").strip()
+        if text and text not in findings:
+            findings.append(text)
+    for text in _signal_texts(selected_work_artifacts, "progress_update"):
+        if text not in findings:
+            findings.append(text)
+    return findings[:3]
+
+
+def _default_task_checkpoint_blocker(selected_work_artifacts: list[dict[str, str]]) -> str:
+    blockers = _signal_texts(selected_work_artifacts, "blocker")
+    return blockers[0] if blockers else ""
+
+
+def _default_task_checkpoint_next_step(selected_work_artifacts: list[dict[str, str]]) -> str:
+    next_steps = _signal_texts(selected_work_artifacts, "next_step")
+    return next_steps[0] if next_steps else ""
+
+
+def _default_task_checkpoint_evidence(conclusions: list[dict[str, str]], selected_work_artifacts: list[dict[str, str]], summary: str) -> list[str]:
+    evidence: list[str] = []
+    for conclusion in conclusions:
+        text = str(conclusion.get("text") or "").strip()
+        if text and text not in evidence:
+            evidence.append(text)
+    for item in selected_work_artifacts:
+        text = str(item.get("text") or "").strip()
+        if text and text not in evidence:
+            evidence.append(text)
+    if not evidence and summary:
+        evidence.append(summary)
+    return evidence[:4]
+
+
+def _default_task_checkpoint_freshness_signal(latest_occurred_at) -> str:
+    if latest_occurred_at is None:
+        return "Latest explicit update time was not recorded."
+    return f"Latest explicit update at {latest_occurred_at.isoformat()}."
+
+
 def _supports_thread_aggregation(source_item: SourceItem) -> bool:
     artifact_key = ((source_item.artifact_kind or "").lower(), (source_item.role or "").lower())
     return artifact_key in PRIMARY_THREAD_ARTIFACTS or artifact_key in SELECTED_THREAD_ARTIFACTS
@@ -907,6 +1216,8 @@ def _collect_selected_work_artifacts(source_items: list[SourceItem]) -> list[dic
             {
                 "artifact_kind": str(source_item.artifact_kind),
                 "signal_type": _classify_work_signal(source_item),
+                "source_item_id": source_item.id,
+                "occurred_at": source_item.occurred_at.isoformat() if source_item.occurred_at else "",
                 "text": text,
             }
         )

@@ -169,3 +169,83 @@ def test_rebuilding_same_group_supersedes_older_continuity_memory(monkeypatch, t
         second_continuity = client.app.state.pallium_service._storage.get_memory_object(second_continuity_id)
         assert first_continuity.lifecycle == 'superseded'
         assert second_continuity.lifecycle == 'active'
+
+
+def test_task_checkpoint_preserves_work_state_and_evidence(monkeypatch, test_db_url: str) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        for payload in (
+            {
+                'source_type': 'chat_message',
+                'source_id': 'task-checkpoint-msg-1',
+                'content_type': 'text/plain',
+                'content': 'The catalog sync retry is queued again.',
+                'artifact_kind': 'message',
+                'role': 'user',
+                'container_ref': 'chat:library-help',
+                'thread_ref': 'chat:library-help:thread-task-checkpoint-001',
+                'session_ref': 'agent-session-task-checkpoint-001',
+            },
+            {
+                'source_type': 'assistant_artifact',
+                'source_id': 'task-checkpoint-artifact-1',
+                'content_type': 'text/plain',
+                'content': 'Partial progress: refreshed 312 reservation records before the catalog sync tool failed.',
+                'artifact_kind': 'tool_use_summary',
+                'role': 'assistant',
+                'container_ref': 'chat:library-help',
+                'thread_ref': 'chat:library-help:thread-task-checkpoint-001',
+                'session_ref': 'agent-session-task-checkpoint-001',
+            },
+            {
+                'source_type': 'assistant_artifact',
+                'source_id': 'task-checkpoint-artifact-2',
+                'content_type': 'text/plain',
+                'content': 'Blocked: catalog API returned 401 because the service token expired.',
+                'artifact_kind': 'tool_use_summary',
+                'role': 'assistant',
+                'container_ref': 'chat:library-help',
+                'thread_ref': 'chat:library-help:thread-task-checkpoint-001',
+                'session_ref': 'agent-session-task-checkpoint-001',
+            },
+            {
+                'source_type': 'assistant_artifact',
+                'source_id': 'task-checkpoint-artifact-3',
+                'content_type': 'text/plain',
+                'content': 'Next step: refresh the catalog service token and rerun the sync from batch 313.',
+                'artifact_kind': 'todo_snapshot',
+                'role': 'assistant',
+                'container_ref': 'chat:library-help',
+                'thread_ref': 'chat:library-help:thread-task-checkpoint-001',
+                'session_ref': 'agent-session-task-checkpoint-001',
+            },
+        ):
+            response = client.post('/items', json=payload)
+            assert response.status_code == 200
+
+        storage = client.app.state.pallium_service._storage
+        checkpoints = storage.list_memory_objects(memory_types=['task_checkpoint'], lifecycle='active')
+        assert len(checkpoints) == 1
+
+        checkpoint = checkpoints[0]
+        assert checkpoint.payload['task'] == 'Resume the catalog sync retry.'
+        assert '312 reservation records' in checkpoint.payload['current_state']
+        assert checkpoint.payload['blocker_state'] == 'Catalog API returned 401 because the service token expired.'
+        assert checkpoint.payload['next_step'] == 'Refresh the catalog service token and rerun the sync from batch 313.'
+        assert any('service token expired' in item for item in checkpoint.payload['evidence'])
+        assert checkpoint.payload['semantic_provenance']['semantic_plugin'] == 'agent_conversation_memory'
+        assert checkpoint.payload['semantic_provenance']['prompt_schema_id'] == 'task_checkpoint_extraction'
+
+        evidence = storage.get_evidence_for_memory_object(checkpoint.id)
+        assert len(evidence) == 4
+
+        payload = _query(
+            client,
+            {
+                'text': 'What blocker did we hit, what progress was preserved, and what should we do next on the catalog sync retry?',
+                'limit': 6,
+                'container_ref': 'chat:library-help',
+            },
+        )
+        assert payload['results'][0]['result_kind'] == 'memory_hit'
+        assert payload['results'][0]['type'] == 'task_checkpoint'
+

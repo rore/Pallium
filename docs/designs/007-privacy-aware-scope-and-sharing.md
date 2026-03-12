@@ -2,7 +2,7 @@
 
 ## Goal
 
-Define a generic privacy-aware scope model for Pallium so scope-aware packages can:
+Define a generic visibility model for Pallium so scope-aware packages can:
 
 - preserve explicit visibility boundaries on ingested evidence and derived memory
 - enforce access before retrieval ranking
@@ -20,7 +20,7 @@ If later cross-container or shared-memory features reuse those refs as if they w
 The right move is to separate three concerns:
 
 1. locality and correlation metadata
-2. privacy / visibility scope
+2. visibility enforcement
 3. later shared-memory publication
 
 ## Non-Goals
@@ -28,68 +28,108 @@ The right move is to separate three concerns:
 This design is not trying to:
 
 - define one final user-facing access-control product
-- hardcode Slack-like concepts such as public, private, channel, or dm into the core model
-- make every existing package immediately require scope metadata
-- ship cross-container reuse in the same slice as the scope foundation
+- hardcode connector-specific concepts such as Slack channels or DMs into the core model
+- make every existing package immediately require visibility metadata
+- ship cross-container reuse in the same slice as the visibility foundation
 - replace existing locality refs with a new ontology
 
 ## Core Principles
 
-1. Scope is separate from locality.
-   `container_ref`, `thread_ref`, `session_ref`, `actor_ref`, and `source_ref` remain descriptive context unless a package explicitly maps them into scope policy.
+1. Visibility is separate from locality.
+   `container_ref`, `thread_ref`, `session_ref`, `actor_ref`, and `source_ref` remain descriptive context unless a package explicitly maps them into visibility policy.
 
-2. Producers declare native scope.
-   Producer or application code is the source of truth for scope boundaries. Pallium should not infer privacy boundaries from text or correlation refs.
+2. The consumer provides the current visibility context, not the whole policy.
+   Producer or application code supplies the visibility boundary for ingest and query. Pallium owns the visibility semantics and enforcement once that boundary is supplied.
 
-3. Fail closed for scope-aware packages.
-   If a package requires scope to enforce safe retrieval or derivation, missing scope data should prevent broad retrieval or promotion rather than silently broadening visibility.
+3. The ingest and query contract should match.
+   The same `visibility_context` shape should be used on ingest and query so consumers do not need one model for storage and another for retrieval.
 
-4. Derivation preserves or narrows scope by default.
-   Direct memory and higher-level memory should stay inside the native scope of their supporting evidence unless the package explicitly creates a separate shared derived object.
+4. Fail closed for scope-aware packages.
+   If a package requires visibility to enforce safe retrieval or derivation, missing visibility data should prevent retrieval or promotion rather than silently broadening visibility.
 
-5. Broader reuse happens through explicit shared memory.
-   Cross-scope reuse should create a separate shared derived memory object with its own target scope and provenance, not widen a local memory object in place.
+5. Local derived memory preserves visibility by default.
+   Direct memory and higher-level memory should stay inside the visibility context of their supporting evidence unless the package explicitly creates a separate shared derived object.
 
-6. Access is enforced before ranking.
-   Retrieval should apply access context filtering before lexical retrieval, vector retrieval, fusion, or reranking.
+6. Broader reuse happens through explicit shared memory.
+   Cross-scope reuse should create a separate shared derived memory object with its own target visibility and provenance, not widen a local memory object in place.
 
-7. Packages own mapping and share policy.
-   The generic core should carry scope plumbing and enforcement hooks. Packages decide how domain/locality context maps to scope and what is eligible for sharing.
+7. Access is enforced before ranking.
+   Retrieval should apply visibility filtering before lexical retrieval, vector retrieval, fusion, or reranking.
+
+## Phase-1 Consumer Contract
+
+Use the same shape on ingest and query:
+
+```json
+{
+  "visibility_context": {
+    "kind": "public" | "limited" | "user",
+    "id": "..." | null
+  }
+}
+```
+
+Meaning:
+
+- `public`
+  - globally visible
+  - `id = null`
+- `limited`
+  - visible within one bounded shared context
+  - use for private channel, group, room, or similar shared limited audience
+  - `id` required
+- `user`
+  - visible only within one user-private context
+  - `id` required
+
+This keeps the contract small, avoids invalid combinations such as separate `privacy + type` fields, and still preserves the distinction between a bounded shared audience and a user-private audience.
+
+## How Pallium Interprets It
+
+On ingest:
+
+- the source item belongs to the supplied `visibility_context`
+- local derived memory preserves that same `visibility_context` by default
+
+On query:
+
+- the request is happening inside the supplied `visibility_context`
+- Pallium expands that current context into the visible set internally
+
+Phase-1 visibility expansion rules:
+
+- query in `public` can see:
+  - `public`
+- query in `limited:X` can see:
+  - `public`
+  - `limited:X`
+- query in `user:U1` can see:
+  - `public`
+  - `user:U1`
+
+So the consumer supplies the current boundary, while Pallium owns the built-in visibility semantics.
 
 ## Conceptual Model
 
-### Native Scope
+### Visibility Context
 
-Native scope is the visibility boundary that arrives with a source item or is preserved on a local derived memory object.
+Visibility context is the consumer-facing boundary carried on source items and query requests.
 
-Conceptually, a native scope envelope needs to answer:
+It needs to answer:
 
-- what scope system or namespace is this package using?
-- what concrete scope refs identify the allowed audience or boundary?
-- which policy version interpreted those refs?
+- is this memory globally visible, shared within one bounded context, or private to one user context?
+- if it is bounded, which concrete context does it belong to?
 
-This does not require a final field-level schema in this document, but the model should support at least:
+Phase-1 core shape:
 
-- package-owned scope namespaces
-- one or more opaque scope refs
-- policy version metadata
+- `kind`
+- `id`
 
-### Query Access Context
-
-A query access context is the set of scopes the caller is allowed to see for a given request.
-
-Retrieval flow for scope-aware packages should become:
-
-1. receive query text plus access context
-2. filter candidate source items and memory objects by allowed scope
-3. run structured narrowing and ranked retrieval only inside the allowed set
-4. package compact, evidence-backed results as usual
-
-This keeps privacy enforcement orthogonal to retrieval sophistication.
+This is intentionally smaller than a full authorization model.
 
 ### Local Derived Memory
 
-Local derived memory is any memory object whose scope is preserved from or narrowed relative to its supporting evidence.
+Local derived memory is any memory object whose visibility is preserved from its supporting evidence.
 
 Examples:
 
@@ -97,24 +137,24 @@ Examples:
 - `investigation_outcome`
 - `thread_summary`
 - `pattern_memory`
-- later `continuity_memory`
+- `continuity_memory`
+- later `task_checkpoint`
 
 Default rule:
 
-- local derived memory cannot become visible outside the native scope of its evidence just because it is more abstract
+- local derived memory cannot become visible outside the visibility context of its evidence just because it is more abstract
 
 ### Shared Derived Memory
 
-Shared derived memory is a separate memory object intentionally published to a broader target scope under package policy.
+Shared derived memory is a separate memory object intentionally published to a broader target visibility context under package policy.
 
-Shared derived memory must not be modeled as a local memory object whose scope was widened in place.
+Shared derived memory must not be modeled as a local memory object whose visibility was widened in place.
 
 It needs separate provenance for at least:
 
-- target scope
-- share policy version
+- target visibility context
 - lineage to supporting local memory and source evidence
-- creation mechanism / package policy
+- creation mechanism or package policy
 
 This separate object model makes later revocation, supersession, and false-share debugging possible.
 
@@ -124,16 +164,17 @@ This separate object model makes later revocation, supersession, and false-share
 
 For scope-aware packages:
 
-- ingest should accept producer-declared native scope
-- missing required scope data should remain persistable if needed for debugging, but not broadly retrievable or promotable without explicit package policy
-- locality refs should still be stored independently of scope
+- ingest should accept producer-declared `visibility_context`
+- missing required visibility data may remain persistable for debugging if desired, but it must not be broadly retrievable or promotable without explicit package policy
+- locality refs should still be stored independently of visibility
 
 ### Direct Promotion
 
 For scope-aware packages:
 
-- direct memory should preserve the native scope of the source evidence by default
-- if multiple supporting source items disagree on native scope, promotion should fail closed unless package policy explicitly defines a legal narrower common scope
+- direct memory should preserve the visibility context of the source evidence by default
+- if supporting source items disagree on visibility context, promotion should fail closed in phase 1
+- phase 1 should not attempt generalized narrowing or intersection logic
 
 ### Thread Aggregation
 
@@ -141,33 +182,34 @@ Thread aggregation is a reusable capability and therefore must not invent privac
 
 Required behavior:
 
-- only aggregate source items that are compatible under the package's native-scope rules
-- do not let a thread aggregate cross scope boundaries just because the same `thread_ref` appears
-- expose scope-aware candidate filtering hooks at the capability boundary rather than hardcoding one package's policy into the capability itself
+- only aggregate source items that have the exact same `visibility_context`
+- do not let a thread aggregate cross visibility boundaries just because the same `thread_ref` appears
+- expose visibility-aware candidate filtering hooks at the capability boundary rather than hardcoding one package's policy into the capability itself
 
 ### Tiered Consolidation
 
-Consolidation is also a reusable capability and must treat scope as a hard precondition, not a soft ranking factor.
+Consolidation is also a reusable capability and must treat visibility as a hard precondition, not a soft ranking factor.
 
 Required behavior:
 
-- only group local derived memory that is compatible under package scope policy
+- only group local derived memory that has the exact same `visibility_context`
 - do not let higher-level memory become broader than its support by default
-- keep scope checks ahead of lexical overlap, topic similarity, time windows, and any future vector signals
+- keep visibility checks ahead of lexical overlap, topic similarity, time windows, and any future vector signals
 
 ### Retrieval
 
 Retrieval for scope-aware packages must:
 
-- enforce query access context before ranking
+- require `visibility_context` on the query and fail closed when it is missing
+- expand the current query visibility according to the built-in phase-1 rules before ranking
 - keep superseded memory filtered as today
 - preserve evidence-backed packaging
-- expose enough trace data to debug why a candidate was excluded for scope reasons
+- expose enough trace data to debug why a candidate was excluded for visibility reasons
 
 At minimum, trace/debug outputs should be able to say:
 
-- candidate was excluded because native scope was missing
-- candidate was excluded because access context did not include the candidate scope
+- candidate was excluded because visibility context was missing
+- candidate was excluded because the query visibility did not include the candidate visibility
 - candidate was returned as local memory vs shared derived memory
 
 ## Ownership Boundaries
@@ -176,46 +218,84 @@ At minimum, trace/debug outputs should be able to say:
 
 Core should own:
 
-- scope plumbing on generic primitives
-- query access context plumbing
+- `visibility_context` plumbing on generic primitives
+- query visibility plumbing
+- built-in phase-1 visibility expansion rules
 - fail-closed enforcement hooks
-- generic provenance fields needed for native and shared scope handling
+- generic provenance fields needed for local and shared visibility handling
 
 Core should not own:
 
-- connector-specific scope labels
-- package-specific mapping from locality refs to scope
+- connector-specific labels such as Slack channel vs group internals
+- package-specific mapping from locality refs to visibility context
 - package-specific share eligibility rules
 
 ### Capabilities
 
 Reusable capabilities should own:
 
-- scope-aware candidate filtering hooks
-- compatibility guards for aggregation and consolidation
-- no package-specific scope semantics beyond the hook contract
+- visibility-aware candidate filtering hooks
+- exact-match compatibility guards for aggregation and consolidation
+- no package-specific visibility semantics beyond the hook contract
 
 ### Semantic Packages
 
 Semantic packages should own:
 
-- mapping from domain/locality context to scope refs
-- whether the package is scope-aware
-- share eligibility policy
-- any package-specific narrowing rules
+- whether the package is visibility-aware
+- mapping from domain or locality context to `visibility_context`
+- any later package-specific narrowing or share policy
 - cross-scope publication policy for shared derived memory
 
 ### Application / Producer Layer
 
 Application and producer code should own:
 
-- declaring native scope on ingest
-- supplying query access context on retrieval
-- any user/application authorization logic outside Pallium itself
+- declaring `visibility_context` on ingest
+- supplying `visibility_context` on query
+- any user or application authorization logic outside Pallium itself
+
+## Pelican Mapping
+
+This model fits the expected downstream shape cleanly:
+
+- public team conversation:
+  - `visibility_context = { "kind": "public", "id": null }`
+- private team channel or group:
+  - `visibility_context = { "kind": "limited", "id": "channel-123" }`
+- user-private interaction:
+  - `visibility_context = { "kind": "user", "id": "user-456" }`
+
+Examples:
+
+- a query in `public` sees only public memory
+- a query in `limited:channel-123` can reuse public memory plus that bounded channel memory
+- a query in `user:user-456` can reuse public memory plus that user's private memory
+
+This gives the consumer one stable contract while keeping the enforcement semantics inside Pallium.
+
+## Future Promotion To Broader Audiences
+
+The phase-1 model intentionally leaves room for later explicit promotion from a narrower context to a broader audience.
+
+Example future flow:
+
+1. work happens inside `limited:channel-123`
+2. Pallium forms local memory there
+3. a later explicit share or promotion step creates a separate broader derived memory object in `public` or another `limited:*` audience
+4. the original limited memory remains limited
+
+This does not lose evidence. Later shared-memory design should preserve:
+
+- lineage back to the original local memory
+- lineage back to the original supporting evidence
+- a distinction between full provenance and whatever evidence is safe to expose at the broader scope
+
+That is exactly why explicit shared-memory derivation is a later separate slice.
 
 ## Phased Implementation Plan
 
-### Phase 1: Native Scope And Enforcement Foundation
+### Phase 1: Visibility Foundation And Enforcement
 
 Roadmap item:
 
@@ -223,16 +303,17 @@ Roadmap item:
 
 Deliver:
 
-- native scope on source items and memory objects
-- query access context enforcement before ranking
-- preserve/narrow derivation defaults
-- scope-aware hooks in aggregation and consolidation
+- `visibility_context` on source items and memory objects
+- query visibility enforcement before ranking
+- exact-match derivation defaults for promotion, aggregation, and consolidation
+- visibility-aware hooks in aggregation and consolidation
 - trace and evaluation support for fail-closed behavior and privacy leaks
 
 Do not deliver yet:
 
 - broader shared derived memory publication
 - cross-container reuse
+- mixed-context derivation
 
 ### Phase 2: Explicit Shared-Derived-Memory Contract
 
@@ -243,8 +324,9 @@ Roadmap item:
 Deliver:
 
 - separate shared derived memory objects
-- target scope and share provenance metadata
+- target visibility and share provenance metadata
 - lineage to supporting local memory and evidence
+- controlled visible evidence for broader audiences
 - lifecycle expectations for shared derived memory
 - trace and evaluation support for false-share and stale-share cases
 
@@ -266,25 +348,19 @@ Deliver:
 
 ## Current Recommendation
 
-Treat privacy-aware scope as necessary infrastructure, but keep each privacy-related roadmap slice narrow and testable.
+Treat visibility-aware scope as necessary infrastructure, but keep each privacy-related roadmap slice narrow and testable.
 
 For the privacy-specific path, the right sequence is:
 
-1. native scope and enforcement foundation
+1. visibility foundation and enforcement
 2. explicit shared-derived-memory contract
 3. bounded cross-container shared memory
 
-This privacy path should follow the current retrieval explainability work and fit around the existing within-container roadmap work rather than displacing the current product claim.
-
-For the current package, that product claim remains:
-
-- better recurring-question recall
-- bounded, evidence-backed memory
-- no broad ambient workspace memory
+For the current package, this privacy path is now part of integration readiness, not optional later polish.
 
 ## Open Design Questions
 
-- what is the smallest generic scope envelope that is useful without overfitting one connector?
-- for scope-aware packages, should missing native scope block promotion entirely or only block retrieval and sharing?
-- what is the cleanest representation of shared derived memory lineage when one shared object depends on multiple local memory objects with different local scopes?
-- how much scope detail should be visible in normal query results versus debug/trace outputs?
+- should missing `visibility_context` on ingest persist raw evidence for debugging, or be rejected entirely for scope-aware packages?
+- how much visibility detail should be visible in normal query results versus debug or trace outputs?
+- what package or operator gates should later explicit broader sharing require?
+- when broader sharing exists, how should Pallium distinguish full lineage from evidence that is safe to expose at the broader visibility context?

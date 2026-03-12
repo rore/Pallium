@@ -29,6 +29,7 @@ Current implemented shape:
   - `thread_summary`
   - `pattern_memory`
   - `continuity_memory`
+  - `task_checkpoint`
   - fallback `discussion_summary`
 - minimal memory lifecycle with `active` and `superseded`
 - committed semantic regression set and eval harness
@@ -85,6 +86,7 @@ Current semantic output supports:
 - `decision`
 - `investigation_outcome`
 - `thread_summary`
+- `task_checkpoint`
 - `pattern_memory`
 - `continuity_memory`
 - `discussion_summary`
@@ -137,7 +139,7 @@ The scenarios compare:
 - baseline current-thread context only
 - current-thread context plus Pallium memory-backed retrieval
 
-Thread-level summaries now sit between atomic events and higher-level memory, and bounded consolidation can now produce evidence-backed higher-level memory over `thread_summary`, `decision`, and `investigation_outcome`: `pattern_memory` for broad recurring recall and `continuity_memory` for repeated-answer carry-forward.
+Thread-level summaries now sit between atomic events and higher-level memory, and bounded consolidation can now produce evidence-backed higher-level memory over `thread_summary`, `decision`, and `investigation_outcome`: `pattern_memory` for broad recurring recall, `continuity_memory` for repeated-answer carry-forward, and `task_checkpoint` for resumed-work continuity when selected work artifacts support it.
 
 ## Recurring-Question Value Benchmark
 
@@ -159,7 +161,7 @@ Each run writes:
 
 The committed benchmark is the first user-facing proof layer for whether Pallium improves recurring-question handling with current-thread context, lower-level memory, and later higher-level memory modes.
 
-The current package now also uses internal routed retrieval policy so broad recall, repeated-answer continuity, precise factual lookup, and evidence-trace questions can prefer different layers while remaining inspectable through `/query/debug`.
+The current package now also uses internal routed retrieval policy so broad recall, repeated-answer continuity, resumed-work continuation, precise factual lookup, and evidence-trace questions can prefer different layers while remaining inspectable through `/query/debug`.
 
 ## Work Resumption Benchmark
 
@@ -183,14 +185,13 @@ The benchmark scores:
 
 The gap rollup is hypothesis-driven: scenario-authored `dimension_gap_targets` contribute to it, so the benchmark should be treated as a directional guide to the next continuity slice rather than a neutral discovery engine.
 
-It reports authored continuity-gap signals that can indicate the next slice, such as:
+It reports authored continuity-gap signals that can indicate the next hardening slice, such as:
 
-- compact task-state memory
 - routing or layer choice
 - result packaging or evidence
 - retrieval recall
 
-In this branch, that benchmark guidance already led to bounded selected work-artifact support rather than a broader runtime-log ingest model.
+That benchmark guidance first led to bounded selected work-artifact support, and it now also exercises compact `task_checkpoint` memory for resumed-work continuity without broadening into runtime-log ingest.
 
 Run it with:
 
@@ -236,6 +237,7 @@ Current higher-level kinds:
 
 - `pattern_memory` for broad recurring cross-thread recall
 - `continuity_memory` for repeated-answer continuity and compact carry-forward
+- `task_checkpoint` for compact resumed-work state, blockers, next steps, and evidence
 
 Three bounded selection/grouping strategies are implemented and comparable:
 

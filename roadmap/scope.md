@@ -8,11 +8,10 @@ Current focus:
 - use the public-corpus layer, routed retrieval benchmark, tiered-memory validation benchmark, and the explicit work-resumption benchmark as guardrails, but stop treating conversation realism alone as sufficient proof of workflow continuity
 - keep memory bounded, evidence-backed, additive, and fail-closed where scope matters: Pallium should preserve learned state from work, not replace transcript persistence, live tool retrieval, or the agent runtime itself
 - the current slice now includes bounded selected assistant-originated work artifacts for progress, blocker, and next-step continuity without ingesting raw runtime logs
-- extend the current slice through compact task checkpoints before expanding retrieval sophistication again
+- the current slice now includes compact `task_checkpoint` memory for resumed-work continuity before further retrieval expansion
 
 Concrete next steps:
-- use the explicit work-resumption benchmark as a directional guide, not a neutral discovery engine, for whether the remaining continuity slice is compact task-state memory, routing/layer choice, result packaging/evidence, or retrieval recall
-- add one compact `task_checkpoint`-style memory kind for resuming work with current state, key findings, blockers, next step, evidence, and freshness
+- use the explicit work-resumption benchmark as a directional guide, not a neutral discovery engine, for whether the remaining continuity gaps are routing/layer choice, result packaging/evidence, or retrieval recall after `task_checkpoint` landed
 - add a generic privacy-aware scope enforcement foundation before any claim that Pallium is ready for real downstream integration testing
 - then define and pass one canonical integration-readiness scenario that proves both resumed-work value and fail-closed public/private separation inside Pallium before a live downstream adapter is treated as meaningful validation
 - add a vector retrieval provider behind the existing retrieval boundary only if the work-resumption and public-corpus evals show paraphrase or concept recall is the next real bottleneck after the task-continuity and privacy slices land
@@ -27,7 +26,7 @@ What the current evaluation layer established:
 - exact factual and evidence-heavy questions should still prefer lower-level `decision` or `investigation_outcome`
 - the current routed policy can now distinguish broad recall, continuity, precise fact, and evidence-trace questions on the committed synthetic benchmark set
 - the new work-resumption benchmark now makes workflow continuity explicit across interruption, resumed investigation, partial progress, blocker recovery, and no-value continuation guards
-- the remaining unresolved risk is now compact work-state carry-forward: even with bounded selected work-artifact support, the committed slices are intentionally small and still expose missing progress, blocker, and next-step packaging compared with resumed developer work
+- compact work-state carry-forward now exists through package-owned `task_checkpoint` memory, but the committed slices still need more proof around routing sharpness, result packaging, and privacy-aware integration readiness
 - the current within-container defaults are not yet a substitute for an explicit privacy model once mixed public/private downstream memory becomes part of the target environment
 
 Still out of scope for this phase:

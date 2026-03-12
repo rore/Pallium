@@ -24,7 +24,7 @@ from evals.recurring_question_benchmark import _compare_answers, _generate_answe
 from providers.llm.base import LLMProvider
 
 DEFAULT_OUTPUT_DIR = Path("evals/public_corpus/output")
-HIGHER_LEVEL_LAYERS = {"pattern_memory", "continuity_memory"}
+HIGHER_LEVEL_LAYERS = {"pattern_memory", "continuity_memory", "task_checkpoint"}
 FAILURE_FAMILIES = (
     "retrieval_recall_failure",
     "routing_layer_choice_failure",
@@ -296,6 +296,8 @@ def _result_layer(item: dict[str, Any] | None) -> str:
         return "pattern_memory"
     if item.get("type") == "continuity_memory":
         return "continuity_memory"
+    if item.get("type") == "task_checkpoint":
+        return "task_checkpoint"
     return "lower_level_memory"
 
 

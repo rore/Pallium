@@ -20,7 +20,7 @@ from providers.llm.base import LLMProvider
 DEFAULT_SCENARIO_FILE = Path("evals/recurring_question/scenarios.json")
 DEFAULT_OUTPUT_DIR = Path("evals/recurring_question/output")
 ANSWER_SCHEMA = '{"answer":"string","evidence_used":["string"]}'
-HIGHER_LEVEL_MEMORY_TYPES = {"pattern_memory", "continuity_memory"}
+HIGHER_LEVEL_MEMORY_TYPES = {"pattern_memory", "continuity_memory", "task_checkpoint"}
 TARGET_KEYWORD_STOPWORDS = {
     "a",
     "an",

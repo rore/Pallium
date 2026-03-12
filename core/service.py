@@ -298,37 +298,35 @@ class PalliumService:
         if not thread_items:
             return None
 
-        active_thread_summary_ids = self._find_active_thread_summary_ids(plugin, thread_items)
+        active_thread_memory_ids = self._find_active_thread_memory_ids(thread_items)
         aggregate = build_thread_aggregate(thread_items)
         conclusions = self._collect_thread_conclusions(thread_items)
         thread_result = plugin.build_thread_summary(aggregate, conclusions)
         self._persist_process_result(thread_result)
 
         if thread_result.memory_objects:
-            new_thread_summary_id = thread_result.memory_objects[0].id
-            for superseded_id in active_thread_summary_ids:
-                if superseded_id != new_thread_summary_id:
-                    self.supersede_memory_object(superseded_id, new_thread_summary_id)
+            for memory_object in thread_result.memory_objects:
+                key = (memory_object.type, memory_object.schema_id)
+                for superseded_id in active_thread_memory_ids.get(key, []):
+                    if superseded_id != memory_object.id:
+                        self.supersede_memory_object(superseded_id, memory_object.id)
 
         return thread_result
 
-    def _find_active_thread_summary_ids(
+    def _find_active_thread_memory_ids(
         self,
-        plugin: ThreadAggregationSemanticPlugin,
         thread_items: list[SourceItem],
-    ) -> list[str]:
+    ) -> dict[tuple[str, str], list[str]]:
         seen: set[str] = set()
-        ids: list[str] = []
+        ids: dict[tuple[str, str], list[str]] = {}
         for source_item in thread_items:
             for memory_object in self._storage.list_memory_objects_for_source_item(source_item.id):
-                if memory_object.type != THREAD_SUMMARY_TYPE or memory_object.lifecycle != "active":
-                    continue
-                if memory_object.schema_id != plugin.thread_summary_schema_id:
+                if memory_object.lifecycle != "active":
                     continue
                 if memory_object.id in seen:
                     continue
                 seen.add(memory_object.id)
-                ids.append(memory_object.id)
+                ids.setdefault((memory_object.type, memory_object.schema_id), []).append(memory_object.id)
         return ids
 
     def _collect_thread_conclusions(self, thread_items: list[SourceItem]) -> list[MemoryObject]:
