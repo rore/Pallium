@@ -1,9 +1,15 @@
 # Docs Map
 
-This repo uses three documentation surfaces on purpose. Each one owns a
+This repo uses four documentation surfaces on purpose. Each one owns a
 different kind of truth.
 
 ## Ownership
+
+- docs/
+  Developer-facing entry points and practical guides. Start with:
+  - `docs/overview.md`
+  - `docs/agent-integration.md`
+  - `docs/privacy-and-visibility.md`
 
 - roadmap/
   Canonical planning workspace. Use it for queue, ordering, scope, milestones,
@@ -19,11 +25,13 @@ different kind of truth.
 
 ## Update Rules
 
-- If the question is "what are we doing next?", update roadmap/.
+- If the question is "how should a developer approach this repo?", update
+  `docs/`.
+- If the question is "what are we doing next?", update `roadmap/`.
 - If the question is "what is Pallium and what have we accepted?", update
-  docs/context/.
+  `docs/context/`.
 - If the question is "why this design and what were the alternatives?", update
-  docs/designs/.
+  `docs/designs/`.
 
 ## Guardrails
 

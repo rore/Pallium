@@ -82,11 +82,19 @@ Implemented semantic behavior now includes:
 - promoted typed memory for:
   - `decision`
   - `investigation_outcome`
+- thread-level memory for:
+  - `thread_summary`
 - higher-level memory for:
   - `pattern_memory`
   - `continuity_memory`
+  - `task_checkpoint`
 - fallback `discussion_summary` for non-typed extraction results
 - prompt provenance attached to LLM-derived annotations and memory objects
+
+Current `agent_conversation_memory` evidence now includes selected assistant-originated work artifacts in addition to user messages and final assistant outputs:
+
+- `artifact_kind="tool_use_summary"` with `role="assistant"` for explicit progress or blocker state
+- `artifact_kind="todo_snapshot"` with `role="assistant"` for explicit next-step state
 
 Prompt provenance fields currently tracked:
 
@@ -168,10 +176,14 @@ Current package boundary:
 - primary evidence units:
   - `artifact_kind="message"` with `role="user"`
   - `artifact_kind="assistant_output"` with `role="assistant"`
+- selected assistant-originated work artifacts:
+  - `artifact_kind="tool_use_summary"` with `role="assistant"`
+  - `artifact_kind="todo_snapshot"` with `role="assistant"`
 - primary value targets:
   - recurring-question recall
   - cross-thread continuity
   - assistant consistency
+  - resumed-work continuity
 - explicit non-goals for the package:
   - all workplace chat
   - arbitrary ambient messages that never flowed through the agent

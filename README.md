@@ -2,86 +2,45 @@
 
 # Pallium
 
-Pallium is a generic memory engine for agents.
+Pallium is a local-first memory service for agents.
 
-It stores selected source items, derives reusable knowledge through extensible semantic layers, and returns compact evidence-backed memory objects to consumers.
+It lets an agent runtime ingest selected conversation evidence, derive reusable
+memory objects such as decisions and investigation outcomes, and later retrieve
+compact, evidence-backed results instead of replaying whole transcripts.
 
-The current product focus is the first semantic package, `agent_conversation_memory`. That narrows the first value claim, not the scope of the Pallium platform itself.
+Today the project is focused on one concrete product slice:
+`agent_conversation_memory`. That slice is about helping an agent stay
+oriented across repeated questions, interrupted work, and resumed threads
+without turning Pallium into the agent runtime, a vector database, or a
+transcript archive.
 
-## What Exists Now
+## Why This Exists
 
-Current implemented shape:
+Most agent systems can see the current thread, but they quickly lose:
 
-- one local-first FastAPI service
-- one generic core
-- one reusable capability layer with thread aggregation and bounded consolidation
-- semantic plugins with deterministic and LLM-backed paths
-- an explicit `agent_conversation_memory` runtime package over the LLM-backed semantic path
-- provider abstraction for OpenAI-compatible and Claude-style APIs with conservative retries, backoff, request-id capture, and bounded concurrency
-- SQLite-backed storage behind a storage boundary
-- mixed retrieval over memory hits and compact source hits
-- package-owned internal routing over higher-level memory, lower-level memory, and source evidence
-- explicit event refs for message and assistant-artifact ingest
-- first concrete product package: agent conversation memory over user messages, final assistant outputs, and selected assistant-originated work artifacts for bounded progress, blocker, and next-step continuity
-- typed and higher-level memory for:
-  - `decision`
-  - `investigation_outcome`
-  - `thread_summary`
-  - `pattern_memory`
-  - `continuity_memory`
-  - `task_checkpoint`
-  - fallback `discussion_summary`
-- minimal memory lifecycle with `active` and `superseded`
-- committed semantic regression set and eval harness
-- realistic agent-conversation scenario test bed and runner
-- recurring-question value benchmark
-- work-resumption continuity benchmark
-- memory-routing benchmark for routed retrieval policy
-- simulation script, Bruno collection, and pytest coverage
+- prior decisions and why they were made
+- investigation outcomes and the evidence behind them
+- resumed-work state such as progress, blockers, and next steps
+- safe separation between public and private memory
 
-## Core Concepts
+Pallium is the layer that stores those things in a reusable form.
 
-The core centers on five generic primitives:
+## What You Should Understand In 60 Seconds
 
-- `SourceItem`
-- `Annotation`
-- `Relation`
-- `IndexEntry`
-- `MemoryObject`
+Pallium sits beside an agent, not inside the model:
 
-Important current behavior:
+1. your runtime decides which events are worth remembering
+2. Pallium stores those source items and derives memory from them
+3. your runtime queries Pallium when it needs prior context
+4. Pallium returns compact `memory_hit` and `source_hit` cards with evidence refs
 
-- source items are the evidence layer
-- semantic plugins promote reusable memory from source items
-- thread aggregation now exists as a reusable capability above atomic source items
-- bounded consolidation now exists as a reusable capability above lower-level memory
-- memory objects are evidence-backed through explicit relations
-- retrieval returns compact cards rather than raw source payloads by default
-- the current package can internally rerank retrieved candidates by question shape without changing the public `/query` contract
-- superseded memory is filtered from default retrieval, while raw evidence remains intact
+Current shipped API:
 
-## Semantic Direction
+- `POST /items`
+- `POST /query`
+- `POST /query/debug`
 
-Current semantic package focus:
-
-- `agent_conversation_memory` as the first explicit product package
-- current bounded evidence model:
-  - `artifact_kind="message"` with `role="user"`
-  - `artifact_kind="assistant_output"` with `role="assistant"`
-  - selected assistant-originated work artifacts:
-    - `artifact_kind="tool_use_summary"` with `role="assistant"` for explicit progress or blocker state
-    - `artifact_kind="todo_snapshot"` with `role="assistant"` for explicit next-step state
-- target value questions:
-  - what did we already conclude?
-  - why did we choose this?
-  - have we answered this before?
-  - what prior agent-conversation context should carry into this new thread?
-- out of scope for this package:
-  - ambient workplace chat that never flowed through an agent
-  - raw tool logs, raw MCP events, or exhaustive runtime-notification ingest
-  - full transcript replay as the default retrieval goal
-
-Current semantic output supports:
+Current shipped memory types:
 
 - `decision`
 - `investigation_outcome`
@@ -89,279 +48,81 @@ Current semantic output supports:
 - `task_checkpoint`
 - `pattern_memory`
 - `continuity_memory`
-- `discussion_summary`
+- fallback `discussion_summary`
 
-The LLM-backed path records semantic provenance with each derived artifact:
+## What Pallium Does Today
 
-- prompt schema id
-- prompt schema version
-- prompt variant
+Implemented and committed in the repo:
 
-Default LLM prompt path:
+- one local-first FastAPI service with SQLite-backed storage
+- a generic core with explicit `SourceItem`, `Annotation`, `Relation`,
+  `IndexEntry`, and `MemoryObject` primitives
+- semantic package entry points for `demo_agent_memory`,
+  `llm_agent_memory`, and `agent_conversation_memory`
+- OpenAI-compatible and Anthropic-style LLM provider adapters with bounded
+  retries, backoff, request-id capture, and concurrency limits
+- lexical retrieval over both source evidence and promoted memory
+- compact source hits instead of raw transcript replay by default
+- routed retrieval inside `agent_conversation_memory` across higher-level
+  memory, lower-level memory, and source evidence
+- debug retrieval trace through `POST /query/debug`
+- thread aggregation and bounded higher-level memory consolidation
+- privacy-aware `visibility_context` enforcement for the
+  `agent_conversation_memory` package
+- eval and benchmark suites for semantic extraction, recurring questions,
+  work resumption, routed retrieval, consolidation strategies, and public-corpus
+  validation
 
-- prompt variant: `strict_typed_memory_v4_evidence_guarded`
-- prompt schema: `typed_memory_extraction`
-- prompt schema version: `v4`
+## Current Product Boundary
 
-## Semantic Regression
+The current package is deliberately narrow.
 
-Pallium includes a committed semantic regression batch at [C:/Dev/rore/Pallium/evals/semantic/input/items.jsonl](C:/Dev/rore/Pallium/evals/semantic/input/items.jsonl).
+Good fit:
 
-Latest recorded baseline:
+- agent-mediated user messages
+- final assistant outputs
+- selected assistant-originated work artifacts:
+  `tool_use_summary` and `todo_snapshot`
+- repeated questions, cross-thread recall, and resumed-work continuity
 
-- provider: OpenAI-compatible
-- model: `gpt-5-mini`
-- prompt variant: `strict_typed_memory_v4_evidence_guarded`
-- overall correct: `30 / 30`
-- decision false positives: `0`
-- investigation false positives: `0`
-- false negatives: `0`
+Out of scope for the current slice:
 
-See [C:/Dev/rore/Pallium/evals/semantic/baseline.md](C:/Dev/rore/Pallium/evals/semantic/baseline.md).
+- ambient workplace chat that never flowed through an agent
+- raw tool logs, raw MCP events, and exhaustive runtime notifications
+- broad workspace search or org-wide knowledge sync
+- cross-container shared memory
+- vector retrieval and hybrid fusion
 
-## Agent Conversation Test Bed
+## What Pallium Is Not
 
-Pallium includes a realistic agent-conversation scenario harness built around a neutral public-safe sample domain: library reservation and catalog sync.
+Pallium is not:
 
-Run it with:
+- an agent runtime
+- a workflow engine
+- a connector framework as its core identity
+- a system-of-record database
+- a transcript archive or raw tool-log warehouse
 
-```powershell
-.\.venv\Scripts\python.exe -m evals.agent_conversation_runner
-```
+## Quick Start
 
-Each run writes:
-
-- `summary.json`
-- `results.jsonl`
-
-The scenarios compare:
-
-- baseline current-thread context only
-- current-thread context plus Pallium memory-backed retrieval
-
-Thread-level summaries now sit between atomic events and higher-level memory, and bounded consolidation can now produce evidence-backed higher-level memory over `thread_summary`, `decision`, and `investigation_outcome`: `pattern_memory` for broad recurring recall, `continuity_memory` for repeated-answer carry-forward, and `task_checkpoint` for resumed-work continuity when selected work artifacts support it.
-
-## Recurring-Question Value Benchmark
-
-Pallium also includes a user-facing recurring-question benchmark that compares final downstream answers between:
-
-- baseline current-thread context only
-- current-thread context plus Pallium memory-backed retrieval
-
-Run it with:
+The commands below use PowerShell. Translate them for your shell if needed.
 
 ```powershell
-.\.venv\Scripts\python.exe -m evals.recurring_question_benchmark
-```
-
-Each run writes:
-
-- `summary.json`
-- `results.jsonl`
-
-The committed benchmark is the first user-facing proof layer for whether Pallium improves recurring-question handling with current-thread context, lower-level memory, and later higher-level memory modes.
-
-The current package now also uses internal routed retrieval policy so broad recall, repeated-answer continuity, resumed-work continuation, precise factual lookup, and evidence-trace questions can prefer different layers while remaining inspectable through `/query/debug`.
-
-## Developer-Work Continuity Benchmark
-
-Pallium now includes an authored developer-work continuity suite under `evals/work_resumption/` for workflow continuity within the current `agent_conversation_memory` slice.
-
-It measures whether retrieved memory and source evidence help an agent stay oriented across:
-
-- resumed investigation after a pause
-- blocker recovery after auth or tool failure
-- resumed implementation or ticket work after interruption
-- review continuity after prior feedback
-- wrong-memory and stale-memory guard cases
-- stronger no-value continuation cases where the current thread should already be enough
-
-The benchmark scores and reports separately on:
-
-- task orientation
-- key findings reuse
-- blocker state carry-forward
-- preserved progress
-- next-step guidance
-- evidence packaging
-- freshness and wrong-memory guards
-
-The suite now rolls failures into explicit continuity families so the next tuning question is easier to read:
-
-- retrieval recall
-- routing or layer choice
-- compact task-state packaging
-- result packaging or evidence
-- no-value overreach
-- stale or wrong-memory selection
-
-That benchmark guidance now exercises package-owned `task_checkpoint` memory for compact resumed-work continuity without broadening into runtime-log ingest, and it makes the next bottleneck easier to distinguish before broader retrieval changes.
-
-Run it with:
-
-```powershell
-.\.venv\Scripts\python.exe -m evals.work_resumption_benchmark
-```
-
-Each run writes:
-
-- `summary.json`
-- `results.jsonl`
-- `report.md`
-
-## Memory Routing Benchmark
-
-Pallium now includes a dedicated benchmark for the current routed retrieval policy over broad recall, repeated-answer continuity, precise fact lookup, evidence-trace questions, and non-value guard cases.
-
-Run it with:
-
-```powershell
-.\.venv\Scripts\python.exe -m evals.memory_routing_benchmark
-```
-
-Each run writes:
-
-- `summary.json`
-- `results.jsonl`
-- `report.md`
-
-The current deterministic stub benchmark is intended to validate the routed policy end to end across broad recall, continuity, precise fact, evidence-trace, paraphrase, and guard scenarios before later retrieval expansion.
-
-## Tiered Memory and Strategy Comparison
-
-Pallium now includes the first bounded tiered-memory capability.
-
-It can build bounded higher-level memory over:
-
-- `thread_summary`
-- `decision`
-- `investigation_outcome`
-
-Current higher-level kinds:
-
-- `pattern_memory` for broad recurring cross-thread recall
-- `continuity_memory` for repeated-answer continuity and compact carry-forward
-- `task_checkpoint` for compact resumed-work state, blockers, next steps, and evidence
-
-Three bounded selection/grouping strategies are implemented and comparable:
-
-- `thread_local_carry_forward`
-- `container_topic_window`
-- `thread_summary_anchored`
-
-Current package default:
-
-- `thread_summary_anchored`
-
-Why this default:
-
-- keeps thread summaries as the main interpretable unit
-- allows bounded cross-thread carry-forward
-- stayed conservative on the current false-merge guard scenario
-
-Run the comparison harness with:
-
-```powershell
-.\.venv\Scripts\python.exe -m evals.consolidation_strategy_runner
-```
-
-Each run writes:
-
-- `summary.json`
-- `results.jsonl`
-
-
-## Public Corpus Benchmark
-
-Pallium now includes a bounded public-corpus eval path for messy real user-assistant interactions without depending on private downstream traffic.
-
-Current public-corpus layer:
-
-- WildChat remains the primary realism corpus
-- WildBench is the complementary task-oriented benchmark source
-- raw corpora stay outside the repo
-- reviewed manifests define the committed benchmark slices, including a small WildBench developer-continuation pack
-- local helpers keep the full-corpus workflows reproducible without changing the public benchmark contract
-- the benchmark reports the shared continuity failure taxonomy, including retrieval recall, routed layer choice, result packaging/evidence, compact task-state misses, and no-value overreach where applicable
-
-Recommended local WildChat layout:
-
-- `C:\data\wildchat\WildChat-4.8M\snapshot`: downloaded Hugging Face dataset snapshot
-- `C:\data\wildchat\WildChat-4.8M\derived\conversation_index.sqlite`: local candidate index for slice review
-- `C:\data\wildchat\WildChat-4.8M\derived\review_candidates.jsonl`: candidate episodes for human review
-- `C:\data\wildchat\WildChat-4.8M\derived\review_sets\wildchat_review_manifest\conversations.json`: small materialized corpus for the committed reviewed slice
-- `C:\data\wildchat\WildChat-4.8M\runs\...`: repeated benchmark outputs
-
-WildChat setup:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install huggingface_hub pyarrow
-.\.venv\Scripts\python.exe -m evals.public_corpus_wildchat_local download --root C:\data\wildchat\WildChat-4.8M
-.\.venv\Scripts\python.exe -m evals.public_corpus_wildchat_local validate --root C:\data\wildchat\WildChat-4.8M
-.\.venv\Scripts\python.exe -m evals.public_corpus_wildchat_local build-candidate-index --root C:\data\wildchat\WildChat-4.8M
-.\.venv\Scripts\python.exe -m evals.public_corpus_wildchat_local emit-candidates --root C:\data\wildchat\WildChat-4.8M
-.\.venv\Scripts\python.exe -m evals.public_corpus_wildchat_local materialize-review-set --root C:\data\wildchat\WildChat-4.8M --reviewed-manifest evals\public_corpus\wildchat_review_manifest.json
-.\.venv\Scripts\python.exe -m evals.public_corpus_wildchat_local benchmark --root C:\data\wildchat\WildChat-4.8M --reviewed-manifest evals\public_corpus\wildchat_review_manifest.json --run-name local-public-corpus-benchmark
-```
-
-Recommended local WildBench layout:
-
-- `C:\data\wildbench\WildBench\snapshot`: downloaded Hugging Face dataset snapshot
-- `C:\data\wildbench\WildBench\derived\review_candidates.jsonl`: candidate episodes for human review
-- `C:\data\wildbench\WildBench\derived\review_sets\wildbench_review_manifest\conversations.json`: small materialized corpus for the committed reviewed slice
-- `C:\data\wildbench\WildBench\runs\...`: repeated benchmark outputs
-
-WildBench setup:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install huggingface_hub pyarrow
-.\.venv\Scripts\python.exe -m evals.public_corpus_wildbench_local download --root C:\data\wildbench\WildBench
-.\.venv\Scripts\python.exe -m evals.public_corpus_wildbench_local validate --root C:\data\wildbench\WildBench
-.\.venv\Scripts\python.exe -m evals.public_corpus_wildbench_local emit-candidates --root C:\data\wildbench\WildBench
-.\.venv\Scripts\python.exe -m evals.public_corpus_wildbench_local materialize-review-set --root C:\data\wildbench\WildBench --reviewed-manifest evals\public_corpus\wildbench_review_manifest.json
-.\.venv\Scripts\python.exe -m evals.public_corpus_wildbench_local benchmark --root C:\data\wildbench\WildBench --reviewed-manifest evals\public_corpus\wildbench_review_manifest.json --run-name local-public-corpus-wildbench-benchmark
-```
-
-The committed repo assets live under [C:/Dev/rore/Pallium/evals/public_corpus](C:/Dev/rore/Pallium/evals/public_corpus).
-## Tiered-Memory Validation Benchmark
-
-Pallium includes a dedicated benchmark for deciding when higher-level `pattern_memory` is actually useful and which consolidation strategy is safest.
-
-Run it with:
-
-```powershell
-.\.venv\Scripts\python.exe -m evals.tiered_memory_validation_runner
-```
-
-Each run writes:
-
-- `summary.json`
-- `results.jsonl`
-
-The benchmark compares:
-
-- baseline current-thread context only
-- lower-level memory without tiered consolidation
-- tiered memory with:
-  - `thread_local_carry_forward`
-  - `container_topic_window`
-  - `thread_summary_anchored`
-
-Current recorded direction:
-
-- `container_topic_window` is strongest for broad cross-thread prior-conclusion questions and tends to produce `pattern_memory`
-- `thread_local_carry_forward` and bounded single-thread `thread_summary_anchored` are better for repeated-answer continuity and can produce `continuity_memory`
-- precise factual and evidence-heavy questions should still prefer lower-level memory over higher-level memory
-- all current strategies stayed false-merge-safe on the committed validation scenarios
-
-## Run Locally
-
-From the repo root:
-
-```powershell
-& "C:\Users\I347041\AppData\Roaming\uv\python\cpython-3.14-windows-x86_64-none\python.exe" -m venv .venv
+python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .[dev]
+Copy-Item pallium.example.toml pallium.local.toml
+Copy-Item .env.example .env.local
+```
+
+Optional verification:
+
+```powershell
 .\.venv\Scripts\python.exe -m pytest
+```
+
+Set an API key in `.env.local`, then run:
+
+```powershell
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -371,89 +132,129 @@ In another terminal:
 .\.venv\Scripts\python.exe examples\agent_memory_simulation.py
 ```
 
-## Local Config
+If you want to bring up the service without a live LLM provider, set
+`default_use_case = "demo_agent_memory"` in `pallium.local.toml`.
 
-Use a structured local config file for package and provider setup:
+## Minimal API Flow
 
-- copy [C:/Dev/rore/Pallium/pallium.example.toml](C:/Dev/rore/Pallium/pallium.example.toml) to `pallium.local.toml`
-- copy [C:/Dev/rore/Pallium/.env.example](C:/Dev/rore/Pallium/.env.example) to [C:/Dev/rore/Pallium/.env.local](C:/Dev/rore/Pallium/.env.local) for secrets and one-off overrides
+Example ingest request:
 
-Recommended split:
-
-- `pallium.local.toml`
-  - default package
-  - storage backend
-  - named LLM providers
-  - package-specific model and prompt configuration
-- `.env.local`
-  - API keys
-  - temporary overrides
-
-Example `pallium.local.toml`:
-
-```toml
-default_use_case = "agent_conversation_memory"
-
-[storage]
-backend = "sqlite"
-sqlite_url = "sqlite:///./pallium.db"
-
-[llm_providers.openai]
-kind = "openai_compatible"
-base_url = "https://api.openai.com/v1"
-api_key_env = "PALLIUM_OPENAI_API_KEY"
-timeout_seconds = 30
-max_attempts = 3
-base_backoff_ms = 250
-max_backoff_ms = 3000
-jitter_ratio = 0.2
-max_concurrency = 4
-
-[semantic_packages.agent_conversation_memory]
-implementation = "agent_conversation_memory"
-llm_provider = "openai"
-model = "gpt-5-mini"
-prompt_variant = "strict_typed_memory_v4_evidence_guarded"
+```json
+{
+  "source_type": "assistant_artifact",
+  "source_id": "artifact-002",
+  "content_type": "text/plain",
+  "content": "Decision: use item event time for reservation ordering to avoid missed hold updates during sync delays.",
+  "artifact_kind": "assistant_output",
+  "role": "assistant",
+  "container_ref": "chat:library-help",
+  "thread_ref": "chat:library-help:1730000000.000100",
+  "session_ref": "agent-session-1",
+  "actor_ref": "agent:assistant",
+  "source_ref": "https://example.test/chat/artifact-002",
+  "visibility_context": {
+    "kind": "limited",
+    "id": "library-help"
+  }
+}
 ```
 
-Example `.env.local`:
+Example query request:
 
-```env
-PALLIUM_OPENAI_API_KEY=your-key
+```json
+{
+  "text": "why did we choose item event time for reservation ordering?",
+  "limit": 5,
+  "container_ref": "chat:library-help",
+  "visibility_context": {
+    "kind": "limited",
+    "id": "library-help"
+  }
+}
 ```
 
-Environment variables still override both `.env.local` and `pallium.local.toml`.
+Result shape:
 
-Provider resilience defaults are configured per provider, not per package. Current default posture is conservative:
+- `memory_hit`: compact promoted memory such as a `decision` or `task_checkpoint`
+- `source_hit`: compact evidence card with refs and excerpt
 
-- retry only transient failures
-- respect `Retry-After` when present
-- bounded exponential backoff with jitter
-- bounded in-process concurrency
-- fail fast on invalid successful responses and non-retryable request/auth errors
+Use `POST /query/debug` when you need lexical hit trace, routed-layer choice, or
+visibility exclusion debugging.
 
-## LLM Semantic Eval Harness
+## Integration Model
 
-Run the committed regression batch:
+An agent should use Pallium as a bounded memory sidecar:
 
-```powershell
-.\.venv\Scripts\python.exe -m evals.semantic_runner --suite-name semantic-regression --max-concurrency 4
-```
+- write to Pallium when the runtime sees a user message, final assistant answer,
+  or an explicit assistant work artifact worth remembering
+- query Pallium when answering repeated questions, resuming work, or starting a
+  new related thread
+- keep `source_id` stable so repeated ingest stays idempotent
+- keep the source of truth outside Pallium; it stores selected copies plus
+  derived memory
 
-Each run writes:
+The current package expects explicit runtime curation. Pallium is not designed
+to ingest every event your agent sees.
 
-- `summary.json`
-- `results.jsonl`
+See [docs/agent-integration.md](docs/agent-integration.md) for the practical
+integration guide.
 
-Use `--split-output` only when you want per-input debug files.
+## Privacy And Visibility
 
-## Repository Guide
+`agent_conversation_memory` is scope-aware.
 
-- [C:/Dev/rore/Pallium/docs/README.md](C:/Dev/rore/Pallium/docs/README.md)
-- [C:/Dev/rore/Pallium/docs/context/architecture.md](C:/Dev/rore/Pallium/docs/context/architecture.md)
-- [C:/Dev/rore/Pallium/docs/context/state.md](C:/Dev/rore/Pallium/docs/context/state.md)
-- [C:/Dev/rore/Pallium/roadmap/board.md](C:/Dev/rore/Pallium/roadmap/board.md)
+The package uses a consumer-supplied `visibility_context` on ingest and query:
 
+- `public` queries can see `public`
+- `limited:X` queries can see `public` and `limited:X`
+- `user:U1` queries can see `public` and `user:U1`
 
+Important current behavior:
 
+- missing query visibility fails closed
+- missing ingest visibility is stored but not promoted or returned in normal
+  scoped queries
+- thread aggregation and higher-level consolidation do not cross visibility
+  contexts
+- `container_ref`, `thread_ref`, and `session_ref` are locality metadata, not
+  the privacy model
 
+See [docs/privacy-and-visibility.md](docs/privacy-and-visibility.md) for the
+full contract.
+
+## Status And Roadmap
+
+This repository already ships the first end-to-end product slice, but it is not
+claiming to be finished.
+
+Current next step:
+
+- one canonical integration-readiness scenario that proves resumed-work value
+  and fail-closed public/private separation together
+
+Planned but not yet shipped:
+
+- vector retrieval behind the retrieval boundary
+- explicit hybrid lexical plus vector fusion
+- explicit shared-memory derivation
+- cross-container bounded memory
+
+See [roadmap/board.md](roadmap/board.md) and [roadmap/scope.md](roadmap/scope.md).
+
+## Documentation
+
+Start here:
+
+- [docs/overview.md](docs/overview.md)
+- [docs/agent-integration.md](docs/agent-integration.md)
+- [docs/privacy-and-visibility.md](docs/privacy-and-visibility.md)
+
+Stable context:
+
+- [docs/context/vision.md](docs/context/vision.md)
+- [docs/context/architecture.md](docs/context/architecture.md)
+- [docs/context/state.md](docs/context/state.md)
+
+Deeper design threads:
+
+- [docs/designs/README.md](docs/designs/README.md)
