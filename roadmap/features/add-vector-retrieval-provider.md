@@ -13,7 +13,9 @@ Add a vector retrieval provider and semantic indexing for selected Pallium text 
 
 ## Why
 
-Pallium needs to retrieve both exact technical evidence and fuzzier prior reasoning. Lexical retrieval already covers the first part; vector retrieval is the next required capability for the second.
+Pallium will likely need to retrieve both exact technical evidence and fuzzier prior reasoning. Lexical retrieval already covers the first part.
+
+Vector retrieval should become the next retrieval expansion only if the current public-corpus and work-resumption evaluation layers show that paraphrase or concept recall remains the main bottleneck after the current task-continuity slices land.
 
 ## In Scope
 

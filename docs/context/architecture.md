@@ -194,6 +194,14 @@ Current behavior:
 - default retrieval does not surface superseded memory as current
 - raw source evidence remains searchable even when a promoted memory object is superseded
 
+Future lifecycle direction should stay generic rather than package-specific:
+
+- lineage should explain how memory was formed and superseded
+- confidence should weight how strongly memory is trusted
+- decay should reduce stale-memory influence at retrieval time without deleting history
+
+These are intended as future engine-level lifecycle signals, not semantic memory kinds.
+
 ## Semantic Regression
 
 The repo now treats semantic evaluation as a first-class product asset.

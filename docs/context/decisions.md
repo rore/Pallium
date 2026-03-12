@@ -159,6 +159,16 @@ Why:
 - supports comparing semantic behavior across prompt revisions
 - keeps stored derived memory auditable instead of treating prompts as invisible runtime state
 
+### 2026-03-12 - Position Pallium as derived knowledge memory for agents
+
+Pallium should be positioned as a generic memory engine whose differentiated direction is derived knowledge memory, not only fact storage or episodic transcript recall.
+
+Why:
+
+- matches the implemented memory objects such as `decision`, `investigation_outcome`, `thread_summary`, `pattern_memory`, and `continuity_memory`
+- better explains why evidence links, lifecycle, consolidation, and routed retrieval matter
+- keeps the public claim narrow while still describing the real architectural direction
+
 ## Open
 
 ### Ingestion policy
@@ -167,8 +177,12 @@ Need explicit rules for when a producer should submit a source item.
 
 ### Memory lifecycle
 
-Need a clear model for candidate, active, corrected, rejected, superseded, and
-consolidated memory states.
+Need a clearer generic lifecycle model that eventually covers:
+
+- richer lineage across derivation, consolidation, and supersession
+- confidence as a generic trust signal
+- decay as retrieval-time freshness weighting
+- any later expansion beyond the current `active` and `superseded` states
 
 ### Query contract beyond mixed hits
 

@@ -1,7 +1,10 @@
 # Next
-- add-vector-retrieval-provider
+- add-work-resumption-benchmark
+- add-selected-agent-work-artifact-semantic-support
+- add-task-checkpoint-memory-kind
 
 # Later
+- add-vector-retrieval-provider
 - add-hybrid-retrieval-fusion
 - add-privacy-aware-memory-scope-and-sharing-foundation
 - add-explicit-shared-memory-derivation
@@ -9,6 +12,7 @@
 
 # Ideas
 - idea-evidence-backed-agent-memory
+- idea-generic-memory-lifecycle-signals
 - idea-optional-embedding-provider-support
 - idea-optional-reranker-support
 

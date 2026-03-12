@@ -1,17 +1,19 @@
 Pallium now has a dedicated validation layer for tiered memory, a retrieval trace/debug path for lexical retrieval, package-owned internal routing over the current memory layers, and a bounded public-corpus evaluation path for messy real user-assistant interactions through WildChat as the primary realism corpus plus a complementary WildBench task slice.
 
 Current focus:
-- preserve the current product claim: Pallium improves cross-thread and cross-session recurring-question handling, not broad workspace search
-- harden that claim against real interaction shape without depending on internal downstream traffic or private integration first
+- preserve the current product claim, but sharpen it: Pallium should help an agent stay oriented across interrupted and resumed work, not only answer recurring questions
+- keep `agent_conversation_memory` as the first package, but treat the next value slice as work continuity within agent-mediated, tool-mediated workflows rather than broad workspace search
 - keep `thread_summary_anchored` as the current package default because the validation benchmark shows it is conservative, interpretable, and broadly useful
-- use the tiered-memory validation benchmark and routed retrieval benchmark as guardrails, but stop treating synthetic phrase coverage as sufficient proof of real interaction readiness
-- keep tiered memory bounded, evidence-backed, and additive rather than operationalizing it as always-on behavior too early
-- use the retrieval trace/debug path and the current routed package policy to inspect behavior as the eval corpus becomes more realistic
+- use the public-corpus layer, routed retrieval benchmark, and tiered-memory validation benchmark as guardrails, but stop treating conversation realism alone as sufficient proof of workflow continuity
+- keep memory bounded, evidence-backed, and additive: Pallium should preserve learned state from work, not replace transcript persistence, live tool retrieval, or the agent runtime itself
+- extend the current slice through selected work-state signals and compact task checkpoints before expanding retrieval sophistication again
 
 Concrete next steps:
-- run the public-corpus benchmark against a real local WildChat export and use the results to determine whether the next limiting factor is retrieval recall, routed layer choice, or result packaging
-- add a vector retrieval provider behind the existing retrieval boundary if that public-corpus eval shows paraphrase/concept recall is the next real bottleneck
-- then add RRF-based hybrid retrieval fusion over lexical and vector candidates if dual-mode retrieval is justified by that eval evidence
+- add an explicit work-resumption benchmark so Pallium is tested on interruption, resumed investigation, partial progress, blocker recovery, and no-value continuation cases
+- add selected agent work-artifact semantic support beyond final assistant outputs so partial findings, blockers, and next-step state can contribute to memory without ingesting raw runtime logs
+- add one compact `task_checkpoint`-style memory kind for resuming work with current state, key findings, blockers, next step, evidence, and freshness
+- add a vector retrieval provider behind the existing retrieval boundary only if the work-resumption and public-corpus evals show paraphrase or concept recall is the next real bottleneck after the task-continuity slices land
+- then add RRF-based hybrid retrieval fusion over lexical and vector candidates if dual-mode retrieval is justified by that evaluation evidence
 - add a generic privacy-aware scope enforcement foundation before any later cross-container sharing work
 - then add an explicit shared-memory derivation path so broader reuse happens through separate shared derived memory rather than in-place widening of local memory
 - then treat cross-container memory as a later bounded shared-memory feature that builds on those privacy/scope foundations and still requires stronger guards and stronger false-merge evaluation than current within-container memory
@@ -22,7 +24,7 @@ What the current evaluation layer established:
 - same-thread and precise factual questions should not default to higher-level memory
 - exact factual and evidence-heavy questions should still prefer lower-level `decision` or `investigation_outcome`
 - the current routed policy can now distinguish broad recall, continuity, precise fact, and evidence-trace questions on the committed synthetic benchmark set
-- the remaining unresolved risk is realism, not basic policy shape: even with the new WildBench complement, the committed reviewed slices are still bounded and should guide rather than replace larger local review runs
+- the remaining unresolved risk is realism and workflow continuity, not only basic policy shape: even with the new WildBench complement, the committed reviewed slices are still bounded and conversation-oriented compared with resumed developer work
 
 Still out of scope for this phase:
 - private downstream-system coupling as a prerequisite for Pallium development
@@ -30,5 +32,5 @@ Still out of scope for this phase:
 - vector-assisted consolidation selection
 - public API expansion for consolidation control or query intent
 - replacing lower-level memory with only higher-level summaries
-- broad ambient-workspace knowledge coverage beyond agent-mediated conversation memory
-
+- broad ambient-workspace knowledge coverage beyond agent-mediated memory
+- turning Pallium into a workflow engine, transcript store, or raw tool-log archive

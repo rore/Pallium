@@ -15,6 +15,11 @@ The first concrete semantic package is `agent_conversation_memory`. That package
 is intentionally narrower than Pallium itself and is the first product slice
 being used to prove value.
 
+Pallium's differentiated direction is derived knowledge memory for agents:
+not only fact storage and not only episodic transcript recall, but compact,
+evidence-backed knowledge objects such as decisions, investigation outcomes,
+and later higher-level recurring patterns.
+
 ## What Pallium Is Not
 
 Pallium is not:
