@@ -416,6 +416,18 @@ def _build_public_corpus_thread_summary_payload(user_prompt: str) -> dict[str, s
         return {
             'summary': 'The thread found that unordered grocery lists cause backtracking and chose store-section grouping.'
         }
+    if '1gi' in lower and '512mi' in lower:
+        return {
+            'summary': 'The thread found that the export worker hit the 512Mi memory limit and decided to raise the limit to 1Gi.'
+        }
+    if 'problem framing' in lower and 'tradeoffs' in lower and 'ownership' in lower:
+        return {
+            'summary': 'The thread chose the three-bucket interview rubric: problem framing, tradeoffs, and ownership.'
+        }
+    if 'job already running, skipping new start' in lower:
+        return {
+            'summary': "The thread found that overlapping retries were proven by the log line 'job already running, skipping new start'."
+        }
     return {'summary': 'Unresolved.'}
 
 
@@ -504,7 +516,54 @@ def _build_public_corpus_answer_payload(user_prompt: str) -> dict[str, object]:
             'evidence_used': [],
         }
 
+    if 'what resource cap did you say to bump for the export worker again?' in lower:
+        if ('memory/decision' in lower or 'source/public_corpus_turn' in lower) and '1gi' in lower:
+            return {
+                'answer': 'Raise the worker memory limit to 1Gi while keeping the request at 512Mi.',
+                'evidence_used': ['1Gi', '512Mi'],
+            }
+        return {
+            'answer': 'The visible context does not include the earlier export-worker resource recommendation.',
+            'evidence_used': [],
+        }
+
+    if 'can you rewrite that as short bullets for a text message?' in lower:
+        if 'fushimi inari' in lower and 'arashiyama' in lower:
+            return {
+                'answer': '- Day 1: Fushimi Inari and Gion\n- Day 2: Arashiyama and Kinkaku-ji\n- Day 3: Nishiki Market and Pontocho',
+                'evidence_used': ['Fushimi Inari', 'Arashiyama', 'bullet'],
+            }
+        return {
+            'answer': 'The visible context does not include the itinerary to rewrite.',
+            'evidence_used': [],
+        }
+
+    if 'remind me of those buckets again.' in lower:
+        if ('memory/decision' in lower or 'source/public_corpus_turn' in lower) and 'problem framing' in lower and 'tradeoffs' in lower and 'ownership' in lower:
+            return {
+                'answer': 'Use the three headings problem framing, tradeoffs, and ownership.',
+                'evidence_used': ['problem framing', 'tradeoffs', 'ownership'],
+            }
+        return {
+            'answer': 'The visible context does not include the earlier scorecard headings.',
+            'evidence_used': [],
+        }
+
+    if 'which exact log line proved the retries were overlapping?' in lower:
+        if ('source/public_corpus_turn' in lower or 'memory/investigation_outcome' in lower) and 'job already running, skipping new start' in lower:
+            return {
+                'answer': "The exact log line was 'job already running, skipping new start'.",
+                'evidence_used': ['job already running, skipping new start'],
+            }
+        return {
+            'answer': 'The visible context does not include the earlier log evidence.',
+            'evidence_used': [],
+        }
+
     return {
         'answer': 'The current thread context is sufficient for this question.',
         'evidence_used': [],
     }
+
+
+

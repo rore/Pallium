@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from evals.public_corpus_builder import build_candidate_episodes, build_reviewed_episodes, load_review_manifest, load_wildchat_conversations
+from evals.public_corpus_builder import (
+    build_candidate_episodes,
+    build_reviewed_episodes,
+    extract_review_conversation_ids,
+    load_review_manifest,
+    load_wildchat_conversations,
+)
 
 
 FIXTURE = Path('tests/fixtures/wildchat_export_sample.jsonl')
@@ -31,6 +37,18 @@ def test_load_wildchat_conversations_filters_to_safe_english_multi_turn_rows() -
     assert by_id['wc-review-003']['session_ref'] != by_id['wc-review-004']['session_ref']
 
 
+def test_load_wildchat_conversations_supports_directory_inputs_and_targeted_ids(tmp_path: Path) -> None:
+    source_lines = [line for line in FIXTURE.read_text(encoding='utf-8').splitlines() if line.strip()]
+    first_file = tmp_path / 'part-000.jsonl'
+    second_file = tmp_path / 'part-001.jsonl'
+    first_file.write_text('\n'.join(source_lines[:6]) + '\n', encoding='utf-8')
+    second_file.write_text('\n'.join(source_lines[6:]) + '\n', encoding='utf-8')
+
+    conversations = load_wildchat_conversations(tmp_path, conversation_ids={'wc-review-003', 'wc-review-004'})
+
+    assert [item['conversation_id'] for item in conversations] == ['wc-review-003', 'wc-review-004']
+
+
 def test_candidate_episode_generation_is_deterministic_and_includes_carry_forward() -> None:
     conversations = load_wildchat_conversations(FIXTURE)
     candidates = build_candidate_episodes(conversations)
@@ -39,6 +57,20 @@ def test_candidate_episode_generation_is_deterministic_and_includes_carry_forwar
     assert any(item['episode_type'] == 'within_conversation_later_turn_recall' for item in candidates)
     assert any(item['episode_type'] == 'later_session_carry_forward' for item in candidates)
     assert any(item['target_conversation_id'] == 'wc-review-004' for item in candidates if item['episode_type'] == 'later_session_carry_forward')
+
+
+def test_reviewed_manifest_conversation_ids_cover_reviewed_slice() -> None:
+    manifest = load_review_manifest(MANIFEST)
+
+    assert extract_review_conversation_ids(manifest) == {
+        'wc-review-001',
+        'wc-review-002',
+        'wc-review-003',
+        'wc-review-004',
+        'wc-review-005',
+        'wc-review-006',
+        'wc-review-007',
+    }
 
 
 def test_reviewed_episode_builder_emits_pallium_shaped_events() -> None:

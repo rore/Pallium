@@ -5,50 +5,58 @@ import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 DEFAULT_REVIEW_MANIFEST = Path("evals/public_corpus/wildchat_review_manifest.json")
+DEFAULT_WILDBENCH_REVIEW_MANIFEST = Path("evals/public_corpus/wildbench_review_manifest.json")
 DEFAULT_OUTPUT_DIR = Path("evals/public_corpus/output")
 DEFAULT_QUERY_LIMIT = 6
+PARQUET_BATCH_SIZE = 256
 ENGLISH_MARKERS = {"en", "en-us", "english"}
-SAFE_FALSE_MARKERS = {"toxic", "unsafe", "flagged", "blocked", "fail", "failed"}
-SAFE_TRUE_MARKERS = {"safe", "clean", "approved", "allow", "allowed", "non-toxic", "non_toxic"}
+SAFE_FALSE_MARKERS = {"toxic", "unsafe", "flagged", "blocked", "fail", "failed", "no", "inappropriate", "false"}
+SAFE_TRUE_MARKERS = {"safe", "clean", "approved", "allow", "allowed", "non-toxic", "non_toxic", "yes", "appropriate", "true"}
 USER_ROLE_MARKERS = {"user", "human"}
 ASSISTANT_ROLE_MARKERS = {"assistant", "gpt", "model", "bot"}
+WILDCHAT_CORPUS_NAME = "wildchat"
+WILDBENCH_CORPUS_NAME = "wildbench"
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build reviewed public-corpus episodes from a local WildChat export.")
+    parser = argparse.ArgumentParser(description="Build reviewed public-corpus episodes from a local public benchmark export.")
     parser.add_argument("--corpus-file", type=Path, required=True)
     parser.add_argument("--reviewed-manifest", type=Path, default=DEFAULT_REVIEW_MANIFEST)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--run-name", default="wildchat-reviewed-build")
+    parser.add_argument("--run-name", default="public-corpus-reviewed-build")
     parser.add_argument("--emit-candidates", action="store_true")
     args = parser.parse_args()
 
     output_dir = args.output_dir / args.run_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    conversations = load_wildchat_conversations(args.corpus_file)
     manifest = load_review_manifest(args.reviewed_manifest)
+    corpus_name = str(manifest.get("corpus_name", WILDCHAT_CORPUS_NAME))
+    conversations = load_public_corpus_conversations(args.corpus_file, corpus_name=corpus_name)
     reviewed_episodes = build_reviewed_episodes(conversations=conversations, manifest=manifest)
     reviewed_path = output_dir / "reviewed_episodes.json"
     reviewed_path.write_text(json.dumps(reviewed_episodes, indent=2), encoding="utf-8")
 
     candidate_path = None
+    candidate_count = None
     if args.emit_candidates:
         candidates = build_candidate_episodes(conversations)
+        candidate_count = len(candidates)
         candidate_path = output_dir / "candidate_episodes.jsonl"
         with candidate_path.open("w", encoding="utf-8") as handle:
             for item in candidates:
                 handle.write(json.dumps(item) + "\n")
 
     summary = {
+        "corpus_name": corpus_name,
         "corpus_file": str(args.corpus_file),
         "reviewed_manifest": str(args.reviewed_manifest),
         "conversations_kept": len(conversations),
         "reviewed_episodes": len(reviewed_episodes),
-        "candidate_episode_count": len(build_candidate_episodes(conversations)) if args.emit_candidates else None,
+        "candidate_episode_count": candidate_count,
         "reviewed_output": str(reviewed_path),
         "candidate_output": str(candidate_path) if candidate_path is not None else None,
     }
@@ -61,17 +69,71 @@ def load_review_manifest(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def load_wildchat_conversations(path: Path) -> list[dict[str, Any]]:
-    rows = _load_rows(path)
-    normalized: list[dict[str, Any]] = []
-    for index, row in enumerate(rows):
+def extract_review_conversation_ids(manifest: dict[str, Any]) -> set[str]:
+    conversation_ids: set[str] = set()
+    for spec in manifest.get("episodes", []):
+        for key in ("conversation_id", "target_conversation_id"):
+            value = spec.get(key)
+            if value not in (None, ""):
+                conversation_ids.add(str(value))
+        for value in spec.get("source_conversation_ids", []):
+            if value not in (None, ""):
+                conversation_ids.add(str(value))
+    return conversation_ids
+
+
+def load_public_corpus_conversations(
+    path: Path,
+    *,
+    corpus_name: str,
+    conversation_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    if corpus_name == WILDCHAT_CORPUS_NAME:
+        return load_wildchat_conversations(path, conversation_ids=conversation_ids)
+    if corpus_name == WILDBENCH_CORPUS_NAME:
+        return load_wildbench_conversations(path, conversation_ids=conversation_ids)
+    raise ValueError(f"Unsupported public corpus: {corpus_name}")
+
+
+def load_wildchat_conversations(path: Path, *, conversation_ids: set[str] | None = None) -> list[dict[str, Any]]:
+    return list(iter_wildchat_conversations(path, conversation_ids=conversation_ids))
+
+
+def load_wildbench_conversations(path: Path, *, conversation_ids: set[str] | None = None) -> list[dict[str, Any]]:
+    return list(iter_wildbench_conversations(path, conversation_ids=conversation_ids))
+
+
+def iter_wildchat_conversations(path: Path, *, conversation_ids: set[str] | None = None) -> Iterator[dict[str, Any]]:
+    for index, row in enumerate(_iter_rows(path)):
+        if conversation_ids is not None:
+            conversation_id = _extract_row_conversation_id(row=row, ordinal=index)
+            if conversation_id is None or conversation_id not in conversation_ids:
+                continue
         conversation = _normalize_wildchat_row(row=row, ordinal=index)
         if conversation is not None:
-            normalized.append(conversation)
-    return normalized
+            yield conversation
+
+
+def iter_wildbench_conversations(path: Path, *, conversation_ids: set[str] | None = None) -> Iterator[dict[str, Any]]:
+    for index, row in enumerate(_iter_rows(path)):
+        conversation_id = _extract_wildbench_conversation_id(row=row, ordinal=index)
+        if conversation_ids is not None and (conversation_id is None or conversation_id not in conversation_ids):
+            continue
+        conversation = _normalize_wildbench_row(row=row, ordinal=index)
+        if conversation is not None:
+            yield conversation
 
 
 def build_candidate_episodes(conversations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not conversations:
+        return []
+    corpus_name = str(conversations[0].get("corpus_name", WILDCHAT_CORPUS_NAME))
+    if corpus_name == WILDBENCH_CORPUS_NAME:
+        return _build_wildbench_candidate_episodes(conversations)
+    return _build_wildchat_candidate_episodes(conversations)
+
+
+def _build_wildchat_candidate_episodes(conversations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     for conversation in conversations:
         query_turn_index = _last_user_turn_index(conversation["turns"])
@@ -115,6 +177,31 @@ def build_candidate_episodes(conversations: list[dict[str, Any]]) -> list[dict[s
                     "user_key": user_key,
                 }
             )
+    return candidates
+
+
+def _build_wildbench_candidate_episodes(conversations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for conversation in conversations:
+        query_turn_index = _last_user_turn_index(conversation["turns"])
+        if query_turn_index is None or query_turn_index < 2:
+            continue
+        target_turn = conversation["turns"][query_turn_index]
+        candidates.append(
+            {
+                "episode_id": f"{conversation['conversation_id']}::within::{query_turn_index}",
+                "episode_type": "within_conversation_later_turn_recall",
+                "conversation_id": conversation["conversation_id"],
+                "query_turn_index": query_turn_index,
+                "current_context_turn_indices": [query_turn_index],
+                "query_text": target_turn["content"],
+                "turn_count": len(conversation["turns"]),
+                "language": conversation["language"],
+                "primary_tag": conversation.get("primary_tag"),
+                "intent": conversation.get("intent"),
+                "checklist_count": len(conversation.get("checklist", [])),
+            }
+        )
     return candidates
 
 
@@ -196,11 +283,16 @@ def _assemble_episode(
     return {
         "episode_id": spec["episode_id"],
         "episode_type": spec["episode_type"],
-        "corpus_name": manifest.get("corpus_name", "wildchat"),
+        "corpus_name": manifest.get("corpus_name", WILDCHAT_CORPUS_NAME),
         "description": spec["description"],
         "source_conversation_ids": source_conversation_ids,
         "target_conversation_id": target_conversation["conversation_id"],
         "source_user_key": target_conversation.get("user_key"),
+        "source_primary_tag": target_conversation.get("primary_tag"),
+        "source_secondary_tags": target_conversation.get("secondary_tags", []),
+        "source_intent": target_conversation.get("intent"),
+        "source_checklist": target_conversation.get("checklist", []),
+        "reference_answer": target_conversation.get("reference_answer"),
         "prior_events": prior_events,
         "current_thread_context": current_thread_context,
         "current_query": current_query,
@@ -272,12 +364,16 @@ def _build_source_event(*, conversation: dict[str, Any], turn: dict[str, Any]) -
             "language": conversation["language"],
             "safe": conversation.get("safe"),
             "model": conversation.get("model"),
+            "primary_tag": conversation.get("primary_tag"),
+            "secondary_tags": conversation.get("secondary_tags", []),
+            "intent": conversation.get("intent"),
+            "checklist": conversation.get("checklist", []),
         },
     }
 
 
 def _normalize_wildchat_row(*, row: dict[str, Any], ordinal: int) -> dict[str, Any] | None:
-    turns = _normalize_turns(row)
+    turns = _normalize_turns(row.get("conversation") or row.get("messages") or row.get("turns") or [])
     if len(turns) < 4:
         return None
     if sum(1 for turn in turns if turn["role"] == "user") < 2:
@@ -293,20 +389,20 @@ def _normalize_wildchat_row(*, row: dict[str, Any], ordinal: int) -> dict[str, A
     if safe_value is False:
         return None
 
-    conversation_id = str(_find_first_value(row, {"conversation_id", "id", "conversation_hash", "conversation_uuid"}) or f"wildchat-{ordinal:05d}")
-    user_key_value = _find_first_value(row, {"hashed_ip", "user_hash", "user_id"})
+    conversation_id = _extract_row_conversation_id(row=row, ordinal=ordinal) or f"wildchat-{ordinal:05d}"
+    user_key_value = _find_first_value(row, {"hashed_ip", "user_hash", "user_id", "user_key"})
     user_key = str(user_key_value) if user_key_value not in (None, "") else None
-    timestamp_value = _find_first_value(row, {"timestamp", "created_at", "createdAt", "conversation_created_at"})
+    timestamp_value = _find_first_value(row, {"timestamp", "created_at", "createdAt", "conversation_created_at", "base_timestamp"})
     base_timestamp = _normalize_timestamp(timestamp_value, fallback_minutes=ordinal)
     model_value = _find_first_value(row, {"model", "model_name", "assistant_model"})
     model = str(model_value) if model_value not in (None, "") else None
 
-    container_ref = _build_container_ref(user_key=user_key, conversation_id=conversation_id)
+    container_ref = _build_wildchat_container_ref(user_key=user_key, conversation_id=conversation_id)
     thread_ref = f"public-corpus:wildchat:thread:{conversation_id}"
     session_ref = f"public-corpus:wildchat:session:{conversation_id}"
 
     return {
-        "corpus_name": "wildchat",
+        "corpus_name": WILDCHAT_CORPUS_NAME,
         "conversation_id": conversation_id,
         "language": language,
         "safe": safe_value,
@@ -321,8 +417,62 @@ def _normalize_wildchat_row(*, row: dict[str, Any], ordinal: int) -> dict[str, A
     }
 
 
-def _normalize_turns(row: dict[str, Any]) -> list[dict[str, Any]]:
-    raw_turns = row.get("conversation") or row.get("messages") or row.get("turns") or []
+def _normalize_wildbench_row(*, row: dict[str, Any], ordinal: int) -> dict[str, Any] | None:
+    raw_turns = row.get("conversation_input") or row.get("conversation") or row.get("messages") or row.get("turns") or []
+    turns = _normalize_turns(raw_turns)
+    if len(turns) < 3:
+        return None
+    if turns[-1]["role"] != "user":
+        return None
+    if sum(1 for turn in turns if turn["role"] == "user") < 2:
+        return None
+    if sum(1 for turn in turns if turn["role"] == "assistant") < 1:
+        return None
+
+    provided_languages = [str(turn.get("language", "")).strip() for turn in raw_turns if isinstance(turn, dict) and str(turn.get("language", "")).strip()]
+    if provided_languages and any(_normalize_language(language) != "english" for language in provided_languages):
+        return None
+    language = "english"
+
+    safe_value = _extract_safe_value(row)
+    if safe_value is False:
+        return None
+
+    conversation_id = _extract_wildbench_conversation_id(row=row, ordinal=ordinal) or f"wildbench-{ordinal:05d}"
+    timestamp_value = _find_first_value(row, {"timestamp", "created_at", "createdAt", "session_created_at", "base_timestamp"})
+    base_timestamp = _normalize_timestamp(timestamp_value, fallback_minutes=ordinal)
+    primary_tag = _normalize_optional_text(row.get("primary_tag"))
+    secondary_tags = _normalize_text_list(row.get("secondary_tags"))
+    intent = _normalize_optional_text(row.get("intent"))
+    reference_answer = _extract_reference_answer(row.get("references")) or _normalize_optional_text(row.get("reference_answer"))
+    model = _normalize_optional_text(_find_first_value(row, {"model", "model_name", "assistant_model"}))
+
+    container_ref = f"public-corpus:wildbench:session:{conversation_id}"
+    thread_ref = f"public-corpus:wildbench:thread:{conversation_id}"
+    session_ref = f"public-corpus:wildbench:session:{conversation_id}"
+
+    return {
+        "corpus_name": WILDBENCH_CORPUS_NAME,
+        "conversation_id": conversation_id,
+        "language": language,
+        "safe": safe_value,
+        "user_key": None,
+        "model": model,
+        "turns": turns,
+        "container_ref": container_ref,
+        "thread_ref": thread_ref,
+        "session_ref": session_ref,
+        "base_timestamp": base_timestamp,
+        "sort_key": base_timestamp.isoformat(),
+        "primary_tag": primary_tag,
+        "secondary_tags": secondary_tags,
+        "intent": intent,
+        "checklist": _normalize_text_list(row.get("checklist")),
+        "reference_answer": reference_answer,
+    }
+
+
+def _normalize_turns(raw_turns: Any) -> list[dict[str, Any]]:
     if not isinstance(raw_turns, list):
         return []
 
@@ -371,7 +521,7 @@ def _normalize_language(value: Any) -> str | None:
 
 
 def _extract_safe_value(payload: Any) -> bool | None:
-    for semantic, keys in (("safe", {"safe", "is_safe"}), ("toxic", {"toxic", "is_toxic", "toxicity"})):
+    for semantic, keys in (("safe", {"safe", "is_safe", "appropriate"}), ("toxic", {"toxic", "is_toxic", "toxicity"})):
         found = _find_first_keyed_value(payload, keys)
         if found is not None:
             _, value = found
@@ -415,7 +565,7 @@ def _normalize_safe_value(value: Any, *, semantic: str) -> bool | None:
     return None
 
 
-def _build_container_ref(*, user_key: str | None, conversation_id: str) -> str:
+def _build_wildchat_container_ref(*, user_key: str | None, conversation_id: str) -> str:
     if user_key:
         return f"public-corpus:wildchat:user:{user_key}"
     return f"public-corpus:wildchat:conversation:{conversation_id}"
@@ -459,7 +609,6 @@ def _find_first_keyed_value(payload: Any, keys: set[str]) -> tuple[str, Any] | N
     return None
 
 
-
 def _find_first_value(payload: Any, keys: set[str]) -> Any:
     found = _find_first_keyed_value(payload, keys)
     return None if found is None else found[1]
@@ -477,14 +626,113 @@ def _normalize_timestamp(value: Any, *, fallback_minutes: int) -> datetime:
     return datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=fallback_minutes * 10)
 
 
-def _load_rows(path: Path) -> list[dict[str, Any]]:
-    if path.suffix.lower() in {".jsonl", ".ndjson"}:
-        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(payload, list):
-        return payload
+def _extract_row_conversation_id(*, row: dict[str, Any], ordinal: int) -> str | None:
+    value = _find_first_value(row, {"conversation_id", "id", "conversation_hash", "conversation_uuid"})
+    if value in (None, ""):
+        return None
+    return str(value)
+
+
+def _extract_wildbench_conversation_id(*, row: dict[str, Any], ordinal: int) -> str | None:
+    value = _find_first_value(row, {"session_id", "conversation_id", "id"})
+    if value in (None, ""):
+        return None
+    return str(value)
+
+
+def _extract_reference_answer(value: Any) -> str | None:
+    if isinstance(value, dict):
+        for key in ("gpt-4", "gpt4", "reference", "answer"):
+            item = value.get(key)
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+        for item in value.values():
+            normalized = _extract_reference_answer(item)
+            if normalized:
+                return normalized
+    if isinstance(value, list):
+        for item in value:
+            normalized = _extract_reference_answer(item)
+            if normalized:
+                return normalized
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _normalize_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_text_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _iter_rows(path: Path) -> Iterator[dict[str, Any]]:
+    for corpus_file in _resolve_corpus_files(path):
+        yield from _iter_rows_from_file(corpus_file)
+
+
+def _resolve_corpus_files(path: Path) -> list[Path]:
+    if not path.exists():
+        raise FileNotFoundError(f"Corpus path does not exist: {path}")
+    if path.is_file():
+        return [path]
+
+    files = sorted(item for item in path.rglob("*") if item.is_file())
+    parquet_files = [item for item in files if item.suffix.lower() == ".parquet"]
+    if parquet_files:
+        return parquet_files
+
+    jsonl_files = [item for item in files if item.suffix.lower() in {".jsonl", ".ndjson"}]
+    if jsonl_files:
+        return jsonl_files
+
+    json_files = [item for item in files if item.suffix.lower() == ".json"]
+    if len(json_files) == 1:
+        return json_files
+
+    raise ValueError(f"Unsupported corpus directory layout: {path}")
+
+
+def _iter_rows_from_file(path: Path) -> Iterator[dict[str, Any]]:
+    suffix = path.suffix.lower()
+    if suffix in {".jsonl", ".ndjson"}:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    yield json.loads(line)
+        return
+    if suffix == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, dict):
+                    yield item
+            return
+        raise ValueError(f"Unsupported corpus JSON payload: {path}")
+    if suffix == ".parquet":
+        try:
+            import pyarrow.parquet as pq
+        except ImportError as exc:
+            raise RuntimeError("Reading public corpus parquet snapshots requires the optional 'pyarrow' package.") from exc
+        parquet_file = pq.ParquetFile(path)
+        for batch in parquet_file.iter_batches(batch_size=PARQUET_BATCH_SIZE):
+            for row in batch.to_pylist():
+                if isinstance(row, dict):
+                    yield row
+        return
     raise ValueError(f"Unsupported corpus file format: {path}")
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

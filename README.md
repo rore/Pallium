@@ -221,28 +221,54 @@ Each run writes:
 
 Pallium now includes a bounded public-corpus eval path for messy real user-assistant interactions without depending on private downstream traffic.
 
-Current first slice:
+Current public-corpus layer:
 
-- WildChat as the only required corpus
-- raw corpus stays outside the repo
-- a reviewed manifest defines the committed benchmark slice
-- a local builder normalizes selected conversations into the existing Pallium event contract
+- WildChat remains the primary realism corpus
+- WildBench is the complementary task-oriented benchmark source
+- raw corpora stay outside the repo
+- reviewed manifests define the committed benchmark slices
+- local helpers keep the full-corpus workflows reproducible without changing the public benchmark contract
 - the benchmark reports whether misses look like retrieval recall, routed layer choice, result packaging/evidence, or overreach
 
-Build reviewed episodes from a local WildChat export with:
+Recommended local WildChat layout:
+
+- `C:\data\wildchat\WildChat-4.8M\snapshot`: downloaded Hugging Face dataset snapshot
+- `C:\data\wildchat\WildChat-4.8M\derived\conversation_index.sqlite`: local candidate index for slice review
+- `C:\data\wildchat\WildChat-4.8M\derived\review_candidates.jsonl`: candidate episodes for human review
+- `C:\data\wildchat\WildChat-4.8M\derived\review_sets\wildchat_review_manifest\conversations.json`: small materialized corpus for the committed reviewed slice
+- `C:\data\wildchat\WildChat-4.8M\runs\...`: repeated benchmark outputs
+
+WildChat setup:
 
 ```powershell
-.\.venv\Scripts\python.exe -m evals.public_corpus_builder --corpus-file C:\data\wildchat.jsonl --reviewed-manifest evals\public_corpus\wildchat_review_manifest.json --emit-candidates
+.\.venv\Scripts\python.exe -m pip install huggingface_hub pyarrow
+.\.venv\Scripts\python.exe -m evals.public_corpus_wildchat_local download --root C:\data\wildchat\WildChat-4.8M
+.\.venv\Scripts\python.exe -m evals.public_corpus_wildchat_local validate --root C:\data\wildchat\WildChat-4.8M
+.\.venv\Scripts\python.exe -m evals.public_corpus_wildchat_local build-candidate-index --root C:\data\wildchat\WildChat-4.8M
+.\.venv\Scripts\python.exe -m evals.public_corpus_wildchat_local emit-candidates --root C:\data\wildchat\WildChat-4.8M
+.\.venv\Scripts\python.exe -m evals.public_corpus_wildchat_local materialize-review-set --root C:\data\wildchat\WildChat-4.8M --reviewed-manifest evals\public_corpus\wildchat_review_manifest.json
+.\.venv\Scripts\python.exe -m evals.public_corpus_wildchat_local benchmark --root C:\data\wildchat\WildChat-4.8M --reviewed-manifest evals\public_corpus\wildchat_review_manifest.json --run-name local-public-corpus-benchmark
 ```
 
-Run the reviewed benchmark with:
+Recommended local WildBench layout:
+
+- `C:\data\wildbench\WildBench\snapshot`: downloaded Hugging Face dataset snapshot
+- `C:\data\wildbench\WildBench\derived\review_candidates.jsonl`: candidate episodes for human review
+- `C:\data\wildbench\WildBench\derived\review_sets\wildbench_review_manifest\conversations.json`: small materialized corpus for the committed reviewed slice
+- `C:\data\wildbench\WildBench\runs\...`: repeated benchmark outputs
+
+WildBench setup:
 
 ```powershell
-.\.venv\Scripts\python.exe -m evals.public_corpus_benchmark --corpus-file C:\data\wildchat.jsonl --reviewed-manifest evals\public_corpus\wildchat_review_manifest.json
+.\.venv\Scripts\python.exe -m pip install huggingface_hub pyarrow
+.\.venv\Scripts\python.exe -m evals.public_corpus_wildbench_local download --root C:\data\wildbench\WildBench
+.\.venv\Scripts\python.exe -m evals.public_corpus_wildbench_local validate --root C:\data\wildbench\WildBench
+.\.venv\Scripts\python.exe -m evals.public_corpus_wildbench_local emit-candidates --root C:\data\wildbench\WildBench
+.\.venv\Scripts\python.exe -m evals.public_corpus_wildbench_local materialize-review-set --root C:\data\wildbench\WildBench --reviewed-manifest evals\public_corpus\wildbench_review_manifest.json
+.\.venv\Scripts\python.exe -m evals.public_corpus_wildbench_local benchmark --root C:\data\wildbench\WildBench --reviewed-manifest evals\public_corpus\wildbench_review_manifest.json --run-name local-public-corpus-wildbench-benchmark
 ```
 
 The committed repo assets live under [C:/Dev/rore/Pallium/evals/public_corpus](C:/Dev/rore/Pallium/evals/public_corpus).
-
 ## Tiered-Memory Validation Benchmark
 
 Pallium includes a dedicated benchmark for deciding when higher-level `pattern_memory` is actually useful and which consolidation strategy is safest.
@@ -373,5 +399,7 @@ Use `--split-output` only when you want per-input debug files.
 - [C:/Dev/rore/Pallium/docs/context/architecture.md](C:/Dev/rore/Pallium/docs/context/architecture.md)
 - [C:/Dev/rore/Pallium/docs/context/state.md](C:/Dev/rore/Pallium/docs/context/state.md)
 - [C:/Dev/rore/Pallium/roadmap/board.md](C:/Dev/rore/Pallium/roadmap/board.md)
+
+
 
 

@@ -1,0 +1,109 @@
+[
+  {
+    "session_id": "wb-review-001",
+    "primary_tag": "coding",
+    "secondary_tags": ["kubernetes", "debugging"],
+    "intent": "debugging",
+    "appropriate": "yes",
+    "references": {
+      "gpt-4": "Raise the worker memory limit to 1Gi while keeping the request at 512Mi."
+    },
+    "checklist": [
+      "mentions 1Gi limit",
+      "mentions 512Mi request"
+    ],
+    "conversation_input": [
+      {"role": "user", "content": "My export worker keeps restarting in Kubernetes. What should I inspect first?", "language": "English"},
+      {"role": "assistant", "content": "Investigation found that the worker is getting OOMKilled during CSV export because it hits the 512Mi memory limit.", "language": "English"},
+      {"role": "user", "content": "What change would you make?", "language": "English"},
+      {"role": "assistant", "content": "Decision: raise the worker memory limit to 1Gi while keeping the request at 512Mi so the export can finish without starving the node.", "language": "English"},
+      {"role": "user", "content": "What resource cap did you say to bump for the export worker again?", "language": "English"}
+    ]
+  },
+  {
+    "session_id": "wb-review-002",
+    "primary_tag": "travel",
+    "secondary_tags": ["planning", "formatting"],
+    "intent": "planning",
+    "appropriate": "yes",
+    "references": {
+      "gpt-4": "Day 1: Fushimi Inari and Gion. Day 2: Arashiyama and Kinkaku-ji. Day 3: Nishiki Market and a slow evening in Pontocho."
+    },
+    "checklist": [
+      "keeps Fushimi Inari",
+      "keeps Arashiyama",
+      "uses bullet format"
+    ],
+    "conversation_input": [
+      {"role": "user", "content": "Plan a relaxed three-day Kyoto trip for my parents.", "language": "English"},
+      {"role": "assistant", "content": "Here is a relaxed plan. Day 1: Fushimi Inari early, then Gion. Day 2: Arashiyama and Kinkaku-ji. Day 3: Nishiki Market and a slow evening in Pontocho.", "language": "English"},
+      {"role": "user", "content": "Can you rewrite that as short bullets for a text message?", "language": "English"}
+    ]
+  },
+  {
+    "session_id": "wb-review-003",
+    "primary_tag": "career",
+    "secondary_tags": ["hiring", "feedback"],
+    "intent": "evaluation",
+    "appropriate": "yes",
+    "references": {
+      "gpt-4": "Use the three buckets problem framing, tradeoffs, and ownership."
+    },
+    "checklist": [
+      "mentions problem framing",
+      "mentions tradeoffs",
+      "mentions ownership"
+    ],
+    "conversation_input": [
+      {"role": "user", "content": "We need a consistent interview debrief structure. What should the rubric be?", "language": "English"},
+      {"role": "assistant", "content": "Decision: use the three-bucket debrief rubric problem framing, tradeoffs, and ownership so interview notes stay comparable.", "language": "English"},
+      {"role": "user", "content": "Can you explain why that helps?", "language": "English"},
+      {"role": "assistant", "content": "It keeps different interviewers from writing wildly different notes.", "language": "English"},
+      {"role": "user", "content": "Remind me of those buckets again.", "language": "English"}
+    ]
+  },
+  {
+    "session_id": "wb-review-004",
+    "primary_tag": "coding",
+    "secondary_tags": ["logs", "operations"],
+    "intent": "debugging",
+    "appropriate": "yes",
+    "references": {
+      "gpt-4": "The exact log line was 'job already running, skipping new start'."
+    },
+    "checklist": [
+      "quotes the exact log line"
+    ],
+    "conversation_input": [
+      {"role": "user", "content": "Our cron task keeps double-processing invoices. What evidence shows the retries overlap?", "language": "English"},
+      {"role": "assistant", "content": "Investigation found that the exact log line 'job already running, skipping new start' showed the retries were overlapping.", "language": "English"},
+      {"role": "user", "content": "Which exact log line proved the retries were overlapping?", "language": "English"}
+    ]
+  },
+  {
+    "session_id": "wb-filtered-001",
+    "primary_tag": "travel",
+    "secondary_tags": ["planning"],
+    "intent": "planning",
+    "appropriate": "yes",
+    "conversation_input": [
+      {"role": "user", "content": "????", "language": "Arabic"},
+      {"role": "assistant", "content": "????", "language": "Arabic"},
+      {"role": "user", "content": "????", "language": "Arabic"}
+    ]
+  },
+  {
+    "session_id": "wb-filtered-002",
+    "primary_tag": "career",
+    "secondary_tags": ["hiring"],
+    "intent": "evaluation",
+    "appropriate": "no",
+    "conversation_input": [
+      {"role": "user", "content": "Unsafe sample", "language": "English"},
+      {"role": "assistant", "content": "Unsafe sample", "language": "English"},
+      {"role": "user", "content": "Unsafe sample", "language": "English"}
+    ]
+  }
+]
+
+

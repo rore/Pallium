@@ -1,0 +1,62 @@
+{
+  "corpus_name": "wildbench",
+  "default_query_limit": 6,
+  "filters": {
+    "language": "english",
+    "safe_only_when_available": true,
+    "multi_turn_only": true
+  },
+  "episodes": [
+    {
+      "episode_id": "wildbench-k8s-memory-cap-recall",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wb-review-001",
+      "query_turn_index": 4,
+      "description": "A realistic coding/debugging follow-up asks for the exact resource cap after earlier diagnosis and recommendation.",
+      "should_memory_help": true,
+      "expected_winning_layer": "lower_level_memory",
+      "acceptable_winning_layers": ["lower_level_memory", "source_evidence"],
+      "expected_memory_types": ["decision"],
+      "expected_answer_signals": ["1Gi", "512Mi"],
+      "review_notes": "This pressures exact recall on a realistic external task without requiring higher-level memory."
+    },
+    {
+      "episode_id": "wildbench-kyoto-no-value-guard",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wb-review-002",
+      "query_turn_index": 2,
+      "current_context_turn_indices": [1, 2],
+      "description": "The user is only asking for a reformat of the already visible itinerary, so memory should not materially help.",
+      "should_memory_help": false,
+      "overreach_guard": true,
+      "expected_answer_signals": ["Fushimi Inari", "Arashiyama", "bullet"],
+      "review_notes": "This is the realistic no-value suppression check for the WildBench-backed slice."
+    },
+    {
+      "episode_id": "wildbench-scorecard-headings-recall",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wb-review-003",
+      "query_turn_index": 4,
+      "description": "A paraphrased hiring-feedback follow-up asks for the earlier rubric headings on the same task.",
+      "should_memory_help": true,
+      "expected_winning_layer": "lower_level_memory",
+      "acceptable_winning_layers": ["lower_level_memory", "source_evidence"],
+      "expected_memory_types": ["decision"],
+      "expected_answer_signals": ["problem framing", "tradeoffs", "ownership"],
+      "review_notes": "This is the first realistic paraphrase-recall pressure case in the public-corpus layer."
+    },
+    {
+      "episode_id": "wildbench-overlap-log-line",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wb-review-004",
+      "query_turn_index": 2,
+      "description": "A realistic debugging follow-up asks for the exact supporting log line from earlier in the same session.",
+      "should_memory_help": true,
+      "expected_winning_layer": "source_evidence",
+      "acceptable_winning_layers": ["source_evidence", "lower_level_memory"],
+      "expected_memory_types": ["investigation_outcome"],
+      "expected_answer_signals": ["job already running", "skipping new start"],
+      "review_notes": "This pressures evidence packaging and source preference instead of broad higher-level carry-forward."
+    }
+  ]
+}

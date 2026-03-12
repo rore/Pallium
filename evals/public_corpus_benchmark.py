@@ -14,7 +14,12 @@ from fastapi.testclient import TestClient
 from app.config import AppConfig
 from app.dependencies import build_llm_provider
 from app.main import create_app
-from evals.public_corpus_builder import DEFAULT_REVIEW_MANIFEST, build_reviewed_episodes, load_review_manifest, load_wildchat_conversations
+from evals.public_corpus_builder import (
+    DEFAULT_REVIEW_MANIFEST,
+    build_reviewed_episodes,
+    load_public_corpus_conversations,
+    load_review_manifest,
+)
 from evals.recurring_question_benchmark import _compare_answers, _generate_answer, _score_answer
 from providers.llm.base import LLMProvider
 
@@ -29,7 +34,7 @@ FAILURE_FAMILIES = (
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run the reviewed public-corpus benchmark over a local WildChat export.")
+    parser = argparse.ArgumentParser(description="Run the reviewed public-corpus benchmark over a local public benchmark export.")
     parser.add_argument("--corpus-file", type=Path, required=True)
     parser.add_argument("--reviewed-manifest", type=Path, default=DEFAULT_REVIEW_MANIFEST)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
@@ -60,7 +65,8 @@ def run_public_corpus_benchmark(
     default_consolidation_strategy: str | None = "thread_summary_anchored",
 ) -> Path:
     manifest = load_review_manifest(reviewed_manifest)
-    conversations = load_wildchat_conversations(corpus_file)
+    corpus_name = str(manifest.get("corpus_name", "wildchat"))
+    conversations = load_public_corpus_conversations(corpus_file, corpus_name=corpus_name)
     episodes = build_reviewed_episodes(conversations=conversations, manifest=manifest)
 
     default_package = config.package_config(config.default_use_case)
@@ -71,7 +77,7 @@ def run_public_corpus_benchmark(
     else:
         provider = answer_provider
 
-    run_id = run_name or _build_run_id(config)
+    run_id = run_name or _build_run_id(config, corpus_name=corpus_name)
     run_dir = output_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     results_path = run_dir / "results.jsonl"
@@ -201,6 +207,7 @@ def _run_episode(
         expected_layer_found=expected_layer_found,
         expected_memory_types_found=expected_memory_types_found,
         expected_higher_level_memory_types_found=expected_higher_level_memory_types_found,
+        higher_level_expectation_present=bool(expected_higher_level_memory_types),
         top_layer_match=top_layer_match,
         evidence_used_present=evidence_used_present,
         forbidden_terms_found=forbidden_terms_found,
@@ -214,6 +221,10 @@ def _run_episode(
         "corpus_name": episode["corpus_name"],
         "source_conversation_ids": episode["source_conversation_ids"],
         "target_conversation_id": episode["target_conversation_id"],
+        "source_primary_tag": episode.get("source_primary_tag"),
+        "source_secondary_tags": episode.get("source_secondary_tags", []),
+        "source_intent": episode.get("source_intent"),
+        "source_checklist_count": len(episode.get("source_checklist", [])),
         "should_memory_help": bool(episode.get("should_memory_help")),
         "expected_winning_layer": expected_winning_layer,
         "acceptable_winning_layers": acceptable_winning_layers,
@@ -246,6 +257,8 @@ def _run_episode(
             "comparison": comparison,
         },
         "consolidation_run": _serialize_consolidation_result(consolidation_result),
+        "reference_answer": episode.get("reference_answer"),
+        "source_checklist": episode.get("source_checklist", []),
     }
 
 
@@ -256,6 +269,7 @@ def _classify_failure_family(
     expected_layer_found: bool,
     expected_memory_types_found: bool,
     expected_higher_level_memory_types_found: bool,
+    higher_level_expectation_present: bool,
     top_layer_match: bool,
     evidence_used_present: bool,
     forbidden_terms_found: list[str],
@@ -264,7 +278,7 @@ def _classify_failure_family(
         return "overreach_no_value_failure"
     if not should_memory_help:
         return None if winner != "memory_backed" else "overreach_no_value_failure"
-    if not expected_layer_found and not expected_memory_types_found and not expected_higher_level_memory_types_found:
+    if not expected_layer_found and not expected_memory_types_found and (not higher_level_expectation_present or not expected_higher_level_memory_types_found):
         return "retrieval_recall_failure"
     if not top_layer_match:
         return "routing_layer_choice_failure"
@@ -331,8 +345,10 @@ def _build_summary(
 ) -> dict[str, Any]:
     failure_counter = Counter(row["failure_family"] for row in results if row["failure_family"])
     by_episode_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_primary_tag: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in results:
         by_episode_type[row["episode_type"]].append(row)
+        by_primary_tag[row.get("source_primary_tag") or "unlabeled"].append(row)
 
     summary: dict[str, Any] = {
         "run_id": run_id,
@@ -351,6 +367,7 @@ def _build_summary(
         "policy_successes": sum(1 for row in results if row["policy_success"]),
         "failure_families": {name: int(failure_counter.get(name, 0)) for name in FAILURE_FAMILIES},
         "by_episode_type": [],
+        "by_primary_tag": [],
     }
     for episode_type in sorted(by_episode_type):
         rows = by_episode_type[episode_type]
@@ -366,6 +383,19 @@ def _build_summary(
                 },
             }
         )
+    for primary_tag in sorted(by_primary_tag):
+        rows = by_primary_tag[primary_tag]
+        summary["by_primary_tag"].append(
+            {
+                "primary_tag": primary_tag,
+                "episodes_total": len(rows),
+                "policy_successes": sum(1 for row in rows if row["policy_success"]),
+                "failure_families": {
+                    name: sum(1 for row in rows if row["failure_family"] == name)
+                    for name in FAILURE_FAMILIES
+                },
+            }
+        )
     return summary
 
 
@@ -374,6 +404,7 @@ def _build_report(*, summary: dict[str, Any], results: list[dict[str, Any]]) -> 
         "# Public Corpus Benchmark Report",
         "",
         f"Run ID: `{summary['run_id']}`",
+        f"Corpus: `{summary['corpus_name']}`",
         "",
         "## Aggregate",
         "",
@@ -388,22 +419,28 @@ def _build_report(*, summary: dict[str, Any], results: list[dict[str, Any]]) -> 
     ]
     for name, count in summary["failure_families"].items():
         lines.append(f"- `{name}`: {count}")
+    lines.extend(["", "## By Primary Tag", ""])
+    for row in summary.get("by_primary_tag", []):
+        lines.append(f"- `{row['primary_tag']}`: {row['policy_successes']} / {row['episodes_total']} policy successes")
     lines.extend(["", "## Episode Results", ""])
     for row in results:
         status = "PASS" if row["policy_success"] else f"FAIL ({row['failure_family']})"
         lines.append(
             f"- `{row['episode_id']}` [{status}]: winner `{row['winner']}`, "
-            f"expected layer `{row['expected_winning_layer']}`, top layer `{row['top_layer']}`"
+            f"expected layer `{row['expected_winning_layer']}`, top layer `{row['top_layer']}`, "
+            f"tag `{row.get('source_primary_tag') or 'unlabeled'}`, intent `{row.get('source_intent') or 'unknown'}`"
         )
     return "\n".join(lines) + "\n"
 
 
-def _build_run_id(config: AppConfig) -> str:
+def _build_run_id(config: AppConfig, *, corpus_name: str) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     provider = (config.llm_provider_for_default_use_case or "provider").replace("_", "-")
     model = (config.llm_model_for_default_use_case or "model").replace("/", "-").replace(".", "-")
-    return f"public-corpus-benchmark__{provider}__{model}__{timestamp}"
+    return f"public-corpus-benchmark__{corpus_name}__{provider}__{model}__{timestamp}"
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

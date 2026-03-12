@@ -1,4 +1,4 @@
-Pallium now has a dedicated validation layer for tiered memory, a retrieval trace/debug path for lexical retrieval, package-owned internal routing over the current memory layers, and a bounded public-corpus evaluation path for messy real user-assistant interactions through local WildChat-shaped exports.
+Pallium now has a dedicated validation layer for tiered memory, a retrieval trace/debug path for lexical retrieval, package-owned internal routing over the current memory layers, and a bounded public-corpus evaluation path for messy real user-assistant interactions through WildChat as the primary realism corpus plus a complementary WildBench task slice.
 
 Current focus:
 - preserve the current product claim: Pallium improves cross-thread and cross-session recurring-question handling, not broad workspace search
@@ -22,7 +22,7 @@ What the current evaluation layer established:
 - same-thread and precise factual questions should not default to higher-level memory
 - exact factual and evidence-heavy questions should still prefer lower-level `decision` or `investigation_outcome`
 - the current routed policy can now distinguish broad recall, continuity, precise fact, and evidence-trace questions on the committed synthetic benchmark set
-- the remaining unresolved risk is realism, not basic policy shape: the current benchmark is still too curated to stand in for messy live interaction traffic
+- the remaining unresolved risk is realism, not basic policy shape: even with the new WildBench complement, the committed reviewed slices are still bounded and should guide rather than replace larger local review runs
 
 Still out of scope for this phase:
 - private downstream-system coupling as a prerequisite for Pallium development
@@ -31,3 +31,4 @@ Still out of scope for this phase:
 - public API expansion for consolidation control or query intent
 - replacing lower-level memory with only higher-level summaries
 - broad ambient-workspace knowledge coverage beyond agent-mediated conversation memory
+
