@@ -1,10 +1,10 @@
 ---
 id: add-selected-agent-work-artifact-semantic-support
 title: Add selected agent work-artifact semantic support
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary
@@ -44,3 +44,5 @@ For interruption and resumption, the valuable signals are often partial findings
 ## Notes
 
 This slice is about preserving selected learned state from work, not about mirroring a downstream agent runtime inside Pallium.
+
+Implemented as bounded support for selected assistant-originated `tool_use_summary` and `todo_snapshot` artifacts so explicit progress, blocker, and next-step state can participate in thread aggregation, semantic promotion, and work-resumption retrieval without ingesting raw runtime logs. A later `task_checkpoint` slice still owns compact task-state packaging beyond those source artifacts.

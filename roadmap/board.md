@@ -1,12 +1,11 @@
 # Next
-- add-work-resumption-benchmark
-- add-selected-agent-work-artifact-semantic-support
 - add-task-checkpoint-memory-kind
+- add-privacy-aware-memory-scope-and-sharing-foundation
+- add-conversation-agent-integration-readiness-scenario
 
 # Later
 - add-vector-retrieval-provider
 - add-hybrid-retrieval-fusion
-- add-privacy-aware-memory-scope-and-sharing-foundation
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
 
@@ -17,6 +16,8 @@
 - idea-optional-reranker-support
 
 # Done
+- add-selected-agent-work-artifact-semantic-support
+- add-work-resumption-benchmark
 - add-public-real-interaction-eval-corpus-and-episode-builder
 - add-internal-intent-aware-memory-routing
 - add-continuity-memory-kind

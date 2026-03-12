@@ -1,0 +1,573 @@
+[
+  {
+    "scenario_id": "resume-investigation-after-pause",
+    "scenario_family": "resumed_investigation_after_pause",
+    "description": "A paused catalog-sync investigation should resume with the prior finding and decision instead of starting blank.",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "wr-thread-1-msg-1",
+        "content_type": "text/plain",
+        "content": "Why are duplicate holds appearing after delayed catalog sync?",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-001",
+        "session_ref": "agent-session-wr-001",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://wr/thread-1-msg-1",
+        "occurred_at": "2026-03-11T08:00:00Z",
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-1-artifact-1",
+        "content_type": "text/plain",
+        "content": "Investigation found that arrival-time ordering reused stale hold state during delayed catalog sync and created duplicate holds.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-001",
+        "session_ref": "agent-session-wr-001",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-1-artifact-1",
+        "occurred_at": "2026-03-11T08:01:00Z",
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-1-artifact-2",
+        "content_type": "text/plain",
+        "content": "Decision: use item event time for reservation ordering to avoid duplicate holds after delayed catalog sync.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-001",
+        "session_ref": "agent-session-wr-001",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-1-artifact-2",
+        "occurred_at": "2026-03-11T08:02:00Z",
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "I am resuming the delayed catalog sync investigation after a pause."
+      }
+    ],
+    "current_query": {
+      "text": "What did we previously conclude about the delayed catalog sync investigation?",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    },
+    "target_question": "What did we previously conclude about the delayed catalog sync investigation?",
+    "expected_value": true,
+    "expected_top_layer": "lower_level_memory",
+    "acceptable_top_layers": [
+      "lower_level_memory"
+    ],
+    "expected_memory_types": [
+      "investigation_outcome",
+      "decision"
+    ],
+    "expected_dimensions": {
+      "task_orientation": [
+        "delayed catalog sync investigation",
+        "duplicate holds"
+      ],
+      "prior_findings_reused": [
+        "arrival-time ordering reused stale hold state",
+        "item event time"
+      ],
+      "blocker_state": [],
+      "preserved_progress": [],
+      "next_step_guidance": []
+    },
+    "retrieval_signals": {
+      "task_orientation": [
+        "duplicate holds"
+      ],
+      "prior_findings_reused": [
+        "arrival-time ordering reused stale hold state",
+        "item event time"
+      ]
+    },
+    "dimension_gap_targets": {
+      "task_orientation": [
+        "retrieval_recall",
+        "routing_or_layer_choice",
+        "result_packaging_or_evidence"
+      ],
+      "prior_findings_reused": [
+        "result_packaging_or_evidence"
+      ]
+    },
+    "forbidden_terms": []
+  },
+  {
+    "scenario_id": "debugging-continued-from-partial-findings",
+    "scenario_family": "debugging_continued_from_partial_findings",
+    "description": "Debugging should resume from the partial finding, preserved narrowing work, and the stored next step instead of re-opening the search space.",
+    "prior_events": [
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-2-artifact-1",
+        "content_type": "text/plain",
+        "content": "Investigation found that duplicate holds only reproduce on delayed sync workers when the reservation cache is warm.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-002",
+        "session_ref": "agent-session-wr-002",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-2-artifact-1",
+        "occurred_at": "2026-03-11T09:00:00Z",
+        "metadata": {
+          "topic": "duplicate_hold_debugging"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-2-artifact-2",
+        "content_type": "text/plain",
+        "content": "Partial progress: local replay confirmed the bug and narrowed it to cache invalidation on delayed sync workers.",
+        "artifact_kind": "tool_use_summary",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-002",
+        "session_ref": "agent-session-wr-002",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-2-artifact-2",
+        "occurred_at": "2026-03-11T09:01:00Z",
+        "metadata": {
+          "topic": "duplicate_hold_debugging"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-2-artifact-3",
+        "content_type": "text/plain",
+        "content": "Next step: compare cache invalidation between delayed and immediate sync workers.",
+        "artifact_kind": "todo_snapshot",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-002",
+        "session_ref": "agent-session-wr-002",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-2-artifact-3",
+        "occurred_at": "2026-03-11T09:02:00Z",
+        "metadata": {
+          "topic": "duplicate_hold_debugging"
+        }
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "What finding should orient us in duplicate-hold debugging, what progress do we already have, and what should we try next?"
+      }
+    ],
+    "current_query": {
+      "text": "What finding should orient us in duplicate-hold debugging, what progress do we already have, and what should we try next?",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    },
+    "target_question": "What finding should orient us in duplicate-hold debugging, what progress do we already have, and what should we try next?",
+    "expected_value": true,
+    "expected_top_layer": "lower_level_memory",
+    "acceptable_top_layers": [
+      "lower_level_memory",
+      "source_evidence"
+    ],
+    "expected_memory_types": [
+      "investigation_outcome"
+    ],
+    "expected_dimensions": {
+      "task_orientation": [
+        "duplicate-hold debugging",
+        "delayed sync workers"
+      ],
+      "prior_findings_reused": [
+        "reservation cache is warm",
+        "cache invalidation"
+      ],
+      "blocker_state": [],
+      "preserved_progress": [
+        "local replay confirmed the bug",
+        "narrowed it to cache invalidation"
+      ],
+      "next_step_guidance": [
+        "compare cache invalidation between delayed and immediate sync workers"
+      ]
+    },
+    "retrieval_signals": {
+      "prior_findings_reused": [
+        "reservation cache is warm",
+        "cache invalidation"
+      ],
+      "preserved_progress": [
+        "local replay confirmed the bug",
+        "narrowed it to cache invalidation"
+      ],
+      "next_step_guidance": [
+        "compare cache invalidation between delayed and immediate sync workers"
+      ]
+    },
+    "dimension_gap_targets": {
+      "task_orientation": [
+        "result_packaging_or_evidence"
+      ],
+      "prior_findings_reused": [
+        "result_packaging_or_evidence"
+      ],
+      "preserved_progress": [
+        "compact_task_state_memory"
+      ],
+      "next_step_guidance": [
+        "compact_task_state_memory"
+      ]
+    },
+    "forbidden_terms": []
+  },
+  {
+    "scenario_id": "resume-after-auth-tool-failure",
+    "scenario_family": "resumed_after_auth_or_tool_failure",
+    "description": "A retry after an auth failure should preserve the blocker, the partial progress, and the resume point rather than replaying the whole failure transcript.",
+    "prior_events": [
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-3-artifact-1",
+        "content_type": "text/plain",
+        "content": "Partial progress: refreshed 312 reservation records before the catalog sync tool failed.",
+        "artifact_kind": "tool_use_summary",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-003",
+        "session_ref": "agent-session-wr-003",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-3-artifact-1",
+        "occurred_at": "2026-03-11T10:00:00Z",
+        "metadata": {
+          "topic": "catalog_sync_retry"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-3-artifact-2",
+        "content_type": "text/plain",
+        "content": "Blocked: catalog API returned 401 because the service token expired.",
+        "artifact_kind": "tool_use_summary",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-003",
+        "session_ref": "agent-session-wr-003",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-3-artifact-2",
+        "occurred_at": "2026-03-11T10:01:00Z",
+        "metadata": {
+          "topic": "catalog_sync_retry"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-3-artifact-3",
+        "content_type": "text/plain",
+        "content": "Next step: refresh the catalog service token and rerun the sync from batch 313.",
+        "artifact_kind": "tool_use_summary",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-003",
+        "session_ref": "agent-session-wr-003",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-3-artifact-3",
+        "occurred_at": "2026-03-11T10:02:00Z",
+        "metadata": {
+          "topic": "catalog_sync_retry"
+        }
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "The catalog sync retry is queued again. What blocker did we hit, what progress was preserved, and what should we do next?"
+      }
+    ],
+    "current_query": {
+      "text": "What blocker did we hit, what progress was preserved, and what should we do next on the catalog sync retry?",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    },
+    "target_question": "What blocker did we hit, what progress was preserved, and what should we do next on the catalog sync retry?",
+    "expected_value": true,
+    "expected_top_layer": "source_evidence",
+    "acceptable_top_layers": [
+      "source_evidence"
+    ],
+    "expected_memory_types": [],
+    "expected_dimensions": {
+      "task_orientation": [
+        "catalog sync retry"
+      ],
+      "prior_findings_reused": [],
+      "blocker_state": [
+        "401",
+        "service token expired"
+      ],
+      "preserved_progress": [
+        "refreshed 312 reservation records",
+        "batch 313"
+      ],
+      "next_step_guidance": [
+        "refresh the catalog service token",
+        "rerun the sync from batch 313"
+      ]
+    },
+    "retrieval_signals": {
+      "blocker_state": [
+        "401",
+        "service token expired"
+      ],
+      "preserved_progress": [
+        "refreshed 312 reservation records",
+        "batch 313"
+      ],
+      "next_step_guidance": [
+        "refresh the catalog service token",
+        "rerun the sync from batch 313"
+      ]
+    },
+    "dimension_gap_targets": {
+      "task_orientation": [
+        "result_packaging_or_evidence"
+      ],
+      "blocker_state": [
+        "selected_work_artifact_support"
+      ],
+      "preserved_progress": [
+        "selected_work_artifact_support"
+      ],
+      "next_step_guidance": [
+        "compact_task_state_memory"
+      ]
+    },
+    "forbidden_terms": []
+  },
+  {
+    "scenario_id": "resume-implementation-ticket-after-interruption",
+    "scenario_family": "resumed_implementation_after_interruption",
+    "description": "Implementation work should resume from the ticket state and next step rather than from a loose transcript of what happened before the interruption.",
+    "prior_events": [
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-4-artifact-1",
+        "content_type": "text/plain",
+        "content": "Decision: keep the reservation ordering fix behind the use_item_event_time flag.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-004",
+        "session_ref": "agent-session-wr-004",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-4-artifact-1",
+        "occurred_at": "2026-03-11T11:00:00Z",
+        "metadata": {
+          "topic": "ticket_lib_241"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-4-artifact-2",
+        "content_type": "text/plain",
+        "content": "Partial progress: ticket LIB-241 has the schema change and backfill done.",
+        "artifact_kind": "tool_use_summary",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-004",
+        "session_ref": "agent-session-wr-004",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-4-artifact-2",
+        "occurred_at": "2026-03-11T11:01:00Z",
+        "metadata": {
+          "topic": "ticket_lib_241"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-4-artifact-3",
+        "content_type": "text/plain",
+        "content": "Next step: wire the admin toggle and add retry-path coverage before enabling the flag.",
+        "artifact_kind": "todo_snapshot",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-004",
+        "session_ref": "agent-session-wr-004",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-4-artifact-3",
+        "occurred_at": "2026-03-11T11:02:00Z",
+        "metadata": {
+          "topic": "ticket_lib_241"
+        }
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "What state were we in on ticket LIB-241 and what should I do next?"
+      }
+    ],
+    "current_query": {
+      "text": "What state were we in on ticket LIB-241 and what should I do next?",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    },
+    "target_question": "What state were we in on ticket LIB-241 and what should I do next?",
+    "expected_value": true,
+    "expected_top_layer": "lower_level_memory",
+    "acceptable_top_layers": [
+      "lower_level_memory",
+      "source_evidence"
+    ],
+    "expected_memory_types": [
+      "decision"
+    ],
+    "expected_dimensions": {
+      "task_orientation": [
+        "ticket lib-241",
+        "use_item_event_time flag"
+      ],
+      "prior_findings_reused": [
+        "reservation ordering fix"
+      ],
+      "blocker_state": [],
+      "preserved_progress": [
+        "schema change and backfill done"
+      ],
+      "next_step_guidance": [
+        "wire the admin toggle",
+        "add retry-path coverage"
+      ]
+    },
+    "retrieval_signals": {
+      "task_orientation": [
+        "use_item_event_time flag"
+      ],
+      "preserved_progress": [
+        "schema change and backfill done"
+      ],
+      "next_step_guidance": [
+        "wire the admin toggle",
+        "add retry-path coverage"
+      ]
+    },
+    "dimension_gap_targets": {
+      "task_orientation": [
+        "result_packaging_or_evidence"
+      ],
+      "prior_findings_reused": [
+        "result_packaging_or_evidence"
+      ],
+      "preserved_progress": [
+        "compact_task_state_memory"
+      ],
+      "next_step_guidance": [
+        "compact_task_state_memory"
+      ]
+    },
+    "forbidden_terms": []
+  },
+  {
+    "scenario_id": "same-thread-no-value-continuation",
+    "scenario_family": "no_value_continuation_guard",
+    "description": "If the current thread already names the blocker and next step, memory should not win by replaying older sync details.",
+    "prior_events": [
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-5-artifact-1",
+        "content_type": "text/plain",
+        "content": "Partial progress: refreshed 312 reservation records before the catalog sync tool failed.",
+        "artifact_kind": "tool_use_summary",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-005",
+        "session_ref": "agent-session-wr-005",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-5-artifact-1",
+        "occurred_at": "2026-03-11T12:00:00Z",
+        "metadata": {
+          "topic": "catalog_sync_retry"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-5-artifact-2",
+        "content_type": "text/plain",
+        "content": "Blocked: catalog API returned 401 because the service token expired.",
+        "artifact_kind": "tool_use_summary",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-005",
+        "session_ref": "agent-session-wr-005",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-5-artifact-2",
+        "occurred_at": "2026-03-11T12:01:00Z",
+        "metadata": {
+          "topic": "catalog_sync_retry"
+        }
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "Should we retry the catalog sync now or refresh auth first?"
+      },
+      {
+        "role": "assistant",
+        "artifact_kind": "assistant_output",
+        "content": "Refresh the catalog service token first, then rerun the sync."
+      }
+    ],
+    "current_query": {
+      "text": "Should we retry the catalog sync now or refresh auth first?",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    },
+    "target_question": "Should we retry the catalog sync now or refresh auth first?",
+    "expected_value": false,
+    "expected_top_layer": null,
+    "acceptable_top_layers": [],
+    "expected_memory_types": [],
+    "expected_dimensions": {
+      "task_orientation": [
+        "catalog sync"
+      ],
+      "prior_findings_reused": [],
+      "blocker_state": [
+        "refresh auth first"
+      ],
+      "preserved_progress": [],
+      "next_step_guidance": [
+        "refresh the catalog service token",
+        "rerun the sync"
+      ]
+    },
+    "retrieval_signals": {},
+    "dimension_gap_targets": {},
+    "expected_non_value_reason": "The current thread already carries the blocker and next step, so older memory should not count as a win.",
+    "forbidden_terms": [
+      "312 reservation records",
+      "batch 313"
+    ]
+  }
+]

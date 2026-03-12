@@ -4,20 +4,20 @@ title: Add privacy-aware memory scope enforcement foundation
 status: queued
 priority: high
 commitment: committed
-milestone: Later
+milestone: Next
 ---
 
 ## Summary
 
 Add a generic native-scope and query-enforcement foundation so scope-aware Pallium packages can fail closed, preserve or narrow scope through derivation, and prepare safely for later explicit shared-memory behavior.
 
-This slice should establish the privacy boundary mechanics and the package/capability hooks needed for later shared-memory and cross-container features without trying to ship broad cross-scope reuse in the same step.
+This slice should establish the privacy boundary mechanics and the package/capability hooks needed for later shared-memory and cross-scope features without trying to ship broad cross-scope reuse in the same step.
 
 ## Why
 
 Pallium is a generic memory engine, not a Slack memory engine. Current refs such as `container_ref`, `thread_ref`, and `session_ref` are useful locality metadata, but they are not a privacy model and should not become one accidentally.
 
-Before Pallium can safely support any later cross-container reuse, it needs a generic scope model that lets producers declare visibility boundaries, keeps retrieval fail-closed for scope-aware packages, and prevents local memory objects from silently turning into shared memory.
+For real downstream integration, especially where public and private memory can coexist, this is no longer a distant concern. Before Pallium can be treated as integration-ready, it needs a generic scope model that lets producers declare visibility boundaries, keeps retrieval fail-closed for scope-aware packages, and prevents local memory objects from silently turning into shared memory.
 
 ## In Scope
 
@@ -50,7 +50,7 @@ Before Pallium can safely support any later cross-container reuse, it needs a ge
 4. Direct and higher-level derivation preserve or narrow native scope by default.
 5. The capability and package boundaries are explicit about what core owns, what reusable capabilities own, and what semantic packages own for scope handling.
 6. Evaluation coverage includes missing-scope, mixed-scope, and privacy-leak cases.
-7. Later shared-memory and cross-container roadmap items can build on this foundation instead of redefining privacy ad hoc.
+7. The integration-readiness scenario and any later shared-memory work can build on this foundation instead of redefining privacy ad hoc.
 
 ## Notes
 

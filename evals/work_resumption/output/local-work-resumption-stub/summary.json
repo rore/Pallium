@@ -1,0 +1,101 @@
+{
+  "run_id": "local-work-resumption-stub",
+  "created_at": "2026-03-12T13:48:33.100693+00:00",
+  "scenario_file": "evals\\work_resumption\\scenarios.json",
+  "results_file": "results.jsonl",
+  "provider": "openai_compatible",
+  "model": "fake-answer-model",
+  "prompt_variant": "strict_typed_memory_v4_evidence_guarded",
+  "consolidation_strategy": null,
+  "scenarios_total": 5,
+  "value_scenarios": 4,
+  "non_value_scenarios": 1,
+  "memory_backed_wins": 4,
+  "top_layer_matches": 5,
+  "non_value_guard_successes": 1,
+  "overreach_failures": 0,
+  "scenario_families": [
+    "debugging_continued_from_partial_findings",
+    "no_value_continuation_guard",
+    "resumed_after_auth_or_tool_failure",
+    "resumed_implementation_after_interruption",
+    "resumed_investigation_after_pause"
+  ],
+  "scoring_dimensions": [
+    "task_orientation",
+    "prior_findings_reused",
+    "blocker_state",
+    "preserved_progress",
+    "next_step_guidance"
+  ],
+  "gap_signal_counts": {
+    "compact_task_state_memory": 4,
+    "selected_work_artifact_support": 1
+  },
+  "biggest_gap": "compact_task_state_memory",
+  "biggest_gap_implication": "The next feature should add a compact task-state memory that carries forward progress, blocker state, and the next step without depending on transcript replay.",
+  "dimension_summary": [
+    {
+      "dimension": "task_orientation",
+      "applicable_scenarios": 5,
+      "memory_backed_complete": 5,
+      "memory_backed_better_than_baseline": 3
+    },
+    {
+      "dimension": "prior_findings_reused",
+      "applicable_scenarios": 3,
+      "memory_backed_complete": 3,
+      "memory_backed_better_than_baseline": 3
+    },
+    {
+      "dimension": "blocker_state",
+      "applicable_scenarios": 2,
+      "memory_backed_complete": 2,
+      "memory_backed_better_than_baseline": 1
+    },
+    {
+      "dimension": "preserved_progress",
+      "applicable_scenarios": 3,
+      "memory_backed_complete": 1,
+      "memory_backed_better_than_baseline": 3
+    },
+    {
+      "dimension": "next_step_guidance",
+      "applicable_scenarios": 4,
+      "memory_backed_complete": 1,
+      "memory_backed_better_than_baseline": 1
+    }
+  ],
+  "by_family": [
+    {
+      "scenario_family": "debugging_continued_from_partial_findings",
+      "scenarios_total": 1,
+      "memory_backed_wins": 1,
+      "top_layer_matches": 1
+    },
+    {
+      "scenario_family": "no_value_continuation_guard",
+      "scenarios_total": 1,
+      "memory_backed_wins": 0,
+      "top_layer_matches": 1
+    },
+    {
+      "scenario_family": "resumed_after_auth_or_tool_failure",
+      "scenarios_total": 1,
+      "memory_backed_wins": 1,
+      "top_layer_matches": 1
+    },
+    {
+      "scenario_family": "resumed_implementation_after_interruption",
+      "scenarios_total": 1,
+      "memory_backed_wins": 1,
+      "top_layer_matches": 1
+    },
+    {
+      "scenario_family": "resumed_investigation_after_pause",
+      "scenarios_total": 1,
+      "memory_backed_wins": 1,
+      "top_layer_matches": 1
+    }
+  ]
+}

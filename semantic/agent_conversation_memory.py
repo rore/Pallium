@@ -22,17 +22,34 @@ THREAD_SUMMARY_SYSTEM_PROMPT = (
     "Summarize one agent-mediated conversation thread for future recall. "
     "Return exactly one JSON object and no extra prose. "
     "Use only facts that are explicitly present in the thread items or carried conclusions. "
+    "Selected work artifacts may describe explicit partial progress, blockers, or next steps; include them only when they are explicitly stated. "
     "Do not infer causes, recommendations, next steps, risks, or unresolved conclusions that are not stated. "
     "If the thread is unresolved, say only that it is unresolved. "
     "Keep the summary concise: at most two sentences and roughly 60 words."
 )
-SUPPORTED_THREAD_ARTIFACTS = {
+PRIMARY_THREAD_ARTIFACTS = {
     ("message", "user"),
     ("assistant_output", "assistant"),
+}
+SELECTED_WORK_ARTIFACT_KINDS = {"tool_use_summary", "todo_snapshot"}
+SELECTED_THREAD_ARTIFACTS = {
+    (artifact_kind, "assistant")
+    for artifact_kind in SELECTED_WORK_ARTIFACT_KINDS
 }
 CARRIED_CONCLUSION_TYPES = {"decision", "investigation_outcome"}
 THREAD_SUMMARY_MAX_TEXT_CHARS = 4000
 THREAD_SUMMARY_TEXT_VIEW = "memory_object.thread_summary_context"
+MAX_SELECTED_WORK_ARTIFACTS = 4
+WORK_SIGNAL_PREFIX_TO_TYPE = (
+    ("blocked:", "blocker"),
+    ("blocker:", "blocker"),
+    ("failed attempt:", "blocker"),
+    ("failure:", "blocker"),
+    ("next step:", "next_step"),
+    ("partial progress:", "progress_update"),
+    ("partial finding:", "progress_update"),
+    ("progress:", "progress_update"),
+)
 PATTERN_MEMORY_PROMPT_SCHEMA_ID = "pattern_memory_extraction"
 PATTERN_MEMORY_PROMPT_SCHEMA_VERSION = "v1"
 PATTERN_MEMORY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "pattern_label": "string"}, indent=2)
@@ -73,12 +90,14 @@ ROUTING_SUMMARY_TYPES = {"thread_summary", "discussion_summary"}
 ROUTING_PREFERRED_LAYERS = {
     "answer_continuity": ("continuity_memory", "lower_level_memory", "source_evidence", "pattern_memory"),
     "broad_recall": ("pattern_memory", "lower_level_memory", "continuity_memory", "source_evidence"),
+    "work_resumption": ("source_evidence", "lower_level_memory", "continuity_memory", "pattern_memory"),
     "precise_fact": ("lower_level_memory", "source_evidence", "continuity_memory", "pattern_memory"),
     "evidence_trace": ("source_evidence", "lower_level_memory", "continuity_memory", "pattern_memory"),
 }
 ROUTING_LAYER_WEIGHTS = {
     "answer_continuity": {"continuity_memory": 400, "lower_level_memory": 300, "source_evidence": 200, "pattern_memory": 120},
     "broad_recall": {"pattern_memory": 400, "lower_level_memory": 300, "continuity_memory": 180, "source_evidence": 120},
+    "work_resumption": {"source_evidence": 430, "lower_level_memory": 330, "continuity_memory": 150, "pattern_memory": 70},
     "precise_fact": {"lower_level_memory": 420, "source_evidence": 320, "continuity_memory": 140, "pattern_memory": 60},
     "evidence_trace": {"source_evidence": 460, "lower_level_memory": 360, "continuity_memory": 120, "pattern_memory": 40},
 }
@@ -109,6 +128,7 @@ ROUTING_META_QUERY_TOKENS = {
 ROUTING_WEAK_HIGHER_LEVEL_MATCH_PENALTY = {
     "answer_continuity": 0,
     "broad_recall": 260,
+    "work_resumption": 200,
     "precise_fact": 120,
     "evidence_trace": 120,
 }
@@ -161,7 +181,23 @@ EVIDENCE_TRACE_CUES = (
     "prior message",
     "backed the",
 )
-
+WORK_RESUMPTION_CUES = (
+    "what blocker",
+    "what progress",
+    "what progress was preserved",
+    "what state were we in",
+    "what should i do next",
+    "what should we do next",
+    "what should we try next",
+    "what finding should orient us",
+    "queued again",
+    "resume work",
+)
+WORK_RESUMPTION_NEXT_STEP_CUES = (
+    "next step",
+    "do next",
+    "try next",
+)
 
 class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, ConsolidationSemanticPlugin):
     name = "agent_conversation_memory"
@@ -245,7 +281,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
     def supports_thread_aggregation(self, source_item: SourceItem) -> bool:
         if not source_item.thread_ref or not source_item.container_ref:
             return False
-        return (source_item.artifact_kind or "", source_item.role or "") in SUPPORTED_THREAD_ARTIFACTS
+        return _supports_thread_aggregation(source_item)
 
     def supports_consolidation(self, memory_object: MemoryObject) -> bool:
         return memory_object.type in {"thread_summary", "decision", "investigation_outcome"}
@@ -266,6 +302,8 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             if text:
                 conclusion_lines.append(f"- {conclusion.type}: {text}")
 
+        selected_work_artifacts = _collect_selected_work_artifacts(aggregate.source_items)
+
         thread_material = aggregate.aggregate_text
         if len(thread_material) > THREAD_SUMMARY_MAX_TEXT_CHARS:
             thread_material = thread_material[:THREAD_SUMMARY_MAX_TEXT_CHARS].rstrip() + "\n[thread items truncated for token budget]"
@@ -280,6 +318,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 f"Session ref: {aggregate.session_ref or 'null'}\n"
                 f"Latest occurred at: {aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else 'null'}\n"
                 f"Carried conclusions:\n{chr(10).join(conclusion_lines) if conclusion_lines else '- none'}\n\n"
+                f"Selected work artifacts:\n{_format_selected_work_artifacts(selected_work_artifacts)}\n\n"
                 f"Thread items:\n{thread_material}"
             ),
             schema_description=THREAD_SUMMARY_SCHEMA_DESCRIPTION,
@@ -315,6 +354,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 "session_ref": aggregate.session_ref,
                 "summary": summary,
                 "conclusions": conclusion_payload,
+                "selected_work_artifacts": selected_work_artifacts,
                 "latest_occurred_at": aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else None,
                 "semantic_provenance": semantic_provenance,
             },
@@ -340,7 +380,11 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             for conclusion in carried_conclusions
         )
         index_source = " ".join(
-            [summary, *[item["text"] for item in conclusion_payload if item.get("text")]]
+            [
+                summary,
+                *[item["text"] for item in conclusion_payload if item.get("text")],
+                *[item["text"] for item in selected_work_artifacts if item.get("text")],
+            ]
         )
         index_entry = build_index_entry(
             target_kind="memory_object",
@@ -541,6 +585,8 @@ def _classify_query_intent(text: str) -> str:
     lowered = text.lower()
     if any(cue in lowered for cue in EVIDENCE_TRACE_CUES):
         return "evidence_trace"
+    if any(cue in lowered for cue in WORK_RESUMPTION_CUES):
+        return "work_resumption"
     if any(cue in lowered for cue in ANSWER_CONTINUITY_CUES):
         return "answer_continuity"
     if any(cue in lowered for cue in BROAD_RECALL_CUES) or lowered.startswith("why "):
@@ -548,7 +594,6 @@ def _classify_query_intent(text: str) -> str:
     if any(cue in lowered for cue in PRECISE_FACT_CUES) or lowered.startswith(("what ", "which ", "when ")):
         return "precise_fact"
     return "broad_recall"
-
 
 def _score_routed_candidate(
     item: QueryResultItem,
@@ -596,6 +641,9 @@ def _specificity_bonus(item: QueryResultItem, intent: str, *, query_text: str) -
         bonus += 40 if intent in {"precise_fact", "evidence_trace"} else 20
     if item.result_kind == "memory_hit" and item.type in ROUTING_SUMMARY_TYPES and intent in {"precise_fact", "evidence_trace"}:
         bonus -= 30
+    if item.result_kind == "memory_hit" and item.type == "thread_summary" and intent == "work_resumption":
+        if _memory_hit_has_selected_work_artifacts(item):
+            bonus += 35
     if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "answer_continuity":
         bonus += 25
     if item.result_kind == "memory_hit" and item.type == "pattern_memory" and intent == "broad_recall":
@@ -604,8 +652,11 @@ def _specificity_bonus(item: QueryResultItem, intent: str, *, query_text: str) -
             bonus += 45
     if item.result_kind == "source_hit" and intent == "evidence_trace":
         bonus += 30 if item.artifact_kind == "assistant_output" else 10
+    if item.result_kind == "source_hit" and intent == "work_resumption":
+        bonus += 45 if (item.artifact_kind or "") in SELECTED_WORK_ARTIFACT_KINDS else 20
+        if (item.artifact_kind or "") == "todo_snapshot" and _query_contains_any(query_text, WORK_RESUMPTION_NEXT_STEP_CUES):
+            bonus += 25
     return bonus
-
 
 def _query_contains_any(text: str, cues: Iterable[str]) -> bool:
     lowered = text.lower()
@@ -665,10 +716,18 @@ def _routing_item_text(item: QueryResultItem) -> str:
             for conclusion in item.payload.get("conclusions", []):
                 if isinstance(conclusion, dict):
                     fragments.append(str(conclusion.get("text") or ""))
+        elif item.type == "thread_summary":
+            fragments.append(str(item.payload.get("summary") or ""))
+            for conclusion in item.payload.get("conclusions", []):
+                if isinstance(conclusion, dict):
+                    fragments.append(str(conclusion.get("text") or ""))
+            for work_artifact in item.payload.get("selected_work_artifacts", []):
+                if isinstance(work_artifact, dict):
+                    fragments.append(str(work_artifact.get("signal_type") or ""))
+                    fragments.append(str(work_artifact.get("text") or ""))
         else:
             fragments.append(json.dumps(item.payload, sort_keys=True))
     return " ".join(fragment for fragment in fragments if fragment)
-
 
 def _routing_reason(intent: str, layer: str, content_overlap_tokens: list[str]) -> str:
     weak_match_suffix = " Weak higher-level overlap kept it below better-grounded candidates." if not content_overlap_tokens and layer in ROUTING_HIGHER_LEVEL_TYPES else ""
@@ -688,6 +747,14 @@ def _routing_reason(intent: str, layer: str, content_overlap_tokens: list[str]) 
         if layer == "lower_level_memory":
             return "Lower-level memory stays relevant, but broader recall prefers a consolidated pattern when present."
         return "Source evidence remains available, but compact prior-conclusion memory is preferred."
+    if intent == "work_resumption":
+        if layer == "source_evidence":
+            return "Resume-oriented wording favors exact prior work artifacts and source evidence."
+        if layer == "lower_level_memory":
+            return "Lower-level memory can orient resumed work, but routing keeps sharper prior work evidence ahead of summaries."
+        if layer == "continuity_memory":
+            return "Continuity memory can help resumed work, but exact blocker and next-step evidence is preferred first." + weak_match_suffix
+        return "Pattern memory is too broad for resume-oriented state carry-forward." + weak_match_suffix
     if intent == "precise_fact":
         if layer == "lower_level_memory":
             return "Precise factual wording favors exact lower-level memory over higher-level summaries."
@@ -703,7 +770,6 @@ def _routing_reason(intent: str, layer: str, content_overlap_tokens: list[str]) 
     if layer == "continuity_memory":
         return "Continuity memory is demoted because evidence-trace questions need sharper provenance." + weak_match_suffix
     return "Pattern memory is demoted because evidence-trace questions need sharper provenance." + weak_match_suffix
-
 
 def _routing_strategy_name(item: QueryResultItem) -> str | None:
     if item.result_kind != "memory_hit" or not item.payload:
@@ -822,3 +888,59 @@ def _default_carry_forward_answer(conclusions: list[dict[str, str]]) -> str:
     if conclusions:
         return " ".join(item["text"] for item in conclusions)
     return "A prior answer was recorded in this conversation thread."
+
+
+def _supports_thread_aggregation(source_item: SourceItem) -> bool:
+    artifact_key = ((source_item.artifact_kind or "").lower(), (source_item.role or "").lower())
+    return artifact_key in PRIMARY_THREAD_ARTIFACTS or artifact_key in SELECTED_THREAD_ARTIFACTS
+
+
+def _collect_selected_work_artifacts(source_items: list[SourceItem]) -> list[dict[str, str]]:
+    selected: list[dict[str, str]] = []
+    for source_item in source_items:
+        if not _is_selected_work_artifact(source_item):
+            continue
+        text = source_item.content.strip()
+        if not text:
+            continue
+        selected.append(
+            {
+                "artifact_kind": str(source_item.artifact_kind),
+                "signal_type": _classify_work_signal(source_item),
+                "text": text,
+            }
+        )
+    if len(selected) <= MAX_SELECTED_WORK_ARTIFACTS:
+        return selected
+    return selected[-MAX_SELECTED_WORK_ARTIFACTS:]
+
+
+def _is_selected_work_artifact(source_item: SourceItem) -> bool:
+    return (source_item.artifact_kind or "").lower() in SELECTED_WORK_ARTIFACT_KINDS and (source_item.role or "").lower() == "assistant"
+
+
+def _classify_work_signal(source_item: SourceItem) -> str:
+    artifact_kind = (source_item.artifact_kind or "").lower()
+    lowered = source_item.content.strip().lower()
+    if artifact_kind == "todo_snapshot":
+        return "next_step"
+    for prefix, signal_type in WORK_SIGNAL_PREFIX_TO_TYPE:
+        if lowered.startswith(prefix):
+            return signal_type
+    return "progress_update"
+
+
+def _format_selected_work_artifacts(selected_work_artifacts: list[dict[str, str]]) -> str:
+    if not selected_work_artifacts:
+        return "- none"
+    return "\n".join(
+        f"- {item['signal_type']} ({item['artifact_kind']}): {item['text']}"
+        for item in selected_work_artifacts
+    )
+
+
+def _memory_hit_has_selected_work_artifacts(item: QueryResultItem) -> bool:
+    if item.result_kind != "memory_hit" or not item.payload:
+        return False
+    selected = item.payload.get("selected_work_artifacts", [])
+    return isinstance(selected, list) and any(isinstance(entry, dict) and entry.get("text") for entry in selected)

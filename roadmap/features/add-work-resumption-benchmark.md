@@ -1,10 +1,10 @@
 ---
 id: add-work-resumption-benchmark
 title: Add work-resumption benchmark
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary
@@ -52,4 +52,11 @@ Before Pallium expands retrieval sophistication again, it needs an acceptance be
 
 ## Notes
 
-This slice should build on the current scenario/eval approach and on the public-corpus lessons, but it should not assume that public chat corpora alone are a sufficient proxy for tool-mediated developer workflows.
+This slice should build on the current scenario/eval approach and on the public-corpus lessons, but it should not assume that public chat corpora alone are a sufficient proxy for tool-mediated developer workflows. The gap rollup is intentionally hypothesis-driven: scenario-authored `dimension_gap_targets` contribute to it, so the benchmark should guide the next slice rather than claim fully neutral discovery.
+
+Implemented in:
+
+- `evals/work_resumption_benchmark.py`
+- `evals/work_resumption/scenarios.json`
+- `tests/test_work_resumption_benchmark.py`
+

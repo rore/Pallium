@@ -67,15 +67,28 @@ def _build_item_extraction_payload(user_prompt: str) -> dict[str, object]:
 
 
 def _build_thread_summary_payload(user_prompt: str) -> dict[str, str]:
-    if 'Investigation found' in user_prompt and 'Decision:' in user_prompt:
+    lower = user_prompt.lower()
+    if 'investigation found' in lower and 'decision:' in lower:
         return {
             'summary': 'The thread found that arrival-time ordering caused hold problems during catalog sync delays and decided to use item event time ordering.'
         }
-    if 'Investigation found' in user_prompt:
+    if 'schema change and backfill done' in lower and 'admin toggle' in lower:
+        return {
+            'summary': 'The thread kept the reservation ordering fix behind the use_item_event_time flag, finished the schema and backfill work, and still needs the admin toggle plus retry-path coverage.'
+        }
+    if 'service token expired' in lower and 'batch 313' in lower:
+        return {
+            'summary': 'The thread refreshed 312 reservation records before a 401 caused by an expired catalog service token, and the next step is to refresh the token and resume from batch 313.'
+        }
+    if 'reservation cache is warm' in lower and 'compare cache invalidation' in lower:
+        return {
+            'summary': 'The thread narrowed duplicate-hold debugging to warm-cache invalidation on delayed sync workers and should compare invalidation between delayed and immediate workers next.'
+        }
+    if 'investigation found' in lower:
         return {
             'summary': 'The thread found that arrival-time ordering caused hold problems during catalog sync delays.'
         }
-    if '30-minute batches' in user_prompt:
+    if '30-minute batches' in lower:
         return {
             'summary': 'The thread decided to send overdue notices in 30-minute batches to avoid staff inbox spam.'
         }

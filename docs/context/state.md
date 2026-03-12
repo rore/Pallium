@@ -29,6 +29,10 @@
   - `continuity_memory`
   - fallback `discussion_summary`
 - reusable thread aggregation capability now exists for `agent_conversation_memory`
+- `agent_conversation_memory` now accepts a bounded evidence set beyond user messages and final assistant outputs:
+  - selected assistant-originated `tool_use_summary` artifacts for explicit progress or blocker state
+  - selected assistant-originated `todo_snapshot` artifacts for explicit next-step state
+  - raw tool logs, raw MCP events, and exhaustive runtime notifications remain out of scope
 - reusable bounded consolidation capability now exists for higher-level `pattern_memory` and `continuity_memory`
 - semantic eval uses one committed JSONL regression batch and one baseline metrics document
 - runtime can now select `agent_conversation_memory` as an explicit use-case entry point
@@ -45,6 +49,7 @@
 - a bounded offline public-corpus eval path now exists for WildChat reviewed-manifest selection plus a complementary WildBench reviewed task slice, with local helper workflows for both
 - realistic agent-conversation scenarios now exist under `evals/agent_conversation/`
 - recurring-question benchmark now exists under `evals/recurring_question/`
+- work-resumption benchmark now exists under `evals/work_resumption/`
 - memory-routing benchmark now exists under `evals/memory_routing/`
 - consolidation strategy comparison harness now exists under `evals/consolidation/`
 - tiered-memory validation benchmark now exists under `evals/tiered_memory_validation/`
@@ -52,7 +57,7 @@
 
 ## Verification Notes
 
-- `pytest` passes locally: `74 passed`
+- last recorded full-suite `pytest` run passes locally: `74 passed`
 - focused retrieval-trace slice tests pass locally:
   - `tests/test_storage_sqlite.py`
   - `tests/test_api.py`
@@ -61,6 +66,7 @@
 - focused routing slice tests pass locally:
   - `tests/test_agent_conversation_memory_routing.py`
   - `tests/test_recurring_question_benchmark.py`
+  - `tests/test_work_resumption_benchmark.py`
   - `tests/test_tiered_memory_validation_runner.py`
   - `tests/test_tiered_memory.py`
   - `tests/test_api.py`
@@ -78,6 +84,11 @@
   - `evals/recurring_question/output/local-recurring-question-smoke`
   - `2` value scenarios where memory-backed won
   - `1` non-value scenario where memory-backed correctly did not win
+- deterministic work-resumption benchmark now exists as the committed continuity guardrail:
+  - `evals/work_resumption/`
+  - scenario families cover resumed investigation, debugging from partial findings, auth/tool-failure recovery, interrupted ticket work, and no-value continuation guards
+  - the gap rollup is partly hypothesis-driven because scenario-authored `dimension_gap_targets` contribute to it, so benchmark results should be read as guidance rather than neutral proof
+  - the benchmark is intended to guide which continuity capability currently scores highest as the next missing slice after bounded selected work-artifact support: compact task-state memory, routing/layer choice, result packaging/evidence, or retrieval recall
 - deterministic memory-routing benchmark run succeeded locally:
   - `evals/memory_routing/output/local-memory-routing-stub`
   - `10 / 10` policy-success scenarios
@@ -147,6 +158,5 @@
 - `Retry-After` is honored when present
 - invalid successful responses remain fail-fast and are not retried
 - live eval/benchmark paths now use the same provider resilience path as normal semantic extraction
-
 
 

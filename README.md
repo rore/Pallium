@@ -22,7 +22,7 @@ Current implemented shape:
 - mixed retrieval over memory hits and compact source hits
 - package-owned internal routing over higher-level memory, lower-level memory, and source evidence
 - explicit event refs for message and assistant-artifact ingest
-- first concrete product package: agent conversation memory over user messages and final assistant outputs
+- first concrete product package: agent conversation memory over user messages, final assistant outputs, and selected assistant-originated work artifacts for bounded progress, blocker, and next-step continuity
 - typed and higher-level memory for:
   - `decision`
   - `investigation_outcome`
@@ -34,6 +34,7 @@ Current implemented shape:
 - committed semantic regression set and eval harness
 - realistic agent-conversation scenario test bed and runner
 - recurring-question value benchmark
+- work-resumption continuity benchmark
 - memory-routing benchmark for routed retrieval policy
 - simulation script, Bruno collection, and pytest coverage
 
@@ -63,9 +64,12 @@ Important current behavior:
 Current semantic package focus:
 
 - `agent_conversation_memory` as the first explicit product package
-- MVP evidence model:
+- current bounded evidence model:
   - `artifact_kind="message"` with `role="user"`
   - `artifact_kind="assistant_output"` with `role="assistant"`
+  - selected assistant-originated work artifacts:
+    - `artifact_kind="tool_use_summary"` with `role="assistant"` for explicit progress or blocker state
+    - `artifact_kind="todo_snapshot"` with `role="assistant"` for explicit next-step state
 - target value questions:
   - what did we already conclude?
   - why did we choose this?
@@ -73,6 +77,7 @@ Current semantic package focus:
   - what prior agent-conversation context should carry into this new thread?
 - out of scope for this package:
   - ambient workplace chat that never flowed through an agent
+  - raw tool logs, raw MCP events, or exhaustive runtime-notification ingest
   - full transcript replay as the default retrieval goal
 
 Current semantic output supports:
@@ -155,6 +160,49 @@ Each run writes:
 The committed benchmark is the first user-facing proof layer for whether Pallium improves recurring-question handling with current-thread context, lower-level memory, and later higher-level memory modes.
 
 The current package now also uses internal routed retrieval policy so broad recall, repeated-answer continuity, precise factual lookup, and evidence-trace questions can prefer different layers while remaining inspectable through `/query/debug`.
+
+## Work Resumption Benchmark
+
+Pallium now includes a bounded work-resumption benchmark for workflow continuity within the current `agent_conversation_memory` slice.
+
+It measures whether retrieved memory and source evidence help an agent stay oriented across:
+
+- resumed investigation after a pause
+- debugging continued from partial findings
+- resumed work after auth or tool failure with partial progress preserved
+- resumed implementation or ticket work after interruption
+- no-value continuation cases where the current thread should already be enough
+
+The benchmark scores:
+
+- task orientation
+- prior findings reuse
+- blocker state carry-forward
+- preserved progress
+- next-step guidance
+
+The gap rollup is hypothesis-driven: scenario-authored `dimension_gap_targets` contribute to it, so the benchmark should be treated as a directional guide to the next continuity slice rather than a neutral discovery engine.
+
+It reports authored continuity-gap signals that can indicate the next slice, such as:
+
+- compact task-state memory
+- routing or layer choice
+- result packaging or evidence
+- retrieval recall
+
+In this branch, that benchmark guidance already led to bounded selected work-artifact support rather than a broader runtime-log ingest model.
+
+Run it with:
+
+```powershell
+.\.venv\Scripts\python.exe -m evals.work_resumption_benchmark
+```
+
+Each run writes:
+
+- `summary.json`
+- `results.jsonl`
+- `report.md`
 
 ## Memory Routing Benchmark
 
@@ -399,7 +447,4 @@ Use `--split-output` only when you want per-input debug files.
 - [C:/Dev/rore/Pallium/docs/context/architecture.md](C:/Dev/rore/Pallium/docs/context/architecture.md)
 - [C:/Dev/rore/Pallium/docs/context/state.md](C:/Dev/rore/Pallium/docs/context/state.md)
 - [C:/Dev/rore/Pallium/roadmap/board.md](C:/Dev/rore/Pallium/roadmap/board.md)
-
-
-
 

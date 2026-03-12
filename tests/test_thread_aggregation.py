@@ -14,9 +14,19 @@ from providers.llm.base import LLMJsonResponse
 class ThreadAwareStubProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
         if "Thread items:" in user_prompt:
-            payload = {
-                "summary": "Reservation ordering thread summary with prior findings and decision.",
-            }
+            lower = user_prompt.lower()
+            if "schema change and backfill done" in lower and "admin toggle" in lower:
+                payload = {
+                    "summary": "Ticket LIB-241 has the schema and backfill done, and the next step is wiring the admin toggle plus retry-path coverage.",
+                }
+            elif "service token expired" in lower and "batch 313" in lower:
+                payload = {
+                    "summary": "The sync retry hit a 401 because the service token expired after 312 reservation records, so the next step is refreshing the token and resuming from batch 313.",
+                }
+            else:
+                payload = {
+                    "summary": "Reservation ordering thread summary with prior findings and decision.",
+                }
         elif "Investigation found that arrival-time ordering skipped hold updates during catalog sync delays." in user_prompt:
             payload = {
                 "summary": "Prior investigation about missing holds.",
@@ -119,6 +129,68 @@ def test_thread_summary_is_created_and_superseded(monkeypatch, test_db_url: str)
     superseded = [item for item in thread_summaries.values() if item.lifecycle == "superseded"]
     assert len(active) == 1
     assert superseded
+
+
+def test_thread_summary_preserves_selected_work_artifacts(monkeypatch, test_db_url: str) -> None:
+    client = _create_thread_client(monkeypatch, test_db_url)
+
+    for payload in (
+        {
+            "source_type": "chat_message",
+            "source_id": "thread-msg-work-1",
+            "content_type": "text/plain",
+            "content": "What state were we in on ticket LIB-241 before the interruption?",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-agg-work-001",
+            "session_ref": "agent-session-agg-work-001",
+        },
+        {
+            "source_type": "assistant_artifact",
+            "source_id": "thread-work-artifact-1",
+            "content_type": "text/plain",
+            "content": "Partial progress: ticket LIB-241 has the schema change and backfill done.",
+            "artifact_kind": "tool_use_summary",
+            "role": "assistant",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-agg-work-001",
+            "session_ref": "agent-session-agg-work-001",
+        },
+        {
+            "source_type": "assistant_artifact",
+            "source_id": "thread-work-artifact-2",
+            "content_type": "text/plain",
+            "content": "Next step: wire the admin toggle and add retry-path coverage before enabling the flag.",
+            "artifact_kind": "todo_snapshot",
+            "role": "assistant",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-agg-work-001",
+            "session_ref": "agent-session-agg-work-001",
+        },
+    ):
+        response = client.post("/items", json=payload)
+        assert response.status_code == 200
+
+    query_response = client.post(
+        "/query",
+        json={
+            "text": "what state were we in on ticket lib 241 and what should i do next?",
+            "limit": 8,
+            "container_ref": "chat:library-help",
+        },
+    )
+    assert query_response.status_code == 200
+    memory_hits = [item for item in query_response.json()["results"] if item["result_kind"] == "memory_hit"]
+    thread_summary = next(item for item in memory_hits if item["type"] == "thread_summary")
+    selected = thread_summary["payload"]["selected_work_artifacts"]
+
+    assert [item["signal_type"] for item in selected] == ["progress_update", "next_step"]
+    assert any("schema change and backfill done" in item["text"] for item in selected)
+    assert any("wire the admin toggle" in item["text"] for item in selected)
+    evidence_kinds = {item["artifact_kind"] for item in thread_summary["evidence"]}
+    assert "tool_use_summary" in evidence_kinds
+    assert "todo_snapshot" in evidence_kinds
 
 
 def test_thread_summary_carries_forward_typed_conclusions(monkeypatch, test_db_url: str) -> None:

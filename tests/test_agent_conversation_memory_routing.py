@@ -116,6 +116,66 @@ def test_evidence_trace_routes_source_evidence_first(monkeypatch, test_db_url: s
         )
 
 
+def test_work_resumption_routes_selected_work_artifacts_to_source_evidence_first(monkeypatch, test_db_url: str) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        for payload in (
+            {
+                'source_type': 'chat_message',
+                'source_id': 'resume-msg-1',
+                'content_type': 'text/plain',
+                'content': 'The catalog sync retry is queued again.',
+                'artifact_kind': 'message',
+                'role': 'user',
+                'container_ref': 'chat:library-help',
+                'thread_ref': 'chat:library-help:thread-routing-work-001',
+                'session_ref': 'agent-session-routing-work-001',
+            },
+            {
+                'source_type': 'assistant_artifact',
+                'source_id': 'resume-work-1',
+                'content_type': 'text/plain',
+                'content': 'Blocked: catalog API returned 401 because the service token expired.',
+                'artifact_kind': 'tool_use_summary',
+                'role': 'assistant',
+                'container_ref': 'chat:library-help',
+                'thread_ref': 'chat:library-help:thread-routing-work-001',
+                'session_ref': 'agent-session-routing-work-001',
+            },
+            {
+                'source_type': 'assistant_artifact',
+                'source_id': 'resume-work-2',
+                'content_type': 'text/plain',
+                'content': 'Next step: refresh the catalog service token and rerun the sync from batch 313.',
+                'artifact_kind': 'todo_snapshot',
+                'role': 'assistant',
+                'container_ref': 'chat:library-help',
+                'thread_ref': 'chat:library-help:thread-routing-work-001',
+                'session_ref': 'agent-session-routing-work-001',
+            },
+        ):
+            response = client.post('/items', json=payload)
+            assert response.status_code == 200
+
+        payload = _run_debug_query(
+            client,
+            {
+                'text': 'What blocker did we hit and what should we do next on the catalog sync retry?',
+                'limit': 6,
+                'container_ref': 'chat:library-help',
+            },
+        )
+        routing = payload['trace']['routing']
+
+        assert routing['query_intent'] == 'work_resumption'
+        assert routing['preferred_layers'][0] == 'source_evidence'
+        assert payload['results'][0]['result_kind'] == 'source_hit'
+        assert payload['results'][0]['artifact_kind'] in {'tool_use_summary', 'todo_snapshot'}
+        assert any(
+            item['result_kind'] == 'memory_hit' and item['type'] == 'thread_summary'
+            for item in payload['results']
+        )
+
+
 def test_broad_recall_filters_unrelated_continuity_memory(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
         scenario = _ingest_prior_events(client, 'same-container-false-merge-guard')
