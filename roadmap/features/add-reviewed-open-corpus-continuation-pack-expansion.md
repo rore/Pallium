@@ -1,10 +1,10 @@
 ---
 id: add-reviewed-open-corpus-continuation-pack-expansion
 title: Expand reviewed open-corpus continuation packs
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary
