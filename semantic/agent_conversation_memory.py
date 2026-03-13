@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from collections import OrderedDict
 from typing import Iterable
 
@@ -8,7 +9,7 @@ from capabilities.consolidation import ConsolidationGroup, ConsolidationPolicy
 from capabilities.thread_aggregation import ThreadAggregate
 from core.contracts import ProcessResult
 from core.indexing import build_index_entry
-from core.models import MemoryObject, QueryResultItem, QueryTrace, Relation, SourceItem
+from core.models import MemoryObject, QueryFilters, QueryResultItem, QueryTrace, Relation, SourceItem
 from providers.llm.base import LLMProvider
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
 from semantic.common import normalize_for_index
@@ -108,7 +109,7 @@ TASK_CHECKPOINT_SYSTEM_PROMPT = (
 )
 TASK_CHECKPOINT_MAX_TEXT_CHARS = 3200
 TASK_CHECKPOINT_TEXT_VIEW = "memory_object.task_checkpoint_context"
-ROUTING_POLICY_NAME = "agent_conversation_memory.intent_routing.v1"
+ROUTING_POLICY_NAME = "agent_conversation_memory.intent_routing.v2"
 ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory", "task_checkpoint"}
 ROUTING_LOWER_LEVEL_EXACT_TYPES = {"decision", "investigation_outcome"}
 ROUTING_SUMMARY_TYPES = {"thread_summary", "discussion_summary"}
@@ -157,6 +158,17 @@ ROUTING_WEAK_HIGHER_LEVEL_MATCH_PENALTY = {
     "precise_fact": 120,
     "evidence_trace": 120,
 }
+ROUTING_SAFE_FALLBACK_LAYERS = {
+    "answer_continuity": ("lower_level_memory", "source_evidence"),
+    "broad_recall": ("lower_level_memory", "source_evidence", "task_checkpoint"),
+    "work_resumption": ("source_evidence", "lower_level_memory"),
+    "precise_fact": ("source_evidence",),
+    "evidence_trace": ("lower_level_memory",),
+}
+ROUTING_SUPPORT_THRESHOLD = {"weak": 0, "supported": 60, "strong": 110}
+ROUTING_FALLBACK_MARGIN = 35
+ROUTING_FOCUS_BOOST = 120
+ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY = 90
 ANSWER_CONTINUITY_CUES = (
     "already answered",
     "answered before",
@@ -202,6 +214,9 @@ EVIDENCE_TRACE_CUES = (
     "exact prior evidence",
     "what evidence",
     "show evidence",
+    "quote the earlier",
+    "quote the earlier note",
+    "quote the note",
     "which source",
     "source evidence",
     "supported the",
@@ -239,6 +254,14 @@ WORK_RESUMPTION_BLOCKER_CUES = (
     "failure",
     "failed",
 )
+WORK_RESUMPTION_SIGNAL_TYPES = ("task", "progress_update", "key_finding", "blocker", "next_step", "evidence", "freshness")
+WORK_RESUMPTION_SHARP_CHECKPOINT_THRESHOLD = 44
+WORK_RESUMPTION_THIN_CHECKPOINT_PENALTY = 70
+WORK_RESUMPTION_STALE_STATE_PENALTY = 55
+WORK_RESUMPTION_STALE_SOURCE_PENALTY = 28
+WORK_RESUMPTION_FRESH_STATE_BONUS = 18
+WORK_RESUMPTION_FRESHNESS_MARGIN_SECONDS = 5400
+WORK_RESUMPTION_SIGNAL_PRIORITY = ("blocker", "next_step", "progress_update")
 
 class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, ConsolidationSemanticPlugin):
     name = "agent_conversation_memory"
@@ -291,14 +314,49 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         text: str,
         requested_limit: int,
         retrieval_result,
+        query_filters: QueryFilters | None = None,
     ) -> tuple[list[QueryResultItem], QueryTrace | None]:
         intent = _classify_query_intent(text)
         preferred_layers = ROUTING_PREFERRED_LAYERS[intent]
         query_tokens = _routing_query_tokens(text)
         scored_candidates = [
-            _score_routed_candidate(item, intent, query_text=text, query_tokens=query_tokens, lexical_rank=index)
+            _score_routed_candidate(
+                item,
+                intent,
+                query_text=text,
+                query_tokens=query_tokens,
+                lexical_rank=index,
+                query_filters=query_filters,
+            )
             for index, item in enumerate(retrieval_result.results, start=1)
         ]
+        packaging_summary = None
+        if intent == "work_resumption" and scored_candidates:
+            packaging_summary = _apply_work_resumption_packaging(
+                scored_candidates,
+                query_filters=query_filters,
+            )
+        layer_summary = _summarize_routing_layers(scored_candidates)
+        routing_focus = _select_routing_focus(
+            intent=intent,
+            preferred_layers=preferred_layers,
+            layer_summary=layer_summary,
+        )
+        for candidate in scored_candidates:
+            candidate["routing_score"] = int(candidate["base_routing_score"]) + _routing_focus_adjustment(
+                layer=str(candidate["layer"]),
+                selected_layer=str(routing_focus["selected_layer"]),
+                primary_layer=preferred_layers[0],
+                fallback_applied=bool(routing_focus["applied"]),
+            )
+            candidate["reason"] = _routing_reason(
+                intent=intent,
+                layer=str(candidate["layer"]),
+                content_overlap_tokens=list(candidate["content_overlap_tokens"]),
+                support_grade=str(candidate["support_grade"]),
+                routing_focus=routing_focus,
+                packaging_reasons=list(candidate["packaging_reasons"]),
+            )
         ranked_candidates = sorted(
             scored_candidates,
             key=lambda candidate: (candidate["routing_score"], candidate["lexical_score"]),
@@ -306,7 +364,13 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         )
         for routing_rank, candidate in enumerate(ranked_candidates, start=1):
             candidate["routing_rank"] = routing_rank
-        final_candidates = ranked_candidates[:requested_limit]
+        final_candidates, packaging_summary = _select_final_candidates(
+            intent=intent,
+            ranked_candidates=ranked_candidates,
+            requested_limit=requested_limit,
+            query_filters=query_filters,
+            packaging_summary=packaging_summary,
+        )
         final_results = [candidate["item"] for candidate in final_candidates]
 
         routed_trace = None
@@ -321,8 +385,11 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 routing=_build_routing_trace(
                     intent=intent,
                     preferred_layers=preferred_layers,
+                    layer_summary=layer_summary,
+                    routing_focus=routing_focus,
                     ranked_candidates=ranked_candidates,
                     final_candidates=final_candidates,
+                    packaging_summary=packaging_summary,
                 ),
             )
 
@@ -782,26 +849,47 @@ def _score_routed_candidate(
     query_text: str,
     query_tokens: tuple[str, ...],
     lexical_rank: int,
+    query_filters: QueryFilters | None,
 ) -> dict[str, object]:
     layer = _result_layer(item)
     lexical_score = int(item.score)
     overlap_tokens = _routing_overlap_tokens(item, query_tokens)
     content_overlap_tokens = [token for token in overlap_tokens if token not in ROUTING_META_QUERY_TOKENS]
-    routing_score = (
+    evidence_shape_score = _candidate_evidence_shape_score(
+        item,
+        layer=layer,
+        content_overlap_tokens=content_overlap_tokens,
+        query_filters=query_filters,
+    )
+    base_routing_score = (
         ROUTING_LAYER_WEIGHTS[intent][layer]
         + (lexical_score * 10)
         + _specificity_bonus(item, intent, query_text=query_text)
+        + evidence_shape_score
         + _routing_overlap_adjustment(layer, intent, content_overlap_tokens)
     )
+    support_grade = _routing_support_grade(evidence_shape_score)
     return {
         "item": item,
         "layer": layer,
         "lexical_rank": lexical_rank,
         "lexical_score": lexical_score,
-        "routing_score": routing_score,
-        "reason": _routing_reason(intent, layer, content_overlap_tokens),
+        "base_routing_score": base_routing_score,
+        "routing_score": base_routing_score,
+        "support_score": evidence_shape_score,
+        "support_grade": support_grade,
+        "reason": "",
         "strategy_name": _routing_strategy_name(item),
         "content_overlap_tokens": content_overlap_tokens,
+        "evidence_count": len(item.evidence),
+        "same_thread": _candidate_matches_thread(item, query_filters),
+        "same_container": _candidate_matches_container(item, query_filters),
+        "freshness_timestamp_value": _candidate_freshness_timestamp(item),
+        "freshness_timestamp": None,
+        "packaging_adjustment": 0,
+        "packaging_reasons": [],
+        "work_signal_types": (),
+        "work_usefulness_score": 0,
     }
 
 
@@ -938,57 +1026,73 @@ def _routing_item_text(item: QueryResultItem) -> str:
             fragments.append(json.dumps(item.payload, sort_keys=True))
     return " ".join(fragment for fragment in fragments if fragment)
 
-def _routing_reason(intent: str, layer: str, content_overlap_tokens: list[str]) -> str:
+def _routing_reason(
+    intent: str,
+    layer: str,
+    content_overlap_tokens: list[str],
+    support_grade: str,
+    routing_focus: dict[str, object],
+    packaging_reasons: list[str],
+) -> str:
     weak_match_suffix = " Weak higher-level overlap kept it below better-grounded candidates." if not content_overlap_tokens and layer in ROUTING_HIGHER_LEVEL_TYPES else ""
+    fallback_suffix = _routing_fallback_suffix(
+        layer=layer,
+        selected_layer=str(routing_focus["selected_layer"]),
+        primary_layer=str(routing_focus["primary_layer"]),
+        applied=bool(routing_focus["applied"]),
+        reason_code=str(routing_focus["reason_code"]),
+        support_grade=support_grade,
+    )
+    packaging_suffix = _routing_packaging_suffix(packaging_reasons)
     if intent == "answer_continuity":
         if layer == "continuity_memory":
-            return "Repeated-answer wording favors compact carry-forward memory."
+            return "Repeated-answer wording favors compact carry-forward memory." + fallback_suffix + packaging_suffix
         if layer == "task_checkpoint":
-            return "Task checkpoints are narrower than repeated-answer carry-forward memory." + weak_match_suffix
+            return "Task checkpoints are narrower than repeated-answer carry-forward memory." + weak_match_suffix + fallback_suffix + packaging_suffix
         if layer == "pattern_memory":
-            return "Broad pattern memory is demoted because the query is asking whether the answer was already given."
+            return "Broad pattern memory is demoted because the query is asking whether the answer was already given." + fallback_suffix + packaging_suffix
         if layer == "lower_level_memory":
-            return "Exact lower-level memory remains a fallback behind continuity carry-forward."
-        return "Source evidence remains available, but routing prefers compact carry-forward first."
+            return "Exact lower-level memory remains a fallback behind continuity carry-forward." + fallback_suffix + packaging_suffix
+        return "Source evidence remains available, but routing prefers compact carry-forward first." + fallback_suffix + packaging_suffix
     if intent == "broad_recall":
         if layer == "pattern_memory":
-            return "Broad recall wording favors higher-level pattern memory." + weak_match_suffix
+            return "Broad recall wording favors higher-level pattern memory." + weak_match_suffix + fallback_suffix + packaging_suffix
         if layer == "continuity_memory":
-            return "Continuity memory is narrower than the broad prior-conclusion question." + weak_match_suffix
+            return "Continuity memory is narrower than the broad prior-conclusion question." + weak_match_suffix + fallback_suffix + packaging_suffix
         if layer == "task_checkpoint":
-            return "Task checkpoints are narrower than the broad prior-conclusion question." + weak_match_suffix
+            return "Task checkpoints are narrower than the broad prior-conclusion question." + weak_match_suffix + fallback_suffix + packaging_suffix
         if layer == "lower_level_memory":
-            return "Lower-level memory stays relevant, but broader recall prefers a consolidated pattern when present."
-        return "Source evidence remains available, but compact prior-conclusion memory is preferred."
+            return "Lower-level memory stays relevant, but broader recall prefers a consolidated pattern when present." + fallback_suffix + packaging_suffix
+        return "Source evidence remains available, but compact prior-conclusion memory is preferred." + fallback_suffix + packaging_suffix
     if intent == "work_resumption":
         if layer == "task_checkpoint":
-            return "Resume-oriented wording favors compact task checkpoints that preserve task state, blockers, and next steps." + weak_match_suffix
+            return "Resume-oriented wording favors compact task checkpoints that preserve task state, blockers, and next steps." + weak_match_suffix + fallback_suffix + packaging_suffix
         if layer == "source_evidence":
-            return "Resume-oriented wording favors exact prior work artifacts and source evidence."
+            return "Resume-oriented wording favors exact prior work artifacts and source evidence." + fallback_suffix + packaging_suffix
         if layer == "lower_level_memory":
-            return "Lower-level memory can orient resumed work, but routing keeps sharper prior work evidence ahead of summaries."
+            return "Lower-level memory can orient resumed work, but routing keeps sharper prior work evidence ahead of summaries." + fallback_suffix + packaging_suffix
         if layer == "continuity_memory":
-            return "Continuity memory can help resumed work, but exact blocker and next-step evidence is preferred first." + weak_match_suffix
-        return "Pattern memory is too broad for resume-oriented state carry-forward." + weak_match_suffix
+            return "Continuity memory can help resumed work, but exact blocker and next-step evidence is preferred first." + weak_match_suffix + fallback_suffix + packaging_suffix
+        return "Pattern memory is too broad for resume-oriented state carry-forward." + weak_match_suffix + fallback_suffix + packaging_suffix
     if intent == "precise_fact":
         if layer == "lower_level_memory":
-            return "Precise factual wording favors exact lower-level memory over higher-level summaries."
+            return "Precise factual wording favors exact lower-level memory over higher-level summaries." + fallback_suffix + packaging_suffix
         if layer == "source_evidence":
-            return "Source evidence stays near the top for precise factual lookup."
+            return "Source evidence stays near the top for precise factual lookup." + fallback_suffix + packaging_suffix
         if layer == "task_checkpoint":
-            return "Task checkpoints are demoted because they compress state instead of preserving exact factual detail." + weak_match_suffix
+            return "Task checkpoints are demoted because they compress state instead of preserving exact factual detail." + weak_match_suffix + fallback_suffix + packaging_suffix
         if layer == "continuity_memory":
-            return "Continuity memory is demoted because it can blur exact factual lookup." + weak_match_suffix
-        return "Pattern memory is demoted because it can blur exact factual lookup." + weak_match_suffix
+            return "Continuity memory is demoted because it can blur exact factual lookup." + weak_match_suffix + fallback_suffix + packaging_suffix
+        return "Pattern memory is demoted because it can blur exact factual lookup." + weak_match_suffix + fallback_suffix + packaging_suffix
     if layer == "source_evidence":
-        return "Evidence-trace wording favors raw supporting source evidence."
+        return "Evidence-trace wording favors raw supporting source evidence." + fallback_suffix + packaging_suffix
     if layer == "lower_level_memory":
-        return "Lower-level memory stays close behind source evidence for evidence-trace questions."
+        return "Lower-level memory stays close behind source evidence for evidence-trace questions." + fallback_suffix + packaging_suffix
     if layer == "task_checkpoint":
-        return "Task checkpoints are demoted because evidence-trace questions need sharper provenance." + weak_match_suffix
+        return "Task checkpoints are demoted because evidence-trace questions need sharper provenance." + weak_match_suffix + fallback_suffix + packaging_suffix
     if layer == "continuity_memory":
-        return "Continuity memory is demoted because evidence-trace questions need sharper provenance." + weak_match_suffix
-    return "Pattern memory is demoted because evidence-trace questions need sharper provenance." + weak_match_suffix
+        return "Continuity memory is demoted because evidence-trace questions need sharper provenance." + weak_match_suffix + fallback_suffix + packaging_suffix
+    return "Pattern memory is demoted because evidence-trace questions need sharper provenance." + weak_match_suffix + fallback_suffix + packaging_suffix
 
 def _routing_strategy_name(item: QueryResultItem) -> str | None:
     if item.result_kind != "memory_hit" or not item.payload:
@@ -1010,8 +1114,11 @@ def _build_routing_trace(
     *,
     intent: str,
     preferred_layers: tuple[str, ...],
+    layer_summary: dict[str, dict[str, object]],
+    routing_focus: dict[str, object],
     ranked_candidates: list[dict[str, object]],
     final_candidates: list[dict[str, object]],
+    packaging_summary: dict[str, object] | None,
 ) -> dict[str, object]:
     selected_results = [_build_routing_trace_entry(candidate) for candidate in final_candidates]
     demoted_higher_level_hits = [
@@ -1020,13 +1127,25 @@ def _build_routing_trace(
         if candidate["layer"] in ROUTING_HIGHER_LEVEL_TYPES
         and int(candidate["routing_rank"]) > int(candidate["lexical_rank"])
     ][:4]
-    return {
+    trace = {
         "policy_name": ROUTING_POLICY_NAME,
         "query_intent": intent,
         "preferred_layers": list(preferred_layers),
+        "selected_layer": routing_focus["selected_layer"],
+        "fallback": {
+            "applied": routing_focus["applied"],
+            "from_layer": routing_focus["primary_layer"],
+            "to_layer": routing_focus["selected_layer"],
+            "reason_code": routing_focus["reason_code"],
+            "reason": routing_focus["reason"],
+        },
+        "candidate_summary": layer_summary,
         "selected_results": selected_results,
         "demoted_higher_level_hits": demoted_higher_level_hits,
     }
+    if packaging_summary:
+        trace["packaging"] = packaging_summary
+    return trace
 
 
 def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object]:
@@ -1041,15 +1160,644 @@ def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object
         "routing_rank": candidate["routing_rank"],
         "lexical_score": candidate["lexical_score"],
         "routing_score": candidate["routing_score"],
+        "support_score": candidate["support_score"],
+        "support_grade": candidate["support_grade"],
         "reason": candidate["reason"],
     }
     content_overlap_tokens = list(candidate["content_overlap_tokens"])
     if content_overlap_tokens:
         entry["content_overlap_terms"] = content_overlap_tokens
+    if candidate["evidence_count"]:
+        entry["evidence_count"] = candidate["evidence_count"]
+    if candidate["same_thread"]:
+        entry["same_thread"] = True
+    if candidate["same_container"]:
+        entry["same_container"] = True
+    if candidate["freshness_timestamp"]:
+        entry["freshness_timestamp"] = candidate["freshness_timestamp"]
+    if candidate["packaging_adjustment"]:
+        entry["packaging_adjustment"] = candidate["packaging_adjustment"]
+    if candidate["work_usefulness_score"]:
+        entry["work_usefulness_score"] = candidate["work_usefulness_score"]
+    if candidate["work_signal_types"]:
+        entry["work_signal_types"] = list(candidate["work_signal_types"])
+    if candidate["packaging_reasons"]:
+        entry["packaging_reasons"] = list(candidate["packaging_reasons"])
     strategy_name = candidate["strategy_name"]
     if strategy_name is not None:
         entry["strategy_name"] = strategy_name
     return entry
+
+
+def _candidate_evidence_shape_score(
+    item: QueryResultItem,
+    *,
+    layer: str,
+    content_overlap_tokens: list[str],
+    query_filters: QueryFilters | None,
+) -> int:
+    score = len(content_overlap_tokens) * 24
+    evidence_count = len(item.evidence)
+    score += min(evidence_count, 3) * 8
+    if _candidate_matches_thread(item, query_filters):
+        score += 12
+    elif _candidate_matches_container(item, query_filters):
+        score += 6
+
+    if item.result_kind == "source_hit":
+        artifact_kind = (item.artifact_kind or "").lower()
+        if artifact_kind in SELECTED_WORK_ARTIFACT_KINDS:
+            score += 34
+        elif artifact_kind == "assistant_output":
+            score += 28
+        else:
+            score += 18
+        return score
+
+    if item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+        score += 34
+        payload = item.payload or {}
+        if str(payload.get("decision_evidence_text") or payload.get("investigation_evidence_text") or "").strip():
+            score += 10
+        return score
+
+    payload = item.payload or {}
+    if item.type == "task_checkpoint":
+        explicit_fields = sum(
+            1
+            for key in ("task", "current_state", "blocker_state", "next_step", "freshness_signal")
+            if str(payload.get(key) or "").strip()
+        )
+        selected_work_artifacts = payload.get("selected_work_artifacts", [])
+        artifact_count = len(selected_work_artifacts) if isinstance(selected_work_artifacts, list) else 0
+        key_findings = _parse_string_list(payload.get("key_findings"))
+        evidence_lines = _parse_string_list(payload.get("evidence"))
+        score += 18 + min(explicit_fields, 5) * 8 + min(artifact_count, 4) * 6
+        score += min(len(key_findings), 3) * 4 + min(len(evidence_lines), 3) * 5
+        if str(payload.get("blocker_state") or "").strip() and str(payload.get("next_step") or "").strip():
+            score += 10
+        freshness_text = str(payload.get("freshness_signal") or "").lower()
+        if freshness_text and any(marker in freshness_text for marker in ("latest", "current", "stale")):
+            score += 6
+        if not evidence_lines and not key_findings:
+            score -= 12
+        return score
+
+    if item.type == "continuity_memory":
+        score += 18
+        if str(payload.get("carry_forward_answer") or "").strip():
+            score += 18
+    elif item.type == "pattern_memory":
+        score += 14
+        if str(payload.get("pattern_label") or "").strip() and str(payload.get("pattern_label") or "").strip() != "generic_pattern":
+            score += 10
+    elif item.type in ROUTING_SUMMARY_TYPES:
+        score += 8
+
+    conclusions = payload.get("conclusions", [])
+    if isinstance(conclusions, list):
+        score += min(len([entry for entry in conclusions if isinstance(entry, dict) and entry.get("text")]), 3) * 8
+    return score
+
+
+def _apply_work_resumption_packaging(
+    scored_candidates: list[dict[str, object]],
+    *,
+    query_filters: QueryFilters | None,
+) -> dict[str, object]:
+    relevant_candidates = [
+        candidate
+        for candidate in scored_candidates
+        if _candidate_matches_requested_locality(candidate, query_filters)
+    ]
+    freshest_timestamp = max(
+        (
+            timestamp
+            for timestamp in (
+                candidate.get("freshness_timestamp_value")
+                for candidate in relevant_candidates
+            )
+            if isinstance(timestamp, datetime)
+        ),
+        default=None,
+    )
+
+    for candidate in scored_candidates:
+        item = candidate["item"]
+        assert isinstance(item, QueryResultItem)
+        signal_types = _work_resumption_signal_types(item)
+        candidate["work_signal_types"] = signal_types
+        usefulness_score, usefulness_reasons = _work_resumption_usefulness_score(item, signal_types)
+        freshness_adjustment, freshness_reasons = _work_resumption_freshness_adjustment(candidate, freshest_timestamp)
+        packaging_adjustment = usefulness_score + freshness_adjustment
+        candidate["work_usefulness_score"] = usefulness_score
+        candidate["packaging_adjustment"] = packaging_adjustment
+        candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*usefulness_reasons, *freshness_reasons]))
+        timestamp = candidate.get("freshness_timestamp_value")
+        candidate["freshness_timestamp"] = timestamp.isoformat() if isinstance(timestamp, datetime) else None
+        candidate["base_routing_score"] = int(candidate["base_routing_score"]) + packaging_adjustment
+        support_adjustment = (usefulness_score // 2) + freshness_adjustment
+        candidate["support_score"] = max(0, int(candidate["support_score"]) + support_adjustment)
+        candidate["support_grade"] = _routing_support_grade(int(candidate["support_score"]))
+
+    return {
+        "mode": "work_resumption_ranking",
+        "freshest_state_timestamp": freshest_timestamp.isoformat() if isinstance(freshest_timestamp, datetime) else None,
+    }
+
+
+
+def _candidate_matches_requested_locality(candidate: dict[str, object], query_filters: QueryFilters | None) -> bool:
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    if query_filters is not None and query_filters.thread_ref:
+        return query_filters.thread_ref in _candidate_thread_refs(item)
+    if query_filters is not None and query_filters.container_ref:
+        return query_filters.container_ref in _candidate_container_refs(item)
+    return True
+
+
+
+def _work_resumption_signal_types(item: QueryResultItem) -> tuple[str, ...]:
+    signal_types: set[str] = set()
+    if item.result_kind == "source_hit":
+        excerpt = str(item.excerpt or "").strip()
+        signal_type = _classify_work_signal_text(item.artifact_kind, excerpt)
+        if signal_type:
+            signal_types.add(signal_type)
+        if excerpt:
+            signal_types.add("evidence")
+        return tuple(signal for signal in WORK_RESUMPTION_SIGNAL_TYPES if signal in signal_types)
+
+    payload = item.payload or {}
+    if item.type == "task_checkpoint":
+        if str(payload.get("task") or "").strip():
+            signal_types.add("task")
+        if str(payload.get("current_state") or "").strip():
+            signal_types.add("progress_update")
+        if _parse_string_list(payload.get("key_findings")):
+            signal_types.add("key_finding")
+        if str(payload.get("blocker_state") or "").strip():
+            signal_types.add("blocker")
+        if str(payload.get("next_step") or "").strip():
+            signal_types.add("next_step")
+        if _parse_string_list(payload.get("evidence")):
+            signal_types.add("evidence")
+        if str(payload.get("freshness_signal") or "").strip():
+            signal_types.add("freshness")
+        for artifact in payload.get("selected_work_artifacts", []):
+            if not isinstance(artifact, dict):
+                continue
+            artifact_signal = str(artifact.get("signal_type") or "").strip()
+            if artifact_signal in {"progress_update", "blocker", "next_step"}:
+                signal_types.add(artifact_signal)
+    elif item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+        signal_types.add("key_finding")
+        if str(payload.get("decision_evidence_text") or payload.get("investigation_evidence_text") or "").strip():
+            signal_types.add("evidence")
+    elif item.type in ROUTING_SUMMARY_TYPES:
+        if str(payload.get("summary") or "").strip():
+            signal_types.add("key_finding")
+        for artifact in payload.get("selected_work_artifacts", []):
+            if not isinstance(artifact, dict):
+                continue
+            artifact_signal = str(artifact.get("signal_type") or "").strip()
+            if artifact_signal in {"progress_update", "blocker", "next_step"}:
+                signal_types.add(artifact_signal)
+    elif item.type == "continuity_memory":
+        if str(payload.get("carry_forward_answer") or "").strip():
+            signal_types.add("key_finding")
+    elif item.type == "pattern_memory" and str(payload.get("summary") or "").strip():
+        signal_types.add("key_finding")
+    return tuple(signal for signal in WORK_RESUMPTION_SIGNAL_TYPES if signal in signal_types)
+
+
+
+def _classify_work_signal_text(artifact_kind: str | None, text: str) -> str:
+    normalized_text = text.strip()
+    if not normalized_text:
+        return ""
+    if (artifact_kind or "").lower() == "todo_snapshot":
+        return "next_step"
+    lowered = normalized_text.lower()
+    for prefix, signal_type in WORK_SIGNAL_PREFIX_TO_TYPE:
+        if lowered.startswith(prefix):
+            return signal_type
+    if any(marker in lowered for marker in ("blocked", "blocker", "failed")):
+        return "blocker"
+    return "progress_update"
+
+
+
+def _work_resumption_usefulness_score(item: QueryResultItem, signal_types: tuple[str, ...]) -> tuple[int, list[str]]:
+    signal_set = set(signal_types)
+    reasons: list[str] = []
+    score = 0
+    if item.result_kind == "memory_hit" and item.type == "task_checkpoint":
+        payload = item.payload or {}
+        if "task" in signal_set:
+            score += 6
+        if "progress_update" in signal_set:
+            score += 8
+        if "key_finding" in signal_set:
+            score += 6
+        if "blocker" in signal_set:
+            score += 12
+        if "next_step" in signal_set:
+            score += 12
+        if "evidence" in signal_set:
+            score += 10
+        if "freshness" in signal_set:
+            score += 8
+        selected_work_artifacts = payload.get("selected_work_artifacts", [])
+        artifact_count = len(selected_work_artifacts) if isinstance(selected_work_artifacts, list) else 0
+        score += min(artifact_count, 3) * 2
+        if {"blocker", "next_step", "evidence", "freshness"}.issubset(signal_set) and signal_set.intersection({"progress_update", "key_finding"}):
+            score += 10
+            reasons.append("sharp_checkpoint")
+        if _is_thin_task_checkpoint_payload(payload):
+            score -= WORK_RESUMPTION_THIN_CHECKPOINT_PENALTY
+            reasons.append("thin_checkpoint")
+        return score, reasons
+
+    if item.result_kind == "source_hit":
+        if "blocker" in signal_set:
+            score += 12
+        if "next_step" in signal_set:
+            score += 12
+        if "progress_update" in signal_set:
+            score += 8
+        if "evidence" in signal_set:
+            score += 4
+        return score, reasons
+
+    if item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+        if "key_finding" in signal_set:
+            score += 10
+        if "evidence" in signal_set:
+            score += 6
+        return score, reasons
+
+    if item.type in ROUTING_SUMMARY_TYPES and signal_set.intersection({"blocker", "next_step", "progress_update"}):
+        score += 8
+    return score, reasons
+
+
+
+def _is_thin_task_checkpoint_payload(payload: dict[str, object]) -> bool:
+    explicit_core_fields = sum(
+        1
+        for key in ("task", "current_state", "blocker_state", "next_step", "freshness_signal")
+        if str(payload.get(key) or "").strip()
+    )
+    has_findings = bool(_parse_string_list(payload.get("key_findings")))
+    has_evidence = bool(_parse_string_list(payload.get("evidence")))
+    has_operational_state = bool(str(payload.get("blocker_state") or "").strip() or str(payload.get("next_step") or "").strip())
+    return explicit_core_fields < 3 or not has_operational_state or (not has_findings and not has_evidence)
+
+
+
+def _work_resumption_freshness_adjustment(
+    candidate: dict[str, object],
+    freshest_timestamp: datetime | None,
+) -> tuple[int, list[str]]:
+    timestamp = candidate.get("freshness_timestamp_value")
+    signal_types = set(candidate.get("work_signal_types") or ())
+    if not isinstance(timestamp, datetime):
+        return 0, []
+    if freshest_timestamp is None:
+        if candidate["layer"] == "task_checkpoint" and "freshness" in signal_types:
+            return 8, ["explicit_freshness_signal"]
+        return 0, []
+
+    delta_seconds = (freshest_timestamp - timestamp).total_seconds()
+    if delta_seconds >= WORK_RESUMPTION_FRESHNESS_MARGIN_SECONDS:
+        if candidate["layer"] == "task_checkpoint":
+            return -WORK_RESUMPTION_STALE_STATE_PENALTY, ["stale_against_fresher_state"]
+        if candidate["layer"] == "source_evidence":
+            return -WORK_RESUMPTION_STALE_SOURCE_PENALTY, ["stale_against_fresher_state"]
+        return -(WORK_RESUMPTION_STALE_SOURCE_PENALTY // 2), ["stale_against_fresher_state"]
+    if delta_seconds <= 0 and signal_types.intersection({"blocker", "next_step", "progress_update"}):
+        return WORK_RESUMPTION_FRESH_STATE_BONUS, ["fresh_explicit_state"]
+    if candidate["layer"] == "task_checkpoint" and "freshness" in signal_types:
+        return 8, ["explicit_freshness_signal"]
+    return 0, []
+
+
+
+def _select_final_candidates(
+    *,
+    intent: str,
+    ranked_candidates: list[dict[str, object]],
+    requested_limit: int,
+    query_filters: QueryFilters | None,
+    packaging_summary: dict[str, object] | None,
+) -> tuple[list[dict[str, object]], dict[str, object] | None]:
+    summary = dict(packaging_summary or {})
+    if intent != "work_resumption" or not ranked_candidates:
+        return ranked_candidates[:requested_limit], summary or None
+
+    top_candidate = ranked_candidates[0]
+    summary["top_result_layer"] = top_candidate["layer"]
+    if top_candidate["layer"] != "task_checkpoint" or requested_limit <= 1:
+        demoted_checkpoint = next((candidate for candidate in ranked_candidates if candidate["layer"] == "task_checkpoint"), None)
+        if demoted_checkpoint is not None and demoted_checkpoint is not top_candidate:
+            summary["demoted_task_checkpoint"] = {
+                "result_id": _routing_result_id(demoted_checkpoint["item"]),
+                "packaging_reasons": list(demoted_checkpoint["packaging_reasons"]),
+            }
+        return ranked_candidates[:requested_limit], summary
+
+    selected_candidates = [top_candidate]
+    used_result_ids = {_routing_result_id(top_candidate["item"])}
+    adjacent_evidence: list[dict[str, str]] = []
+    for signal_type in WORK_RESUMPTION_SIGNAL_PRIORITY:
+        if len(selected_candidates) >= requested_limit:
+            break
+        for candidate in ranked_candidates[1:]:
+            candidate_result_id = _routing_result_id(candidate["item"])
+            if candidate_result_id in used_result_ids:
+                continue
+            if candidate["layer"] != "source_evidence":
+                continue
+            if signal_type not in candidate["work_signal_types"]:
+                continue
+            if not _candidate_locality_compatible_for_packaging(top_candidate["item"], candidate["item"], query_filters):
+                continue
+            selected_candidates.append(candidate)
+            used_result_ids.add(candidate_result_id)
+            adjacent_evidence.append({"signal_type": signal_type, "result_id": candidate_result_id})
+            break
+
+    for candidate in ranked_candidates[1:]:
+        if len(selected_candidates) >= requested_limit:
+            break
+        candidate_result_id = _routing_result_id(candidate["item"])
+        if candidate_result_id in used_result_ids:
+            continue
+        selected_candidates.append(candidate)
+        used_result_ids.add(candidate_result_id)
+
+    if adjacent_evidence:
+        summary["mode"] = "task_checkpoint_plus_adjacent_evidence"
+        summary["adjacent_evidence"] = adjacent_evidence
+    return selected_candidates, summary
+
+
+
+def _candidate_locality_compatible_for_packaging(
+    primary_item: QueryResultItem,
+    candidate_item: QueryResultItem,
+    query_filters: QueryFilters | None,
+) -> bool:
+    primary_thread_refs = set(_candidate_thread_refs(primary_item))
+    candidate_thread_refs = set(_candidate_thread_refs(candidate_item))
+    if query_filters is not None and query_filters.thread_ref:
+        return query_filters.thread_ref in primary_thread_refs and query_filters.thread_ref in candidate_thread_refs
+    if primary_thread_refs and candidate_thread_refs and primary_thread_refs.intersection(candidate_thread_refs):
+        return True
+
+    primary_container_refs = set(_candidate_container_refs(primary_item))
+    candidate_container_refs = set(_candidate_container_refs(candidate_item))
+    if query_filters is not None and query_filters.container_ref:
+        return query_filters.container_ref in primary_container_refs and query_filters.container_ref in candidate_container_refs
+    if primary_container_refs and candidate_container_refs:
+        return bool(primary_container_refs.intersection(candidate_container_refs))
+    return True
+
+
+
+def _candidate_freshness_timestamp(item: QueryResultItem) -> datetime | None:
+    timestamps: list[datetime] = []
+    if item.occurred_at is not None:
+        timestamps.append(_normalize_timestamp(item.occurred_at))
+    if item.payload:
+        payload_timestamp = _parse_iso_timestamp(item.payload.get("latest_occurred_at"))
+        if payload_timestamp is not None:
+            timestamps.append(payload_timestamp)
+    for evidence in item.evidence:
+        if evidence.occurred_at is not None:
+            timestamps.append(_normalize_timestamp(evidence.occurred_at))
+    if not timestamps:
+        return None
+    return max(timestamps)
+
+
+
+def _normalize_timestamp(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+
+def _parse_iso_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return _normalize_timestamp(parsed)
+
+def _routing_support_grade(support_score: int) -> str:
+    if support_score >= ROUTING_SUPPORT_THRESHOLD["strong"]:
+        return "strong"
+    if support_score >= ROUTING_SUPPORT_THRESHOLD["supported"]:
+        return "supported"
+    return "weak"
+
+
+def _summarize_routing_layers(scored_candidates: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    summary: dict[str, dict[str, object]] = {}
+    all_layers = {"pattern_memory", "continuity_memory", "task_checkpoint", "lower_level_memory", "source_evidence"}
+    for layer in sorted(all_layers):
+        layer_candidates = [candidate for candidate in scored_candidates if candidate["layer"] == layer]
+        if not layer_candidates:
+            summary[layer] = {
+                "candidate_count": 0,
+                "supported_candidate_count": 0,
+                "strong_candidate_count": 0,
+            }
+            continue
+        best_candidate = max(
+            layer_candidates,
+            key=lambda candidate: (int(candidate["support_score"]), int(candidate["lexical_score"])),
+        )
+        summary[layer] = {
+            "candidate_count": len(layer_candidates),
+            "supported_candidate_count": sum(
+                1 for candidate in layer_candidates if str(candidate["support_grade"]) in {"supported", "strong"}
+            ),
+            "strong_candidate_count": sum(1 for candidate in layer_candidates if candidate["support_grade"] == "strong"),
+            "best_support_score": best_candidate["support_score"],
+            "best_support_grade": best_candidate["support_grade"],
+            "best_lexical_score": best_candidate["lexical_score"],
+            "best_lexical_rank": best_candidate["lexical_rank"],
+        }
+    return summary
+
+
+def _select_routing_focus(
+    *,
+    intent: str,
+    preferred_layers: tuple[str, ...],
+    layer_summary: dict[str, dict[str, object]],
+) -> dict[str, object]:
+    primary_layer = preferred_layers[0]
+    primary_summary = layer_summary.get(primary_layer, {})
+    selected_layer = primary_layer
+    applied = False
+    reason_code = "preferred_layer_supported"
+    reason = "Preferred layer had enough candidate support to stay selected."
+
+    fallback_candidates = [
+        (layer, layer_summary.get(layer, {}))
+        for layer in ROUTING_SAFE_FALLBACK_LAYERS[intent]
+        if int(layer_summary.get(layer, {}).get("candidate_count", 0)) > 0
+    ]
+    best_fallback_layer = None
+    best_fallback_summary = None
+    if fallback_candidates:
+        best_fallback_layer, best_fallback_summary = max(
+            fallback_candidates,
+            key=lambda item: (
+                int(item[1].get("best_support_score", 0)),
+                int(item[1].get("best_lexical_score", 0)),
+            ),
+        )
+
+    primary_count = int(primary_summary.get("candidate_count", 0))
+    primary_support = int(primary_summary.get("best_support_score", 0))
+    primary_grade = str(primary_summary.get("best_support_grade", "weak"))
+
+    if primary_count == 0 and best_fallback_layer is not None and best_fallback_summary is not None:
+        selected_layer = best_fallback_layer
+        applied = True
+        reason_code = "preferred_layer_missing"
+        reason = f"No {primary_layer} candidate was retrieved, so routing fell back to the sharpest safer layer."
+    elif primary_layer in ROUTING_HIGHER_LEVEL_TYPES and best_fallback_layer is not None and best_fallback_summary is not None:
+        fallback_support = int(best_fallback_summary.get("best_support_score", 0))
+        fallback_grade = str(best_fallback_summary.get("best_support_grade", "weak"))
+        if (
+            intent in {"answer_continuity", "work_resumption"}
+            and primary_grade == "weak"
+            and fallback_grade == "strong"
+            and fallback_support >= primary_support + ROUTING_FALLBACK_MARGIN
+        ):
+            selected_layer = best_fallback_layer
+            applied = True
+            reason_code = "weak_higher_level_support"
+            reason = "Higher-level memory was retrieved, but its candidate support was materially weaker than a strongly supported safer layer."
+        elif intent not in {"answer_continuity", "work_resumption"} and primary_grade == "weak" and fallback_grade in {"supported", "strong"}:
+            selected_layer = best_fallback_layer
+            applied = True
+            reason_code = "weak_higher_level_support"
+            reason = "Higher-level memory was retrieved, but its candidate support was weak, so routing chose a safer layer."
+        elif fallback_support >= primary_support + ROUTING_FALLBACK_MARGIN:
+            selected_layer = best_fallback_layer
+            applied = True
+            reason_code = "safer_layer_stronger"
+            reason = "A safer layer had materially stronger candidate support than the higher-level preference."
+    elif (
+        primary_layer in {"source_evidence", "lower_level_memory"}
+        and best_fallback_layer is not None
+        and best_fallback_summary is not None
+        and primary_grade == "weak"
+        and str(best_fallback_summary.get("best_support_grade", "weak")) in {"supported", "strong"}
+    ):
+        selected_layer = best_fallback_layer
+        applied = True
+        reason_code = "primary_support_weak"
+        reason = "The preferred sharp layer was weakly supported, so routing used the next safer retrieved layer."
+
+    return {
+        "applied": applied,
+        "primary_layer": primary_layer,
+        "selected_layer": selected_layer,
+        "reason_code": reason_code,
+        "reason": reason,
+    }
+
+
+def _routing_focus_adjustment(
+    *,
+    layer: str,
+    selected_layer: str,
+    primary_layer: str,
+    fallback_applied: bool,
+) -> int:
+    adjustment = ROUTING_FOCUS_BOOST if layer == selected_layer else 0
+    if fallback_applied and primary_layer in ROUTING_HIGHER_LEVEL_TYPES and layer == primary_layer and layer != selected_layer:
+        adjustment -= ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY
+    return adjustment
+
+
+def _routing_fallback_suffix(
+    *,
+    layer: str,
+    selected_layer: str,
+    primary_layer: str,
+    applied: bool,
+    reason_code: str,
+    support_grade: str,
+) -> str:
+    if not applied:
+        return ""
+    if layer == selected_layer:
+        return f" Candidate-aware fallback selected this layer because `{reason_code}`."
+    if layer == primary_layer and layer in ROUTING_HIGHER_LEVEL_TYPES and layer != selected_layer:
+        return " Candidate-aware fallback demoted this higher-level layer because retrieved support was weaker than safer evidence."
+    if support_grade == "weak":
+        return " Candidate-aware fallback kept weakly supported alternatives behind the selected layer."
+    return ""
+
+
+def _routing_packaging_suffix(packaging_reasons: list[str]) -> str:
+    suffixes: list[str] = []
+    if "sharp_checkpoint" in packaging_reasons:
+        suffixes.append(" It preserved blocker, next-step, evidence, and freshness state more explicitly than weaker checkpoint packaging.")
+    if "thin_checkpoint" in packaging_reasons:
+        suffixes.append(" Thin checkpoint packaging weakened it against sharper resumed-work state.")
+    if "stale_against_fresher_state" in packaging_reasons:
+        suffixes.append(" Fresher explicit state outranked older carried-forward state.")
+    if "fresh_explicit_state" in packaging_reasons:
+        suffixes.append(" Fresh explicit state strengthened this candidate.")
+    if "explicit_freshness_signal" in packaging_reasons and "fresh_explicit_state" not in packaging_reasons:
+        suffixes.append(" Explicit freshness state improved its resumed-work usefulness.")
+    return "".join(OrderedDict.fromkeys(suffixes))
+
+def _candidate_matches_thread(item: QueryResultItem, query_filters: QueryFilters | None) -> bool:
+    if query_filters is None or not query_filters.thread_ref:
+        return False
+    candidate_thread_refs = {thread_ref for thread_ref in _candidate_thread_refs(item) if thread_ref}
+    return query_filters.thread_ref in candidate_thread_refs
+
+
+def _candidate_matches_container(item: QueryResultItem, query_filters: QueryFilters | None) -> bool:
+    if query_filters is None or not query_filters.container_ref:
+        return False
+    candidate_container_refs = {container_ref for container_ref in _candidate_container_refs(item) if container_ref}
+    return query_filters.container_ref in candidate_container_refs
+
+
+def _candidate_thread_refs(item: QueryResultItem) -> tuple[str, ...]:
+    refs: list[str] = []
+    if item.thread_ref:
+        refs.append(item.thread_ref)
+    refs.extend(evidence.thread_ref for evidence in item.evidence if evidence.thread_ref)
+    return tuple(dict.fromkeys(refs))
+
+
+def _candidate_container_refs(item: QueryResultItem) -> tuple[str, ...]:
+    refs: list[str] = []
+    if item.container_ref:
+        refs.append(item.container_ref)
+    refs.extend(evidence.container_ref for evidence in item.evidence if evidence.container_ref)
+    return tuple(dict.fromkeys(refs))
 
 
 def _collect_conclusions(group: ConsolidationGroup) -> list[dict[str, str]]:

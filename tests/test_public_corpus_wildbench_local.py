@@ -36,6 +36,7 @@ class _CombinedPublicCorpusProvider:
         )
 
 
+
 def _seed_local_snapshot(root: Path) -> Path:
     layout = ensure_local_layout(root)
     target = layout['snapshot_dir'] / 'wildbench-export.json'
@@ -43,8 +44,10 @@ def _seed_local_snapshot(root: Path) -> Path:
     return target
 
 
+
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
+
 
 
 def _configure_local_benchmark_env(monkeypatch, tmp_path: Path) -> None:
@@ -55,6 +58,7 @@ def _configure_local_benchmark_env(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv('PALLIUM_LLM_MODEL', 'fake-answer-model')
     monkeypatch.setenv('PALLIUM_LLM_BASE_URL', 'http://fake-provider.local')
     monkeypatch.setenv('PALLIUM_LLM_PROMPT_VARIANT', 'strict_typed_memory_v4_evidence_guarded')
+
 
 
 def test_validate_local_wildbench_corpus_reports_json_snapshot_layout(tmp_path: Path) -> None:
@@ -68,6 +72,7 @@ def test_validate_local_wildbench_corpus_reports_json_snapshot_layout(tmp_path: 
     assert summary['snapshot_size_bytes'] > 0
 
 
+
 def test_emit_review_candidates_uses_local_wildbench_layout(tmp_path: Path) -> None:
     _seed_local_snapshot(tmp_path)
 
@@ -75,8 +80,9 @@ def test_emit_review_candidates_uses_local_wildbench_layout(tmp_path: Path) -> N
     candidates = _read_jsonl(output_path)
 
     assert output_path == tmp_path / 'derived' / 'review_candidates.jsonl'
-    assert len(candidates) == 4
+    assert len(candidates) == 5
     assert all(item['episode_type'] == 'within_conversation_later_turn_recall' for item in candidates)
+
 
 
 def test_materialize_wildbench_review_set_writes_small_local_review_bundle(tmp_path: Path) -> None:
@@ -97,6 +103,7 @@ def test_materialize_wildbench_review_set_writes_small_local_review_bundle(tmp_p
         'wb-review-003',
         'wb-review-004',
     }
+
 
 
 def test_benchmark_review_set_runs_end_to_end_from_materialized_local_review_bundle(monkeypatch, tmp_path: Path) -> None:

@@ -25,6 +25,8 @@ from evals.recurring_question_benchmark import _compare_answers, _generate_answe
 from providers.llm.base import LLMProvider
 
 DEFAULT_OUTPUT_DIR = Path("evals/public_corpus/output")
+TASK_STATE_PRESERVE_MARKERS = {"blocker_state", "preserved_progress", "next_step_guidance", "freshness"}
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the reviewed public-corpus benchmark over a local public benchmark export.")
@@ -150,18 +152,29 @@ def _run_episode(
     returned_memory_types = sorted({item.get("type") for item in memory_hits if item.get("type")})
     higher_level_memory_types = sorted(item for item in returned_memory_types if item in HIGHER_LEVEL_LAYERS)
     routing = ((memory_payload.get("trace") or {}).get("routing") or {})
+    routing_intent = routing.get("query_intent")
     top_result = memory_payload["results"][0] if memory_payload["results"] else None
     top_layer = result_layer(top_result)
     available_layers = sorted({result_layer(item) for item in memory_payload["results"]})
 
-    expected_winning_layer = episode.get("expected_winning_layer")
-    acceptable_winning_layers = episode.get("acceptable_winning_layers") or ([expected_winning_layer] if expected_winning_layer else [])
+    expected_intent = episode.get("expected_intent")
+    intent_match = routing_intent == expected_intent if expected_intent else True
+    expected_primary_layer = episode.get("expected_primary_layer") or episode.get("expected_winning_layer")
+    acceptable_layers = list(episode.get("acceptable_layers") or [])
+    if not acceptable_layers:
+        acceptable_layers = list(episode.get("acceptable_winning_layers") or ([expected_primary_layer] if expected_primary_layer else []))
+    acceptable_fallback_layers = list(episode.get("acceptable_fallback_layers") or [])
+    if not acceptable_fallback_layers and acceptable_layers and expected_primary_layer:
+        acceptable_fallback_layers = [layer for layer in acceptable_layers if layer != expected_primary_layer]
+    forbidden_layers = list(episode.get("forbidden_layers") or [])
+    forbidden_layers_hit = [layer for layer in forbidden_layers if layer == top_layer]
+
     expected_memory_types = episode.get("expected_memory_types", [])
     expected_higher_level_memory_types = episode.get("expected_higher_level_memory_types", [])
     expected_memory_types_found = all(item in returned_memory_types for item in expected_memory_types)
     expected_higher_level_memory_types_found = all(item in higher_level_memory_types for item in expected_higher_level_memory_types)
-    expected_layer_found = (expected_winning_layer in available_layers) if expected_winning_layer else False
-    top_layer_match = top_layer in acceptable_winning_layers if acceptable_winning_layers else True
+    expected_layer_found = (expected_primary_layer in available_layers) if expected_primary_layer else False
+    top_layer_match = top_layer in acceptable_layers if acceptable_layers else True
 
     baseline_rubric = _score_answer(
         answer_payload=baseline_answer,
@@ -193,24 +206,61 @@ def _run_episode(
         retrieval_results=memory_payload["results"],
         answer_payload=memory_answer,
     )
+    guard_matches = _guard_term_matches(
+        guard_terms=episode.get("guard_terms", {}),
+        top_result=top_result,
+        answer_payload=memory_answer,
+    )
 
-    failure_family = _classify_failure_family(
+    failure_families = _classify_failure_families(
         should_memory_help=bool(episode.get("should_memory_help")),
         winner=winner,
         expected_layer_found=expected_layer_found,
         expected_memory_types_found=expected_memory_types_found,
         expected_higher_level_memory_types_found=expected_higher_level_memory_types_found,
         higher_level_expectation_present=bool(expected_higher_level_memory_types),
+        intent_match=intent_match,
         top_layer_match=top_layer_match,
+        forbidden_layers_hit=forbidden_layers_hit,
         evidence_used_present=evidence_used_present,
         forbidden_terms_found=forbidden_terms_found,
+        guard_matches=guard_matches,
+        expected_primary_layer=expected_primary_layer,
+        must_preserve=episode.get("must_preserve", []),
     )
-    policy_success = failure_family is None
+    failure_family = failure_families[0] if failure_families else None
+    policy_success = not failure_families
+    no_value_guard_success = (not bool(episode.get("should_memory_help"))) and "no_value_overreach_failure" not in failure_families
+    stale_guard_success = (
+        "stale_state" not in episode.get("must_not_introduce", [])
+        or "stale_memory_failure" not in failure_families
+    )
+    wrong_memory_guard_success = (
+        "wrong_thread_state" not in episode.get("must_not_introduce", [])
+        or "wrong_memory_selection_failure" not in failure_families
+    )
+    privacy_guard_success = (
+        "privacy_leak" not in episode.get("must_not_introduce", [])
+        or "privacy_leak_failure" not in failure_families
+    )
+
+    labels = {
+        "scenario_family": episode.get("scenario_family", episode["episode_type"]),
+        "should_memory_help": bool(episode.get("should_memory_help")),
+        "expected_intent": expected_intent,
+        "expected_primary_layer": expected_primary_layer,
+        "acceptable_fallback_layers": acceptable_fallback_layers,
+        "forbidden_layers": forbidden_layers,
+        "must_preserve": list(episode.get("must_preserve", [])),
+        "must_not_introduce": list(episode.get("must_not_introduce", [])),
+    }
 
     return {
         "episode_id": episode["episode_id"],
         "episode_type": episode["episode_type"],
+        "scenario_family": episode.get("scenario_family", episode["episode_type"]),
         "description": episode["description"],
+        "labels": labels,
         "corpus_name": episode["corpus_name"],
         "source_conversation_ids": episode["source_conversation_ids"],
         "target_conversation_id": episode["target_conversation_id"],
@@ -219,12 +269,19 @@ def _run_episode(
         "source_intent": episode.get("source_intent"),
         "source_checklist_count": len(episode.get("source_checklist", [])),
         "should_memory_help": bool(episode.get("should_memory_help")),
-        "expected_winning_layer": expected_winning_layer,
-        "acceptable_winning_layers": acceptable_winning_layers,
+        "expected_intent": expected_intent,
+        "routing_intent": routing_intent,
+        "intent_match": intent_match,
+        "expected_primary_layer": expected_primary_layer,
+        "acceptable_fallback_layers": acceptable_fallback_layers,
+        "acceptable_layers": acceptable_layers,
+        "forbidden_layers": forbidden_layers,
+        "forbidden_layers_hit": forbidden_layers_hit,
+        "expected_winning_layer": episode.get("expected_winning_layer"),
+        "acceptable_winning_layers": episode.get("acceptable_winning_layers", acceptable_layers),
         "expected_memory_types": expected_memory_types,
         "expected_higher_level_memory_types": expected_higher_level_memory_types,
         "consolidation_strategy": consolidation_strategy,
-        "routing_intent": routing.get("query_intent"),
         "routing_preferred_layers": routing.get("preferred_layers", []),
         "top_layer": top_layer,
         "available_layers": available_layers,
@@ -235,8 +292,10 @@ def _run_episode(
         "expected_higher_level_memory_types_found": expected_higher_level_memory_types_found,
         "top_layer_match": top_layer_match,
         "evidence_used_present": evidence_used_present,
+        "guard_matches": guard_matches,
         "forbidden_terms_found": forbidden_terms_found,
         "failure_family": failure_family,
+        "failure_families": failure_families,
         "policy_success": policy_success,
         "query_trace": memory_payload.get("trace"),
         "memory_backed_retrieval": memory_payload["results"],
@@ -252,6 +311,10 @@ def _run_episode(
         "consolidation_run": _serialize_consolidation_result(consolidation_result),
         "reference_answer": episode.get("reference_answer"),
         "source_checklist": episode.get("source_checklist", []),
+        "no_value_guard_success": no_value_guard_success,
+        "stale_guard_success": stale_guard_success,
+        "wrong_memory_guard_success": wrong_memory_guard_success,
+        "privacy_guard_success": privacy_guard_success,
     }
 
 
@@ -261,28 +324,54 @@ def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
     return updated
 
 
-def _classify_failure_family(    *,
+def _classify_failure_families(
+    *,
     should_memory_help: bool,
     winner: str,
     expected_layer_found: bool,
     expected_memory_types_found: bool,
     expected_higher_level_memory_types_found: bool,
     higher_level_expectation_present: bool,
+    intent_match: bool,
     top_layer_match: bool,
+    forbidden_layers_hit: list[str],
     evidence_used_present: bool,
     forbidden_terms_found: list[str],
-) -> str | None:
-    if forbidden_terms_found:
-        return "no_value_overreach_failure"
+    guard_matches: dict[str, list[str]],
+    expected_primary_layer: str | None,
+    must_preserve: list[str],
+) -> list[str]:
+    failures: list[str] = []
+
+    if guard_matches.get("stale_state"):
+        failures.append("stale_memory_failure")
+    if guard_matches.get("wrong_thread_state"):
+        failures.append("wrong_memory_selection_failure")
+    if guard_matches.get("privacy_leak"):
+        failures.append("privacy_leak_failure")
+
     if not should_memory_help:
-        return None if winner != "memory_backed" else "no_value_overreach_failure"
+        if winner == "memory_backed" or forbidden_terms_found or forbidden_layers_hit or any(guard_matches.values()):
+            failures.append("no_value_overreach_failure")
+        return _ordered_failure_families(failures)
+
     if not expected_layer_found and not expected_memory_types_found and (not higher_level_expectation_present or not expected_higher_level_memory_types_found):
-        return "retrieval_recall_failure"
-    if not top_layer_match:
-        return "routing_layer_choice_failure"
-    if winner != "memory_backed" or not evidence_used_present:
-        return "result_packaging_evidence_failure"
-    return None
+        failures.append("retrieval_recall_failure")
+    if not intent_match or not top_layer_match or forbidden_layers_hit:
+        failures.append("routing_layer_choice_failure")
+    if (
+        winner != "memory_backed" or not evidence_used_present
+    ) and "retrieval_recall_failure" not in failures and "routing_layer_choice_failure" not in failures:
+        if expected_primary_layer == "task_checkpoint" or any(marker in TASK_STATE_PRESERVE_MARKERS for marker in must_preserve):
+            failures.append("compact_task_state_failure")
+        else:
+            failures.append("result_packaging_evidence_failure")
+    return _ordered_failure_families(failures)
+
+
+def _ordered_failure_families(families: list[str]) -> list[str]:
+    unique = set(families)
+    return [name for name in CONTINUITY_FAILURE_FAMILIES if name in unique]
 
 
 def _find_forbidden_terms(*, forbidden_terms: list[str], retrieval_results: list[dict[str, Any]], answer_payload: dict[str, Any]) -> list[str]:
@@ -290,6 +379,47 @@ def _find_forbidden_terms(*, forbidden_terms: list[str], retrieval_results: list
         return []
     combined = json.dumps(retrieval_results).lower() + "\n" + json.dumps(answer_payload).lower()
     return [term for term in forbidden_terms if term.lower() in combined]
+
+
+def _guard_term_matches(*, guard_terms: dict[str, list[str]], top_result: dict[str, Any] | None, answer_payload: dict[str, Any]) -> dict[str, list[str]]:
+    combined = _guard_haystack_from_result(top_result) + "\n" + json.dumps(answer_payload, sort_keys=True).lower()
+    return {
+        guard: [term for term in terms if term.lower() in combined]
+        for guard, terms in guard_terms.items()
+    }
+
+
+def _guard_haystack_from_result(item: dict[str, Any] | None) -> str:
+    if not item:
+        return ""
+    if item.get("result_kind") == "source_hit":
+        return json.dumps({
+            "result_kind": item.get("result_kind"),
+            "source_type": item.get("source_type"),
+            "source_id": item.get("source_id"),
+            "excerpt": item.get("excerpt"),
+        }, sort_keys=True).lower()
+    payload = item.get("payload") or {}
+    surfaced_payload = {
+        key: payload.get(key)
+        for key in (
+            "summary",
+            "carry_forward_answer",
+            "decision",
+            "investigation_outcome",
+            "task",
+            "current_state",
+            "blocker_state",
+            "next_step",
+            "freshness_signal",
+        )
+        if payload.get(key) not in (None, "", [])
+    }
+    return json.dumps({
+        "result_kind": item.get("result_kind"),
+        "type": item.get("type"),
+        "payload": surfaced_payload,
+    }, sort_keys=True).lower()
 
 
 def _serialize_consolidation_result(result: Any) -> dict[str, Any] | None:
@@ -329,12 +459,15 @@ def _build_summary(
     run_id: str,
     results_file: str,
 ) -> dict[str, Any]:
-    failure_counter = Counter(row["failure_family"] for row in results if row["failure_family"])
+    failure_counter: Counter[str] = Counter()
     by_episode_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
     by_primary_tag: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_scenario_family: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in results:
+        failure_counter.update(row.get("failure_families", []))
         by_episode_type[row["episode_type"]].append(row)
         by_primary_tag[row.get("source_primary_tag") or "unlabeled"].append(row)
+        by_scenario_family[row.get("scenario_family") or row["episode_type"]].append(row)
 
     summary: dict[str, Any] = {
         "run_id": run_id,
@@ -351,9 +484,15 @@ def _build_summary(
         "no_value_guard_total": sum(1 for row in results if not row["should_memory_help"]),
         "memory_backed_wins": sum(1 for row in results if row["winner"] == "memory_backed"),
         "policy_successes": sum(1 for row in results if row["policy_success"]),
+        "non_value_guard_successes": sum(1 for row in results if row["no_value_guard_success"]),
+        "stale_guard_successes": sum(1 for row in results if row["stale_guard_success"]),
+        "wrong_memory_guard_successes": sum(1 for row in results if row["wrong_memory_guard_success"]),
+        "privacy_guard_successes": sum(1 for row in results if row["privacy_guard_success"]),
         "failure_families": {name: int(failure_counter.get(name, 0)) for name in CONTINUITY_FAILURE_FAMILIES},
+        "scenario_families": sorted(by_scenario_family),
         "by_episode_type": [],
         "by_primary_tag": [],
+        "by_scenario_family": [],
     }
     for episode_type in sorted(by_episode_type):
         rows = by_episode_type[episode_type]
@@ -364,7 +503,7 @@ def _build_summary(
                 "policy_successes": sum(1 for row in rows if row["policy_success"]),
                 "memory_backed_wins": sum(1 for row in rows if row["winner"] == "memory_backed"),
                 "failure_families": {
-                    name: sum(1 for row in rows if row["failure_family"] == name)
+                    name: sum(1 for row in rows if name in row.get("failure_families", []))
                     for name in CONTINUITY_FAILURE_FAMILIES
                 },
             }
@@ -377,7 +516,20 @@ def _build_summary(
                 "episodes_total": len(rows),
                 "policy_successes": sum(1 for row in rows if row["policy_success"]),
                 "failure_families": {
-                    name: sum(1 for row in rows if row["failure_family"] == name)
+                    name: sum(1 for row in rows if name in row.get("failure_families", []))
+                    for name in CONTINUITY_FAILURE_FAMILIES
+                },
+            }
+        )
+    for family in sorted(by_scenario_family):
+        rows = by_scenario_family[family]
+        summary["by_scenario_family"].append(
+            {
+                "scenario_family": family,
+                "episodes_total": len(rows),
+                "policy_successes": sum(1 for row in rows if row["policy_success"]),
+                "failure_families": {
+                    name: sum(1 for row in rows if name in row.get("failure_families", []))
                     for name in CONTINUITY_FAILURE_FAMILIES
                 },
             }
@@ -399,22 +551,26 @@ def _build_report(*, summary: dict[str, Any], results: list[dict[str, Any]]) -> 
         f"- no-value-guards: {summary['no_value_guard_total']}",
         f"- memory-backed wins: {summary['memory_backed_wins']}",
         f"- policy successes: {summary['policy_successes']} / {summary['episodes_total']}",
+        f"- no-value guard successes: {summary['non_value_guard_successes']} / {summary['no_value_guard_total']}",
+        f"- stale guard successes: {summary['stale_guard_successes']} / {summary['episodes_total']}",
+        f"- wrong-memory guard successes: {summary['wrong_memory_guard_successes']} / {summary['episodes_total']}",
+        f"- privacy guard successes: {summary['privacy_guard_successes']} / {summary['episodes_total']}",
         "",
         "## Failure Families",
         "",
     ]
     for name, count in summary["failure_families"].items():
         lines.append(f"- `{name}`: {count}")
-    lines.extend(["", "## By Primary Tag", ""])
-    for row in summary.get("by_primary_tag", []):
-        lines.append(f"- `{row['primary_tag']}`: {row['policy_successes']} / {row['episodes_total']} policy successes")
+    lines.extend(["", "## By Scenario Family", ""])
+    for row in summary.get("by_scenario_family", []):
+        lines.append(f"- `{row['scenario_family']}`: {row['policy_successes']} / {row['episodes_total']} policy successes")
     lines.extend(["", "## Episode Results", ""])
     for row in results:
-        status = "PASS" if row["policy_success"] else f"FAIL ({row['failure_family']})"
+        status = "PASS" if row["policy_success"] else f"FAIL ({', '.join(row['failure_families'])})"
         lines.append(
-            f"- `{row['episode_id']}` [{status}]: winner `{row['winner']}`, "
-            f"expected layer `{row['expected_winning_layer']}`, top layer `{row['top_layer']}`, "
-            f"tag `{row.get('source_primary_tag') or 'unlabeled'}`, intent `{row.get('source_intent') or 'unknown'}`"
+            f"- `{row['episode_id']}` [{status}]: winner `{row['winner']}`, intent `{row.get('routing_intent') or 'unknown'}`, "
+            f"expected layer `{row['expected_primary_layer']}`, top layer `{row['top_layer']}`, "
+            f"family `{row.get('scenario_family') or row['episode_type']}`, tag `{row.get('source_primary_tag') or 'unlabeled'}`"
         )
     return "\n".join(lines) + "\n"
 
@@ -428,9 +584,3 @@ def _build_run_id(config: AppConfig, *, corpus_name: str) -> str:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-
-
-
-

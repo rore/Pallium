@@ -702,6 +702,10 @@ def _build_public_corpus_thread_summary_payload(user_prompt: str) -> dict[str, s
         return {
             'summary': "The thread chose the 'Done / Waiting / Next owner' handoff template for short updates."
         }
+    if 'branch kiosk fallback coverage is still missing' in lower and 'kiosk smoke tests' in lower:
+        return {
+            'summary': 'The thread finished the approval step, but branch kiosk fallback coverage is still missing and the next step is to rerun kiosk smoke tests after fixing it.'
+        }
     if 'backtracking' in lower and 'store section' in lower:
         return {
             'summary': 'The thread found that unordered grocery lists cause backtracking and chose store-section grouping.'
@@ -709,6 +713,10 @@ def _build_public_corpus_thread_summary_payload(user_prompt: str) -> dict[str, s
     if '1gi' in lower and '512mi' in lower:
         return {
             'summary': 'The thread found that the export worker hit the 512Mi memory limit and decided to raise the limit to 1Gi.'
+        }
+    if 'retry window was exhausted' in lower and 'batch 418' in lower:
+        return {
+            'summary': 'The thread resumed the sync after auth refresh and the latest blocker is a retry-window 429, with the next step to resume from batch 418.'
         }
     if 'problem framing' in lower and 'tradeoffs' in lower and 'ownership' in lower:
         return {
@@ -736,6 +744,36 @@ def _build_public_corpus_pattern_payload(user_prompt: str) -> dict[str, str]:
 
 def _build_public_corpus_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
     lower = user_prompt.lower()
+    if 'branch kiosk fallback coverage is still missing' in lower and 'kiosk smoke tests' in lower:
+        return {
+            'summary': 'The branch kiosk handoff cleanup is still blocked on fallback coverage.',
+            'task': 'Resume the branch kiosk handoff cleanup.',
+            'current_state': 'VPN approval is already done, and the remaining blocker is branch kiosk fallback coverage.',
+            'key_findings': ['VPN approval is done.', 'Branch kiosk fallback coverage is still missing.'],
+            'blocker_state': 'Branch kiosk fallback coverage is still missing before the rollout can continue.',
+            'next_step': 'Add the branch kiosk fallback note and rerun kiosk smoke tests.',
+            'evidence': [
+                'Partial progress: VPN approval is done and the rollout note is updated.',
+                'Blocked: branch kiosk fallback coverage is still missing before the rollout can continue.',
+                'Next step: add the branch kiosk fallback note and rerun kiosk smoke tests.',
+            ],
+            'freshness_signal': 'The latest blocker is branch kiosk fallback coverage; the older VPN-approval blocker is stale.',
+        }
+    if 'retry window was exhausted' in lower and 'batch 418' in lower:
+        return {
+            'summary': 'The catalog sync retry is now blocked by a retry-window limit after auth recovery.',
+            'task': 'Resume the catalog sync retry from the latest blocker state.',
+            'current_state': 'The token refresh worked, the sync resumed through batch 417, and the current blocker is a 429 retry-window limit.',
+            'key_findings': ['The sync resumed from batch 313 and reached batch 417.', 'The retry window is exhausted.'],
+            'blocker_state': 'Catalog API returned 429 because the retry window was exhausted.',
+            'next_step': 'Wait 15 minutes and resume from batch 418.',
+            'evidence': [
+                'Partial progress: the sync resumed from batch 313 and reached batch 417.',
+                'Blocked: catalog API returned 429 because the retry window was exhausted.',
+                'Next step: wait 15 minutes and resume from batch 418.',
+            ],
+            'freshness_signal': 'The latest blocker is the retry-window 429; the older expired-token blocker is stale.',
+        }
     if 'done / waiting / next owner' in lower:
         return {
             'summary': 'The handoff template choice should carry forward for resumed work.',
@@ -788,6 +826,17 @@ def _build_public_corpus_answer_payload(user_prompt: str) -> dict[str, object]:
             'evidence_used': [],
         }
 
+    if 'which earlier note explained why keeping it cold was a bad idea?' in lower or ('what evidence showed' in lower and 'cold storage slows recovery' in lower):
+        if 'cold storage slows recovery' in lower:
+            return {
+                'answer': 'The earlier note said cold storage slows recovery and keeps the sour smell around longer.',
+                'evidence_used': ['cold storage slows recovery', 'sour smell'],
+            }
+        return {
+            'answer': 'The visible context does not include the earlier recovery evidence.',
+            'evidence_used': [],
+        }
+
     if 'can you paste that gentle rewrite again exactly?' in lower:
         if 'i missed your call earlier and wanted to apologize for going quiet.' in lower:
             return {
@@ -815,6 +864,17 @@ def _build_public_corpus_answer_payload(user_prompt: str) -> dict[str, object]:
             'evidence_used': [],
         }
 
+    if ('what blocker is still live' in lower and 'what should i do next' in lower) or ('what blocker remained' in lower and 'what should happen next' in lower) or 'blocker and next step are already visible in this thread' in lower:
+        if ('branch kiosk fallback coverage is still missing' in lower and 'kiosk smoke tests' in lower) or ('memory/task_checkpoint' in lower and 'branch kiosk' in lower):
+            return {
+                'answer': 'The current blocker is that branch kiosk fallback coverage is still missing, and the next step is to add the branch kiosk fallback note and rerun kiosk smoke tests.',
+                'evidence_used': ['branch kiosk fallback coverage is still missing', 'kiosk smoke tests'],
+            }
+        return {
+            'answer': 'The visible context does not include the latest branch-kiosk blocker state.',
+            'evidence_used': [],
+        }
+
     if 'what did we previously conclude about why grocery trips keep dragging out?' in lower or 'big picture on why grocery trips keep dragging out' in lower:
         if 'memory/pattern_memory' in lower and 'backtracking' in lower and 'store section' in lower:
             return {
@@ -831,7 +891,7 @@ def _build_public_corpus_answer_payload(user_prompt: str) -> dict[str, object]:
             'evidence_used': [],
         }
 
-    if 'what resource cap did you say to bump for the export worker again?' in lower:
+    if 'what resource cap did you say to bump for the export worker again?' in lower or ('memory limit' in lower and '512mi' in lower) or ('memory cap' in lower and 'request stays' in lower):
         if ('memory/decision' in lower or 'source/public_corpus_turn' in lower) and '1gi' in lower:
             return {
                 'answer': 'Raise the worker memory limit to 1Gi while keeping the request at 512Mi.',
@@ -864,7 +924,7 @@ def _build_public_corpus_answer_payload(user_prompt: str) -> dict[str, object]:
             'evidence_used': [],
         }
 
-    if 'which exact log line proved the retries were overlapping?' in lower:
+    if 'which exact log line proved the retries were overlapping?' in lower or 'paste the overlap-proof line again for the incident note' in lower or 'which exact overlap-proof line should i paste into the incident note?' in lower:
         if 'job already running, skipping new start' in lower:
             return {
                 'answer': "The exact log line was 'job already running, skipping new start'.",
@@ -875,10 +935,22 @@ def _build_public_corpus_answer_payload(user_prompt: str) -> dict[str, object]:
             'evidence_used': [],
         }
 
+    if ('what is the current blocker' in lower and 'what should i do next' in lower) or ('what is the live blocker' in lower and 'resume point now' in lower) or ('what blocker did we hit now' in lower and 'where do i resume from' in lower) or 'current blocker and resume point are already visible in this thread' in lower:
+        if ('retry window was exhausted' in lower and 'batch 418' in lower) or ('memory/task_checkpoint' in lower and 'catalog sync retry' in lower):
+            return {
+                'answer': 'The current blocker is a 429 because the retry window was exhausted, and the next step is to wait 15 minutes and resume from batch 418.',
+                'evidence_used': ['retry window was exhausted', 'batch 418'],
+            }
+        return {
+            'answer': 'The visible context does not include the latest sync-retry blocker state.',
+            'evidence_used': [],
+        }
+
     return {
         'answer': 'The current thread context is sufficient for this question.',
         'evidence_used': [],
     }
+
 
 
 

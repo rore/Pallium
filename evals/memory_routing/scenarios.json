@@ -861,8 +861,7 @@
     "expected_intent": "broad_recall",
     "expected_top_layer": "lower_level_memory",
     "acceptable_top_layers": [
-      "lower_level_memory",
-      "pattern_memory"
+      "lower_level_memory"
     ],
     "expected_answer_signals": [
       "duplicate holds",

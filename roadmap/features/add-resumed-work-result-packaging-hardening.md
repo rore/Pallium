@@ -1,10 +1,10 @@
 ---
 id: add-resumed-work-result-packaging-hardening
 title: Add resumed-work result packaging hardening
-status: queued
+status: done
 priority: medium
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary

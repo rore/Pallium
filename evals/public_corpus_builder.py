@@ -19,6 +19,9 @@ USER_ROLE_MARKERS = {"user", "human"}
 ASSISTANT_ROLE_MARKERS = {"assistant", "gpt", "model", "bot"}
 WILDCHAT_CORPUS_NAME = "wildchat"
 WILDBENCH_CORPUS_NAME = "wildbench"
+WORK_PROGRESS_PREFIXES = ("partial progress:", "progress update:", "review progress:", "progress:")
+WORK_BLOCKER_PREFIXES = ("blocked:", "blocker:", "failed attempt:", "failure:")
+WORK_NEXT_STEP_PREFIXES = ("next step:",)
 
 
 def main() -> int:
@@ -274,6 +277,20 @@ def _assemble_episode(
     source_conversation_ids: list[str],
 ) -> dict[str, Any]:
     effective_query_text = str(spec.get("query_text", query_text))
+    expected_primary_layer = spec.get("expected_primary_layer", spec.get("expected_winning_layer"))
+    acceptable_fallback_layers = list(spec.get("acceptable_fallback_layers") or [])
+    if not acceptable_fallback_layers and spec.get("acceptable_winning_layers"):
+        acceptable_fallback_layers = [
+            item
+            for item in spec.get("acceptable_winning_layers", [])
+            if item != expected_primary_layer
+        ]
+    acceptable_layers: list[str] = []
+    if expected_primary_layer:
+        acceptable_layers.append(expected_primary_layer)
+    for layer in acceptable_fallback_layers:
+        if layer not in acceptable_layers:
+            acceptable_layers.append(layer)
     current_query = {
         "text": effective_query_text,
         "limit": int(spec.get("query_limit", manifest.get("default_query_limit", DEFAULT_QUERY_LIMIT))),
@@ -300,8 +317,21 @@ def _assemble_episode(
         "current_query": current_query,
         "target_question": spec.get("target_question", query_text),
         "should_memory_help": bool(spec.get("should_memory_help")),
+        "scenario_family": spec.get("scenario_family", spec["episode_type"]),
+        "expected_intent": spec.get("expected_intent"),
+        "expected_primary_layer": expected_primary_layer,
+        "acceptable_fallback_layers": acceptable_fallback_layers,
+        "acceptable_layers": acceptable_layers,
+        "forbidden_layers": list(spec.get("forbidden_layers", [])),
+        "must_preserve": list(spec.get("must_preserve", [])),
+        "must_not_introduce": list(spec.get("must_not_introduce", [])),
+        "guard_terms": {
+            key: [str(item).strip() for item in values if str(item).strip()]
+            for key, values in (spec.get("guard_terms", {}) or {}).items()
+        },
+        "expected_gap_target": spec.get("expected_gap_target"),
         "expected_winning_layer": spec.get("expected_winning_layer"),
-        "acceptable_winning_layers": spec.get("acceptable_winning_layers", []),
+        "acceptable_winning_layers": spec.get("acceptable_winning_layers", acceptable_layers),
         "expected_memory_types": spec.get("expected_memory_types", []),
         "expected_higher_level_memory_types": spec.get("expected_higher_level_memory_types", []),
         "expected_answer_signals": spec.get("expected_answer_signals", []),
@@ -331,10 +361,11 @@ def _build_thread_context(*, conversation: dict[str, Any], context_turn_indices:
     context_items: list[dict[str, Any]] = []
     for turn_index in sorted(context_turn_indices):
         turn = turns_by_index[turn_index]
+        artifact_kind = _infer_artifact_kind(role=turn["role"], content=turn["content"])
         context_items.append(
             {
                 "role": turn["role"],
-                "artifact_kind": "message" if turn["role"] == "user" else "assistant_output",
+                "artifact_kind": artifact_kind,
                 "content": turn["content"],
             }
         )
@@ -344,7 +375,7 @@ def _build_thread_context(*, conversation: dict[str, Any], context_turn_indices:
 def _build_source_event(*, conversation: dict[str, Any], turn: dict[str, Any]) -> dict[str, Any]:
     occurred_at = conversation["base_timestamp"] + timedelta(minutes=int(turn["turn_index"]))
     role = str(turn["role"])
-    artifact_kind = "message" if role == "user" else "assistant_output"
+    artifact_kind = _infer_artifact_kind(role=role, content=str(turn["content"]))
     return {
         "source_type": "public_corpus_turn",
         "source_id": f"{conversation['conversation_id']}:{turn['turn_index']}",
@@ -373,6 +404,17 @@ def _build_source_event(*, conversation: dict[str, Any], turn: dict[str, Any]) -
             "checklist": conversation.get("checklist", []),
         },
     }
+
+
+def _infer_artifact_kind(*, role: str, content: str) -> str:
+    if role == "user":
+        return "message"
+    lowered = content.strip().lower()
+    if lowered.startswith(WORK_NEXT_STEP_PREFIXES):
+        return "todo_snapshot"
+    if lowered.startswith(WORK_PROGRESS_PREFIXES) or lowered.startswith(WORK_BLOCKER_PREFIXES):
+        return "tool_use_summary"
+    return "assistant_output"
 
 
 def _normalize_wildchat_row(*, row: dict[str, Any], ordinal: int) -> dict[str, Any] | None:

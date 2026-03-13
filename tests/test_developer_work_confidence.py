@@ -27,6 +27,10 @@ PUBLIC_CORPUS_MARKERS = (
     "arashiyama",
     "store section",
     "backtracking",
+    "branch kiosk fallback coverage",
+    "kiosk smoke tests",
+    "retry window was exhausted",
+    "batch 418",
 )
 
 
@@ -45,6 +49,7 @@ class CompositeSemanticProvider:
         )
 
 
+
 def _benchmark_config() -> AppConfig:
     return AppConfig(
         default_use_case="agent_conversation_memory",
@@ -53,6 +58,7 @@ def _benchmark_config() -> AppConfig:
         llm_base_url="http://fake-provider.local",
         llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
     )
+
 
 
 def test_developer_work_confidence_suite_builds_green_confidence_gate(monkeypatch, tmp_path: Path) -> None:
@@ -75,10 +81,10 @@ def test_developer_work_confidence_suite_builds_green_confidence_gate(monkeypatc
     report = (run_dir / "report.md").read_text(encoding="utf-8")
 
     assert summary["components"]["work_resumption"]["scenarios_total"] == 13
-    assert summary["components"]["wildchat_reviewed"]["scenarios_total"] == 6
-    assert summary["components"]["wildbench_developer"]["scenarios_total"] == 5
-    assert summary["aggregate"]["scenarios_total"] == 24
-    assert summary["aggregate"]["policy_successes"] == 24
+    assert summary["components"]["wildchat_reviewed"]["scenarios_total"] == 10
+    assert summary["components"]["wildbench_developer"]["scenarios_total"] == 10
+    assert summary["aggregate"]["scenarios_total"] == 33
+    assert summary["aggregate"]["policy_successes"] == 33
     assert summary["aggregate"]["dominant_tuning_bottleneck"] is None
     assert all(count == 0 for count in summary["aggregate"]["failure_family_counts"].values())
     assert summary["gates"]["confidence_gate_passed"] is True

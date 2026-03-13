@@ -193,8 +193,10 @@ def _aggregate_failure_counts(
     wildchat_results: list[dict[str, Any]],
     wildbench_results: list[dict[str, Any]],
 ) -> dict[str, int]:
-    counts: Counter[str] = Counter(failure for row in wildchat_results + wildbench_results for failure in [row.get("failure_family")] if failure)
+    counts: Counter[str] = Counter()
     counts.update(failure for row in work_results for failure in row.get("failure_families", []))
+    counts.update(failure for row in wildchat_results for failure in row.get("failure_families", []))
+    counts.update(failure for row in wildbench_results for failure in row.get("failure_families", []))
     return {name: int(counts.get(name, 0)) for name in CONTINUITY_FAILURE_FAMILIES}
 
 

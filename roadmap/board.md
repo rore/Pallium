@@ -1,7 +1,4 @@
 # Next
-- add-candidate-aware-routing-and-fallback-hardening
-- add-reviewed-open-corpus-continuation-pack-expansion
-- add-resumed-work-result-packaging-hardening
 
 # Later
 - add-vector-retrieval-provider
@@ -18,6 +15,9 @@
 - idea-optional-reranker-support
 
 # Done
+- add-candidate-aware-routing-and-fallback-hardening
+- add-reviewed-open-corpus-continuation-pack-expansion
+- add-resumed-work-result-packaging-hardening
 - add-conversation-agent-integration-readiness-scenario
 - add-privacy-aware-memory-scope-and-sharing-foundation
 - add-task-checkpoint-memory-kind

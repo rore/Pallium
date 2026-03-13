@@ -65,6 +65,7 @@ def test_memory_routing_benchmark_captures_expected_layer_choices(monkeypatch, t
     assert results['broad-recall-paraphrase']['top_layer'] == 'pattern_memory'
     assert results['evidence-trace-exact']['top_layer'] == 'source_evidence'
     assert results['evidence-trace-paraphrase-challenge']['top_layer'] == 'source_evidence'
+    assert results['same-container-false-merge-guard']['top_layer'] == 'lower_level_memory'
     assert results['same-thread-low-value']['top_layer'] == 'none'
 
 
@@ -80,8 +81,12 @@ def test_memory_routing_benchmark_handles_evidence_trace_paraphrase(monkeypatch,
     )
     results = {item['scenario_id']: item for item in _read_jsonl(run_dir / 'results.jsonl')}
     challenge = results['evidence-trace-paraphrase-challenge']
+    fallback_case = results['same-container-false-merge-guard']
 
     assert challenge['intent_match'] is True
     assert challenge['policy_success'] is True
     assert challenge['expected_intent'] == 'evidence_trace'
     assert challenge['routing_intent'] == 'evidence_trace'
+    assert fallback_case['top_layer'] == 'lower_level_memory'
+    assert fallback_case['query_trace']['routing']['fallback']['applied'] is True
+    assert fallback_case['query_trace']['routing']['fallback']['to_layer'] == 'lower_level_memory'

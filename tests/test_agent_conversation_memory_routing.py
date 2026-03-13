@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from core.models import EvidenceReference, QueryFilters, QueryResultItem, QueryTrace
+from retrieval.base import RetrievalQueryResult
+from semantic.agent_conversation_memory import AgentConversationMemoryPlugin
 from tests.config_helpers import build_llm_test_config
 from tests.stub_providers import TieredMemorySemanticProvider
 
@@ -199,16 +203,120 @@ def test_work_resumption_routes_task_checkpoint_first(monkeypatch, test_db_url: 
 
         assert routing['query_intent'] == 'work_resumption'
         assert routing['preferred_layers'][0] == 'task_checkpoint'
+        assert routing['packaging']['mode'] == 'task_checkpoint_plus_adjacent_evidence'
+        assert [item['signal_type'] for item in routing['packaging']['adjacent_evidence'][:2]] == ['blocker', 'next_step']
         assert payload['results'][0]['result_kind'] == 'memory_hit'
         assert payload['results'][0]['type'] == 'task_checkpoint'
+        assert {payload['results'][1]['artifact_kind'], payload['results'][2]['artifact_kind']} == {'tool_use_summary', 'todo_snapshot'}
         checkpoint_payload = payload['results'][0]['payload']
         assert 'service token expired' in checkpoint_payload['blocker_state'].lower()
         assert 'refresh the catalog service token' in checkpoint_payload['next_step'].lower()
-        assert any(
-            item['result_kind'] == 'source_hit' and item['artifact_kind'] in {'tool_use_summary', 'todo_snapshot'}
-            for item in payload['results']
-        )
+        assert 'blocker' in routing['selected_results'][0]['work_signal_types']
+        assert 'freshness' in routing['selected_results'][0]['work_signal_types']
 
+
+def test_work_resumption_demotes_thin_checkpoint_when_fresher_source_state_is_sharper() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-thin',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'Older catalog sync retry state.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'Earlier retry paused after the auth failure.',
+                    'latest_occurred_at': '2026-03-11T10:02:00Z',
+                },
+                score=18,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-old',
+                        source_type='assistant_artifact',
+                        source_id='artifact-old',
+                        occurred_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-routing-work-thin',
+                        artifact_kind='tool_use_summary',
+                    )
+                ],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='source-fresh-blocker',
+                source_type='assistant_artifact',
+                source_id='artifact-fresh-blocker',
+                excerpt='Blocked: catalog API returned 429 after batch 417 because the retry window was exhausted.',
+                occurred_at=datetime(2026, 3, 11, 12, 1, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-routing-work-thin',
+                artifact_kind='tool_use_summary',
+                score=14,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-fresh-blocker',
+                        source_type='assistant_artifact',
+                        source_id='artifact-fresh-blocker',
+                        occurred_at=datetime(2026, 3, 11, 12, 1, tzinfo=timezone.utc),
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-routing-work-thin',
+                        artifact_kind='tool_use_summary',
+                    )
+                ],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='source-fresh-next-step',
+                source_type='assistant_artifact',
+                source_id='artifact-fresh-next-step',
+                excerpt='Next step: wait 15 minutes and resume from batch 418 with the refreshed token.',
+                occurred_at=datetime(2026, 3, 11, 12, 2, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-routing-work-thin',
+                artifact_kind='todo_snapshot',
+                score=13,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-fresh-next-step',
+                        source_type='assistant_artifact',
+                        source_id='artifact-fresh-next-step',
+                        occurred_at=datetime(2026, 3, 11, 12, 2, tzinfo=timezone.utc),
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-routing-work-thin',
+                        artifact_kind='todo_snapshot',
+                    )
+                ],
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What blocker remains now and what should we do next on the catalog sync retry?',
+            query_tokens=('blocker', 'next', 'retry', 'sync'),
+            limit=3,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    results, trace = plugin.route_query_results(
+        text='What blocker remains now and what should we do next on the catalog sync retry?',
+        requested_limit=3,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+    )
+
+    assert results[0].result_kind == 'source_hit'
+    assert results[1].result_kind == 'source_hit'
+    assert {results[0].artifact_kind, results[1].artifact_kind} == {'tool_use_summary', 'todo_snapshot'}
+    assert any(item.result_kind == 'memory_hit' and item.type == 'task_checkpoint' for item in results)
+    assert trace is not None
+    assert trace.routing is not None
+    assert trace.routing['packaging']['demoted_task_checkpoint']['result_id'] == 'memory_object:checkpoint-thin'
+    assert 'thin_checkpoint' in trace.routing['packaging']['demoted_task_checkpoint']['packaging_reasons']
 
 def test_evidence_trace_with_task_checkpoint_still_prefers_source_evidence(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
@@ -254,3 +362,27 @@ def test_broad_recall_filters_unrelated_continuity_memory(monkeypatch, test_db_u
             for item in routing['selected_results']
             if item['memory_type'] == 'continuity_memory'
         )
+
+
+def test_broad_recall_missing_pattern_applies_explicit_fallback_to_lower_level(monkeypatch, test_db_url: str) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        scenario = _ingest_prior_events(client, 'same-container-false-merge-guard')
+        client.app.state.pallium_service.run_consolidation_pass(
+            use_case='agent_conversation_memory',
+            strategy_name='thread_summary_anchored',
+        )
+
+        payload = _run_debug_query(client, scenario['current_query'])
+        routing = payload['trace']['routing']
+
+        assert routing['selected_layer'] == 'lower_level_memory'
+        assert routing['fallback'] == {
+            'applied': True,
+            'from_layer': 'pattern_memory',
+            'to_layer': 'lower_level_memory',
+            'reason_code': 'preferred_layer_missing',
+            'reason': 'No pattern_memory candidate was retrieved, so routing fell back to the sharpest safer layer.',
+        }
+        assert routing['candidate_summary']['pattern_memory']['candidate_count'] == 0
+        assert payload['results'][0]['result_kind'] == 'memory_hit'
+        assert payload['results'][0]['type'] == 'decision'

@@ -13,7 +13,9 @@
       "conversation_id": "wc-review-001",
       "query_turn_index": 4,
       "description": "Later in the same conversation, the user asks for the exact starter feed ratio again.",
+      "scenario_family": "resumed_work_paraphrase",
       "should_memory_help": true,
+      "expected_intent": "precise_fact",
       "expected_winning_layer": "lower_level_memory",
       "acceptable_winning_layers": [
         "lower_level_memory",
@@ -29,6 +31,31 @@
       "review_notes": "Exact factual carry-forward should stay on lower-level memory or source evidence rather than higher-level synthesis."
     },
     {
+      "episode_id": "wildchat-feed-ratio-evidence-follow-up",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wc-review-001",
+      "query_turn_index": 4,
+      "query_text": "What evidence showed that cold storage slows recovery? Quote the earlier note.",
+      "target_question": "What evidence showed that cold storage slows recovery? Quote the earlier note.",
+      "description": "A later follow-up asks for the exact earlier evidence about why cold storage slowed recovery.",
+      "scenario_family": "exact_evidence_followup",
+      "should_memory_help": true,
+      "expected_intent": "evidence_trace",
+      "expected_winning_layer": "source_evidence",
+      "acceptable_winning_layers": [
+        "source_evidence",
+        "lower_level_memory"
+      ],
+      "expected_memory_types": [
+        "investigation_outcome"
+      ],
+      "expected_answer_signals": [
+        "cold storage slows recovery",
+        "sour smell"
+      ],
+      "review_notes": "Exact evidence follow-up should prefer sharp evidence over a broad recap."
+    },
+    {
       "episode_id": "wildchat-rewrite-no-value-guard",
       "episode_type": "within_conversation_later_turn_recall",
       "conversation_id": "wc-review-002",
@@ -38,6 +65,7 @@
         2
       ],
       "description": "The current thread already includes the assistant rewrite, so memory should not materially help.",
+      "scenario_family": "same_thread_no_value",
       "should_memory_help": false,
       "overreach_guard": true,
       "expected_answer_signals": [
@@ -50,15 +78,21 @@
       "episode_id": "wildchat-handoff-carry-forward",
       "episode_type": "later_session_carry_forward",
       "source_conversation_ids": [
-        "wc-review-003"
+        "wc-review-003",
+        "wc-review-008"
       ],
       "target_conversation_id": "wc-review-004",
       "target_query_turn_index": 0,
-      "description": "A later session asks whether the handoff template answer was already given before.",
+      "description": "A later session asks whether the handoff template answer was already given before, despite a different same-container blocker thread existing.",
+      "scenario_family": "resumed_work_paraphrase",
       "should_memory_help": true,
+      "expected_intent": "answer_continuity",
       "expected_winning_layer": "continuity_memory",
       "acceptable_winning_layers": [
         "continuity_memory"
+      ],
+      "forbidden_layers": [
+        "task_checkpoint"
       ],
       "expected_higher_level_memory_types": [
         "continuity_memory"
@@ -66,8 +100,18 @@
       "expected_answer_signals": [
         "Done / Waiting / Next owner"
       ],
+      "must_not_introduce": [
+        "wrong_thread_state"
+      ],
+      "guard_terms": {
+        "wrong_thread_state": [
+          "branch kiosk fallback",
+          "kiosk smoke tests",
+          "vpn approval"
+        ]
+      },
       "consolidation_strategy": "thread_summary_anchored",
-      "review_notes": "Repeated-answer carry-forward should prefer continuity memory over lower-level replay."
+      "review_notes": "Repeated-answer carry-forward should prefer continuity memory over lower-level replay and should ignore unrelated blocker state in the same container."
     },
     {
       "episode_id": "wildchat-grocery-pattern-recall",
@@ -79,7 +123,9 @@
       "target_conversation_id": "wc-review-007",
       "target_query_turn_index": 0,
       "description": "A later session asks for the general lesson across two earlier grocery-planning conversations.",
+      "scenario_family": "resumed_work_paraphrase",
       "should_memory_help": true,
+      "expected_intent": "broad_recall",
       "expected_winning_layer": "pattern_memory",
       "acceptable_winning_layers": [
         "pattern_memory"
@@ -98,7 +144,8 @@
       "episode_id": "wildchat-handoff-old-answer-paraphrase",
       "episode_type": "later_session_carry_forward",
       "source_conversation_ids": [
-        "wc-review-003"
+        "wc-review-003",
+        "wc-review-008"
       ],
       "target_conversation_id": "wc-review-004",
       "target_query_turn_index": 2,
@@ -109,10 +156,15 @@
       "query_text": "I just need the old handoff template answer, not a new brainstorm.",
       "target_question": "I just need the old handoff template answer, not a new brainstorm.",
       "description": "A later session paraphrases the carry-forward need and asks for the old handoff answer without wanting a fresh brainstorm.",
+      "scenario_family": "resumed_work_paraphrase",
       "should_memory_help": true,
+      "expected_intent": "answer_continuity",
       "expected_winning_layer": "continuity_memory",
       "acceptable_winning_layers": [
         "continuity_memory"
+      ],
+      "forbidden_layers": [
+        "task_checkpoint"
       ],
       "expected_higher_level_memory_types": [
         "continuity_memory"
@@ -120,8 +172,18 @@
       "expected_answer_signals": [
         "Done / Waiting / Next owner"
       ],
+      "must_not_introduce": [
+        "wrong_thread_state"
+      ],
+      "guard_terms": {
+        "wrong_thread_state": [
+          "branch kiosk fallback",
+          "kiosk smoke tests",
+          "vpn approval"
+        ]
+      },
       "consolidation_strategy": "thread_summary_anchored",
-      "review_notes": "Reviewed continuation paraphrase derived from the same handoff recovery thread pair."
+      "review_notes": "Reviewed continuation paraphrase derived from the same handoff recovery thread pair, with unrelated blocker memory in the same container."
     },
     {
       "episode_id": "wildchat-grocery-big-picture-paraphrase",
@@ -139,7 +201,9 @@
       "query_text": "I want the big picture on why grocery trips keep dragging out, not just one tactic.",
       "target_question": "I want the big picture on why grocery trips keep dragging out, not just one tactic.",
       "description": "A later session paraphrases the broad recall need and asks for the big picture across earlier grocery-planning discussions.",
+      "scenario_family": "resumed_work_paraphrase",
       "should_memory_help": true,
+      "expected_intent": "broad_recall",
       "expected_winning_layer": "pattern_memory",
       "acceptable_winning_layers": [
         "pattern_memory"
@@ -153,6 +217,118 @@
       ],
       "consolidation_strategy": "container_topic_window",
       "review_notes": "Reviewed broad-recall paraphrase derived from the same grocery carry-forward thread set."
+    },
+    {
+      "episode_id": "wildchat-branch-kiosk-resumption",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wc-review-008",
+      "query_turn_index": 6,
+      "query_text": "If I pick this back up tomorrow, what blocker is still live and what should I do next?",
+      "target_question": "If I pick this back up tomorrow, what blocker is still live and what should I do next?",
+      "description": "A realistic same-thread continuation asks for the latest blocker and next step after progress and blocker state evolved.",
+      "scenario_family": "blocker_next_step_followup",
+      "should_memory_help": true,
+      "expected_intent": "work_resumption",
+      "expected_winning_layer": "task_checkpoint",
+      "acceptable_winning_layers": [
+        "task_checkpoint"
+      ],
+      "forbidden_layers": [
+        "continuity_memory",
+        "pattern_memory"
+      ],
+      "expected_memory_types": [
+        "task_checkpoint"
+      ],
+      "expected_answer_signals": [
+        "branch kiosk fallback coverage is still missing",
+        "rerun kiosk smoke tests"
+      ],
+      "must_preserve": [
+        "blocker_state",
+        "next_step_guidance",
+        "freshness"
+      ],
+      "must_not_introduce": [
+        "stale_state"
+      ],
+      "guard_terms": {
+        "stale_state": [
+          "vpn approval is still pending"
+        ]
+      },
+      "review_notes": "This pressures compact resumed-work state and freshness, not just broad recall."
+    },
+    {
+      "episode_id": "wildchat-branch-kiosk-no-value-guard",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wc-review-008",
+      "query_turn_index": 6,
+      "current_context_turn_indices": [
+        4,
+        5,
+        6
+      ],
+      "query_text": "The blocker and next step are already visible in this thread, so restate them without pulling in older memory.",
+      "target_question": "The blocker and next step are already visible in this thread, so restate them without pulling in older memory.",
+      "description": "A stronger same-thread no-value continuation already exposes the latest blocker and next step in current context.",
+      "scenario_family": "same_thread_no_value",
+      "should_memory_help": false,
+      "overreach_guard": true,
+      "expected_answer_signals": [
+        "branch kiosk fallback coverage is still missing",
+        "rerun kiosk smoke tests"
+      ],
+      "review_notes": "Current context already holds the freshest blocker and next step, so older memory should stay quiet."
+    },
+    {
+      "episode_id": "wildchat-branch-kiosk-carry-forward",
+      "episode_type": "later_session_carry_forward",
+      "source_conversation_ids": [
+        "wc-review-008"
+      ],
+      "target_conversation_id": "wc-review-009",
+      "target_query_turn_index": 2,
+      "current_context_turn_indices": [
+        0,
+        2
+      ],
+      "query_text": "We are picking this branch kiosk handoff cleanup back up. What blocker remained and what should happen next?",
+      "target_question": "We are picking this branch kiosk handoff cleanup back up. What blocker remained and what should happen next?",
+      "description": "A later session resumes the branch-kiosk thread and asks for the carried blocker and next step.",
+      "scenario_family": "blocker_next_step_followup",
+      "should_memory_help": true,
+      "expected_intent": "work_resumption",
+      "expected_winning_layer": "task_checkpoint",
+      "acceptable_winning_layers": [
+        "task_checkpoint"
+      ],
+      "forbidden_layers": [
+        "continuity_memory",
+        "pattern_memory"
+      ],
+      "expected_memory_types": [
+        "task_checkpoint"
+      ],
+      "expected_answer_signals": [
+        "branch kiosk fallback coverage is still missing",
+        "rerun kiosk smoke tests"
+      ],
+      "must_preserve": [
+        "blocker_state",
+        "next_step_guidance",
+        "freshness"
+      ],
+      "must_not_introduce": [
+        "stale_state"
+      ],
+      "guard_terms": {
+        "stale_state": [
+          "vpn approval is still pending"
+        ]
+      },
+      "consolidation_strategy": "thread_summary_anchored",
+      "review_notes": "This adds a reviewed resumed-work paraphrase that should carry forward compact task state across sessions."
     }
   ]
 }

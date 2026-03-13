@@ -48,9 +48,11 @@
 - superseded memory is hidden from default retrieval while evidence remains searchable
 - named text-view metadata now exists on `IndexEntry`
 - current lexical trace records matched tokens and selected text views across `SourceItem` and `MemoryObject` retrieval
-- `agent_conversation_memory` now applies internal routed retrieval policy across higher-level memory, lower-level memory, and source evidence
+- `agent_conversation_memory` now applies candidate-aware internal routed retrieval policy across higher-level memory, lower-level memory, and source evidence, with explicit safer fallback when higher-level support is weak or missing
+- resumed-work packaging now applies package-owned usefulness and freshness scoring so sharp `task_checkpoint` state can beat muddier summaries, thin or stale checkpoints can be demoted, and adjacent blocker/next-step evidence stays inspectable on the debug path
 - `agent_conversation_memory` is now scope-aware and fail-closed: query visibility is required, missing-visibility ingest stays non-promotable and non-retrievable in normal scoped queries, and public/private memory stays separated through exact-match-only derivation
 - a bounded offline public-corpus eval path now exists for WildChat reviewed-manifest selection plus a complementary WildBench reviewed task slice, with local helper workflows for both
+- the reviewed open-corpus continuation packs are now materially larger and cover resumed-work paraphrases, blocker and next-step follow-ups, exact evidence follow-ups, stronger same-thread no-value continuations, and stale or wrong-memory guards while staying deterministic
 - realistic agent-conversation scenarios now exist under `evals/agent_conversation/`
 - recurring-question benchmark now exists under `evals/recurring_question/`
 - authored developer-work continuity suite now exists under `evals/work_resumption/`
@@ -77,7 +79,7 @@
   - `tests/test_agent_conversation_memory_routing.py`
   - `tests/test_work_resumption_benchmark.py`
   - `tests/test_tiered_memory.py`
-- focused public-corpus slice tests pass locally, including the small WildBench developer-continuation pack assets:
+- focused public-corpus slice tests pass locally, including the expanded WildBench developer-continuation pack assets:
   - `tests/test_public_corpus_builder.py`
   - `tests/test_public_corpus_benchmark.py`
   - `tests/test_public_corpus_wildchat_local.py`
@@ -102,13 +104,13 @@
   - scope guard stayed fail-closed with no privacy leak failure
 - deterministic aggregate developer-work confidence run succeeded locally:
   - `evals/developer_work_confidence/output/local-developer-work-confidence-stub`
-  - `24 / 24` policy-success scenarios across the authored work suite plus reviewed WildChat and WildBench packs
+  - `33 / 33` policy-success scenarios across the authored work suite plus the expanded reviewed WildChat and WildBench continuation packs
   - `0` privacy leaks, `0` wrong-memory failures, `0` stale-memory failures, and `0` no-value overreach failures in the committed stub confidence gate
 - deterministic memory-routing benchmark run succeeded locally:
   - `evals/memory_routing/output/local-memory-routing-stub`
   - `10 / 10` policy-success scenarios
   - `0` false-merge failures
-  - broad recall, continuity, precise fact, and evidence-trace scenarios all matched the current routed-policy expectations
+  - broad recall, continuity, precise fact, and evidence-trace scenarios all matched the current candidate-aware routed-policy expectations, including explicit fallback to lower-level memory when broad higher-level recall was unsupported
 - semantic regression baseline remains the committed real OpenAI run on the current batch
 - current recorded semantic baseline on `gpt-5-mini` with `strict_typed_memory_v4_evidence_guarded` is:
   - `30 / 30` overall correct

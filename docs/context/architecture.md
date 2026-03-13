@@ -40,7 +40,7 @@ Implemented storage and retrieval behavior:
 - compact source-hit cards with explicit event refs instead of raw full content
 - lifecycle-aware retrieval that excludes superseded memory by default
 - optional lexical retrieval trace on the debug query path, including matched tokens and selected text views
-- package-owned routed reranking on top of retrieval results for `agent_conversation_memory`, exposed only through the existing debug trace path
+- package-owned candidate-aware routed reranking on top of retrieval results for `agent_conversation_memory`, with explicit safer-layer fallback exposed through the existing debug trace path
 - evidence resolution from memory objects back to source items
 - generic `visibility_context` plumbing on `SourceItem`, `MemoryObject`, and query requests, with fail-closed retrieval enforcement for scope-aware packages before ranking and visibility exclusion trace on the debug path
 
@@ -193,7 +193,9 @@ The package reuses the current typed-memory extraction path rather than introduc
 
 It now also uses the shared thread aggregation capability to build one active `thread_summary` memory object per `container_ref + thread_ref`. Each thread summary is evidence-backed, lifecycle-managed through supersession, and can carry forward active `decision` and `investigation_outcome` conclusions from that conversation thread.
 
-The package now also owns an internal query-routing policy that reranks retrieved candidates across `pattern_memory`, `continuity_memory`, lower-level memory, and source evidence by question shape. That policy remains package semantics rather than generic retrieval behavior, and it is inspectable through `POST /query/debug` without changing the public `/query` contract.
+The package now also owns an internal query-routing policy that reranks retrieved candidates across `pattern_memory`, `continuity_memory`, lower-level memory, and source evidence using both question shape and retrieved candidate evidence shape. That policy keeps explicit safer-layer fallback inside the package boundary when higher-level support is weak or missing, and it remains inspectable through `POST /query/debug` without changing the public `/query` contract.
+
+For resumed-work queries, that same package-owned path now adds explicit usefulness and freshness shaping for `task_checkpoint` plus adjacent evidence. Sharp checkpoints that preserve blocker, next step, evidence, and freshness can win cleanly, while thin or stale checkpoints can be demoted beneath fresher explicit source state without changing the public API.
 
 `agent_conversation_memory` is now the first scope-aware package. It requires consumer-supplied `visibility_context` on ingest and query, preserves visibility on direct and higher-level memory, excludes missing-visibility evidence from promotion and normal retrieval, and relies on the core/capability layer for exact-match-only aggregation and consolidation.
 

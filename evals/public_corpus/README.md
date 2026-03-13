@@ -30,6 +30,9 @@ How the two sources fit together:
   - result packaging/evidence
   - compact task-state where applicable
   - no-value overreach
+  - stale-memory guard failures
+  - wrong-memory selection failures
+  - privacy leaks when applicable
 
 WildChat notes:
 - use the official dataset card for license and terms review before downloading locally: `https://huggingface.co/datasets/allenai/WildChat-4.8M`
@@ -94,5 +97,7 @@ Notes:
 - `evals.public_corpus_builder` and `evals.public_corpus_benchmark` now work for both WildChat and WildBench reviewed-manifest inputs
 - for the larger WildChat corpus, prefer the WildChat local helper so repeated benchmark runs reuse a materialized review-set cache instead of rescanning the raw snapshot each time
 - for WildBench, keep the workflow small and benchmark-focused; do not build a broader multi-corpus platform in this phase
+
+
 
 

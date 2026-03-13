@@ -2,18 +2,17 @@ Pallium now has a dedicated validation layer for tiered memory, a retrieval trac
 
 Current focus:
 - keep `agent_conversation_memory` as the first product slice, but shift the hardening bar from "works on bounded scenarios" to "behaves safely and usefully on more realistic resumed-work interactions"
-- treat the current main brittle points explicitly: text-heavy routing heuristics, limited reviewed open-corpus breadth, and resumed-work result packaging that is sometimes less operationally sharp than the stored memory warrants
+- the main brittle points are now narrower: routing still begins from query-text intent families, confidence still comes from reviewed open-data rather than downstream traffic, and retrieval is still lexical-first
 - preserve the current product claim: Pallium should help an agent stay oriented across interrupted and resumed work without turning into the agent runtime, a workflow engine, or a transcript archive
 - keep privacy as a permanent regression gate, not a one-time completed feature: every retrieval, routing, aggregation, and debug-path hardening slice must preserve fail-closed visibility behavior
 - treat the canonical integration-readiness scenario as passed in-repo: Pallium now has a narrow self-contained proof of resumed-work value, no-value restraint, and fail-closed scope behavior before any thin downstream adapter exists
-- use the work-resumption benchmark, the aggregate developer-work confidence harness, and the reviewed WildChat/WildBench packs as the main tuning loop before deeper retrieval sophistication
+- use the work-resumption benchmark, the aggregate developer-work confidence harness, the reviewed WildChat/WildBench packs, and the canonical integration-readiness scenario as the standing tuning and regression loop before deeper retrieval sophistication
 - keep memory bounded, evidence-backed, additive, and inspectable while increasing confidence in real-interaction behavior
 
 Concrete next steps:
-- harden package-owned routing so it uses both query wording and candidate evidence shape, plus safer fallback behavior when confidence is weak or current-thread context is already sufficient
-- expand the reviewed open-corpus continuation packs so the deterministic confidence harness covers more paraphrase, blocker, no-value, stale-memory, and wrong-memory cases
-- sharpen resumed-work result packaging so `task_checkpoint` and related layers preserve task, blocker, next-step, evidence, and freshness in a more operationally useful way
-- keep the canonical integration-readiness scenario as a standing milestone gate and Bruno manual runner for judging whether the current Pallium build is worth wiring into a thin downstream adapter
+- use the canonical integration-readiness scenario plus the Bruno runner as a standing gate before any thin downstream adapter work is treated as meaningful validation
+- validate the current build in a thin downstream integration outside the public repo while keeping privacy as a permanent regression gate inside Pallium
+- use the expanded confidence harness to determine whether the next real bottleneck is still routing, result packaging, or lexical recall
 - add a vector retrieval provider behind the existing retrieval boundary only if the expanded confidence harness shows paraphrase or concept recall remains the dominant bottleneck after routing and packaging hardening
 - then add RRF-based hybrid retrieval fusion only if that evidence still supports a dual-mode retrieval path
 - then add an explicit shared-memory derivation path so broader reuse happens through separate shared derived memory rather than in-place widening of local memory
@@ -25,7 +24,7 @@ What the current evaluation layer established:
 - resumed-work continuity benefits from compact `task_checkpoint` memory and selected work artifacts
 - same-thread and precise factual questions should not default to higher-level memory
 - exact factual and evidence-heavy questions should still prefer lower-level `decision` or `investigation_outcome` or raw source evidence
-- the current routed policy is useful and inspectable, but still too dependent on authored text cues to be treated as fully hardened for messy real interaction phrasing
+- the current routed policy is now candidate-aware, explainable, and safer on weak support, but it still begins from explicit query-text intent families and is not yet a final answer for messy real interaction phrasing
 - the current confidence harness is now strong enough to tune Pallium meaningfully, but still reflects reviewed authored and open-data cases rather than live downstream behavior
 - privacy enforcement is now in place and fail-closed, but trust depends on keeping it permanently regressed as the retrieval and routing stack evolves
 

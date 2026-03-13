@@ -1,10 +1,10 @@
 ---
 id: add-candidate-aware-routing-and-fallback-hardening
 title: Add candidate-aware routing and fallback hardening
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary

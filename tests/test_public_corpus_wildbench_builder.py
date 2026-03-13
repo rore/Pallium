@@ -24,22 +24,26 @@ def _json_default(value: object) -> str:
     raise TypeError(f'Unsupported JSON value: {type(value).__name__}')
 
 
+
 def test_load_wildbench_conversations_filters_to_safe_english_multi_turn_rows() -> None:
     conversations = load_public_corpus_conversations(FIXTURE, corpus_name='wildbench')
 
-    assert len(conversations) == 4
+    assert len(conversations) == 5
     by_id = {item['conversation_id']: item for item in conversations}
     assert set(by_id) == {
         'wb-review-001',
         'wb-review-002',
         'wb-review-003',
         'wb-review-004',
+        'wb-review-005',
     }
     assert all(item['language'] == 'english' for item in conversations)
     assert all(item['safe'] is not False for item in conversations)
     assert by_id['wb-review-001']['primary_tag'] == 'coding'
     assert by_id['wb-review-003']['intent'] == 'evaluation'
     assert by_id['wb-review-004']['reference_answer'] == "The exact log line was 'job already running, skipping new start'."
+    assert by_id['wb-review-005']['reference_answer'].startswith('The current blocker is a 429')
+
 
 
 def test_load_wildbench_conversations_accepts_materialized_review_set_rows(tmp_path: Path) -> None:
@@ -51,16 +55,18 @@ def test_load_wildbench_conversations_accepts_materialized_review_set_rows(tmp_p
 
     assert [item['conversation_id'] for item in reloaded] == [item['conversation_id'] for item in conversations]
     assert reloaded[0]['sort_key'] == conversations[0]['sort_key']
-    assert reloaded[3]['reference_answer'] == conversations[3]['reference_answer']
+    assert reloaded[4]['reference_answer'] == conversations[4]['reference_answer']
+
 
 
 def test_wildbench_candidate_episode_generation_is_within_conversation_only() -> None:
     conversations = load_public_corpus_conversations(FIXTURE, corpus_name='wildbench')
     candidates = build_candidate_episodes(conversations)
 
-    assert len(candidates) == 4
+    assert len(candidates) == 5
     assert all(item['episode_type'] == 'within_conversation_later_turn_recall' for item in candidates)
     assert {item['primary_tag'] for item in candidates} == {'career', 'coding', 'travel'}
+
 
 
 def test_wildbench_reviewed_manifest_conversation_ids_cover_reviewed_slice() -> None:
@@ -72,6 +78,7 @@ def test_wildbench_reviewed_manifest_conversation_ids_cover_reviewed_slice() -> 
         'wb-review-003',
         'wb-review-004',
     }
+
 
 
 def test_wildbench_reviewed_episode_builder_emits_pallium_shaped_episodes() -> None:
@@ -97,15 +104,17 @@ def test_wildbench_reviewed_episode_builder_emits_pallium_shaped_episodes() -> N
     assert source_evidence['reference_answer'] == "The exact log line was 'job already running, skipping new start'."
 
 
+
 def test_wildbench_developer_continuation_manifest_stays_small_and_coding_weighted() -> None:
     conversations = load_public_corpus_conversations(FIXTURE, corpus_name='wildbench')
     manifest = load_review_manifest(DEV_CONTINUATION_MANIFEST)
     episodes = build_reviewed_episodes(conversations=conversations, manifest=manifest)
 
-    assert len(episodes) == 5
+    assert len(episodes) == 10
     assert episodes[0]['episode_id'] == 'wildbench-k8s-memory-cap-recall'
     episode_ids = {item['episode_id'] for item in episodes}
     assert 'wildbench-overlap-log-line' in episode_ids
     assert 'wildbench-overlap-log-line-no-value' in episode_ids
-    assert 'wildbench-scorecard-explanation-no-value' in episode_ids
-    assert sum(1 for item in episodes if item['source_primary_tag'] == 'coding') == 3
+    assert 'wildbench-sync-retry-current-blocker' in episode_ids
+    assert 'wildbench-sync-retry-no-value' in episode_ids
+    assert sum(1 for item in episodes if item['source_primary_tag'] == 'coding') == 8

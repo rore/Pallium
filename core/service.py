@@ -194,6 +194,7 @@ class PalliumService:
                 text=text,
                 requested_limit=limit,
                 retrieval_result=retrieval_result,
+                query_filters=filters,
             )
             return QueryResult(results=routed_results, trace=routed_trace)
         return QueryResult(results=retrieval_result.results, trace=retrieval_result.trace)

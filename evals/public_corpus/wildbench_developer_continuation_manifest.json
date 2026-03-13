@@ -13,7 +13,9 @@
       "conversation_id": "wb-review-001",
       "query_turn_index": 4,
       "description": "A realistic debugging follow-up asks for the earlier resource-cap recommendation again.",
+      "scenario_family": "resumed_work_paraphrase",
       "should_memory_help": true,
+      "expected_intent": "precise_fact",
       "expected_winning_layer": "lower_level_memory",
       "acceptable_winning_layers": [
         "lower_level_memory",
@@ -29,12 +31,39 @@
       "review_notes": "Developer-oriented continuation recall pressure over a realistic debugging task."
     },
     {
+      "episode_id": "wildbench-k8s-memory-cap-paraphrase",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wb-review-001",
+      "query_turn_index": 4,
+      "query_text": "Which exact memory limit did you tell me to raise, and which request stays at 512Mi?",
+      "target_question": "Which exact memory limit did you tell me to raise, and which request stays at 512Mi?",
+      "description": "A resumed-work paraphrase asks for the exact Kubernetes memory change without replaying the whole diagnosis.",
+      "scenario_family": "resumed_work_paraphrase",
+      "should_memory_help": true,
+      "expected_intent": "precise_fact",
+      "expected_winning_layer": "lower_level_memory",
+      "acceptable_winning_layers": [
+        "lower_level_memory",
+        "source_evidence"
+      ],
+      "expected_memory_types": [
+        "decision"
+      ],
+      "expected_answer_signals": [
+        "1Gi",
+        "512Mi"
+      ],
+      "review_notes": "This keeps exact recall pressure high while varying the continuation wording."
+    },
+    {
       "episode_id": "wildbench-scorecard-headings-recall",
       "episode_type": "within_conversation_later_turn_recall",
       "conversation_id": "wb-review-003",
       "query_turn_index": 4,
       "description": "A paraphrased follow-up asks for the earlier rubric headings again on the same task.",
+      "scenario_family": "resumed_work_paraphrase",
       "should_memory_help": true,
+      "expected_intent": "precise_fact",
       "expected_winning_layer": "lower_level_memory",
       "acceptable_winning_layers": [
         "lower_level_memory",
@@ -48,7 +77,9 @@
         "tradeoffs",
         "ownership"
       ],
-      "review_notes": "This is the small reviewed paraphrase-recall slice for the developer-work continuity expansion."
+      "review_notes": "This is the small reviewed paraphrase-recall slice for the developer-work continuity expansion.",
+      "query_text": "Which exact headings did we settle on for the debrief rubric?",
+      "target_question": "Which exact headings did we settle on for the debrief rubric?"
     },
     {
       "episode_id": "wildbench-overlap-log-line",
@@ -56,7 +87,9 @@
       "conversation_id": "wb-review-004",
       "query_turn_index": 2,
       "description": "A realistic debugging follow-up asks for the exact supporting log line from earlier in the same session.",
+      "scenario_family": "exact_evidence_followup",
       "should_memory_help": true,
+      "expected_intent": "precise_fact",
       "expected_winning_layer": "source_evidence",
       "acceptable_winning_layers": [
         "source_evidence",
@@ -72,6 +105,111 @@
       "review_notes": "This adds a small evidence-heavy developer follow-up to the continuation pack."
     },
     {
+      "episode_id": "wildbench-overlap-log-line-paraphrase",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wb-review-004",
+      "query_turn_index": 2,
+      "query_text": "Which exact overlap-proof line should I paste into the incident note?",
+      "target_question": "Which exact overlap-proof line should I paste into the incident note?",
+      "description": "A paraphrased evidence follow-up asks for the exact overlap-proof log line again.",
+      "scenario_family": "exact_evidence_followup",
+      "should_memory_help": true,
+      "expected_intent": "precise_fact",
+      "expected_winning_layer": "source_evidence",
+      "acceptable_winning_layers": [
+        "source_evidence",
+        "lower_level_memory"
+      ],
+      "expected_memory_types": [
+        "investigation_outcome"
+      ],
+      "expected_answer_signals": [
+        "job already running",
+        "skipping new start"
+      ],
+      "review_notes": "This broadens exact-evidence pressure without adding new tooling."
+    },
+    {
+      "episode_id": "wildbench-sync-retry-current-blocker",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wb-review-005",
+      "query_turn_index": 6,
+      "description": "A resumed debugging follow-up asks for the latest blocker and next step after the retry state changed.",
+      "scenario_family": "blocker_next_step_followup",
+      "should_memory_help": true,
+      "expected_intent": "work_resumption",
+      "expected_winning_layer": "task_checkpoint",
+      "acceptable_winning_layers": [
+        "task_checkpoint"
+      ],
+      "forbidden_layers": [
+        "continuity_memory",
+        "pattern_memory"
+      ],
+      "expected_memory_types": [
+        "task_checkpoint"
+      ],
+      "expected_answer_signals": [
+        "retry window was exhausted",
+        "batch 418"
+      ],
+      "must_preserve": [
+        "blocker_state",
+        "next_step_guidance",
+        "freshness"
+      ],
+      "must_not_introduce": [
+        "stale_state"
+      ],
+      "guard_terms": {
+        "stale_state": [
+          "service token expired"
+        ]
+      },
+      "review_notes": "This pressures latest-state carry-forward and stale-memory suppression in the public continuation pack."
+    },
+    {
+      "episode_id": "wildbench-sync-retry-current-blocker-paraphrase",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wb-review-005",
+      "query_turn_index": 6,
+      "query_text": "What blocker did we hit now, what should I do next, and where do I resume from?",
+      "target_question": "What blocker did we hit now, what should I do next, and where do I resume from?",
+      "description": "A paraphrased resumed-work follow-up asks for the live blocker and resume point from the latest retry state.",
+      "scenario_family": "blocker_next_step_followup",
+      "should_memory_help": true,
+      "expected_intent": "work_resumption",
+      "expected_winning_layer": "task_checkpoint",
+      "acceptable_winning_layers": [
+        "task_checkpoint"
+      ],
+      "forbidden_layers": [
+        "continuity_memory",
+        "pattern_memory"
+      ],
+      "expected_memory_types": [
+        "task_checkpoint"
+      ],
+      "expected_answer_signals": [
+        "retry window was exhausted",
+        "batch 418"
+      ],
+      "must_preserve": [
+        "blocker_state",
+        "next_step_guidance",
+        "freshness"
+      ],
+      "must_not_introduce": [
+        "stale_state"
+      ],
+      "guard_terms": {
+        "stale_state": [
+          "service token expired"
+        ]
+      },
+      "review_notes": "This keeps the same resumed-work state but varies the continuation wording."
+    },
+    {
       "episode_id": "wildbench-scorecard-explanation-no-value",
       "episode_type": "within_conversation_later_turn_recall",
       "conversation_id": "wb-review-003",
@@ -81,6 +219,7 @@
         2
       ],
       "description": "A same-session follow-up asks why the debrief rubric helps while the chosen buckets are already visible in current context.",
+      "scenario_family": "same_thread_no_value",
       "should_memory_help": false,
       "overreach_guard": true,
       "expected_answer_signals": [
@@ -99,6 +238,7 @@
         2
       ],
       "description": "A same-session debugging follow-up asks for the exact overlap log line while the evidence is still visible in the current thread.",
+      "scenario_family": "same_thread_no_value",
       "should_memory_help": false,
       "overreach_guard": true,
       "expected_answer_signals": [
@@ -106,6 +246,28 @@
         "skipping new start"
       ],
       "review_notes": "Developer-oriented no-value guard: exact evidence is already present in current context, so older memory should stay quiet."
+    },
+    {
+      "episode_id": "wildbench-sync-retry-no-value",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wb-review-005",
+      "query_turn_index": 6,
+      "current_context_turn_indices": [
+        4,
+        5,
+        6
+      ],
+      "query_text": "The current blocker and resume point are already visible in this thread, so restate them without older memory.",
+      "target_question": "The current blocker and resume point are already visible in this thread, so restate them without older memory.",
+      "description": "A stronger same-thread no-value continuation already shows the latest blocker and resume point in current context.",
+      "scenario_family": "same_thread_no_value",
+      "should_memory_help": false,
+      "overreach_guard": true,
+      "expected_answer_signals": [
+        "retry window was exhausted",
+        "batch 418"
+      ],
+      "review_notes": "Current context already holds the latest blocker and next step, so old memory should stay quiet."
     }
   ]
 }
