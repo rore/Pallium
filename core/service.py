@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import timedelta
 
@@ -11,7 +12,7 @@ from core.models import MemoryObject, QueryFilters, QueryTrace, Relation, Source
 from core.visibility import QueryVisibilityTrace, VisibilityContext, visibility_context_matches_exact
 from retrieval.base import RetrievalProvider
 from semantic.base import ConsolidationSemanticPlugin, SemanticPlugin, ThreadAggregationSemanticPlugin
-from storage.base import StorageProvider
+from storage.base import StorageProvider, ThreadProcessingLease, ThreadProcessingScope
 
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
@@ -125,8 +126,28 @@ class PalliumService:
         )
         if source_item is None:
             return None
-        self._process_source_item(source_item, max_attempts=max_attempts)
+        self._process_source_item(
+            source_item,
+            max_attempts=max_attempts,
+            worker_id=worker_id,
+            lease_seconds=lease_seconds,
+        )
         return self.get_item_processing(source_item.id)
+
+    def process_next_thread_rebuild(
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: int = DEFAULT_PROCESSING_LEASE_SECONDS,
+    ) -> ThreadProcessingLease | None:
+        lease = self._storage.claim_next_thread_processing_scope(
+            worker_id=worker_id,
+            lease_seconds=lease_seconds,
+        )
+        if lease is None:
+            return None
+        self._process_thread_rebuild_lease(lease, worker_id=worker_id, lease_seconds=lease_seconds)
+        return lease
 
     def drain_processing_queue(
         self,
@@ -143,14 +164,28 @@ class PalliumService:
                 lease_seconds=lease_seconds,
                 max_attempts=max_attempts,
             )
-            if result is None:
+            if result is not None:
+                results.append(result)
+                continue
+            thread_lease = self.process_next_thread_rebuild(
+                worker_id=worker_id,
+                lease_seconds=lease_seconds,
+            )
+            if thread_lease is None:
                 break
-            results.append(result)
         return results
 
-    def _process_source_item(self, source_item: SourceItem, *, max_attempts: int) -> None:
+    def _process_source_item(
+        self,
+        source_item: SourceItem,
+        *,
+        max_attempts: int,
+        worker_id: str | None = None,
+        lease_seconds: int = DEFAULT_PROCESSING_LEASE_SECONDS,
+    ) -> None:
+        plugin_name = source_item.use_case or self._default_use_case
+        worker_label = worker_id or source_item.processing_claimed_by or "source-item-worker"
         try:
-            plugin_name = source_item.use_case or self._default_use_case
             plugin = self._semantic_plugins[plugin_name]
             if plugin.requires_visibility_context and source_item.visibility_context is None:
                 self._storage.fail_source_item_processing(
@@ -162,26 +197,16 @@ class PalliumService:
                 return
 
             direct_result = plugin.process_item(source_item)
-            thread_result, supersede_plan = self._maybe_rebuild_thread_summary(
+            thread_rebuild_scope = self._build_thread_processing_scope(
+                plugin_name=plugin_name,
                 plugin=plugin,
                 source_item=source_item,
-                pending_memory_objects=direct_result.memory_objects,
             )
-            combined_result = ProcessResult(
-                annotations=[*direct_result.annotations, *(thread_result.annotations if thread_result else [])],
-                memory_objects=[*direct_result.memory_objects, *(thread_result.memory_objects if thread_result else [])],
-                relations=[*direct_result.relations, *(thread_result.relations if thread_result else [])],
-                index_entries=[*direct_result.index_entries, *(thread_result.index_entries if thread_result else [])],
-            )
-            supersession_pairs = [
-                (superseded_id, replacement_id)
-                for replacement_id, superseded_ids in supersede_plan.items()
-                for superseded_id in superseded_ids
-            ]
             self._storage.commit_processed_source_item(
                 source_item_id=source_item.id,
-                result=combined_result,
-                supersession_pairs=supersession_pairs,
+                result=direct_result,
+                supersession_pairs=[],
+                thread_rebuild_scope=thread_rebuild_scope,
             )
         except Exception as exc:
             error = self._truncate_processing_error(exc)
@@ -202,6 +227,19 @@ class PalliumService:
                 else None,
                 final=False,
             )
+            return
+
+        if thread_rebuild_scope is None:
+            return
+
+        lease = self._storage.claim_thread_processing_scope(
+            scope=thread_rebuild_scope,
+            worker_id=worker_label,
+            lease_seconds=lease_seconds,
+        )
+        if lease is None:
+            return
+        self._process_thread_rebuild_lease(lease, worker_id=worker_label, lease_seconds=lease_seconds)
 
     def _build_ingest_result(self, source_item: SourceItem) -> IngestResult:
         processing = self._build_processing_result(source_item)
@@ -422,40 +460,109 @@ class PalliumService:
         for index_entry in result.index_entries:
             self._storage.create_index_entry(index_entry)
 
+    def _build_thread_processing_scope(
+        self,
+        *,
+        plugin_name: str,
+        plugin: SemanticPlugin,
+        source_item: SourceItem,
+    ) -> ThreadProcessingScope | None:
+        if not isinstance(plugin, ThreadAggregationSemanticPlugin):
+            return None
+        if not plugin.supports_thread_aggregation(source_item):
+            return None
+        if not source_item.container_ref or not source_item.thread_ref:
+            return None
+        visibility_context = source_item.visibility_context
+        scope_key = json.dumps(
+            {
+                "use_case": plugin_name,
+                "container_ref": source_item.container_ref,
+                "thread_ref": source_item.thread_ref,
+                "visibility_kind": visibility_context.kind if visibility_context is not None else None,
+                "visibility_id": visibility_context.id if visibility_context is not None else None,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return ThreadProcessingScope(
+            scope_key=scope_key,
+            use_case=plugin_name,
+            container_ref=source_item.container_ref,
+            thread_ref=source_item.thread_ref,
+            visibility_context=visibility_context,
+        )
+
+    def _process_thread_rebuild_lease(
+        self,
+        lease: ThreadProcessingLease,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+    ) -> None:
+        current_lease = lease
+        while True:
+            plugin = self._semantic_plugins[current_lease.use_case]
+            try:
+                thread_result, supersede_plan = self._maybe_rebuild_thread_summary(
+                    plugin=plugin,
+                    thread_scope=current_lease.as_scope(),
+                )
+                if thread_result is not None:
+                    supersession_pairs = [
+                        (superseded_id, replacement_id)
+                        for replacement_id, superseded_ids in supersede_plan.items()
+                        for superseded_id in superseded_ids
+                    ]
+                    self._storage.commit_process_result(
+                        result=thread_result,
+                        supersession_pairs=supersession_pairs,
+                    )
+            except Exception:
+                return
+
+            has_pending = self._storage.complete_thread_processing_scope(
+                scope_key=current_lease.scope_key,
+                worker_id=worker_id,
+                claimed_at=current_lease.processing_claimed_at,
+            )
+            if not has_pending:
+                return
+            next_lease = self._storage.claim_thread_processing_scope(
+                scope=current_lease.as_scope(),
+                worker_id=worker_id,
+                lease_seconds=lease_seconds,
+            )
+            if next_lease is None:
+                return
+            current_lease = next_lease
+
     def _maybe_rebuild_thread_summary(
         self,
         *,
         plugin: SemanticPlugin,
-        source_item: SourceItem,
-        pending_memory_objects: list[MemoryObject],
+        thread_scope: ThreadProcessingScope,
     ) -> tuple[ProcessResult | None, dict[str, list[str]]]:
         if not isinstance(plugin, ThreadAggregationSemanticPlugin):
-            return None, {}
-        if not plugin.supports_thread_aggregation(source_item):
-            return None, {}
-        if not source_item.container_ref or not source_item.thread_ref:
             return None, {}
 
         thread_items = [
             item
-            for item in self._storage.list_source_items_for_thread(source_item.container_ref, source_item.thread_ref)
+            for item in self._storage.list_source_items_for_thread(thread_scope.container_ref, thread_scope.thread_ref)
             if plugin.supports_thread_aggregation(item)
         ]
         if plugin.requires_visibility_context:
             thread_items = [
                 item
                 for item in thread_items
-                if visibility_context_matches_exact(item.visibility_context, source_item.visibility_context)
+                if visibility_context_matches_exact(item.visibility_context, thread_scope.visibility_context)
             ]
         if not thread_items:
             return None, {}
 
         active_thread_memory_ids = self._find_active_thread_memory_ids(thread_items)
         aggregate = build_thread_aggregate(thread_items)
-        conclusions = self._collect_thread_conclusions(
-            thread_items,
-            pending_memory_objects_by_source_item={source_item.id: pending_memory_objects},
-        )
+        conclusions = self._collect_thread_conclusions(thread_items)
         thread_result = plugin.build_thread_summary(aggregate, conclusions)
         supersede_plan: dict[str, list[str]] = {}
         for memory_object in thread_result.memory_objects:
@@ -486,16 +593,10 @@ class PalliumService:
     def _collect_thread_conclusions(
         self,
         thread_items: list[SourceItem],
-        *,
-        pending_memory_objects_by_source_item: dict[str, list[MemoryObject]] | None = None,
     ) -> list[MemoryObject]:
         conclusions: dict[str, MemoryObject] = {}
-        pending_memory_objects_by_source_item = pending_memory_objects_by_source_item or {}
         for source_item in thread_items:
-            memory_objects = [
-                *self._storage.list_memory_objects_for_source_item(source_item.id),
-                *pending_memory_objects_by_source_item.get(source_item.id, []),
-            ]
+            memory_objects = self._storage.list_memory_objects_for_source_item(source_item.id)
             for memory_object in memory_objects:
                 if memory_object.lifecycle != "active":
                     continue

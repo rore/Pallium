@@ -28,6 +28,7 @@ That makes Pallium slower and more fragile exactly where realistic downstream in
   - queue-state initialization
   - immediate response
 - move semantic extraction, direct memory promotion, relations, and thread rebuild work to a worker pipeline
+- serialize thread-level rebuilds with a small thread-scope lease table keyed by use case, thread identity, and exact visibility
 - add one public status endpoint: `GET /items/{source_item_id}/processing`
 - implement a standalone worker CLI: `python -m app.worker`
 - implement an opt-in local supervisor CLI that starts the API plus child workers
@@ -36,7 +37,7 @@ That makes Pallium slower and more fragile exactly where realistic downstream in
 
 ## Out of Scope
 
-- a separate queue table in v1
+- a separate ingest queue table in v1
 - a public drain-queue endpoint
 - moving consolidation into the worker in this slice
 - heartbeat leases or multi-item claim batching for SQLite
@@ -48,7 +49,7 @@ That makes Pallium slower and more fragile exactly where realistic downstream in
 1. `POST /items` no longer calls semantic processing or thread rebuild work on the request path.
 2. New source items persist raw evidence plus queue state, and return `pending` or `skipped` with the current known derived ids.
 3. `GET /items/{source_item_id}/processing` reports current queue status and current derived ids.
-4. `python -m app.worker` can safely claim, process, retry, and complete one-item SQLite work items with lease-based multi-process safety.
+4. `python -m app.worker` can safely claim, process, retry, and complete one-item SQLite work items with lease-based multi-process safety while deferring thread-level rebuilds onto one serialized thread scope at a time.
 5. An opt-in supervisor CLI can start the API and a configured number of child workers, and shut them down cleanly.
 6. Raw source evidence is queryable immediately after ingest, while derived memory and thread-level memory appear after worker completion.
 7. Existing privacy and integration-readiness scenarios still pass once the queue is drained or workers complete.
@@ -71,13 +72,15 @@ Status rules:
 
 - new ingest with valid processing prerequisites starts as `pending`
 - scope-aware ingest missing required visibility starts as `skipped`
-- `completed` means item-local and thread-level processing for that source item finished
+- `completed` means item-local processing for that source item finished and any needed thread-level rebuild has been durably scheduled or coalesced through the thread-scope lease path
 - `failed` means max retries were exhausted
 
 Worker rules:
 
 - lease-based claim model, not in-memory locking
-- one claimed item per transaction for SQLite
+- one claimed source item per transaction for SQLite
+- thread-level rebuilds use a separate SQLite-backed thread-scope lease row so only one worker can rebuild a given thread scope at once
+- a deferred thread rebuild stays coalesced on that thread-scope row until some worker drains it
 - default lease should be long enough for current LLM calls
 - bounded retry backoff should preserve the last error string
 

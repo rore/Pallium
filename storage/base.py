@@ -28,6 +28,37 @@ class IndexSearchResult:
     visibility_exclusions: tuple[VisibilityExclusion, ...] = ()
 
 
+@dataclass(frozen=True)
+class ThreadProcessingScope:
+    scope_key: str
+    use_case: str
+    container_ref: str
+    thread_ref: str
+    visibility_context: VisibilityContext | None
+
+
+@dataclass(frozen=True)
+class ThreadProcessingLease:
+    scope_key: str
+    use_case: str
+    container_ref: str
+    thread_ref: str
+    visibility_context: VisibilityContext | None
+    requested_at: datetime
+    processing_claimed_by: str
+    processing_claimed_at: datetime
+    processing_lease_expires_at: datetime
+
+    def as_scope(self) -> ThreadProcessingScope:
+        return ThreadProcessingScope(
+            scope_key=self.scope_key,
+            use_case=self.use_case,
+            container_ref=self.container_ref,
+            thread_ref=self.thread_ref,
+            visibility_context=self.visibility_context,
+        )
+
+
 class StorageProvider(ABC):
     @abstractmethod
     def find_source_item(self, source_type: str, source_id: str) -> SourceItem | None:
@@ -74,8 +105,50 @@ class StorageProvider(ABC):
         source_item_id: str,
         result: ProcessResult,
         supersession_pairs: list[tuple[str, str]],
+        thread_rebuild_scope: ThreadProcessingScope | None = None,
         completed_at: datetime | None = None,
     ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def commit_process_result(
+        self,
+        *,
+        result: ProcessResult,
+        supersession_pairs: list[tuple[str, str]],
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def claim_thread_processing_scope(
+        self,
+        *,
+        scope: ThreadProcessingScope,
+        worker_id: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> ThreadProcessingLease | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def claim_next_thread_processing_scope(
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> ThreadProcessingLease | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def complete_thread_processing_scope(
+        self,
+        *,
+        scope_key: str,
+        worker_id: str,
+        claimed_at: datetime,
+        completed_at: datetime | None = None,
+    ) -> bool:
         raise NotImplementedError
 
     @abstractmethod

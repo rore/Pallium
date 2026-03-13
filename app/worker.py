@@ -8,6 +8,7 @@ import time
 from app.config import AppConfig
 from app.dependencies import build_service
 from core.contracts import ItemProcessingResult
+from storage.base import ThreadProcessingLease
 from core.service import DEFAULT_PROCESSING_LEASE_SECONDS, DEFAULT_PROCESSING_MAX_ATTEMPTS
 
 
@@ -41,6 +42,15 @@ def run_worker(args: list[str] | None = None, *, config: AppConfig | None = None
             if parsed.once:
                 return 0
             continue
+        thread_lease = service.process_next_thread_rebuild(
+            worker_id=worker_id,
+            lease_seconds=parsed.lease_seconds,
+        )
+        if thread_lease is not None:
+            _log_thread_rebuild(worker_id, thread_lease)
+            if parsed.once:
+                return 0
+            continue
         if parsed.once:
             return 0
         sleep_fn(parsed.poll_interval_seconds)
@@ -49,6 +59,13 @@ def run_worker(args: list[str] | None = None, *, config: AppConfig | None = None
 def _log_result(worker_id: str, result: ItemProcessingResult) -> None:
     print(
         f"[{worker_id}] source_item={result.source_item_id} status={result.processing_status} attempts={result.processing_attempts}",
+        flush=True,
+    )
+
+
+def _log_thread_rebuild(worker_id: str, lease: ThreadProcessingLease) -> None:
+    print(
+        f"[{worker_id}] thread_scope={lease.container_ref}:{lease.thread_ref} status=completed",
         flush=True,
     )
 

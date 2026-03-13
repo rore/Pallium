@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from core.contracts import ProcessResult
 from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem, new_id, utc_now
 from core.visibility import VisibilityContext, VisibilityExclusion, visibility_context_is_visible
-from storage.base import IndexSearchHit, IndexSearchResult, StorageProvider
+from storage.base import IndexSearchHit, IndexSearchResult, StorageProvider, ThreadProcessingLease, ThreadProcessingScope
 
 
 Base = declarative_base()
@@ -96,6 +96,24 @@ class IndexEntryRecord(Base):
     text_view_name = Column(String, nullable=True)
     provider_name = Column(String, nullable=True)
     provider_version = Column(String, nullable=True)
+
+
+class ThreadProcessingLeaseRecord(Base):
+    __tablename__ = "thread_processing_leases"
+
+    scope_key = Column(String, primary_key=True)
+    use_case = Column(String, nullable=False)
+    container_ref = Column(String, nullable=False)
+    thread_ref = Column(String, nullable=False)
+    visibility_kind = Column(String, nullable=True)
+    visibility_id = Column(String, nullable=True)
+    requested_at = Column(DateTime(timezone=True), nullable=True)
+    processing_claimed_by = Column(String, nullable=True)
+    processing_claimed_at = Column(DateTime(timezone=True), nullable=True)
+    processing_lease_expires_at = Column(DateTime(timezone=True), nullable=True)
+    processing_completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
 
 
 class SQLiteStorageProvider(StorageProvider):
@@ -286,12 +304,19 @@ class SQLiteStorageProvider(StorageProvider):
         source_item_id: str,
         result: ProcessResult,
         supersession_pairs: list[tuple[str, str]],
+        thread_rebuild_scope: ThreadProcessingScope | None = None,
         completed_at: datetime | None = None,
     ) -> None:
         finished_at = completed_at or utc_now()
         with self._session_factory.begin() as session:
             self._persist_process_result_in_session(session, result)
             self._apply_supersession_pairs_in_session(session, supersession_pairs)
+            if thread_rebuild_scope is not None:
+                self._upsert_thread_processing_scope_in_session(
+                    session,
+                    scope=thread_rebuild_scope,
+                    requested_at=finished_at,
+                )
             self._after_commit_processed_source_item_persist(
                 session,
                 source_item_id=source_item_id,
@@ -308,6 +333,127 @@ class SQLiteStorageProvider(StorageProvider):
             record.processing_claimed_at = None
             record.processing_lease_expires_at = None
             record.processing_next_attempt_at = None
+
+    def commit_process_result(
+        self,
+        *,
+        result: ProcessResult,
+        supersession_pairs: list[tuple[str, str]],
+    ) -> None:
+        with self._session_factory.begin() as session:
+            self._persist_process_result_in_session(session, result)
+            self._apply_supersession_pairs_in_session(session, supersession_pairs)
+
+    def claim_thread_processing_scope(
+        self,
+        *,
+        scope: ThreadProcessingScope,
+        worker_id: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> ThreadProcessingLease | None:
+        claimed_at = now or utc_now()
+        lease_expires_at = claimed_at + timedelta(seconds=max(1, lease_seconds))
+        statement = text(
+            """
+            UPDATE thread_processing_leases
+            SET processing_claimed_by = :worker_id,
+                processing_claimed_at = :claimed_at,
+                processing_lease_expires_at = :lease_expires_at,
+                updated_at = :claimed_at
+            WHERE scope_key = :scope_key
+              AND requested_at IS NOT NULL
+              AND (processing_lease_expires_at IS NULL OR processing_lease_expires_at <= :claimed_at)
+            RETURNING scope_key
+            """
+        )
+        with self._session_factory.begin() as session:
+            row = session.execute(
+                statement,
+                {
+                    "scope_key": scope.scope_key,
+                    "worker_id": worker_id,
+                    "claimed_at": claimed_at,
+                    "lease_expires_at": lease_expires_at,
+                },
+            ).first()
+            if row is None:
+                return None
+            record = session.get(ThreadProcessingLeaseRecord, row[0])
+            if record is None:
+                return None
+            return self._to_thread_processing_lease(record)
+
+    def claim_next_thread_processing_scope(
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> ThreadProcessingLease | None:
+        claimed_at = now or utc_now()
+        lease_expires_at = claimed_at + timedelta(seconds=max(1, lease_seconds))
+        statement = text(
+            """
+            UPDATE thread_processing_leases
+            SET processing_claimed_by = :worker_id,
+                processing_claimed_at = :claimed_at,
+                processing_lease_expires_at = :lease_expires_at,
+                updated_at = :claimed_at
+            WHERE scope_key = (
+                SELECT scope_key
+                FROM thread_processing_leases
+                WHERE requested_at IS NOT NULL
+                  AND (processing_lease_expires_at IS NULL OR processing_lease_expires_at <= :claimed_at)
+                ORDER BY requested_at ASC, created_at ASC, scope_key ASC
+                LIMIT 1
+            )
+            RETURNING scope_key
+            """
+        )
+        with self._session_factory.begin() as session:
+            row = session.execute(
+                statement,
+                {
+                    "worker_id": worker_id,
+                    "claimed_at": claimed_at,
+                    "lease_expires_at": lease_expires_at,
+                },
+            ).first()
+            if row is None:
+                return None
+            record = session.get(ThreadProcessingLeaseRecord, row[0])
+            if record is None:
+                return None
+            return self._to_thread_processing_lease(record)
+
+    def complete_thread_processing_scope(
+        self,
+        *,
+        scope_key: str,
+        worker_id: str,
+        claimed_at: datetime,
+        completed_at: datetime | None = None,
+    ) -> bool:
+        finished_at = completed_at or utc_now()
+        normalized_claimed_at = self._normalize_datetime(claimed_at) or claimed_at
+        with self._session_factory.begin() as session:
+            record = session.get(ThreadProcessingLeaseRecord, scope_key)
+            if record is None:
+                raise KeyError(scope_key)
+            record_claimed_at = self._normalize_datetime(record.processing_claimed_at)
+            if record.processing_claimed_by != worker_id or record_claimed_at != normalized_claimed_at:
+                return record.requested_at is not None
+            requested_at = self._normalize_datetime(record.requested_at)
+            pending_after = requested_at is not None and requested_at > normalized_claimed_at
+            if not pending_after:
+                record.requested_at = None
+            record.processing_completed_at = finished_at
+            record.processing_claimed_by = None
+            record.processing_claimed_at = None
+            record.processing_lease_expires_at = None
+            record.updated_at = finished_at
+            return pending_after
 
     def list_source_items_for_thread(self, container_ref: str, thread_ref: str) -> list[SourceItem]:
         with self._session_factory() as session:
@@ -609,6 +755,38 @@ class SQLiteStorageProvider(StorageProvider):
     ) -> None:
         return None
 
+    def _upsert_thread_processing_scope_in_session(
+        self,
+        session: Session,
+        *,
+        scope: ThreadProcessingScope,
+        requested_at: datetime,
+    ) -> None:
+        record = session.get(ThreadProcessingLeaseRecord, scope.scope_key)
+        if record is None:
+            session.add(
+                ThreadProcessingLeaseRecord(
+                    scope_key=scope.scope_key,
+                    use_case=scope.use_case,
+                    container_ref=scope.container_ref,
+                    thread_ref=scope.thread_ref,
+                    visibility_kind=self._split_visibility_context(scope.visibility_context)[0],
+                    visibility_id=self._split_visibility_context(scope.visibility_context)[1],
+                    requested_at=requested_at,
+                    processing_claimed_by=None,
+                    processing_claimed_at=None,
+                    processing_lease_expires_at=None,
+                    processing_completed_at=None,
+                    created_at=requested_at,
+                    updated_at=requested_at,
+                )
+            )
+            return
+        existing_requested_at = self._normalize_datetime(record.requested_at)
+        if existing_requested_at is None or requested_at > existing_requested_at:
+            record.requested_at = requested_at
+        record.updated_at = requested_at
+
     def _matches_filters(self, target_kind: str, target_id: str, filters: QueryFilters | None) -> bool:
         if target_kind == "memory_object":
             memory_object = self.get_memory_object(target_id)
@@ -784,6 +962,25 @@ class SQLiteStorageProvider(StorageProvider):
             source_ref=record.source_ref,
             artifact_kind=record.artifact_kind,
             visibility_context=SQLiteStorageProvider._build_visibility_context(record.visibility_kind, record.visibility_id),
+        )
+
+    @staticmethod
+    def _to_thread_processing_lease(record: ThreadProcessingLeaseRecord) -> ThreadProcessingLease:
+        requested_at = SQLiteStorageProvider._normalize_datetime(record.requested_at)
+        claimed_at = SQLiteStorageProvider._normalize_datetime(record.processing_claimed_at)
+        lease_expires_at = SQLiteStorageProvider._normalize_datetime(record.processing_lease_expires_at)
+        if requested_at is None or claimed_at is None or lease_expires_at is None or record.processing_claimed_by is None:
+            raise ValueError(f"thread processing lease is incomplete for scope {record.scope_key}")
+        return ThreadProcessingLease(
+            scope_key=record.scope_key,
+            use_case=record.use_case,
+            container_ref=record.container_ref,
+            thread_ref=record.thread_ref,
+            visibility_context=SQLiteStorageProvider._build_visibility_context(record.visibility_kind, record.visibility_id),
+            requested_at=requested_at,
+            processing_claimed_by=record.processing_claimed_by,
+            processing_claimed_at=claimed_at,
+            processing_lease_expires_at=lease_expires_at,
         )
 
     @staticmethod
