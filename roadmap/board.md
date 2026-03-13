@@ -1,4 +1,7 @@
 # Next
+- add-candidate-aware-routing-and-fallback-hardening
+- add-reviewed-open-corpus-continuation-pack-expansion
+- add-resumed-work-result-packaging-hardening
 - add-conversation-agent-integration-readiness-scenario
 
 # Later
@@ -41,4 +44,3 @@
 - add-first-semantic-layer-and-promotion
 - add-agent-memory-simulation
 - build-structured-retrieval-foundation
-
