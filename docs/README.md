@@ -3,13 +3,25 @@
 This repo uses four documentation surfaces on purpose. Each one owns a
 different kind of truth.
 
+## Recommended Reading Order
+
+For a new developer evaluating the project:
+
+1. `README.md`
+2. `docs/problem-and-approach.md`
+3. `docs/getting-started.md`
+4. `docs/agent-integration.md`
+5. `docs/privacy-and-visibility.md`
+6. `docs/status.md`
+7. `docs/overview.md`
+8. `docs/context/architecture.md`
+
 ## Ownership
 
 - docs/
-  Developer-facing entry points and practical guides. Start with:
-  - `docs/overview.md`
-  - `docs/agent-integration.md`
-  - `docs/privacy-and-visibility.md`
+  Developer-facing entry points and practical guides.
+  Use this layer for evaluator flow, practical onboarding, integration, status,
+  and concepts.
 
 - roadmap/
   Canonical planning workspace. Use it for queue, ordering, scope, milestones,
@@ -25,8 +37,8 @@ different kind of truth.
 
 ## Update Rules
 
-- If the question is "how should a developer approach this repo?", update
-  `docs/`.
+- If the question is "how should a developer evaluate or use this repo?",
+  update `docs/`.
 - If the question is "what are we doing next?", update `roadmap/`.
 - If the question is "what is Pallium and what have we accepted?", update
   `docs/context/`.
@@ -35,6 +47,7 @@ different kind of truth.
 
 ## Guardrails
 
+- Keep front-door docs outside-in, not ontology-first.
 - Do not duplicate planning state in docs/context/.
 - Do not treat docs/designs/ as the canonical queue or status surface.
 - When a design becomes accepted direction, summarize the outcome in

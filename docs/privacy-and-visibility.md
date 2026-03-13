@@ -7,6 +7,21 @@ The main point is simple: locality is not privacy. `thread_ref` and
 `container_ref` help correlate events, but `visibility_context` is the actual
 memory boundary.
 
+## One Concrete Scenario
+
+Imagine two private rooms discussing the same incident.
+
+- both rooms talk about the same reservation-ordering bug
+- both rooms might use copied text or very similar wording
+- both rooms might even use similar thread naming patterns
+
+If you only relied on `thread_ref`, `container_ref`, or lexical similarity, it
+would be easy to leak the wrong memory across scopes.
+
+The current Pallium package avoids that by requiring explicit
+`visibility_context` and enforcing visibility before ranking. A query in one
+limited scope should only see `public` plus that exact limited scope.
+
 ## Why Visibility Exists
 
 Without an explicit visibility contract, local memory can easily become broader
@@ -103,12 +118,6 @@ These fields are still valuable:
 - `source_ref`
 
 But they are descriptive context, not the privacy model.
-
-That separation is important because:
-
-- the same thread identifier might appear in mixed visibility situations
-- different upstream systems may use different locality schemes
-- privacy policy should not be inferred accidentally from connector-specific IDs
 
 ## What Pallium Owns vs What The App Owns
 

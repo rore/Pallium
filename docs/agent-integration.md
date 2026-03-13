@@ -22,6 +22,22 @@ Pallium should sit on the edge of your runtime:
 - Pallium owns selected evidence, derived memory, and retrieval
 - original systems stay the system of record
 
+## One Concrete Flow
+
+A realistic current-package loop looks like this:
+
+1. a user asks why reservation ordering keeps missing hold updates
+2. the assistant investigates and answers with a concrete decision
+3. the runtime stores the user message, the assistant output, and a compact tool
+   summary or next-step artifact
+4. later the user asks the same question again, or the work is resumed after an
+   interruption
+5. the runtime queries Pallium before building the next prompt
+6. Pallium returns a compact conclusion or work-state card plus supporting
+   evidence refs
+
+That is the present value story. Pallium is not trying to be the whole runtime.
+
 ## When To Ingest
 
 Use `POST /items` when your runtime sees an event that is worth future reuse.
@@ -128,10 +144,10 @@ Pallium returns compact cards rather than full raw payloads.
 Result kinds:
 
 - `memory_hit`
-  Derived memory such as `decision`, `investigation_outcome`, `thread_summary`,
-  `pattern_memory`, `continuity_memory`, or `task_checkpoint`.
+  derived memory such as prior conclusions, investigation findings, thread
+  orientation, or resumed-work state
 - `source_hit`
-  Compact evidence card with refs, excerpt, and visibility context.
+  compact evidence card with refs, excerpt, and visibility context
 
 Every `memory_hit` carries evidence refs back to supporting source items.
 
@@ -141,7 +157,7 @@ That means an agent can:
 - keep source evidence available for grounding or verification
 - decide whether to fetch the original source from the system of record
 
-## Suggested Integration Loop
+## Suggested Runtime Loop
 
 One practical runtime pattern:
 
@@ -156,25 +172,18 @@ One practical runtime pattern:
 6. if a result looks wrong, inspect `POST /query/debug` before changing prompts
    or retrieval code
 
-## How To Think About The Memory Types
+## How To Think About The Current Memory Jobs
 
-The current package uses different memory layers for different jobs:
+The current package is optimizing for a few concrete jobs:
 
-- `decision`
-  best for precise past conclusions
-- `investigation_outcome`
-  best for concrete findings and why they matter
-- `thread_summary`
-  best for compact thread orientation
-- `pattern_memory`
-  best for broader recurring recall across bounded prior work
-- `continuity_memory`
-  best for repeated-answer carry-forward
-- `task_checkpoint`
-  best for resumed-work state, blockers, and next steps
+- remembering prior conclusions
+- remembering investigation findings
+- remembering thread orientation
+- remembering where interrupted work left off
+- carrying forward bounded cross-thread context when useful
 
-The package already reranks these differently depending on the query shape. You
-do not need to send an explicit intent parameter today.
+The implementation uses multiple memory kinds internally to serve those jobs,
+but the integration loop does not require you to think in those terms first.
 
 ## Integration Checklist
 

@@ -1,187 +1,113 @@
-# Pallium Overview
+# Concepts And Model
 
-Pallium is a generic memory engine for agents. The current repo proves that
-idea through one concrete package: `agent_conversation_memory`.
+This is the second-level concepts doc.
 
-That distinction matters:
+If you are still evaluating Pallium at a product level, read these first:
 
-- the platform claim is generic agent memory
-- the current product claim is better continuity for agent-mediated conversations
+- [../README.md](../README.md)
+- [problem-and-approach.md](problem-and-approach.md)
+- [getting-started.md](getting-started.md)
 
-If you are evaluating the repo as a developer, read Pallium as "memory sidecar
-for an agent runtime" rather than "general AI knowledge system."
+Read this file when you want the internal model behind the product story.
 
-## Current Product Claim
+## Plain-English Mental Model
 
-Today Pallium is trying to answer a narrow question well:
+Pallium does four things:
 
-Can an agent remember the important conclusions and work state from prior
-agent-mediated conversations strongly enough to answer repeated questions more
-consistently and resume interrupted work with less re-orientation cost?
+1. stores selected evidence from an agent-mediated conversation
+2. derives compact reusable memory from that evidence
+3. keeps memory linked back to the supporting source items
+4. retrieves both memory and source evidence together
 
-The implemented answer is:
+That is the plain-English model. The internal terms come after that.
 
-- ingest selected source evidence
-- derive compact, evidence-backed memory
-- retrieve memory plus supporting evidence
-- preserve privacy boundaries while doing it
-
-## Core Model
+## Core Implementation Vocabulary
 
 The generic core centers on five primitives:
 
-- `SourceItem`: the stored evidence unit submitted by a producer
-- `Annotation`: semantic annotations derived from a source item
-- `Relation`: explicit links between evidence and derived memory
-- `IndexEntry`: retrieval materialization over source or memory text views
-- `MemoryObject`: reusable memory promoted from evidence
+- `SourceItem`
+  one stored evidence unit submitted by a producer
+- `Annotation`
+  semantic annotations derived from a source item
+- `Relation`
+  explicit links between evidence and derived memory
+- `IndexEntry`
+  retrieval materialization over source or memory text views
+- `MemoryObject`
+  reusable memory promoted from evidence
 
-Important design choices:
+These terms matter for contributors and deeper integrators. They are not the
+first thing a new evaluator needs.
 
-- source systems remain the system of record
-- source items are persisted before memory derivation
-- memory is additive and evidence-backed
-- higher-level memory builds on lower-level memory, not on raw global clustering
-
-## Current Semantic Packages
+## Current Package Surface
 
 The repo currently exposes three semantic entry points:
 
 - `demo_agent_memory`
-  Deterministic skeleton for local smoke usage without a live LLM provider.
+  deterministic skeleton for local smoke usage without a live LLM provider
 - `llm_agent_memory`
-  LLM-backed typed extraction path over the generic semantic interface.
+  LLM-backed typed extraction path over the generic semantic interface
 - `agent_conversation_memory`
-  The current product package, with privacy-aware retrieval, thread summaries,
-  resumed-work signals, and routed retrieval over multiple memory layers.
+  the current product package focused on repeated questions, resumed work, and
+  scoped continuity
 
-## What The Current Package Accepts
+## What The Current Package Actually Stores
 
-Primary evidence for `agent_conversation_memory`:
+The current product slice is built around selected evidence, not exhaustive
+mirroring.
 
-- `artifact_kind="message"` with `role="user"`
-- `artifact_kind="assistant_output"` with `role="assistant"`
+Primary evidence today:
 
-Selected assistant-originated work artifacts:
+- user messages
+- final assistant outputs
+- selected assistant work artifacts such as compact findings, blocker state, or
+  next steps
 
-- `artifact_kind="tool_use_summary"` with `role="assistant"`
-- `artifact_kind="todo_snapshot"` with `role="assistant"`
+The package then derives compact reusable memory that can represent jobs such
+as:
 
-Those selected work artifacts exist to preserve explicit progress, blocker, and
-next-step state without widening the package into raw tool-log ingest.
+- prior conclusions
+- investigation findings
+- thread orientation
+- resumed-work checkpoints
+- bounded cross-thread carry-forward
 
-## Memory Types Shipped Today
-
-Lower-level and thread-level memory:
-
-- `decision`
-- `investigation_outcome`
-- `thread_summary`
-- fallback `discussion_summary`
-
-Higher-level and continuity-oriented memory:
-
-- `pattern_memory`
-- `continuity_memory`
-- `task_checkpoint`
-
-What each one is for:
-
-- `decision`
-  A compact conclusion plus rationale grounded in source evidence.
-- `investigation_outcome`
-  A compact finding grounded in explicit investigation evidence.
-- `thread_summary`
-  A bounded summary of one agent-mediated thread and its carried conclusions.
-- `pattern_memory`
-  Cross-thread recurring recall over bounded lower-level support.
-- `continuity_memory`
-  Repeated-answer carry-forward for already-answered questions.
-- `task_checkpoint`
-  Compact resumed-work state: task, current state, findings, blocker state, and
-  next supported step when present.
+The internal memory kinds exist to serve those jobs. They are implementation
+labels, not the first story you should tell a new reader.
 
 ## Retrieval Model
 
-Current retrieval is intentionally simple and inspectable:
+Current retrieval flow is:
 
 1. apply structured filters
 2. enforce visibility before ranking for scope-aware packages
 3. run lexical retrieval over source and memory text views
-4. rerank inside `agent_conversation_memory` based on query intent
+4. rerank inside `agent_conversation_memory` based on the query shape
 5. return compact `memory_hit` and `source_hit` cards
 
-The debug path, `POST /query/debug`, exposes:
+`POST /query/debug` exposes the retrieval trace, including lexical matches,
+selected text views, routed-layer choice, and visibility exclusions.
 
-- lexical matched tokens
-- selected text views
-- routed-layer choice
-- visibility exclusions
+## Privacy Model In One Sentence
 
-This matters because Pallium is trying to be operationally explainable, not just
-"semantic search that seemed to work."
+Locality is not privacy.
 
-## Privacy Model
-
-Pallium currently distinguishes locality metadata from privacy boundaries.
-
-Locality metadata:
-
-- `container_ref`
-- `thread_ref`
-- `session_ref`
-- `actor_ref`
-- `source_ref`
-
-Privacy boundary:
-
-- `visibility_context`
-
-Current phase-1 visibility rules:
-
-- `public` query sees `public`
-- `limited:X` query sees `public` and `limited:X`
-- `user:U1` query sees `public` and `user:U1`
-
-Current safety posture:
-
-- fail closed when scoped queries omit required visibility
-- preserve exact visibility through direct promotion, thread aggregation, and
-  bounded consolidation
-- do not widen local memory into shared memory implicitly
-
-## What Exists Beyond The Core API
-
-The repo includes a stronger validation surface than a typical prototype:
-
-- semantic regression batch and baseline
-- agent-conversation test bed
-- recurring-question benchmark
-- developer-work resumption benchmark
-- routed retrieval benchmark
-- consolidation strategy runner
-- tiered-memory validation benchmark
-- bounded public-corpus evaluation path using reviewed WildChat and WildBench
-  slices
-
-That benchmark surface is part of the product story. Pallium is not only
-asserting that the memory model sounds good; it is trying to measure whether the
-current slice actually improves continuity.
+`container_ref`, `thread_ref`, and related refs help correlate events. The
+actual privacy boundary for the current package is `visibility_context`, and it
+is enforced before ranking.
 
 ## Current Limits
 
-What is intentionally not shipped yet:
+The current concepts and model do not imply that Pallium already supports:
 
 - vector retrieval
-- hybrid lexical plus vector fusion
-- explicit shared-memory derivation across broader scopes
-- cross-container bounded memory
+- hybrid fusion
+- explicit shared-memory publication
 - broad ambient workspace ingestion
-- raw tool-log or runtime-event archival
+- full workflow-state orchestration
 
-## Where To Go Next
+## Read Next
 
-- For integration details, read [agent-integration.md](agent-integration.md).
-- For privacy rules, read [privacy-and-visibility.md](privacy-and-visibility.md).
+- For runtime usage, read [agent-integration.md](agent-integration.md).
+- For privacy detail, read [privacy-and-visibility.md](privacy-and-visibility.md).
 - For stable architecture truth, read [context/architecture.md](context/architecture.md).
-- For queue and status, read [../roadmap/board.md](../roadmap/board.md).
