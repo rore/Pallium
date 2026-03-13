@@ -8,12 +8,17 @@ They forget why decisions were made, lose investigation outcomes, and struggle
 to resume interrupted work without replaying transcripts or rediscovering
 context.
 
-Pallium is a local-first memory sidecar that stores selected evidence, derives
-compact evidence-backed memory, and returns small reusable memory and evidence
-cards so an agent can answer repeated questions and resume work more reliably.
+Pallium is a local-first memory sidecar for agents. It helps them remember
+prior decisions, findings, and work state so they can answer follow-up
+questions and resume interrupted work without replaying full transcripts.
+
+Under the hood, the current slice stores selected evidence, derives compact
+evidence-backed memory, and returns small reusable memory and evidence cards.
 
 The current product slice is deliberately narrow: agent-mediated conversations,
 repeated questions, resumed-work continuity, and privacy-safe scoped memory.
+In other words, Pallium is currently optimized for conversation continuity, not
+general knowledge memory.
 
 ## Why Not Just Transcript Search, Summaries, Or A Vector DB?
 
@@ -35,37 +40,40 @@ links back to supporting evidence.
 
 Today Pallium's concrete value is:
 
-- better repeated-question recall
-- better resumed-work continuity
-- privacy-safe scoped memory for public and private contexts
-- compact evidence-backed results instead of transcript replay
-- debuggable retrieval through `POST /query/debug`
+- better follow-up consistency on repeated questions
+- better resumed-work continuity after interruptions
+- scoped memory that keeps public and private context separated
+- compact answerable context instead of transcript replay
+- a debug path that explains why retrieval returned what it did
 
 ## What Is Shipped Today
 
-This repo already contains a real implemented slice, not just design docs:
+This repo already ships a real working slice, not just design docs. Today it
+can:
+
+- ingest selected conversation evidence and bounded work artifacts
+- return compact memory and source evidence cards
+- support repeated-question recall and resumed-work continuity
+- enforce fail-closed scoped visibility for public and private memory
+- expose a debug trace for retrieval and visibility behavior
+
+Implementation surface:
 
 - one local-first FastAPI service
 - SQLite-backed storage
 - `POST /items`, `POST /query`, and `POST /query/debug`
-- selected ingest for user messages, assistant outputs, and bounded assistant
-  work artifacts
-- compact `memory_hit` and `source_hit` results
-- lexical retrieval over both memory and source evidence
-- package-owned routed retrieval for the current conversation-memory slice
-- fail-closed `visibility_context` enforcement for scoped memory
-- thread aggregation, higher-level carry-forward, and resumed-work checkpoints
+- lexical retrieval plus package-owned routed retrieval for the current slice
 
 ## Why Believe It Is Real?
 
-The repo also has a stronger validation story than most agent-memory projects:
+The repo includes proof, not just claims:
 
-- semantic regression coverage for the typed extraction path
-- recurring-question benchmark coverage
-- developer-work resumption benchmark coverage
-- routed retrieval benchmark coverage
-- public-corpus evaluation workflows for reviewed WildChat and WildBench slices
-- privacy-aware retrieval and visibility exclusion trace in the current package
+- regression coverage for typed memory extraction
+- benchmarks for repeated-question recall
+- benchmarks for resumed-work continuity
+- routed retrieval evaluation for choosing between memory and source evidence
+- reviewed public-corpus evaluation slices from WildChat and WildBench
+- privacy-aware retrieval with visibility exclusion trace
 
 ## How Integration Works
 

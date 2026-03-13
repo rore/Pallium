@@ -67,6 +67,10 @@ The current Pallium slice does five things:
 4. retrieves compact memory and source evidence together
 5. enforces scoped visibility before ranking for the current package
 
+The key distinction is that Pallium is not only retrieving past text. It is
+trying to preserve reusable continuity objects: compact conclusions, findings,
+and work-state checkpoints that remain linked to evidence.
+
 This is why the current docs describe Pallium as a memory sidecar rather than a
 transcript store or search wrapper.
 
@@ -74,8 +78,9 @@ transcript store or search wrapper.
 
 Pallium is not trying to ingest every event an agent sees.
 
-Selective ingest matters because the current product goal is not "store all the
-text." It is "preserve the few pieces of context that are worth reusing later."
+Selective ingest is part of the design, not a temporary limitation. The current
+goal is to preserve the few pieces of context that are worth carrying forward,
+not to become a warehouse for everything the runtime sees.
 
 For the current package, those high-value inputs are mostly:
 
@@ -122,10 +127,10 @@ Good fit today:
 
 Poor fit today:
 
-- ambient workplace chat
-- raw tool-log ingestion
-- broad knowledge-base replacement
-- shared-memory publication across many scopes
+- passive archive of all chat history
+- raw tool or MCP event storage
+- broad company knowledge search
+- general-purpose memory shared across many unrelated contexts
 
 ## What To Read Next
 

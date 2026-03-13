@@ -41,7 +41,7 @@ first thing a new evaluator needs.
 
 ## Current Package Surface
 
-The repo currently exposes three semantic entry points:
+The repo currently exposes three runtime and package entry points:
 
 - `demo_agent_memory`
   deterministic skeleton for local smoke usage without a live LLM provider

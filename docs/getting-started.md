@@ -10,11 +10,23 @@ Goal for this walkthrough:
 - query a resumed-work question
 - inspect the debug trace
 
+A typical quick check looks like this:
+
+- ingest a decision such as "use item event time for reservation ordering"
+- ask "why did we choose item event time?"
+- confirm that Pallium returns a compact decision memory plus supporting
+  evidence
+- then ask a resumed-work question and inspect the debug trace
+
 ## Prerequisites
 
 - Python 3.12 or newer
 - an API key for an OpenAI-compatible provider if you want to use the default
   `agent_conversation_memory` setup
+
+If you want to evaluate the service without a live LLM provider first, switch
+`default_use_case = "demo_agent_memory"` in `pallium.local.toml`. The behavior
+is simpler, but the HTTP flow is the same.
 
 ## 1. Set Up The Local Environment
 
@@ -39,7 +51,6 @@ Optional verification:
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-
 ## 3. Run The Bundled Sample Flow
 
 In another terminal:
@@ -57,13 +68,12 @@ That script now does four things against the running service:
 
 ## 4. What You Should See
 
-You should see output that includes:
+You should see:
 
-- ingest responses with created memory object IDs
-- a repeated-question query returning compact `memory_hit` and `source_hit`
-  cards
-- a resumed-work query returning compact work-state context
-- a debug response that includes retrieval trace details
+- ingest succeeding for the sample conversation
+- repeated-question queries returning compact memory and evidence cards
+- resumed-work queries returning useful prior state
+- debug output showing retrieval and visibility behavior
 
 You are not looking for perfect prose. You are looking for the shape of the
 system:
