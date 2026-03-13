@@ -1,0 +1,35 @@
+meta {
+  name: Scope Guard Limited Blocker
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/items
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "source_type": "assistant_artifact",
+    "source_id": "ir-scope-artifact-2",
+    "content_type": "text/plain",
+    "content": "Blocked: partner approval code ALPHA-PRIVATE is still pending in the private rollout channel.",
+    "artifact_kind": "tool_use_summary",
+    "role": "assistant",
+    "container_ref": "chat:integration-readiness-rollout",
+    "thread_ref": "chat:integration-readiness-rollout:limited-001",
+    "session_ref": "integration-readiness-scope-limited-001",
+    "actor_ref": "agent:assistant",
+    "source_ref": "memory://integration-readiness/scope/limited-artifact-2",
+    "visibility_context": {
+      "kind": "limited",
+      "id": "rollout-alpha"
+    }
+  }
+}

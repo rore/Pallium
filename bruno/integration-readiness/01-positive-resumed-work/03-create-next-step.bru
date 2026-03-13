@@ -1,0 +1,35 @@
+meta {
+  name: Positive Next Step Artifact
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/items
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "source_type": "assistant_artifact",
+    "source_id": "ir-positive-artifact-3",
+    "content_type": "text/plain",
+    "content": "Next step: refresh the catalog service token and rerun the sync from batch 313.",
+    "artifact_kind": "tool_use_summary",
+    "role": "assistant",
+    "container_ref": "chat:integration-readiness",
+    "thread_ref": "chat:integration-readiness:positive-001",
+    "session_ref": "integration-readiness-positive-001",
+    "actor_ref": "agent:assistant",
+    "source_ref": "memory://integration-readiness/positive/artifact-3",
+    "visibility_context": {
+      "kind": "public",
+      "id": null
+    }
+  }
+}

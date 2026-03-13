@@ -1,0 +1,28 @@
+meta {
+  name: Control Query Debug
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/query/debug
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "text": "What review blocker remains right now, and what should I fix before re-requesting review?",
+    "limit": 6,
+    "container_ref": "chat:integration-readiness",
+    "thread_ref": "chat:integration-readiness:control-001",
+    "visibility_context": {
+      "kind": "public",
+      "id": null
+    }
+  }
+}

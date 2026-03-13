@@ -1,0 +1,35 @@
+meta {
+  name: Control Next Step
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/items
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "source_type": "assistant_artifact",
+    "source_id": "ir-control-artifact-3",
+    "content_type": "text/plain",
+    "content": "Next step: add the branch kiosk fallback coverage and re-request review before enabling the flag.",
+    "artifact_kind": "todo_snapshot",
+    "role": "assistant",
+    "container_ref": "chat:integration-readiness",
+    "thread_ref": "chat:integration-readiness:control-001",
+    "session_ref": "integration-readiness-control-001",
+    "actor_ref": "agent:assistant",
+    "source_ref": "memory://integration-readiness/control/artifact-3",
+    "visibility_context": {
+      "kind": "public",
+      "id": null
+    }
+  }
+}

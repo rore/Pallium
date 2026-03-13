@@ -1,0 +1,35 @@
+meta {
+  name: Scope Guard Limited Next Step
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/items
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "source_type": "assistant_artifact",
+    "source_id": "ir-scope-artifact-3",
+    "content_type": "text/plain",
+    "content": "Next step: wait for partner approval in the private rollout channel before enabling the rollout.",
+    "artifact_kind": "todo_snapshot",
+    "role": "assistant",
+    "container_ref": "chat:integration-readiness-rollout",
+    "thread_ref": "chat:integration-readiness-rollout:limited-001",
+    "session_ref": "integration-readiness-scope-limited-001",
+    "actor_ref": "agent:assistant",
+    "source_ref": "memory://integration-readiness/scope/limited-artifact-3",
+    "visibility_context": {
+      "kind": "limited",
+      "id": "rollout-alpha"
+    }
+  }
+}

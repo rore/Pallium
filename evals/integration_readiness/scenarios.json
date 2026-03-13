@@ -1,0 +1,392 @@
+[
+    {
+        "scenario_id":  "resume-after-auth-tool-failure",
+        "scenario_family":  "blocker_recovery",
+        "description":  "A retry after an auth failure should preserve the blocker, the partial progress, and the resume point rather than replaying the whole failure transcript.",
+        "prior_events":  [
+                             {
+                                 "source_type":  "assistant_artifact",
+                                 "source_id":  "wr-thread-3-artifact-1",
+                                 "content_type":  "text/plain",
+                                 "content":  "Partial progress: refreshed 312 reservation records before the catalog sync tool failed.",
+                                 "artifact_kind":  "tool_use_summary",
+                                 "role":  "assistant",
+                                 "container_ref":  "chat:library-help",
+                                 "thread_ref":  "chat:library-help:thread-wr-003",
+                                 "session_ref":  "agent-session-wr-003",
+                                 "actor_ref":  "agent:assistant",
+                                 "source_ref":  "memory://wr/thread-3-artifact-1",
+                                 "occurred_at":  "2026-03-11T10:00:00Z",
+                                 "metadata":  {
+                                                  "topic":  "catalog_sync_retry"
+                                              }
+                             },
+                             {
+                                 "source_type":  "assistant_artifact",
+                                 "source_id":  "wr-thread-3-artifact-2",
+                                 "content_type":  "text/plain",
+                                 "content":  "Blocked: catalog API returned 401 because the service token expired.",
+                                 "artifact_kind":  "tool_use_summary",
+                                 "role":  "assistant",
+                                 "container_ref":  "chat:library-help",
+                                 "thread_ref":  "chat:library-help:thread-wr-003",
+                                 "session_ref":  "agent-session-wr-003",
+                                 "actor_ref":  "agent:assistant",
+                                 "source_ref":  "memory://wr/thread-3-artifact-2",
+                                 "occurred_at":  "2026-03-11T10:01:00Z",
+                                 "metadata":  {
+                                                  "topic":  "catalog_sync_retry"
+                                              }
+                             },
+                             {
+                                 "source_type":  "assistant_artifact",
+                                 "source_id":  "wr-thread-3-artifact-3",
+                                 "content_type":  "text/plain",
+                                 "content":  "Next step: refresh the catalog service token and rerun the sync from batch 313.",
+                                 "artifact_kind":  "tool_use_summary",
+                                 "role":  "assistant",
+                                 "container_ref":  "chat:library-help",
+                                 "thread_ref":  "chat:library-help:thread-wr-003",
+                                 "session_ref":  "agent-session-wr-003",
+                                 "actor_ref":  "agent:assistant",
+                                 "source_ref":  "memory://wr/thread-3-artifact-3",
+                                 "occurred_at":  "2026-03-11T10:02:00Z",
+                                 "metadata":  {
+                                                  "topic":  "catalog_sync_retry"
+                                              }
+                             }
+                         ],
+        "current_thread_context":  [
+                                       {
+                                           "role":  "user",
+                                           "artifact_kind":  "message",
+                                           "content":  "The catalog sync retry is queued again. What blocker did we hit, what progress was preserved, and what should we do next?"
+                                       }
+                                   ],
+        "current_query":  {
+                              "text":  "What blocker did we hit, what progress was preserved, and what should we do next on the catalog sync retry?",
+                              "limit":  6,
+                              "container_ref":  "chat:library-help"
+                          },
+        "target_question":  "What blocker did we hit, what progress was preserved, and what should we do next on the catalog sync retry?",
+        "should_memory_help":  true,
+        "expected_intent":  "work_resumption",
+        "expected_primary_layer":  "task_checkpoint",
+        "acceptable_fallback_layers":  [
+
+                                       ],
+        "forbidden_layers":  [
+                                 "pattern_memory",
+                                 "continuity_memory"
+                             ],
+        "expected_memory_types":  [
+                                      "task_checkpoint"
+                                  ],
+        "expected_dimensions":  {
+                                    "task_orientation":  [
+                                                             "catalog sync retry"
+                                                         ],
+                                    "blocker_state":  [
+                                                          "401",
+                                                          "service token expired"
+                                                      ],
+                                    "preserved_progress":  [
+                                                               "refreshed 312 reservation records",
+                                                               "batch 313"
+                                                           ],
+                                    "next_step_guidance":  [
+                                                               "refresh the catalog service token",
+                                                               "rerun the sync from batch 313"
+                                                           ],
+                                    "evidence":  [
+                                                     "task_checkpoint"
+                                                 ]
+                                },
+        "retrieval_signals":  {
+                                  "blocker_state":  [
+                                                        "401",
+                                                        "service token expired"
+                                                    ],
+                                  "preserved_progress":  [
+                                                             "refreshed 312 reservation records",
+                                                             "batch 313"
+                                                         ],
+                                  "next_step_guidance":  [
+                                                             "refresh the catalog service token",
+                                                             "rerun the sync from batch 313"
+                                                         ]
+                              },
+        "must_preserve":  [
+                              "task_orientation",
+                              "blocker_state",
+                              "preserved_progress",
+                              "next_step_guidance",
+                              "evidence"
+                          ],
+        "must_not_introduce":  [
+                                   "higher_level_overreach"
+                               ],
+        "guard_terms":  {
+
+                        },
+        "forbidden_terms":  [
+
+                            ],
+        "milestone_role":  "positive_value"
+    },
+    {
+        "scenario_id":  "same-thread-review-no-value-guard",
+        "scenario_family":  "no_value_guard",
+        "description":  "If the current thread already carries the review blocker and next fix, memory should stay quiet instead of replaying older review details.",
+        "prior_events":  [
+                             {
+                                 "source_type":  "assistant_artifact",
+                                 "source_id":  "wr-thread-9-artifact-1",
+                                 "content_type":  "text/plain",
+                                 "content":  "Decision: keep the use_item_event_time flag off for branch kiosks until retry-path coverage exists.",
+                                 "artifact_kind":  "assistant_output",
+                                 "role":  "assistant",
+                                 "container_ref":  "chat:library-help",
+                                 "thread_ref":  "chat:library-help:thread-wr-009",
+                                 "session_ref":  "agent-session-wr-009",
+                                 "actor_ref":  "agent:assistant",
+                                 "source_ref":  "memory://wr/thread-9-artifact-1",
+                                 "occurred_at":  "2026-03-11T17:00:00Z",
+                                 "metadata":  {
+                                                  "topic":  "ticket_lib_241_review"
+                                              }
+                             },
+                             {
+                                 "source_type":  "assistant_artifact",
+                                 "source_id":  "wr-thread-9-artifact-2",
+                                 "content_type":  "text/plain",
+                                 "content":  "Review progress: admin toggle wiring is ready, but the branch kiosk fallback is still missing.",
+                                 "artifact_kind":  "tool_use_summary",
+                                 "role":  "assistant",
+                                 "container_ref":  "chat:library-help",
+                                 "thread_ref":  "chat:library-help:thread-wr-009",
+                                 "session_ref":  "agent-session-wr-009",
+                                 "actor_ref":  "agent:assistant",
+                                 "source_ref":  "memory://wr/thread-9-artifact-2",
+                                 "occurred_at":  "2026-03-11T17:01:00Z",
+                                 "metadata":  {
+                                                  "topic":  "ticket_lib_241_review"
+                                              }
+                             },
+                             {
+                                 "source_type":  "assistant_artifact",
+                                 "source_id":  "wr-thread-9-artifact-3",
+                                 "content_type":  "text/plain",
+                                 "content":  "Next step: add the branch kiosk fallback coverage and re-request review before enabling the flag.",
+                                 "artifact_kind":  "todo_snapshot",
+                                 "role":  "assistant",
+                                 "container_ref":  "chat:library-help",
+                                 "thread_ref":  "chat:library-help:thread-wr-009",
+                                 "session_ref":  "agent-session-wr-009",
+                                 "actor_ref":  "agent:assistant",
+                                 "source_ref":  "memory://wr/thread-9-artifact-3",
+                                 "occurred_at":  "2026-03-11T17:02:00Z",
+                                 "metadata":  {
+                                                  "topic":  "ticket_lib_241_review"
+                                              }
+                             }
+                         ],
+        "current_thread_context":  [
+                                       {
+                                           "role":  "user",
+                                           "artifact_kind":  "message",
+                                           "content":  "What review blocker remains right now, and what should I fix before re-requesting review?"
+                                       },
+                                       {
+                                           "role":  "assistant",
+                                           "artifact_kind":  "assistant_output",
+                                           "content":  "Add the branch kiosk fallback coverage first, then ask for review again."
+                                       }
+                                   ],
+        "current_query":  {
+                              "text":  "What review blocker remains right now, and what should I fix before re-requesting review?",
+                              "limit":  6,
+                              "container_ref":  "chat:library-help"
+                          },
+        "target_question":  "What review blocker remains right now, and what should I fix before re-requesting review?",
+        "should_memory_help":  false,
+        "expected_intent":  "work_resumption",
+        "expected_primary_layer":  null,
+        "acceptable_fallback_layers":  [
+
+                                       ],
+        "forbidden_layers":  [
+
+                             ],
+        "expected_memory_types":  [
+
+                                  ],
+        "expected_dimensions":  {
+                                    "blocker_state":  [
+                                                          "branch kiosk fallback"
+                                                      ],
+                                    "next_step_guidance":  [
+                                                               "add the branch kiosk fallback coverage",
+                                                               "review again"
+                                                           ]
+                                },
+        "retrieval_signals":  {
+
+                              },
+        "must_preserve":  [
+                              "blocker_state",
+                              "next_step_guidance"
+                          ],
+        "must_not_introduce":  [
+                                   "unsupported_recommendation"
+                               ],
+        "guard_terms":  {
+
+                        },
+        "forbidden_terms":  [
+                                "admin toggle wiring is ready"
+                            ],
+        "expected_non_value_reason":  "The current thread already holds the review blocker and next action, so older memory should stay quiet.",
+        "milestone_role":  "no_value_control"
+    },
+    {
+        "scenario_id":  "public-query-must-not-leak-limited-rollout-state",
+        "scenario_family":  "privacy_guard",
+        "description":  "A public rollout query should preserve the public conclusion without leaking the limited-scope blocker details from a private channel.",
+        "prior_events":  [
+                             {
+                                 "source_type":  "assistant_artifact",
+                                 "source_id":  "wr-thread-11-artifact-1",
+                                 "content_type":  "text/plain",
+                                 "content":  "Decision: keep the LIB-241 rollout paused until retry-path coverage exists.",
+                                 "artifact_kind":  "assistant_output",
+                                 "role":  "assistant",
+                                 "container_ref":  "chat:rollout",
+                                 "thread_ref":  "chat:rollout:thread-wr-011-public",
+                                 "session_ref":  "agent-session-wr-011-public",
+                                 "actor_ref":  "agent:assistant",
+                                 "source_ref":  "memory://wr/thread-11-artifact-1",
+                                 "occurred_at":  "2026-03-11T19:00:00Z",
+                                 "visibility_context":  {
+                                                            "kind":  "public",
+                                                            "id":  null
+                                                        },
+                                 "metadata":  {
+                                                  "topic":  "lib241_rollout"
+                                              }
+                             },
+                             {
+                                 "source_type":  "assistant_artifact",
+                                 "source_id":  "wr-thread-11-artifact-2",
+                                 "content_type":  "text/plain",
+                                 "content":  "Blocked: partner approval code ALPHA-PRIVATE is still pending in the private rollout channel.",
+                                 "artifact_kind":  "tool_use_summary",
+                                 "role":  "assistant",
+                                 "container_ref":  "chat:rollout",
+                                 "thread_ref":  "chat:rollout:thread-wr-011-limited",
+                                 "session_ref":  "agent-session-wr-011-limited",
+                                 "actor_ref":  "agent:assistant",
+                                 "source_ref":  "memory://wr/thread-11-artifact-2",
+                                 "occurred_at":  "2026-03-11T19:01:00Z",
+                                 "visibility_context":  {
+                                                            "kind":  "limited",
+                                                            "id":  "rollout-alpha"
+                                                        },
+                                 "metadata":  {
+                                                  "topic":  "lib241_rollout"
+                                              }
+                             },
+                             {
+                                 "source_type":  "assistant_artifact",
+                                 "source_id":  "wr-thread-11-artifact-3",
+                                 "content_type":  "text/plain",
+                                 "content":  "Next step: wait for partner approval in the private rollout channel before enabling the rollout.",
+                                 "artifact_kind":  "todo_snapshot",
+                                 "role":  "assistant",
+                                 "container_ref":  "chat:rollout",
+                                 "thread_ref":  "chat:rollout:thread-wr-011-limited",
+                                 "session_ref":  "agent-session-wr-011-limited",
+                                 "actor_ref":  "agent:assistant",
+                                 "source_ref":  "memory://wr/thread-11-artifact-3",
+                                 "occurred_at":  "2026-03-11T19:02:00Z",
+                                 "visibility_context":  {
+                                                            "kind":  "limited",
+                                                            "id":  "rollout-alpha"
+                                                        },
+                                 "metadata":  {
+                                                  "topic":  "lib241_rollout"
+                                              }
+                             }
+                         ],
+        "current_thread_context":  [
+                                       {
+                                           "role":  "user",
+                                           "artifact_kind":  "message",
+                                           "content":  "What public conclusion did we already make about the LIB-241 rollout?"
+                                       }
+                                   ],
+        "current_query":  {
+                              "text":  "What public conclusion did we already make about the LIB-241 rollout?",
+                              "limit":  6,
+                              "container_ref":  "chat:rollout",
+                              "visibility_context":  {
+                                                         "kind":  "public",
+                                                         "id":  null
+                                                     }
+                          },
+        "target_question":  "What public conclusion did we already make about the LIB-241 rollout?",
+        "should_memory_help":  true,
+        "expected_intent":  "broad_recall",
+        "expected_primary_layer":  "lower_level_memory",
+        "acceptable_fallback_layers":  [
+                                           "source_evidence"
+                                       ],
+        "forbidden_layers":  [
+                                 "task_checkpoint",
+                                 "pattern_memory",
+                                 "continuity_memory"
+                             ],
+        "expected_memory_types":  [
+                                      "decision"
+                                  ],
+        "expected_dimensions":  {
+                                    "task_orientation":  [
+                                                             "LIB-241 rollout"
+                                                         ],
+                                    "key_findings":  [
+                                                         "keep the LIB-241 rollout paused",
+                                                         "retry-path coverage"
+                                                     ],
+                                    "evidence":  [
+                                                     "decision"
+                                                 ]
+                                },
+        "retrieval_signals":  {
+                                  "task_orientation":  [
+                                                           "LIB-241 rollout"
+                                                       ],
+                                  "key_findings":  [
+                                                       "keep the LIB-241 rollout paused",
+                                                       "retry-path coverage"
+                                                   ]
+                              },
+        "must_preserve":  [
+                              "task_orientation",
+                              "key_findings",
+                              "evidence"
+                          ],
+        "must_not_introduce":  [
+                                   "privacy_leak"
+                               ],
+        "guard_terms":  {
+                            "privacy_leak":  [
+                                                 "ALPHA-PRIVATE",
+                                                 "private rollout channel"
+                                             ]
+                        },
+        "forbidden_terms":  [
+
+                            ],
+        "milestone_role":  "scope_guard"
+    }
+]

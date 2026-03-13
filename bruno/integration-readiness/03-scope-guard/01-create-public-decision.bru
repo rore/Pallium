@@ -1,0 +1,35 @@
+meta {
+  name: Scope Guard Public Decision
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/items
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "source_type": "assistant_artifact",
+    "source_id": "ir-scope-artifact-1",
+    "content_type": "text/plain",
+    "content": "Decision: keep the LIB-241 rollout paused until retry-path coverage exists.",
+    "artifact_kind": "assistant_output",
+    "role": "assistant",
+    "container_ref": "chat:integration-readiness-rollout",
+    "thread_ref": "chat:integration-readiness-rollout:public-001",
+    "session_ref": "integration-readiness-scope-public-001",
+    "actor_ref": "agent:assistant",
+    "source_ref": "memory://integration-readiness/scope/public-artifact-1",
+    "visibility_context": {
+      "kind": "public",
+      "id": null
+    }
+  }
+}

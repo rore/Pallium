@@ -1,0 +1,27 @@
+meta {
+  name: Scope Guard Query Debug
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/query/debug
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "text": "What public conclusion did we already make about the LIB-241 rollout?",
+    "limit": 6,
+    "container_ref": "chat:integration-readiness-rollout",
+    "visibility_context": {
+      "kind": "public",
+      "id": null
+    }
+  }
+}

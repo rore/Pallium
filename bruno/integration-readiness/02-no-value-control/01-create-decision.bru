@@ -1,0 +1,35 @@
+meta {
+  name: Control Decision
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/items
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "source_type": "assistant_artifact",
+    "source_id": "ir-control-artifact-1",
+    "content_type": "text/plain",
+    "content": "Decision: keep the use_item_event_time flag off for branch kiosks until retry-path coverage exists.",
+    "artifact_kind": "assistant_output",
+    "role": "assistant",
+    "container_ref": "chat:integration-readiness",
+    "thread_ref": "chat:integration-readiness:control-001",
+    "session_ref": "integration-readiness-control-001",
+    "actor_ref": "agent:assistant",
+    "source_ref": "memory://integration-readiness/control/artifact-1",
+    "visibility_context": {
+      "kind": "public",
+      "id": null
+    }
+  }
+}

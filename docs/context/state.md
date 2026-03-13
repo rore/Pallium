@@ -56,6 +56,7 @@
 - authored developer-work continuity suite now exists under `evals/work_resumption/`
 - memory-routing benchmark now exists under `evals/memory_routing/`
 - aggregate developer-work confidence harness now exists under `evals/developer_work_confidence/`
+- canonical integration-readiness milestone runner now exists under `evals/integration_readiness/`, with a matching Bruno manual runner under `bruno/integration-readiness/`
 - consolidation strategy comparison harness now exists under `evals/consolidation/`
 - tiered-memory validation benchmark now exists under `evals/tiered_memory_validation/`
 - committed examples/tests use a neutral library reservation and catalog sync sample domain
@@ -93,6 +94,12 @@
   - scenario families now cover resumed investigation, blocker recovery, implementation continuity, review continuity, wrong-memory or stale-memory guards, and stronger no-value continuation guards
   - the gap rollup is partly hypothesis-driven because scenario-authored `dimension_gap_targets` contribute to it, so benchmark results should be read as guidance rather than neutral proof
   - the benchmark now exercises package-owned `task_checkpoint` memory for compact resumed-work continuity and separates failures into retrieval recall, routing/layer choice, result packaging/evidence, compact task-state packaging, no-value overreach, and stale/wrong-memory guard misses
+- deterministic integration-readiness milestone run succeeded locally:
+  - `evals/integration_readiness/output/local-integration-readiness-stub`
+  - `3 / 3` milestone scenarios passed
+  - positive resumed-work case selected `task_checkpoint`
+  - no-value control stayed non-memory-backed
+  - scope guard stayed fail-closed with no privacy leak failure
 - deterministic aggregate developer-work confidence run succeeded locally:
   - `evals/developer_work_confidence/output/local-developer-work-confidence-stub`
   - `24 / 24` policy-success scenarios across the authored work suite plus reviewed WildChat and WildBench packs

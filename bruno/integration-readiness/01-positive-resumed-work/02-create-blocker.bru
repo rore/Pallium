@@ -1,0 +1,35 @@
+meta {
+  name: Positive Blocker Artifact
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/items
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "source_type": "assistant_artifact",
+    "source_id": "ir-positive-artifact-2",
+    "content_type": "text/plain",
+    "content": "Blocked: catalog API returned 401 because the service token expired.",
+    "artifact_kind": "tool_use_summary",
+    "role": "assistant",
+    "container_ref": "chat:integration-readiness",
+    "thread_ref": "chat:integration-readiness:positive-001",
+    "session_ref": "integration-readiness-positive-001",
+    "actor_ref": "agent:assistant",
+    "source_ref": "memory://integration-readiness/positive/artifact-2",
+    "visibility_context": {
+      "kind": "public",
+      "id": null
+    }
+  }
+}

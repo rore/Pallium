@@ -5,6 +5,7 @@ Current focus:
 - treat the current main brittle points explicitly: text-heavy routing heuristics, limited reviewed open-corpus breadth, and resumed-work result packaging that is sometimes less operationally sharp than the stored memory warrants
 - preserve the current product claim: Pallium should help an agent stay oriented across interrupted and resumed work without turning into the agent runtime, a workflow engine, or a transcript archive
 - keep privacy as a permanent regression gate, not a one-time completed feature: every retrieval, routing, aggregation, and debug-path hardening slice must preserve fail-closed visibility behavior
+- treat the canonical integration-readiness scenario as passed in-repo: Pallium now has a narrow self-contained proof of resumed-work value, no-value restraint, and fail-closed scope behavior before any thin downstream adapter exists
 - use the work-resumption benchmark, the aggregate developer-work confidence harness, and the reviewed WildChat/WildBench packs as the main tuning loop before deeper retrieval sophistication
 - keep memory bounded, evidence-backed, additive, and inspectable while increasing confidence in real-interaction behavior
 
@@ -12,7 +13,7 @@ Concrete next steps:
 - harden package-owned routing so it uses both query wording and candidate evidence shape, plus safer fallback behavior when confidence is weak or current-thread context is already sufficient
 - expand the reviewed open-corpus continuation packs so the deterministic confidence harness covers more paraphrase, blocker, no-value, stale-memory, and wrong-memory cases
 - sharpen resumed-work result packaging so `task_checkpoint` and related layers preserve task, blocker, next-step, evidence, and freshness in a more operationally useful way
-- then define and pass one canonical integration-readiness scenario that proves both resumed-work value and fail-closed public/private separation inside Pallium before a live downstream adapter is treated as meaningful validation
+- keep the canonical integration-readiness scenario as a standing milestone gate and Bruno manual runner for judging whether the current Pallium build is worth wiring into a thin downstream adapter
 - add a vector retrieval provider behind the existing retrieval boundary only if the expanded confidence harness shows paraphrase or concept recall remains the dominant bottleneck after routing and packaging hardening
 - then add RRF-based hybrid retrieval fusion only if that evidence still supports a dual-mode retrieval path
 - then add an explicit shared-memory derivation path so broader reuse happens through separate shared derived memory rather than in-place widening of local memory

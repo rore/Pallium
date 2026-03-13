@@ -40,6 +40,45 @@ For each run:
 - keep prompts as close as possible between the two runs
 - record the answer quality, not just whether a response was returned
 
+## Canonical Integration-Readiness Milestone
+
+The broader manual scenarios below are still useful, but the repo now also wants one much narrower milestone for saying Pallium is ready for thin downstream integration testing.
+
+That milestone should always include exactly three checks:
+
+1. A positive resumed-work continuity case.
+2. A same-thread or otherwise low-value control case.
+3. A mixed-scope guard case where Pallium must fail closed.
+
+The purpose of this milestone is not benchmark breadth. It is to answer one narrow question:
+
+Can Pallium already provide meaningful resumed-work value while staying privacy-safe enough that wiring a thin downstream adapter is worth the effort?
+
+## Bruno Manual Runner
+
+The canonical integration-readiness milestone should also be runnable manually through Bruno against a local Pallium instance.
+
+That Bruno flow should stay small and human-readable:
+
+- one folder for the positive resumed-work case
+- one folder for the low-value control case
+- one folder for the mixed-scope guard case
+- each folder should contain only the minimal item-ingest sequence plus the final `/query/debug` request
+
+Why this matters:
+
+- the automated benchmark remains the canonical gate
+- the Bruno collection gives a human a direct way to inspect what Pallium is actually storing, returning, and tracing
+- this makes the milestone easier to trust before any real downstream integration exists
+
+When running the Bruno milestone manually, inspect:
+
+- the top returned layer
+- whether blocker, next step, preserved progress, evidence, and freshness are clearly surfaced in the positive case
+- whether the control case avoids creating a fake memory advantage
+- whether the scope guard case fails closed without leaking hidden memory details
+
+
 ## What To Look For
 
 Positive signals:

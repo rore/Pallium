@@ -1,10 +1,10 @@
 ---
 id: add-conversation-agent-integration-readiness-scenario
 title: Add a conversation-agent integration readiness scenario
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary
@@ -36,6 +36,7 @@ If that answer is not yes inside the repo's own realistic scenario harness, live
 - define a small no-value or low-value control case where Pallium should add little because current context is already sufficient
 - define at least one scope guard case where public and private memory are both present and Pallium must fail closed rather than leak or blend them
 - make the scenario explicitly usable as the gate for saying Pallium is ready for a thin local downstream integration
+- add a small Bruno collection flow so the canonical milestone can also be run manually against a local Pallium instance and inspected step by step
 
 ## Out of Scope
 
@@ -61,6 +62,7 @@ If that answer is not yes inside the repo's own realistic scenario harness, live
    - evidence and freshness
 4. The mixed-scope guard case only passes when Pallium fails closed and does not mix or leak memory across incompatible scopes.
 5. The milestone is explicit that passing this scenario means Pallium is ready for thin local integration testing, while failing it means the missing value slice is still inside Pallium rather than in adapter work.
+6. A small Bruno collection exists for the canonical scenario so a human can run the positive case, control case, and scope guard manually against a local Pallium server and inspect the returned memory/debug output.
 
 ## Notes
 
@@ -87,3 +89,18 @@ Suggested scope guard case:
 2. A continuation in one scope must not retrieve or blend memory from the other scope unless an explicit later shared-memory path exists.
 
 This milestone is intentionally narrower than the full work-resumption benchmark. Its purpose is to define the first point where the project can responsibly say "value is ready to test in a live downstream integration" rather than only "the adapter could be wired."
+
+Suggested Bruno shape:
+
+1. One folder for the positive resumed-work case.
+2. One folder for the no-value control case.
+3. One folder for the mixed-scope guard case.
+4. Each folder should include the minimal item-ingest sequence plus the final `/query/debug` check so a human can inspect both the compact result set and the trace.
+5. The Bruno collection should stay small and illustrative; it is a manual milestone runner, not a second benchmark framework.
+
+The automated milestone runner now lives under:
+
+- `evals/integration_readiness/scenarios.json`
+- `evals/integration_readiness_scenario.py`
+- `tests/test_integration_readiness_scenario.py`
+- `bruno/integration-readiness/`
