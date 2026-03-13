@@ -12,6 +12,12 @@ query results, and debug trace directly.
 2. Use the `local` Bruno environment in [C:/Dev/rore/Pallium/bruno/environments/local.bru](C:/Dev/rore/Pallium/bruno/environments/local.bru).
 3. Run against a fresh local database when possible.
 
+Quick reset helper from the repo root:
+
+```powershell
+.\scripts\reset-dev-db.ps1
+```
+
 Why a fresh database matters:
 - these requests use stable ids and refs for readability
 - rerunning them against an old db can create duplicate memory and make inspection noisier

@@ -205,8 +205,9 @@ def _run_memory_branch(
         with TestClient(create_app(scenario_config)) as client:
             try:
                 for event in scenario.get('prior_events', []):
-                    response = client.post('/items', json=event)
+                    response = client.post('/items', json=_with_default_visibility(event))
                     response.raise_for_status()
+                client.app.state.pallium_service.drain_processing_queue(worker_id='tiered-memory-validation-runner')
 
                 consolidation_result = None
                 if strategy_name:
@@ -215,7 +216,7 @@ def _run_memory_branch(
                         strategy_name=strategy_name,
                     )
 
-                query_response = client.post('/query/debug', json=scenario['current_query'])
+                query_response = client.post('/query/debug', json=_with_default_visibility(scenario['current_query']))
                 query_response.raise_for_status()
                 retrieval_payload = query_response.json()
             finally:
@@ -370,6 +371,12 @@ def _evaluate_strategy_result(
         'as_expected': policy_success,
         'strategy_expected_to_help': strategy_expected,
     }
+
+
+def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(payload)
+    updated.setdefault('visibility_context', {'kind': 'public', 'id': None})
+    return updated
 
 
 def _serialize_consolidation_result(result: Any) -> dict[str, Any] | None:

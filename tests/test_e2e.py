@@ -48,37 +48,24 @@ def test_end_to_end_simulation_flow(client) -> None:
     ]
 
     for item in sample_items:
-        response = client.post("/items", json=item)
-        assert response.status_code == 200
-
+        assert client.post("/items", json=item).status_code == 200
     for item in sample_items:
-        repeat_response = client.post("/items", json=item)
-        assert repeat_response.status_code == 200
+        assert client.post("/items", json=item).status_code == 200
+
+    client.app.state.pallium_service.drain_processing_queue(worker_id="e2e-test")
 
     decision_query = client.post(
         "/query",
-        json={
-            "text": "why did we choose item item event time reservation ordering?",
-            "limit": 6,
-            "thread_ref": "slack:C123:1730000000.000100",
-            "session_ref": "agent-session-1",
-        },
+        json={"text": "why did we choose item item event time reservation ordering?", "limit": 6, "thread_ref": "slack:C123:1730000000.000100", "session_ref": "agent-session-1"},
     )
-    assert decision_query.status_code == 200
     decision_payload = decision_query.json()
     assert any(item.get("type") == "decision" for item in decision_payload["results"] if item["result_kind"] == "memory_hit")
     assert any(item.get("source_id") == "artifact-002" for item in decision_payload["results"] if item["result_kind"] == "source_hit")
 
     investigation_query = client.post(
         "/query",
-        json={
-            "text": "what did the investigation find about missed hold updates?",
-            "limit": 6,
-            "thread_ref": "slack:C123:1730000000.000100",
-            "session_ref": "agent-session-1",
-        },
+        json={"text": "what did the investigation find about missed hold updates?", "limit": 6, "thread_ref": "slack:C123:1730000000.000100", "session_ref": "agent-session-1"},
     )
-    assert investigation_query.status_code == 200
     investigation_payload = investigation_query.json()
     assert any(item.get("type") == "investigation_outcome" for item in investigation_payload["results"] if item["result_kind"] == "memory_hit")
     assert any(item.get("source_id") == "artifact-001" for item in investigation_payload["results"] if item["result_kind"] == "source_hit")

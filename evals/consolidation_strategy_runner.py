@@ -165,10 +165,11 @@ def _run_consolidation_scenario(
         with TestClient(create_app(scenario_config)) as client:
             try:
                 for event in scenario.get('prior_events', []):
-                    response = client.post('/items', json=event)
+                    response = client.post('/items', json=_with_default_visibility(event))
                     response.raise_for_status()
+                client.app.state.pallium_service.drain_processing_queue(worker_id='consolidation-strategy-runner')
 
-                before_response = client.post('/query', json=scenario['current_query'])
+                before_response = client.post('/query', json=_with_default_visibility(scenario['current_query']))
                 before_response.raise_for_status()
                 before_payload = before_response.json()
 
@@ -179,7 +180,7 @@ def _run_consolidation_scenario(
                         strategy_name=strategy_name,
                     )
 
-                after_response = client.post('/query', json=scenario['current_query'])
+                after_response = client.post('/query', json=_with_default_visibility(scenario['current_query']))
                 after_response.raise_for_status()
                 after_payload = after_response.json()
             finally:
@@ -214,6 +215,12 @@ def _run_consolidation_scenario(
         'unexpected_terms_found': unexpected_terms,
         'improved_context_shape': (not higher_level_hits and False) or (bool(higher_level_hits) and len(before_memory_types) > 1),
     }
+
+
+def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(payload)
+    updated.setdefault('visibility_context', {'kind': 'public', 'id': None})
+    return updated
 
 
 def _serialize_consolidation_result(result: Any) -> dict[str, Any] | None:

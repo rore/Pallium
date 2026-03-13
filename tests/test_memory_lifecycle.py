@@ -28,6 +28,9 @@ def test_superseded_memory_is_hidden_but_evidence_remains(test_db_url: str) -> N
         thread_ref="thread-1",
         session_ref="session-1",
     )
+    service.drain_processing_queue(worker_id="memory-lifecycle")
+    old_processing = service.get_item_processing(old_result.source_item_id)
+
     new_result = service.ingest_item(
         source_type="decision_note",
         source_id="decision-new",
@@ -41,8 +44,11 @@ def test_superseded_memory_is_hidden_but_evidence_remains(test_db_url: str) -> N
         session_ref="session-1",
     )
 
-    old_memory_id = old_result.memory_object_ids[0]
-    new_memory_id = new_result.memory_object_ids[0]
+    service.drain_processing_queue(worker_id="memory-lifecycle")
+    new_processing = service.get_item_processing(new_result.source_item_id)
+
+    old_memory_id = old_processing.memory_object_ids[0]
+    new_memory_id = new_processing.memory_object_ids[0]
     service.supersede_memory_object(old_memory_id, new_memory_id)
 
     query_result = service.query("reservation ordering reservation ordering", limit=10, thread_ref="thread-1", session_ref="session-1")

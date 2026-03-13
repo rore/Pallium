@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Column, DateTime, String, Text, create_engine, select, text
+from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine, select, text
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
-from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
+from core.contracts import ProcessResult
+from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem, new_id, utc_now
 from core.visibility import VisibilityContext, VisibilityExclusion, visibility_context_is_visible
 from storage.base import IndexSearchHit, IndexSearchResult, StorageProvider
 
@@ -35,6 +36,15 @@ class SourceItemRecord(Base):
     artifact_kind = Column(String, nullable=True)
     visibility_kind = Column(String, nullable=True)
     visibility_id = Column(String, nullable=True)
+    use_case = Column(String, nullable=True)
+    processing_status = Column(String, nullable=False, default="pending")
+    processing_attempts = Column(Integer, nullable=False, default=0)
+    processing_claimed_by = Column(String, nullable=True)
+    processing_claimed_at = Column(DateTime(timezone=True), nullable=True)
+    processing_lease_expires_at = Column(DateTime(timezone=True), nullable=True)
+    processing_completed_at = Column(DateTime(timezone=True), nullable=True)
+    processing_error = Column(Text, nullable=True)
+    processing_next_attempt_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 
@@ -100,6 +110,15 @@ class SQLiteStorageProvider(StorageProvider):
         "artifact_kind": "ALTER TABLE source_items ADD COLUMN artifact_kind VARCHAR",
         "visibility_kind": "ALTER TABLE source_items ADD COLUMN visibility_kind VARCHAR",
         "visibility_id": "ALTER TABLE source_items ADD COLUMN visibility_id VARCHAR",
+        "use_case": "ALTER TABLE source_items ADD COLUMN use_case VARCHAR",
+        "processing_status": "ALTER TABLE source_items ADD COLUMN processing_status VARCHAR DEFAULT 'pending'",
+        "processing_attempts": "ALTER TABLE source_items ADD COLUMN processing_attempts INTEGER DEFAULT 0",
+        "processing_claimed_by": "ALTER TABLE source_items ADD COLUMN processing_claimed_by VARCHAR",
+        "processing_claimed_at": "ALTER TABLE source_items ADD COLUMN processing_claimed_at DATETIME",
+        "processing_lease_expires_at": "ALTER TABLE source_items ADD COLUMN processing_lease_expires_at DATETIME",
+        "processing_completed_at": "ALTER TABLE source_items ADD COLUMN processing_completed_at DATETIME",
+        "processing_error": "ALTER TABLE source_items ADD COLUMN processing_error TEXT",
+        "processing_next_attempt_at": "ALTER TABLE source_items ADD COLUMN processing_next_attempt_at DATETIME",
     }
     _MEMORY_OBJECT_MIGRATIONS = {
         "lifecycle": "ALTER TABLE memory_objects ADD COLUMN lifecycle VARCHAR DEFAULT 'active'",
@@ -152,6 +171,15 @@ class SQLiteStorageProvider(StorageProvider):
             artifact_kind=source_item.artifact_kind,
             visibility_kind=visibility_kind,
             visibility_id=visibility_id,
+            use_case=source_item.use_case,
+            processing_status=source_item.processing_status,
+            processing_attempts=source_item.processing_attempts,
+            processing_claimed_by=source_item.processing_claimed_by,
+            processing_claimed_at=source_item.processing_claimed_at,
+            processing_lease_expires_at=source_item.processing_lease_expires_at,
+            processing_completed_at=source_item.processing_completed_at,
+            processing_error=source_item.processing_error,
+            processing_next_attempt_at=source_item.processing_next_attempt_at,
             created_at=source_item.created_at,
         )
         with self._session_factory.begin() as session:
@@ -164,13 +192,132 @@ class SQLiteStorageProvider(StorageProvider):
                 raise KeyError(source_item_id)
             return self._to_source_item(record)
 
+    def claim_next_source_item(
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+        max_attempts: int,
+        now: datetime | None = None,
+    ) -> SourceItem | None:
+        claimed_at = now or utc_now()
+        lease_expires_at = claimed_at + timedelta(seconds=max(1, lease_seconds))
+        statement = text(
+            """
+            UPDATE source_items
+            SET processing_status = 'processing',
+                processing_attempts = COALESCE(processing_attempts, 0) + 1,
+                processing_claimed_by = :worker_id,
+                processing_claimed_at = :claimed_at,
+                processing_lease_expires_at = :lease_expires_at,
+                processing_next_attempt_at = NULL
+            WHERE id = (
+                SELECT id
+                FROM source_items
+                WHERE use_case IS NOT NULL
+                  AND (
+                    (processing_status = 'pending'
+                        AND COALESCE(processing_attempts, 0) < :max_attempts
+                        AND (processing_next_attempt_at IS NULL OR processing_next_attempt_at <= :claimed_at))
+                    OR (processing_status = 'failed'
+                        AND COALESCE(processing_attempts, 0) < :max_attempts
+                        AND processing_next_attempt_at IS NOT NULL
+                        AND processing_next_attempt_at <= :claimed_at)
+                    OR (processing_status = 'processing'
+                        AND COALESCE(processing_attempts, 0) < :max_attempts
+                        AND processing_lease_expires_at IS NOT NULL
+                        AND processing_lease_expires_at <= :claimed_at)
+                  )
+                ORDER BY created_at ASC, id ASC
+                LIMIT 1
+            )
+            RETURNING id
+            """
+        )
+        with self._session_factory.begin() as session:
+            row = session.execute(
+                statement,
+                {
+                    "worker_id": worker_id,
+                    "claimed_at": claimed_at,
+                    "lease_expires_at": lease_expires_at,
+                    "max_attempts": max_attempts,
+                },
+            ).first()
+            if row is None:
+                return None
+            record = session.get(SourceItemRecord, row[0])
+            if record is None:
+                return None
+            return self._to_source_item(record)
+
+    def complete_source_item_processing(self, source_item_id: str, *, completed_at: datetime | None = None) -> None:
+        finished_at = completed_at or utc_now()
+        with self._session_factory.begin() as session:
+            record = session.get(SourceItemRecord, source_item_id)
+            if record is None:
+                raise KeyError(source_item_id)
+            record.processing_status = "completed"
+            record.processing_completed_at = finished_at
+            record.processing_error = None
+            record.processing_lease_expires_at = None
+            record.processing_next_attempt_at = None
+
+    def fail_source_item_processing(
+        self,
+        source_item_id: str,
+        *,
+        error: str,
+        next_attempt_at: datetime | None,
+        final: bool,
+    ) -> None:
+        with self._session_factory.begin() as session:
+            record = session.get(SourceItemRecord, source_item_id)
+            if record is None:
+                raise KeyError(source_item_id)
+            record.processing_status = "failed" if final else "pending"
+            record.processing_error = error
+            record.processing_lease_expires_at = None
+            record.processing_next_attempt_at = next_attempt_at
+
+    def commit_processed_source_item(
+        self,
+        *,
+        source_item_id: str,
+        result: ProcessResult,
+        supersession_pairs: list[tuple[str, str]],
+        completed_at: datetime | None = None,
+    ) -> None:
+        finished_at = completed_at or utc_now()
+        with self._session_factory.begin() as session:
+            self._persist_process_result_in_session(session, result)
+            self._apply_supersession_pairs_in_session(session, supersession_pairs)
+            self._after_commit_processed_source_item_persist(
+                session,
+                source_item_id=source_item_id,
+                result=result,
+                supersession_pairs=supersession_pairs,
+            )
+            record = session.get(SourceItemRecord, source_item_id)
+            if record is None:
+                raise KeyError(source_item_id)
+            record.processing_status = "completed"
+            record.processing_completed_at = finished_at
+            record.processing_error = None
+            record.processing_claimed_by = None
+            record.processing_claimed_at = None
+            record.processing_lease_expires_at = None
+            record.processing_next_attempt_at = None
+
     def list_source_items_for_thread(self, container_ref: str, thread_ref: str) -> list[SourceItem]:
         with self._session_factory() as session:
             records = session.scalars(
-                select(SourceItemRecord).where(
+                select(SourceItemRecord)
+                .where(
                     SourceItemRecord.container_ref == container_ref,
                     SourceItemRecord.thread_ref == thread_ref,
                 )
+                .order_by(SourceItemRecord.created_at.asc(), SourceItemRecord.id.asc())
             ).all()
         return [self._to_source_item(record) for record in records]
 
@@ -304,6 +451,7 @@ class SQLiteStorageProvider(StorageProvider):
                 )
             ).all()
         return [self._to_index_entry(record) for record in records]
+
     def search_index_entries(
         self,
         tokens: list[str],
@@ -375,6 +523,91 @@ class SQLiteStorageProvider(StorageProvider):
                 select(SourceItemRecord).where(SourceItemRecord.id.in_(source_ids))
             ).all()
         return [self._to_evidence_reference(record) for record in records]
+
+    def _persist_process_result_in_session(self, session: Session, result: ProcessResult) -> None:
+        for annotation in result.annotations:
+            session.add(
+                AnnotationRecord(
+                    id=annotation.id,
+                    source_item_id=annotation.source_item_id,
+                    type=annotation.type,
+                    schema_id=annotation.schema_id,
+                    schema_version=annotation.schema_version,
+                    payload_json=self._dumps(annotation.payload) or "{}",
+                    created_at=annotation.created_at,
+                )
+            )
+        for memory_object in result.memory_objects:
+            visibility_kind, visibility_id = self._split_visibility_context(memory_object.visibility_context)
+            session.add(
+                MemoryObjectRecord(
+                    id=memory_object.id,
+                    type=memory_object.type,
+                    schema_id=memory_object.schema_id,
+                    schema_version=memory_object.schema_version,
+                    payload_json=self._dumps(memory_object.payload) or "{}",
+                    lifecycle=memory_object.lifecycle,
+                    visibility_kind=visibility_kind,
+                    visibility_id=visibility_id,
+                    created_at=memory_object.created_at,
+                )
+            )
+        for relation in result.relations:
+            session.add(
+                RelationRecord(
+                    id=relation.id,
+                    from_kind=relation.from_kind,
+                    from_id=relation.from_id,
+                    relation_type=relation.relation_type,
+                    to_kind=relation.to_kind,
+                    to_id=relation.to_id,
+                )
+            )
+        for index_entry in result.index_entries:
+            session.add(
+                IndexEntryRecord(
+                    id=index_entry.id,
+                    target_kind=index_entry.target_kind,
+                    target_id=index_entry.target_id,
+                    index_type=index_entry.index_type,
+                    text_view=index_entry.text_view,
+                    text_view_name=index_entry.text_view_name,
+                    provider_name=index_entry.provider_name,
+                    provider_version=index_entry.provider_version,
+                )
+            )
+
+    def _apply_supersession_pairs_in_session(self, session: Session, supersession_pairs: list[tuple[str, str]]) -> None:
+        for superseded_id, replacement_id in supersession_pairs:
+            superseded = session.get(MemoryObjectRecord, superseded_id)
+            replacement = session.get(MemoryObjectRecord, replacement_id)
+            if superseded is None or replacement is None:
+                raise KeyError(superseded_id if superseded is None else replacement_id)
+            if superseded.type != replacement.type:
+                raise ValueError("Supersession requires matching memory object types")
+            if superseded.lifecycle == "superseded":
+                continue
+            superseded.lifecycle = "superseded"
+            session.add(
+                RelationRecord(
+                    id=new_id(),
+                    from_kind="memory_object",
+                    from_id=replacement_id,
+                    relation_type="supersedes",
+                    to_kind="memory_object",
+                    to_id=superseded_id,
+                )
+            )
+
+    def _after_commit_processed_source_item_persist(
+        self,
+        session: Session,
+        *,
+        source_item_id: str,
+        result: ProcessResult,
+        supersession_pairs: list[tuple[str, str]],
+    ) -> None:
+        return None
 
     def _matches_filters(self, target_kind: str, target_id: str, filters: QueryFilters | None) -> bool:
         if target_kind == "memory_object":
@@ -459,9 +692,6 @@ class SQLiteStorageProvider(StorageProvider):
 
     @staticmethod
     def _to_source_item(record: SourceItemRecord) -> SourceItem:
-        occurred_at = record.occurred_at
-        if occurred_at is not None and occurred_at.tzinfo is None:
-            occurred_at = occurred_at.replace(tzinfo=timezone.utc)
         return SourceItem(
             id=record.id,
             source_type=record.source_type,
@@ -469,7 +699,7 @@ class SQLiteStorageProvider(StorageProvider):
             content_type=record.content_type,
             content=record.content,
             metadata=SQLiteStorageProvider._loads(record.metadata_json),
-            occurred_at=occurred_at,
+            occurred_at=SQLiteStorageProvider._normalize_datetime(record.occurred_at),
             actor_ref=record.actor_ref,
             role=record.role,
             container_ref=record.container_ref,
@@ -478,7 +708,16 @@ class SQLiteStorageProvider(StorageProvider):
             source_ref=record.source_ref,
             artifact_kind=record.artifact_kind,
             visibility_context=SQLiteStorageProvider._build_visibility_context(record.visibility_kind, record.visibility_id),
-            created_at=record.created_at,
+            use_case=record.use_case,
+            processing_status=record.processing_status or "pending",
+            processing_attempts=record.processing_attempts or 0,
+            processing_claimed_by=record.processing_claimed_by,
+            processing_claimed_at=SQLiteStorageProvider._normalize_datetime(record.processing_claimed_at),
+            processing_lease_expires_at=SQLiteStorageProvider._normalize_datetime(record.processing_lease_expires_at),
+            processing_completed_at=SQLiteStorageProvider._normalize_datetime(record.processing_completed_at),
+            processing_error=record.processing_error,
+            processing_next_attempt_at=SQLiteStorageProvider._normalize_datetime(record.processing_next_attempt_at),
+            created_at=SQLiteStorageProvider._normalize_datetime(record.created_at) or utc_now(),
         )
 
     @staticmethod
@@ -490,7 +729,7 @@ class SQLiteStorageProvider(StorageProvider):
             schema_id=record.schema_id,
             schema_version=record.schema_version,
             payload=SQLiteStorageProvider._loads(record.payload_json),
-            created_at=record.created_at,
+            created_at=SQLiteStorageProvider._normalize_datetime(record.created_at) or utc_now(),
         )
 
     @staticmethod
@@ -503,7 +742,7 @@ class SQLiteStorageProvider(StorageProvider):
             payload=SQLiteStorageProvider._loads(record.payload_json),
             lifecycle=record.lifecycle or "active",
             visibility_context=SQLiteStorageProvider._build_visibility_context(record.visibility_kind, record.visibility_id),
-            created_at=record.created_at,
+            created_at=SQLiteStorageProvider._normalize_datetime(record.created_at) or utc_now(),
         )
 
     @staticmethod
@@ -532,14 +771,11 @@ class SQLiteStorageProvider(StorageProvider):
 
     @staticmethod
     def _to_evidence_reference(record: SourceItemRecord) -> EvidenceReference:
-        occurred_at = record.occurred_at
-        if occurred_at is not None and occurred_at.tzinfo is None:
-            occurred_at = occurred_at.replace(tzinfo=timezone.utc)
         return EvidenceReference(
             source_item_id=record.id,
             source_type=record.source_type,
             source_id=record.source_id,
-            occurred_at=occurred_at,
+            occurred_at=SQLiteStorageProvider._normalize_datetime(record.occurred_at),
             actor_ref=record.actor_ref,
             role=record.role,
             container_ref=record.container_ref,
@@ -549,6 +785,14 @@ class SQLiteStorageProvider(StorageProvider):
             artifact_kind=record.artifact_kind,
             visibility_context=SQLiteStorageProvider._build_visibility_context(record.visibility_kind, record.visibility_id),
         )
+
+    @staticmethod
+    def _normalize_datetime(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     @staticmethod
     def _split_visibility_context(visibility_context: VisibilityContext | None) -> tuple[str | None, str | None]:

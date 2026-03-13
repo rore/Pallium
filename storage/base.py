@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 
+from core.contracts import ProcessResult
 from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
 from core.visibility import VisibilityContext, VisibilityExclusion
 
@@ -37,6 +39,43 @@ class StorageProvider(ABC):
 
     @abstractmethod
     def get_source_item(self, source_item_id: str) -> SourceItem:
+        raise NotImplementedError
+
+    @abstractmethod
+    def claim_next_source_item(
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+        max_attempts: int,
+        now: datetime | None = None,
+    ) -> SourceItem | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def complete_source_item_processing(self, source_item_id: str, *, completed_at: datetime | None = None) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def fail_source_item_processing(
+        self,
+        source_item_id: str,
+        *,
+        error: str,
+        next_attempt_at: datetime | None,
+        final: bool,
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def commit_processed_source_item(
+        self,
+        *,
+        source_item_id: str,
+        result: ProcessResult,
+        supersession_pairs: list[tuple[str, str]],
+        completed_at: datetime | None = None,
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod

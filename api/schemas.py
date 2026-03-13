@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ArtifactKind = Literal["message", "assistant_output", "tool_use_summary", "todo_snapshot", "notification"]
 VisibilityKind = Literal["public", "limited", "user"]
+ProcessingStatus = Literal["pending", "processing", "completed", "skipped", "failed"]
 
 
 class VisibilityContextModel(BaseModel):
@@ -47,6 +48,25 @@ class ItemCreateResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     source_item_id: str
+    annotation_ids: list[str]
+    memory_object_ids: list[str]
+    relation_ids: list[str]
+    index_entry_ids: list[str]
+    processing_status: ProcessingStatus
+    processing_attempts: int
+    processing_error: str | None = None
+
+
+class ProcessingStatusResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    source_item_id: str
+    use_case: str | None = None
+    processing_status: ProcessingStatus
+    processing_attempts: int
+    processing_claimed_at: datetime | None = None
+    processing_completed_at: datetime | None = None
+    processing_error: str | None = None
     annotation_ids: list[str]
     memory_object_ids: list[str]
     relation_ids: list[str]
@@ -159,6 +179,3 @@ class QueryTraceResponse(BaseModel):
 class QueryDebugResponse(BaseModel):
     results: list[QueryResultResponse]
     trace: QueryTraceResponse
-
-
-

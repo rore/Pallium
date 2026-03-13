@@ -1,8 +1,10 @@
 Pallium now has a dedicated validation layer for tiered memory, a retrieval trace/debug path for lexical retrieval, package-owned internal routing over the current memory layers, privacy-aware `visibility_context` enforcement, and a bounded public-corpus evaluation path for messy real user-assistant interactions through WildChat as the primary realism corpus plus a complementary WildBench task slice.
 
 Current focus:
-- keep `agent_conversation_memory` as the first product slice, but shift the hardening bar from "works on bounded scenarios" to "behaves safely and usefully on more realistic resumed-work interactions"
-- the main brittle points are now narrower: routing still begins from query-text intent families, confidence still comes from reviewed open-data rather than downstream traffic, and retrieval is still lexical-first
+- keep `agent_conversation_memory` as the first product slice, but shift the next hardening bar from "works on bounded scenarios" to "holds up under realistic ingest latency and background semantic processing"
+- make `POST /items` cheap and predictable by persisting raw evidence synchronously, then moving semantic extraction, direct promotion, and thread rebuild work onto an explicit SQLite-backed async queue and worker path
+- treat eventual consistency as an explicit product/runtime property rather than an accidental side effect: raw source evidence should stay queryable immediately, while derived memory appears once worker processing completes
+- use this slice to strengthen the current product claim before deeper retrieval upgrades: if ingest remains slow or fragile under realistic write amplification, vector and fusion work would optimize the wrong bottleneck
 - preserve the current product claim: Pallium should help an agent stay oriented across interrupted and resumed work without turning into the agent runtime, a workflow engine, or a transcript archive
 - keep privacy as a permanent regression gate, not a one-time completed feature: every retrieval, routing, aggregation, and debug-path hardening slice must preserve fail-closed visibility behavior
 - treat the canonical integration-readiness scenario as passed in-repo: Pallium now has a narrow self-contained proof of resumed-work value, no-value restraint, and fail-closed scope behavior before any thin downstream adapter exists
@@ -10,14 +12,14 @@ Current focus:
 - keep memory bounded, evidence-backed, additive, and inspectable while increasing confidence in real-interaction behavior
 
 Concrete next steps:
-- use the canonical integration-readiness scenario plus the Bruno runner as a standing gate before any thin downstream adapter work is treated as meaningful validation
-- validate the current build in a thin downstream integration outside the public repo while keeping privacy as a permanent regression gate inside Pallium
-- use the expanded confidence harness to determine whether the next real bottleneck is still routing, result packaging, or lexical recall
-- add a vector retrieval provider behind the existing retrieval boundary only if the expanded confidence harness shows paraphrase or concept recall remains the dominant bottleneck after routing and packaging hardening
+- add an explicit async ingest queue on `source_items`, plus standalone worker processing and an opt-in local supervisor mode, so the write path no longer blocks on semantic extraction or thread rebuild work
+- keep the canonical integration-readiness scenario plus the Bruno runner as a standing gate, but run it only after queue drain or worker completion so the benchmark reflects the new eventual-consistency contract explicitly
+- preserve privacy as a regression gate across both sync raw indexing and async derived-memory creation, especially for skipped items that lack required `visibility_context`
+- use the expanded confidence harness to determine whether the next real bottleneck after async ingest is routing, result packaging, or lexical recall
+- add a vector retrieval provider behind the existing retrieval boundary only if the expanded confidence harness still shows paraphrase or concept recall as the main bottleneck after the ingest/runtime hardening work lands
 - then add RRF-based hybrid retrieval fusion only if that evidence still supports a dual-mode retrieval path
 - then add an explicit shared-memory derivation path so broader reuse happens through separate shared derived memory rather than in-place widening of local memory
 - then treat cross-container memory as a later bounded shared-memory feature built on those privacy and sharing foundations
-
 What the current evaluation layer established:
 - broad recurring why-questions benefit most from consolidated `pattern_memory`
 - repeated-answer consistency benefits from bounded `continuity_memory` carry-forward

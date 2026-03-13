@@ -13,7 +13,7 @@ Main layers:
 5. Provider layer
 6. Storage layer
 7. Retrieval layer
-8. Optional background jobs
+8. Background worker and supervisor runtime
 
 ## Implemented Core and Retrieval Slice
 
@@ -21,7 +21,7 @@ Implemented HTTP endpoints:
 
 - POST /items
 - POST /query
-- POST /query/debug
+- POST /query/debug`r`n- GET /items/{source_item_id}/processing
 
 Implemented abstractions:
 
@@ -32,7 +32,7 @@ Implemented abstractions:
 
 Implemented storage and retrieval behavior:
 
-- SQLite-backed storage provider
+- SQLite-backed storage provider`r`n- synchronous raw source ingest plus queue state on `source_items` for async semantic processing
 - lexical retrieval over indexed text views
 - named text-view metadata on `IndexEntry`
 - indexing for both `SourceItem` and `MemoryObject`
@@ -198,6 +198,33 @@ The package now also owns an internal query-routing policy that reranks retrieve
 For resumed-work queries, that same package-owned path now adds explicit usefulness and freshness shaping for `task_checkpoint` plus adjacent evidence. Sharp checkpoints that preserve blocker, next step, evidence, and freshness can win cleanly, while thin or stale checkpoints can be demoted beneath fresher explicit source state without changing the public API.
 
 `agent_conversation_memory` is now the first scope-aware package. It requires consumer-supplied `visibility_context` on ingest and query, preserves visibility on direct and higher-level memory, excludes missing-visibility evidence from promotion and normal retrieval, and relies on the core/capability layer for exact-match-only aggregation and consolidation.
+
+## Future Operational Scale
+
+The current architecture intentionally accepts some write amplification in
+exchange for explicit evidence, thread-level state, and compact derived memory.
+One meaningful ingest can create:
+
+- one raw source item
+- one or more annotations
+- one or more direct memory objects
+- rebuilt thread-level memory such as `thread_summary` or `task_checkpoint`
+- explicit evidence relations
+- lexical index entries
+
+That is acceptable for the current selected-artifact, local-first product
+assumptions, but it creates predictable future operational pressure in ingest
+latency, LLM cost, thread rebuild amplification, index growth, and SQLite write
+concurrency.
+
+If later downstream usage justifies it, the preferred scale levers are:
+
+- selective or debounced thread rebuilds
+- broader background consolidation and scale work beyond the now-async ingest path
+- bounded or incremental thread recomputation
+- stricter artifact gating
+- background consolidation scheduling
+- backend upgrades only after the current product slice proves the need
 
 ## Lifecycle
 

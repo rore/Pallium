@@ -32,6 +32,15 @@ class SourceItem:
     source_ref: str | None = None
     artifact_kind: str | None = None
     visibility_context: VisibilityContext | None = None
+    use_case: str | None = None
+    processing_status: str = "pending"
+    processing_attempts: int = 0
+    processing_claimed_by: str | None = None
+    processing_claimed_at: datetime | None = None
+    processing_lease_expires_at: datetime | None = None
+    processing_completed_at: datetime | None = None
+    processing_error: str | None = None
+    processing_next_attempt_at: datetime | None = None
     id: str = field(default_factory=new_id)
     created_at: datetime = field(default_factory=utc_now)
 

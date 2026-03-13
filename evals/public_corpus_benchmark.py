@@ -118,6 +118,7 @@ def _run_episode(
             for event in episode.get("prior_events", []):
                 response = client.post("/items", json=_with_default_visibility(event))
                 response.raise_for_status()
+            client.app.state.pallium_service.drain_processing_queue(worker_id="public-corpus-runner")
 
             consolidation_result = None
             if consolidation_strategy:

@@ -44,6 +44,7 @@ def _ingest(client: TestClient, *, source_id: str, content: str, visibility_cont
         },
     )
     assert response.status_code == 200
+    client.app.state.pallium_service.drain_processing_queue(worker_id="visibility-test")
     return response.json()
 
 
@@ -128,6 +129,7 @@ def test_missing_ingest_visibility_does_not_promote_or_retrieve(monkeypatch, tes
             visibility_context=None,
         )
         assert create_payload["memory_object_ids"] == []
+        assert create_payload["processing_status"] == "skipped"
 
         payload = _query(client, visibility_context=_public(), debug=True)
         returned_source_ids = {item.get("source_id") for item in payload["results"] if item["result_kind"] == "source_hit"}
@@ -168,6 +170,7 @@ def test_thread_aggregation_stays_within_exact_visibility_context(monkeypatch, t
                 "visibility_context": _limited("channel-thread"),
             },
         )
+        client.app.state.pallium_service.drain_processing_queue(worker_id="visibility-test")
 
         storage = client.app.state.pallium_service._storage
         summaries = [item for item in storage.list_memory_objects(memory_types=["thread_summary"], lifecycle="active")]
@@ -216,4 +219,3 @@ def test_debug_trace_reports_visibility_exclusions(monkeypatch, test_db_url: str
         assert any(item["count"] >= 1 for item in exclusions)
         assert all("target_id" not in item for item in exclusions)
         assert all("candidate_visibility_context" not in item for item in exclusions)
-

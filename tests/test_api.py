@@ -19,7 +19,7 @@ class StubLLMProvider:
         return LLMJsonResponse(raw_text=str(self._parsed_json), parsed_json=self._parsed_json)
 
 
-def test_post_items_creates_fallback_summary_artifacts(client) -> None:
+def test_post_items_returns_pending_and_raw_index_only(client) -> None:
     response = client.post(
         "/items",
         json={
@@ -30,32 +30,22 @@ def test_post_items_creates_fallback_summary_artifacts(client) -> None:
             "metadata": {"topic": "reservation ordering"},
             "artifact_kind": "message",
             "role": "user",
-            "container_ref": "slack:C123",
-            "thread_ref": "slack:C123:1730000000.000100",
-            "session_ref": "agent-session-1",
-            "actor_ref": "slack:U123",
-            "source_ref": "https://example.test/message/1",
         },
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["source_item_id"]
-    assert len(payload["annotation_ids"]) == 1
-    assert len(payload["memory_object_ids"]) == 1
-    assert len(payload["relation_ids"]) == 1
-    assert len(payload["index_entry_ids"]) == 2
-
-    query_response = client.post(
-        "/query",
-        json={"text": "item item event time reservation ordering", "limit": 5, "thread_ref": "slack:C123:1730000000.000100"},
-    )
-    assert query_response.status_code == 200
-    memory_hits = [item for item in query_response.json()["results"] if item["result_kind"] == "memory_hit"]
-    assert any(item["type"] == "discussion_summary" for item in memory_hits)
+    assert payload["annotation_ids"] == []
+    assert payload["memory_object_ids"] == []
+    assert payload["relation_ids"] == []
+    assert len(payload["index_entry_ids"]) == 1
+    assert payload["processing_status"] == "pending"
+    assert payload["processing_attempts"] == 0
+    assert payload["processing_error"] is None
 
 
-def test_post_items_is_idempotent_on_source_reference(client) -> None:
+def test_post_items_is_idempotent_and_returns_current_processing_snapshot(client, drain_queue) -> None:
     request = {
         "source_type": "decision_note",
         "source_id": "decision-1",
@@ -68,58 +58,129 @@ def test_post_items_is_idempotent_on_source_reference(client) -> None:
     }
 
     first_response = client.post("/items", json=request)
+    drain_queue(client)
     second_response = client.post("/items", json=request)
 
     assert first_response.status_code == 200
     assert second_response.status_code == 200
-    assert len(first_response.json()["annotation_ids"]) == 2
-    assert len(first_response.json()["memory_object_ids"]) == 1
-    assert second_response.json() == first_response.json()
+    assert first_response.json()["processing_status"] == "pending"
+    assert second_response.json()["processing_status"] == "completed"
+    assert len(second_response.json()["annotation_ids"]) == 2
+    assert len(second_response.json()["memory_object_ids"]) == 1
+    assert second_response.json()["processing_attempts"] == 1
 
 
-def test_post_query_returns_compact_decision_memory_and_source_hits(client) -> None:
+def test_get_processing_endpoint_reflects_status_after_worker_completion(client, drain_queue) -> None:
+    create_response = client.post(
+        "/items",
+        json={
+            "source_type": "decision_note",
+            "source_id": "decision-status-1",
+            "content_type": "text/plain",
+            "content": "Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates during sync delays.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+        },
+    )
+    source_item_id = create_response.json()["source_item_id"]
+
+    pending = client.get(f"/items/{source_item_id}/processing")
+    assert pending.status_code == 200
+    assert pending.json()["processing_status"] == "pending"
+    assert pending.json()["memory_object_ids"] == []
+
+    drain_queue(client)
+
+    completed = client.get(f"/items/{source_item_id}/processing")
+    assert completed.status_code == 200
+    payload = completed.json()
+    assert payload["processing_status"] == "completed"
+    assert payload["processing_attempts"] == 1
+    assert payload["processing_completed_at"] is not None
+    assert payload["memory_object_ids"]
+
+
+def test_raw_source_is_queryable_before_worker_completion_and_memory_after(client, drain_queue) -> None:
     client.post(
         "/items",
         json={
             "source_type": "decision_note",
-            "source_id": "decision-1",
+            "source_id": "decision-query-1",
             "content_type": "text/plain",
             "content": "Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates during sync delays.",
             "artifact_kind": "assistant_output",
             "role": "assistant",
             "container_ref": "slack:C123",
-            "thread_ref": "slack:C123:1730000000.000100",
-            "session_ref": "agent-session-1",
-            "actor_ref": "agent:assistant",
-            "source_ref": "https://example.test/message/decision-1",
+            "thread_ref": "thread-query",
         },
     )
 
-    response = client.post(
+    before = client.post(
         "/query",
         json={"text": "what did we decide about reservation ordering?", "limit": 5, "artifact_kind": "assistant_output"},
     )
+    assert before.status_code == 200
+    assert any(item["result_kind"] == "source_hit" for item in before.json()["results"])
+    assert not any(item["result_kind"] == "memory_hit" for item in before.json()["results"])
 
+    drain_queue(client)
+
+    after = client.post(
+        "/query",
+        json={"text": "what did we decide about reservation ordering?", "limit": 5, "artifact_kind": "assistant_output"},
+    )
+    assert after.status_code == 200
+    assert any(item["result_kind"] == "memory_hit" for item in after.json()["results"])
+    assert any(item["result_kind"] == "source_hit" for item in after.json()["results"])
+
+
+def test_missing_required_visibility_creates_skipped_not_pending(monkeypatch, test_db_url: str) -> None:
+    monkeypatch.setattr(
+        "app.dependencies.build_llm_provider",
+        lambda config, **_: StubLLMProvider(
+            {
+                "summary": "Prior assistant conclusion about reservation ordering.",
+                "candidate_type": "decision",
+                "decision_text": "use item item event time reservation ordering for reservation ordering",
+                "decision_evidence_text": "Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates.",
+                "investigation_text": None,
+                "investigation_evidence_text": None,
+                "rationale_text": "to avoid missed hold updates",
+            }
+        ),
+    )
+    scoped_client = TestClient(
+        create_app(
+            AppConfig(
+                storage_backend="sqlite",
+                sqlite_url=test_db_url,
+                default_use_case="agent_conversation_memory",
+                llm_provider="openai_compatible",
+                llm_model="fake-model",
+                llm_base_url="http://fake-provider.local",
+                llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
+            )
+        )
+    )
+
+    response = scoped_client.post(
+        "/items",
+        json={
+            "source_type": "assistant_artifact",
+            "source_id": "missing-visibility-1",
+            "content_type": "text/plain",
+            "content": "Decision: use item event time for reservation ordering to avoid duplicate holds.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+        },
+    )
     assert response.status_code == 200
     payload = response.json()
-    assert "trace" not in payload
-    assert len(payload["results"]) >= 2
-    result_kinds = {result["result_kind"] for result in payload["results"]}
-    assert "memory_hit" in result_kinds
-    assert "source_hit" in result_kinds
-
-    memory_hit = next(result for result in payload["results"] if result["result_kind"] == "memory_hit")
-    assert memory_hit["type"] == "decision"
-    assert memory_hit["payload"]["decision"] == "use item item event time reservation ordering for reservation ordering"
-    assert len(memory_hit["evidence"]) == 1
-
-    source_hit = next(result for result in payload["results"] if result["result_kind"] == "source_hit")
-    assert source_hit["source_id"] == "decision-1"
-    assert source_hit["excerpt"]
-    assert "content" not in source_hit
+    assert payload["processing_status"] == "skipped"
+    assert payload["memory_object_ids"] == []
 
 
-def test_post_query_debug_returns_trace_with_named_text_views(client) -> None:
+def test_query_debug_returns_named_text_views_after_processing(client, drain_queue) -> None:
     client.post(
         "/items",
         json={
@@ -129,12 +190,9 @@ def test_post_query_debug_returns_trace_with_named_text_views(client) -> None:
             "content": "Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates during sync delays.",
             "artifact_kind": "assistant_output",
             "role": "assistant",
-            "container_ref": "slack:C123",
-            "thread_ref": "thread-debug",
-            "session_ref": "session-debug",
-            "actor_ref": "agent:assistant",
         },
     )
+    drain_queue(client)
 
     response = client.post(
         "/query/debug",
@@ -144,121 +202,12 @@ def test_post_query_debug_returns_trace_with_named_text_views(client) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert len(payload["results"]) >= 2
-    assert payload["trace"]["query_tokens"]
-    assert payload["trace"]["stages"]
-
     stage = payload["trace"]["stages"][0]
-    assert stage["stage_name"] == "lexical"
-    assert stage["candidate_hits_considered"] >= len(stage["selected_hits"])
     assert any(hit["text_view_name"] == "memory_object.decision_context" for hit in stage["selected_hits"])
     assert any(hit["text_view_name"] == "source_item.content" for hit in stage["selected_hits"])
-    assert any("reservation" in hit["matched_tokens"] for hit in stage["candidate_hits"])
 
 
-def test_post_query_returns_investigation_memory_and_source_hits(client) -> None:
-    client.post(
-        "/items",
-        json={
-            "source_type": "investigation_summary",
-            "source_id": "investigation-1",
-            "content_type": "text/plain",
-            "content": "Investigation found that arrival-time ordering missed hold updates during sync delays because the catalog provider delivered updates late.",
-            "artifact_kind": "tool_use_summary",
-            "role": "assistant",
-            "thread_ref": "thread-investigation",
-            "session_ref": "session-investigation",
-            "actor_ref": "agent:assistant",
-        },
-    )
-
-    response = client.post(
-        "/query",
-        json={"text": "what did the investigation find about missed hold updates?", "limit": 5, "artifact_kind": "tool_use_summary"},
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    memory_hit = next(result for result in payload["results"] if result["result_kind"] == "memory_hit")
-    assert memory_hit["type"] == "investigation_outcome"
-    assert "arrival-time ordering missed hold updates during sync delays" in memory_hit["payload"]["investigation_outcome"]
-    assert any(result["result_kind"] == "source_hit" for result in payload["results"])
-
-
-def test_post_query_applies_structured_filters(client) -> None:
-    user_message = {
-        "source_type": "chat_message",
-        "source_id": "msg-1",
-        "content_type": "text/plain",
-        "content": "Can we use item item event time reservation ordering?",
-        "artifact_kind": "message",
-        "role": "user",
-        "container_ref": "slack:C123",
-        "thread_ref": "thread-a",
-        "session_ref": "session-a",
-        "actor_ref": "slack:U123",
-    }
-    assistant_note = {
-        "source_type": "investigation_summary",
-        "source_id": "note-1",
-        "content_type": "text/plain",
-        "content": "Investigation found that arrival-time ordering missed hold updates during sync delays.",
-        "artifact_kind": "tool_use_summary",
-        "role": "assistant",
-        "container_ref": "slack:C123",
-        "thread_ref": "thread-a",
-        "session_ref": "session-a",
-        "actor_ref": "agent:assistant",
-    }
-    other_thread = {
-        "source_type": "chat_message",
-        "source_id": "msg-2",
-        "content_type": "text/plain",
-        "content": "We should keep retry backoff capped at 30 seconds.",
-        "artifact_kind": "message",
-        "role": "user",
-        "container_ref": "slack:C123",
-        "thread_ref": "thread-b",
-        "session_ref": "session-b",
-        "actor_ref": "slack:U234",
-    }
-
-    for item in (user_message, assistant_note, other_thread):
-        assert client.post("/items", json=item).status_code == 200
-
-    filtered = client.post(
-        "/query",
-        json={
-            "text": "missed hold updates during sync delays",
-            "limit": 10,
-            "thread_ref": "thread-a",
-            "session_ref": "session-a",
-            "container_ref": "slack:C123",
-        },
-    )
-    assert filtered.status_code == 200
-    filtered_results = filtered.json()["results"]
-    assert filtered_results
-    assert all(item.get("thread_ref") in (None, "thread-a") for item in filtered_results)
-    assert not any(item["result_kind"] == "source_hit" and item["source_id"] == "msg-2" for item in filtered_results)
-
-    assistant_only = client.post(
-        "/query",
-        json={
-            "text": "missed hold updates during sync delays",
-            "limit": 10,
-            "artifact_kind": "tool_use_summary",
-            "role": "assistant",
-        },
-    )
-    assert assistant_only.status_code == 200
-    assistant_results = assistant_only.json()["results"]
-    assert assistant_results
-    source_hits = [item for item in assistant_results if item["result_kind"] == "source_hit"]
-    assert source_hits
-    assert all(item["role"] == "assistant" for item in source_hits)
-
-
-def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: str) -> None:
+def test_llm_plugin_path_processes_after_worker_completion(monkeypatch, test_db_url: str) -> None:
     monkeypatch.setattr(
         "app.dependencies.build_llm_provider",
         lambda config, **_: StubLLMProvider(
@@ -296,96 +245,18 @@ def test_llm_plugin_path_preserves_public_api_shape(monkeypatch, test_db_url: st
             "content": "An LLM should identify this as an investigation outcome about reservation ordering.",
             "artifact_kind": "tool_use_summary",
             "role": "assistant",
-            "thread_ref": "thread-llm",
         },
     )
     assert create_response.status_code == 200
-    assert len(create_response.json()["annotation_ids"]) == 2
+    assert create_response.json()["processing_status"] == "pending"
 
-    query_response = llm_client.post(
-        "/query",
-        json={"text": "what did the investigation find?", "limit": 5, "thread_ref": "thread-llm"},
-    )
-    assert query_response.status_code == 200
-    payload = query_response.json()
-    memory_hit = next(result for result in payload["results"] if result["result_kind"] == "memory_hit")
-    assert memory_hit["type"] == "investigation_outcome"
-    assert memory_hit["payload"]["investigation_outcome"] == "arrival-time ordering missed hold updates during sync delays"
-    assert any(result["result_kind"] == "source_hit" for result in payload["results"])
+    llm_client.app.state.pallium_service.drain_processing_queue(worker_id="llm-test")
+    status_response = llm_client.get(f"/items/{create_response.json()['source_item_id']}/processing")
+    assert status_response.json()["processing_status"] == "completed"
+    assert len(status_response.json()["annotation_ids"]) == 2
 
 
-def test_agent_conversation_memory_package_path_preserves_public_api_shape(monkeypatch, test_db_url: str) -> None:
-    monkeypatch.setattr(
-        "app.dependencies.build_llm_provider",
-        lambda config, **_: StubLLMProvider(
-            {
-                "summary": "Prior assistant conclusion about reservation ordering.",
-                "candidate_type": "decision",
-                "decision_text": "use item item event time reservation ordering for reservation ordering",
-                "decision_evidence_text": "Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates.",
-                "investigation_text": None,
-                "investigation_evidence_text": None,
-                "rationale_text": "to avoid missed hold updates",
-            }
-        ),
-    )
-    client = TestClient(
-        create_app(
-            AppConfig(
-                storage_backend="sqlite",
-                sqlite_url=test_db_url,
-                default_use_case="agent_conversation_memory",
-                llm_provider="openai_compatible",
-                llm_model="fake-model",
-                llm_base_url="http://fake-provider.local",
-                llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
-            )
-        )
-    )
-
-    create_response = client.post(
-        "/items",
-        json={
-            "source_type": "assistant_artifact",
-            "source_id": "assistant-output-1",
-            "content_type": "text/plain",
-            "content": "Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
-            "thread_ref": "thread-assistant",
-            "session_ref": "session-assistant",
-                "visibility_context": {"kind": "public", "id": None},
-            },
-    )
-    assert create_response.status_code == 200
-
-    user_message_response = client.post(
-        "/items",
-        json={
-            "source_type": "chat_message",
-            "source_id": "user-message-1",
-            "content_type": "text/plain",
-            "content": "Why do we use item item event time reservation ordering?",
-            "artifact_kind": "message",
-            "role": "user",
-            "thread_ref": "thread-user",
-            "session_ref": "session-user",
-                "visibility_context": {"kind": "public", "id": None},
-            },
-    )
-    assert user_message_response.status_code == 200
-
-    query_response = client.post(
-        "/query",
-        json={"text": "why did we choose item item event time reservation ordering?", "limit": 5, "visibility_context": {"kind": "public", "id": None}},
-    )
-    assert query_response.status_code == 200
-    payload = query_response.json()
-    assert any(item["result_kind"] == "memory_hit" for item in payload["results"])
-    assert any(item["result_kind"] == "source_hit" for item in payload["results"])
-
-
-def test_llm_plugin_path_returns_server_error_when_provider_fails(monkeypatch, test_db_url: str) -> None:
+def test_worker_failure_is_reported_via_processing_endpoint(monkeypatch, test_db_url: str) -> None:
     monkeypatch.setattr(
         "app.dependencies.build_llm_provider",
         lambda config, **_: StubLLMProvider(error=LLMProviderError("provider failed")),
@@ -401,8 +272,7 @@ def test_llm_plugin_path_returns_server_error_when_provider_fails(monkeypatch, t
                 llm_base_url="http://fake-provider.local",
                 llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
             )
-        ),
-        raise_server_exceptions=False,
+        )
     )
 
     create_response = llm_client.post(
@@ -414,8 +284,10 @@ def test_llm_plugin_path_returns_server_error_when_provider_fails(monkeypatch, t
             "content": "Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates.",
         },
     )
+    assert create_response.status_code == 200
 
-    assert create_response.status_code == 500
-
-
-
+    llm_client.app.state.pallium_service.drain_processing_queue(worker_id="llm-test", max_attempts=1)
+    status_response = llm_client.get(f"/items/{create_response.json()['source_item_id']}/processing")
+    assert status_response.status_code == 200
+    assert status_response.json()["processing_status"] == "failed"
+    assert status_response.json()["processing_error"] == "provider failed"

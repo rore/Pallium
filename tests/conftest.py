@@ -24,3 +24,11 @@ def client(test_db_url: str) -> TestClient:
         )
     )
     return TestClient(app)
+
+
+@pytest.fixture()
+def drain_queue():
+    def _drain(client: TestClient, **kwargs):
+        return client.app.state.pallium_service.drain_processing_queue(worker_id="test-worker", **kwargs)
+
+    return _drain

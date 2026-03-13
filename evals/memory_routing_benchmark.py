@@ -88,6 +88,7 @@ def _run_scenario(
             for event in scenario.get("prior_events", []):
                 response = client.post("/items", json=_with_default_visibility(event))
                 response.raise_for_status()
+            client.app.state.pallium_service.drain_processing_queue(worker_id="memory-routing-runner")
 
             consolidation_result = None
             if consolidation_strategy:

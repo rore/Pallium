@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from api.schemas import (
     ItemCreateRequest,
     ItemCreateResponse,
+    ProcessingStatusResponse,
     QueryDebugResponse,
     QueryRequest,
     QueryResponse,
@@ -161,6 +162,14 @@ def create_router(service: PalliumService) -> APIRouter:
         )
         return ItemCreateResponse(**result.as_dict())
 
+    @router.get("/items/{source_item_id}/processing", response_model=ProcessingStatusResponse)
+    def get_item_processing(source_item_id: str) -> ProcessingStatusResponse:
+        try:
+            result = service.get_item_processing(source_item_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="source item not found") from exc
+        return ProcessingStatusResponse(**result.as_dict())
+
     @router.post("/query", response_model=QueryResponse)
     def query_items(request: QueryRequest) -> QueryResponse:
         result = service.query(
@@ -198,6 +207,3 @@ def create_router(service: PalliumService) -> APIRouter:
         )
 
     return router
-
-
-

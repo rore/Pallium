@@ -153,6 +153,7 @@ def _run_scenario(
             for event in scenario.get("prior_events", []):
                 response = client.post("/items", json=_with_default_visibility(event))
                 response.raise_for_status()
+            client.app.state.pallium_service.drain_processing_queue(worker_id="work-resumption-runner")
 
             consolidation_result = None
             if consolidation_strategy:
@@ -167,7 +168,6 @@ def _run_scenario(
             engine = getattr(client.app.state.pallium_service._storage, "_engine", None)
             if engine is not None:
                 engine.dispose()
-
     baseline_continuation = _generate_continuation(
         answer_provider=answer_provider,
         scenario_id=scenario["scenario_id"],

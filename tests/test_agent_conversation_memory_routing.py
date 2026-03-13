@@ -46,6 +46,7 @@ def _ingest_prior_events(client: TestClient, scenario_id: str) -> dict[str, obje
     for event in scenario['prior_events']:
         response = client.post('/items', json=event)
         assert response.status_code == 200
+    client.app.state.pallium_service.drain_processing_queue(worker_id='routing-test')
     return scenario
 
 
@@ -108,6 +109,7 @@ def _ingest_resumption_work(client: TestClient, *, thread_ref: str) -> None:
     ):
         response = client.post('/items', json=payload)
         assert response.status_code == 200
+    client.app.state.pallium_service.drain_processing_queue(worker_id='routing-test')
 
 
 def test_broad_recall_routes_pattern_memory_first(monkeypatch, test_db_url: str) -> None:

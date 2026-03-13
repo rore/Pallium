@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import re
+from datetime import timedelta
 
 from capabilities.consolidation import ConsolidationCapability, ConsolidationRunGroupResult, ConsolidationRunResult
 from capabilities.thread_aggregation import build_thread_aggregate
-from core.contracts import IngestResult, ProcessResult, QueryResult, build_query_filters, build_source_item
+from core.contracts import IngestResult, ItemProcessingResult, ProcessResult, QueryResult, build_query_filters, build_source_item
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
 from core.models import MemoryObject, QueryFilters, QueryTrace, Relation, SourceItem
 from core.visibility import QueryVisibilityTrace, VisibilityContext, visibility_context_matches_exact
@@ -16,6 +17,11 @@ from storage.base import StorageProvider
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 THREAD_CONCLUSION_TYPES = {"decision", "investigation_outcome"}
 THREAD_SUMMARY_TYPE = "thread_summary"
+DEFAULT_PROCESSING_LEASE_SECONDS = 15 * 60
+DEFAULT_PROCESSING_MAX_ATTEMPTS = 3
+DEFAULT_RETRY_BACKOFF_SECONDS = 5
+MAX_RETRY_BACKOFF_SECONDS = 5 * 60
+MAX_PROCESSING_ERROR_LENGTH = 1000
 
 
 def _normalize_for_index(text: str) -> str:
@@ -61,30 +67,15 @@ class PalliumService:
     ) -> IngestResult:
         existing_source_item = self._storage.find_source_item(source_type=source_type, source_id=source_id)
         if existing_source_item is not None:
-            annotations = self._storage.list_annotations_for_source_item(existing_source_item.id)
-            memory_objects = self._storage.list_memory_objects_for_source_item(existing_source_item.id)
-            relations = self._storage.list_relations_for_source_item(existing_source_item.id)
-            index_entries = self._storage.list_index_entries_for_target(
-                target_kind="source_item",
-                target_id=existing_source_item.id,
-            )
-            for memory_object in memory_objects:
-                index_entries.extend(
-                    self._storage.list_index_entries_for_target(
-                        target_kind="memory_object",
-                        target_id=memory_object.id,
-                    )
-                )
-            return IngestResult(
-                source_item_id=existing_source_item.id,
-                annotation_ids=[item.id for item in annotations],
-                memory_object_ids=[item.id for item in memory_objects],
-                relation_ids=[item.id for item in relations],
-                index_entry_ids=[item.id for item in index_entries],
-            )
+            return self._build_ingest_result(existing_source_item)
 
         plugin_name = use_case or self._default_use_case
         plugin = self._semantic_plugins[plugin_name]
+        processing_status = "pending"
+        processing_error = None
+        if plugin.requires_visibility_context and visibility_context is None:
+            processing_status = "skipped"
+            processing_error = "visibility_context_required"
 
         source_item = build_source_item(
             source_type=source_type,
@@ -101,42 +92,167 @@ class PalliumService:
             source_ref=source_ref,
             artifact_kind=artifact_kind,
             visibility_context=visibility_context,
+            use_case=plugin_name,
+            processing_status=processing_status,
+            processing_error=processing_error,
         )
         self._storage.create_source_item(source_item)
+        self._storage.create_index_entry(
+            build_index_entry(
+                target_kind="source_item",
+                target_id=source_item.id,
+                index_type="lexical",
+                text_view=_normalize_for_index(source_item.content),
+                text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW,
+            )
+        )
+        return self._build_ingest_result(self._storage.get_source_item(source_item.id))
 
-        source_index_entry = build_index_entry(
+    def get_item_processing(self, source_item_id: str) -> ItemProcessingResult:
+        return self._build_processing_result(self._storage.get_source_item(source_item_id))
+
+    def process_next_source_item(
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: int = DEFAULT_PROCESSING_LEASE_SECONDS,
+        max_attempts: int = DEFAULT_PROCESSING_MAX_ATTEMPTS,
+    ) -> ItemProcessingResult | None:
+        source_item = self._storage.claim_next_source_item(
+            worker_id=worker_id,
+            lease_seconds=lease_seconds,
+            max_attempts=max_attempts,
+        )
+        if source_item is None:
+            return None
+        self._process_source_item(source_item, max_attempts=max_attempts)
+        return self.get_item_processing(source_item.id)
+
+    def drain_processing_queue(
+        self,
+        *,
+        worker_id: str = "local-drain",
+        lease_seconds: int = DEFAULT_PROCESSING_LEASE_SECONDS,
+        max_attempts: int = DEFAULT_PROCESSING_MAX_ATTEMPTS,
+        limit: int | None = None,
+    ) -> list[ItemProcessingResult]:
+        results: list[ItemProcessingResult] = []
+        while limit is None or len(results) < limit:
+            result = self.process_next_source_item(
+                worker_id=worker_id,
+                lease_seconds=lease_seconds,
+                max_attempts=max_attempts,
+            )
+            if result is None:
+                break
+            results.append(result)
+        return results
+
+    def _process_source_item(self, source_item: SourceItem, *, max_attempts: int) -> None:
+        try:
+            plugin_name = source_item.use_case or self._default_use_case
+            plugin = self._semantic_plugins[plugin_name]
+            if plugin.requires_visibility_context and source_item.visibility_context is None:
+                self._storage.fail_source_item_processing(
+                    source_item.id,
+                    error="visibility_context_required",
+                    next_attempt_at=None,
+                    final=True,
+                )
+                return
+
+            direct_result = plugin.process_item(source_item)
+            thread_result, supersede_plan = self._maybe_rebuild_thread_summary(
+                plugin=plugin,
+                source_item=source_item,
+                pending_memory_objects=direct_result.memory_objects,
+            )
+            combined_result = ProcessResult(
+                annotations=[*direct_result.annotations, *(thread_result.annotations if thread_result else [])],
+                memory_objects=[*direct_result.memory_objects, *(thread_result.memory_objects if thread_result else [])],
+                relations=[*direct_result.relations, *(thread_result.relations if thread_result else [])],
+                index_entries=[*direct_result.index_entries, *(thread_result.index_entries if thread_result else [])],
+            )
+            supersession_pairs = [
+                (superseded_id, replacement_id)
+                for replacement_id, superseded_ids in supersede_plan.items()
+                for superseded_id in superseded_ids
+            ]
+            self._storage.commit_processed_source_item(
+                source_item_id=source_item.id,
+                result=combined_result,
+                supersession_pairs=supersession_pairs,
+            )
+        except Exception as exc:
+            error = self._truncate_processing_error(exc)
+            if source_item.processing_attempts >= max_attempts:
+                self._storage.fail_source_item_processing(
+                    source_item.id,
+                    error=error,
+                    next_attempt_at=None,
+                    final=True,
+                )
+                return
+            backoff_seconds = self._queue_backoff_seconds(source_item.processing_attempts)
+            self._storage.fail_source_item_processing(
+                source_item.id,
+                error=error,
+                next_attempt_at=source_item.processing_claimed_at + timedelta(seconds=backoff_seconds)
+                if source_item.processing_claimed_at is not None
+                else None,
+                final=False,
+            )
+
+    def _build_ingest_result(self, source_item: SourceItem) -> IngestResult:
+        processing = self._build_processing_result(source_item)
+        return IngestResult(
+            source_item_id=processing.source_item_id,
+            annotation_ids=processing.annotation_ids,
+            memory_object_ids=processing.memory_object_ids,
+            relation_ids=processing.relation_ids,
+            index_entry_ids=processing.index_entry_ids,
+            processing_status=processing.processing_status,
+            processing_attempts=processing.processing_attempts,
+            processing_error=processing.processing_error,
+        )
+
+    def _build_processing_result(self, source_item: SourceItem) -> ItemProcessingResult:
+        annotations = self._storage.list_annotations_for_source_item(source_item.id)
+        memory_objects = self._storage.list_memory_objects_for_source_item(source_item.id)
+        relations = self._storage.list_relations_for_source_item(source_item.id)
+        index_entries = self._storage.list_index_entries_for_target(
             target_kind="source_item",
             target_id=source_item.id,
-            index_type="lexical",
-            text_view=_normalize_for_index(source_item.content),
-            text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW,
         )
-        self._storage.create_index_entry(source_index_entry)
-
-        derived = ProcessResult(annotations=[], memory_objects=[], relations=[], index_entries=[])
-        thread_result = None
-        if not (plugin.requires_visibility_context and source_item.visibility_context is None):
-            derived = plugin.process_item(source_item)
-            self._persist_process_result(derived)
-            thread_result = self._maybe_rebuild_thread_summary(plugin=plugin, source_item=source_item)
-
-        annotation_ids = [item.id for item in derived.annotations]
-        memory_object_ids = [item.id for item in derived.memory_objects]
-        relation_ids = [item.id for item in derived.relations]
-        index_entry_ids = [source_index_entry.id, *[item.id for item in derived.index_entries]]
-        if thread_result is not None:
-            annotation_ids.extend(item.id for item in thread_result.annotations)
-            memory_object_ids.extend(item.id for item in thread_result.memory_objects)
-            relation_ids.extend(item.id for item in thread_result.relations)
-            index_entry_ids.extend(item.id for item in thread_result.index_entries)
-
-        return IngestResult(
+        for memory_object in memory_objects:
+            index_entries.extend(
+                self._storage.list_index_entries_for_target(
+                    target_kind="memory_object",
+                    target_id=memory_object.id,
+                )
+            )
+        return ItemProcessingResult(
             source_item_id=source_item.id,
-            annotation_ids=annotation_ids,
-            memory_object_ids=memory_object_ids,
-            relation_ids=relation_ids,
-            index_entry_ids=index_entry_ids,
+            use_case=source_item.use_case,
+            processing_status=source_item.processing_status,
+            processing_attempts=source_item.processing_attempts,
+            processing_claimed_at=source_item.processing_claimed_at,
+            processing_completed_at=source_item.processing_completed_at,
+            processing_error=source_item.processing_error,
+            annotation_ids=[item.id for item in annotations],
+            memory_object_ids=[item.id for item in memory_objects],
+            relation_ids=[item.id for item in relations],
+            index_entry_ids=[item.id for item in index_entries],
         )
+
+    @staticmethod
+    def _queue_backoff_seconds(attempt_count: int) -> int:
+        return min(MAX_RETRY_BACKOFF_SECONDS, DEFAULT_RETRY_BACKOFF_SECONDS * (2 ** max(attempt_count - 1, 0)))
+
+    @staticmethod
+    def _truncate_processing_error(error: Exception) -> str:
+        text = str(error).strip() or error.__class__.__name__
+        return text[:MAX_PROCESSING_ERROR_LENGTH]
 
     def query(
         self,
@@ -311,13 +427,14 @@ class PalliumService:
         *,
         plugin: SemanticPlugin,
         source_item: SourceItem,
-    ) -> ProcessResult | None:
+        pending_memory_objects: list[MemoryObject],
+    ) -> tuple[ProcessResult | None, dict[str, list[str]]]:
         if not isinstance(plugin, ThreadAggregationSemanticPlugin):
-            return None
+            return None, {}
         if not plugin.supports_thread_aggregation(source_item):
-            return None
+            return None, {}
         if not source_item.container_ref or not source_item.thread_ref:
-            return None
+            return None, {}
 
         thread_items = [
             item
@@ -331,22 +448,24 @@ class PalliumService:
                 if visibility_context_matches_exact(item.visibility_context, source_item.visibility_context)
             ]
         if not thread_items:
-            return None
+            return None, {}
 
         active_thread_memory_ids = self._find_active_thread_memory_ids(thread_items)
         aggregate = build_thread_aggregate(thread_items)
-        conclusions = self._collect_thread_conclusions(thread_items)
+        conclusions = self._collect_thread_conclusions(
+            thread_items,
+            pending_memory_objects_by_source_item={source_item.id: pending_memory_objects},
+        )
         thread_result = plugin.build_thread_summary(aggregate, conclusions)
-        self._persist_process_result(thread_result)
-
-        if thread_result.memory_objects:
-            for memory_object in thread_result.memory_objects:
-                key = (memory_object.type, memory_object.schema_id)
-                for superseded_id in active_thread_memory_ids.get(key, []):
-                    if superseded_id != memory_object.id:
-                        self.supersede_memory_object(superseded_id, memory_object.id)
-
-        return thread_result
+        supersede_plan: dict[str, list[str]] = {}
+        for memory_object in thread_result.memory_objects:
+            key = (memory_object.type, memory_object.schema_id)
+            supersede_plan[memory_object.id] = [
+                superseded_id
+                for superseded_id in active_thread_memory_ids.get(key, [])
+                if superseded_id != memory_object.id
+            ]
+        return thread_result, supersede_plan
 
     def _find_active_thread_memory_ids(
         self,
@@ -364,10 +483,20 @@ class PalliumService:
                 ids.setdefault((memory_object.type, memory_object.schema_id), []).append(memory_object.id)
         return ids
 
-    def _collect_thread_conclusions(self, thread_items: list[SourceItem]) -> list[MemoryObject]:
+    def _collect_thread_conclusions(
+        self,
+        thread_items: list[SourceItem],
+        *,
+        pending_memory_objects_by_source_item: dict[str, list[MemoryObject]] | None = None,
+    ) -> list[MemoryObject]:
         conclusions: dict[str, MemoryObject] = {}
+        pending_memory_objects_by_source_item = pending_memory_objects_by_source_item or {}
         for source_item in thread_items:
-            for memory_object in self._storage.list_memory_objects_for_source_item(source_item.id):
+            memory_objects = [
+                *self._storage.list_memory_objects_for_source_item(source_item.id),
+                *pending_memory_objects_by_source_item.get(source_item.id, []),
+            ]
+            for memory_object in memory_objects:
                 if memory_object.lifecycle != "active":
                     continue
                 if memory_object.type not in THREAD_CONCLUSION_TYPES:

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
@@ -92,8 +92,9 @@ def _run_scenario(*, scenario: dict[str, Any], config: AppConfig, consolidation_
         )
         with TestClient(create_app(scenario_config)) as client:
             for event in scenario.get("prior_events", []):
-                response = client.post("/items", json=event)
+                response = client.post("/items", json=_with_default_visibility(event))
                 response.raise_for_status()
+            client.app.state.pallium_service.drain_processing_queue(worker_id="agent-conversation-runner")
 
             consolidation_result = None
             if consolidation_strategy:
@@ -102,13 +103,12 @@ def _run_scenario(*, scenario: dict[str, Any], config: AppConfig, consolidation_
                     strategy_name=consolidation_strategy,
                 )
 
-            query_response = client.post("/query", json=scenario["current_query"])
+            query_response = client.post("/query", json=_with_default_visibility(scenario["current_query"]))
             query_response.raise_for_status()
             query_payload = query_response.json()
             engine = getattr(client.app.state.pallium_service._storage, "_engine", None)
             if engine is not None:
                 engine.dispose()
-
     memory_hits = [item for item in query_payload["results"] if item["result_kind"] == "memory_hit"]
     source_hits = [item for item in query_payload["results"] if item["result_kind"] == "source_hit"]
     returned_memory_types = sorted({item["type"] for item in memory_hits if item.get("type")})
@@ -135,6 +135,12 @@ def _run_scenario(*, scenario: dict[str, Any], config: AppConfig, consolidation_
         "consolidation_strategy": consolidation_strategy,
         "consolidation_run": _serialize_consolidation_result(consolidation_result),
     }
+
+
+def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(payload)
+    updated.setdefault("visibility_context", {"kind": "public", "id": None})
+    return updated
 
 
 def _serialize_consolidation_result(result: Any) -> dict[str, Any] | None:

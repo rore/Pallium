@@ -22,10 +22,46 @@ class IngestResult:
     memory_object_ids: list[str]
     relation_ids: list[str]
     index_entry_ids: list[str]
+    processing_status: str
+    processing_attempts: int
+    processing_error: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
             "source_item_id": self.source_item_id,
+            "annotation_ids": self.annotation_ids,
+            "memory_object_ids": self.memory_object_ids,
+            "relation_ids": self.relation_ids,
+            "index_entry_ids": self.index_entry_ids,
+            "processing_status": self.processing_status,
+            "processing_attempts": self.processing_attempts,
+            "processing_error": self.processing_error,
+        }
+
+
+@dataclass(frozen=True)
+class ItemProcessingResult:
+    source_item_id: str
+    use_case: str | None
+    processing_status: str
+    processing_attempts: int
+    processing_claimed_at: datetime | None
+    processing_completed_at: datetime | None
+    processing_error: str | None
+    annotation_ids: list[str]
+    memory_object_ids: list[str]
+    relation_ids: list[str]
+    index_entry_ids: list[str]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "source_item_id": self.source_item_id,
+            "use_case": self.use_case,
+            "processing_status": self.processing_status,
+            "processing_attempts": self.processing_attempts,
+            "processing_claimed_at": self.processing_claimed_at,
+            "processing_completed_at": self.processing_completed_at,
+            "processing_error": self.processing_error,
             "annotation_ids": self.annotation_ids,
             "memory_object_ids": self.memory_object_ids,
             "relation_ids": self.relation_ids,
@@ -54,6 +90,15 @@ def build_source_item(
     source_ref: str | None = None,
     artifact_kind: str | None = None,
     visibility_context: VisibilityContext | None = None,
+    use_case: str | None = None,
+    processing_status: str = "pending",
+    processing_attempts: int = 0,
+    processing_claimed_by: str | None = None,
+    processing_claimed_at: datetime | None = None,
+    processing_lease_expires_at: datetime | None = None,
+    processing_completed_at: datetime | None = None,
+    processing_error: str | None = None,
+    processing_next_attempt_at: datetime | None = None,
 ) -> SourceItem:
     return SourceItem(
         source_type=source_type,
@@ -70,6 +115,15 @@ def build_source_item(
         source_ref=source_ref,
         artifact_kind=artifact_kind,
         visibility_context=visibility_context,
+        use_case=use_case,
+        processing_status=processing_status,
+        processing_attempts=processing_attempts,
+        processing_claimed_by=processing_claimed_by,
+        processing_claimed_at=processing_claimed_at,
+        processing_lease_expires_at=processing_lease_expires_at,
+        processing_completed_at=processing_completed_at,
+        processing_error=processing_error,
+        processing_next_attempt_at=processing_next_attempt_at,
     )
 
 
