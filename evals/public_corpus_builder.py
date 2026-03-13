@@ -273,8 +273,9 @@ def _assemble_episode(
     target_conversation: dict[str, Any],
     source_conversation_ids: list[str],
 ) -> dict[str, Any]:
+    effective_query_text = str(spec.get("query_text", query_text))
     current_query = {
-        "text": query_text,
+        "text": effective_query_text,
         "limit": int(spec.get("query_limit", manifest.get("default_query_limit", DEFAULT_QUERY_LIMIT))),
         "container_ref": target_conversation["container_ref"],
         "visibility_context": {"kind": "public", "id": None},

@@ -164,6 +164,8 @@ ANSWER_CONTINUITY_CUES = (
     "asked again",
     "asking again",
     "prior answer",
+    "old answer",
+    "not a new brainstorm",
     "carry forward",
 )
 BROAD_RECALL_CUES = (

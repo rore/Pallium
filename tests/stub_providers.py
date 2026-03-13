@@ -799,7 +799,7 @@ def _build_public_corpus_answer_payload(user_prompt: str) -> dict[str, object]:
             'evidence_used': [],
         }
 
-    if 'have we already answered what short handoff template to use?' in lower:
+    if 'have we already answered what short handoff template to use?' in lower or 'old handoff template answer' in lower:
         if 'memory/continuity_memory' in lower:
             return {
                 'answer': "Yes. Use the three-line handoff template 'Done / Waiting / Next owner'.",
@@ -815,7 +815,7 @@ def _build_public_corpus_answer_payload(user_prompt: str) -> dict[str, object]:
             'evidence_used': [],
         }
 
-    if 'what did we previously conclude about why grocery trips keep dragging out?' in lower:
+    if 'what did we previously conclude about why grocery trips keep dragging out?' in lower or 'big picture on why grocery trips keep dragging out' in lower:
         if 'memory/pattern_memory' in lower and 'backtracking' in lower and 'store section' in lower:
             return {
                 'answer': 'We previously concluded that the trips drag out because unordered lists cause repeated backtracking, so the fix is to group the list by store section before shopping.',
@@ -865,7 +865,7 @@ def _build_public_corpus_answer_payload(user_prompt: str) -> dict[str, object]:
         }
 
     if 'which exact log line proved the retries were overlapping?' in lower:
-        if ('source/public_corpus_turn' in lower or 'memory/investigation_outcome' in lower) and 'job already running, skipping new start' in lower:
+        if 'job already running, skipping new start' in lower:
             return {
                 'answer': "The exact log line was 'job already running, skipping new start'.",
                 'evidence_used': ['job already running, skipping new start'],

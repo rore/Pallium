@@ -139,7 +139,7 @@ def _run_scenario(
         )
         with TestClient(create_app(scenario_config)) as client:
             for event in scenario.get("prior_events", []):
-                response = client.post("/items", json=event)
+                response = client.post("/items", json=_with_default_visibility(event))
                 response.raise_for_status()
 
             consolidation_result = None
@@ -149,7 +149,7 @@ def _run_scenario(
                     strategy_name=consolidation_strategy,
                 )
 
-            query_response = client.post("/query/debug", json=scenario["current_query"])
+            query_response = client.post("/query/debug", json=_with_default_visibility(scenario["current_query"]))
             query_response.raise_for_status()
             memory_payload = query_response.json()
             engine = getattr(client.app.state.pallium_service._storage, "_engine", None)
@@ -485,6 +485,13 @@ def _format_memory_results(results: list[dict[str, Any]]) -> str:
         else:
             lines.append(f"- source/{item.get('source_type')}:{item.get('source_id')}: {item.get('excerpt')}")
     return "\n".join(lines)
+
+
+def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(payload)
+    if "visibility_context" not in updated or updated["visibility_context"] is None:
+        updated["visibility_context"] = {"kind": "public", "id": None}
+    return updated
 
 
 def _load_scenarios(path: Path) -> list[dict[str, Any]]:

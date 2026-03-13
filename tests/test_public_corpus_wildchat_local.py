@@ -94,7 +94,7 @@ def test_materialize_review_set_writes_small_local_review_bundle(tmp_path: Path)
     assert review_dir == tmp_path / 'derived' / 'review_sets' / 'fixture-review'
     assert summary['conversation_count'] == 7
     assert len(conversations) == 7
-    assert len(episodes) == 4
+    assert len(episodes) == 6
     assert {item['conversation_id'] for item in conversations} == {
         'wc-review-001',
         'wc-review-002',
@@ -127,14 +127,16 @@ def test_benchmark_review_set_runs_end_to_end_from_materialized_local_review_bun
     assert run_dir == tmp_path / 'runs' / 'wildchat-local-helper'
     assert summary['corpus_name'] == 'wildchat'
     assert summary['corpus_file'] == str(tmp_path / 'derived' / 'review_sets' / 'fixture-review' / 'conversations.json')
-    assert summary['episodes_total'] == 4
-    assert summary['policy_successes'] == 4
-    assert len(results) == 4
+    assert summary['episodes_total'] == 6
+    assert summary['policy_successes'] == 6
+    assert len(results) == 6
     assert (run_dir / 'report.md').exists()
     assert {item['episode_id'] for item in results} == {
         'wildchat-feed-ratio-recall',
         'wildchat-grocery-pattern-recall',
         'wildchat-handoff-carry-forward',
         'wildchat-rewrite-no-value-guard',
+        'wildchat-handoff-old-answer-paraphrase',
+        'wildchat-grocery-big-picture-paraphrase',
     }
 

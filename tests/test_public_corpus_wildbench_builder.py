@@ -102,7 +102,10 @@ def test_wildbench_developer_continuation_manifest_stays_small_and_coding_weight
     manifest = load_review_manifest(DEV_CONTINUATION_MANIFEST)
     episodes = build_reviewed_episodes(conversations=conversations, manifest=manifest)
 
-    assert len(episodes) == 3
+    assert len(episodes) == 5
     assert episodes[0]['episode_id'] == 'wildbench-k8s-memory-cap-recall'
-    assert 'wildbench-overlap-log-line' in {item['episode_id'] for item in episodes}
-    assert sum(1 for item in episodes if item['source_primary_tag'] == 'coding') == 2
+    episode_ids = {item['episode_id'] for item in episodes}
+    assert 'wildbench-overlap-log-line' in episode_ids
+    assert 'wildbench-overlap-log-line-no-value' in episode_ids
+    assert 'wildbench-scorecard-explanation-no-value' in episode_ids
+    assert sum(1 for item in episodes if item['source_primary_tag'] == 'coding') == 3

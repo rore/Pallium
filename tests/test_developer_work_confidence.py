@@ -75,10 +75,10 @@ def test_developer_work_confidence_suite_builds_green_confidence_gate(monkeypatc
     report = (run_dir / "report.md").read_text(encoding="utf-8")
 
     assert summary["components"]["work_resumption"]["scenarios_total"] == 13
-    assert summary["components"]["wildchat_reviewed"]["scenarios_total"] == 4
-    assert summary["components"]["wildbench_developer"]["scenarios_total"] == 3
-    assert summary["aggregate"]["scenarios_total"] == 20
-    assert summary["aggregate"]["policy_successes"] == 20
+    assert summary["components"]["wildchat_reviewed"]["scenarios_total"] == 6
+    assert summary["components"]["wildbench_developer"]["scenarios_total"] == 5
+    assert summary["aggregate"]["scenarios_total"] == 24
+    assert summary["aggregate"]["policy_successes"] == 24
     assert summary["aggregate"]["dominant_tuning_bottleneck"] is None
     assert all(count == 0 for count in summary["aggregate"]["failure_family_counts"].values())
     assert summary["gates"]["confidence_gate_passed"] is True

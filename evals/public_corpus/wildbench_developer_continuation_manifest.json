@@ -15,9 +15,17 @@
       "description": "A realistic debugging follow-up asks for the earlier resource-cap recommendation again.",
       "should_memory_help": true,
       "expected_winning_layer": "lower_level_memory",
-      "acceptable_winning_layers": ["lower_level_memory", "source_evidence"],
-      "expected_memory_types": ["decision"],
-      "expected_answer_signals": ["1Gi", "512Mi"],
+      "acceptable_winning_layers": [
+        "lower_level_memory",
+        "source_evidence"
+      ],
+      "expected_memory_types": [
+        "decision"
+      ],
+      "expected_answer_signals": [
+        "1Gi",
+        "512Mi"
+      ],
       "review_notes": "Developer-oriented continuation recall pressure over a realistic debugging task."
     },
     {
@@ -28,9 +36,18 @@
       "description": "A paraphrased follow-up asks for the earlier rubric headings again on the same task.",
       "should_memory_help": true,
       "expected_winning_layer": "lower_level_memory",
-      "acceptable_winning_layers": ["lower_level_memory", "source_evidence"],
-      "expected_memory_types": ["decision"],
-      "expected_answer_signals": ["problem framing", "tradeoffs", "ownership"],
+      "acceptable_winning_layers": [
+        "lower_level_memory",
+        "source_evidence"
+      ],
+      "expected_memory_types": [
+        "decision"
+      ],
+      "expected_answer_signals": [
+        "problem framing",
+        "tradeoffs",
+        "ownership"
+      ],
       "review_notes": "This is the small reviewed paraphrase-recall slice for the developer-work continuity expansion."
     },
     {
@@ -41,10 +58,54 @@
       "description": "A realistic debugging follow-up asks for the exact supporting log line from earlier in the same session.",
       "should_memory_help": true,
       "expected_winning_layer": "source_evidence",
-      "acceptable_winning_layers": ["source_evidence", "lower_level_memory"],
-      "expected_memory_types": ["investigation_outcome"],
-      "expected_answer_signals": ["job already running", "skipping new start"],
+      "acceptable_winning_layers": [
+        "source_evidence",
+        "lower_level_memory"
+      ],
+      "expected_memory_types": [
+        "investigation_outcome"
+      ],
+      "expected_answer_signals": [
+        "job already running",
+        "skipping new start"
+      ],
       "review_notes": "This adds a small evidence-heavy developer follow-up to the continuation pack."
+    },
+    {
+      "episode_id": "wildbench-scorecard-explanation-no-value",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wb-review-003",
+      "query_turn_index": 2,
+      "current_context_turn_indices": [
+        1,
+        2
+      ],
+      "description": "A same-session follow-up asks why the debrief rubric helps while the chosen buckets are already visible in current context.",
+      "should_memory_help": false,
+      "overreach_guard": true,
+      "expected_answer_signals": [
+        "comparable",
+        "different interviewers"
+      ],
+      "review_notes": "Developer-oriented no-value guard: current thread context already carries the chosen rubric and explanation seed."
+    },
+    {
+      "episode_id": "wildbench-overlap-log-line-no-value",
+      "episode_type": "within_conversation_later_turn_recall",
+      "conversation_id": "wb-review-004",
+      "query_turn_index": 2,
+      "current_context_turn_indices": [
+        1,
+        2
+      ],
+      "description": "A same-session debugging follow-up asks for the exact overlap log line while the evidence is still visible in the current thread.",
+      "should_memory_help": false,
+      "overreach_guard": true,
+      "expected_answer_signals": [
+        "job already running",
+        "skipping new start"
+      ],
+      "review_notes": "Developer-oriented no-value guard: exact evidence is already present in current context, so older memory should stay quiet."
     }
   ]
 }

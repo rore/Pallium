@@ -78,7 +78,7 @@ def test_reviewed_episode_builder_emits_pallium_shaped_events() -> None:
     manifest = load_review_manifest(MANIFEST)
     episodes = build_reviewed_episodes(conversations=conversations, manifest=manifest)
 
-    assert len(episodes) == 4
+    assert len(episodes) == 6
     by_id = {item['episode_id']: item for item in episodes}
 
     lower_level = by_id['wildchat-feed-ratio-recall']
@@ -97,3 +97,11 @@ def test_reviewed_episode_builder_emits_pallium_shaped_events() -> None:
     pattern = by_id['wildchat-grocery-pattern-recall']
     assert pattern['source_conversation_ids'] == ['wc-review-005', 'wc-review-006']
     assert pattern['expected_higher_level_memory_types'] == ['pattern_memory']
+
+    handoff_paraphrase = by_id['wildchat-handoff-old-answer-paraphrase']
+    assert handoff_paraphrase['current_query']['text'].startswith('I just need the old handoff template answer')
+    assert handoff_paraphrase['expected_winning_layer'] == 'continuity_memory'
+
+    grocery_paraphrase = by_id['wildchat-grocery-big-picture-paraphrase']
+    assert grocery_paraphrase['expected_winning_layer'] == 'pattern_memory'
+    assert grocery_paraphrase['target_question'].startswith('I want the big picture on why grocery trips keep dragging out')
