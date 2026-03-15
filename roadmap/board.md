@@ -1,10 +1,11 @@
-﻿# Next
+# Next
 - add-live-thread-memory-quality-hardening
 
 # Later
 - add-vector-retrieval-provider
 - add-hybrid-retrieval-fusion
 - add-agent-memory-decision-benchmark-program
+- add-targeted-external-memory-benchmark-pressure-pack
 - add-live-integration-improvement-loop-and-replay-pipeline
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
@@ -53,4 +54,3 @@
 - add-first-semantic-layer-and-promotion
 - add-agent-memory-simulation
 - build-structured-retrieval-foundation
-
