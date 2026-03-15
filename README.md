@@ -15,7 +15,7 @@ questions and resume interrupted work without replaying full transcripts.
 Under the hood, Pallium stores selected evidence, derives compact evidence-backed
 memory, and returns small reusable memory and evidence cards. Pallium also
 keeps public and private scoped memory separate by default in the current
-package.
+conversation package.
 
 The current product focus is deliberately narrow: agent-mediated conversations,
 repeated questions, resumed-work continuity, and safe scoped recall. In other
@@ -57,32 +57,35 @@ Today Pallium's concrete value is:
 
 ## What Exists Today
 
-Current capabilities:
+Current behavior:
 
 - selected ingest for conversation evidence and bounded work artifacts
-- compact memory and source evidence cards on query
+- compact query results that can return derived memory, source evidence, or
+  both
 - repeated-question recall and resumed-work continuity
 - fail-closed scoped visibility for public and private memory
-- debug trace for retrieval and visibility behavior
+- a debug path for retrieval and visibility behavior
 
 Current implementation surface:
 
 - one local-first FastAPI service
 - SQLite-backed storage
-- `POST /items`, `POST /query`, and `POST /query/debug`
-- lexical retrieval plus routed retrieval for the current package
+- `POST /items`, `GET /items/{source_item_id}/processing`, `POST /query`,
+  `POST /query/debug`, and `GET /debug/queue/health`
+- lexical retrieval plus package-level query policy for the current
+  conversation package
 
 ## Validation
 
 The repository includes validation for the current product focus:
 
-- structured memory extraction regression coverage
+- extraction regression coverage for compact memory derivation
 - repeated-question benchmark coverage
 - resumed-work benchmark coverage
-- routed retrieval evaluation
+- evaluation for choosing between memory and source evidence on query
 - integration-readiness scenarios
-- public-corpus evaluation slices from WildChat and WildBench
-- visibility exclusion trace for scoped retrieval
+- reviewed public-corpus slices from WildChat and WildBench
+- scoped-visibility checks and debug trace coverage
 
 See [docs/validation.md](docs/validation.md) for the validation summary.
 
@@ -94,8 +97,8 @@ The runtime model is simple:
 2. call `POST /query` before answering a follow-up question or resuming work
 3. use the returned compact memory and evidence cards in your runtime or prompt
 
-Use `POST /query/debug` when you need to understand missing results, routed
-layer choice, or visibility exclusions.
+Use `POST /query/debug` when you need to understand missing results, returned
+result shape, or visibility exclusions.
 
 For the current product focus, the best inputs are:
 
@@ -155,8 +158,10 @@ Choose the next doc by job:
 
 - problem and value: [docs/problem-and-approach.md](docs/problem-and-approach.md)
 - 10-minute tryout: [docs/getting-started.md](docs/getting-started.md)
-- integration model: [docs/agent-integration.md](docs/agent-integration.md)
+- integration guide: [docs/agent-integration.md](docs/agent-integration.md)
+- HTTP API reference: [docs/http-api.md](docs/http-api.md)
 - privacy and scoped recall: [docs/privacy-and-visibility.md](docs/privacy-and-visibility.md)
+- memory structure and lifecycle: [docs/memory-model.md](docs/memory-model.md)
 - validation and evidence: [docs/validation.md](docs/validation.md)
 - current maturity: [docs/status.md](docs/status.md)
 - deeper concepts: [docs/overview.md](docs/overview.md)

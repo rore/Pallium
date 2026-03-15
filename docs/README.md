@@ -1,28 +1,59 @@
 # Docs Map
 
-This repo uses four documentation surfaces on purpose. Each one owns a
-different kind of truth.
+Pallium's docs are split by job so the README does not have to do everything.
 
 ## Recommended Reading Order
 
-For a new developer evaluating the project:
+For a developer evaluating the project for the first time:
 
 1. `README.md`
 2. `docs/problem-and-approach.md`
 3. `docs/getting-started.md`
 4. `docs/agent-integration.md`
-5. `docs/privacy-and-visibility.md`
-6. `docs/validation.md`
-7. `docs/status.md`
-8. `docs/overview.md`
-9. `docs/context/architecture.md`
+5. `docs/http-api.md`
+6. `docs/privacy-and-visibility.md`
+7. `docs/memory-model.md`
+8. `docs/validation.md`
+9. `docs/status.md`
+10. `docs/overview.md`
+11. `docs/context/architecture.md`
+
+## Documentation Roles
+
+- front door
+  - `README.md`
+  - what Pallium is, what it does today, and how to try it quickly
+
+- tutorial
+  - `docs/getting-started.md`
+  - one short local walkthrough from setup to first query
+
+- how-to
+  - `docs/agent-integration.md`
+  - how to fit Pallium into an agent runtime
+
+- reference
+  - `docs/http-api.md`
+  - endpoint shapes, request fields, response fields, and operational endpoints
+
+- explanations
+  - `docs/problem-and-approach.md`
+  - `docs/privacy-and-visibility.md`
+  - `docs/memory-model.md`
+  - `docs/validation.md`
+  - `docs/status.md`
+  - `docs/overview.md`
+
+- stable architecture context
+  - `docs/context/architecture.md`
+  - `docs/context/state.md`
 
 ## Ownership
 
 - docs/
   Developer-facing entry points and practical guides.
-  Use this layer for evaluator flow, practical onboarding, integration, status,
-  validation, and concepts.
+  Use this layer for evaluator flow, practical onboarding, integration,
+  reference material, validation, memory model, and concepts.
 
 - roadmap/
   Canonical planning workspace. Use it for queue, ordering, scope, milestones,
@@ -43,12 +74,15 @@ For a new developer evaluating the project:
 - If the question is "what are we doing next?", update `roadmap/`.
 - If the question is "what is Pallium and what have we accepted?", update
   `docs/context/`.
-- If the question is "why this design and what were the alternatives?", update
-  `docs/designs/`.
+- If the question is "why this design and what were the alternatives?",
+  update `docs/designs/`.
 
 ## Guardrails
 
 - Keep front-door docs outside-in, not ontology-first.
+- Keep public docs plain-language first and move deeper terms later.
+- Separate tutorial, how-to, explanation, and reference material when a page is
+  trying to do too many jobs.
 - Do not duplicate planning state in docs/context/.
 - Do not treat docs/designs/ as the canonical queue or status surface.
 - When a design becomes accepted direction, summarize the outcome in

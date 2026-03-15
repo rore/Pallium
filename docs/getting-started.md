@@ -94,12 +94,13 @@ system:
 
 ## 5. Manual Next Step
 
-Once the sample flow makes sense, open the integration guide and map the same
-loop onto your own runtime:
+Once the sample flow makes sense, open the docs that match your next question:
 
-- [agent-integration.md](agent-integration.md)
-- [privacy-and-visibility.md](privacy-and-visibility.md)
-- [validation.md](validation.md)
+- if you want the request and response shapes, read [http-api.md](http-api.md)
+- if you want to wire Pallium into a runtime, read [agent-integration.md](agent-integration.md)
+- if you want the scope rules, read [privacy-and-visibility.md](privacy-and-visibility.md)
+- if you want to understand what is stored and derived, read [memory-model.md](memory-model.md)
+- if you want the current validation surface, read [validation.md](validation.md)
 
 ## What You Just Proved
 

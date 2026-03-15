@@ -13,7 +13,7 @@ Today the repository includes validation for:
 - structured memory extraction quality
 - repeated-question recall
 - resumed-work continuity
-- routed retrieval and safer fallback behavior
+- query-path behavior and fallback between memory and source evidence
 - scoped visibility and privacy leak guards
 - integration-readiness scenarios for the current package
 - public-corpus evaluation slices drawn from reviewed WildChat and WildBench
@@ -38,7 +38,7 @@ Repo-local state currently records successful or committed baselines for:
 - semantic regression on the structured extraction path
 - recurring-question benchmark runs
 - resumed-work benchmark runs
-- routed retrieval benchmark runs
+- query-path benchmark runs for memory versus source evidence selection
 - integration-readiness scenario runs
 - public-corpus evaluation workflows
 

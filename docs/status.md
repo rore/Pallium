@@ -19,14 +19,16 @@ Current shipped surface:
 
 - local-first FastAPI service
 - SQLite-backed storage
-- `POST /items`, `POST /query`, `POST /query/debug`
+- `POST /items`, `GET /items/{source_item_id}/processing`, `POST /query`,
+  `POST /query/debug`, and `GET /debug/queue/health`
 - selected ingest for user messages, assistant outputs, and bounded assistant
   work artifacts
 - compact `memory_hit` and `source_hit` results
 - scoped `visibility_context` enforcement with fail-closed behavior in the
-  current package
-- routed retrieval over memory and source evidence
-- thread-level carry-forward and resumed-work checkpoints in today's product
+  current conversation package
+- a query path that can return derived memory, source evidence, or both
+  depending on the question
+- thread-level orientation and resumed-work checkpoints in the current product
   focus
 - background processing for ingest and same-thread memory rebuilds
 
@@ -34,10 +36,10 @@ Current shipped surface:
 
 The current product focus is covered by:
 
-- regression coverage for structured memory extraction
+- regression coverage for compact memory extraction
 - benchmark coverage for repeated-question recall
 - benchmark coverage for resumed-work continuity
-- routed retrieval evaluation for choosing between memory and source evidence
+- evaluation for choosing between memory and source evidence on query
 - integration-readiness scenarios for the current package
 - public-corpus evaluation workflows for reviewed WildChat and WildBench slices
 - privacy-aware retrieval behavior with debug trace visibility exclusions
@@ -48,8 +50,8 @@ The main open questions are:
 
 - when broader carry-forward memory should win over lower-level evidence
 - how well resumed-work packaging holds up on messier real-world traffic
-- the current routing boundary between broad recall, precise fact lookup, and
-  work resumption
+- the current boundary between broad recall, precise fact lookup, and work
+  resumption
 - whether lexical retrieval is enough, or whether vector or hybrid retrieval is
   the next real bottleneck
 
@@ -81,7 +83,9 @@ The next likely additions are:
 - product problem and approach: [problem-and-approach.md](problem-and-approach.md)
 - 10-minute local walkthrough: [getting-started.md](getting-started.md)
 - runtime integration: [agent-integration.md](agent-integration.md)
+- HTTP API reference: [http-api.md](http-api.md)
 - privacy model: [privacy-and-visibility.md](privacy-and-visibility.md)
+- memory structure and lifecycle: [memory-model.md](memory-model.md)
 - validation and evidence: [validation.md](validation.md)
 - concepts and model: [overview.md](overview.md)
 - stable architecture truth: [context/architecture.md](context/architecture.md)

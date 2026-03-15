@@ -1,11 +1,10 @@
 # Agent Integration Guide
 
-This guide explains how Pallium is supposed to be used by an agent runtime
-today.
+This guide explains how to integrate Pallium with an agent runtime today.
 
-The short version: Pallium is a memory sidecar, but it should be an opinionated one. The runtime should decide what runtime facts and raw events to
-send. Pallium should decide what is worth remembering, what is suitable to
-inject, and how to package carry-forward memory for the next turn.
+Short version: the runtime decides which upstream events to send and when to
+query. Pallium decides what is worth remembering, how to package it, and when a
+returned memory block is useful to inject.
 
 ## Where Pallium Fits
 
@@ -17,7 +16,7 @@ flowchart LR
     D -->|injection decision + injectable blocks + debug trace| A
 ```
 
-Pallium should sit on the edge of your runtime:
+Pallium sits on the edge of your runtime:
 
 - your runtime owns the live conversation, tools, and user interaction
 - Pallium owns selected evidence, derived memory, retrieval, ranking, and
@@ -177,7 +176,7 @@ Expected response shape direction:
 - `should_inject`
 - `decision_reason`
 - `injectable_blocks` or `injectable_results`
-- optional raw/debug trace on the debug path
+- optional raw or debug trace on the debug path
 
 Example `decision_reason` values:
 
@@ -263,3 +262,9 @@ Also do not design your integration as if the downstream agent should own the
 memory policy. The target boundary is a thin client that provides runtime facts
 and accepts Pallium's memory decisions.
 
+## Read Next
+
+- API reference: [http-api.md](http-api.md)
+- privacy rules: [privacy-and-visibility.md](privacy-and-visibility.md)
+- memory structure and lifecycle: [memory-model.md](memory-model.md)
+- deeper concepts: [overview.md](overview.md)

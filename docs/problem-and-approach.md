@@ -136,6 +136,8 @@ Poor fit today:
 
 - For a live local walkthrough, read [getting-started.md](getting-started.md).
 - For runtime usage, read [agent-integration.md](agent-integration.md).
+- For request and response shapes, read [http-api.md](http-api.md).
 - For privacy rules, read [privacy-and-visibility.md](privacy-and-visibility.md).
+- For what gets stored and derived, read [memory-model.md](memory-model.md).
 - For product proof, read [validation.md](validation.md).
 - For internal concepts, read [overview.md](overview.md).

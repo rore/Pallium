@@ -7,6 +7,9 @@ If you are still evaluating Pallium at a product level, read these first:
 - [../README.md](../README.md)
 - [problem-and-approach.md](problem-and-approach.md)
 - [getting-started.md](getting-started.md)
+- [agent-integration.md](agent-integration.md)
+- [http-api.md](http-api.md)
+- [memory-model.md](memory-model.md)
 
 Read this file when you want the internal model behind the product story.
 
@@ -53,7 +56,7 @@ The repo currently exposes three runtime and package entry points:
 
 ## What The Current Package Actually Stores
 
-The current product slice is built around selected evidence, not exhaustive
+The current conversation package is built around selected evidence, not exhaustive
 mirroring.
 
 Primary evidence today:
@@ -109,5 +112,6 @@ The current concepts and model do not imply that Pallium already supports:
 ## Read Next
 
 - For runtime usage, read [agent-integration.md](agent-integration.md).
+- For request shapes, read [http-api.md](http-api.md).
 - For privacy detail, read [privacy-and-visibility.md](privacy-and-visibility.md).
 - For stable architecture truth, read [context/architecture.md](context/architecture.md).
