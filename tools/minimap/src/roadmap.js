@@ -46,6 +46,10 @@ function detectEol(text) {
   return text.includes("\r\n") ? "\r\n" : "\n";
 }
 
+function stripUtf8Bom(text) {
+  return String(text ?? "").replace(/^\uFEFF/, "");
+}
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -571,15 +575,16 @@ export function deriveAvailableLenses(itemSummaries, workspaceConfig = { lenses:
 }
 
 export function parseItemText(text, sourcePath = "item.md") {
-  const eol = detectEol(text);
-  const frontmatterMatch = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  const normalizedText = stripUtf8Bom(text);
+  const eol = detectEol(normalizedText);
+  const frontmatterMatch = normalizedText.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
 
   if (!frontmatterMatch) {
     throw new AppError(`Missing or invalid frontmatter in ${sourcePath}.`, 422, "parse_error");
   }
 
   const rawFrontmatter = frontmatterMatch[1];
-  const body = text.slice(frontmatterMatch[0].length);
+  const body = normalizedText.slice(frontmatterMatch[0].length);
   const frontmatterEntries = parseFrontmatterBlock(rawFrontmatter);
   const frontmatter = {};
   const metadataValues = {};
@@ -624,7 +629,7 @@ export function parseItemText(text, sourcePath = "item.md") {
 
   return {
     eol,
-    rawText: text,
+    rawText: normalizedText,
     prefix,
     frontmatter,
     metadataValues,
@@ -812,7 +817,7 @@ async function readRoadmapConfig(repoRoot) {
     }
 
     try {
-      parsedConfig = JSON.parse(rawConfig);
+      parsedConfig = JSON.parse(stripUtf8Bom(rawConfig));
     } catch {
       throw new AppError("roadmap.config.json must contain valid JSON.", 422, "config_error", buildConfigErrorDetails(resolvedRepoRoot, configPath));
     }
@@ -921,7 +926,8 @@ export async function resolveRoadmapRoot(repoRoot) {
 }
 
 export function parseBoardText(text, sourcePath = "board.md") {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const normalizedText = stripUtf8Bom(text);
+  const lines = normalizedText.replace(/\r\n/g, "\n").split("\n");
   const groups = [];
   let currentGroup = null;
 
