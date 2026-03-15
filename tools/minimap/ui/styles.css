@@ -1208,6 +1208,20 @@ h3 {
   padding-left: 1.3rem;
 }
 
+.preview-markdown li + li {
+  margin-top: 0.22rem;
+}
+
+.preview-markdown li > p {
+  margin: 0;
+}
+
+.preview-markdown li > ul,
+.preview-markdown li > ol {
+  margin-top: 0.45rem;
+  margin-bottom: 0.2rem;
+}
+
 .preview-markdown code {
   padding: 0.1rem 0.34rem;
   border-radius: 999px;
