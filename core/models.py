@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -158,6 +158,8 @@ class RetrievalStageTrace:
     candidate_hits_considered: int
     candidate_hits: tuple[RetrievalTraceHit, ...]
     selected_hits: tuple[RetrievalTraceHit, ...]
+    candidate_hits_before_visibility: int | None = None
+    candidate_hits_after_visibility: int | None = None
 
 
 @dataclass(frozen=True)
@@ -169,3 +171,4 @@ class QueryTrace:
     stages: tuple[RetrievalStageTrace, ...]
     routing: dict[str, Any] | None = None
     visibility: QueryVisibilityTrace | None = None
+    result_summary: dict[str, Any] | None = None

@@ -54,6 +54,12 @@ class ItemProcessingResult:
     memory_object_ids: list[str]
     relation_ids: list[str]
     index_entry_ids: list[str]
+    failure_category: str | None = None
+    annotation_count: int = 0
+    memory_object_types: list[str] = field(default_factory=list)
+    thread_rebuild_requested: bool = False
+    thread_rebuild_completed: bool = False
+    produced_memory_provenance: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -68,6 +74,12 @@ class ItemProcessingResult:
             "memory_object_ids": self.memory_object_ids,
             "relation_ids": self.relation_ids,
             "index_entry_ids": self.index_entry_ids,
+            "failure_category": self.failure_category,
+            "annotation_count": self.annotation_count,
+            "memory_object_types": self.memory_object_types,
+            "thread_rebuild_requested": self.thread_rebuild_requested,
+            "thread_rebuild_completed": self.thread_rebuild_completed,
+            "produced_memory_provenance": self.produced_memory_provenance,
         }
 
 

@@ -1,4 +1,4 @@
-# Next
+﻿# Next
 - add-async-ingest-queue-and-worker-processing
 
 # Later
@@ -18,6 +18,7 @@
 - idea-optional-reranker-support
 
 # Done
+- add-debug-observability-for-processing-and-query-trace
 - add-candidate-aware-routing-and-fallback-hardening
 - add-reviewed-open-corpus-continuation-pack-expansion
 - add-resumed-work-result-packaging-hardening
@@ -48,3 +49,5 @@
 - add-first-semantic-layer-and-promotion
 - add-agent-memory-simulation
 - build-structured-retrieval-foundation
+
+

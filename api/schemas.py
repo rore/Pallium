@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
@@ -57,6 +57,13 @@ class ItemCreateResponse(BaseModel):
     processing_error: str | None = None
 
 
+class MemoryProvenanceResponse(BaseModel):
+    memory_object_id: str
+    memory_kind: str
+    source_item_ids: list[str] = Field(default_factory=list)
+    superseded_memory_ids: list[str] = Field(default_factory=list)
+
+
 class ProcessingStatusResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -71,6 +78,12 @@ class ProcessingStatusResponse(BaseModel):
     memory_object_ids: list[str]
     relation_ids: list[str]
     index_entry_ids: list[str]
+    failure_category: str | None = None
+    annotation_count: int = 0
+    memory_object_types: list[str] = Field(default_factory=list)
+    thread_rebuild_requested: bool = False
+    thread_rebuild_completed: bool = False
+    produced_memory_provenance: list[MemoryProvenanceResponse] = Field(default_factory=list)
 
 
 class QueryRequest(BaseModel):
@@ -152,6 +165,8 @@ class RetrievalStageTraceResponse(BaseModel):
     candidate_hits_considered: int
     candidate_hits: list[RetrievalTraceHitResponse]
     selected_hits: list[RetrievalTraceHitResponse]
+    candidate_hits_before_visibility: int | None = None
+    candidate_hits_after_visibility: int | None = None
 
 
 class QueryTraceVisibilityExclusionResponse(BaseModel):
@@ -174,8 +189,52 @@ class QueryTraceResponse(BaseModel):
     stages: list[RetrievalStageTraceResponse]
     routing: dict[str, Any] | None = None
     visibility: QueryTraceVisibilityResponse | None = None
+    result_summary: dict[str, Any] | None = None
 
 
 class QueryDebugResponse(BaseModel):
     results: list[QueryResultResponse]
     trace: QueryTraceResponse
+
+
+class QueueHealthReasonCountResponse(BaseModel):
+    reason: str
+    count: int
+
+
+class LeasedSourceItemResponse(BaseModel):
+    source_item_id: str
+    use_case: str | None = None
+    processing_claimed_by: str | None = None
+    processing_claimed_at: datetime | None = None
+    processing_lease_expires_at: datetime | None = None
+
+
+class LeasedThreadScopeResponse(BaseModel):
+    scope_key: str
+    use_case: str
+    container_ref: str
+    thread_ref: str
+    visibility_context: VisibilityContextModel | None = None
+    processing_claimed_by: str | None = None
+    processing_claimed_at: datetime | None = None
+    processing_lease_expires_at: datetime | None = None
+
+
+class RecentFailureResponse(BaseModel):
+    source_item_id: str
+    use_case: str | None = None
+    failure_category: str | None = None
+    processing_error: str | None = None
+    processing_attempts: int
+    processing_completed_at: datetime | None = None
+
+
+class QueueHealthResponse(BaseModel):
+    status_counts: dict[str, int]
+    oldest_pending_age_seconds: int | None = None
+    pending_without_use_case_count: int
+    unclaimable_pending_counts: list[QueueHealthReasonCountResponse] = Field(default_factory=list)
+    leased_source_items: list[LeasedSourceItemResponse] = Field(default_factory=list)
+    leased_thread_scopes: list[LeasedThreadScopeResponse] = Field(default_factory=list)
+    recent_failures: list[RecentFailureResponse] = Field(default_factory=list)

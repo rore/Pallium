@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import re
@@ -415,6 +415,13 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             ranked_candidates=ranked_candidates,
             requested_limit=requested_limit,
             query_filters=query_filters,
+            packaging_summary=packaging_summary,
+        )
+        _annotate_excluded_candidates(
+            ranked_candidates=ranked_candidates,
+            final_candidates=final_candidates,
+            requested_limit=requested_limit,
+            routing_focus=routing_focus,
             packaging_summary=packaging_summary,
         )
         final_results = [candidate["item"] for candidate in final_candidates]
@@ -1160,6 +1167,36 @@ def _routing_result_id(item: QueryResultItem) -> str:
     return f"source_item:{item.source_item_id}"
 
 
+def _annotate_excluded_candidates(
+    *,
+    ranked_candidates: list[dict[str, object]],
+    final_candidates: list[dict[str, object]],
+    requested_limit: int,
+    routing_focus: dict[str, object],
+    packaging_summary: dict[str, object] | None,
+) -> None:
+    selected_result_ids = {_routing_result_id(candidate["item"]) for candidate in final_candidates}
+    packaging_mode = str((packaging_summary or {}).get("mode") or "")
+    for candidate in ranked_candidates:
+        result_id = _routing_result_id(candidate["item"])
+        if result_id in selected_result_ids:
+            candidate["excluded_reason_code"] = None
+            candidate["excluded_reason"] = None
+            continue
+        if (
+            packaging_mode == "task_checkpoint_plus_adjacent_evidence"
+            and int(candidate.get("routing_rank", 0)) <= requested_limit
+        ):
+            candidate["excluded_reason_code"] = "displaced_by_adjacent_evidence_packaging"
+            candidate["excluded_reason"] = "Checkpoint packaging preferred adjacent source evidence for resumed-work coverage."
+        elif bool(routing_focus.get("applied")) and str(candidate.get("layer")) == str(routing_focus.get("primary_layer")):
+            candidate["excluded_reason_code"] = "fallback_layer_deprioritized"
+            candidate["excluded_reason"] = str(routing_focus.get("reason"))
+        else:
+            candidate["excluded_reason_code"] = "lower_routing_score_than_selected_limit"
+            candidate["excluded_reason"] = "Candidate remained below the final routed cutoff."
+
+
 def _build_routing_trace(
     *,
     intent: str,
@@ -1177,11 +1214,23 @@ def _build_routing_trace(
         if candidate["layer"] in ROUTING_HIGHER_LEVEL_TYPES
         and int(candidate["routing_rank"]) > int(candidate["lexical_rank"])
     ][:4]
+    excluded_high_scoring_candidates = [
+        _build_routing_trace_entry(candidate)
+        for candidate in ranked_candidates
+        if candidate.get("excluded_reason_code")
+    ][:5]
+    returned_result_kinds: dict[str, int] = {}
+    for candidate in final_candidates:
+        item = candidate["item"]
+        assert isinstance(item, QueryResultItem)
+        returned_result_kinds[item.result_kind] = returned_result_kinds.get(item.result_kind, 0) + 1
     trace = {
         "policy_name": ROUTING_POLICY_NAME,
         "query_intent": intent,
         "preferred_layers": list(preferred_layers),
         "selected_layer": routing_focus["selected_layer"],
+        "candidate_count_entering_routing": len(ranked_candidates),
+        "returned_result_kinds": returned_result_kinds,
         "fallback": {
             "applied": routing_focus["applied"],
             "from_layer": routing_focus["primary_layer"],
@@ -1191,6 +1240,7 @@ def _build_routing_trace(
         },
         "candidate_summary": layer_summary,
         "selected_results": selected_results,
+        "excluded_high_scoring_candidates": excluded_high_scoring_candidates,
         "demoted_higher_level_hits": demoted_higher_level_hits,
     }
     if packaging_summary:
@@ -1204,6 +1254,7 @@ def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object
     entry = {
         "result_id": _routing_result_id(item),
         "result_kind": item.result_kind,
+        "result_origin": "memory" if item.result_kind == "memory_hit" else "source",
         "memory_type": item.type,
         "layer": candidate["layer"],
         "lexical_rank": candidate["lexical_rank"],
@@ -1233,6 +1284,9 @@ def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object
         entry["work_signal_types"] = list(candidate["work_signal_types"])
     if candidate["packaging_reasons"]:
         entry["packaging_reasons"] = list(candidate["packaging_reasons"])
+    if candidate.get("excluded_reason_code"):
+        entry["excluded_reason_code"] = candidate["excluded_reason_code"]
+        entry["excluded_reason"] = candidate.get("excluded_reason")
     strategy_name = candidate["strategy_name"]
     if strategy_name is not None:
         entry["strategy_name"] = strategy_name

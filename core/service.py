@@ -1,18 +1,23 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import re
+from collections import Counter
+from dataclasses import replace
 from datetime import timedelta
+from typing import Any
 
 from capabilities.consolidation import ConsolidationCapability, ConsolidationRunGroupResult, ConsolidationRunResult
 from capabilities.thread_aggregation import build_thread_aggregate
 from core.contracts import IngestResult, ItemProcessingResult, ProcessResult, QueryResult, build_query_filters, build_source_item
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
-from core.models import MemoryObject, QueryFilters, QueryTrace, Relation, SourceItem
-from core.visibility import QueryVisibilityTrace, VisibilityContext, visibility_context_matches_exact
+from core.models import MemoryObject, QueryFilters, QueryTrace, Relation, SourceItem, utc_now
+from core.observability import IntegrationDebugLogger, OBSERVABILITY_METADATA_KEY, serialize_visibility_context
+from core.visibility import QueryVisibilityTrace, VisibilityContext, visibility_context_matches_exact, visibility_context_label
+from providers.llm.base import LLMProviderError
 from retrieval.base import RetrievalProvider
 from semantic.base import ConsolidationSemanticPlugin, SemanticPlugin, ThreadAggregationSemanticPlugin
-from storage.base import StorageProvider, ThreadProcessingLease, ThreadProcessingScope
+from storage.base import QueueHealthSnapshot, StorageProvider, ThreadProcessingLease, ThreadProcessingScope
 
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
@@ -23,7 +28,15 @@ DEFAULT_PROCESSING_MAX_ATTEMPTS = 3
 DEFAULT_RETRY_BACKOFF_SECONDS = 5
 MAX_RETRY_BACKOFF_SECONDS = 5 * 60
 MAX_PROCESSING_ERROR_LENGTH = 1000
-
+FAILURE_CATEGORY_MISSING_USE_CASE = "missing_use_case"
+FAILURE_CATEGORY_MISSING_VISIBILITY = "missing_visibility_context"
+FAILURE_CATEGORY_UNKNOWN_USE_CASE = "unknown_use_case"
+FAILURE_CATEGORY_MALFORMED_PAYLOAD = "malformed_payload"
+FAILURE_CATEGORY_EXTRACTOR = "extractor_failure"
+FAILURE_CATEGORY_LLM = "llm_failure"
+FAILURE_CATEGORY_THREAD_REBUILD = "thread_rebuild_failure"
+FAILURE_CATEGORY_STORAGE_COMMIT = "storage_commit_failure"
+FAILURE_CATEGORY_UNEXPECTED = "unexpected_runtime_failure"
 
 def _normalize_for_index(text: str) -> str:
     return " ".join(TOKEN_PATTERN.findall(text.lower()))
@@ -33,6 +46,103 @@ def _query_tokens(text: str) -> tuple[str, ...]:
     return tuple(sorted(set(TOKEN_PATTERN.findall(text.lower()))))
 
 
+def _observability_state(source_item: SourceItem) -> dict[str, Any]:
+    metadata = source_item.metadata or {}
+    if not isinstance(metadata, dict):
+        return {}
+    state = metadata.get(OBSERVABILITY_METADATA_KEY)
+    return dict(state) if isinstance(state, dict) else {}
+
+
+def _with_observability_metadata(
+    existing_updates: dict[str, dict[str, Any]],
+    source_item_id: str,
+    patch: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    merged_updates = dict(existing_updates)
+    source_updates = dict(merged_updates.get(source_item_id, {}))
+    existing_observability = source_updates.get(OBSERVABILITY_METADATA_KEY)
+    observability_state = dict(existing_observability) if isinstance(existing_observability, dict) else {}
+    observability_state.update(patch)
+    source_updates[OBSERVABILITY_METADATA_KEY] = observability_state
+    merged_updates[source_item_id] = source_updates
+    return merged_updates
+
+
+def _build_memory_provenance(
+    result: ProcessResult,
+    *,
+    default_source_item_id: str | None = None,
+    supersession_pairs: list[tuple[str, str]] | None = None,
+) -> list[dict[str, Any]]:
+    supported_by: dict[str, list[str]] = {}
+    superseded_by_replacement: dict[str, list[str]] = {}
+    for relation in result.relations:
+        if relation.from_kind != "memory_object":
+            continue
+        if relation.relation_type == "supported_by" and relation.to_kind == "source_item":
+            supported_by.setdefault(relation.from_id, []).append(relation.to_id)
+        elif relation.relation_type == "supersedes" and relation.to_kind == "memory_object":
+            superseded_by_replacement.setdefault(relation.from_id, []).append(relation.to_id)
+    for superseded_id, replacement_id in supersession_pairs or []:
+        superseded_by_replacement.setdefault(replacement_id, []).append(superseded_id)
+
+    provenance: list[dict[str, Any]] = []
+    for memory_object in result.memory_objects:
+        source_item_ids = supported_by.get(memory_object.id, [])
+        if not source_item_ids and default_source_item_id is not None:
+            source_item_ids = [default_source_item_id]
+        provenance.append(
+            {
+                "memory_object_id": memory_object.id,
+                "memory_kind": memory_object.type,
+                "source_item_ids": sorted(dict.fromkeys(source_item_ids)),
+                "superseded_memory_ids": sorted(dict.fromkeys(superseded_by_replacement.get(memory_object.id, []))),
+            }
+        )
+    return provenance
+
+
+def _build_query_result_summary(results: list[Any]) -> dict[str, Any]:
+    kind_counts = Counter(getattr(item, "result_kind", "unknown") for item in results)
+    return {
+        "returned_result_count": len(results),
+        "returned_result_kinds": dict(sorted(kind_counts.items())),
+        "returned_origins": {
+            "memory": sum(1 for item in results if getattr(item, "result_kind", None) == "memory_hit"),
+            "source": sum(1 for item in results if getattr(item, "result_kind", None) == "source_hit"),
+        },
+    }
+
+
+def _classify_failure(error: Exception, *, phase: str) -> str:
+    if isinstance(error, LLMProviderError):
+        return FAILURE_CATEGORY_LLM
+    if isinstance(error, (json.JSONDecodeError, ValueError, TypeError)):
+        return FAILURE_CATEGORY_MALFORMED_PAYLOAD
+    if phase == "thread_rebuild":
+        return FAILURE_CATEGORY_THREAD_REBUILD
+    if phase == "process_item":
+        return FAILURE_CATEGORY_EXTRACTOR
+    return FAILURE_CATEGORY_UNEXPECTED
+
+
+def _preferred_active_summary_ref(memory_objects: list[MemoryObject]) -> dict[str, str] | None:
+    if not memory_objects:
+        return None
+    priority = {
+        THREAD_SUMMARY_TYPE: 0,
+        "task_checkpoint": 1,
+        "continuity_memory": 2,
+        "pattern_memory": 3,
+    }
+    preferred = min(
+        memory_objects,
+        key=lambda item: (priority.get(item.type, 10), item.created_at, item.id),
+    )
+    return {"kind": preferred.type, "id": preferred.id}
+
+
 class PalliumService:
     def __init__(
         self,
@@ -40,12 +150,14 @@ class PalliumService:
         retrieval: RetrievalProvider,
         semantic_plugins: dict[str, SemanticPlugin],
         default_use_case: str,
+        observability: IntegrationDebugLogger | None = None,
     ) -> None:
         self._storage = storage
         self._retrieval = retrieval
         self._semantic_plugins = semantic_plugins
         self._default_use_case = default_use_case
         self._consolidation_capability = ConsolidationCapability()
+        self._observability = observability or IntegrationDebugLogger(enabled=False)
 
     def ingest_item(
         self,
@@ -112,6 +224,24 @@ class PalliumService:
     def get_item_processing(self, source_item_id: str) -> ItemProcessingResult:
         return self._build_processing_result(self._storage.get_source_item(source_item_id))
 
+    def get_queue_health(
+        self,
+        *,
+        max_attempts: int = DEFAULT_PROCESSING_MAX_ATTEMPTS,
+    ) -> QueueHealthSnapshot:
+        scoped_use_cases = tuple(
+            sorted(
+                name
+                for name, plugin in self._semantic_plugins.items()
+                if plugin.requires_visibility_context
+            )
+        )
+        return self._storage.get_queue_health_snapshot(
+            now=utc_now(),
+            max_attempts=max_attempts,
+            known_use_cases=tuple(sorted(self._semantic_plugins.keys())),
+            scoped_use_cases=scoped_use_cases,
+        )
     def process_next_source_item(
         self,
         *,
@@ -183,24 +313,74 @@ class PalliumService:
         worker_id: str | None = None,
         lease_seconds: int = DEFAULT_PROCESSING_LEASE_SECONDS,
     ) -> None:
-        plugin_name = source_item.use_case or self._default_use_case
         worker_label = worker_id or source_item.processing_claimed_by or "source-item-worker"
-        try:
-            plugin = self._semantic_plugins[plugin_name]
-            if plugin.requires_visibility_context and source_item.visibility_context is None:
-                self._storage.fail_source_item_processing(
-                    source_item.id,
-                    error="visibility_context_required",
-                    next_attempt_at=None,
-                    final=True,
-                )
-                return
+        plugin_name = source_item.use_case or self._default_use_case
+        if source_item.use_case is None and not self._default_use_case:
+            failure_category = FAILURE_CATEGORY_MISSING_USE_CASE
+            error = "missing_use_case"
+            self._storage.fail_source_item_processing(
+                source_item.id,
+                error=error,
+                next_attempt_at=None,
+                final=True,
+                metadata_updates={OBSERVABILITY_METADATA_KEY: {"failure_category": failure_category}},
+            )
+            self._emit_processing_failure(source_item, worker_id=worker_label, failure_category=failure_category, error=error)
+            return
 
+        plugin = self._semantic_plugins.get(plugin_name)
+        if plugin is None:
+            failure_category = FAILURE_CATEGORY_UNKNOWN_USE_CASE
+            error = f"unknown_use_case:{plugin_name}"
+            self._storage.fail_source_item_processing(
+                source_item.id,
+                error=error,
+                next_attempt_at=None,
+                final=True,
+                metadata_updates={OBSERVABILITY_METADATA_KEY: {"failure_category": failure_category}},
+            )
+            self._emit_processing_failure(source_item, worker_id=worker_label, failure_category=failure_category, error=error)
+            return
+
+        if plugin.requires_visibility_context and source_item.visibility_context is None:
+            failure_category = FAILURE_CATEGORY_MISSING_VISIBILITY
+            error = "visibility_context_required"
+            self._storage.fail_source_item_processing(
+                source_item.id,
+                error=error,
+                next_attempt_at=None,
+                final=True,
+                metadata_updates={OBSERVABILITY_METADATA_KEY: {"failure_category": failure_category}},
+            )
+            self._emit_processing_failure(source_item, worker_id=worker_label, failure_category=failure_category, error=error)
+            return
+
+        try:
             direct_result = plugin.process_item(source_item)
             thread_rebuild_scope = self._build_thread_processing_scope(
                 plugin_name=plugin_name,
                 plugin=plugin,
                 source_item=source_item,
+            )
+            memory_provenance = _build_memory_provenance(direct_result, default_source_item_id=source_item.id)
+            metadata_updates = _with_observability_metadata(
+                direct_result.source_item_metadata_updates,
+                source_item.id,
+                {
+                    "annotation_count": len(direct_result.annotations),
+                    "memory_object_types": [memory_object.type for memory_object in direct_result.memory_objects],
+                    "produced_memory_provenance": memory_provenance,
+                    "thread_rebuild_requested": thread_rebuild_scope is not None,
+                    "thread_rebuild_completed": False,
+                    "failure_category": None,
+                },
+            )
+            direct_result = ProcessResult(
+                annotations=direct_result.annotations,
+                memory_objects=direct_result.memory_objects,
+                relations=direct_result.relations,
+                index_entries=direct_result.index_entries,
+                source_item_metadata_updates=metadata_updates,
             )
             self._storage.commit_processed_source_item(
                 source_item_id=source_item.id,
@@ -208,24 +388,35 @@ class PalliumService:
                 supersession_pairs=[],
                 thread_rebuild_scope=thread_rebuild_scope,
             )
+            self._emit_processing_outcome(
+                source_item=source_item,
+                result=direct_result,
+                thread_rebuild_scope=thread_rebuild_scope,
+            )
+            self._emit_memory_creation_provenance(
+                source_item=source_item,
+                provenance=memory_provenance,
+            )
         except Exception as exc:
+            failure_category = _classify_failure(exc, phase="process_item")
             error = self._truncate_processing_error(exc)
-            if source_item.processing_attempts >= max_attempts:
-                self._storage.fail_source_item_processing(
-                    source_item.id,
-                    error=error,
-                    next_attempt_at=None,
-                    final=True,
-                )
-                return
-            backoff_seconds = self._queue_backoff_seconds(source_item.processing_attempts)
+            final_failure = source_item.processing_attempts >= max_attempts
+            next_attempt_at = None
+            if not final_failure and source_item.processing_claimed_at is not None:
+                backoff_seconds = self._queue_backoff_seconds(source_item.processing_attempts)
+                next_attempt_at = source_item.processing_claimed_at + timedelta(seconds=backoff_seconds)
             self._storage.fail_source_item_processing(
                 source_item.id,
                 error=error,
-                next_attempt_at=source_item.processing_claimed_at + timedelta(seconds=backoff_seconds)
-                if source_item.processing_claimed_at is not None
-                else None,
-                final=False,
+                next_attempt_at=next_attempt_at,
+                final=final_failure,
+                metadata_updates={OBSERVABILITY_METADATA_KEY: {"failure_category": failure_category}},
+            )
+            self._emit_processing_failure(
+                source_item,
+                worker_id=worker_label,
+                failure_category=failure_category,
+                error=error,
             )
             return
 
@@ -240,7 +431,6 @@ class PalliumService:
         if lease is None:
             return
         self._process_thread_rebuild_lease(lease, worker_id=worker_label, lease_seconds=lease_seconds)
-
     def _build_ingest_result(self, source_item: SourceItem) -> IngestResult:
         processing = self._build_processing_result(source_item)
         return IngestResult(
@@ -269,6 +459,7 @@ class PalliumService:
                     target_id=memory_object.id,
                 )
             )
+        observability_state = _observability_state(source_item)
         return ItemProcessingResult(
             source_item_id=source_item.id,
             use_case=source_item.use_case,
@@ -281,8 +472,13 @@ class PalliumService:
             memory_object_ids=[item.id for item in memory_objects],
             relation_ids=[item.id for item in relations],
             index_entry_ids=[item.id for item in index_entries],
+            failure_category=observability_state.get("failure_category"),
+            annotation_count=int(observability_state.get("annotation_count", len(annotations))),
+            memory_object_types=list(observability_state.get("memory_object_types", [item.type for item in memory_objects])),
+            thread_rebuild_requested=bool(observability_state.get("thread_rebuild_requested", False)),
+            thread_rebuild_completed=bool(observability_state.get("thread_rebuild_completed", False)),
+            produced_memory_provenance=list(observability_state.get("produced_memory_provenance", [])),
         )
-
     @staticmethod
     def _queue_backoff_seconds(attempt_count: int) -> int:
         return min(MAX_RETRY_BACKOFF_SECONDS, DEFAULT_RETRY_BACKOFF_SECONDS * (2 ** max(attempt_count - 1, 0)))
@@ -330,6 +526,7 @@ class PalliumService:
                         fail_closed_reason="query_visibility_context_required",
                     ),
                 )
+                trace = replace(trace, result_summary=_build_query_result_summary([]))
             return QueryResult(results=[], trace=trace)
 
         route_query_results = getattr(plugin, "route_query_results", None)
@@ -350,9 +547,13 @@ class PalliumService:
                 retrieval_result=retrieval_result,
                 query_filters=filters,
             )
+            if routed_trace is not None:
+                routed_trace = replace(routed_trace, result_summary=_build_query_result_summary(routed_results))
             return QueryResult(results=routed_results, trace=routed_trace)
-        return QueryResult(results=retrieval_result.results, trace=retrieval_result.trace)
-
+        trace = retrieval_result.trace
+        if trace is not None:
+            trace = replace(trace, result_summary=_build_query_result_summary(retrieval_result.results))
+        return QueryResult(results=retrieval_result.results, trace=trace)
     def run_consolidation_pass(
         self,
         *,
@@ -503,8 +704,11 @@ class PalliumService:
         current_lease = lease
         while True:
             plugin = self._semantic_plugins[current_lease.use_case]
+            thread_items: list[SourceItem] = []
+            thread_result: ProcessResult | None = None
+            supersession_pairs: list[tuple[str, str]] = []
             try:
-                thread_result, supersede_plan = self._maybe_rebuild_thread_summary(
+                thread_result, supersede_plan, thread_items = self._maybe_rebuild_thread_summary(
                     plugin=plugin,
                     thread_scope=current_lease.as_scope(),
                 )
@@ -514,11 +718,40 @@ class PalliumService:
                         for replacement_id, superseded_ids in supersede_plan.items()
                         for superseded_id in superseded_ids
                     ]
+                    metadata_updates = dict(thread_result.source_item_metadata_updates)
+                    for thread_item in thread_items:
+                        metadata_updates = _with_observability_metadata(
+                            metadata_updates,
+                            thread_item.id,
+                            {"thread_rebuild_completed": True},
+                        )
+                    thread_result = ProcessResult(
+                        annotations=thread_result.annotations,
+                        memory_objects=thread_result.memory_objects,
+                        relations=thread_result.relations,
+                        index_entries=thread_result.index_entries,
+                        source_item_metadata_updates=metadata_updates,
+                    )
                     self._storage.commit_process_result(
                         result=thread_result,
                         supersession_pairs=supersession_pairs,
                     )
-            except Exception:
+                self._emit_thread_rebuild_outcome(
+                    lease=current_lease,
+                    thread_items=thread_items,
+                    result=thread_result,
+                    supersession_pairs=supersession_pairs,
+                )
+            except Exception as exc:
+                self._observability.emit(
+                    "thread_rebuild_outcome",
+                    thread_ref=current_lease.thread_ref,
+                    visibility_scope=visibility_context_label(current_lease.visibility_context),
+                    visibility_context=serialize_visibility_context(current_lease.visibility_context),
+                    processing_status="failed",
+                    failure_category=_classify_failure(exc, phase="thread_rebuild"),
+                    error=self._truncate_processing_error(exc),
+                )
                 return
 
             has_pending = self._storage.complete_thread_processing_scope(
@@ -542,9 +775,9 @@ class PalliumService:
         *,
         plugin: SemanticPlugin,
         thread_scope: ThreadProcessingScope,
-    ) -> tuple[ProcessResult | None, dict[str, list[str]]]:
+    ) -> tuple[ProcessResult | None, dict[str, list[str]], list[SourceItem]]:
         if not isinstance(plugin, ThreadAggregationSemanticPlugin):
-            return None, {}
+            return None, {}, []
 
         thread_items = [
             item
@@ -558,7 +791,7 @@ class PalliumService:
                 if visibility_context_matches_exact(item.visibility_context, thread_scope.visibility_context)
             ]
         if not thread_items:
-            return None, {}
+            return None, {}, []
 
         active_thread_memory_ids = self._find_active_thread_memory_ids(thread_items)
         aggregate = build_thread_aggregate(thread_items)
@@ -572,7 +805,7 @@ class PalliumService:
                 for superseded_id in active_thread_memory_ids.get(key, [])
                 if superseded_id != memory_object.id
             ]
-        return thread_result, supersede_plan
+        return thread_result, supersede_plan, thread_items
 
     def _find_active_thread_memory_ids(
         self,
@@ -655,3 +888,83 @@ class PalliumService:
                 continue
             ids.append(memory_object.id)
         return ids
+
+    def _emit_processing_outcome(
+        self,
+        *,
+        source_item: SourceItem,
+        result: ProcessResult,
+        thread_rebuild_scope: ThreadProcessingScope | None,
+    ) -> None:
+        self._observability.emit(
+            "source_item_processing_outcome",
+            source_item_id=source_item.id,
+            source_type=source_item.source_type,
+            artifact_kind=source_item.artifact_kind,
+            use_case=source_item.use_case,
+            processing_status="completed",
+            produced_annotation_count=len(result.annotations),
+            produced_memory_kinds=[memory_object.type for memory_object in result.memory_objects],
+            thread_rebuild_ran=thread_rebuild_scope is not None,
+        )
+
+    def _emit_processing_failure(
+        self,
+        source_item: SourceItem,
+        *,
+        worker_id: str,
+        failure_category: str,
+        error: str,
+    ) -> None:
+        self._observability.emit(
+            "source_item_processing_failure",
+            source_item_id=source_item.id,
+            source_type=source_item.source_type,
+            artifact_kind=source_item.artifact_kind,
+            use_case=source_item.use_case,
+            processing_status="failed",
+            worker_id=worker_id,
+            failure_category=failure_category,
+            error=error,
+        )
+
+    def _emit_memory_creation_provenance(
+        self,
+        *,
+        source_item: SourceItem,
+        provenance: list[dict[str, Any]],
+    ) -> None:
+        for entry in provenance:
+            self._observability.emit(
+                "memory_creation_provenance",
+                source_item_id=source_item.id,
+                memory_object_id=entry["memory_object_id"],
+                memory_kind=entry["memory_kind"],
+                source_item_ids=entry["source_item_ids"],
+                superseded_memory_ids=entry["superseded_memory_ids"],
+            )
+
+    def _emit_thread_rebuild_outcome(
+        self,
+        *,
+        lease: ThreadProcessingLease,
+        thread_items: list[SourceItem],
+        result: ProcessResult | None,
+        supersession_pairs: list[tuple[str, str]],
+    ) -> None:
+        created_memory_kinds = [memory_object.type for memory_object in result.memory_objects] if result is not None else []
+        active_summary_ref = _preferred_active_summary_ref(result.memory_objects if result is not None else [])
+        self._observability.emit(
+            "thread_rebuild_outcome",
+            thread_ref=lease.thread_ref,
+            visibility_scope=visibility_context_label(lease.visibility_context),
+            visibility_context=serialize_visibility_context(lease.visibility_context),
+            input_item_count_considered=len(thread_items),
+            created_or_updated_memory_kinds=created_memory_kinds,
+            superseded_memory_ids=[superseded_id for superseded_id, _replacement_id in supersession_pairs],
+            superseded_memory_count=len(supersession_pairs),
+            final_active_summary_kind=active_summary_ref["kind"] if active_summary_ref is not None else None,
+            final_active_summary_id=active_summary_ref["id"] if active_summary_ref is not None else None,
+            processing_status="completed",
+        )
+

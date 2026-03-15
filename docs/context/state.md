@@ -1,8 +1,8 @@
-# State
+﻿# State
 
 ## Last Updated
 
-2026-03-13
+2026-03-15
 
 ## Repo Snapshot
 
@@ -21,6 +21,9 @@
 - ingest supports explicit event refs for messages and assistant artifacts
 - query returns compact source-hit cards with structured refs
 - debug query now exposes retrieval trace plus package-owned routing trace over the same compact result set
+- debug queue health now exists at `GET /debug/queue/health` for status counts, unclaimable pending reasons, active leases, and recent failures
+- per-item processing inspection now includes failure category, annotation count, produced memory kinds, thread rebuild status, and compact memory provenance
+- opt-in integration debug logging now emits structured processing, failure, provenance, and thread-rebuild events without changing normal runtime behavior
 - generic `visibility_context` now exists on ingest, storage, query, evidence, and debug trace for privacy-aware scope enforcement
 - semantic behavior now includes:
   - `decision`
@@ -74,6 +77,12 @@
 - focused privacy and scope-enforcement slices pass locally:
   - `tests/test_visibility_scope.py`
   - `tests/test_storage_sqlite.py`
+- focused debug observability slices pass locally:
+  - `tests/test_observability.py`
+  - `tests/test_api.py`
+  - `tests/test_async_worker.py`
+  - `tests/test_agent_conversation_memory_routing.py`
+  - `tests/test_config.py`
 - focused routing and resumed-work slices pass locally:
   - `tests/test_thread_aggregation.py`
   - `tests/test_agent_conversation_memory_routing.py`
@@ -176,6 +185,8 @@
 - `Retry-After` is honored when present
 - invalid successful responses remain fail-fast and are not retried
 - live eval/benchmark paths now use the same provider resilience path as normal semantic extraction
+
+
 
 
 

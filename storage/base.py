@@ -26,6 +26,8 @@ class IndexSearchHit:
 class IndexSearchResult:
     hits: list[IndexSearchHit]
     visibility_exclusions: tuple[VisibilityExclusion, ...] = ()
+    total_hits_before_visibility: int = 0
+    total_hits_after_visibility: int = 0
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,54 @@ class ThreadProcessingLease:
             thread_ref=self.thread_ref,
             visibility_context=self.visibility_context,
         )
+
+
+@dataclass(frozen=True)
+class QueueHealthReasonCount:
+    reason: str
+    count: int
+
+
+@dataclass(frozen=True)
+class LeasedSourceItemInfo:
+    source_item_id: str
+    use_case: str | None
+    processing_claimed_by: str | None
+    processing_claimed_at: datetime | None
+    processing_lease_expires_at: datetime | None
+
+
+@dataclass(frozen=True)
+class LeasedThreadScopeInfo:
+    scope_key: str
+    use_case: str
+    container_ref: str
+    thread_ref: str
+    visibility_context: VisibilityContext | None
+    processing_claimed_by: str | None
+    processing_claimed_at: datetime | None
+    processing_lease_expires_at: datetime | None
+
+
+@dataclass(frozen=True)
+class RecentFailureInfo:
+    source_item_id: str
+    use_case: str | None
+    failure_category: str | None
+    processing_error: str | None
+    processing_attempts: int
+    processing_completed_at: datetime | None
+
+
+@dataclass(frozen=True)
+class QueueHealthSnapshot:
+    status_counts: dict[str, int]
+    oldest_pending_age_seconds: int | None
+    pending_without_use_case_count: int
+    unclaimable_pending_counts: tuple[QueueHealthReasonCount, ...]
+    leased_source_items: tuple[LeasedSourceItemInfo, ...]
+    leased_thread_scopes: tuple[LeasedThreadScopeInfo, ...]
+    recent_failures: tuple[RecentFailureInfo, ...]
 
 
 class StorageProvider(ABC):
@@ -95,6 +145,7 @@ class StorageProvider(ABC):
         error: str,
         next_attempt_at: datetime | None,
         final: bool,
+        metadata_updates: dict[str, object] | None = None,
     ) -> None:
         raise NotImplementedError
 
@@ -217,4 +268,16 @@ class StorageProvider(ABC):
 
     @abstractmethod
     def get_evidence_for_memory_object(self, memory_object_id: str) -> list[EvidenceReference]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_queue_health_snapshot(
+        self,
+        *,
+        now: datetime,
+        max_attempts: int,
+        known_use_cases: tuple[str, ...],
+        scoped_use_cases: tuple[str, ...],
+        recent_failure_limit: int = 10,
+    ) -> QueueHealthSnapshot:
         raise NotImplementedError

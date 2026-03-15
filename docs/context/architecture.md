@@ -1,4 +1,4 @@
-# Architecture
+﻿# Architecture
 
 ## Top-Level Shape
 
@@ -21,7 +21,9 @@ Implemented HTTP endpoints:
 
 - POST /items
 - POST /query
-- POST /query/debug`r`n- GET /items/{source_item_id}/processing
+- POST /query/debug
+- GET /items/{source_item_id}/processing
+- GET /debug/queue/health
 
 Implemented abstractions:
 
@@ -32,17 +34,20 @@ Implemented abstractions:
 
 Implemented storage and retrieval behavior:
 
-- SQLite-backed storage provider`r`n- synchronous raw source ingest plus queue state on `source_items` for async semantic processing
+- SQLite-backed storage provider
+- synchronous raw source ingest plus queue state on `source_items` for async semantic processing
+- compact per-item debug state embedded in `SourceItem.metadata` for integration explainability
 - lexical retrieval over indexed text views
 - named text-view metadata on `IndexEntry`
 - indexing for both `SourceItem` and `MemoryObject`
 - mixed retrieval over memory hits and compact source hits
 - compact source-hit cards with explicit event refs instead of raw full content
 - lifecycle-aware retrieval that excludes superseded memory by default
-- optional lexical retrieval trace on the debug query path, including matched tokens and selected text views
+- optional lexical retrieval trace on the debug query path, including matched tokens, candidate-flow counts, selected text views, routed exclusion reasons, and result-origin summaries
 - package-owned candidate-aware routed reranking on top of retrieval results for `agent_conversation_memory`, with explicit safer-layer fallback exposed through the existing debug trace path
 - evidence resolution from memory objects back to source items
 - generic `visibility_context` plumbing on `SourceItem`, `MemoryObject`, and query requests, with fail-closed retrieval enforcement for scope-aware packages before ranking and visibility exclusion trace on the debug path
+- explicit local integration-debug logging for processing outcomes, failures, memory provenance, and thread rebuild results, gated behind config rather than always-on logging
 
 ## Target Retrieval Architecture
 
@@ -329,3 +334,5 @@ Current expected follow-up hardening:
 
 - richer consolidation trace and merge rationale
 - richer per-result retrieval provenance so later vector and fusion retrieval can plug into the same routed trace path
+
+

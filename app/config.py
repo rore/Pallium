@@ -48,6 +48,11 @@ class SemanticPackageConfig:
     consolidation: ConsolidationPolicy | None = None
 
 
+@dataclass(frozen=True)
+class ObservabilityConfig:
+    integration_debug: bool = False
+
+
 def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
     return {
         "demo_agent_memory": SemanticPackageConfig(name="demo_agent_memory", implementation="demo_agent_memory"),
@@ -72,6 +77,7 @@ class AppConfig:
     default_use_case: str = "demo_agent_memory"
     llm_providers: dict[str, LLMProviderConfig] = field(default_factory=dict)
     semantic_packages: dict[str, SemanticPackageConfig] = field(default_factory=_default_semantic_packages)
+    observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
 
     # Legacy compatibility inputs. New code should prefer llm_providers and semantic_packages.
     llm_provider: str | None = None
@@ -133,6 +139,14 @@ class AppConfig:
                 env_values,
                 config_data.get("default_use_case") or "demo_agent_memory",
             ) or "demo_agent_memory",
+            observability=ObservabilityConfig(
+                integration_debug=_resolve_bool_value(
+                    "PALLIUM_OBSERVABILITY_INTEGRATION_DEBUG",
+                    env_values,
+                    _read_nested(config_data, "observability", "integration_debug"),
+                    False,
+                )
+            ),
             llm_providers=_build_provider_configs(config_data, env_values),
             semantic_packages=_build_package_configs(config_data, env_values),
             llm_provider=_resolve_legacy_value("PALLIUM_LLM_PROVIDER", env_values),
@@ -252,6 +266,17 @@ def _resolve_float_value(name: str, env_values: dict[str, str]) -> float | None:
     return float(value)
 
 
+def _resolve_bool_value(
+    name: str,
+    env_values: dict[str, str],
+    raw_value: Any,
+    default: bool,
+) -> bool:
+    if name in env_values:
+        return _parse_bool(env_values[name], default)
+    return _parse_bool(raw_value, default)
+
+
 def _read_nested(data: dict[str, Any], *keys: str) -> Any:
     current: Any = data
     for key in keys:
@@ -259,6 +284,19 @@ def _read_nested(data: dict[str, Any], *keys: str) -> Any:
             return None
         current = current[key]
     return current
+
+
+def _parse_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def _build_provider_configs(config_data: dict[str, Any], env_values: dict[str, str]) -> dict[str, LLMProviderConfig]:

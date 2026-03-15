@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
@@ -9,6 +9,7 @@ from api.schemas import (
     QueryDebugResponse,
     QueryRequest,
     QueryResponse,
+    QueueHealthResponse,
 )
 from core.models import QueryResultItem, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
 from core.service import PalliumService
@@ -91,6 +92,8 @@ def _serialize_stage_trace(stage: RetrievalStageTrace) -> dict[str, object]:
         "candidate_hits_considered": stage.candidate_hits_considered,
         "candidate_hits": [_serialize_trace_hit(hit) for hit in stage.candidate_hits],
         "selected_hits": [_serialize_trace_hit(hit) for hit in stage.selected_hits],
+        "candidate_hits_before_visibility": stage.candidate_hits_before_visibility,
+        "candidate_hits_after_visibility": stage.candidate_hits_after_visibility,
     }
 
 
@@ -135,6 +138,7 @@ def _serialize_trace(trace: QueryTrace) -> dict[str, object]:
         "stages": [_serialize_stage_trace(stage) for stage in trace.stages],
         "routing": trace.routing,
         "visibility": _serialize_visibility_trace(trace.visibility) if trace.visibility is not None else None,
+        "result_summary": trace.result_summary,
     }
 
 
@@ -169,6 +173,53 @@ def create_router(service: PalliumService) -> APIRouter:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="source item not found") from exc
         return ProcessingStatusResponse(**result.as_dict())
+
+    @router.get("/debug/queue/health", response_model=QueueHealthResponse)
+    def get_queue_health() -> QueueHealthResponse:
+        snapshot = service.get_queue_health()
+        return QueueHealthResponse(
+            status_counts=snapshot.status_counts,
+            oldest_pending_age_seconds=snapshot.oldest_pending_age_seconds,
+            pending_without_use_case_count=snapshot.pending_without_use_case_count,
+            unclaimable_pending_counts=[
+                {"reason": item.reason, "count": item.count}
+                for item in snapshot.unclaimable_pending_counts
+            ],
+            leased_source_items=[
+                {
+                    "source_item_id": item.source_item_id,
+                    "use_case": item.use_case,
+                    "processing_claimed_by": item.processing_claimed_by,
+                    "processing_claimed_at": item.processing_claimed_at,
+                    "processing_lease_expires_at": item.processing_lease_expires_at,
+                }
+                for item in snapshot.leased_source_items
+            ],
+            leased_thread_scopes=[
+                {
+                    "scope_key": item.scope_key,
+                    "use_case": item.use_case,
+                    "container_ref": item.container_ref,
+                    "thread_ref": item.thread_ref,
+                    "visibility_context": _serialize_visibility_context(item.visibility_context),
+                    "processing_claimed_by": item.processing_claimed_by,
+                    "processing_claimed_at": item.processing_claimed_at,
+                    "processing_lease_expires_at": item.processing_lease_expires_at,
+                }
+                for item in snapshot.leased_thread_scopes
+            ],
+            recent_failures=[
+                {
+                    "source_item_id": item.source_item_id,
+                    "use_case": item.use_case,
+                    "failure_category": item.failure_category,
+                    "processing_error": item.processing_error,
+                    "processing_attempts": item.processing_attempts,
+                    "processing_completed_at": item.processing_completed_at,
+                }
+                for item in snapshot.recent_failures
+            ],
+        )
 
     @router.post("/query", response_model=QueryResponse)
     def query_items(request: QueryRequest) -> QueryResponse:

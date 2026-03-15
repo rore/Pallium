@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from api.routes import create_router
 from app.config import AppConfig, SemanticPackageConfig
+from core.observability import IntegrationDebugLogger
 from core.service import PalliumService
 from providers.llm.anthropic_claude import AnthropicClaudeLLMProvider
 from providers.llm.base import LLMProvider
@@ -106,8 +107,10 @@ def build_service(config: AppConfig | None = None) -> PalliumService:
         retrieval=retrieval,
         semantic_plugins=plugins,
         default_use_case=resolved_config.default_use_case,
+        observability=IntegrationDebugLogger(enabled=resolved_config.observability.integration_debug),
     )
 
 
 def build_router(service: PalliumService):
     return create_router(service)
+

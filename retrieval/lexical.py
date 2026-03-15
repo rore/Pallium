@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from datetime import timezone
@@ -198,6 +198,8 @@ class LexicalRetrievalProvider(RetrievalProvider):
                         candidate_hits_considered=len(hits),
                         candidate_hits=tuple(_build_trace_hit(hit) for hit in hits),
                         selected_hits=tuple(selected_hits),
+                        candidate_hits_before_visibility=search_result.total_hits_before_visibility,
+                        candidate_hits_after_visibility=search_result.total_hits_after_visibility,
                     ),
                 ),
                 visibility=(

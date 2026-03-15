@@ -120,3 +120,26 @@ def test_legacy_env_values_still_map_to_llm_packages(monkeypatch, tmp_path: Path
     assert provider.api_key == "legacy-key"
     assert provider.timeout_seconds == 33.0
     assert provider.retry_policy.max_attempts == 5
+
+def test_observability_debug_config_reads_toml_and_env_override(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        """
+        default_use_case = "demo_agent_memory"
+
+        [storage]
+        backend = "sqlite"
+        sqlite_url = "sqlite:///./configured.db"
+
+        [observability]
+        integration_debug = false
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("PALLIUM_OBSERVABILITY_INTEGRATION_DEBUG", "1")
+
+    config = AppConfig.from_env()
+
+    assert config.observability.integration_debug is True

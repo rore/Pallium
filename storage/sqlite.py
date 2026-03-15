@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import re
@@ -10,7 +10,18 @@ from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from core.contracts import ProcessResult
 from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem, new_id, utc_now
 from core.visibility import VisibilityContext, VisibilityExclusion, visibility_context_is_visible
-from storage.base import IndexSearchHit, IndexSearchResult, StorageProvider, ThreadProcessingLease, ThreadProcessingScope
+from storage.base import (
+    IndexSearchHit,
+    IndexSearchResult,
+    LeasedSourceItemInfo,
+    LeasedThreadScopeInfo,
+    QueueHealthReasonCount,
+    QueueHealthSnapshot,
+    RecentFailureInfo,
+    StorageProvider,
+    ThreadProcessingLease,
+    ThreadProcessingScope,
+)
 
 
 Base = declarative_base()
@@ -288,16 +299,24 @@ class SQLiteStorageProvider(StorageProvider):
         error: str,
         next_attempt_at: datetime | None,
         final: bool,
+        metadata_updates: dict[str, object] | None = None,
     ) -> None:
+        finished_at = utc_now()
         with self._session_factory.begin() as session:
             record = session.get(SourceItemRecord, source_item_id)
             if record is None:
                 raise KeyError(source_item_id)
+            if metadata_updates:
+                existing_metadata = self._loads(record.metadata_json)
+                existing_metadata.update(metadata_updates)
+                record.metadata_json = self._dumps(existing_metadata)
             record.processing_status = "failed" if final else "pending"
             record.processing_error = error
+            record.processing_claimed_by = None
+            record.processing_claimed_at = None
             record.processing_lease_expires_at = None
+            record.processing_completed_at = finished_at if final else None
             record.processing_next_attempt_at = next_attempt_at
-
     def commit_processed_source_item(
         self,
         *,
@@ -344,7 +363,7 @@ class SQLiteStorageProvider(StorageProvider):
         with self._session_factory.begin() as session:
             self._persist_process_result_in_session(session, result)
             self._apply_supersession_pairs_in_session(session, supersession_pairs)
-
+            self._apply_source_item_metadata_updates_in_session(session, result.source_item_metadata_updates)
     def claim_thread_processing_scope(
         self,
         *,
@@ -615,6 +634,8 @@ class SQLiteStorageProvider(StorageProvider):
         hits: list[IndexSearchHit] = []
         exclusion_counts: dict[str, int] = {}
         unique_tokens = set(tokens)
+        total_hits_before_visibility = 0
+        total_hits_after_visibility = 0
         for record in records:
             if not self._matches_filters(record.target_kind, record.target_id, filters):
                 continue
@@ -623,6 +644,7 @@ class SQLiteStorageProvider(StorageProvider):
             score = len(matched_tokens)
             if score == 0:
                 continue
+            total_hits_before_visibility += 1
             visibility_context = self._target_visibility_context(record.target_kind, record.target_id)
             if not visibility_context_is_visible(visibility_context, visibility_contexts):
                 if include_visibility_trace and visibility_contexts is not None:
@@ -633,6 +655,7 @@ class SQLiteStorageProvider(StorageProvider):
                     )
                     exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue
+            total_hits_after_visibility += 1
             hits.append(
                 IndexSearchHit(
                     target_kind=record.target_kind,
@@ -651,7 +674,12 @@ class SQLiteStorageProvider(StorageProvider):
             VisibilityExclusion(reason=reason, count=count)
             for reason, count in sorted(exclusion_counts.items())
         )
-        return IndexSearchResult(hits=hits[:limit], visibility_exclusions=exclusions)
+        return IndexSearchResult(
+            hits=hits[:limit],
+            visibility_exclusions=exclusions,
+            total_hits_before_visibility=total_hits_before_visibility,
+            total_hits_after_visibility=total_hits_after_visibility,
+        )
 
     def get_evidence_for_memory_object(self, memory_object_id: str) -> list[EvidenceReference]:
         with self._session_factory() as session:
@@ -670,6 +698,126 @@ class SQLiteStorageProvider(StorageProvider):
                 select(SourceItemRecord).where(SourceItemRecord.id.in_(source_ids))
             ).all()
         return [self._to_evidence_reference(record) for record in records]
+
+    def get_queue_health_snapshot(
+        self,
+        *,
+        now: datetime,
+        max_attempts: int,
+        known_use_cases: tuple[str, ...],
+        scoped_use_cases: tuple[str, ...],
+        recent_failure_limit: int = 10,
+    ) -> QueueHealthSnapshot:
+        normalized_now = self._normalize_datetime(now) or now
+        known_use_case_set = set(known_use_cases)
+        scoped_use_case_set = set(scoped_use_cases)
+        with self._session_factory() as session:
+            source_records = session.scalars(select(SourceItemRecord)).all()
+            thread_records = session.scalars(select(ThreadProcessingLeaseRecord)).all()
+
+        status_counts: dict[str, int] = {}
+        pending_without_use_case_count = 0
+        unclaimable_counts: dict[str, int] = {}
+        oldest_pending_created_at: datetime | None = None
+        leased_source_items: list[LeasedSourceItemInfo] = []
+        recent_failures: list[RecentFailureInfo] = []
+
+        for record in source_records:
+            status = record.processing_status or "pending"
+            status_counts[status] = status_counts.get(status, 0) + 1
+            created_at = self._normalize_datetime(record.created_at)
+            if status == "pending":
+                if not record.use_case:
+                    pending_without_use_case_count += 1
+                if created_at is not None and (oldest_pending_created_at is None or created_at < oldest_pending_created_at):
+                    oldest_pending_created_at = created_at
+                reason = self._classify_unclaimable_pending_reason(
+                    record,
+                    now=normalized_now,
+                    max_attempts=max_attempts,
+                    known_use_cases=known_use_case_set,
+                    scoped_use_cases=scoped_use_case_set,
+                )
+                if reason is not None:
+                    unclaimable_counts[reason] = unclaimable_counts.get(reason, 0) + 1
+            lease_expires_at = self._normalize_datetime(record.processing_lease_expires_at)
+            if status == "processing" and lease_expires_at is not None and lease_expires_at > normalized_now:
+                leased_source_items.append(
+                    LeasedSourceItemInfo(
+                        source_item_id=record.id,
+                        use_case=record.use_case,
+                        processing_claimed_by=record.processing_claimed_by,
+                        processing_claimed_at=self._normalize_datetime(record.processing_claimed_at),
+                        processing_lease_expires_at=lease_expires_at,
+                    )
+                )
+            if status == "failed":
+                observability_state = self._observability_state_from_metadata(record.metadata_json)
+                recent_failures.append(
+                    RecentFailureInfo(
+                        source_item_id=record.id,
+                        use_case=record.use_case,
+                        failure_category=(
+                            str(observability_state.get("failure_category"))
+                            if observability_state.get("failure_category") is not None
+                            else None
+                        ),
+                        processing_error=record.processing_error,
+                        processing_attempts=record.processing_attempts or 0,
+                        processing_completed_at=self._normalize_datetime(record.processing_completed_at),
+                    )
+                )
+
+        leased_thread_scopes = [
+            LeasedThreadScopeInfo(
+                scope_key=record.scope_key,
+                use_case=record.use_case,
+                container_ref=record.container_ref,
+                thread_ref=record.thread_ref,
+                visibility_context=self._build_visibility_context(record.visibility_kind, record.visibility_id),
+                processing_claimed_by=record.processing_claimed_by,
+                processing_claimed_at=self._normalize_datetime(record.processing_claimed_at),
+                processing_lease_expires_at=self._normalize_datetime(record.processing_lease_expires_at),
+            )
+            for record in thread_records
+            if record.processing_claimed_by is not None
+            and (self._normalize_datetime(record.processing_lease_expires_at) or normalized_now) > normalized_now
+        ]
+        recent_failures.sort(
+            key=lambda item: (item.processing_completed_at or datetime.min.replace(tzinfo=timezone.utc), item.source_item_id),
+            reverse=True,
+        )
+        oldest_pending_age_seconds = None
+        if oldest_pending_created_at is not None:
+            oldest_pending_age_seconds = max(0, int((normalized_now - oldest_pending_created_at).total_seconds()))
+        return QueueHealthSnapshot(
+            status_counts=dict(sorted(status_counts.items())),
+            oldest_pending_age_seconds=oldest_pending_age_seconds,
+            pending_without_use_case_count=pending_without_use_case_count,
+            unclaimable_pending_counts=tuple(
+                QueueHealthReasonCount(reason=reason, count=count)
+                for reason, count in sorted(unclaimable_counts.items())
+            ),
+            leased_source_items=tuple(
+                sorted(
+                    leased_source_items,
+                    key=lambda item: (
+                        item.processing_claimed_at or datetime.min.replace(tzinfo=timezone.utc),
+                        item.source_item_id,
+                    ),
+                )
+            ),
+            leased_thread_scopes=tuple(
+                sorted(
+                    leased_thread_scopes,
+                    key=lambda item: (
+                        item.processing_claimed_at or datetime.min.replace(tzinfo=timezone.utc),
+                        item.scope_key,
+                    ),
+                )
+            ),
+            recent_failures=tuple(recent_failures[:recent_failure_limit]),
+        )
 
     def _persist_process_result_in_session(self, session: Session, result: ProcessResult) -> None:
         for annotation in result.annotations:
@@ -768,7 +916,13 @@ class SQLiteStorageProvider(StorageProvider):
             existing_metadata = self._loads(record.metadata_json)
             if not isinstance(existing_metadata, dict):
                 existing_metadata = {}
-            existing_metadata.update(metadata_patch)
+            for key, value in metadata_patch.items():
+                if isinstance(value, dict) and isinstance(existing_metadata.get(key), dict):
+                    merged_value = dict(existing_metadata[key])
+                    merged_value.update(value)
+                    existing_metadata[key] = merged_value
+                else:
+                    existing_metadata[key] = value
             record.metadata_json = self._dumps(existing_metadata)
 
     def _upsert_thread_processing_scope_in_session(
@@ -1030,4 +1184,34 @@ class SQLiteStorageProvider(StorageProvider):
         if not value:
             return {}
         return json.loads(value)
+
+    @staticmethod
+    def _observability_state_from_metadata(metadata_json: str | None) -> dict[str, object]:
+        metadata = SQLiteStorageProvider._loads(metadata_json)
+        state = metadata.get("observability_debug")
+        return state if isinstance(state, dict) else {}
+
+    @staticmethod
+    def _classify_unclaimable_pending_reason(
+        record: SourceItemRecord,
+        *,
+        now: datetime,
+        max_attempts: int,
+        known_use_cases: set[str],
+        scoped_use_cases: set[str],
+    ) -> str | None:
+        if (record.processing_status or "pending") != "pending":
+            return None
+        if not record.use_case:
+            return "missing_use_case"
+        if (record.processing_attempts or 0) >= max_attempts:
+            return "legacy_max_attempts_exhausted_pending"
+        next_attempt_at = SQLiteStorageProvider._normalize_datetime(record.processing_next_attempt_at)
+        if next_attempt_at is not None and next_attempt_at > now:
+            return "retry_backoff_active"
+        if record.use_case not in known_use_cases:
+            return "unknown_use_case"
+        if record.use_case in scoped_use_cases and not record.visibility_kind:
+            return "missing_visibility_for_scoped_use_case"
+        return None
 

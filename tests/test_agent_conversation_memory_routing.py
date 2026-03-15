@@ -388,3 +388,23 @@ def test_broad_recall_missing_pattern_applies_explicit_fallback_to_lower_level(m
         assert routing['candidate_summary']['pattern_memory']['candidate_count'] == 0
         assert payload['results'][0]['result_kind'] == 'memory_hit'
         assert payload['results'][0]['type'] == 'decision'
+
+def test_routing_trace_reports_excluded_candidates_and_result_origins(monkeypatch, test_db_url: str) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest_resumption_work(client, thread_ref='chat:library-help:thread-routing-observability')
+
+        payload = _run_debug_query(
+            client,
+            {
+                'text': 'What blocker did we hit and what should we do next on the catalog sync retry?',
+                'limit': 4,
+                'container_ref': 'chat:library-help',
+            },
+        )
+        routing = payload['trace']['routing']
+
+        assert routing['candidate_count_entering_routing'] >= len(payload['results'])
+        assert routing['returned_result_kinds']['memory_hit'] >= 1
+        assert routing['selected_results'][0]['result_origin'] in {'memory', 'source'}
+        assert routing['excluded_high_scoring_candidates']
+        assert all(item['excluded_reason_code'] for item in routing['excluded_high_scoring_candidates'])
