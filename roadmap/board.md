@@ -4,10 +4,10 @@
 # Later
 - add-targeted-external-memory-benchmark-pressure-pack
 - add-live-integration-improvement-loop-and-replay-pipeline
-- add-vector-retrieval-provider
-- add-hybrid-retrieval-fusion
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
+- add-vector-retrieval-provider
+- add-hybrid-retrieval-fusion
 
 # Ideas
 - idea-evidence-backed-agent-memory

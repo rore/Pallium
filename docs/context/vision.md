@@ -20,6 +20,32 @@ not only fact storage and not only episodic transcript recall, but compact,
 evidence-backed knowledge objects such as decisions, investigation outcomes,
 and later higher-level recurring patterns.
 
+## North-Star Use Cases
+
+Pallium's roadmap should be driven by the downstream-agent use cases it is meant
+to solve, not by generic memory-system feature accumulation.
+
+The north-star use cases are:
+
+- requirement and architecture questions answered from prior decisions,
+  reasoning, and evidence rather than transcript rediscovery
+- long-running investigation continuity, where prior findings, rejected paths,
+  and supporting evidence are carried forward cleanly
+- resumed work after interruption, where a later continuation begins with prior
+  progress, blockers, and next-step orientation instead of restarting analysis
+- repeated-question reuse across later conversations when the same conclusion
+  should safely help again
+- evidence-backed reuse of findings discovered while exploring external systems,
+  without turning Pallium into the system of record for those systems
+- long-lived conversation continuity that relies on compact memory and explicit
+  injection decisions rather than growing transcript replay
+- evaluation of whether downstream agents remember what matters, stay quiet
+  when they should, and remain thin rather than accumulating local memory
+  heuristics
+
+These use cases should be the standard for deciding what Pallium needs next,
+what gaps matter most, and which later capabilities are worth the complexity.
+
 ## What Pallium Is Not
 
 Pallium is not:
@@ -71,4 +97,3 @@ Pallium is not:
 11. Build iteratively around a walking skeleton.
     Prefer a thin end-to-end system with all major layers present over a large
     upfront design freeze.
-
