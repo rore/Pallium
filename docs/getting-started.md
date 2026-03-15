@@ -51,11 +51,14 @@ Optional verification:
 .\.venv\Scripts\python.exe -m app.run --host 127.0.0.1 --port 8000 --processors 1
 ```
 
+The combined local runner now starts one cleaner by default. Set `[retention].enabled = true` in `pallium.local.toml` to activate retention passes, or pass `--cleaners 0` when you want an instance without the cleaner.
+
 If you want the split mode instead, use:
 
 ```powershell
 .\.venv\Scripts\python.exe -m app.run serve --host 127.0.0.1 --port 8000
 .\.venv\Scripts\python.exe -m app.run processor
+.\.venv\Scripts\python.exe -m app.run cleaner
 ```
 
 ## 3. Run The Bundled Sample Flow

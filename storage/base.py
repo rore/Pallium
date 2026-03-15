@@ -62,6 +62,18 @@ class ThreadProcessingLease:
 
 
 @dataclass(frozen=True)
+class RetentionLease:
+    key: str
+    claimed_by: str
+    claimed_at: datetime
+    lease_expires_at: datetime
+
+
+class RetentionLeaseLostError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
 class QueueHealthReasonCount:
     reason: str
     count: int
@@ -99,6 +111,39 @@ class RecentFailureInfo:
 
 
 @dataclass(frozen=True)
+class RetentionRunStats:
+    deleted_source_items: int = 0
+    deleted_memory_objects: int = 0
+    deleted_relations: int = 0
+    deleted_index_entries: int = 0
+    stripped_debug_metadata: int = 0
+    skipped_protected_source_items: int = 0
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "deleted_source_items": self.deleted_source_items,
+            "deleted_memory_objects": self.deleted_memory_objects,
+            "deleted_relations": self.deleted_relations,
+            "deleted_index_entries": self.deleted_index_entries,
+            "stripped_debug_metadata": self.stripped_debug_metadata,
+            "skipped_protected_source_items": self.skipped_protected_source_items,
+        }
+
+
+@dataclass(frozen=True)
+class RetentionHealthSnapshot:
+    enabled: bool
+    last_run_started_at: datetime | None
+    last_run_completed_at: datetime | None
+    last_deleted_source_items: int = 0
+    last_deleted_memory_objects: int = 0
+    last_deleted_relations: int = 0
+    last_deleted_index_entries: int = 0
+    last_stripped_debug_metadata: int = 0
+    last_skipped_protected_source_items: int = 0
+
+
+@dataclass(frozen=True)
 class QueueHealthSnapshot:
     status_counts: dict[str, int]
     oldest_pending_age_seconds: int | None
@@ -107,6 +152,7 @@ class QueueHealthSnapshot:
     leased_source_items: tuple[LeasedSourceItemInfo, ...]
     leased_thread_scopes: tuple[LeasedThreadScopeInfo, ...]
     recent_failures: tuple[RecentFailureInfo, ...]
+    retention: RetentionHealthSnapshot
 
 
 class StorageProvider(ABC):
@@ -203,6 +249,59 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def claim_retention_lease(
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> RetentionLease | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def renew_retention_lease(
+        self,
+        *,
+        worker_id: str,
+        claimed_at: datetime,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> RetentionLease | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def complete_retention_pass(
+        self,
+        *,
+        worker_id: str,
+        claimed_at: datetime,
+        completed_at: datetime | None,
+        stats: RetentionRunStats,
+    ) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def fail_retention_pass(
+        self,
+        *,
+        worker_id: str,
+        claimed_at: datetime,
+    ) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def run_retention_pass(
+        self,
+        *,
+        now: datetime,
+        batch_size: int,
+        lease: RetentionLease | None = None,
+        lease_seconds: int | None = None,
+        lease_now: datetime | None = None,
+    ) -> RetentionRunStats:
+        raise NotImplementedError
+
+    @abstractmethod
     def create_annotation(self, annotation: Annotation) -> None:
         raise NotImplementedError
 
@@ -228,6 +327,10 @@ class StorageProvider(ABC):
 
     @abstractmethod
     def update_memory_object_lifecycle(self, memory_object_id: str, lifecycle: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def refresh_memory_object_freshness(self, memory_object_id: str) -> datetime | None:
         raise NotImplementedError
 
     @abstractmethod
@@ -278,6 +381,7 @@ class StorageProvider(ABC):
         max_attempts: int,
         known_use_cases: tuple[str, ...],
         scoped_use_cases: tuple[str, ...],
+        retention_enabled: bool,
         recent_failure_limit: int = 10,
     ) -> QueueHealthSnapshot:
         raise NotImplementedError

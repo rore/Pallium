@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
@@ -230,6 +230,18 @@ class RecentFailureResponse(BaseModel):
     processing_completed_at: datetime | None = None
 
 
+class RetentionHealthResponse(BaseModel):
+    enabled: bool
+    last_run_started_at: datetime | None = None
+    last_run_completed_at: datetime | None = None
+    last_deleted_source_items: int = 0
+    last_deleted_memory_objects: int = 0
+    last_deleted_relations: int = 0
+    last_deleted_index_entries: int = 0
+    last_stripped_debug_metadata: int = 0
+    last_skipped_protected_source_items: int = 0
+
+
 class QueueHealthResponse(BaseModel):
     status_counts: dict[str, int]
     oldest_pending_age_seconds: int | None = None
@@ -238,3 +250,4 @@ class QueueHealthResponse(BaseModel):
     leased_source_items: list[LeasedSourceItemResponse] = Field(default_factory=list)
     leased_thread_scopes: list[LeasedThreadScopeResponse] = Field(default_factory=list)
     recent_failures: list[RecentFailureResponse] = Field(default_factory=list)
+    retention: RetentionHealthResponse

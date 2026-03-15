@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import re
@@ -17,7 +17,7 @@ from core.visibility import QueryVisibilityTrace, VisibilityContext, visibility_
 from providers.llm.base import LLMProviderError
 from retrieval.base import RetrievalProvider
 from semantic.base import ConsolidationSemanticPlugin, SemanticPlugin, ThreadAggregationSemanticPlugin
-from storage.base import QueueHealthSnapshot, StorageProvider, ThreadProcessingLease, ThreadProcessingScope
+from storage.base import QueueHealthSnapshot, RetentionLeaseLostError, RetentionRunStats, StorageProvider, ThreadProcessingLease, ThreadProcessingScope
 
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
@@ -151,6 +151,10 @@ class PalliumService:
         semantic_plugins: dict[str, SemanticPlugin],
         default_use_case: str,
         observability: IntegrationDebugLogger | None = None,
+        *,
+        retention_enabled: bool = False,
+        retention_lease_seconds: int = 300,
+        retention_batch_size: int = 200,
     ) -> None:
         self._storage = storage
         self._retrieval = retrieval
@@ -158,6 +162,9 @@ class PalliumService:
         self._default_use_case = default_use_case
         self._consolidation_capability = ConsolidationCapability()
         self._observability = observability or IntegrationDebugLogger(enabled=False)
+        self._retention_enabled = retention_enabled
+        self._retention_lease_seconds = retention_lease_seconds
+        self._retention_batch_size = retention_batch_size
 
     def ingest_item(
         self,
@@ -241,7 +248,74 @@ class PalliumService:
             max_attempts=max_attempts,
             known_use_cases=tuple(sorted(self._semantic_plugins.keys())),
             scoped_use_cases=scoped_use_cases,
+            retention_enabled=self._retention_enabled,
         )
+
+    def run_retention_pass(
+        self,
+        *,
+        worker_id: str,
+        now=None,
+        lease_seconds: int | None = None,
+        batch_size: int | None = None,
+    ) -> RetentionRunStats | None:
+        if not self._retention_enabled:
+            return None
+        claimed_at = now or utc_now()
+        resolved_lease_seconds = lease_seconds or self._retention_lease_seconds
+        resolved_batch_size = batch_size or self._retention_batch_size
+        lease = self._storage.claim_retention_lease(
+            worker_id=worker_id,
+            lease_seconds=resolved_lease_seconds,
+            now=claimed_at,
+        )
+        if lease is None:
+            return None
+        self._observability.emit(
+            "retention_pass_started",
+            worker_id=worker_id,
+            maintenance_key=lease.key,
+            claimed_at=lease.claimed_at,
+            lease_expires_at=lease.lease_expires_at,
+        )
+        try:
+            stats = self._storage.run_retention_pass(
+                now=lease.claimed_at,
+                batch_size=resolved_batch_size,
+                lease=lease,
+                lease_seconds=resolved_lease_seconds,
+                lease_now=lease.claimed_at if now is not None else None,
+            )
+            completed = self._storage.complete_retention_pass(
+                worker_id=worker_id,
+                claimed_at=lease.claimed_at,
+                completed_at=lease.claimed_at if now is not None else utc_now(),
+                stats=stats,
+            )
+            if not completed:
+                raise RetentionLeaseLostError("retention lease lost before completion")
+            self._observability.emit(
+                "retention_pass_completed",
+                worker_id=worker_id,
+                maintenance_key=lease.key,
+                claimed_at=lease.claimed_at,
+                stats=stats.as_dict(),
+            )
+            return stats
+        except Exception as exc:
+            released = self._storage.fail_retention_pass(worker_id=worker_id, claimed_at=lease.claimed_at)
+            failure_reason = "lease_lost" if isinstance(exc, RetentionLeaseLostError) else "exception"
+            error_message = "retention lease lost before completion" if isinstance(exc, RetentionLeaseLostError) else self._truncate_processing_error(exc)
+            self._observability.emit(
+                "retention_pass_failed",
+                worker_id=worker_id,
+                maintenance_key=lease.key,
+                claimed_at=lease.claimed_at,
+                error=error_message,
+                failure_reason=failure_reason,
+                lease_release_succeeded=released,
+            )
+            raise
     def process_next_source_item(
         self,
         *,

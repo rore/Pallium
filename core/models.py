@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -64,6 +64,7 @@ class MemoryObject:
     payload: dict[str, Any]
     lifecycle: str = "active"
     visibility_context: VisibilityContext | None = None
+    freshness_at: datetime | None = None
     id: str = field(default_factory=new_id)
     created_at: datetime = field(default_factory=utc_now)
 

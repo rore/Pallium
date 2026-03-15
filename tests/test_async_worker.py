@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import re
 import threading
 
 from app.config import AppConfig
@@ -127,16 +128,33 @@ class BlockingThreadAggregationPlugin(ThreadAggregationSemanticPlugin):
         )
 
 
-def _build_service(test_db_url: str, *, plugins: dict[str, SemanticPlugin] | None = None, default_use_case: str = 'demo_agent_memory', storage: SQLiteStorageProvider | None = None) -> PalliumService:
+def _build_service(
+    test_db_url: str,
+    *,
+    plugins: dict[str, SemanticPlugin] | None = None,
+    default_use_case: str = 'demo_agent_memory',
+    storage: SQLiteStorageProvider | None = None,
+    retention_enabled: bool = False,
+    retention_lease_seconds: int = 300,
+    retention_batch_size: int = 200,
+) -> PalliumService:
     storage = storage or SQLiteStorageProvider(test_db_url)
     retrieval = LexicalRetrievalProvider(storage)
     resolved_plugins = {'demo_agent_memory': DemoAgentMemoryPlugin()}
     if plugins:
         resolved_plugins.update(plugins)
-    return PalliumService(storage=storage, retrieval=retrieval, semantic_plugins=resolved_plugins, default_use_case=default_use_case)
+    return PalliumService(
+        storage=storage,
+        retrieval=retrieval,
+        semantic_plugins=resolved_plugins,
+        default_use_case=default_use_case,
+        retention_enabled=retention_enabled,
+        retention_lease_seconds=retention_lease_seconds,
+        retention_batch_size=retention_batch_size,
+    )
 
 
-def test_run_worker_once_processes_pending_item(test_db_url: str) -> None:
+def test_run_worker_once_processes_pending_item(test_db_url: str, capsys) -> None:
     service = _build_service(test_db_url)
     ingest = service.ingest_item(
         source_type='decision_note',
@@ -157,6 +175,9 @@ def test_run_worker_once_processes_pending_item(test_db_url: str) -> None:
     assert status.processing_status == 'completed'
     assert status.memory_object_ids
 
+    runtime_output = capsys.readouterr().out
+    assert re.search(r'^\d{4}-\d{2}-\d{2}T.+ \[processor\] worker_id=worker-test source_item=', runtime_output, re.MULTILINE)
+
 
 def test_run_worker_stops_cleanly_when_stop_is_requested(test_db_url: str) -> None:
     exit_code = run_worker(
@@ -170,7 +191,7 @@ def test_run_worker_stops_cleanly_when_stop_is_requested(test_db_url: str) -> No
     assert exit_code == 0
 
 
-def test_run_processor_once_processes_pending_item(test_db_url: str) -> None:
+def test_run_processor_once_processes_pending_item(test_db_url: str, capsys) -> None:
     service = _build_service(test_db_url)
     ingest = service.ingest_item(
         source_type='decision_note',
@@ -190,6 +211,9 @@ def test_run_processor_once_processes_pending_item(test_db_url: str) -> None:
     status = service.get_item_processing(ingest.source_item_id)
     assert status.processing_status == 'completed'
     assert status.memory_object_ids
+
+    runtime_output = capsys.readouterr().out
+    assert re.search(r'^\d{4}-\d{2}-\d{2}T.+ \[processor\] worker_id=processor-test source_item=', runtime_output, re.MULTILINE)
 
 
 def test_worker_failure_updates_attempts_and_allows_reclaim(test_db_url: str) -> None:
@@ -352,7 +376,7 @@ def test_supervisor_blocks_reload_mode() -> None:
     assert supervisor.run_supervisor(['--reload']) == 2
 
 
-def test_supervisor_starts_api_and_processors_and_terminates_them() -> None:
+def test_supervisor_starts_api_and_processors_and_terminates_them(capsys) -> None:
     started: list[FakeProcess] = []
 
     def popen_factory(command, cwd=None):
@@ -368,10 +392,38 @@ def test_supervisor_starts_api_and_processors_and_terminates_them() -> None:
     )
 
     assert exit_code == 0
-    assert len(started) == 3
-    assert started[0].command[:3] == ['python', '-m', 'uvicorn'] or started[0].command[1:3] == ['-m', 'uvicorn']
+    assert len(started) == 4
+    assert started[0].command[:4] == ['python', '-m', 'app.run', 'serve'] or started[0].command[1:4] == ['-m', 'app.run', 'serve']
+    assert any('app.cleaner' in process.command for process in started)
     assert all(process.terminated for process in started)
     assert all(process.waited or process.returncode is not None for process in started)
+
+    supervisor_output = capsys.readouterr().out
+    assert re.search(r'^\d{4}-\d{2}-\d{2}T.+ \[supervisor\] started api pid=', supervisor_output, re.MULTILINE)
+
+
+
+def test_supervisor_can_disable_cleaners_explicitly(capsys) -> None:
+    started: list[FakeProcess] = []
+
+    def popen_factory(command, cwd=None):
+        process = FakeProcess(command, cwd=cwd)
+        started.append(process)
+        return process
+
+    exit_code = supervisor.run_supervisor(
+        ['--host', '127.0.0.1', '--port', '8010', '--processors', '1', '--cleaners', '0'],
+        popen_factory=popen_factory,
+        sleep_fn=lambda _: None,
+        should_stop=lambda: True,
+    )
+
+    assert exit_code == 0
+    assert len(started) == 2
+    assert all('app.cleaner' not in process.command for process in started)
+
+    supervisor_output = capsys.readouterr().out
+    assert re.search(r'^\d{4}-\d{2}-\d{2}T.+ \[supervisor\] started processor pid=', supervisor_output, re.MULTILINE)
 
 
 def test_thread_processing_lease_is_single_winner_and_expired_lease_is_reclaimable(test_db_url: str) -> None:

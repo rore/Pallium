@@ -10,6 +10,7 @@ from collections.abc import Callable
 
 from app.config import AppConfig
 from app.dependencies import build_service
+from app.runtime_logging import emit_runtime_log
 from core.contracts import ItemProcessingResult
 from storage.base import ThreadProcessingLease
 from core.service import DEFAULT_PROCESSING_LEASE_SECONDS, DEFAULT_PROCESSING_MAX_ATTEMPTS
@@ -91,18 +92,16 @@ def run_worker(
 
 
 def _log_result(worker_id: str, result: ItemProcessingResult) -> None:
-    print(
-        f"[{worker_id}] source_item={result.source_item_id} status={result.processing_status} attempts={result.processing_attempts}",
-        flush=True,
+    emit_runtime_log(
+        "processor",
+        f"worker_id={worker_id} source_item={result.source_item_id} status={result.processing_status} attempts={result.processing_attempts}",
     )
-
 
 def _log_thread_rebuild(worker_id: str, lease: ThreadProcessingLease) -> None:
-    print(
-        f"[{worker_id}] thread_scope={lease.container_ref}:{lease.thread_ref} status=completed",
-        flush=True,
+    emit_runtime_log(
+        "processor",
+        f"worker_id={worker_id} thread_scope={lease.container_ref}:{lease.thread_ref} status=completed",
     )
-
 
 if __name__ == "__main__":
     raise SystemExit(run_worker())

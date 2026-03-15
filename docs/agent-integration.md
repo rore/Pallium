@@ -3,24 +3,35 @@
 This guide explains how Pallium is supposed to be used by an agent runtime
 today.
 
-The short version: Pallium is a memory sidecar. Your runtime decides what to
-send, when to query, and how to use the returned memory in prompts or planning.
+The short version: Pallium is a memory sidecar, but it should be an opinionated one. The runtime should decide what runtime facts and raw events to
+send. Pallium should decide what is worth remembering, what is suitable to
+inject, and how to package carry-forward memory for the next turn.
 
 ## Where Pallium Fits
 
 ```mermaid
 flowchart LR
-    A["Agent runtime"] -->|selected events| B["Pallium /items"]
+    A["Agent runtime"] -->|raw events + refs + visibility| B["Pallium /items"]
     B --> C["source evidence + derived memory"]
-    A -->|resume, repeated question, cross-thread recall| D["Pallium /query"]
-    D -->|compact memory_hit + source_hit cards| A
+    A -->|current user text + runtime context| D["Pallium /query"]
+    D -->|injection decision + injectable blocks + debug trace| A
 ```
 
 Pallium should sit on the edge of your runtime:
 
 - your runtime owns the live conversation, tools, and user interaction
-- Pallium owns selected evidence, derived memory, and retrieval
+- Pallium owns selected evidence, derived memory, retrieval, ranking, and
+  injectability judgment
 - original systems stay the system of record
+
+The intended model is:
+
+- agent owns transport and runtime facts
+- Pallium owns memory judgment
+
+If the agent starts doing phrase filtering, memory-kind preference, local
+reranking, or injectability policy, the integration has become a second memory
+engine.
 
 ## One Concrete Flow
 
@@ -56,7 +67,9 @@ Avoid ingesting:
 - raw MCP traffic
 - ambient messages that never flowed through the agent
 
-The current package is designed for bounded, intentional ingest.
+The current package is designed for bounded, intentional ingest. The runtime
+should perform only mechanical validation here, such as empty-payload rejection
+or obvious duplicate suppression. Semantic filtering belongs in Pallium.
 
 ## What To Ingest Today
 
@@ -137,9 +150,41 @@ Use `POST /query/debug` when:
 - you need to inspect visibility exclusions
 - you need to see lexical matched tokens and text views
 
+## Query Input Contract
+
+The runtime should send:
+
+- current user text
+- refs and visibility:
+  - `container_ref`
+  - `thread_ref`
+  - `session_ref`
+  - `visibility_context`
+- a small amount of explicit runtime context when available, for example:
+  - `turn_kind = new_thread | same_thread_continuation | resumed_session | new_session`
+  - whether the active session already has sufficient local context
+
+That runtime context is mechanical, not semantic. The runtime should describe
+its world, not guess what memory kind should win.
+
 ## Query Result Contract
 
-Pallium returns compact cards rather than full raw payloads.
+Pallium should return integration-ready memory decisions rather than forcing the
+agent to infer injectability from generic ranked candidates.
+
+Expected response shape direction:
+
+- `should_inject`
+- `decision_reason`
+- `injectable_blocks` or `injectable_results`
+- optional raw/debug trace on the debug path
+
+Example `decision_reason` values:
+
+- `carry_forward_available`
+- `same_thread_context_sufficient`
+- `no_relevant_memory`
+- `only_low_value_candidates`
 
 Result kinds:
 
@@ -157,6 +202,15 @@ That means an agent can:
 - keep source evidence available for grounding or verification
 - decide whether to fetch the original source from the system of record
 
+The downstream agent should not need to decide:
+
+- whether `task_checkpoint` beats `thread_summary`
+- whether a greeting summary should be suppressed
+- whether same-thread context is enough
+- how many weak candidates to drop locally
+
+Those are Pallium decisions.
+
 ## Suggested Runtime Loop
 
 One practical runtime pattern:
@@ -166,9 +220,9 @@ One practical runtime pattern:
 3. ingest a compact tool-use summary only when it adds explicit finding,
    blocker, or next-step value
 4. on repeated questions or resumed work, query Pallium before building the
-   next prompt
-5. feed a small number of top `memory_hit` and `source_hit` cards into the
-   runtime prompt or planner
+   next prompt and include runtime context if it is available
+5. inject Pallium's returned carry-forward block(s) directly when
+   `should_inject=true`
 6. if a result looks wrong, inspect `POST /query/debug` before changing prompts
    or retrieval code
 
@@ -192,6 +246,7 @@ but the integration loop does not require you to think in those terms first.
 - preserve upstream refs so evidence remains actionable
 - send `visibility_context` on every ingest and query
 - query before prompt-building when continuity matters
+- keep local seam rules mechanical rather than semantic
 - use the debug endpoint before changing heuristics blindly
 
 ## Current Limits
@@ -204,4 +259,7 @@ Do not design your integration as if Pallium already supports:
 - automatic ingestion from arbitrary upstream systems
 - authorization on behalf of your app
 
-Those remain outside the current contract.
+Also do not design your integration as if the downstream agent should own the
+memory policy. The target boundary is a thin client that provides runtime facts
+and accepts Pallium's memory decisions.
+

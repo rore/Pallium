@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -143,3 +143,33 @@ def test_observability_debug_config_reads_toml_and_env_override(monkeypatch, tmp
     config = AppConfig.from_env()
 
     assert config.observability.integration_debug is True
+
+def test_retention_config_reads_toml_and_env_override(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        """
+        default_use_case = "demo_agent_memory"
+
+        [storage]
+        backend = "sqlite"
+        sqlite_url = "sqlite:///./configured.db"
+
+        [retention]
+        enabled = false
+        run_interval_seconds = 600
+        lease_seconds = 420
+        batch_size = 150
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("PALLIUM_RETENTION_ENABLED", "1")
+    monkeypatch.setenv("PALLIUM_RETENTION_BATCH_SIZE", "80")
+
+    config = AppConfig.from_env()
+
+    assert config.retention.enabled is True
+    assert config.retention.run_interval_seconds == 600
+    assert config.retention.lease_seconds == 420
+    assert config.retention.batch_size == 80

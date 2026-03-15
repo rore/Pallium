@@ -2,8 +2,7 @@
 
 ## Goal
 
-Define the next evaluation layer needed to tune Pallium for Pelican-like
-developer-work continuity without depending on private downstream traffic.
+Define the next evaluation layer needed to tune Pallium for downstream-agent developer-work continuity without depending on private downstream traffic.
 
 This design is not a single benchmark file. It is a benchmark program that
 combines:
@@ -37,8 +36,7 @@ They make Pallium believable for:
 - bounded resumed-work continuity in authored scenarios
 - real interaction phrasing pressure
 
-They do not yet make Pallium fully believable for the broader Pelican-shaped
-problem:
+They do not yet make Pallium fully believable for the broader downstream-agent-shaped problem:
 
 - interrupted tool-heavy investigation
 - resume after auth or tool failure
@@ -361,8 +359,8 @@ Recommended sequence after current privacy and integration-readiness work:
 
 ## Recommendation
 
-Treat this as the benchmark program that should tune Pallium toward Pelican-like
-value without requiring private downstream traffic.
+Treat this as the benchmark program that should tune Pallium toward downstream-agent value without requiring private downstream traffic.
 
 It should remain broader than the current work-resumption benchmark, but still
 bounded enough to review and reason about.
+

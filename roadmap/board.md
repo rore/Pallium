@@ -1,5 +1,6 @@
-﻿# Next
-
+# Next
+- add-live-thread-memory-quality-hardening
+- add-cleaner-retention-and-timestamped-runtime-logs
 
 # Later
 - add-vector-retrieval-provider
@@ -51,5 +52,3 @@
 - add-first-semantic-layer-and-promotion
 - add-agent-memory-simulation
 - build-structured-retrieval-foundation
-
-

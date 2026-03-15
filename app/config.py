@@ -53,6 +53,14 @@ class ObservabilityConfig:
     integration_debug: bool = False
 
 
+@dataclass(frozen=True)
+class RetentionConfig:
+    enabled: bool = False
+    run_interval_seconds: int = 300
+    lease_seconds: int = 300
+    batch_size: int = 200
+
+
 def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
     return {
         "demo_agent_memory": SemanticPackageConfig(name="demo_agent_memory", implementation="demo_agent_memory"),
@@ -78,6 +86,7 @@ class AppConfig:
     llm_providers: dict[str, LLMProviderConfig] = field(default_factory=dict)
     semantic_packages: dict[str, SemanticPackageConfig] = field(default_factory=_default_semantic_packages)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
+    retention: RetentionConfig = field(default_factory=RetentionConfig)
 
     # Legacy compatibility inputs. New code should prefer llm_providers and semantic_packages.
     llm_provider: str | None = None
@@ -146,6 +155,32 @@ class AppConfig:
                     _read_nested(config_data, "observability", "integration_debug"),
                     False,
                 )
+            ),
+            retention=RetentionConfig(
+                enabled=_resolve_bool_value(
+                    "PALLIUM_RETENTION_ENABLED",
+                    env_values,
+                    _read_nested(config_data, "retention", "enabled"),
+                    False,
+                ),
+                run_interval_seconds=_resolve_int_setting(
+                    "PALLIUM_RETENTION_RUN_INTERVAL_SECONDS",
+                    env_values,
+                    _read_nested(config_data, "retention", "run_interval_seconds"),
+                    300,
+                ),
+                lease_seconds=_resolve_int_setting(
+                    "PALLIUM_RETENTION_LEASE_SECONDS",
+                    env_values,
+                    _read_nested(config_data, "retention", "lease_seconds"),
+                    300,
+                ),
+                batch_size=_resolve_int_setting(
+                    "PALLIUM_RETENTION_BATCH_SIZE",
+                    env_values,
+                    _read_nested(config_data, "retention", "batch_size"),
+                    200,
+                ),
             ),
             llm_providers=_build_provider_configs(config_data, env_values),
             semantic_packages=_build_package_configs(config_data, env_values),
@@ -264,6 +299,14 @@ def _resolve_float_value(name: str, env_values: dict[str, str]) -> float | None:
     if value is None or value == "":
         return None
     return float(value)
+
+
+def _resolve_int_setting(name: str, env_values: dict[str, str], raw_value: Any, default: int) -> int:
+    if name in env_values:
+        return int(env_values[name])
+    if raw_value is None or raw_value == "":
+        return default
+    return int(raw_value)
 
 
 def _resolve_bool_value(

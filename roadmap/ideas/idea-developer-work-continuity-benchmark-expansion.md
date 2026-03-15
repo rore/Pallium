@@ -19,7 +19,7 @@ authored scenarios and reviewed open-data slices.
 ## Why
 
 The current benchmark stack is strong enough to guide the first product slice,
-but not yet broad enough to make Pallium fully trustworthy for Pelican-like
+but not yet broad enough to make Pallium fully trustworthy for downstream-agent
 developer workflows.
 
 Pallium now needs a benchmark program that can separate:
@@ -67,3 +67,4 @@ Design source:
 
 This should remain an idea until the current privacy and integration-readiness
 queue is further along.
+

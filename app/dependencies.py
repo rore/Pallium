@@ -108,6 +108,9 @@ def build_service(config: AppConfig | None = None) -> PalliumService:
         semantic_plugins=plugins,
         default_use_case=resolved_config.default_use_case,
         observability=IntegrationDebugLogger(enabled=resolved_config.observability.integration_debug),
+        retention_enabled=resolved_config.retention.enabled,
+        retention_lease_seconds=resolved_config.retention.lease_seconds,
+        retention_batch_size=resolved_config.retention.batch_size,
     )
 
 

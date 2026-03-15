@@ -255,7 +255,7 @@ Application and producer code should own:
 - supplying `visibility_context` on query
 - any user or application authorization logic outside Pallium itself
 
-## Pelican Mapping
+## Downstream Mapping
 
 This model fits the expected downstream shape cleanly:
 
@@ -364,3 +364,4 @@ For the current package, this privacy path is now part of integration readiness,
 - how much visibility detail should be visible in normal query results versus debug or trace outputs?
 - what package or operator gates should later explicit broader sharing require?
 - when broader sharing exists, how should Pallium distinguish full lineage from evidence that is safe to expose at the broader visibility context?
+

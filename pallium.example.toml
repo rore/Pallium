@@ -1,4 +1,10 @@
-﻿default_use_case = "agent_conversation_memory"
+[retention]
+enabled = false
+run_interval_seconds = 300
+lease_seconds = 300
+batch_size = 200
+
+default_use_case = "agent_conversation_memory"
 
 [storage]
 backend = "sqlite"

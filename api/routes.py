@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
@@ -219,6 +219,17 @@ def create_router(service: PalliumService) -> APIRouter:
                 }
                 for item in snapshot.recent_failures
             ],
+            retention={
+                "enabled": snapshot.retention.enabled,
+                "last_run_started_at": snapshot.retention.last_run_started_at,
+                "last_run_completed_at": snapshot.retention.last_run_completed_at,
+                "last_deleted_source_items": snapshot.retention.last_deleted_source_items,
+                "last_deleted_memory_objects": snapshot.retention.last_deleted_memory_objects,
+                "last_deleted_relations": snapshot.retention.last_deleted_relations,
+                "last_deleted_index_entries": snapshot.retention.last_deleted_index_entries,
+                "last_stripped_debug_metadata": snapshot.retention.last_stripped_debug_metadata,
+                "last_skipped_protected_source_items": snapshot.retention.last_skipped_protected_source_items,
+            },
         )
 
     @router.post("/query", response_model=QueryResponse)
