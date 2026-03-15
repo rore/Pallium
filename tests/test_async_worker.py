@@ -158,6 +158,18 @@ def test_run_worker_once_processes_pending_item(test_db_url: str) -> None:
     assert status.memory_object_ids
 
 
+def test_run_worker_stops_cleanly_when_stop_is_requested(test_db_url: str) -> None:
+    exit_code = run_worker(
+        ['--worker-id', 'worker-stop-test'],
+        config=AppConfig(storage_backend='sqlite', sqlite_url=test_db_url, default_use_case='demo_agent_memory'),
+        sleep_fn=lambda _: None,
+        should_stop=lambda: True,
+        install_signal_handlers=False,
+    )
+
+    assert exit_code == 0
+
+
 def test_run_processor_once_processes_pending_item(test_db_url: str) -> None:
     service = _build_service(test_db_url)
     ingest = service.ingest_item(
