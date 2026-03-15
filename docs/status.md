@@ -32,7 +32,7 @@ Current shipped surface:
 
 ## What Is Validated Today
 
-The repo already contains meaningful proof layers:
+The current product focus is covered by:
 
 - regression coverage for structured memory extraction
 - benchmark coverage for repeated-question recall
@@ -42,12 +42,9 @@ The repo already contains meaningful proof layers:
 - public-corpus evaluation workflows for reviewed WildChat and WildBench slices
 - privacy-aware retrieval behavior with debug trace visibility exclusions
 
-This is stronger than a typical concept repo. The project includes both product
-claims and ways to test those claims.
-
 ## What Is Still Experimental
 
-The main open questions are easier to understand in plain language:
+The main open questions are:
 
 - when broader carry-forward memory should win over lower-level evidence
 - how well resumed-work packaging holds up on messier real-world traffic

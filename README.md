@@ -12,9 +12,10 @@ Pallium is a local-first memory sidecar for agents. It helps them remember
 prior decisions, findings, and work state so they can answer follow-up
 questions and resume interrupted work without replaying full transcripts.
 
-Under the hood, Pallium stores selected evidence, derives compact evidence-backed memory, and returns small reusable memory and evidence cards.
-Pallium also keeps public and private scoped memory separate by default in the
-current package.
+Under the hood, Pallium stores selected evidence, derives compact evidence-backed
+memory, and returns small reusable memory and evidence cards. Pallium also
+keeps public and private scoped memory separate by default in the current
+package.
 
 The current product focus is deliberately narrow: agent-mediated conversations,
 repeated questions, resumed-work continuity, and safe scoped recall. In other
@@ -54,39 +55,36 @@ Today Pallium's concrete value is:
 - safe scoped memory boundaries
 - inspectable retrieval when results look wrong
 
-## What Is Shipped Today
+## What Exists Today
 
-This repo already ships a real working product, not just design docs. Today it
-can:
+Current capabilities:
 
-- ingest selected conversation evidence and bounded work artifacts
-- return compact memory and source evidence cards
-- support repeated-question recall and resumed-work continuity
-- enforce fail-closed scoped visibility for public and private memory
-- expose a debug trace for retrieval and visibility behavior
+- selected ingest for conversation evidence and bounded work artifacts
+- compact memory and source evidence cards on query
+- repeated-question recall and resumed-work continuity
+- fail-closed scoped visibility for public and private memory
+- debug trace for retrieval and visibility behavior
 
-Implementation surface:
+Current implementation surface:
 
 - one local-first FastAPI service
 - SQLite-backed storage
 - `POST /items`, `POST /query`, and `POST /query/debug`
 - lexical retrieval plus routed retrieval for the current package
 
-## Why Believe It Is Real?
+## Validation
 
-This is not just a concept repo.
+The repository includes validation for the current product focus:
 
-Pallium already includes a real validation layer over the product claim:
+- structured memory extraction regression coverage
+- repeated-question benchmark coverage
+- resumed-work benchmark coverage
+- routed retrieval evaluation
+- integration-readiness scenarios
+- public-corpus evaluation slices from WildChat and WildBench
+- visibility exclusion trace for scoped retrieval
 
-- structured memory extraction is regression-tested
-- repeated-question recall is benchmarked
-- resumed-work continuity is benchmarked
-- routed retrieval behavior is evaluated
-- integration-readiness scenarios are exercised
-- public-corpus slices from WildChat and WildBench are part of the evaluation
-  path
-- privacy-aware retrieval exposes visibility exclusion trace instead of acting
-  like a black box
+See [docs/validation.md](docs/validation.md) for the validation summary.
 
 ## How Integration Works
 

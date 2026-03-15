@@ -1,16 +1,14 @@
 # Validation
 
-This page summarizes the product-proof surface for Pallium.
+This page summarizes the validation surface for Pallium.
 
-The goal is not to claim that everything is solved. The goal is to make clear
-what the repo already tests, what has passed in the current package, and what
-still needs more proof.
+The goal is to show what the repository currently tests, what has recorded
+baselines or successful runs in the current package, and what still needs more
+proof.
 
 ## What Pallium Currently Tests
 
-The current validation surface covers more than one happy path.
-
-Today the repo includes validation for:
+Today the repository includes validation for:
 
 - structured memory extraction quality
 - repeated-question recall
@@ -24,9 +22,7 @@ Today the repo includes validation for:
 
 ## What That Means In Practice
 
-This is not only a retrieval demo.
-
-The current product claim already has proof layers around:
+The current product focus has explicit checks around:
 
 - whether Pallium can bring back prior conclusions
 - whether it can preserve useful resumed-work state
@@ -35,7 +31,7 @@ The current product claim already has proof layers around:
 - whether the current package still behaves reasonably on messier public-corpus
   slices
 
-## What Has Passed In The Current Package
+## What Has Recorded Baselines Or Successful Runs
 
 Repo-local state currently records successful or committed baselines for:
 
@@ -51,8 +47,6 @@ For the detailed recorded outputs and latest maintained notes, see
 
 ## What Remains Uncertain
 
-Pallium is still honest about the open questions.
-
 The main remaining uncertainties are:
 
 - how far resumed-work packaging generalizes across broader downstream traffic
@@ -64,10 +58,7 @@ The main remaining uncertainties are:
 
 ## Why This Matters
 
-Many projects can describe an architecture. Fewer can show a product claim plus
-an explicit validation layer around it.
-
-Pallium's validation surface is already part of the product story:
+The validation surface is part of how Pallium is developed:
 
 - repeated-question consistency is tested
 - resumed-work continuity is tested
