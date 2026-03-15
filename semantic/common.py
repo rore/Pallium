@@ -25,6 +25,11 @@ INVESTIGATION_PATTERNS = (
     re.compile(r"\bfindings?[:\s]+(?P<body>.+)", re.IGNORECASE),
     re.compile(r"\boutcome[:\s]+(?P<body>.+)", re.IGNORECASE),
     re.compile(r"\bwe found that\s+(?P<body>.+)", re.IGNORECASE),
+    re.compile(r"\bverdict[:\s]+(?P<body>.+)", re.IGNORECASE),
+    re.compile(r"\bhere's the verdict[:\s]+(?P<body>.+)", re.IGNORECASE),
+    re.compile(r"\bthe verdict is\s+(?P<body>.+)", re.IGNORECASE),
+    re.compile(r"\bconclusion[:\s]+(?P<body>.+)", re.IGNORECASE),
+    re.compile(r"\bthe conclusion is\s+(?P<body>.+)", re.IGNORECASE),
 )
 RATIONALE_SPLITTERS = (
     " because ",
@@ -54,6 +59,20 @@ INVESTIGATION_EVIDENCE_PATTERNS = (
     re.compile(r"^\s*findings?[:\s]+", re.IGNORECASE),
     re.compile(r"^\s*outcome[:\s]+", re.IGNORECASE),
     re.compile(r"^\s*we found that\s+", re.IGNORECASE),
+    re.compile(r"^\s*verdict[:\s]+", re.IGNORECASE),
+    re.compile(r"^\s*here's the verdict[:\s]+", re.IGNORECASE),
+    re.compile(r"^\s*the verdict is\s+", re.IGNORECASE),
+    re.compile(r"^\s*conclusion[:\s]+", re.IGNORECASE),
+    re.compile(r"^\s*the conclusion is\s+", re.IGNORECASE),
+)
+
+WEAK_INVESTIGATION_EVIDENCE_PATTERN = re.compile(
+    r"\b(may|might|could|should|watch|monitor|recommend(?:ed|s)?|proposal|prefer(?:s|red)?|need(?:ed|s)?|next step|risk)\b",
+    re.IGNORECASE,
+)
+GROUNDED_INVESTIGATION_MARKER_PATTERN = re.compile(
+    r"\b(verdict|conclusion|root cause|caused by|due to|because)\b",
+    re.IGNORECASE,
 )
 
 
@@ -195,6 +214,24 @@ def has_explicit_investigation_evidence(text: str | None) -> bool:
     return any(pattern.search(text) for pattern in INVESTIGATION_EVIDENCE_PATTERNS)
 
 
+def has_grounded_investigation_evidence(source_item: SourceItem, text: str | None) -> bool:
+    if has_explicit_investigation_evidence(text):
+        return True
+    if not text:
+        return False
+    normalized = text.strip()
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    if lowered not in source_item.content.lower():
+        return False
+    if WEAK_INVESTIGATION_EVIDENCE_PATTERN.search(normalized):
+        return False
+    if has_explicit_decision_evidence(normalized):
+        return False
+    return bool(GROUNDED_INVESTIGATION_MARKER_PATTERN.search(normalized))
+
+
 def _memory_text_view_name(memory_type: str) -> str:
     if memory_type == "decision":
         return "memory_object.decision_context"
@@ -276,7 +313,7 @@ def build_process_result(
         extraction.candidate_type == "investigation_outcome"
         and extraction.investigation_text
         and extraction.investigation_evidence_text
-        and has_explicit_investigation_evidence(extraction.investigation_evidence_text)
+        and has_grounded_investigation_evidence(source_item, extraction.investigation_evidence_text)
     ):
         candidate_payload = {
             "candidate_type": "investigation_outcome",

@@ -57,6 +57,40 @@ def test_llm_plugin_promotes_decision_memory_from_valid_extraction() -> None:
     assert result.memory_objects[0].payload["semantic_provenance"]["prompt_variant"] == "strict_typed_memory_v4_evidence_guarded"
 
 
+def test_llm_plugin_promotes_investigation_outcome_from_explicit_verdict_extraction() -> None:
+    plugin = LLMAgentMemoryPlugin(
+        provider=StubLLMProvider(
+            response=LLMJsonResponse(
+                raw_text="{\"summary\":\"Comparative verdict\",\"candidate_type\":\"investigation_outcome\",\"decision_text\":null,\"decision_evidence_text\":null,\"investigation_text\":\"transaction-transformer had the most significant recent ledger changes\",\"investigation_evidence_text\":\"Here's the verdict: transaction-transformer had the most significant recent ledger changes by a wide margin.\",\"rationale_text\":\"because it touched more tickets, files, and transaction flows\"}",
+                parsed_json={
+                    "summary": "Comparative verdict",
+                    "candidate_type": "investigation_outcome",
+                    "decision_text": None,
+                    "decision_evidence_text": None,
+                    "investigation_text": "transaction-transformer had the most significant recent ledger changes",
+                    "investigation_evidence_text": "Here's the verdict: transaction-transformer had the most significant recent ledger changes by a wide margin.",
+                    "rationale_text": "because it touched more tickets, files, and transaction flows",
+                },
+            )
+        )
+    )
+    source_item = SourceItem(
+        source_type="assistant_output",
+        source_id="investigation-verdict-123",
+        content_type="text/plain",
+        content="Here's the verdict: transaction-transformer had the most significant recent ledger changes by a wide margin. It touched more tickets, files, and transaction flows than ledger-query.",
+        artifact_kind="assistant_output",
+        role="assistant",
+    )
+
+    result = plugin.process_item(source_item)
+
+    assert len(result.annotations) == 2
+    assert result.memory_objects[0].type == "investigation_outcome"
+    assert result.memory_objects[0].payload["investigation_outcome"] == "transaction-transformer had the most significant recent ledger changes"
+    assert result.memory_objects[0].payload["investigation_evidence_text"] == "Here's the verdict: transaction-transformer had the most significant recent ledger changes by a wide margin."
+
+
 def test_llm_plugin_promotes_investigation_outcome_from_valid_extraction() -> None:
     plugin = LLMAgentMemoryPlugin(
         provider=StubLLMProvider(

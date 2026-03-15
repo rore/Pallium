@@ -17,12 +17,24 @@ class ThreadAwareStubProvider:
             payload = _build_task_checkpoint_payload(user_prompt)
         elif "Thread items:" in user_prompt:
             lower = user_prompt.lower()
-            if "schema change and backfill done" in lower and "admin toggle" in lower:
+            if "transaction-transformer had the most significant recent ledger changes" in lower and "local repos only" in lower:
+                payload = {"summary": "unresolved"}
+            elif "schema change and backfill done" in lower and "admin toggle" in lower:
                 payload = {"summary": "Ticket LIB-241 has the schema and backfill done, and the next step is wiring the admin toggle plus retry-path coverage."}
             elif "service token expired" in lower and "batch 313" in lower:
                 payload = {"summary": "The sync retry hit a 401 because the service token expired after 312 reservation records, so the next step is refreshing the token and resuming from batch 313."}
             else:
                 payload = {"summary": "Reservation ordering thread summary with prior findings and decision."}
+        elif "Here's the verdict: transaction-transformer had the most significant recent ledger changes" in user_prompt:
+            payload = {
+                "summary": "Comparative repo verdict.",
+                "candidate_type": "investigation_outcome",
+                "decision_text": None,
+                "decision_evidence_text": None,
+                "investigation_text": "transaction-transformer had the most significant recent ledger changes",
+                "investigation_evidence_text": "Here's the verdict: transaction-transformer had the most significant recent ledger changes by a wide margin.",
+                "rationale_text": "because it touched more tickets, files, and transaction flows than ledger-query",
+            }
         elif "Investigation found that arrival-time ordering skipped hold updates during catalog sync delays." in user_prompt:
             payload = {
                 "summary": "Prior investigation about missing holds.",
@@ -181,6 +193,49 @@ def test_task_checkpoint_is_created_and_superseded(monkeypatch, test_db_url: str
     checkpoints = list({memory.id: memory for item in thread_items for memory in storage.list_memory_objects_for_source_item(item.id) if memory.type == "task_checkpoint"}.values())
     assert len(checkpoints) >= 2
     assert len([item for item in checkpoints if item.lifecycle == "active"]) == 1
+
+
+def test_pelican_style_thread_promotes_verdict_and_uses_summary_fallback(monkeypatch, test_db_url: str) -> None:
+    client = _create_thread_client(monkeypatch, test_db_url)
+    thread_ref = "slack:thread:CLOCAL001:1773572419.417473"
+    session_ref = "pelican:3b1c949210be"
+    payloads = (
+        {"source_type": "chat_message", "source_id": "pelican-ledger-msg-1", "content_type": "text/plain", "content": "summarize the latest changes in ledgers", "artifact_kind": "message", "role": "user", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+        {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-1", "content_type": "text/plain", "content": "Here's what's been happening across the ledger services: transaction-transformer expanded transaction coverage while ledger-query focused on export and ADX plumbing.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+        {"source_type": "chat_message", "source_id": "pelican-ledger-msg-2", "content_type": "text/plain", "content": "Assume you are blocked from opening browsers or using Jira/Slack auth. What is your best next-step plan using only the local repos?", "artifact_kind": "message", "role": "user", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+        {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-2", "content_type": "text/plain", "content": "Understood. No browser auth, no Jira or Slack auth. I'll work with the local repos only and ask you directly if I need anything from those services.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+        {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-3", "content_type": "text/plain", "content": "Best next steps I could take for you: deep-dive into specific commits, compare ledger-query vs transaction-transformer locally, review recent code, map the architecture, or pick up a coding task from the cloned repos.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+        {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-4", "content_type": "text/plain", "content": "Here's the verdict: transaction-transformer had the most significant recent ledger changes by a wide margin. It touched more tickets, files, and core transaction flows than ledger-query.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+        {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-5", "content_type": "text/plain", "content": "Task complete. No Slack message needed. Nothing new to report.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+    )
+    for payload in payloads:
+        client.post("/items", json=payload)
+
+    storage = client.app.state.pallium_service._storage
+    thread_items = storage.list_source_items_for_thread("slack:CLOCAL001", thread_ref)
+    memory_by_source = {
+        item.source_id: storage.list_memory_objects_for_source_item(item.id)
+        for item in thread_items
+    }
+    final_memory = memory_by_source["pelican-ledger-artifact-4"]
+    assert any(memory.type == "investigation_outcome" for memory in final_memory)
+
+    thread_summaries = list({
+        memory.id: memory
+        for item in thread_items
+        for memory in storage.list_memory_objects_for_source_item(item.id)
+        if memory.type == "thread_summary"
+    }.values())
+    active_summary = next(memory for memory in thread_summaries if memory.lifecycle == "active")
+    summary_text = str(active_summary.payload["summary"])
+    assert summary_text.lower() != "unresolved"
+    assert "transaction-transformer" in summary_text.lower()
+    assert "constraint" in summary_text.lower() or "local repos" in summary_text.lower() or "browser" in summary_text.lower()
+
+    selected_work_artifacts = active_summary.payload.get("selected_work_artifacts", [])
+    assert any(item.get("signal_type") == "constraint" for item in selected_work_artifacts)
+    assert any(item.get("signal_type") == "next_step" for item in selected_work_artifacts)
+    assert all("task complete" not in str(item.get("text") or "").lower() for item in selected_work_artifacts)
 
 
 def test_thread_summary_carries_forward_typed_conclusions(monkeypatch, test_db_url: str) -> None:

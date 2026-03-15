@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from collections import OrderedDict
 from typing import Iterable
@@ -22,10 +23,10 @@ THREAD_SUMMARY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string"}, indent=2)
 THREAD_SUMMARY_SYSTEM_PROMPT = (
     "Summarize one agent-mediated conversation thread for future recall. "
     "Return exactly one JSON object and no extra prose. "
-    "Use only facts that are explicitly present in the thread items or carried conclusions. "
-    "Selected work artifacts may describe explicit partial progress, blockers, or next steps; include them only when they are explicitly stated. "
+    "Use only facts that are explicitly present in the thread items, selected work artifacts, or carried conclusions. "
+    "Selected work artifacts may describe explicit partial progress, blockers, next steps, constraints, or durable findings; include them only when they are explicitly stated. "
     "Do not infer causes, recommendations, next steps, risks, or unresolved conclusions that are not stated. "
-    "If the thread is unresolved, say only that it is unresolved. "
+    "Only say the thread is unresolved when the supplied content truly lacks any resolved conclusion, durable constraint, progress state, blocker, or supported next step. "
     "Keep the summary concise: at most two sentences and roughly 60 words."
 )
 PRIMARY_THREAD_ARTIFACTS = {
@@ -40,7 +41,7 @@ SELECTED_THREAD_ARTIFACTS = {
 CARRIED_CONCLUSION_TYPES = {"decision", "investigation_outcome"}
 THREAD_SUMMARY_MAX_TEXT_CHARS = 4000
 THREAD_SUMMARY_TEXT_VIEW = "memory_object.thread_summary_context"
-MAX_SELECTED_WORK_ARTIFACTS = 4
+MAX_SELECTED_WORK_ARTIFACTS = 6
 WORK_SIGNAL_PREFIX_TO_TYPE = (
     ("blocked:", "blocker"),
     ("blocker:", "blocker"),
@@ -51,6 +52,51 @@ WORK_SIGNAL_PREFIX_TO_TYPE = (
     ("partial finding:", "progress_update"),
     ("progress:", "progress_update"),
 )
+LOW_VALUE_ASSISTANT_META_PATTERNS = (
+    re.compile(r"\btask (?:is )?complete\b", re.IGNORECASE),
+    re.compile(r"\bnothing new to report\b", re.IGNORECASE),
+    re.compile(r"\bno response (?:requested|needed)\b", re.IGNORECASE),
+    re.compile(r"\bno (?:chat |email |message )?needed\b", re.IGNORECASE),
+    re.compile(r"\bno (?:chat |email |slack )?message needed\b", re.IGNORECASE),
+)
+CONSTRAINT_TOOL_MARKERS = (
+    "browser",
+    "jira",
+    "slack",
+    "auth",
+    "authenticate",
+    "authentication",
+    "login",
+    "local repo",
+    "local repos",
+)
+CONSTRAINT_MARKERS = (
+    "blocked from",
+    "use only",
+    "instead of",
+    "ask you directly",
+    "ask the user directly",
+    "do not",
+    "don't",
+)
+IMPLICIT_FINDING_MARKERS = (
+    "here's the verdict",
+    "verdict:",
+    "conclusion:",
+    "the conclusion is",
+    "investigation found",
+    "investigation concluded",
+    "analysis found",
+    "we found that",
+)
+IMPLICIT_NEXT_STEP_MARKERS = (
+    "next step",
+    "next steps",
+    "best next step",
+    "best next steps",
+    "plan:",
+)
+WEAK_THREAD_SUMMARY_TEXT = {"unresolved", "still unresolved", "unknown", "no safe summary"}
 PATTERN_MEMORY_PROMPT_SCHEMA_ID = "pattern_memory_extraction"
 PATTERN_MEMORY_PROMPT_SCHEMA_VERSION = "v1"
 PATTERN_MEMORY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "pattern_label": "string"}, indent=2)
@@ -423,7 +469,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
 
         selected_work_artifacts = _collect_selected_work_artifacts(aggregate.source_items)
 
-        thread_material = aggregate.aggregate_text
+        thread_material = _build_thread_material(aggregate.source_items)
         if len(thread_material) > THREAD_SUMMARY_MAX_TEXT_CHARS:
             thread_material = thread_material[:THREAD_SUMMARY_MAX_TEXT_CHARS].rstrip() + "\n[thread items truncated for token budget]"
 
@@ -445,7 +491,20 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         parsed_summary = response.parsed_json.get("summary")
         if not isinstance(parsed_summary, str) or not parsed_summary.strip():
             raise ValueError("thread summary extraction must return a non-empty summary string")
-        summary = parsed_summary.strip()
+        summary = _resolve_thread_summary(
+            parsed_summary.strip(),
+            conclusion_payload=[
+                {
+                    "type": conclusion.type,
+                    "text": conclusion.payload.get("decision")
+                    or conclusion.payload.get("investigation_outcome")
+                    or conclusion.payload.get("summary")
+                    or "",
+                }
+                for conclusion in carried_conclusions
+            ],
+            selected_work_artifacts=selected_work_artifacts,
+        )
 
         semantic_provenance = {
             "semantic_plugin": self.name,
@@ -453,16 +512,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             "prompt_schema_id": THREAD_SUMMARY_PROMPT_SCHEMA_ID,
             "prompt_schema_version": THREAD_SUMMARY_PROMPT_SCHEMA_VERSION,
         }
-        conclusion_payload = [
-            {
-                "type": conclusion.type,
-                "text": conclusion.payload.get("decision")
-                or conclusion.payload.get("investigation_outcome")
-                or conclusion.payload.get("summary")
-                or "",
-            }
-            for conclusion in carried_conclusions
-        ]
+        conclusion_payload = _build_conclusion_payload(carried_conclusions)
         thread_summary_memory = MemoryObject(
             type="thread_summary",
             schema_id=self.thread_summary_schema_id,
@@ -1377,15 +1427,24 @@ def _classify_work_signal_text(artifact_kind: str | None, text: str) -> str:
     normalized_text = text.strip()
     if not normalized_text:
         return ""
-    if (artifact_kind or "").lower() == "todo_snapshot":
-        return "next_step"
     lowered = normalized_text.lower()
+    artifact_kind_normalized = (artifact_kind or "").lower()
+    if artifact_kind_normalized == "todo_snapshot":
+        return "next_step"
     for prefix, signal_type in WORK_SIGNAL_PREFIX_TO_TYPE:
         if lowered.startswith(prefix):
             return signal_type
+    if _extract_constraint_signal_text(normalized_text):
+        return "constraint"
+    if any(marker in lowered for marker in IMPLICIT_FINDING_MARKERS):
+        return "key_finding"
+    if any(marker in lowered for marker in IMPLICIT_NEXT_STEP_MARKERS):
+        return "next_step"
     if any(marker in lowered for marker in ("blocked", "blocker", "failed")):
         return "blocker"
-    return "progress_update"
+    if artifact_kind_normalized in SELECTED_WORK_ARTIFACT_KINDS:
+        return "progress_update"
+    return ""
 
 
 
@@ -1868,6 +1927,20 @@ def _parse_string_list(value: object) -> list[str]:
     return parsed
 
 
+def _build_conclusion_payload(conclusions: Iterable[MemoryObject]) -> list[dict[str, str]]:
+    payload: list[dict[str, str]] = []
+    for conclusion in conclusions:
+        text = str(
+            conclusion.payload.get("decision")
+            or conclusion.payload.get("investigation_outcome")
+            or conclusion.payload.get("summary")
+            or ""
+        ).strip()
+        if text:
+            payload.append({"type": conclusion.type, "text": text})
+    return payload
+
+
 def _should_build_task_checkpoint(selected_work_artifacts: list[dict[str, str]]) -> bool:
     signal_types = {item.get("signal_type") for item in selected_work_artifacts if item.get("text")}
     return bool(signal_types.intersection({"progress_update", "blocker", "next_step"}))
@@ -1907,6 +1980,7 @@ def _default_task_checkpoint_state(summary: str, selected_work_artifacts: list[d
     fragments: list[str] = []
     progress_updates = _signal_texts(selected_work_artifacts, "progress_update")
     blockers = _signal_texts(selected_work_artifacts, "blocker")
+    constraints = _signal_texts(selected_work_artifacts, "constraint")
     if progress_updates:
         fragments.append(progress_updates[0])
     if blockers:
@@ -1915,6 +1989,8 @@ def _default_task_checkpoint_state(summary: str, selected_work_artifacts: list[d
         next_steps = _signal_texts(selected_work_artifacts, "next_step")
         if next_steps:
             fragments.append(f"Pending: {next_steps[0]}")
+    if not fragments and constraints:
+        fragments.append(f"Constraint: {constraints[0]}")
     if fragments:
         return " ".join(fragments)
     return summary
@@ -1926,9 +2002,10 @@ def _default_task_checkpoint_findings(conclusions: list[dict[str, str]], selecte
         text = str(conclusion.get("text") or "").strip()
         if text and text not in findings:
             findings.append(text)
-    for text in _signal_texts(selected_work_artifacts, "progress_update"):
-        if text not in findings:
-            findings.append(text)
+    for signal_type in ("key_finding", "progress_update", "constraint"):
+        for text in _signal_texts(selected_work_artifacts, signal_type):
+            if text not in findings:
+                findings.append(text)
     return findings[:3]
 
 
@@ -1968,26 +2045,155 @@ def _supports_thread_aggregation(source_item: SourceItem) -> bool:
     return artifact_key in PRIMARY_THREAD_ARTIFACTS or artifact_key in SELECTED_THREAD_ARTIFACTS
 
 
+def _build_thread_material(source_items: list[SourceItem]) -> str:
+    filtered_lines = [
+        f"{item.role or 'unknown'}/{item.artifact_kind or 'unknown'}: {item.content.strip()}"
+        for item in source_items
+        if item.content.strip() and not _is_low_value_meta_artifact(item)
+    ]
+    if filtered_lines:
+        return "`n".join(filtered_lines)
+    return "`n".join(
+        f"{item.role or 'unknown'}/{item.artifact_kind or 'unknown'}: {item.content.strip()}"
+        for item in source_items
+        if item.content.strip()
+    )
+
+
+def _resolve_thread_summary(
+    summary: str,
+    *,
+    conclusion_payload: list[dict[str, str]],
+    selected_work_artifacts: list[dict[str, str]],
+) -> str:
+    if not _thread_summary_needs_fallback(summary, conclusion_payload, selected_work_artifacts):
+        return summary
+    return _build_thread_summary_fallback(conclusion_payload, selected_work_artifacts)
+
+
+def _thread_summary_needs_fallback(
+    summary: str,
+    conclusion_payload: list[dict[str, str]],
+    selected_work_artifacts: list[dict[str, str]],
+) -> bool:
+    stripped = summary.strip()
+    if not stripped:
+        return True
+    if not (
+        conclusion_payload
+        or _signal_texts(selected_work_artifacts, "key_finding")
+        or _signal_texts(selected_work_artifacts, "constraint")
+        or _signal_texts(selected_work_artifacts, "progress_update")
+        or _signal_texts(selected_work_artifacts, "blocker")
+        or _signal_texts(selected_work_artifacts, "next_step")
+    ):
+        return False
+    lowered = stripped.lower()
+    if lowered in WEAK_THREAD_SUMMARY_TEXT or lowered.startswith("unresolved"):
+        return True
+    return _is_low_value_meta_text(stripped)
+
+
+def _build_thread_summary_fallback(
+    conclusion_payload: list[dict[str, str]],
+    selected_work_artifacts: list[dict[str, str]],
+) -> str:
+    sentences: list[str] = []
+    primary = _first_thread_state_text(conclusion_payload, selected_work_artifacts, ("key_finding", "progress_update", "blocker", "next_step"), prefer_conclusions=True)
+    if primary:
+        sentences.append(_ensure_sentence(primary))
+    constraint = _first_thread_state_text(conclusion_payload, selected_work_artifacts, ("constraint",))
+    if constraint and _normalize_summary_fragment(constraint) != _normalize_summary_fragment(primary):
+        sentences.append(_ensure_sentence(f"Constraint: {constraint}"))
+    elif not constraint:
+        blocker = _first_thread_state_text(conclusion_payload, selected_work_artifacts, ("blocker",))
+        next_step = _first_thread_state_text(conclusion_payload, selected_work_artifacts, ("next_step",))
+        progress = _first_thread_state_text(conclusion_payload, selected_work_artifacts, ("progress_update",))
+        secondary = ""
+        if blocker and next_step:
+            secondary = f"Blocked by {blocker}; next step is {next_step}"
+        elif next_step:
+            secondary = f"Next step: {next_step}"
+        elif blocker:
+            secondary = f"Blocked by {blocker}"
+        elif progress and _normalize_summary_fragment(progress) != _normalize_summary_fragment(primary):
+            secondary = f"Progress: {progress}"
+        if secondary:
+            sentences.append(_ensure_sentence(secondary))
+    if not sentences:
+        return "The thread recorded explicit conversation state for future recall."
+    return " ".join(sentences[:2])
+
+
+def _first_thread_state_text(
+    conclusion_payload: list[dict[str, str]],
+    selected_work_artifacts: list[dict[str, str]],
+    signal_types: tuple[str, ...],
+    *,
+    prefer_conclusions: bool = False,
+) -> str:
+    if prefer_conclusions:
+        for conclusion in conclusion_payload:
+            text = str(conclusion.get("text") or "").strip()
+            if text:
+                return text
+    for signal_type in signal_types:
+        texts = _signal_texts(selected_work_artifacts, signal_type)
+        if texts:
+            return texts[0]
+    if not prefer_conclusions:
+        return ""
+    return ""
+
+
+def _ensure_sentence(text: str) -> str:
+    normalized = text.strip()
+    if not normalized:
+        return ""
+    normalized = normalized[0].upper() + normalized[1:]
+    if normalized[-1] not in ".!?":
+        normalized += "."
+    return normalized
+
+
+def _normalize_summary_fragment(text: str) -> str:
+    return str(text or "").strip().lower().rstrip(".!?")
+
+
 def _collect_selected_work_artifacts(source_items: list[SourceItem]) -> list[dict[str, str]]:
     selected: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
     for source_item in source_items:
-        if not _is_selected_work_artifact(source_item):
+        artifact = _build_selected_work_artifact(source_item)
+        if artifact is None:
             continue
-        text = source_item.content.strip()
-        if not text:
+        key = (str(artifact["signal_type"]), str(artifact["text"]))
+        if key in seen:
             continue
-        selected.append(
-            {
-                "artifact_kind": str(source_item.artifact_kind),
-                "signal_type": _classify_work_signal(source_item),
-                "source_item_id": source_item.id,
-                "occurred_at": source_item.occurred_at.isoformat() if source_item.occurred_at else "",
-                "text": text,
-            }
-        )
+        seen.add(key)
+        selected.append(artifact)
     if len(selected) <= MAX_SELECTED_WORK_ARTIFACTS:
         return selected
     return selected[-MAX_SELECTED_WORK_ARTIFACTS:]
+
+
+def _build_selected_work_artifact(source_item: SourceItem) -> dict[str, str] | None:
+    text = source_item.content.strip()
+    if not text:
+        return None
+    if _is_low_value_meta_artifact(source_item):
+        return None
+    signal_type = _classify_work_signal(source_item)
+    if not signal_type:
+        return None
+    artifact_kind = str(source_item.artifact_kind or source_item.source_type)
+    return {
+        "artifact_kind": artifact_kind,
+        "signal_type": signal_type,
+        "source_item_id": source_item.id,
+        "occurred_at": source_item.occurred_at.isoformat() if source_item.occurred_at else "",
+        "text": text,
+    }
 
 
 def _is_selected_work_artifact(source_item: SourceItem) -> bool:
@@ -1996,13 +2202,54 @@ def _is_selected_work_artifact(source_item: SourceItem) -> bool:
 
 def _classify_work_signal(source_item: SourceItem) -> str:
     artifact_kind = (source_item.artifact_kind or "").lower()
-    lowered = source_item.content.strip().lower()
-    if artifact_kind == "todo_snapshot":
+    text = source_item.content.strip()
+    if not text:
+        return ""
+    if _is_selected_work_artifact(source_item):
+        return _classify_work_signal_text(artifact_kind, text)
+    artifact_key = (artifact_kind, (source_item.role or "").lower())
+    if artifact_key not in PRIMARY_THREAD_ARTIFACTS:
+        return ""
+    return _classify_implicit_work_signal(source_item)
+
+
+def _classify_implicit_work_signal(source_item: SourceItem) -> str:
+    text = source_item.content.strip()
+    lowered = text.lower()
+    if _extract_constraint_signal_text(text):
+        return "constraint"
+    if any(marker in lowered for marker in IMPLICIT_FINDING_MARKERS):
+        return "key_finding"
+    if any(marker in lowered for marker in IMPLICIT_NEXT_STEP_MARKERS):
         return "next_step"
-    for prefix, signal_type in WORK_SIGNAL_PREFIX_TO_TYPE:
-        if lowered.startswith(prefix):
-            return signal_type
-    return "progress_update"
+    if any(prefix in lowered for prefix in ("blocked:", "blocker:", "failed attempt:", "failure:")):
+        return "blocker"
+    return ""
+
+
+def _extract_constraint_signal_text(text: str) -> str:
+    lowered = text.lower()
+    if not any(marker in lowered for marker in CONSTRAINT_MARKERS):
+        return ""
+    if not any(tool_marker in lowered for tool_marker in CONSTRAINT_TOOL_MARKERS):
+        return ""
+    return text.strip()
+
+
+def _is_low_value_meta_artifact(source_item: SourceItem) -> bool:
+    if (source_item.role or "").lower() != "assistant":
+        return False
+    artifact_kind = (source_item.artifact_kind or "").lower()
+    if artifact_kind not in {"assistant_output", "tool_use_summary", "unknown", ""}:
+        return False
+    return _is_low_value_meta_text(source_item.content)
+
+
+def _is_low_value_meta_text(text: str) -> bool:
+    normalized = text.strip()
+    if not normalized:
+        return False
+    return any(pattern.search(normalized) for pattern in LOW_VALUE_ASSISTANT_META_PATTERNS)
 
 
 def _format_selected_work_artifacts(selected_work_artifacts: list[dict[str, str]]) -> str:

@@ -68,18 +68,19 @@ If you are not certain the source contains explicit evidence, return candidate_t
 
 Your task is conservative typed-memory extraction with evidence grounding.
 A decision exists only when the source explicitly records a concrete choice that has already been made.
-An investigation_outcome exists only when the source explicitly records an established finding, root cause, conclusion, or diagnostic outcome.
+An investigation_outcome exists only when the source explicitly records an established finding, root cause, conclusion, diagnostic outcome, or evidence-backed analytical verdict.
 If the source only states a need, a symptom, a proposal, a preference, a recommendation, a status update, or something to watch, candidate_type must be null.
 
 Evidence rule:
-- candidate_type may be non-null only if decision_evidence_text or investigation_evidence_text contains the exact explicit cue proving the type.
+- candidate_type may be non-null only if decision_evidence_text or investigation_evidence_text quotes an exact explicit statement from the source that proves the type.
 - Valid decision cues are phrasing like: "Decision:", "we decided", "we chose", "chosen approach", or "we will use".
-- Valid investigation cues are phrasing like: "Root cause:", "Investigation found", "Investigation concluded", "Analysis found", "Findings:", "Outcome:", or "We found that".
+- Valid investigation cues include explicit finding or conclusion phrasing such as: "Root cause:", "Investigation found", "Investigation concluded", "Analysis found", "Findings:", "Outcome:", "We found that", "Verdict:", "Here's the verdict:", "Conclusion:", or "The conclusion is".
+- Explicit analytical verdicts are allowed when they clearly state a resolved conclusion from the source, for example which repo was more significant and why.
 - Statements such as "we need", "we should watch", "was detected", "leaned toward", or "prefer" are not valid evidence and must produce candidate_type null.
 
 Source-type guidance:
 - For `decision_note`, require explicit committed-choice wording rather than inferred intent.
-- For `investigation_summary`, `incident_note`, `tool_summary`, and `assistant_artifact`, allow investigation_outcome only when the established finding is explicit.
+- For `investigation_summary`, `incident_note`, `tool_summary`, `assistant_artifact`, and `assistant_output`, allow investigation_outcome only when the established finding or analytical verdict is explicit.
 - For `chat_message`, `meeting_summary`, `status_update`, and `notification`, default to null unless the text itself contains one of the valid explicit cues above.
 
 When candidate_type is `decision`, fill only decision_text and decision_evidence_text.
