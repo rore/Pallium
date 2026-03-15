@@ -12,13 +12,21 @@ Pallium is a local-first memory sidecar for agents. It helps them remember
 prior decisions, findings, and work state so they can answer follow-up
 questions and resume interrupted work without replaying full transcripts.
 
-Under the hood, the current slice stores selected evidence, derives compact
-evidence-backed memory, and returns small reusable memory and evidence cards.
+Under the hood, Pallium stores selected evidence, derives compact evidence-backed memory, and returns small reusable memory and evidence cards.
+Pallium also keeps public and private scoped memory separate by default in the
+current package.
 
-The current product slice is deliberately narrow: agent-mediated conversations,
-repeated questions, resumed-work continuity, and privacy-safe scoped memory.
-In other words, Pallium is currently optimized for conversation continuity, not
-general knowledge memory.
+The current product focus is deliberately narrow: agent-mediated conversations,
+repeated questions, resumed-work continuity, and safe scoped recall. In other
+words, Pallium is optimized for conversation continuity, not general knowledge
+memory.
+
+A typical use case:
+
+- yesterday the agent investigated an issue and chose an approach
+- today you ask "why did we choose this?" or "where did we leave off?"
+- Pallium returns a compact decision or task checkpoint plus the supporting
+  evidence
 
 ## Why Not Just Transcript Search, Summaries, Or A Vector DB?
 
@@ -32,7 +40,7 @@ Common approaches each solve part of the problem and miss part of it:
 - runtime-local state helps within a session, but usually does not give you
   reusable cross-thread memory with clear evidence and scoped visibility rules
 
-Pallium's current approach is to keep small reusable memory for agent-mediated
+Pallium's approach is to keep small reusable memory for agent-mediated
 conversations, especially repeated questions and resumed work, while preserving
 links back to supporting evidence.
 
@@ -40,15 +48,15 @@ links back to supporting evidence.
 
 Today Pallium's concrete value is:
 
-- better follow-up consistency on repeated questions
-- better resumed-work continuity after interruptions
-- scoped memory that keeps public and private context separated
-- compact answerable context instead of transcript replay
-- a debug path that explains why retrieval returned what it did
+- fewer repeated rediscovery cycles
+- more consistent follow-up answers
+- better resumed-work continuity
+- safe scoped memory boundaries
+- inspectable retrieval when results look wrong
 
 ## What Is Shipped Today
 
-This repo already ships a real working slice, not just design docs. Today it
+This repo already ships a real working product, not just design docs. Today it
 can:
 
 - ingest selected conversation evidence and bounded work artifacts
@@ -62,18 +70,23 @@ Implementation surface:
 - one local-first FastAPI service
 - SQLite-backed storage
 - `POST /items`, `POST /query`, and `POST /query/debug`
-- lexical retrieval plus package-owned routed retrieval for the current slice
+- lexical retrieval plus routed retrieval for the current package
 
 ## Why Believe It Is Real?
 
-The repo includes proof, not just claims:
+This is not just a concept repo.
 
-- regression coverage for typed memory extraction
-- benchmarks for repeated-question recall
-- benchmarks for resumed-work continuity
-- routed retrieval evaluation for choosing between memory and source evidence
-- reviewed public-corpus evaluation slices from WildChat and WildBench
-- privacy-aware retrieval with visibility exclusion trace
+Pallium already includes a real validation layer over the product claim:
+
+- structured memory extraction is regression-tested
+- repeated-question recall is benchmarked
+- resumed-work continuity is benchmarked
+- routed retrieval behavior is evaluated
+- integration-readiness scenarios are exercised
+- public-corpus slices from WildChat and WildBench are part of the evaluation
+  path
+- privacy-aware retrieval exposes visibility exclusion trace instead of acting
+  like a black box
 
 ## How Integration Works
 
@@ -86,12 +99,24 @@ The runtime model is simple:
 Use `POST /query/debug` when you need to understand missing results, routed
 layer choice, or visibility exclusions.
 
-For the current slice, the best inputs are:
+For the current product focus, the best inputs are:
 
 - agent-mediated user messages
 - final assistant outputs
 - selected assistant work artifacts such as explicit blocker summaries or next
   steps
+
+## Best Fit Today
+
+- agent-mediated follow-up questions
+- resumed investigations or implementation work
+- scoped public/private continuity
+
+## Poor Fit Today
+
+- full transcript archive
+- broad workspace knowledge search
+- general-purpose org memory
 
 ## Evaluate It In 10 Minutes
 
@@ -126,18 +151,15 @@ The current repo does not yet ship:
 - cross-container bounded memory
 - broad ambient workspace ingestion
 
-## Roadmap UI
-
-Pallium uses the vendored minimap app in `tools/minimap/` as the local UI for its roadmap files. If you want to inspect the roadmap, current focus, and item details visually instead of reading the markdown files directly, run `node tools/minimap/server.js` from the repo root and open the printed local URL.
-
 ## Read Next
 
-Recommended reading order:
+Choose the next doc by job:
 
-- [docs/problem-and-approach.md](docs/problem-and-approach.md)
-- [docs/getting-started.md](docs/getting-started.md)
-- [docs/agent-integration.md](docs/agent-integration.md)
-- [docs/privacy-and-visibility.md](docs/privacy-and-visibility.md)
-- [docs/status.md](docs/status.md)
-- [docs/overview.md](docs/overview.md)
-- [docs/context/architecture.md](docs/context/architecture.md)
+- problem and value: [docs/problem-and-approach.md](docs/problem-and-approach.md)
+- 10-minute tryout: [docs/getting-started.md](docs/getting-started.md)
+- integration model: [docs/agent-integration.md](docs/agent-integration.md)
+- privacy and scoped recall: [docs/privacy-and-visibility.md](docs/privacy-and-visibility.md)
+- validation and evidence: [docs/validation.md](docs/validation.md)
+- current maturity: [docs/status.md](docs/status.md)
+- deeper concepts: [docs/overview.md](docs/overview.md)
+- architecture: [docs/context/architecture.md](docs/context/architecture.md)

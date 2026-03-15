@@ -26,28 +26,30 @@ Current shipped surface:
 - scoped `visibility_context` enforcement with fail-closed behavior in the
   current package
 - routed retrieval over memory and source evidence
-- thread-level carry-forward and resumed-work checkpoints in the current slice
-- async ingest processors with serialized same-thread rebuild coordination for thread summaries and task checkpoints
+- thread-level carry-forward and resumed-work checkpoints in today's product
+  focus
+- background processing for ingest and same-thread memory rebuilds
 
 ## What Is Validated Today
 
 The repo already contains meaningful proof layers:
 
-- semantic regression coverage for the typed extraction path
-- recurring-question benchmark coverage
-- developer-work resumption benchmark coverage
-- routed retrieval benchmark coverage
+- regression coverage for structured memory extraction
+- benchmark coverage for repeated-question recall
+- benchmark coverage for resumed-work continuity
+- routed retrieval evaluation for choosing between memory and source evidence
+- integration-readiness scenarios for the current package
 - public-corpus evaluation workflows for reviewed WildChat and WildBench slices
 - privacy-aware retrieval behavior with debug trace visibility exclusions
 
 This is stronger than a typical concept repo. The project includes both product
 claims and ways to test those claims.
 
-## Still Being Tuned Or Proven
+## What Is Still Experimental
 
 The main open questions are easier to understand in plain language:
 
-- when higher-level carry-forward memory should win over lower-level evidence
+- when broader carry-forward memory should win over lower-level evidence
 - how well resumed-work packaging holds up on messier real-world traffic
 - the current routing boundary between broad recall, precise fact lookup, and
   work resumption
@@ -61,14 +63,14 @@ The main open questions are easier to understand in plain language:
 - interrupted investigations or implementation work
 - scoped public/private continuity
 
-## Not The Best Fit Today
+## Poor Fit Today
 
 - broad workspace search
 - raw transcript storage
 - fully shared memory across many contexts
 - general workflow orchestration
 
-## Likely Next Bets
+## What Probably Comes Next
 
 The next likely additions are:
 
@@ -83,5 +85,6 @@ The next likely additions are:
 - 10-minute local walkthrough: [getting-started.md](getting-started.md)
 - runtime integration: [agent-integration.md](agent-integration.md)
 - privacy model: [privacy-and-visibility.md](privacy-and-visibility.md)
+- validation and evidence: [validation.md](validation.md)
 - concepts and model: [overview.md](overview.md)
 - stable architecture truth: [context/architecture.md](context/architecture.md)

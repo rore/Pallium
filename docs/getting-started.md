@@ -51,14 +51,14 @@ Optional verification:
 .\.venv\Scripts\python.exe -m app.run --host 127.0.0.1 --port 8000 --processors 1
 ```
 
-## 3. Run The Bundled Sample Flow
-
 If you want the split mode instead, use:
 
 ```powershell
 .\.venv\Scripts\python.exe -m app.run serve --host 127.0.0.1 --port 8000
 .\.venv\Scripts\python.exe -m app.run processor
 ```
+
+## 3. Run The Bundled Sample Flow
 
 Then, in another terminal:
 
@@ -96,6 +96,7 @@ loop onto your own runtime:
 
 - [agent-integration.md](agent-integration.md)
 - [privacy-and-visibility.md](privacy-and-visibility.md)
+- [validation.md](validation.md)
 
 ## What You Just Proved
 
@@ -104,5 +105,5 @@ In one short run, you verified that the current repo already ships:
 - a local service you can run yourself
 - scoped ingest for agent-mediated events
 - compact retrieval over memory plus evidence
-- resumed-work continuity support in the current slice
+- resumed-work continuity support in today's product focus
 - a debuggable retrieval path

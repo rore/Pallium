@@ -57,9 +57,9 @@ you need:
 - explainable evidence links
 - scoped memory that survives beyond one in-memory session
 
-## Pallium's Current Approach
+## Pallium's Approach Today
 
-The current Pallium slice does five things:
+Right now Pallium does five things:
 
 1. stores selected evidence instead of mirroring everything
 2. derives compact reusable memory from that evidence
@@ -91,8 +91,8 @@ For the current package, those high-value inputs are mostly:
 
 ## Why Evidence-Backed Memory Matters
 
-The current slice is not only trying to retrieve relevant text. It is trying to
-preserve reusable context with traceable support.
+The current product focus is not only trying to retrieve relevant text. It is
+trying to preserve reusable context with traceable support.
 
 That means Pallium can return:
 
@@ -102,7 +102,7 @@ That means Pallium can return:
 This is a better fit for repeated-question and resumed-work scenarios than
 relying only on raw retrieval.
 
-## Current Product Slice
+## Current Product Focus
 
 The present claim is intentionally narrow:
 
@@ -137,4 +137,5 @@ Poor fit today:
 - For a live local walkthrough, read [getting-started.md](getting-started.md).
 - For runtime usage, read [agent-integration.md](agent-integration.md).
 - For privacy rules, read [privacy-and-visibility.md](privacy-and-visibility.md).
+- For product proof, read [validation.md](validation.md).
 - For internal concepts, read [overview.md](overview.md).

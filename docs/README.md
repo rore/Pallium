@@ -12,16 +12,17 @@ For a new developer evaluating the project:
 3. `docs/getting-started.md`
 4. `docs/agent-integration.md`
 5. `docs/privacy-and-visibility.md`
-6. `docs/status.md`
-7. `docs/overview.md`
-8. `docs/context/architecture.md`
+6. `docs/validation.md`
+7. `docs/status.md`
+8. `docs/overview.md`
+9. `docs/context/architecture.md`
 
 ## Ownership
 
 - docs/
   Developer-facing entry points and practical guides.
   Use this layer for evaluator flow, practical onboarding, integration, status,
-  and concepts.
+  validation, and concepts.
 
 - roadmap/
   Canonical planning workspace. Use it for queue, ordering, scope, milestones,
