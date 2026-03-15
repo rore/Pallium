@@ -1547,6 +1547,48 @@ function buildBoardGroupsWithMovedItem(itemId, targetGroupIndex, boardGroups = b
   return groups;
 }
 
+function buildBoardGroupsWithPlacedItem(itemId, targetGroupIndex, beforeItemId = "", boardGroups = buildBoardGroupsPayload()) {
+  if (!itemId || !Number.isInteger(targetGroupIndex) || targetGroupIndex < 0 || targetGroupIndex >= boardGroups.length) {
+    return null;
+  }
+
+  const sourceGroupIndex = boardGroups.findIndex((group) => group.itemIds.includes(itemId));
+  if (sourceGroupIndex < 0) {
+    return null;
+  }
+
+  const groups = boardGroups.map((group) => ({
+    ...group,
+    itemIds: group.itemIds.filter((currentId) => currentId !== itemId),
+  }));
+
+  const targetItems = [...groups[targetGroupIndex].itemIds];
+  let insertIndex = targetItems.length;
+
+  if (beforeItemId) {
+    const nextIndex = targetItems.indexOf(beforeItemId);
+    if (nextIndex >= 0) {
+      insertIndex = nextIndex;
+    }
+  }
+
+  targetItems.splice(insertIndex, 0, itemId);
+  groups[targetGroupIndex] = {
+    ...groups[targetGroupIndex],
+    itemIds: targetItems,
+  };
+
+  const unchanged = boardGroups.every((group, index) => {
+    if (group.itemIds.length !== groups[index].itemIds.length) {
+      return false;
+    }
+    return group.itemIds.every((currentId, itemIndex) => currentId === groups[index].itemIds[itemIndex]);
+  });
+
+  return unchanged ? null : groups;
+}
+
+
 function clearBoardDragState() {
   state.dragItemId = null;
   state.dragColumnIndex = null;
@@ -1624,6 +1666,43 @@ async function persistBoardColumnMove(itemId, targetGroupIndex) {
   }
 }
 
+async function persistBoardItemPlacement(itemId, targetGroupIndex, beforeItemId = "") {
+  if (!state.workspace || !itemId || !Number.isInteger(targetGroupIndex) || targetGroupIndex < 0 || targetGroupIndex >= state.workspace.boardGroups.length) {
+    return;
+  }
+
+  const groups = buildBoardGroupsWithPlacedItem(itemId, targetGroupIndex, beforeItemId);
+  if (!groups) {
+    return;
+  }
+
+  setBanner("Updating board order...");
+
+  try {
+    const workspace = await fetchJson("/api/board", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groups }),
+    });
+
+    const keepItemOpen = !shouldUseEditorOverlay() || (state.editorOverlayOpen && state.selectedItemId === itemId);
+    state.workspace = workspace;
+    if (!keepItemOpen) {
+      state.editorOverlayOpen = false;
+    }
+    syncWorkspaceChrome();
+    await syncVisibleSelection({
+      preferredItemId: keepItemOpen ? itemId : "",
+      replaceRoute: true,
+      forceReloadItem: keepItemOpen,
+    });
+    setBanner("Board updated.", "success");
+  } catch (error) {
+    setBanner(error.message, "error");
+  }
+}
+
+
 async function persistDerivedLensMove(itemId, targetValue) {
   const activeLens = getActiveLensDefinition();
   if (!activeLens || activeLens.key === DEFAULT_LENS_KEY || !activeLens.draggable || !targetValue) {
@@ -1695,9 +1774,12 @@ function renderBoardColumnsMode() {
       const dragHandle = allowColumnDrag
         ? `<span class="board-column-card-drag" data-drag-item-id="${escapeHtml(item.id)}" draggable="true" role="button" tabindex="0" aria-label="Move ${escapeHtml(item.title)}" title="Drag to move ${escapeHtml(item.title)}">::</span>`
         : "";
+      const placementAttributes = boardGrouping && allowColumnDrag
+        ? `data-board-drop-group-index="${group.originalIndex}" data-board-drop-before-id="${escapeHtml(item.id)}"`
+        : "";
 
       return `
-        <article class="board-column-card${activeClass}" title="${escapeHtml(item.title)}">
+        <article class="board-column-card${activeClass}${placementAttributes ? " board-column-dropzone" : ""}" title="${escapeHtml(item.title)}" ${placementAttributes}>
           <div class="board-column-card-main" data-item-dblopen="${escapeHtml(item.id)}" title="${escapeHtml(item.title)}">
             ${buildBoardCardBodyMarkup(item, activeLens?.key)}
           </div>
@@ -1775,7 +1857,7 @@ function renderBoardColumnsMode() {
       });
     }
 
-    for (const dropZone of boardGroupsElement.querySelectorAll("[data-board-drop-group-index], [data-lens-drop-value]")) {
+    for (const dropZone of boardGroupsElement.querySelectorAll("[data-board-drop-group-index], [data-lens-drop-value], [data-board-drop-before-id]")) {
       dropZone.addEventListener("dragover", (event) => {
         if (!state.dragItemId) {
           return;
@@ -1805,6 +1887,15 @@ function renderBoardColumnsMode() {
         state.dragClickSuppressUntil = Date.now() + 350;
         clearBoardDragState();
         if (!itemId) {
+          return;
+        }
+
+        if (dropZone.dataset.boardDropBeforeId) {
+          void persistBoardItemPlacement(
+            itemId,
+            Number(dropZone.dataset.boardDropGroupIndex),
+            dropZone.dataset.boardDropBeforeId || "",
+          );
           return;
         }
 
