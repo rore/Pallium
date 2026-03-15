@@ -60,6 +60,7 @@ def test_memory_routing_benchmark_captures_expected_layer_choices(monkeypatch, t
     results = {item['scenario_id']: item for item in _read_jsonl(run_dir / 'results.jsonl')}
 
     assert results['broad-recall-cross-thread']['top_layer'] == 'pattern_memory'
+    assert results['broad-recall-cross-thread']['routing_intent'] == 'broad_recall'
     assert results['answer-continuity-repeat']['top_layer'] == 'continuity_memory'
     assert results['precise-fact-ordering']['top_layer'] == 'lower_level_memory'
     assert results['broad-recall-paraphrase']['top_layer'] == 'pattern_memory'

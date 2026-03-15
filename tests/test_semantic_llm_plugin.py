@@ -185,7 +185,8 @@ def test_llm_plugin_flags_low_value_meta_without_promoting_typed_memory() -> Non
     result = plugin.process_item(source_item)
 
     assert len(result.annotations) == 1
-    assert result.memory_objects[0].type == "discussion_summary"
+    assert result.memory_objects == []
+    assert result.thread_rebuild_requested is False
     assert result.annotations[0].payload["semantic_signals"]["is_low_value_meta"] is True
     assert result.source_item_metadata_updates[source_item.id][SEMANTIC_SIGNAL_METADATA_KEY]["is_low_value_meta"] is True
 

@@ -272,12 +272,17 @@ def build_process_result(
         )
     ]
 
+    memory_objects: list[MemoryObject] = []
+    relations: list[Relation] = []
+    index_entries = []
+
     if (
         extraction.candidate_type == "decision"
         and extraction.decision_text
         and extraction.decision_evidence_text
         and has_explicit_decision_evidence(extraction.decision_evidence_text)
     ):
+        canonical_key = normalize_for_index(extraction.decision_text)
         candidate_payload = {
             "candidate_type": "decision",
             "decision_text": extraction.decision_text,
@@ -299,19 +304,22 @@ def build_process_result(
                 payload=candidate_payload,
             )
         )
-        memory_object = MemoryObject(
-            type="decision",
-            schema_id=f"{schema_prefix}.decision",
-            schema_version="v1",
-            payload={
-                "decision": extraction.decision_text,
-                "decision_evidence_text": extraction.decision_evidence_text,
-                "rationale": extraction.rationale_text,
-                "source_type": source_item.source_type,
-                "source_id": source_item.source_id,
-                **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
-            },
-            visibility_context=source_item.visibility_context,
+        memory_objects.append(
+            MemoryObject(
+                type="decision",
+                schema_id=f"{schema_prefix}.decision",
+                schema_version="v1",
+                payload={
+                    "decision": extraction.decision_text,
+                    "decision_evidence_text": extraction.decision_evidence_text,
+                    "rationale": extraction.rationale_text,
+                    "canonical_key": canonical_key,
+                    "source_type": source_item.source_type,
+                    "source_id": source_item.source_id,
+                    **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
+                },
+                visibility_context=source_item.visibility_context,
+            )
         )
         index_source = " ".join(
             part
@@ -320,6 +328,7 @@ def build_process_result(
                 extraction.decision_text or "",
                 extraction.decision_evidence_text or "",
                 extraction.rationale_text or "",
+                canonical_key,
             )
             if part
         )
@@ -329,6 +338,7 @@ def build_process_result(
         and extraction.investigation_evidence_text
         and has_grounded_investigation_evidence(source_item, extraction.investigation_evidence_text)
     ):
+        canonical_key = normalize_for_index(extraction.investigation_text)
         candidate_payload = {
             "candidate_type": "investigation_outcome",
             "investigation_text": extraction.investigation_text,
@@ -350,19 +360,22 @@ def build_process_result(
                 payload=candidate_payload,
             )
         )
-        memory_object = MemoryObject(
-            type="investigation_outcome",
-            schema_id=f"{schema_prefix}.investigation_outcome",
-            schema_version="v1",
-            payload={
-                "investigation_outcome": extraction.investigation_text,
-                "investigation_evidence_text": extraction.investigation_evidence_text,
-                "rationale": extraction.rationale_text,
-                "source_type": source_item.source_type,
-                "source_id": source_item.source_id,
-                **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
-            },
-            visibility_context=source_item.visibility_context,
+        memory_objects.append(
+            MemoryObject(
+                type="investigation_outcome",
+                schema_id=f"{schema_prefix}.investigation_outcome",
+                schema_version="v1",
+                payload={
+                    "investigation_outcome": extraction.investigation_text,
+                    "investigation_evidence_text": extraction.investigation_evidence_text,
+                    "rationale": extraction.rationale_text,
+                    "canonical_key": canonical_key,
+                    "source_type": source_item.source_type,
+                    "source_id": source_item.source_id,
+                    **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
+                },
+                visibility_context=source_item.visibility_context,
+            )
         )
         index_source = " ".join(
             part
@@ -371,48 +384,135 @@ def build_process_result(
                 extraction.investigation_text or "",
                 extraction.investigation_evidence_text or "",
                 extraction.rationale_text or "",
+                extraction.key_finding_text or "",
+                canonical_key,
+            )
+            if part
+        )
+    elif _should_create_discussion_summary(source_item, extraction):
+        memory_objects.append(
+            MemoryObject(
+                type="discussion_summary",
+                schema_id=f"{schema_prefix}.discussion_summary",
+                schema_version="v1",
+                payload={
+                    "summary": extraction.summary,
+                    "source_type": source_item.source_type,
+                    "source_id": source_item.source_id,
+                    **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
+                },
+                visibility_context=source_item.visibility_context,
+            )
+        )
+        index_source = " ".join(
+            part
+            for part in (
+                extraction.summary,
+                extraction.constraint_text or "",
+                extraction.blocker_text or "",
+                extraction.progress_text or "",
+                extraction.next_step_text or "",
+                extraction.key_finding_text or "",
             )
             if part
         )
     else:
-        memory_object = MemoryObject(
-            type="discussion_summary",
-            schema_id=f"{schema_prefix}.discussion_summary",
-            schema_version="v1",
-            payload={
-                "summary": extraction.summary,
-                "source_type": source_item.source_type,
-                "source_id": source_item.source_id,
-                **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
-            },
-            visibility_context=source_item.visibility_context,
-        )
-        index_source = extraction.summary
+        index_source = ""
 
-    relation = Relation(
-        from_kind="memory_object",
-        from_id=memory_object.id,
-        relation_type="supported_by",
-        to_kind="source_item",
-        to_id=source_item.id,
-    )
-    index_entry = build_index_entry(
-        target_kind="memory_object",
-        target_id=memory_object.id,
-        index_type="lexical",
-        text_view=normalize_for_index(index_source),
-        text_view_name=_memory_text_view_name(memory_object.type),
-    )
+    if memory_objects:
+        memory_object = memory_objects[0]
+        relations.append(
+            Relation(
+                from_kind="memory_object",
+                from_id=memory_object.id,
+                relation_type="supported_by",
+                to_kind="source_item",
+                to_id=source_item.id,
+            )
+        )
+        index_entries.append(
+            build_index_entry(
+                target_kind="memory_object",
+                target_id=memory_object.id,
+                index_type="lexical",
+                text_view=normalize_for_index(index_source),
+                text_view_name=_memory_text_view_name(memory_object.type),
+            )
+        )
+
+    thread_rebuild_requested = _should_request_thread_rebuild(source_item, extraction, memory_objects)
     metadata_updates: dict[str, dict[str, object]] = {}
     if semantic_signals:
         metadata_updates[source_item.id] = {SEMANTIC_SIGNAL_METADATA_KEY: semantic_signals}
     return ProcessResult(
         annotations=annotations,
-        memory_objects=[memory_object],
-        relations=[relation],
-        index_entries=[index_entry],
+        memory_objects=memory_objects,
+        relations=relations,
+        index_entries=index_entries,
         source_item_metadata_updates=metadata_updates,
+        thread_rebuild_requested=thread_rebuild_requested,
     )
+
+
+SELECTED_ASSISTANT_WORK_ARTIFACT_KINDS = {"tool_use_summary", "todo_snapshot"}
+
+
+def _has_explicit_thread_signal(extraction: SemanticExtraction) -> bool:
+    return any(
+        getattr(extraction, field_name)
+        for field_name in ("constraint_text", "blocker_text", "progress_text", "next_step_text", "key_finding_text")
+    )
+
+
+def _is_selected_assistant_work_artifact(source_item: SourceItem, extraction: SemanticExtraction) -> bool:
+    return (
+        not extraction.is_low_value_meta
+        and (source_item.role or "").lower() == "assistant"
+        and (source_item.artifact_kind or "").lower() in SELECTED_ASSISTANT_WORK_ARTIFACT_KINDS
+    )
+
+
+def _is_substantive_summary(source_item: SourceItem, extraction: SemanticExtraction) -> bool:
+    if extraction.is_low_value_meta:
+        return False
+    if _has_explicit_thread_signal(extraction):
+        return True
+    summary_tokens = TOKEN_PATTERN.findall(extraction.summary.lower())
+    content_tokens = TOKEN_PATTERN.findall(source_item.content.lower())
+    if len(summary_tokens) >= 4:
+        return True
+    return len(content_tokens) >= 4
+
+
+def _should_create_discussion_summary(source_item: SourceItem, extraction: SemanticExtraction) -> bool:
+    if extraction.is_low_value_meta:
+        return False
+    if _is_selected_assistant_work_artifact(source_item, extraction):
+        return True
+    return _is_substantive_summary(source_item, extraction)
+
+
+def _should_request_thread_rebuild(
+    source_item: SourceItem,
+    extraction: SemanticExtraction,
+    memory_objects: list[MemoryObject],
+) -> bool:
+    if extraction.is_low_value_meta:
+        return False
+    has_supported_typed_memory = any(
+        memory_object.type in {"decision", "investigation_outcome"}
+        for memory_object in memory_objects
+    )
+    if has_supported_typed_memory:
+        return True
+    if _has_explicit_thread_signal(extraction):
+        return True
+    if _is_selected_assistant_work_artifact(source_item, extraction):
+        return True
+    if extraction.candidate_type in {"decision", "investigation_outcome"}:
+        # Weak typed-looking candidates that fail evidence guards should not churn thread rebuilds.
+        return False
+    return _is_substantive_summary(source_item, extraction)
 
 
 def _build_semantic_signal_payload(

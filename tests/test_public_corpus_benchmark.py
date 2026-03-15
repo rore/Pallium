@@ -61,6 +61,7 @@ def test_public_corpus_benchmark_reports_success_and_failure_families(monkeypatc
     assert by_id['wildchat-handoff-carry-forward']['wrong_memory_guard_success'] is True
     assert by_id['wildchat-grocery-pattern-recall']['top_layer'] == 'pattern_memory'
     assert by_id['wildchat-grocery-pattern-recall']['routing_intent'] == 'broad_recall'
+    assert by_id['wildchat-grocery-pattern-recall']['failure_families'] == []
     assert by_id['wildchat-rewrite-no-value-guard']['winner'] != 'memory_backed'
     assert by_id['wildchat-handoff-old-answer-paraphrase']['top_layer'] == 'continuity_memory'
     assert by_id['wildchat-handoff-old-answer-paraphrase']['failure_families'] == []

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import re
@@ -8,9 +8,9 @@ from typing import Iterable
 
 from capabilities.consolidation import ConsolidationGroup, ConsolidationPolicy
 from capabilities.thread_aggregation import ThreadAggregate
-from core.contracts import ProcessResult
+from core.contracts import PackageQueryOutcome, ProcessResult, SupersessionHint
 from core.indexing import build_index_entry
-from core.models import MemoryObject, QueryFilters, QueryResultItem, QueryTrace, Relation, SourceItem
+from core.models import InjectableBlock, MemoryObject, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace, Relation, SourceItem
 from providers.llm.base import LLMProvider
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
 from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY, normalize_for_index
@@ -155,23 +155,25 @@ TASK_CHECKPOINT_SYSTEM_PROMPT = (
 )
 TASK_CHECKPOINT_MAX_TEXT_CHARS = 3200
 TASK_CHECKPOINT_TEXT_VIEW = "memory_object.task_checkpoint_context"
-ROUTING_POLICY_NAME = "agent_conversation_memory.intent_routing.v2"
-ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory", "task_checkpoint"}
+ROUTING_POLICY_NAME = "agent_conversation_memory.intent_routing.v3"
+ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory", "task_checkpoint", "thread_summary", "discussion_summary"}
 ROUTING_LOWER_LEVEL_EXACT_TYPES = {"decision", "investigation_outcome"}
 ROUTING_SUMMARY_TYPES = {"thread_summary", "discussion_summary"}
 ROUTING_PREFERRED_LAYERS = {
-    "answer_continuity": ("continuity_memory", "lower_level_memory", "source_evidence", "task_checkpoint", "pattern_memory"),
-    "broad_recall": ("pattern_memory", "lower_level_memory", "continuity_memory", "task_checkpoint", "source_evidence"),
-    "work_resumption": ("task_checkpoint", "source_evidence", "lower_level_memory", "continuity_memory", "pattern_memory"),
-    "precise_fact": ("lower_level_memory", "source_evidence", "continuity_memory", "task_checkpoint", "pattern_memory"),
-    "evidence_trace": ("source_evidence", "lower_level_memory", "continuity_memory", "task_checkpoint", "pattern_memory"),
+    "answer_continuity": ("continuity_memory", "investigation_outcome", "decision", "source_evidence", "task_checkpoint", "pattern_memory", "thread_summary", "discussion_summary"),
+    "broad_recall": ("pattern_memory", "investigation_outcome", "decision", "continuity_memory", "task_checkpoint", "source_evidence", "thread_summary", "discussion_summary"),
+    "work_resumption": ("task_checkpoint", "source_evidence", "investigation_outcome", "decision", "continuity_memory", "pattern_memory", "thread_summary", "discussion_summary"),
+    "precise_fact": ("decision", "investigation_outcome", "source_evidence", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory"),
+    "evidence_trace": ("source_evidence", "investigation_outcome", "decision", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory"),
+    "investigative_conclusion": ("investigation_outcome", "decision", "source_evidence", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory"),
 }
 ROUTING_LAYER_WEIGHTS = {
-    "answer_continuity": {"continuity_memory": 400, "lower_level_memory": 300, "source_evidence": 200, "task_checkpoint": 140, "pattern_memory": 120},
-    "broad_recall": {"pattern_memory": 400, "lower_level_memory": 300, "continuity_memory": 180, "task_checkpoint": 150, "source_evidence": 120},
-    "work_resumption": {"task_checkpoint": 470, "source_evidence": 390, "lower_level_memory": 310, "continuity_memory": 180, "pattern_memory": 70},
-    "precise_fact": {"lower_level_memory": 420, "source_evidence": 320, "continuity_memory": 140, "task_checkpoint": 110, "pattern_memory": 60},
-    "evidence_trace": {"source_evidence": 460, "lower_level_memory": 360, "continuity_memory": 120, "task_checkpoint": 90, "pattern_memory": 40},
+    "answer_continuity": {"continuity_memory": 400, "investigation_outcome": 320, "decision": 300, "source_evidence": 200, "task_checkpoint": 140, "pattern_memory": 120, "thread_summary": 100, "discussion_summary": 70, "lower_level_memory": 260},
+    "broad_recall": {"pattern_memory": 400, "investigation_outcome": 330, "decision": 310, "continuity_memory": 180, "task_checkpoint": 150, "source_evidence": 120, "thread_summary": 130, "discussion_summary": 80, "lower_level_memory": 250},
+    "work_resumption": {"task_checkpoint": 470, "source_evidence": 390, "investigation_outcome": 300, "decision": 290, "continuity_memory": 180, "pattern_memory": 70, "thread_summary": 130, "discussion_summary": 70, "lower_level_memory": 250},
+    "precise_fact": {"decision": 440, "investigation_outcome": 430, "source_evidence": 320, "thread_summary": 110, "discussion_summary": 70, "continuity_memory": 140, "task_checkpoint": 110, "pattern_memory": 60, "lower_level_memory": 340},
+    "evidence_trace": {"source_evidence": 460, "investigation_outcome": 380, "decision": 360, "thread_summary": 120, "discussion_summary": 80, "continuity_memory": 120, "task_checkpoint": 90, "pattern_memory": 40, "lower_level_memory": 300},
+    "investigative_conclusion": {"investigation_outcome": 480, "decision": 430, "source_evidence": 360, "thread_summary": 220, "discussion_summary": 120, "continuity_memory": 110, "task_checkpoint": 100, "pattern_memory": 80, "lower_level_memory": 320},
 }
 ROUTING_META_QUERY_TOKENS = {
     "a",
@@ -203,6 +205,7 @@ ROUTING_WEAK_HIGHER_LEVEL_MATCH_PENALTY = {
     "work_resumption": 200,
     "precise_fact": 120,
     "evidence_trace": 120,
+    "investigative_conclusion": 90,
 }
 ROUTING_SAFE_FALLBACK_LAYERS = {
     "answer_continuity": ("lower_level_memory", "source_evidence"),
@@ -210,6 +213,7 @@ ROUTING_SAFE_FALLBACK_LAYERS = {
     "work_resumption": ("source_evidence", "lower_level_memory"),
     "precise_fact": ("source_evidence",),
     "evidence_trace": ("lower_level_memory",),
+    "investigative_conclusion": ("decision", "source_evidence", "thread_summary"),
 }
 ROUTING_SUPPORT_THRESHOLD = {"weak": 0, "supported": 60, "strong": 110}
 ROUTING_FALLBACK_MARGIN = 35
@@ -245,6 +249,12 @@ BROAD_RECALL_ABSTRACTION_CUES = (
     "should we remember",
     "what should we remember",
 )
+BROAD_RECALL_CONCLUSION_CUES = (
+    "what public conclusion",
+    "what did we previously conclude",
+    "what did we conclude before",
+    "what did we conclude",
+)
 PRECISE_FACT_CUES = (
     "what ordering",
     "which ordering",
@@ -272,6 +282,17 @@ EVIDENCE_TRACE_CUES = (
     "prior message",
     "backed the",
 )
+INVESTIGATIVE_CONCLUSION_CUES = (
+    "what had we concluded",
+    "what did the investigation find",
+    "what did investigation find",
+    "which repo changed more and why",
+    "which repo changed more",
+    "what was the verdict",
+    "what was our verdict",
+    "what conclusion did we reach",
+)
+SHARP_DIAGNOSTIC_MEMORY_TYPES = {"task_checkpoint", "investigation_outcome", "decision"}
 WORK_RESUMPTION_CUES = (
     "what blocker",
     "what progress",
@@ -352,7 +373,17 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         return "agent_conversation_memory.task_checkpoint"
 
     def process_item(self, source_item: SourceItem) -> ProcessResult:
-        return self._delegate.process_item(source_item)
+        direct_result = self._delegate.process_item(source_item)
+        supersession_hints = self._build_supersession_hints(source_item, direct_result)
+        return ProcessResult(
+            annotations=direct_result.annotations,
+            memory_objects=direct_result.memory_objects,
+            relations=direct_result.relations,
+            index_entries=direct_result.index_entries,
+            source_item_metadata_updates=direct_result.source_item_metadata_updates,
+            thread_rebuild_requested=direct_result.thread_rebuild_requested,
+            supersession_hints=supersession_hints,
+        )
 
     def route_query_results(
         self,
@@ -361,7 +392,10 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         requested_limit: int,
         retrieval_result,
         query_filters: QueryFilters | None = None,
-    ) -> tuple[list[QueryResultItem], QueryTrace | None]:
+        runtime_context: QueryRuntimeContext | None = None,
+        include_trace: bool = False,
+        debug_candidate_loader=None,
+    ) -> PackageQueryOutcome:
         intent = _classify_query_intent(text)
         preferred_layers = ROUTING_PREFERRED_LAYERS[intent]
         query_tokens = _routing_query_tokens(text)
@@ -376,6 +410,8 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             )
             for index, item in enumerate(retrieval_result.results, start=1)
         ]
+        if scored_candidates:
+            _apply_same_kind_freshness_shaping(scored_candidates, intent=intent)
         packaging_summary = None
         if intent == "work_resumption" and scored_candidates:
             packaging_summary = _apply_work_resumption_packaging(
@@ -417,6 +453,11 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             query_filters=query_filters,
             packaging_summary=packaging_summary,
         )
+        injection_blocks, injection_summary = _build_injectable_blocks(
+            final_candidates,
+            intent=intent,
+            runtime_context=runtime_context,
+        )
         _annotate_excluded_candidates(
             ranked_candidates=ranked_candidates,
             final_candidates=final_candidates,
@@ -424,10 +465,17 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             routing_focus=routing_focus,
             packaging_summary=packaging_summary,
         )
+        sharp_candidate_diagnostics = _build_sharp_candidate_diagnostics(
+            ranked_candidates=ranked_candidates,
+            final_candidates=final_candidates,
+            injectable_blocks=injection_blocks,
+            decision_reason=str(injection_summary["decision_reason"]),
+            debug_candidate_loader=debug_candidate_loader if include_trace else None,
+        )
         final_results = [candidate["item"] for candidate in final_candidates]
 
         routed_trace = None
-        if retrieval_result.trace is not None:
+        if include_trace and retrieval_result.trace is not None:
             routed_trace = QueryTrace(
                 query_text=retrieval_result.trace.query_text,
                 query_tokens=retrieval_result.trace.query_tokens,
@@ -443,11 +491,41 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                     ranked_candidates=ranked_candidates,
                     final_candidates=final_candidates,
                     packaging_summary=packaging_summary,
+                    injection_summary=injection_summary,
+                    sharp_candidate_diagnostics=sharp_candidate_diagnostics,
                 ),
             )
 
-        return final_results, routed_trace
+        return PackageQueryOutcome(
+            results=final_results,
+            trace=routed_trace,
+            should_inject=bool(injection_summary["should_inject"]),
+            decision_reason=str(injection_summary["decision_reason"]),
+            injectable_blocks=injection_blocks,
+            sharp_candidate_diagnostics=sharp_candidate_diagnostics,
+        )
 
+    def _build_supersession_hints(self, source_item: SourceItem, result: ProcessResult) -> list[SupersessionHint]:
+        if not source_item.container_ref or not source_item.thread_ref:
+            return []
+        hints: list[SupersessionHint] = []
+        for memory_object in result.memory_objects:
+            if memory_object.type not in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+                continue
+            canonical_key = str(memory_object.payload.get("canonical_key") or "").strip()
+            if not canonical_key:
+                continue
+            hints.append(
+                SupersessionHint(
+                    replacement_memory_id=memory_object.id,
+                    memory_type=memory_object.type,
+                    canonical_key=canonical_key,
+                    container_ref=source_item.container_ref,
+                    thread_ref=source_item.thread_ref,
+                    visibility_context=source_item.visibility_context,
+                )
+            )
+        return hints
     def supports_thread_aggregation(self, source_item: SourceItem) -> bool:
         if not source_item.thread_ref or not source_item.container_ref:
             return False
@@ -535,6 +613,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 "semantic_provenance": semantic_provenance,
             },
             visibility_context=aggregate.visibility_context,
+            freshness_at=aggregate.latest_occurred_at,
         )
         relations = [
             Relation(
@@ -679,6 +758,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 },
             },
             visibility_context=aggregate.visibility_context,
+            freshness_at=aggregate.latest_occurred_at,
         )
         index_source = " ".join(
             [
@@ -772,6 +852,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 "consolidation_provenance": consolidation_provenance,
             },
             visibility_context=group.visibility_context,
+            freshness_at=group.latest_occurred_at,
         )
         index_source = " ".join(
             [
@@ -861,6 +942,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 },
             },
             visibility_context=group.visibility_context,
+            freshness_at=group.latest_occurred_at,
         )
         index_source = " ".join(
             [
@@ -893,6 +975,8 @@ def _classify_query_intent(text: str) -> str:
         return "work_resumption"
     if any(cue in lowered for cue in ANSWER_CONTINUITY_CUES):
         return "answer_continuity"
+    if any(cue in lowered for cue in INVESTIGATIVE_CONCLUSION_CUES):
+        return "investigative_conclusion"
     if any(cue in lowered for cue in BROAD_RECALL_CUES) or lowered.startswith("why "):
         return "broad_recall"
     if any(cue in lowered for cue in PRECISE_FACT_CUES) or lowered.startswith(("what ", "which ", "when ")):
@@ -950,6 +1034,43 @@ def _score_routed_candidate(
     }
 
 
+def _apply_same_kind_freshness_shaping(scored_candidates: list[dict[str, object]], *, intent: str) -> None:
+    if intent not in {"investigative_conclusion", "precise_fact", "broad_recall"}:
+        return
+    for memory_type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+        typed_candidates = [candidate for candidate in scored_candidates if getattr(candidate["item"], "type", None) == memory_type]
+        if len(typed_candidates) < 2:
+            continue
+        typed_candidates.sort(
+            key=lambda candidate: (
+                candidate.get("freshness_timestamp_value") is not None,
+                candidate.get("freshness_timestamp_value") or datetime.min.replace(tzinfo=timezone.utc),
+                bool(candidate.get("same_thread")),
+                int(candidate.get("lexical_score", 0)),
+            ),
+            reverse=True,
+        )
+        freshest = typed_candidates[0].get("freshness_timestamp_value")
+        for index, candidate in enumerate(typed_candidates):
+            freshness_delta = 0
+            if index == 0:
+                freshness_delta += 42 if intent == "investigative_conclusion" else 24
+                if candidate.get("same_thread"):
+                    freshness_delta += 16
+            else:
+                freshness_delta -= min(index * 12, 30)
+                if freshest is not None and candidate.get("freshness_timestamp_value") is not None:
+                    candidate_time = candidate.get("freshness_timestamp_value")
+                    if isinstance(candidate_time, datetime) and freshest > candidate_time:
+                        freshness_delta -= 10
+            candidate["base_routing_score"] = int(candidate["base_routing_score"]) + freshness_delta
+            candidate["support_score"] = max(0, int(candidate["support_score"]) + max(freshness_delta // 2, 0))
+            candidate["support_grade"] = _routing_support_grade(int(candidate["support_score"]))
+            if freshness_delta > 0:
+                candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*candidate["packaging_reasons"], "fresh_same_kind_conclusion"]))
+            elif freshness_delta < 0:
+                candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*candidate["packaging_reasons"], "older_same_kind_conclusion"]))
+
 def _result_layer(item: QueryResultItem) -> str:
     if item.result_kind == "source_hit":
         return "source_evidence"
@@ -959,15 +1080,28 @@ def _result_layer(item: QueryResultItem) -> str:
         return "continuity_memory"
     if item.type == "task_checkpoint":
         return "task_checkpoint"
+    if item.type == "thread_summary":
+        return "thread_summary"
+    if item.type == "discussion_summary":
+        return "discussion_summary"
+    if item.type == "investigation_outcome":
+        return "investigation_outcome"
+    if item.type == "decision":
+        return "decision"
     return "lower_level_memory"
 
 
 def _specificity_bonus(item: QueryResultItem, intent: str, *, query_text: str) -> int:
     bonus = 0
     if item.result_kind == "memory_hit" and item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
-        bonus += 40 if intent in {"precise_fact", "evidence_trace"} else 20
-    if item.result_kind == "memory_hit" and item.type in ROUTING_SUMMARY_TYPES and intent in {"precise_fact", "evidence_trace"}:
-        bonus -= 30
+        if intent == "investigative_conclusion":
+            bonus += 95 if item.type == "investigation_outcome" else 80
+        elif intent in {"precise_fact", "evidence_trace"}:
+            bonus += 50 if item.type == "decision" else 45
+        else:
+            bonus += 20
+    if item.result_kind == "memory_hit" and item.type in ROUTING_SUMMARY_TYPES and intent in {"precise_fact", "evidence_trace", "investigative_conclusion"}:
+        bonus -= 40
     if item.result_kind == "memory_hit" and item.type == "thread_summary" and intent == "work_resumption":
         if _memory_hit_has_selected_work_artifacts(item):
             bonus += 35
@@ -980,10 +1114,14 @@ def _specificity_bonus(item: QueryResultItem, intent: str, *, query_text: str) -
                 bonus += 20
             if _query_contains_any(query_text, WORK_RESUMPTION_BLOCKER_CUES) and str(item.payload.get("blocker_state") or "").strip():
                 bonus += 25
-        elif intent in {"precise_fact", "evidence_trace"}:
+        elif intent in {"precise_fact", "evidence_trace", "investigative_conclusion"}:
             bonus -= 35
     if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "answer_continuity":
         bonus += 25
+    if item.result_kind == "memory_hit" and item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES and intent == "broad_recall" and _query_contains_any(query_text, BROAD_RECALL_CONCLUSION_CUES):
+        bonus += 85 if item.type == "decision" else 75
+    if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "broad_recall" and _query_contains_any(query_text, BROAD_RECALL_CONCLUSION_CUES):
+        bonus -= 45
     if item.result_kind == "memory_hit" and item.type == "pattern_memory" and intent == "broad_recall":
         bonus += 25
         if _query_contains_any(query_text, BROAD_RECALL_ABSTRACTION_CUES):
@@ -994,6 +1132,8 @@ def _specificity_bonus(item: QueryResultItem, intent: str, *, query_text: str) -
         bonus += 45 if (item.artifact_kind or "") in SELECTED_WORK_ARTIFACT_KINDS else 20
         if (item.artifact_kind or "") == "todo_snapshot" and _query_contains_any(query_text, WORK_RESUMPTION_NEXT_STEP_CUES):
             bonus += 25
+    if item.result_kind == "source_hit" and intent == "investigative_conclusion":
+        bonus += 6 if item.artifact_kind == "assistant_output" else 2
     return bonus
 
 def _query_contains_any(text: str, cues: Iterable[str]) -> bool:
@@ -1101,6 +1241,16 @@ def _routing_reason(
         support_grade=support_grade,
     )
     packaging_suffix = _routing_packaging_suffix(packaging_reasons)
+    if intent == "investigative_conclusion":
+        if layer == "investigation_outcome":
+            return "Investigative wording favors prior resolved findings before broader summaries." + fallback_suffix + packaging_suffix
+        if layer == "decision":
+            return "A prior decision remains sharp context, but explicit investigation findings outrank it here." + fallback_suffix + packaging_suffix
+        if layer == "source_evidence":
+            return "Source evidence stays close behind carried conclusions for investigative questions." + fallback_suffix + packaging_suffix
+        if layer == "thread_summary":
+            return "Thread summaries stay available, but investigative queries prefer sharper findings and decisions first." + weak_match_suffix + fallback_suffix + packaging_suffix
+        return "Discussion summaries are last-resort context for investigative questions." + weak_match_suffix + fallback_suffix + packaging_suffix
     if intent == "answer_continuity":
         if layer == "continuity_memory":
             return "Repeated-answer wording favors compact carry-forward memory." + fallback_suffix + packaging_suffix
@@ -1108,7 +1258,7 @@ def _routing_reason(
             return "Task checkpoints are narrower than repeated-answer carry-forward memory." + weak_match_suffix + fallback_suffix + packaging_suffix
         if layer == "pattern_memory":
             return "Broad pattern memory is demoted because the query is asking whether the answer was already given." + fallback_suffix + packaging_suffix
-        if layer == "lower_level_memory":
+        if layer in {"investigation_outcome", "decision", "lower_level_memory"}:
             return "Exact lower-level memory remains a fallback behind continuity carry-forward." + fallback_suffix + packaging_suffix
         return "Source evidence remains available, but routing prefers compact carry-forward first." + fallback_suffix + packaging_suffix
     if intent == "broad_recall":
@@ -1118,7 +1268,7 @@ def _routing_reason(
             return "Continuity memory is narrower than the broad prior-conclusion question." + weak_match_suffix + fallback_suffix + packaging_suffix
         if layer == "task_checkpoint":
             return "Task checkpoints are narrower than the broad prior-conclusion question." + weak_match_suffix + fallback_suffix + packaging_suffix
-        if layer == "lower_level_memory":
+        if layer in {"investigation_outcome", "decision", "lower_level_memory"}:
             return "Lower-level memory stays relevant, but broader recall prefers a consolidated pattern when present." + fallback_suffix + packaging_suffix
         return "Source evidence remains available, but compact prior-conclusion memory is preferred." + fallback_suffix + packaging_suffix
     if intent == "work_resumption":
@@ -1126,13 +1276,13 @@ def _routing_reason(
             return "Resume-oriented wording favors compact task checkpoints that preserve task state, blockers, and next steps." + weak_match_suffix + fallback_suffix + packaging_suffix
         if layer == "source_evidence":
             return "Resume-oriented wording favors exact prior work artifacts and source evidence." + fallback_suffix + packaging_suffix
-        if layer == "lower_level_memory":
+        if layer in {"investigation_outcome", "decision", "lower_level_memory"}:
             return "Lower-level memory can orient resumed work, but routing keeps sharper prior work evidence ahead of summaries." + fallback_suffix + packaging_suffix
         if layer == "continuity_memory":
             return "Continuity memory can help resumed work, but exact blocker and next-step evidence is preferred first." + weak_match_suffix + fallback_suffix + packaging_suffix
-        return "Pattern memory is too broad for resume-oriented state carry-forward." + weak_match_suffix + fallback_suffix + packaging_suffix
+        return "Pattern or summary memory is too broad for resume-oriented state carry-forward." + weak_match_suffix + fallback_suffix + packaging_suffix
     if intent == "precise_fact":
-        if layer == "lower_level_memory":
+        if layer in {"investigation_outcome", "decision", "lower_level_memory"}:
             return "Precise factual wording favors exact lower-level memory over higher-level summaries." + fallback_suffix + packaging_suffix
         if layer == "source_evidence":
             return "Source evidence stays near the top for precise factual lookup." + fallback_suffix + packaging_suffix
@@ -1140,16 +1290,16 @@ def _routing_reason(
             return "Task checkpoints are demoted because they compress state instead of preserving exact factual detail." + weak_match_suffix + fallback_suffix + packaging_suffix
         if layer == "continuity_memory":
             return "Continuity memory is demoted because it can blur exact factual lookup." + weak_match_suffix + fallback_suffix + packaging_suffix
-        return "Pattern memory is demoted because it can blur exact factual lookup." + weak_match_suffix + fallback_suffix + packaging_suffix
+        return "Higher-level summary memory is demoted because it can blur exact factual lookup." + weak_match_suffix + fallback_suffix + packaging_suffix
     if layer == "source_evidence":
         return "Evidence-trace wording favors raw supporting source evidence." + fallback_suffix + packaging_suffix
-    if layer == "lower_level_memory":
+    if layer in {"investigation_outcome", "decision", "lower_level_memory"}:
         return "Lower-level memory stays close behind source evidence for evidence-trace questions." + fallback_suffix + packaging_suffix
     if layer == "task_checkpoint":
         return "Task checkpoints are demoted because evidence-trace questions need sharper provenance." + weak_match_suffix + fallback_suffix + packaging_suffix
     if layer == "continuity_memory":
         return "Continuity memory is demoted because evidence-trace questions need sharper provenance." + weak_match_suffix + fallback_suffix + packaging_suffix
-    return "Pattern memory is demoted because evidence-trace questions need sharper provenance." + weak_match_suffix + fallback_suffix + packaging_suffix
+    return "Pattern or summary memory is demoted because evidence-trace questions need sharper provenance." + weak_match_suffix + fallback_suffix + packaging_suffix
 
 def _routing_strategy_name(item: QueryResultItem) -> str | None:
     if item.result_kind != "memory_hit" or not item.payload:
@@ -1162,9 +1312,7 @@ def _routing_strategy_name(item: QueryResultItem) -> str | None:
 
 
 def _routing_result_id(item: QueryResultItem) -> str:
-    if item.result_kind == "memory_hit":
-        return f"memory_object:{item.memory_object_id}"
-    return f"source_item:{item.source_item_id}"
+    return str(item.result_id)
 
 
 def _annotate_excluded_candidates(
@@ -1206,6 +1354,8 @@ def _build_routing_trace(
     ranked_candidates: list[dict[str, object]],
     final_candidates: list[dict[str, object]],
     packaging_summary: dict[str, object] | None,
+    injection_summary: dict[str, object],
+    sharp_candidate_diagnostics: list[dict[str, object]],
 ) -> dict[str, object]:
     selected_results = [_build_routing_trace_entry(candidate) for candidate in final_candidates]
     demoted_higher_level_hits = [
@@ -1242,6 +1392,8 @@ def _build_routing_trace(
         "selected_results": selected_results,
         "excluded_high_scoring_candidates": excluded_high_scoring_candidates,
         "demoted_higher_level_hits": demoted_higher_level_hits,
+        "injection_decision": injection_summary,
+        "sharp_candidate_diagnostics": sharp_candidate_diagnostics,
     }
     if packaging_summary:
         trace["packaging"] = packaging_summary
@@ -1291,6 +1443,335 @@ def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object
     if strategy_name is not None:
         entry["strategy_name"] = strategy_name
     return entry
+
+
+def _build_injectable_blocks(
+    final_candidates: list[dict[str, object]],
+    *,
+    intent: str,
+    runtime_context: QueryRuntimeContext | None,
+) -> tuple[list[InjectableBlock], dict[str, object]]:
+    if (
+        runtime_context is not None
+        and runtime_context.turn_kind == "same_thread_continuation"
+        and runtime_context.session_has_sufficient_local_context is True
+    ):
+        return [], {
+            "should_inject": False,
+            "decision_reason": "same_thread_context_sufficient",
+            "returned_block_ids": [],
+            "eligible_result_ids": [],
+            "dropped_by_cap_result_ids": [],
+            "cap": 3,
+        }
+    if not final_candidates:
+        return [], {
+            "should_inject": False,
+            "decision_reason": "no_relevant_memory",
+            "returned_block_ids": [],
+            "eligible_result_ids": [],
+            "dropped_by_cap_result_ids": [],
+            "cap": 3,
+        }
+
+    primary_non_discussion_eligible = [
+        candidate
+        for candidate in final_candidates
+        if _candidate_is_injection_eligible(
+            candidate,
+            intent=intent,
+            allow_discussion_fallback=False,
+            allow_source_companion=False,
+        )
+    ]
+    primary_eligible_candidates = [
+        candidate
+        for candidate in final_candidates
+        if _candidate_is_injection_eligible(
+            candidate,
+            intent=intent,
+            allow_discussion_fallback=not primary_non_discussion_eligible,
+            allow_source_companion=False,
+        )
+    ]
+    if not primary_eligible_candidates:
+        decision_reason = "only_low_value_candidates" if any(_candidate_is_low_value(candidate) for candidate in final_candidates) else "no_relevant_memory"
+        return [], {
+            "should_inject": False,
+            "decision_reason": decision_reason,
+            "returned_block_ids": [],
+            "eligible_result_ids": [],
+            "dropped_by_cap_result_ids": [],
+            "cap": 3,
+        }
+
+    selected_candidates = list(primary_eligible_candidates[:3])
+    if intent == "work_resumption" and len(selected_candidates) < 3:
+        used_result_ids = {_routing_result_id(candidate["item"]) for candidate in selected_candidates}
+        companion_candidates = [
+            candidate
+            for candidate in final_candidates
+            if _candidate_is_injection_eligible(
+                candidate,
+                intent=intent,
+                allow_discussion_fallback=False,
+                allow_source_companion=True,
+            )
+            and candidate["item"].result_kind == "source_hit"
+            and _routing_result_id(candidate["item"]) not in used_result_ids
+        ]
+        for candidate in companion_candidates:
+            if len(selected_candidates) >= 3:
+                break
+            selected_candidates.append(candidate)
+            used_result_ids.add(_routing_result_id(candidate["item"]))
+
+    blocks = [_build_injectable_block_from_candidate(candidate, intent=intent) for candidate in selected_candidates]
+    returned_ids = [block.result_id for block in blocks]
+    eligible_candidates = list(primary_eligible_candidates)
+    if intent == "work_resumption":
+        eligible_candidates.extend(
+            candidate
+            for candidate in final_candidates
+            if _candidate_is_injection_eligible(
+                candidate,
+                intent=intent,
+                allow_discussion_fallback=False,
+                allow_source_companion=True,
+            )
+            and candidate["item"].result_kind == "source_hit"
+            and _routing_result_id(candidate["item"]) not in {_routing_result_id(item["item"]) for item in eligible_candidates}
+        )
+    eligible_ids = [_routing_result_id(candidate["item"]) for candidate in eligible_candidates]
+    dropped_ids = [result_id for result_id in eligible_ids if result_id not in returned_ids]
+    return blocks, {
+        "should_inject": bool(blocks),
+        "decision_reason": "carry_forward_available" if blocks else "no_relevant_memory",
+        "returned_block_ids": returned_ids,
+        "eligible_result_ids": eligible_ids,
+        "dropped_by_cap_result_ids": dropped_ids,
+        "cap": 3,
+    }
+
+
+def _candidate_is_injection_eligible(
+    candidate: dict[str, object],
+    *,
+    intent: str,
+    allow_discussion_fallback: bool,
+    allow_source_companion: bool,
+) -> bool:
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    if _candidate_is_low_value(candidate):
+        return False
+    if item.result_kind == "source_hit":
+        if _source_candidate_is_primary_injection_eligible(intent):
+            return True
+        return allow_source_companion and _source_candidate_is_companion_injection_eligible(intent)
+    if item.type in {"decision", "investigation_outcome", "task_checkpoint", "continuity_memory", "pattern_memory", "thread_summary"}:
+        return True
+    if item.type == "discussion_summary":
+        return allow_discussion_fallback
+    return False
+
+
+def _source_candidate_is_primary_injection_eligible(intent: str) -> bool:
+    return intent in {"evidence_trace", "investigative_conclusion"}
+
+
+def _source_candidate_is_companion_injection_eligible(intent: str) -> bool:
+    return intent == "work_resumption"
+
+
+def _candidate_is_low_value(candidate: dict[str, object]) -> bool:
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    if item.result_kind == "source_hit":
+        return _is_low_value_meta_text(str(item.excerpt or ""))
+    if item.type in {"discussion_summary", "thread_summary"}:
+        payload = item.payload or {}
+        return _is_low_value_meta_text(str(payload.get("summary") or ""))
+    return False
+
+
+def _build_injectable_block_from_candidate(candidate: dict[str, object], *, intent: str) -> InjectableBlock:
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    if item.result_kind == "source_hit":
+        return InjectableBlock(
+            result_id=str(item.result_id),
+            block_type="source_evidence",
+            title="Supporting Evidence",
+            text=str(item.excerpt or "").strip(),
+            memory_type=None,
+            evidence=item.evidence,
+        )
+
+    payload = item.payload or {}
+    if item.type == "decision":
+        text = str(payload.get("decision") or "").strip()
+        rationale = str(payload.get("rationale") or "").strip()
+        body = f"Decision: {text}"
+        if rationale:
+            body += f" Rationale: {rationale}"
+        return InjectableBlock(
+            result_id=str(item.result_id),
+            block_type="memory",
+            title="Prior Decision",
+            text=body,
+            evidence=item.evidence,
+            memory_type=item.type,
+        )
+    if item.type == "investigation_outcome":
+        text = str(payload.get("investigation_outcome") or "").strip()
+        rationale = str(payload.get("rationale") or "").strip()
+        body = f"Investigation outcome: {text}"
+        if rationale:
+            body += f" Rationale: {rationale}"
+        return InjectableBlock(
+            result_id=str(item.result_id),
+            block_type="memory",
+            title="Prior Investigation",
+            text=body,
+            evidence=item.evidence,
+            memory_type=item.type,
+        )
+    if item.type == "task_checkpoint":
+        parts = [str(payload.get("summary") or "").strip(), str(payload.get("current_state") or "").strip()]
+        blocker = str(payload.get("blocker_state") or "").strip()
+        next_step = str(payload.get("next_step") or "").strip()
+        if blocker:
+            parts.append(f"Blocker: {blocker}")
+        if next_step:
+            parts.append(f"Next step: {next_step}")
+        return InjectableBlock(
+            result_id=str(item.result_id),
+            block_type="memory",
+            title="Task Checkpoint",
+            text=" ".join(part for part in parts if part),
+            evidence=item.evidence,
+            memory_type=item.type,
+        )
+    if item.type == "continuity_memory":
+        return InjectableBlock(
+            result_id=str(item.result_id),
+            block_type="memory",
+            title="Carry Forward",
+            text=str(payload.get("carry_forward_answer") or payload.get("summary") or "").strip(),
+            evidence=item.evidence,
+            memory_type=item.type,
+        )
+    if item.type == "pattern_memory":
+        return InjectableBlock(
+            result_id=str(item.result_id),
+            block_type="memory",
+            title="Pattern Memory",
+            text=str(payload.get("summary") or "").strip(),
+            evidence=item.evidence,
+            memory_type=item.type,
+        )
+    if item.type in {"thread_summary", "discussion_summary"}:
+        return InjectableBlock(
+            result_id=str(item.result_id),
+            block_type="memory",
+            title="Thread Summary" if item.type == "thread_summary" else "Discussion Summary",
+            text=str(payload.get("summary") or "").strip(),
+            evidence=item.evidence,
+            memory_type=item.type,
+        )
+    return InjectableBlock(
+        result_id=str(item.result_id),
+        block_type="memory",
+        title=item.type or "Memory",
+        text=str(payload.get("summary") or "").strip(),
+        evidence=item.evidence,
+        memory_type=item.type,
+    )
+
+
+def _build_sharp_candidate_diagnostics(
+    *,
+    ranked_candidates: list[dict[str, object]],
+    final_candidates: list[dict[str, object]],
+    injectable_blocks: list[InjectableBlock],
+    decision_reason: str,
+    debug_candidate_loader=None,
+) -> list[dict[str, object]]:
+    selected_injection_ids = {block.result_id for block in injectable_blocks}
+    final_result_ids = {_routing_result_id(candidate["item"]) for candidate in final_candidates}
+    diagnostics: dict[str, dict[str, object]] = {}
+
+    for candidate in ranked_candidates:
+        item = candidate["item"]
+        assert isinstance(item, QueryResultItem)
+        if item.type not in SHARP_DIAGNOSTIC_MEMORY_TYPES:
+            continue
+        result_id = _routing_result_id(item)
+        loss_stage = "selected" if result_id in selected_injection_ids else "routing"
+        loss_reason_code = None
+        loss_reason = None
+        if result_id not in final_result_ids:
+            if candidate.get("excluded_reason_code") == "displaced_by_adjacent_evidence_packaging":
+                loss_stage = "packaging"
+            loss_reason_code = candidate.get("excluded_reason_code")
+            loss_reason = candidate.get("excluded_reason")
+        elif result_id not in selected_injection_ids:
+            if decision_reason == "same_thread_context_sufficient":
+                loss_stage = "packaging"
+                loss_reason_code = "same_thread_context_sufficient"
+                loss_reason = "Current same-thread session already had sufficient local context, so Pallium suppressed injection."
+            elif decision_reason in {"only_low_value_candidates", "no_relevant_memory", "same_thread_context_sufficient", "injection_policy_unavailable"}:
+                loss_stage = "packaging"
+                loss_reason_code = decision_reason
+                loss_reason = "Candidate survived routing but was excluded from final injection packaging."
+            else:
+                loss_stage = "injection_cap"
+                loss_reason_code = "final_injection_cap"
+                loss_reason = "Candidate remained eligible but was dropped by the final injection cap."
+        diagnostics[result_id] = {
+            "result_id": result_id,
+            "candidate_kind": item.type,
+            "result_kind": item.result_kind,
+            "score": candidate["routing_score"],
+            "injection_eligible": _candidate_is_injection_eligible(
+                candidate,
+                intent="investigative_conclusion",
+                allow_discussion_fallback=False,
+                allow_source_companion=False,
+            ),
+            "selected_for_injection": result_id in selected_injection_ids,
+            "loss_stage": loss_stage,
+            "loss_reason_code": loss_reason_code,
+            "loss_reason": loss_reason,
+            "retrieved": True,
+            "lexical_rank": candidate.get("lexical_rank"),
+            "routing_rank": candidate.get("routing_rank"),
+        }
+
+    if callable(debug_candidate_loader):
+        for item in debug_candidate_loader(memory_types=list(SHARP_DIAGNOSTIC_MEMORY_TYPES)):
+            if item.type not in SHARP_DIAGNOSTIC_MEMORY_TYPES:
+                continue
+            result_id = str(item.result_id)
+            diagnostics.setdefault(
+                result_id,
+                {
+                    "result_id": result_id,
+                    "candidate_kind": item.type,
+                    "result_kind": item.result_kind,
+                    "score": 0,
+                    "injection_eligible": True,
+                    "selected_for_injection": False,
+                    "loss_stage": "retrieval",
+                    "loss_reason_code": "not_retrieved",
+                    "loss_reason": "Sharp candidate was in scope but not retrieved lexically.",
+                    "retrieved": False,
+                    "lexical_rank": None,
+                    "routing_rank": None,
+                },
+            )
+    return list(diagnostics.values())
 
 
 def _candidate_evidence_shape_score(
@@ -1682,6 +2163,8 @@ def _candidate_locality_compatible_for_packaging(
 
 def _candidate_freshness_timestamp(item: QueryResultItem) -> datetime | None:
     timestamps: list[datetime] = []
+    if item.freshness_at is not None:
+        timestamps.append(_normalize_timestamp(item.freshness_at))
     if item.occurred_at is not None:
         timestamps.append(_normalize_timestamp(item.occurred_at))
     if item.payload:
@@ -1726,9 +2209,23 @@ def _routing_support_grade(support_score: int) -> str:
 
 def _summarize_routing_layers(scored_candidates: list[dict[str, object]]) -> dict[str, dict[str, object]]:
     summary: dict[str, dict[str, object]] = {}
-    all_layers = {"pattern_memory", "continuity_memory", "task_checkpoint", "lower_level_memory", "source_evidence"}
+    all_layers = {
+        "pattern_memory",
+        "continuity_memory",
+        "task_checkpoint",
+        "lower_level_memory",
+        "source_evidence",
+        "decision",
+        "investigation_outcome",
+        "thread_summary",
+        "discussion_summary",
+    }
+    lower_level_layers = {"lower_level_memory", "decision", "investigation_outcome"}
     for layer in sorted(all_layers):
-        layer_candidates = [candidate for candidate in scored_candidates if candidate["layer"] == layer]
+        if layer == "lower_level_memory":
+            layer_candidates = [candidate for candidate in scored_candidates if str(candidate["layer"]) in lower_level_layers]
+        else:
+            layer_candidates = [candidate for candidate in scored_candidates if candidate["layer"] == layer]
         if not layer_candidates:
             summary[layer] = {
                 "candidate_count": 0,
@@ -1753,7 +2250,6 @@ def _summarize_routing_layers(scored_candidates: list[dict[str, object]]) -> dic
         }
     return summary
 
-
 def _select_routing_focus(
     *,
     intent: str,
@@ -1775,14 +2271,34 @@ def _select_routing_focus(
     best_fallback_layer = None
     best_fallback_summary = None
     if fallback_candidates:
-        best_fallback_layer, best_fallback_summary = max(
-            fallback_candidates,
-            key=lambda item: (
-                int(item[1].get("best_support_score", 0)),
-                int(item[1].get("best_lexical_score", 0)),
-            ),
-        )
-
+        if intent == "broad_recall":
+            supported_lower_level = next(
+                (
+                    (layer, summary)
+                    for layer, summary in fallback_candidates
+                    if layer == "lower_level_memory"
+                    and str(summary.get("best_support_grade", "weak")) in {"supported", "strong"}
+                ),
+                None,
+            )
+            if supported_lower_level is not None:
+                best_fallback_layer, best_fallback_summary = supported_lower_level
+            else:
+                best_fallback_layer, best_fallback_summary = max(
+                    fallback_candidates,
+                    key=lambda item: (
+                        int(item[1].get("best_support_score", 0)),
+                        int(item[1].get("best_lexical_score", 0)),
+                    ),
+                )
+        else:
+            best_fallback_layer, best_fallback_summary = max(
+                fallback_candidates,
+                key=lambda item: (
+                    int(item[1].get("best_support_score", 0)),
+                    int(item[1].get("best_lexical_score", 0)),
+                ),
+            )
     primary_count = int(primary_summary.get("candidate_count", 0))
     primary_support = int(primary_summary.get("best_support_score", 0))
     primary_grade = str(primary_summary.get("best_support_grade", "weak"))

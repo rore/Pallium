@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 ArtifactKind = Literal["message", "assistant_output", "tool_use_summary", "todo_snapshot", "notification"]
 VisibilityKind = Literal["public", "limited", "user"]
 ProcessingStatus = Literal["pending", "processing", "completed", "skipped", "failed"]
+TurnKind = Literal["new_thread", "same_thread_continuation", "resumed_session", "new_session"]
 
 
 class VisibilityContextModel(BaseModel):
@@ -24,6 +25,11 @@ class VisibilityContextModel(BaseModel):
         if not self.id:
             raise ValueError(f"{self.kind} visibility_context requires a non-empty id")
         return self
+
+
+class RuntimeContextModel(BaseModel):
+    turn_kind: TurnKind | None = None
+    session_has_sufficient_local_context: bool | None = None
 
 
 class ItemCreateRequest(BaseModel):
@@ -96,6 +102,7 @@ class QueryRequest(BaseModel):
     thread_ref: str | None = None
     session_ref: str | None = None
     visibility_context: VisibilityContextModel | None = None
+    runtime_context: RuntimeContextModel | None = None
 
 
 class EvidenceResponse(BaseModel):
@@ -114,6 +121,7 @@ class EvidenceResponse(BaseModel):
 
 
 class QueryResultResponse(BaseModel):
+    result_id: str | None = None
     result_kind: str
     score: int
     evidence: list[EvidenceResponse]
@@ -135,8 +143,20 @@ class QueryResultResponse(BaseModel):
     visibility_context: VisibilityContextModel | None = None
 
 
+class InjectableBlockResponse(BaseModel):
+    result_id: str
+    block_type: str
+    title: str
+    text: str
+    memory_type: str | None = None
+    evidence: list[EvidenceResponse] = Field(default_factory=list)
+
+
 class QueryResponse(BaseModel):
     results: list[QueryResultResponse]
+    should_inject: bool
+    decision_reason: str
+    injectable_blocks: list[InjectableBlockResponse] = Field(default_factory=list)
 
 
 class QueryTraceFiltersResponse(BaseModel):
@@ -192,8 +212,7 @@ class QueryTraceResponse(BaseModel):
     result_summary: dict[str, Any] | None = None
 
 
-class QueryDebugResponse(BaseModel):
-    results: list[QueryResultResponse]
+class QueryDebugResponse(QueryResponse):
     trace: QueryTraceResponse
 
 

@@ -11,7 +11,7 @@ from api.schemas import (
     QueryResponse,
     QueueHealthResponse,
 )
-from core.models import QueryResultItem, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
+from core.models import InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
 from core.service import PalliumService
 from core.visibility import QueryVisibilityTrace, VisibilityContext, VisibilityExclusion
 
@@ -29,6 +29,15 @@ def _deserialize_visibility_context(payload) -> VisibilityContext | None:
     if payload is None:
         return None
     return VisibilityContext(kind=payload.kind, id=payload.id)
+
+
+def _deserialize_runtime_context(payload) -> QueryRuntimeContext | None:
+    if payload is None:
+        return None
+    return QueryRuntimeContext(
+        turn_kind=payload.turn_kind,
+        session_has_sufficient_local_context=payload.session_has_sufficient_local_context,
+    )
 
 
 def _serialize_evidence(evidence) -> dict[str, object]:
@@ -50,6 +59,7 @@ def _serialize_evidence(evidence) -> dict[str, object]:
 
 def _serialize_result(item: QueryResultItem) -> dict[str, object]:
     return {
+        "result_id": item.result_id,
         "result_kind": item.result_kind,
         "score": item.score,
         "evidence": [_serialize_evidence(evidence) for evidence in item.evidence],
@@ -69,6 +79,17 @@ def _serialize_result(item: QueryResultItem) -> dict[str, object]:
         "source_ref": item.source_ref,
         "artifact_kind": item.artifact_kind,
         "visibility_context": _serialize_visibility_context(item.visibility_context),
+    }
+
+
+def _serialize_injectable_block(block: InjectableBlock) -> dict[str, object]:
+    return {
+        "result_id": block.result_id,
+        "block_type": block.block_type,
+        "title": block.title,
+        "text": block.text,
+        "memory_type": block.memory_type,
+        "evidence": [_serialize_evidence(evidence) for evidence in block.evidence],
     }
 
 
@@ -244,8 +265,14 @@ def create_router(service: PalliumService) -> APIRouter:
             thread_ref=request.thread_ref,
             session_ref=request.session_ref,
             visibility_context=_deserialize_visibility_context(request.visibility_context),
+            runtime_context=_deserialize_runtime_context(request.runtime_context),
         )
-        return QueryResponse(results=[_serialize_result(item) for item in result.results])
+        return QueryResponse(
+            results=[_serialize_result(item) for item in result.results],
+            should_inject=result.should_inject,
+            decision_reason=result.decision_reason,
+            injectable_blocks=[_serialize_injectable_block(block) for block in result.injectable_blocks],
+        )
 
     @router.post("/query/debug", response_model=QueryDebugResponse)
     def query_items_debug(request: QueryRequest) -> QueryDebugResponse:
@@ -259,12 +286,16 @@ def create_router(service: PalliumService) -> APIRouter:
             thread_ref=request.thread_ref,
             session_ref=request.session_ref,
             visibility_context=_deserialize_visibility_context(request.visibility_context),
+            runtime_context=_deserialize_runtime_context(request.runtime_context),
             include_trace=True,
         )
         if result.trace is None:
             raise ValueError("debug query must include retrieval trace")
         return QueryDebugResponse(
             results=[_serialize_result(item) for item in result.results],
+            should_inject=result.should_inject,
+            decision_reason=result.decision_reason,
+            injectable_blocks=[_serialize_injectable_block(block) for block in result.injectable_blocks],
             trace=_serialize_trace(result.trace),
         )
 

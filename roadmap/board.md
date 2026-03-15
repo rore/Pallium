@@ -1,16 +1,16 @@
-# Next
+﻿# Next
 - add-live-thread-memory-quality-hardening
-- add-cleaner-retention-and-timestamped-runtime-logs
 
 # Later
 - add-vector-retrieval-provider
 - add-hybrid-retrieval-fusion
+- add-agent-memory-decision-benchmark-program
+- add-live-integration-improvement-loop-and-replay-pipeline
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
 
 # Ideas
 - idea-evidence-backed-agent-memory
-- idea-developer-work-continuity-benchmark-expansion
 - idea-generic-memory-lifecycle-signals
 - idea-operational-scale-hardening
 - idea-multi-package-source-item-processing
@@ -19,6 +19,7 @@
 - idea-optional-reranker-support
 
 # Done
+- add-cleaner-retention-and-timestamped-runtime-logs
 - add-richer-item-level-semantic-signals
 - add-async-ingest-queue-and-worker-processing
 - add-debug-observability-for-processing-and-query-trace
@@ -52,3 +53,4 @@
 - add-first-semantic-layer-and-promotion
 - add-agent-memory-simulation
 - build-structured-retrieval-foundation
+

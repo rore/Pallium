@@ -9,11 +9,11 @@ from typing import Any
 
 from capabilities.consolidation import ConsolidationCapability, ConsolidationRunGroupResult, ConsolidationRunResult
 from capabilities.thread_aggregation import build_thread_aggregate
-from core.contracts import IngestResult, ItemProcessingResult, ProcessResult, QueryResult, build_query_filters, build_source_item
+from core.contracts import IngestResult, ItemProcessingResult, PackageQueryOutcome, ProcessResult, QueryResult, build_query_filters, build_source_item
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
-from core.models import MemoryObject, QueryFilters, QueryTrace, Relation, SourceItem, utc_now
+from core.models import MemoryObject, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace, Relation, SourceItem, utc_now
 from core.observability import IntegrationDebugLogger, OBSERVABILITY_METADATA_KEY, serialize_visibility_context
-from core.visibility import QueryVisibilityTrace, VisibilityContext, visibility_context_matches_exact, visibility_context_label
+from core.visibility import QueryVisibilityTrace, VisibilityContext, expand_visibility_context, visibility_context_is_visible, visibility_context_matches_exact, visibility_context_label
 from providers.llm.base import LLMProviderError
 from retrieval.base import RetrievalProvider
 from semantic.base import ConsolidationSemanticPlugin, SemanticPlugin, ThreadAggregationSemanticPlugin
@@ -431,12 +431,19 @@ class PalliumService:
 
         try:
             direct_result = plugin.process_item(source_item)
-            thread_rebuild_scope = self._build_thread_processing_scope(
-                plugin_name=plugin_name,
-                plugin=plugin,
-                source_item=source_item,
+            thread_rebuild_scope = None
+            if direct_result.thread_rebuild_requested:
+                thread_rebuild_scope = self._build_thread_processing_scope(
+                    plugin_name=plugin_name,
+                    plugin=plugin,
+                    source_item=source_item,
+                )
+            supersession_pairs = self._resolve_supersession_pairs(direct_result)
+            memory_provenance = _build_memory_provenance(
+                direct_result,
+                default_source_item_id=source_item.id,
+                supersession_pairs=supersession_pairs,
             )
-            memory_provenance = _build_memory_provenance(direct_result, default_source_item_id=source_item.id)
             metadata_updates = _with_observability_metadata(
                 direct_result.source_item_metadata_updates,
                 source_item.id,
@@ -455,11 +462,13 @@ class PalliumService:
                 relations=direct_result.relations,
                 index_entries=direct_result.index_entries,
                 source_item_metadata_updates=metadata_updates,
+                thread_rebuild_requested=direct_result.thread_rebuild_requested,
+                supersession_hints=direct_result.supersession_hints,
             )
             self._storage.commit_processed_source_item(
                 source_item_id=source_item.id,
                 result=direct_result,
-                supersession_pairs=[],
+                supersession_pairs=supersession_pairs,
                 thread_rebuild_scope=thread_rebuild_scope,
             )
             self._emit_processing_outcome(
@@ -574,6 +583,7 @@ class PalliumService:
         thread_ref: str | None = None,
         session_ref: str | None = None,
         visibility_context: VisibilityContext | None = None,
+        runtime_context: QueryRuntimeContext | None = None,
         include_trace: bool = False,
     ) -> QueryResult:
         filters: QueryFilters | None = build_query_filters(
@@ -601,7 +611,13 @@ class PalliumService:
                     ),
                 )
                 trace = replace(trace, result_summary=_build_query_result_summary([]))
-            return QueryResult(results=[], trace=trace)
+            return QueryResult(
+                results=[],
+                trace=trace,
+                should_inject=False,
+                decision_reason="no_relevant_memory",
+                injectable_blocks=[],
+            )
 
         route_query_results = getattr(plugin, "route_query_results", None)
         retrieval_limit = limit
@@ -615,19 +631,119 @@ class PalliumService:
             include_trace=include_trace,
         )
         if callable(route_query_results):
-            routed_results, routed_trace = route_query_results(
+            outcome = route_query_results(
                 text=text,
                 requested_limit=limit,
                 retrieval_result=retrieval_result,
                 query_filters=filters,
+                runtime_context=runtime_context,
+                include_trace=include_trace,
+                debug_candidate_loader=self._make_debug_candidate_loader(
+                    filters=filters,
+                    visibility_context=visibility_context if plugin.requires_visibility_context else None,
+                ),
             )
+            if not isinstance(outcome, PackageQueryOutcome):
+                raise TypeError("route_query_results must return PackageQueryOutcome")
+            routed_trace = outcome.trace
             if routed_trace is not None:
-                routed_trace = replace(routed_trace, result_summary=_build_query_result_summary(routed_results))
-            return QueryResult(results=routed_results, trace=routed_trace)
+                routed_trace = replace(routed_trace, result_summary=_build_query_result_summary(outcome.results))
+            return QueryResult(
+                results=outcome.results,
+                trace=routed_trace,
+                should_inject=outcome.should_inject,
+                decision_reason=outcome.decision_reason,
+                injectable_blocks=outcome.injectable_blocks,
+            )
         trace = retrieval_result.trace
         if trace is not None:
             trace = replace(trace, result_summary=_build_query_result_summary(retrieval_result.results))
-        return QueryResult(results=retrieval_result.results, trace=trace)
+        return QueryResult(
+            results=retrieval_result.results,
+            trace=trace,
+            should_inject=False,
+            decision_reason="injection_policy_unavailable",
+            injectable_blocks=[],
+        )
+    def _resolve_supersession_pairs(self, result: ProcessResult) -> list[tuple[str, str]]:
+        if not result.supersession_hints:
+            return []
+        replacements = {memory_object.id: memory_object for memory_object in result.memory_objects}
+        pairs: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for hint in result.supersession_hints:
+            replacement = replacements.get(hint.replacement_memory_id)
+            if replacement is None:
+                continue
+            if not hint.container_ref or not hint.thread_ref or not hint.canonical_key:
+                continue
+            thread_items = self._storage.list_source_items_for_thread(hint.container_ref, hint.thread_ref)
+            for thread_item in thread_items:
+                if not visibility_context_matches_exact(thread_item.visibility_context, hint.visibility_context):
+                    continue
+                for candidate in self._storage.list_memory_objects_for_source_item(thread_item.id):
+                    if candidate.id == replacement.id:
+                        continue
+                    if candidate.lifecycle != "active" or candidate.type != hint.memory_type:
+                        continue
+                    if not visibility_context_matches_exact(candidate.visibility_context, hint.visibility_context):
+                        continue
+                    candidate_key = str(candidate.payload.get("canonical_key") or "").strip()
+                    if candidate_key != hint.canonical_key:
+                        continue
+                    pair = (candidate.id, replacement.id)
+                    if pair in seen:
+                        continue
+                    seen.add(pair)
+                    pairs.append(pair)
+        return pairs
+
+    def _make_debug_candidate_loader(
+        self,
+        *,
+        filters: QueryFilters | None,
+        visibility_context: VisibilityContext | None,
+    ):
+        visible_contexts = expand_visibility_context(visibility_context) if visibility_context is not None else None
+
+        def load_candidates(*, memory_types: list[str] | None = None) -> list[QueryResultItem]:
+            results: list[QueryResultItem] = []
+            for memory_object in self._storage.list_memory_objects(memory_types=memory_types, lifecycle="active"):
+                if not visibility_context_is_visible(memory_object.visibility_context, visible_contexts):
+                    continue
+                evidence = self._storage.get_evidence_for_memory_object(memory_object.id)
+                if filters is not None and not any(self._evidence_matches_filters(item, filters) for item in evidence):
+                    continue
+                results.append(
+                    QueryResultItem(
+                        result_kind="memory_hit",
+                        memory_object_id=memory_object.id,
+                        type=memory_object.type,
+                        payload=memory_object.payload,
+                        freshness_at=memory_object.freshness_at,
+                        score=0,
+                        evidence=evidence,
+                        visibility_context=memory_object.visibility_context,
+                    )
+                )
+            return results
+
+        return load_candidates
+    @staticmethod
+    def _evidence_matches_filters(evidence, filters: QueryFilters) -> bool:
+        if filters.source_type is not None and evidence.source_type != filters.source_type:
+            return False
+        if filters.role is not None and evidence.role != filters.role:
+            return False
+        if filters.artifact_kind is not None and evidence.artifact_kind != filters.artifact_kind:
+            return False
+        if filters.container_ref is not None and evidence.container_ref != filters.container_ref:
+            return False
+        if filters.thread_ref is not None and evidence.thread_ref != filters.thread_ref:
+            return False
+        if filters.session_ref is not None and evidence.session_ref != filters.session_ref:
+            return False
+        return True
     def run_consolidation_pass(
         self,
         *,

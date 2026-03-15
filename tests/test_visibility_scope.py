@@ -219,3 +219,31 @@ def test_debug_trace_reports_visibility_exclusions(monkeypatch, test_db_url: str
         assert any(item["count"] >= 1 for item in exclusions)
         assert all("target_id" not in item for item in exclusions)
         assert all("candidate_visibility_context" not in item for item in exclusions)
+
+
+
+def test_public_query_injectable_blocks_respect_visibility(monkeypatch, test_db_url: str) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest(client, source_id="public-inject", content="Decision: use item event time for reservation ordering to avoid duplicate holds.", visibility_context=_public())
+        _ingest(client, source_id="limited-inject", content="Decision: use item event time for reservation ordering to avoid duplicate holds.", visibility_context=_limited("channel-inject"))
+
+        payload = _query(client, visibility_context=_public())
+        assert payload["should_inject"] is True
+        assert payload["injectable_blocks"]
+        visible_result_ids = {item["result_id"] for item in payload["results"]}
+        assert {block["result_id"] for block in payload["injectable_blocks"]}.issubset(visible_result_ids)
+        for block in payload["injectable_blocks"]:
+            for evidence in block["evidence"]:
+                assert evidence["visibility_context"] == _public()
+
+
+def test_debug_sharp_candidate_diagnostics_do_not_leak_hidden_candidates(monkeypatch, test_db_url: str) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest(client, source_id="public-sharp", content="Decision: use item event time for reservation ordering to avoid duplicate holds.", visibility_context=_public())
+        _ingest(client, source_id="limited-sharp", content="Decision: use item event time for reservation ordering to avoid duplicate holds.", visibility_context=_limited("channel-sharp"))
+
+        payload = _query(client, visibility_context=_public(), debug=True)
+        diagnostics = payload["trace"]["routing"]["sharp_candidate_diagnostics"]
+        public_result_ids = {item["result_id"] for item in payload["results"] if (item["visibility_context"] or {}).get("kind") == "public"}
+        assert diagnostics
+        assert all(entry["result_id"] in public_result_ids for entry in diagnostics)

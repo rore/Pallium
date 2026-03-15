@@ -1,31 +1,33 @@
-Pallium now has its first realistic runtime shape for `agent_conversation_memory`: async ingest and background processors are shipped, thread rebuild work is serialized safely, queue/debug observability exists, and the item-level semantic path now extracts richer internal signals in the same LLM call rather than leaning mainly on caller-perfect artifact shaping.
+﻿Pallium now has its first realistic runtime shape for `agent_conversation_memory`: async ingest and background processors are shipped, thread rebuild work is serialized safely, queue/debug observability exists, the item-level semantic path now extracts richer internal signals in the same LLM call rather than leaning mainly on caller-perfect artifact shaping, and the cleaner-driven retention/runtime logging slice is shipped.
 
 The next architectural correction is to make the agent boundary explicit: downstream agents should send runtime facts and raw events, while Pallium owns memory judgment, ranking, injectability, and final carry-forward packaging. Live downstream-agent integration work showed that if Pallium returns only low-level ranked candidates, semantic policy leaks back into the agent and the integration stops being thin.
 
 Current focus:
 - keep `agent_conversation_memory` as the first product slice, but move the next bar from proving the runtime shape to fixing the concrete quality issues from live downstream-agent runs
-- first, stop low-value turns from becoming durable memory and from triggering thread-summary churn so downstream agents can stay thin and Pallium owns more of the semantic policy itself, including inject-worthiness, final carry-forward packaging, and explicit injection decisions
-- then, make investigative conclusion prompts surface `investigation_outcome` / `decision` / sharper evidence ahead of generic `thread_summary` and `discussion_summary`
+- stop low-value turns from becoming durable memory and from triggering thread-summary churn so downstream agents can stay thin and Pallium owns more of the semantic policy itself, including inject-worthiness, final carry-forward packaging, and explicit injection decisions
+- make investigative conclusion prompts surface `investigation_outcome` / `decision` / sharper evidence ahead of generic `thread_summary` and `discussion_summary`
 - make the canonical agent integration contract part of the live memory-quality slice so Pallium accepts runtime context like turn kind and returns `should_inject`, `decision_reason`, and integration-ready `injectable_blocks` rather than leaving those decisions to the caller
 - use freshness as an explicit signal for competing conclusions and working-state relevance rather than relying only on raw creation time
 - keep privacy as a permanent regression gate while these ranking and lifecycle changes land
-- after memory quality is cleaner, add dedicated cleaner-driven hot-store retention so Pallium stays a memory system rather than drifting into a forever transcript archive
-- improve runtime log readability alongside that retention slice so live integration debugging is timestamped and chronologically readable without opening JSON payloads by hand
+- keep vector retrieval and hybrid fusion behind these fixes; only move there if live downstream-agent evidence still shows recall rather than memory quality or retention as the next bottleneck
+- once the current memory-quality contract lands, expand the benchmark program so Pallium is scored as a memory-decision sidecar:
+  - not only "was the right memory retrievable?"
+  - but also "did Pallium inject the right thing, stay quiet when it should, and keep the downstream agent thin without local semantic compensation?"
 
 Concrete next steps:
 - ship low-value promotion suppression plus thread-rebuild gating so greetings, acknowledgments, and obvious meta chatter stay as raw evidence without creating `discussion_summary` memory or needless rebuilds
 - add a dedicated investigative-conclusion routing path and sharper lexical/index views for `investigation_outcome`, `decision`, and `task_checkpoint`, plus an integration-ready query contract so Pallium returns filtered injectable blocks/results, explicit injection decisions, and `/query/debug` shows candidate type, score, and whether sharp memory was missing, demoted, excluded, or dropped during final injection packaging
 - add bounded freshness-aware handling for competing same-kind conclusions so newer or more recently supported conclusions rank ahead of older ones without pretending global contradiction resolution is solved
-- add a dedicated cleaner runtime with freshness-aware retention for working-memory kinds, short TTL for superseded/noisy history, and source-item protection while retained memory still depends on that evidence
-- extend queue/debug health with retention status and unify Pallium-owned runtime logs under timestamp-prefixed output for observability, processors, cleaner, supervisor, and runner-started server logs
-- keep vector retrieval and hybrid fusion behind these fixes; only move there if live downstream-agent evidence still shows recall rather than memory quality or retention as the next bottleneck
+- after that contract lands, promote the agent memory-decision benchmark program so Pallium is scored on injection decisions, low-value/noise suppression, rebuild churn, and thin-agent boundary correctness rather than only retrieval usefulness
+- after the benchmark contract exists, add a live miss-capture loop so suspicious real cases become bounded miss bundles, reviewable promotions into replay fixtures, and safer shadow comparisons instead of staying anecdotal
 
 What the current evaluation and live integration evidence established:
 - broad recurring why-questions benefit most from consolidated `pattern_memory`, but live downstream-agent investigative prompts can still over-surface generic summaries when sharper lower-level memory exists
 - resumed-work continuity benefits from `task_checkpoint`, but low-value turn promotion and generic summary competition still weaken live retrieval quality
 - same-thread and precise factual questions should not default to higher-level memory, and investigative verdict questions now need a sharper dedicated routing family rather than being treated as broad generic recall
 - live downstream-agent runs exposed that promotion noise, rebuild churn, injectability policy, and the lack of a canonical integration contract are now product issues, not just optional polish
-- privacy enforcement, query-debug traceability, and opt-in live semantic smoke tests are already in place and should stay the validation loop while these two slices land
+- those same runs also showed a benchmark gap: current suites are stronger on retrieval and continuity usefulness than on injection decisions, low-value promotion, rebuild churn, and thin-agent boundary correctness
+- privacy enforcement, query-debug traceability, opt-in live semantic smoke tests, and timestamped runtime logs are already in place and should stay the validation loop while the current memory-quality slice lands
 
 Still out of scope for this phase:
 - cold archive storage for expired raw evidence

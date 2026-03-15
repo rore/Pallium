@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from core.visibility import QueryVisibilityTrace, VisibilityContext
@@ -14,6 +14,19 @@ def utc_now() -> datetime:
 
 def new_id() -> str:
     return str(uuid4())
+
+
+def build_result_id(
+    *,
+    result_kind: str,
+    memory_object_id: str | None = None,
+    source_item_id: str | None = None,
+) -> str | None:
+    if result_kind == "memory_hit" and memory_object_id:
+        return f"memory_object:{memory_object_id}"
+    if result_kind == "source_hit" and source_item_id:
+        return f"source_item:{source_item_id}"
+    return None
 
 
 @dataclass(frozen=True)
@@ -117,14 +130,25 @@ class QueryFilters:
     session_ref: str | None = None
 
 
+TurnKind = Literal["new_thread", "same_thread_continuation", "resumed_session", "new_session"]
+
+
+@dataclass(frozen=True)
+class QueryRuntimeContext:
+    turn_kind: TurnKind | None = None
+    session_has_sufficient_local_context: bool | None = None
+
+
 @dataclass(frozen=True)
 class QueryResultItem:
     result_kind: str
     score: int
     evidence: list[EvidenceReference]
+    result_id: str | None = None
     memory_object_id: str | None = None
     type: str | None = None
     payload: dict[str, Any] | None = None
+    freshness_at: datetime | None = None
     source_item_id: str | None = None
     source_type: str | None = None
     source_id: str | None = None
@@ -138,6 +162,28 @@ class QueryResultItem:
     source_ref: str | None = None
     artifact_kind: str | None = None
     visibility_context: VisibilityContext | None = None
+
+    def __post_init__(self) -> None:
+        if self.result_id is None:
+            object.__setattr__(
+                self,
+                "result_id",
+                build_result_id(
+                    result_kind=self.result_kind,
+                    memory_object_id=self.memory_object_id,
+                    source_item_id=self.source_item_id,
+                ),
+            )
+
+
+@dataclass(frozen=True)
+class InjectableBlock:
+    result_id: str
+    block_type: str
+    title: str
+    text: str
+    evidence: list[EvidenceReference]
+    memory_type: str | None = None
 
 
 @dataclass(frozen=True)

@@ -73,6 +73,38 @@ class ThreadAwareStubProvider:
                 "progress_text": None,
                 "key_finding_text": None,
             }
+        elif "Maybe we should use item event time for reservation ordering if it seems safer." in user_prompt:
+            payload = {
+                "summary": "Tentative reservation-ordering idea.",
+                "candidate_type": "decision",
+                "decision_text": "use item event time for reservation ordering",
+                "decision_evidence_text": "Maybe we should use item event time for reservation ordering if it seems safer.",
+                "investigation_text": None,
+                "investigation_evidence_text": None,
+                "rationale_text": None,
+                "is_low_value_meta": False,
+                "constraint_text": None,
+                "next_step_text": None,
+                "blocker_text": None,
+                "progress_text": None,
+                "key_finding_text": None,
+            }
+        elif "We might want to monitor whether transaction-transformer changed more than ledger-query." in user_prompt:
+            payload = {
+                "summary": "Tentative repo comparison.",
+                "candidate_type": "investigation_outcome",
+                "decision_text": None,
+                "decision_evidence_text": None,
+                "investigation_text": "transaction-transformer changed more than ledger-query",
+                "investigation_evidence_text": "We might want to monitor whether transaction-transformer changed more than ledger-query.",
+                "rationale_text": None,
+                "is_low_value_meta": False,
+                "constraint_text": None,
+                "next_step_text": None,
+                "blocker_text": None,
+                "progress_text": None,
+                "key_finding_text": None,
+            }
         else:
             lowered_prompt = user_prompt.lower()
             payload = {
@@ -290,3 +322,154 @@ def test_agent_conversation_runner_surfaces_thread_summary(monkeypatch, tmp_path
     results = [json.loads(line) for line in (run_dir / "results.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
     cross_thread_case = next(item for item in results if item["scenario_id"] == "cross-thread-decision-recall")
     assert cross_thread_case["returned_memory_types"]
+
+
+
+def test_low_value_meta_item_keeps_raw_source_and_summary_annotation_without_durable_memory(monkeypatch, test_db_url: str) -> None:
+    client = _create_thread_client(monkeypatch, test_db_url)
+    response = client.post(
+        "/items",
+        json={
+            "source_type": "assistant_artifact",
+            "source_id": "thread-meta-1",
+            "content_type": "text/plain",
+            "content": "Task complete. No Slack message needed. Nothing new to report.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "slack:CLOCAL001",
+            "thread_ref": "slack:CLOCAL001:thread-meta",
+            "session_ref": "session:thread-meta",
+        },
+    )
+
+    assert response.status_code == 200
+    source_item_id = response.json()["source_item_id"]
+    storage = client.app.state.pallium_service._storage
+    source_item = storage.get_source_item(source_item_id)
+    annotations = storage.list_annotations_for_source_item(source_item_id)
+    memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
+    processing = client.app.state.pallium_service.get_item_processing(source_item_id)
+
+    assert source_item.source_id == "thread-meta-1"
+    assert any(annotation.type == "summary" for annotation in annotations)
+    assert all(memory.type != "discussion_summary" for memory in memory_objects)
+    assert all(memory.type != "thread_summary" for memory in memory_objects)
+    assert processing.thread_rebuild_requested is False
+
+
+def test_unsupported_typed_decision_candidate_does_not_create_durable_typed_memory_or_request_rebuild(monkeypatch, test_db_url: str) -> None:
+    client = _create_thread_client(monkeypatch, test_db_url)
+    response = client.post(
+        "/items",
+        json={
+            "source_type": "assistant_artifact",
+            "source_id": "thread-weak-decision-1",
+            "content_type": "text/plain",
+            "content": "Maybe we should use item event time for reservation ordering if it seems safer.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-weak-decision",
+            "session_ref": "session:thread-weak-decision",
+        },
+    )
+
+    assert response.status_code == 200
+    source_item_id = response.json()["source_item_id"]
+    storage = client.app.state.pallium_service._storage
+    processing = client.app.state.pallium_service.get_item_processing(source_item_id)
+    memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
+
+    assert all(memory.type != "decision" for memory in memory_objects)
+    assert all(memory.type != "thread_summary" for memory in memory_objects)
+    assert processing.thread_rebuild_requested is False
+    assert processing.thread_rebuild_completed is False
+
+
+
+def test_unsupported_typed_investigation_candidate_does_not_create_durable_typed_memory_or_request_rebuild(monkeypatch, test_db_url: str) -> None:
+    client = _create_thread_client(monkeypatch, test_db_url)
+    response = client.post(
+        "/items",
+        json={
+            "source_type": "assistant_artifact",
+            "source_id": "thread-weak-investigation-1",
+            "content_type": "text/plain",
+            "content": "We might want to monitor whether transaction-transformer changed more than ledger-query.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-weak-investigation",
+            "session_ref": "session:thread-weak-investigation",
+        },
+    )
+
+    assert response.status_code == 200
+    source_item_id = response.json()["source_item_id"]
+    storage = client.app.state.pallium_service._storage
+    processing = client.app.state.pallium_service.get_item_processing(source_item_id)
+    memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
+
+    assert all(memory.type != "investigation_outcome" for memory in memory_objects)
+    assert all(memory.type != "thread_summary" for memory in memory_objects)
+    assert processing.thread_rebuild_requested is False
+    assert processing.thread_rebuild_completed is False
+
+
+
+def test_supported_typed_memory_still_requests_thread_rebuild(monkeypatch, test_db_url: str) -> None:
+    client = _create_thread_client(monkeypatch, test_db_url)
+    response = client.post(
+        "/items",
+        json={
+            "source_type": "assistant_artifact",
+            "source_id": "thread-supported-decision-1",
+            "content_type": "text/plain",
+            "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-supported-decision",
+            "session_ref": "session:thread-supported-decision",
+        },
+    )
+
+    assert response.status_code == 200
+    source_item_id = response.json()["source_item_id"]
+    storage = client.app.state.pallium_service._storage
+    processing = client.app.state.pallium_service.get_item_processing(source_item_id)
+    memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
+
+    assert any(memory.type == "decision" for memory in memory_objects)
+    assert any(memory.type == "thread_summary" for memory in memory_objects)
+    assert processing.thread_rebuild_requested is True
+    assert processing.thread_rebuild_completed is True
+
+
+
+def test_substantive_item_still_requests_thread_rebuild(monkeypatch, test_db_url: str) -> None:
+    client = _create_thread_client(monkeypatch, test_db_url)
+    response = client.post(
+        "/items",
+        json={
+            "source_type": "chat_message",
+            "source_id": "thread-substantive-1",
+            "content_type": "text/plain",
+            "content": "Why are duplicate holds happening after catalog sync delays?",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-substantive",
+            "session_ref": "session:thread-substantive",
+        },
+    )
+
+    assert response.status_code == 200
+    source_item_id = response.json()["source_item_id"]
+    storage = client.app.state.pallium_service._storage
+    processing = client.app.state.pallium_service.get_item_processing(source_item_id)
+    memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
+
+    assert processing.thread_rebuild_requested is True
+    assert processing.thread_rebuild_completed is True
+    assert any(memory.type == "thread_summary" for memory in memory_objects)

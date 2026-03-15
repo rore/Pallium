@@ -4,8 +4,28 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from core.models import Annotation, IndexEntry, MemoryObject, QueryFilters, QueryTrace, Relation, SourceItem
+from core.models import (
+    Annotation,
+    IndexEntry,
+    InjectableBlock,
+    MemoryObject,
+    QueryFilters,
+    QueryRuntimeContext,
+    QueryTrace,
+    Relation,
+    SourceItem,
+)
 from core.visibility import VisibilityContext
+
+
+@dataclass(frozen=True)
+class SupersessionHint:
+    replacement_memory_id: str
+    memory_type: str
+    canonical_key: str
+    container_ref: str | None
+    thread_ref: str | None
+    visibility_context: VisibilityContext | None
 
 
 @dataclass(frozen=True)
@@ -15,6 +35,8 @@ class ProcessResult:
     relations: list[Relation]
     index_entries: list[IndexEntry]
     source_item_metadata_updates: dict[str, dict[str, Any]] = field(default_factory=dict)
+    thread_rebuild_requested: bool = True
+    supersession_hints: list[SupersessionHint] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -84,9 +106,22 @@ class ItemProcessingResult:
 
 
 @dataclass(frozen=True)
+class PackageQueryOutcome:
+    results: list
+    trace: QueryTrace | None = None
+    should_inject: bool = False
+    decision_reason: str = "injection_policy_unavailable"
+    injectable_blocks: list[InjectableBlock] = field(default_factory=list)
+    sharp_candidate_diagnostics: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class QueryResult:
     results: list
     trace: QueryTrace | None = None
+    should_inject: bool = False
+    decision_reason: str = "injection_policy_unavailable"
+    injectable_blocks: list[InjectableBlock] = field(default_factory=list)
 
 
 def build_source_item(
@@ -160,3 +195,17 @@ def build_query_filters(
     if not any(value is not None for value in filters.__dict__.values()):
         return None
     return filters
+
+
+def build_query_runtime_context(
+    *,
+    turn_kind: str | None = None,
+    session_has_sufficient_local_context: bool | None = None,
+) -> QueryRuntimeContext | None:
+    runtime_context = QueryRuntimeContext(
+        turn_kind=turn_kind,
+        session_has_sufficient_local_context=session_has_sufficient_local_context,
+    )
+    if runtime_context.turn_kind is None and runtime_context.session_has_sufficient_local_context is None:
+        return None
+    return runtime_context

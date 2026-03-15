@@ -1,10 +1,10 @@
----
+﻿---
 id: add-cleaner-retention-and-timestamped-runtime-logs
 title: Cleaner retention and timestamped runtime logs
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary
@@ -95,4 +95,5 @@ Implementation defaults:
   - metadata stripping
   - timestamp-prefixed logging across runtime components
   - correlation of packaging/injection-related log output with the downstream integration flow
+
 
