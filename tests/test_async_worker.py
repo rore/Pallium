@@ -4,6 +4,7 @@ from datetime import timedelta
 import threading
 
 from app.config import AppConfig
+from app.processor import run_processor
 from app.worker import run_worker
 from app import supervisor
 from core.contracts import ProcessResult, build_source_item
@@ -150,6 +151,28 @@ def test_run_worker_once_processes_pending_item(test_db_url: str) -> None:
     assert ingest.processing_status == 'pending'
 
     exit_code = run_worker(['--once', '--worker-id', 'worker-test'], config=AppConfig(storage_backend='sqlite', sqlite_url=test_db_url, default_use_case='demo_agent_memory'))
+    assert exit_code == 0
+
+    status = service.get_item_processing(ingest.source_item_id)
+    assert status.processing_status == 'completed'
+    assert status.memory_object_ids
+
+
+def test_run_processor_once_processes_pending_item(test_db_url: str) -> None:
+    service = _build_service(test_db_url)
+    ingest = service.ingest_item(
+        source_type='decision_note',
+        source_id='processor-demo-1',
+        content_type='text/plain',
+        content='Decision: use item event time for reservation ordering to avoid duplicate holds.',
+        metadata=None,
+        use_case='demo_agent_memory',
+        artifact_kind='assistant_output',
+        role='assistant',
+    )
+    assert ingest.processing_status == 'pending'
+
+    exit_code = run_processor(['--once', '--processor-id', 'processor-test'], config=AppConfig(storage_backend='sqlite', sqlite_url=test_db_url, default_use_case='demo_agent_memory'))
     assert exit_code == 0
 
     status = service.get_item_processing(ingest.source_item_id)
@@ -317,7 +340,7 @@ def test_supervisor_blocks_reload_mode() -> None:
     assert supervisor.run_supervisor(['--reload']) == 2
 
 
-def test_supervisor_starts_api_and_workers_and_terminates_them() -> None:
+def test_supervisor_starts_api_and_processors_and_terminates_them() -> None:
     started: list[FakeProcess] = []
 
     def popen_factory(command, cwd=None):
@@ -326,7 +349,7 @@ def test_supervisor_starts_api_and_workers_and_terminates_them() -> None:
         return process
 
     exit_code = supervisor.run_supervisor(
-        ['--host', '127.0.0.1', '--port', '8010', '--workers', '2'],
+        ['--host', '127.0.0.1', '--port', '8010', '--processors', '2'],
         popen_factory=popen_factory,
         sleep_fn=lambda _: None,
         should_stop=lambda: True,

@@ -8,7 +8,11 @@ query results, and debug trace directly.
 
 ## Before You Run
 
-1. Start Pallium locally.
+1. Start Pallium locally, preferably with the combined runner:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.run --host 127.0.0.1 --port 8000 --processors 1
+```
 2. Use the `local` Bruno environment in [C:/Dev/rore/Pallium/bruno/environments/local.bru](C:/Dev/rore/Pallium/bruno/environments/local.bru).
 3. Run against a fresh local database when possible.
 

@@ -45,15 +45,22 @@ Optional verification:
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-## 2. Start The Service
+## 2. Start Pallium
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m app.run --host 127.0.0.1 --port 8000 --processors 1
 ```
 
 ## 3. Run The Bundled Sample Flow
 
-In another terminal:
+If you want the split mode instead, use:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.run serve --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m app.run processor
+```
+
+Then, in another terminal:
 
 ```powershell
 .\.venv\Scripts\python.exe examples\agent_memory_simulation.py

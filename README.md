@@ -97,7 +97,7 @@ For the current slice, the best inputs are:
 
 If you want to try Pallium quickly:
 
-- run the local service
+- run the local service plus processor
 - ingest a small sample conversation
 - query a repeated question
 - query a resumed-work question
@@ -125,6 +125,10 @@ The current repo does not yet ship:
 - explicit shared-memory derivation
 - cross-container bounded memory
 - broad ambient workspace ingestion
+
+## Roadmap UI
+
+Pallium uses the vendored minimap app in `tools/minimap/` as the local UI for its roadmap files. If you want to inspect the roadmap, current focus, and item details visually instead of reading the markdown files directly, run `node tools/minimap/server.js` from the repo root and open the printed local URL.
 
 ## Read Next
 

@@ -13,7 +13,7 @@ Main layers:
 5. Provider layer
 6. Storage layer
 7. Retrieval layer
-8. Background worker and supervisor runtime
+8. Background processor and supervisor runtime
 
 ## Implemented Core and Retrieval Slice
 

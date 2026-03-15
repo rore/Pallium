@@ -27,7 +27,7 @@ Current shipped surface:
   current package
 - routed retrieval over memory and source evidence
 - thread-level carry-forward and resumed-work checkpoints in the current slice
-- async ingest workers with serialized same-thread rebuild coordination for thread summaries and task checkpoints
+- async ingest processors with serialized same-thread rebuild coordination for thread summaries and task checkpoints
 
 ## What Is Validated Today
 
