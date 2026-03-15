@@ -1,10 +1,10 @@
 ---
 id: add-async-ingest-queue-and-worker-processing
 title: Async ingest queue and worker processing
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary
@@ -85,3 +85,14 @@ Worker rules:
 - bounded retry backoff should preserve the last error string
 
 This slice should also update repo docs that still describe background jobs as optional future work, because async processing becomes part of the main ingest/runtime architecture rather than a later operational nicety.
+
+
+## Implementation Notes
+
+The shipped local-first runtime now exposes a Pallium-first launcher and user-facing processor terminology:
+
+- `python -m app.run --host 127.0.0.1 --port 8000 --processors 1` for the normal local combined mode
+- `python -m app.run serve` for API-only mode
+- `python -m app.run processor` for processor-only mode
+
+The internal worker and supervisor modules still exist, but the user-facing runtime no longer depends on remembering separate `uvicorn` versus queue-worker startup commands.

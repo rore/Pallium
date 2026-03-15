@@ -95,6 +95,7 @@ Implemented semantic behavior now includes:
   - `task_checkpoint`
 - fallback `discussion_summary` for non-typed extraction results
 - prompt provenance attached to LLM-derived annotations and memory objects
+- internal-only item semantic signals now extracted in the same item-level LLM call and persisted under `SourceItem.metadata["pallium_semantic_signals"]` for later higher-level synthesis
 
 Current `agent_conversation_memory` evidence now includes selected assistant-originated work artifacts in addition to user messages and final assistant outputs:
 
@@ -275,7 +276,9 @@ Current chosen path:
 - model: `gpt-5-mini`
 - prompt variant: `strict_typed_memory_v4_evidence_guarded`
 - prompt schema: `typed_memory_extraction`
-- prompt schema version: `v4`
+- prompt schema version: `v5`
+
+The item-level prompt now carries field-specific internal-signal rules and examples so a single extraction call can also emit low-value-meta, constraint, blocker, progress, next-step, and key-finding state. Prompt changes should be validated both with stub tests and with the opt-in real-provider smoke suite at `tests/test_semantic_llm_live.py`.
 
 ## Tiered Memory
 

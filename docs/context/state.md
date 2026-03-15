@@ -22,6 +22,7 @@
 - query returns compact source-hit cards with structured refs
 - debug query now exposes retrieval trace plus package-owned routing trace over the same compact result set
 - debug queue health now exists at `GET /debug/queue/health` for status counts, unclaimable pending reasons, active leases, and recent failures
+- normal local runtime now goes through `python -m app.run ... --processors N` rather than expecting users to wire `uvicorn` and background processors manually
 - per-item processing inspection now includes failure category, annotation count, produced memory kinds, thread rebuild status, and compact memory provenance
 - opt-in integration debug logging now emits structured processing, failure, provenance, and thread-rebuild events without changing normal runtime behavior
 - generic `visibility_context` now exists on ingest, storage, query, evidence, and debug trace for privacy-aware scope enforcement
@@ -43,6 +44,7 @@
 - semantic eval uses one committed JSONL regression batch and one baseline metrics document
 - runtime can now select `agent_conversation_memory` as an explicit use-case entry point
 - LLM-derived semantic artifacts carry prompt schema id/version and prompt variant provenance
+- item-level LLM extraction now also emits internal-only semantic signals for low-value meta state, constraints, blockers, progress, next steps, and key findings, persisted under `SourceItem.metadata["pallium_semantic_signals"]`
 - provider-level LLM resilience now includes conservative retries, backoff, request-id metadata, and bounded concurrency
 - thread summaries now use an explicit-only, token-bounded prompt contract
 - minimal lifecycle handling now exists for promoted memory:
@@ -121,7 +123,9 @@
   - `0` false-merge failures
   - broad recall, continuity, precise fact, and evidence-trace scenarios all matched the current candidate-aware routed-policy expectations, including explicit fallback to lower-level memory when broad higher-level recall was unsupported
 - semantic regression baseline remains the committed real OpenAI run on the current batch
-- current recorded semantic baseline on `gpt-5-mini` with `strict_typed_memory_v4_evidence_guarded` is:
+- current recorded semantic baseline on `gpt-5-mini` with `strict_typed_memory_v4_evidence_guarded` is still the committed baseline document, but the shipped prompt schema version is now `v5` after richer internal signal extraction and live prompt hardening.
+- the last live provider-backed semantic smoke loop for the richer signal fields passed locally with `4 / 4` cases across verdict, constraints/next-step, low-value meta, and weak monitoring status.
+- the previously recorded semantic baseline on `gpt-5-mini` with `strict_typed_memory_v4_evidence_guarded` was:
   - `30 / 30` overall correct
   - `0` decision false positives
   - `0` investigation false positives

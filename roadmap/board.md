@@ -1,5 +1,5 @@
 ﻿# Next
-- add-async-ingest-queue-and-worker-processing
+
 
 # Later
 - add-vector-retrieval-provider
@@ -18,6 +18,8 @@
 - idea-optional-reranker-support
 
 # Done
+- add-richer-item-level-semantic-signals
+- add-async-ingest-queue-and-worker-processing
 - add-debug-observability-for-processing-and-query-trace
 - add-candidate-aware-routing-and-fallback-hardening
 - add-reviewed-open-corpus-continuation-pack-expansion
