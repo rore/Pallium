@@ -12,6 +12,7 @@
 - idea-developer-work-continuity-benchmark-expansion
 - idea-generic-memory-lifecycle-signals
 - idea-operational-scale-hardening
+- idea-multi-package-source-item-processing
 - idea-optional-embedding-provider-support
 - idea-optional-llm-assisted-routing
 - idea-optional-reranker-support

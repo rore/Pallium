@@ -146,6 +146,8 @@ Important model properties:
 
 - a source item does not always become memory
 - a source item may produce zero, one, or multiple memory objects over time
+- current async processing assigns exactly one semantic package (`use_case`) per source item; this is a deliberate current limitation, not the intended final multi-package architecture
+- future multi-package support should keep raw source items package-neutral and move queue/processing ownership to per-package records keyed by `(source_item_id, use_case)` through an additive migration: add the new per-package table, backfill current single-package rows, switch worker claims, then retire source-item-level queue ownership later
 - memory objects are evidence-backed and may point to one or more supporting source items
 - generic visibility is separate from locality metadata; `container_ref`, `thread_ref`, and `session_ref` remain descriptive unless a package explicitly maps them into policy
 - relations stay explicit and boring early on
