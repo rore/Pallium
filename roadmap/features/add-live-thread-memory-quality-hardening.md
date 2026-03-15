@@ -1,10 +1,10 @@
 ---
 id: add-live-thread-memory-quality-hardening
 title: Live thread memory quality hardening
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary
@@ -113,4 +113,5 @@ Implementation defaults:
   - freshness-based same-kind ranking
   - integration-ready injectable output for new-thread continuation queries
   - debug trace explanations for sharp-candidate loss and final injection packaging
+
 

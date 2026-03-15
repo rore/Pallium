@@ -1,10 +1,10 @@
-﻿---
+---
 id: add-agent-memory-decision-benchmark-program
 title: Agent memory-decision benchmark program
 status: queued
 priority: high
 commitment: committed
-milestone: Later
+milestone: Next
 ---
 
 ## Summary
@@ -187,3 +187,4 @@ Recommended benchmark additions:
 - one bounded freshness/conflict suite
 - one thin-agent simulation harness
 - one generalized replay pack from live downstream-agent lessons
+
