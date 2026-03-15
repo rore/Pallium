@@ -139,21 +139,21 @@ def test_run_semantic_eval_writes_summary_and_jsonl_results(tmp_path: Path) -> N
     assert summary["input_file"] == str(input_file)
     assert summary["results_file"] == "results.jsonl"
     assert summary["prompt_schema_id"] == "typed_memory_extraction"
-    assert summary["prompt_schema_version"] == "v4"
+    assert summary["prompt_schema_version"] == "v5"
     assert summary["split_output"] is False
     assert summary["split_outputs"] == []
     assert summary["prompt_variants"] == ["strict_typed_memory_v4_evidence_guarded"]
     assert summary["max_concurrency"] == 1
     variant = summary["per_variant"]["strict_typed_memory_v4_evidence_guarded"]
     assert variant["prompt_schema_id"] == "typed_memory_extraction"
-    assert variant["prompt_schema_version"] == "v4"
+    assert variant["prompt_schema_version"] == "v5"
     assert variant["promoted_counts"]["decision"] == 1
     assert variant["type_metrics"]["decision"]["correct"] == 1
     assert summary["run_id"].startswith("semantic-smoke__openai-compatible__fake-model__")
     assert len(results) == 1
     assert results[0]["status"] == "ok"
     assert results[0]["request"]["prompt_schema_id"] == "typed_memory_extraction"
-    assert results[0]["request"]["prompt_schema_version"] == "v4"
+    assert results[0]["request"]["prompt_schema_version"] == "v5"
     assert results[0]["normalized_extraction"]["candidate_type"] == "decision"
     assert results[0]["artifacts"]["memory_objects"][0]["type"] == "decision"
 

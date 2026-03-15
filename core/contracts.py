@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from core.models import Annotation, IndexEntry, MemoryObject, QueryFilters, QueryTrace, Relation, SourceItem
 from core.visibility import VisibilityContext
@@ -13,6 +14,7 @@ class ProcessResult:
     memory_objects: list[MemoryObject]
     relations: list[Relation]
     index_entries: list[IndexEntry]
+    source_item_metadata_updates: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -311,6 +311,7 @@ class SQLiteStorageProvider(StorageProvider):
         with self._session_factory.begin() as session:
             self._persist_process_result_in_session(session, result)
             self._apply_supersession_pairs_in_session(session, supersession_pairs)
+            self._apply_source_item_metadata_updates_in_session(session, result.source_item_metadata_updates)
             if thread_rebuild_scope is not None:
                 self._upsert_thread_processing_scope_in_session(
                     session,
@@ -754,6 +755,21 @@ class SQLiteStorageProvider(StorageProvider):
         supersession_pairs: list[tuple[str, str]],
     ) -> None:
         return None
+
+    def _apply_source_item_metadata_updates_in_session(
+        self,
+        session: Session,
+        metadata_updates: dict[str, dict[str, object]],
+    ) -> None:
+        for source_item_id, metadata_patch in metadata_updates.items():
+            record = session.get(SourceItemRecord, source_item_id)
+            if record is None:
+                raise KeyError(source_item_id)
+            existing_metadata = self._loads(record.metadata_json)
+            if not isinstance(existing_metadata, dict):
+                existing_metadata = {}
+            existing_metadata.update(metadata_patch)
+            record.metadata_json = self._dumps(existing_metadata)
 
     def _upsert_thread_processing_scope_in_session(
         self,

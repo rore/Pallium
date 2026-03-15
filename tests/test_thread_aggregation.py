@@ -34,6 +34,12 @@ class ThreadAwareStubProvider:
                 "investigation_text": "transaction-transformer had the most significant recent ledger changes",
                 "investigation_evidence_text": "Here's the verdict: transaction-transformer had the most significant recent ledger changes by a wide margin.",
                 "rationale_text": "because it touched more tickets, files, and transaction flows than ledger-query",
+                "is_low_value_meta": False,
+                "constraint_text": None,
+                "next_step_text": None,
+                "blocker_text": None,
+                "progress_text": None,
+                "key_finding_text": "transaction-transformer had the most significant recent ledger changes because it touched more tickets, files, and core transaction flows than ledger-query",
             }
         elif "Investigation found that arrival-time ordering skipped hold updates during catalog sync delays." in user_prompt:
             payload = {
@@ -44,6 +50,12 @@ class ThreadAwareStubProvider:
                 "investigation_text": "arrival-time ordering skipped hold updates during catalog sync delays",
                 "investigation_evidence_text": "Investigation found that arrival-time ordering skipped hold updates during catalog sync delays.",
                 "rationale_text": None,
+                "is_low_value_meta": False,
+                "constraint_text": None,
+                "next_step_text": None,
+                "blocker_text": None,
+                "progress_text": None,
+                "key_finding_text": "arrival-time ordering skipped hold updates during catalog sync delays",
             }
         elif "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays." in user_prompt:
             payload = {
@@ -54,8 +66,15 @@ class ThreadAwareStubProvider:
                 "investigation_text": None,
                 "investigation_evidence_text": None,
                 "rationale_text": "to avoid skipped holds during sync delays",
+                "is_low_value_meta": False,
+                "constraint_text": None,
+                "next_step_text": None,
+                "blocker_text": None,
+                "progress_text": None,
+                "key_finding_text": None,
             }
         else:
+            lowered_prompt = user_prompt.lower()
             payload = {
                 "summary": "Conversation summary.",
                 "candidate_type": None,
@@ -64,6 +83,12 @@ class ThreadAwareStubProvider:
                 "investigation_text": None,
                 "investigation_evidence_text": None,
                 "rationale_text": None,
+                "is_low_value_meta": "task complete" in lowered_prompt and "nothing new to report" in lowered_prompt,
+                "constraint_text": "No browser auth, no Jira or Slack auth; use the local repos only and ask the user directly for anything behind those services." if "no browser auth" in lowered_prompt and "local repos only" in lowered_prompt else None,
+                "next_step_text": "Compare ledger-query vs transaction-transformer locally, then explain which repo changed more." if "compare ledger-query vs transaction-transformer locally first" in lowered_prompt else None,
+                "blocker_text": "Browser and SSO-backed services are unavailable in this environment." if "no browser auth" in lowered_prompt and "jira or slack auth" in lowered_prompt else None,
+                "progress_text": "The latest ledger changes were already summarized across the local repos." if "expanded transaction coverage" in lowered_prompt and "adx plumbing" in lowered_prompt else None,
+                "key_finding_text": None,
             }
         return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
 
@@ -204,7 +229,7 @@ def test_pelican_style_thread_promotes_verdict_and_uses_summary_fallback(monkeyp
         {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-1", "content_type": "text/plain", "content": "Here's what's been happening across the ledger services: transaction-transformer expanded transaction coverage while ledger-query focused on export and ADX plumbing.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
         {"source_type": "chat_message", "source_id": "pelican-ledger-msg-2", "content_type": "text/plain", "content": "Assume you are blocked from opening browsers or using Jira/Slack auth. What is your best next-step plan using only the local repos?", "artifact_kind": "message", "role": "user", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
         {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-2", "content_type": "text/plain", "content": "Understood. No browser auth, no Jira or Slack auth. I'll work with the local repos only and ask you directly if I need anything from those services.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
-        {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-3", "content_type": "text/plain", "content": "Best next steps I could take for you: deep-dive into specific commits, compare ledger-query vs transaction-transformer locally, review recent code, map the architecture, or pick up a coding task from the cloned repos.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+        {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-3", "content_type": "text/plain", "content": "I can compare ledger-query vs transaction-transformer locally first, then explain which repo changed more from the cloned repos.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
         {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-4", "content_type": "text/plain", "content": "Here's the verdict: transaction-transformer had the most significant recent ledger changes by a wide margin. It touched more tickets, files, and core transaction flows than ledger-query.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
         {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-5", "content_type": "text/plain", "content": "Task complete. No Slack message needed. Nothing new to report.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
     )

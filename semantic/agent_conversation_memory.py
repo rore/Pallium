@@ -13,7 +13,7 @@ from core.indexing import build_index_entry
 from core.models import MemoryObject, QueryFilters, QueryResultItem, QueryTrace, Relation, SourceItem
 from providers.llm.base import LLMProvider
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
-from semantic.common import normalize_for_index
+from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY, normalize_for_index
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin
 
 
@@ -2164,36 +2164,75 @@ def _collect_selected_work_artifacts(source_items: list[SourceItem]) -> list[dic
     selected: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for source_item in source_items:
-        artifact = _build_selected_work_artifact(source_item)
-        if artifact is None:
-            continue
-        key = (str(artifact["signal_type"]), str(artifact["text"]))
-        if key in seen:
-            continue
-        seen.add(key)
-        selected.append(artifact)
+        for artifact in _build_selected_work_artifacts(source_item):
+            key = (str(artifact["signal_type"]), str(artifact["text"]))
+            if key in seen:
+                continue
+            seen.add(key)
+            selected.append(artifact)
     if len(selected) <= MAX_SELECTED_WORK_ARTIFACTS:
         return selected
     return selected[-MAX_SELECTED_WORK_ARTIFACTS:]
 
 
-def _build_selected_work_artifact(source_item: SourceItem) -> dict[str, str] | None:
+def _build_selected_work_artifacts(source_item: SourceItem) -> list[dict[str, str]]:
     text = source_item.content.strip()
     if not text:
-        return None
+        return []
+    semantic_signals = _source_item_semantic_signals(source_item)
+    if semantic_signals.get("is_low_value_meta") is True:
+        return []
+    artifacts = _collect_metadata_signal_artifacts(source_item, semantic_signals)
+    if artifacts:
+        return artifacts
     if _is_low_value_meta_artifact(source_item):
-        return None
+        return []
     signal_type = _classify_work_signal(source_item)
     if not signal_type:
-        return None
+        return []
+    return [_build_work_artifact(source_item, signal_type=signal_type, text=text, signal_origin="fallback")]
+
+
+def _collect_metadata_signal_artifacts(source_item: SourceItem, semantic_signals: dict[str, object]) -> list[dict[str, str]]:
+    artifacts: list[dict[str, str]] = []
+    for field_name, signal_type in (
+        ("constraint_text", "constraint"),
+        ("blocker_text", "blocker"),
+        ("progress_text", "progress_update"),
+        ("next_step_text", "next_step"),
+        ("key_finding_text", "key_finding"),
+    ):
+        text = str(semantic_signals.get(field_name) or "").strip()
+        if not text:
+            continue
+        artifacts.append(_build_work_artifact(source_item, signal_type=signal_type, text=text, signal_origin="llm"))
+    return artifacts
+
+
+def _build_work_artifact(
+    source_item: SourceItem,
+    *,
+    signal_type: str,
+    text: str,
+    signal_origin: str,
+) -> dict[str, str]:
     artifact_kind = str(source_item.artifact_kind or source_item.source_type)
     return {
         "artifact_kind": artifact_kind,
         "signal_type": signal_type,
+        "signal_origin": signal_origin,
         "source_item_id": source_item.id,
         "occurred_at": source_item.occurred_at.isoformat() if source_item.occurred_at else "",
         "text": text,
     }
+
+
+def _source_item_semantic_signals(source_item: SourceItem) -> dict[str, object]:
+    metadata = source_item.metadata or {}
+    if not isinstance(metadata, dict):
+        return {}
+    signals = metadata.get(SEMANTIC_SIGNAL_METADATA_KEY)
+    return signals if isinstance(signals, dict) else {}
 
 
 def _is_selected_work_artifact(source_item: SourceItem) -> bool:
@@ -2237,6 +2276,9 @@ def _extract_constraint_signal_text(text: str) -> str:
 
 
 def _is_low_value_meta_artifact(source_item: SourceItem) -> bool:
+    semantic_signals = _source_item_semantic_signals(source_item)
+    if semantic_signals.get("is_low_value_meta") is True:
+        return True
     if (source_item.role or "").lower() != "assistant":
         return False
     artifact_kind = (source_item.artifact_kind or "").lower()

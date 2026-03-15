@@ -8,6 +8,9 @@ from core.indexing import build_index_entry
 from core.models import Annotation, MemoryObject, Relation, SourceItem
 
 
+SEMANTIC_SIGNAL_METADATA_KEY = "pallium_semantic_signals"
+
+
 SENTENCE_PATTERN = re.compile(r"(?<=[.!?])\s+")
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 DECISION_PATTERNS = (
@@ -86,6 +89,12 @@ class SemanticExtraction:
     investigation_evidence_text: str | None = None
     rationale_text: str | None = None
     matched_phrase: str | None = None
+    is_low_value_meta: bool = False
+    constraint_text: str | None = None
+    next_step_text: str | None = None
+    blocker_text: str | None = None
+    progress_text: str | None = None
+    key_finding_text: str | None = None
 
 
 def summarize_content(content: str) -> str:
@@ -246,9 +255,12 @@ def build_process_result(
     schema_prefix: str,
     semantic_metadata: dict[str, str] | None = None,
 ) -> ProcessResult:
+    semantic_signals = _build_semantic_signal_payload(extraction, semantic_metadata=semantic_metadata)
     summary_payload = {"text": extraction.summary}
     if semantic_metadata:
         summary_payload["semantic_provenance"] = semantic_metadata
+    if semantic_signals:
+        summary_payload["semantic_signals"] = semantic_signals
 
     annotations = [
         Annotation(
@@ -274,6 +286,8 @@ def build_process_result(
         }
         if semantic_metadata:
             candidate_payload["semantic_provenance"] = semantic_metadata
+        if semantic_signals:
+            candidate_payload["semantic_signals"] = semantic_signals
         if extraction.matched_phrase:
             candidate_payload["matched_phrase"] = extraction.matched_phrase
         annotations.append(
@@ -323,6 +337,8 @@ def build_process_result(
         }
         if semantic_metadata:
             candidate_payload["semantic_provenance"] = semantic_metadata
+        if semantic_signals:
+            candidate_payload["semantic_signals"] = semantic_signals
         if extraction.matched_phrase:
             candidate_payload["matched_phrase"] = extraction.matched_phrase
         annotations.append(
@@ -387,9 +403,30 @@ def build_process_result(
         text_view=normalize_for_index(index_source),
         text_view_name=_memory_text_view_name(memory_object.type),
     )
+    metadata_updates: dict[str, dict[str, object]] = {}
+    if semantic_signals:
+        metadata_updates[source_item.id] = {SEMANTIC_SIGNAL_METADATA_KEY: semantic_signals}
     return ProcessResult(
         annotations=annotations,
         memory_objects=[memory_object],
         relations=[relation],
         index_entries=[index_entry],
+        source_item_metadata_updates=metadata_updates,
     )
+
+
+def _build_semantic_signal_payload(
+    extraction: SemanticExtraction,
+    *,
+    semantic_metadata: dict[str, str] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    if extraction.is_low_value_meta:
+        payload["is_low_value_meta"] = True
+    for field_name in ("constraint_text", "next_step_text", "blocker_text", "progress_text", "key_finding_text"):
+        value = getattr(extraction, field_name)
+        if value:
+            payload[field_name] = value
+    if payload and semantic_metadata:
+        payload["semantic_provenance"] = semantic_metadata
+    return payload
