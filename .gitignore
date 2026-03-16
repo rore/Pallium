@@ -1,4 +1,4 @@
-﻿tools/minimap/.minimap-stdout.log
+tools/minimap/.minimap-stdout.log
 tools/minimap/.minimap-stderr.log
 __pycache__/
 .pytest_cache/
@@ -33,3 +33,6 @@ pallium.db.schema.lock
 *.schema.lock
 
 .local/harness-sessions/
+
+tmp/
+

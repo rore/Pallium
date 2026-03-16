@@ -170,8 +170,10 @@ def run_developer_work_confidence_suite(
         4,
     ) if aggregate["scenarios_total"] else 0.0
 
-    contract_green = benchmark["lane_aggregates"][BenchmarkLane.CONTRACT.value]["failures"] == 0
-    trace_green = benchmark["lane_aggregates"][BenchmarkLane.TRACE.value]["failures"] == 0
+    contract_lane = benchmark["lane_aggregates"][BenchmarkLane.CONTRACT.value]
+    trace_lane = benchmark["lane_aggregates"][BenchmarkLane.TRACE.value]
+    contract_green = contract_lane["scenarios_total"] > 0 and contract_lane["failures"] == 0
+    trace_green = trace_lane["scenarios_total"] > 0 and trace_lane["failures"] == 0
     operational_drift_present = benchmark["lane_aggregates"][BenchmarkLane.OPERATIONAL.value]["failures"] > 0
     realism_pressure_present = benchmark["lane_aggregates"][BenchmarkLane.REALISM.value]["failures"] > 0
 

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.config import AppConfig
 from evals.developer_work_confidence import run_developer_work_confidence_suite
+from evals.benchmark_architecture import build_suite_summary
 from tests.stub_providers import (
     PublicCorpusAnswerProvider,
     PublicCorpusSemanticProvider,
@@ -133,3 +134,52 @@ def test_developer_work_confidence_suite_reports_hard_gates_and_pressure_signals
     assert '`hard_gate_passed`: FAIL' in report
     assert '`confidence_gate_passed`: FAIL' in report
     assert '`memory_routing`' in report
+
+def test_developer_work_confidence_suite_fails_closed_when_hard_gate_coverage_is_missing(tmp_path: Path, monkeypatch) -> None:
+    def _write_stub_run(name: str, suite_id: str) -> Path:
+        run_dir = tmp_path / name
+        run_dir.mkdir(parents=True, exist_ok=True)
+        summary = {
+            'benchmark': build_suite_summary(suite_id=suite_id, results=[]),
+        }
+        (run_dir / 'summary.json').write_text(json.dumps(summary), encoding='utf-8')
+        (run_dir / 'results.jsonl').write_text('', encoding='utf-8')
+        return run_dir
+
+    monkeypatch.setattr(
+        'evals.developer_work_confidence.run_work_resumption_benchmark',
+        lambda **kwargs: _write_stub_run('work_resumption', 'work_resumption'),
+    )
+    monkeypatch.setattr(
+        'evals.developer_work_confidence.run_memory_routing_benchmark',
+        lambda **kwargs: _write_stub_run('memory_routing', 'memory_routing'),
+    )
+    monkeypatch.setattr(
+        'evals.developer_work_confidence.run_public_corpus_benchmark',
+        lambda **kwargs: _write_stub_run(kwargs['run_name'], 'public_corpus'),
+    )
+    monkeypatch.setattr(
+        'evals.developer_work_confidence.run_low_value_churn_benchmark',
+        lambda **kwargs: _write_stub_run('low_value_churn', 'low_value_churn'),
+    )
+
+    run_dir = run_developer_work_confidence_suite(
+        work_scenario_file=WORK_SCENARIOS,
+        memory_routing_scenario_file=MEMORY_ROUTING_SCENARIOS,
+        wildchat_corpus_file=WILDCHAT_FIXTURE,
+        wildchat_manifest=WILDCHAT_MANIFEST,
+        wildbench_corpus_file=WILDBENCH_FIXTURE,
+        wildbench_manifest=WILDBENCH_MANIFEST,
+        output_root=tmp_path / 'output',
+        config=_benchmark_config(),
+        run_name='developer-work-confidence-missing-coverage',
+    )
+
+    summary = json.loads((run_dir / 'summary.json').read_text(encoding='utf-8'))
+
+    assert summary['aggregate']['hard_gate_status']['coverage_complete'] is False
+    assert summary['aggregate']['hard_gate_status']['missing_lanes'] == ['contract', 'trace']
+    assert summary['gates']['contract_hard_gate_green'] is False
+    assert summary['gates']['trace_hard_gate_green'] is False
+    assert summary['gates']['hard_gate_passed'] is False
+    assert summary['gates']['confidence_gate_passed'] is False
