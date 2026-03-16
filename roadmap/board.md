@@ -1,8 +1,9 @@
 # Next
-- add-targeted-external-memory-benchmark-pressure-pack
+- add-benchmark-architecture-formalization-and-tiered-reporting
+- add-live-integration-improvement-loop-and-replay-pipeline
 
 # Later
-- add-live-integration-improvement-loop-and-replay-pipeline
+- add-targeted-external-memory-benchmark-pressure-pack
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
 - add-vector-retrieval-provider

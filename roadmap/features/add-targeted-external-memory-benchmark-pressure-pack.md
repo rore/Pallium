@@ -4,7 +4,7 @@ title: Targeted external memory benchmark pressure pack
 status: queued
 priority: high
 commitment: committed
-milestone: Next
+milestone: Later
 ---
 
 ## Summary
@@ -57,25 +57,32 @@ real use:
 A targeted external pressure pack can help here because it gives Pallium a
 second kind of signal:
 
-- not "did Pallium solve the downstream-agent product problem?"
-- but "is Pallium's core memory machinery robust against public memory stressors
-  we did not invent ourselves?"
+- not whether Pallium solved the downstream-agent product problem
+- but whether Pallium's core memory machinery is robust against public memory
+  stressors we did not invent ourselves
 
 This should improve Pallium by surfacing failure families that our internal
 benchmarks may under-sample, then turning those failures into Pallium-native
 regressions and tuning work.
 
+Within Pallium's benchmark architecture, this feature belongs to the realism
+and pressure side of the stack. It is explicitly not part of the thin-agent
+contract hard gate.
+
 ## In Scope
 
 - add one bounded external benchmark pressure-pack layer after the internal
   agent memory-decision benchmark program lands
+- keep external pressure-pack reporting separate from the contract and trace
+  hard gates so generic memory pressure does not get confused with product
+  acceptance
 - use external benchmarks only to improve Pallium's core memory engine, not to
   position Pallium against other products or publish unstable leaderboard claims
 - prioritize adoption in this order:
   1. LongMemEval
   2. LoCoMo
   3. MemoryAgentBench
-  4. optional later consideration of PersonaMem / ConvoMem only if
+  4. optional later consideration of PersonaMem or ConvoMem only if
      personalization or preference memory becomes a real Pallium goal
 - make LongMemEval the first external benchmark slice because it pressures the
   highest-value generic memory gaps for Pallium:
@@ -83,14 +90,14 @@ regressions and tuning work.
   - temporal reasoning
   - knowledge updates
   - stale-memory handling
-  - change over time / freshness behavior
+  - change over time and freshness behavior
   - safer handling when prior memory is outdated or contradicted
 - add one curated LongMemEval adoption path rather than a broad raw harness
 - the LongMemEval slice should produce Pallium-relevant reporting for at least:
-  - update vs stale-memory failures
+  - update versus stale-memory failures
   - temporal ordering failures
   - cross-session carry-forward failures
-  - abstention / unsupported-memory failures where applicable
+  - abstention or unsupported-memory failures where applicable
 - make LoCoMo the second adoption slice because it pressures:
   - long conversational recall
   - multi-hop memory use
@@ -108,7 +115,7 @@ regressions and tuning work.
 - the MemoryAgentBench work should focus on what is useful to Pallium:
   - incremental multi-turn memory behavior
   - memory updating over interaction history
-  - conflict handling / selective forgetting pressure
+  - conflict handling or selective forgetting pressure
   - long-range context use in agent-like turn sequences
 - do not block the feature on exhaustive MemoryAgentBench support if the public
   assets or harness are still too unstable; a bounded reviewed subset is enough
@@ -117,7 +124,7 @@ regressions and tuning work.
   - retrieval recall failure
   - stale-memory failure
   - wrong-memory selection failure
-  - update/conflict handling failure
+  - update or conflict handling failure
   - temporal reasoning failure
   - unsupported-memory overreach
 - require every adopted external benchmark slice to answer:
@@ -128,11 +135,9 @@ regressions and tuning work.
 - add one promotion path that turns valuable external benchmark misses into
   Pallium-owned replay cases or benchmark scenarios where they become part of
   the repo's long-lived regression set
-- report external-benchmark results separately from the thin-agent and
-  developer-work benchmark gates so we do not confuse generic memory quality
-  with downstream-agent product quality
-- add cost/runtime guidance for adopted external packs so they remain practical
-  to run as tuning tools instead of becoming aspirational benchmark baggage
+- add cost and runtime guidance for adopted external packs so they remain
+  practical to run as tuning tools instead of becoming aspirational benchmark
+  baggage
 
 ## Out of Scope
 
@@ -164,9 +169,9 @@ regressions and tuning work.
    living as disconnected benchmark numbers.
 6. Valuable public-benchmark failures can be promoted into Pallium-native replay
    or authored regression cases.
-7. The roadmap and reports make it clear that internal agent-memory-decision
-   benchmarks remain the product acceptance gate, while external packs are a
-   complementary pressure layer.
+7. Reports and roadmap language make it explicit that internal contract and
+   trace benchmarks remain the product acceptance gate, while external packs are
+   a complementary pressure layer.
 
 ## Notes
 
@@ -174,8 +179,9 @@ Recommended sequencing:
 
 1. finish the live thread memory-quality and thin-agent contract slice
 2. land the agent memory-decision benchmark program
-3. then adopt this targeted external benchmark pressure pack
-4. after that, add the live miss-capture and replay-promotion loop so real and
+3. formalize the benchmark architecture and acceptance-gate vocabulary
+4. then adopt this targeted external benchmark pressure pack
+5. after that, add the live miss-capture and replay-promotion loop so real and
    public failures can feed the same regression vocabulary
 
 Prioritization rationale:
@@ -194,9 +200,12 @@ Prioritization rationale:
 Implementation defaults:
 
 - prefer reviewed, curated subsets over giant benchmark ingestion on day one
-- keep benchmark configs explicit and stable; do not hide unstable prompt/model
-  conditions behind a single score
+- keep benchmark configs explicit and stable; do not hide unstable prompt or
+  model conditions behind a single score
 - use external benchmarks to discover missing Pallium failure families, not only
   to produce one more report
 - every adopted slice should have a clear path from public-benchmark miss to
   Pallium-specific regression or tuning work
+- treat the main output as pressure on Pallium's realism and replay layers, not
+  as a replacement for contract or trace hard-gate reporting
+

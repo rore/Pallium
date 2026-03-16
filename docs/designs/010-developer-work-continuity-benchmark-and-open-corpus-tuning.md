@@ -1,11 +1,24 @@
 # Developer-Work Continuity Benchmark And Open-Corpus Tuning
 
+## Status
+
+This design remains the continuity-specific benchmark design for Pallium.
+
+The canonical benchmark architecture now lives in
+ docs/designs/011-benchmark-architecture-and-acceptance-gates.md.
+
+Use this document for the developer-work, reviewed realism, and continuity
+parts of the benchmark stack. Use the newer benchmark-architecture document for
+lane structure, hard gates, dataset tiers, and judging policy.
+
 ## Goal
 
-Define the next evaluation layer needed to tune Pallium for downstream-agent developer-work continuity without depending on private downstream traffic.
+Define the continuity-specific evaluation layer needed to tune Pallium for
+bounded downstream-agent developer-work continuity without depending on private
+downstream traffic.
 
-This design is not a single benchmark file. It is a benchmark program that
-combines:
+This design is not a single benchmark file. It is the continuity-specific part
+of a broader benchmark program that combines:
 
 - authored resumed-work scenarios
 - realistic public conversation data
@@ -16,47 +29,34 @@ The purpose is to make Pallium tunable against the work shape that matters:
 interrupted investigation, resumed implementation, blocker recovery, and
 cross-session carry-forward of learned state.
 
-## Why Current Evaluation Is Not Enough
+## Why Continuity Still Needs Its Own Design
 
-Pallium now has several useful evaluation layers:
+Pallium now has a more explicit benchmark architecture with contract, trace,
+usefulness, realism, and operational lanes.
 
-- recurring-question benchmark
-- memory-routing benchmark
-- tiered-memory validation benchmark
-- work-resumption benchmark
-- public-corpus evaluation through WildChat
-- complementary public task pressure through WildBench
-
-These are good guardrails, but they still leave a gap.
-
-They make Pallium believable for:
-
-- recurring-question handling
-- routing across current memory layers
-- bounded resumed-work continuity in authored scenarios
-- real interaction phrasing pressure
-
-They do not yet make Pallium fully believable for the broader downstream-agent-shaped problem:
+That broader structure is correct, but continuity still needs its own narrower
+design because it captures the product-shaped realism layer for:
 
 - interrupted tool-heavy investigation
 - resume after auth or tool failure
 - ticket work resumed after a pause
 - review and implementation continuity
-- deciding when memory should stay quiet
+- deciding when memory should stay quiet during continuation
 - privacy-safe continuity once mixed public/private memory exists
 
-So the next tuning layer should be a broader developer-work continuity program,
-not just more synthetic prompt cases and not just more retrieval architecture.
+This document should therefore remain focused on the continuity-specific realism
+and scenario-design problem, not the whole benchmark architecture.
 
 ## Product Question
 
-The benchmark program should answer:
+The continuity benchmark program should answer:
 
 Can Pallium preserve and reuse learned work state well enough that a later
 continuation is materially better, while staying bounded, evidence-backed, and
 privacy-safe?
 
-That should be the main tuning question before larger retrieval expansion.
+That should remain the main continuity tuning question before larger retrieval
+expansion.
 
 ## Design Principles
 
@@ -69,14 +69,16 @@ That should be the main tuning question before larger retrieval expansion.
    packaging, and recall failures.
 5. Include strong no-value and wrong-memory guard cases.
 6. Do not let benchmark growth turn Pallium into a workflow engine.
+7. Keep continuity realism aligned with the canonical benchmark architecture
+   rather than defining a second benchmark philosophy.
 
-## Benchmark Portfolio
+## Continuity Portfolio Inside The Larger Benchmark Stack
 
-The benchmark program should have three layers.
+The continuity-specific benchmark program should keep three realism components.
 
 ### 1. Canonical Authored Developer-Work Suite
 
-This is the main product-shaping layer.
+This is the main product-shaping continuity layer.
 
 It should expand the current work-resumption benchmark into a broader suite of
 developer-work scenario families:
@@ -90,7 +92,7 @@ developer-work scenario families:
 - repeated context question phrased differently later
 - same-thread no-value continuation
 - stale or wrong prior-state trap
-- later privacy/mixed-visibility guard cases
+- later privacy or mixed-visibility guard cases
 
 Why this layer matters:
 
@@ -120,8 +122,8 @@ corpus.
 
 ### 3. External Task Pressure Pack
 
-This layer should pressure-test Pallium against realistic user-task prompts that
-are not authored in the repo.
+This layer should pressure-test continuity behavior against realistic user-task
+prompts that are not authored in the repo.
 
 Primary source:
 
@@ -129,12 +131,13 @@ Primary source:
 
 Purpose:
 
-- realistic prompt/task phrasing
+- realistic prompt and task phrasing
 - paraphrase pressure
 - harder retrieval and routing acceptance checks
 
-This layer is best used as an acceptance benchmark for changes already justified
-by the authored suite and continuation pack.
+This layer is best used as a reviewed pressure pack for changes already
+justified by the authored suite and continuation pack, not as the product truth
+source.
 
 ## Scenario Taxonomy
 
@@ -168,9 +171,9 @@ Recommended scenario families:
 
 ### Repeated Context Questions
 
-- broad recurring recall may favor `pattern_memory`
-- repeated-answer carry-forward may favor `continuity_memory`
-- resumed-work state may favor `task_checkpoint`
+- broad recurring recall may favor pattern_memory
+- repeated-answer carry-forward may favor continuity_memory
+- resumed-work state may favor task_checkpoint
 
 ### No-Value Continuation
 
@@ -182,7 +185,7 @@ Recommended scenario families:
 - same topic, wrong thread
 - stale checkpoint
 - broad pattern memory where exact evidence should win
-- later privacy/mixed-visibility trap
+- later privacy or mixed-visibility trap
 
 ## Per-Scenario Labels
 
@@ -190,70 +193,77 @@ Each reviewed scenario should include explicit labels.
 
 Recommended labels:
 
-- `scenario_family`
-- `should_memory_help`
-- `expected_intent`
-- `expected_primary_layer`
-- `acceptable_fallback_layers`
-- `forbidden_layers`
-- `must_preserve`
-- `must_not_introduce`
-- `expected_gap_target` when a scenario is designed to expose a missing slice
+- scenario_family
+- should_memory_help
+- expected_intent
+- expected_primary_layer
+- acceptable_fallback_layers
+- forbidden_layers
+- must_preserve
+- must_not_introduce
+- expected_gap_target when a scenario is designed to expose a missing slice
+- dataset_tier so continuity assets can participate in the wider iteration,
+  confidence, and replay structure
 
-Recommended `must_preserve` values:
+Recommended must_preserve values:
 
-- `task_orientation`
-- `key_findings`
-- `blocker_state`
-- `preserved_progress`
-- `next_step_guidance`
-- `evidence`
-- `freshness`
+- task_orientation
+- key_findings
+- blocker_state
+- preserved_progress
+- next_step_guidance
+- evidence
+- freshness
 
-Recommended `must_not_introduce` values:
+Recommended must_not_introduce values:
 
-- `wrong_thread_state`
-- `stale_state`
-- `unsupported_recommendation`
-- `higher_level_overreach`
-- `privacy_leak`
+- wrong_thread_state
+- stale_state
+- unsupported_recommendation
+- higher_level_overreach
+- privacy_leak
 
 ## Scoring Model
 
-The benchmark should not collapse all behavior into one score.
+The continuity benchmark should not collapse all behavior into one score.
 
 Recommended score dimensions:
 
-- `memory_helped`
-- `primary_layer_correct`
-- `intent_correct`
-- `task_orientation`
-- `key_findings_reused`
-- `blocker_state_preserved`
-- `preserved_progress`
-- `next_step_guidance`
-- `evidence_preserved`
-- `freshness_preserved`
-- `no_value_guard`
-- `wrong_memory_guard`
+- memory_helped
+- primary_layer_correct
+- intent_correct
+- task_orientation
+- key_findings_reused
+- blocker_state_preserved
+- preserved_progress
+- next_step_guidance
+- evidence_preserved
+- freshness_preserved
+- no_value_guard
+- wrong_memory_guard
+
+These dimensions should fit under the larger benchmark architecture, where
+contract and trace lanes remain the primary hard gate and continuity realism is
+a major input to confidence and replay growth.
 
 ## Failure Taxonomy
 
 The report should explicitly classify failures into families.
 
-Current and recommended failure families:
+Current and recommended continuity-relevant failure families:
 
-- `retrieval_recall_failure`
-- `routing_layer_choice_failure`
-- `result_packaging_evidence_failure`
-- `compact_task_state_failure`
-- `no_value_overreach_failure`
-- `stale_memory_failure`
-- `wrong_memory_selection_failure`
-- later `privacy_leak_failure`
+- retrieval_recall_failure
+- routing_layer_choice_failure
+- result_packaging_evidence_failure
+- compact_task_state_failure
+- no_value_overreach_failure
+- stale_memory_failure
+- wrong_memory_selection_failure
+- privacy_leak_failure
 
-This is the core of the tuning loop. If Pallium changes, we should know whether
-it improved recall, routing, or packaging rather than arguing from anecdotes.
+This remains the core of the tuning loop. If Pallium changes, we should know
+whether it improved recall, routing, or packaging rather than arguing from
+anecdotes.
 
 ## How Open Data Should Be Used
 
@@ -270,10 +280,10 @@ Best uses:
 - same-thread no-value cases
 - later-turn clarification prompts
 - loosely resumed-work language such as:
-  - "what did we find"
-  - "where were we"
-  - "what should I do next"
-  - "what blocked us"
+  - what did we find
+  - where were we
+  - what should I do next
+  - what blocked us
 
 Recommended workflow:
 
@@ -288,7 +298,7 @@ benchmark program.
 
 ### WildBench
 
-Use WildBench as a complementary acceptance and pressure-test layer.
+Use WildBench as a complementary reviewed pressure layer.
 
 Best uses:
 
@@ -301,7 +311,7 @@ for prompt pressure than for task-state continuity semantics.
 
 ## Tuning Loop
 
-The benchmark program should support a repeatable tuning loop.
+The continuity benchmark program should support a repeatable loop.
 
 1. Make a narrow Pallium change.
 2. Run the authored developer-work suite.
@@ -314,53 +324,54 @@ The benchmark program should support a repeatable tuning loop.
 This matters especially for:
 
 - routing tweaks
-- `task_checkpoint` packaging changes
+- task_checkpoint packaging changes
 - result formatting changes
 - later vector retrieval
 - later hybrid fusion
 
 ## What This Should Help Decide
 
-The benchmark program should help answer:
+The continuity benchmark program should help answer:
 
 - is routing still the main problem?
 - is result packaging still the main problem?
 - is lexical recall now the real bottleneck?
-- is `task_checkpoint` actually improving developer-work continuity?
+- is task_checkpoint actually improving developer-work continuity?
 - when should Pallium stay quiet?
 - after privacy lands, are public/private boundaries holding?
 
-This is the mechanism that should justify later retrieval expansion.
-
-Vector retrieval should move forward only if this benchmark program shows recall
-failures are now the dominant limitation after the continuity and privacy slices
-land.
+This remains one mechanism for deciding whether later retrieval expansion is
+justified.
 
 ## Deliverables For The Future Work
 
 The eventual implementation effort should likely produce:
 
 - one expanded developer-work continuity benchmark suite
-- one reviewed WildChat continuation/paraphrase pack
+- one reviewed WildChat continuation and paraphrase pack
 - one bounded WildBench acceptance pack
 - shared failure taxonomy and reporting across all three
 - guidance dashboards or summaries that show which failure family dominates
 
 ## Suggested Sequencing
 
-Recommended sequence after current privacy and integration-readiness work:
+Recommended sequence after the shipped benchmark-program and routing-hardening
+work:
 
-1. expand the authored work-resumption suite into a fuller developer-work
-   continuity benchmark
-2. mine and review WildChat continuation slices
-3. connect WildBench as an acceptance pack over the same failure taxonomy
-4. use this combined benchmark program to decide whether routing, packaging, or
+1. keep the continuity-specific authored and reviewed sets stable as confidence
+   assets
+2. adopt the targeted external memory pressure pack under the broader benchmark
+   architecture
+3. add the live miss-capture and replay-promotion loop so continuity misses can
+   become replay fixtures
+4. use the combined benchmark program to decide whether routing, packaging, or
    retrieval should be tuned next
 
 ## Recommendation
 
-Treat this as the benchmark program that should tune Pallium toward downstream-agent value without requiring private downstream traffic.
+Treat this as the continuity-specific benchmark design that tunes Pallium
+toward downstream-agent value without requiring private downstream traffic.
 
 It should remain broader than the current work-resumption benchmark, but still
-bounded enough to review and reason about.
-
+bounded enough to review and reason about, and it should now be interpreted as
+one realism component inside Pallium's canonical benchmark architecture.

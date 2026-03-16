@@ -2,7 +2,7 @@
 
 ## What Pallium Is
 
-`Pallium` is a generic memory engine for agents.
+Pallium is a generic memory engine for agents.
 
 It stores selected source items, derives reusable knowledge from them through
 extensible semantic layers, and returns compact evidence-backed memory objects
@@ -11,7 +11,7 @@ to downstream consumers.
 One important internal use case is team knowledge support for an agent, but the
 project itself should remain generic and open-source friendly.
 
-The first concrete semantic package is `agent_conversation_memory`. That package
+The first concrete semantic package is agent_conversation_memory. That package
 is intentionally narrower than Pallium itself and is the first product slice
 being used to prove value.
 
@@ -35,8 +35,8 @@ The north-star use cases are:
   progress, blockers, and next-step orientation instead of restarting analysis
 - repeated-question reuse across later conversations when the same conclusion
   should safely help again
-- evidence-backed reuse of findings discovered while exploring external systems,
-  without turning Pallium into the system of record for those systems
+- evidence-backed reuse of findings discovered while exploring external
+  systems, without turning Pallium into the system of record for those systems
 - long-lived conversation continuity that relies on compact memory and explicit
   injection decisions rather than growing transcript replay
 - evaluation of whether downstream agents remember what matters, stay quiet
@@ -45,6 +45,29 @@ The north-star use cases are:
 
 These use cases should be the standard for deciding what Pallium needs next,
 what gaps matter most, and which later capabilities are worth the complexity.
+
+## Benchmark Direction
+
+Pallium's benchmark program should be treated as part of the product
+architecture, not as an afterthought.
+
+The benchmark north star is the thin-agent memory-decision boundary:
+
+- remember what matters
+- stay quiet when local context is already sufficient
+- return compact, evidence-backed, injection-ready carry-forward
+- avoid stale, wrong-scope, privacy-unsafe, or low-value memory
+- avoid forcing semantic cleanup back into the downstream agent
+
+The benchmark architecture should therefore keep:
+
+- deterministic contract and trace grading as the foundation
+- usefulness judging narrow and secondary
+- authored and reviewed realism sets as the product-shaping realism layer
+- external benchmark packs as complementary pressure on the core memory engine,
+  not as product truth
+- live misses promoted into replay assets so real interaction failures become
+  permanent regressions
 
 ## What Pallium Is Not
 
