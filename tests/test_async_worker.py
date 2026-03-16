@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 import re
 import threading
+from subprocess import TimeoutExpired
 
 from app.config import AppConfig
 from app.processor import run_processor
@@ -356,17 +357,27 @@ class FakeProcess:
         FakeProcess._next_pid += 1
         self.returncode = None
         self.terminated = False
+        self.killed = False
         self.waited = False
+        self.wait_timeout = False
+        self.ignore_terminate = False
 
     def poll(self):
         return self.returncode
 
     def terminate(self):
         self.terminated = True
-        self.returncode = 0
+        if not self.ignore_terminate:
+            self.returncode = 0
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
 
     def wait(self, timeout=None):
         self.waited = True
+        if self.wait_timeout and self.returncode is None:
+            raise TimeoutExpired(self.command, timeout)
         if self.returncode is None:
             self.returncode = 0
         return self.returncode
@@ -424,6 +435,32 @@ def test_supervisor_can_disable_cleaners_explicitly(capsys) -> None:
 
     supervisor_output = capsys.readouterr().out
     assert re.search(r'^\d{4}-\d{2}-\d{2}T.+ \[supervisor\] started processor pid=', supervisor_output, re.MULTILINE)
+
+
+def test_supervisor_kills_process_that_ignores_terminate(capsys) -> None:
+    started: list[FakeProcess] = []
+
+    def popen_factory(command, cwd=None):
+        process = FakeProcess(command, cwd=cwd)
+        if 'app.cleaner' in process.command:
+            process.wait_timeout = True
+            process.ignore_terminate = True
+        started.append(process)
+        return process
+
+    exit_code = supervisor.run_supervisor(
+        ['--host', '127.0.0.1', '--port', '8010', '--processors', '1'],
+        popen_factory=popen_factory,
+        sleep_fn=lambda _: None,
+        should_stop=lambda: True,
+    )
+
+    assert exit_code == 0
+    cleaner = next(process for process in started if 'app.cleaner' in process.command)
+    assert cleaner.terminated is True
+    assert cleaner.killed is True
+    captured = capsys.readouterr()
+    assert 'forcing process shutdown' in captured.err
 
 
 def test_thread_processing_lease_is_single_winner_and_expired_lease_is_reclaimable(test_db_url: str) -> None:

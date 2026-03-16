@@ -91,7 +91,16 @@ def run_supervisor(
                 process.terminate()
         for process in reversed(processes):
             if process.poll() is None:
-                process.wait(timeout=5)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    emit_runtime_log(
+                        "supervisor",
+                        f"forcing process shutdown pid={process.pid} after terminate timeout",
+                        stderr=True,
+                    )
+                    process.kill()
+                    process.wait(timeout=5)
         signal.signal(signal.SIGINT, previous_sigint)
         signal.signal(signal.SIGTERM, previous_sigterm)
     return exit_code
