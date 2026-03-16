@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine, delete, func, or_, select, text
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
@@ -41,6 +43,16 @@ from storage.base import (
 
 Base = declarative_base()
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 
 
 class SourceItemRecord(Base):
@@ -202,12 +214,64 @@ class SQLiteStorageProvider(StorageProvider):
         connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
         self._engine = create_engine(database_url, future=True, connect_args=connect_args)
         self._session_factory = sessionmaker(self._engine, expire_on_commit=False, class_=Session)
-        Base.metadata.create_all(self._engine)
-        self._ensure_source_item_columns()
-        self._ensure_memory_object_columns()
-        self._ensure_index_entry_columns()
-        self._ensure_maintenance_state_columns()
-        self._backfill_legacy_memory_freshness()
+        self._initialize_schema()
+
+    def _initialize_schema(self) -> None:
+        with self._schema_initialization_lock():
+            Base.metadata.create_all(self._engine)
+            self._ensure_source_item_columns()
+            self._ensure_memory_object_columns()
+            self._ensure_index_entry_columns()
+            self._ensure_maintenance_state_columns()
+            self._backfill_legacy_memory_freshness()
+
+    @contextmanager
+    def _schema_initialization_lock(self):
+        if self._engine.url.drivername != "sqlite":
+            yield
+            return
+
+        lock_path = self._schema_lock_path()
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+b") as lock_file:
+            lock_file.seek(0, 2)
+            if lock_file.tell() == 0:
+                lock_file.write(b"0")
+                lock_file.flush()
+            lock_file.seek(0)
+            self._acquire_schema_file_lock(lock_file)
+            try:
+                yield
+            finally:
+                self._release_schema_file_lock(lock_file)
+
+    def _schema_lock_path(self) -> Path:
+        database = self._engine.url.database
+        if not database or database == ":memory:":
+            return Path(".pallium-schema-init.lock")
+        database_path = Path(database)
+        return database_path.with_name(f"{database_path.name}.schema.lock")
+
+    @staticmethod
+    def _acquire_schema_file_lock(lock_file) -> None:
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            return
+        if msvcrt is not None:
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            return
+        raise RuntimeError("no supported file-locking implementation available for sqlite schema initialization")
+
+    @staticmethod
+    def _release_schema_file_lock(lock_file) -> None:
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            return
+        if msvcrt is not None:
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            return
+        raise RuntimeError("no supported file-locking implementation available for sqlite schema initialization")
 
     def find_source_item(self, source_type: str, source_id: str) -> SourceItem | None:
         with self._session_factory() as session:

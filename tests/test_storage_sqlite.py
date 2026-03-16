@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import multiprocessing
+from pathlib import Path
+
 from core.models import Annotation, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
 from core.visibility import VisibilityContext
 from storage.sqlite import SQLiteStorageProvider
@@ -138,3 +141,39 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     assert evidence[0].thread_ref == "thread-a"
     assert evidence[0].source_ref == "https://example.test/thread-1"
     assert evidence[0].visibility_context == VisibilityContext(kind="limited", id="channel-a")
+
+
+def _initialize_sqlite_storage_process(database_url: str, result_queue) -> None:
+    try:
+        SQLiteStorageProvider(database_url)
+    except Exception as exc:  # pragma: no cover - exercised via multiprocessing regression
+        result_queue.put(f"error:{exc!r}")
+        raise
+    result_queue.put("ok")
+
+
+def test_sqlite_storage_provider_serializes_schema_initialization(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'concurrent-startup.db'}"
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue()
+    processes = [
+        context.Process(target=_initialize_sqlite_storage_process, args=(database_url, result_queue))
+        for _ in range(3)
+    ]
+
+    for process in processes:
+        process.start()
+
+    results = [result_queue.get(timeout=15) for _ in processes]
+
+    for process in processes:
+        process.join(timeout=15)
+        assert process.exitcode == 0
+
+    assert results == ["ok", "ok", "ok"]
+    SQLiteStorageProvider(database_url)
+
+
+
+
+
