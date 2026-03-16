@@ -20,6 +20,13 @@ not only fact storage and not only episodic transcript recall, but compact,
 evidence-backed knowledge objects such as decisions, investigation outcomes,
 and later higher-level recurring patterns.
 
+Real downstream incidents should shape Pallium's priorities, but they should be
+translated into reusable memory behaviors rather than turning Pallium into a
+collection of scenario-specific fixes. Product decisions should therefore be
+framed as generic retrieval policy, routing policy, packaging policy,
+memory-worthiness policy, lifecycle policy, compatibility handling, or
+benchmark categories rather than as one downstream product's vocabulary.
+
 ## North-Star Use Cases
 
 Pallium's roadmap should be driven by the downstream-agent use cases it is meant
@@ -45,6 +52,8 @@ The north-star use cases are:
 
 These use cases should be the standard for deciding what Pallium needs next,
 what gaps matter most, and which later capabilities are worth the complexity.
+Concrete incidents are useful evidence, but they should not narrow Pallium into
+product-specific names, tool terms, or one-off prompt wording.
 
 ## Benchmark Direction
 
@@ -68,6 +77,15 @@ The benchmark architecture should therefore keep:
   not as product truth
 - live misses promoted into replay assets so real interaction failures become
   permanent regressions
+
+That benchmark program should also preserve Pallium's generic scope:
+
+- live misses should be generalized into Pallium-owned failure classes before
+  they become replay assets
+- benchmark and replay fixtures should stay anonymized and domain-generic by
+  default
+- scenario-specific downstream vocabulary should not become the benchmark
+  architecture's naming system
 
 ## What Pallium Is Not
 

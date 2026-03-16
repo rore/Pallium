@@ -36,6 +36,24 @@ first-class repo-local objects:
 Those should remain Pallium-owned artifacts even if external tooling later
 helps visualize or run them.
 
+## Generalization Discipline
+
+Real downstream incidents are valuable inputs, but the benchmark program should
+translate them into Pallium-native failure classes before they become repo
+assets or implementation drivers.
+
+That means:
+
+- replay assets should be scrubbed, generalized, and anonymized before they are
+  committed
+- benchmark runners and fixtures should validate generalized memory behaviors,
+  not product-specific terminology or one-off incident vocabulary
+- future work should be named and reasoned about as retrieval policy, routing
+  policy, packaging policy, memory-worthiness policy, lifecycle or supersession
+  policy, compatibility handling, and benchmark failure families
+- downstream incidents are input signals for Pallium, not the benchmark
+  architecture's own vocabulary
+
 ## Benchmark Lanes
 
 Pallium should organize its benchmark stack into five lanes.
@@ -306,4 +324,3 @@ to be inferred from:
 
 Those narrower documents should now align to this benchmark architecture rather
 than each defining a separate benchmark philosophy.
-
