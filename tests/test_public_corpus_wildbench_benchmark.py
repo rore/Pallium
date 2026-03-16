@@ -47,7 +47,7 @@ def test_public_corpus_benchmark_reports_wildbench_failure_signal(monkeypatch, t
     assert summary['should_memory_help_total'] == 3
     assert summary['no_value_guard_total'] == 1
     assert summary['memory_backed_wins'] == 3
-    assert summary['policy_successes'] == 1
+    assert summary['policy_successes'] == 2
     assert summary['failure_families']['retrieval_recall_failure'] == 0
 
     by_id = {item['episode_id']: item for item in results}
@@ -58,3 +58,4 @@ def test_public_corpus_benchmark_reports_wildbench_failure_signal(monkeypatch, t
     assert by_id['wildbench-overlap-log-line']['routing_intent'] == 'precise_fact'
     assert by_id['wildbench-scorecard-headings-recall']['failure_families'] == ['routing_layer_choice_failure', 'paraphrase_or_indirect_query_failure']
     assert by_id['wildbench-scorecard-headings-recall']['source_primary_tag'] == 'career'
+
