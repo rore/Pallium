@@ -519,6 +519,7 @@ def test_query_new_thread_cross_thread_recall_relaxes_thread_session_filters(mon
     assert payload["injectable_blocks"]
     assert any(block["memory_type"] in {"task_checkpoint", "thread_summary"} for block in payload["injectable_blocks"])
     assert any("batch 313" in block["text"].lower() or "service token expired" in block["text"].lower() for block in payload["injectable_blocks"])
+    assert any("admin portal" in block["text"].lower() or "local browser" in block["text"].lower() for block in payload["injectable_blocks"])
     assert trace["requested_filters"]["thread_ref"] == fresh_thread_ref
     assert trace["requested_filters"]["session_ref"] == fresh_session_ref
     assert trace["filters"]["container_ref"] == container_ref
@@ -557,6 +558,133 @@ def test_query_new_thread_constraint_recall_uses_structured_memory(monkeypatch, 
     assert any("admin portal" in block["text"].lower() or "local browser" in block["text"].lower() for block in payload["injectable_blocks"])
     assert payload["trace"]["routing"]["selected_layer"] != "source_evidence"
     assert all(block["block_type"] == "memory" for block in payload["injectable_blocks"] )
+
+def test_query_debug_replay_keeps_structured_recall_after_new_thread_contamination(monkeypatch, test_db_url: str) -> None:
+    client = _agent_conversation_client(monkeypatch, test_db_url)
+    container_ref, _old_thread_ref, _old_session_ref = _ingest_cross_thread_catalog_history(client)
+    fresh_thread_ref = "chat:team:operations:thread-fresh-contaminated"
+    fresh_session_ref = "session:operations-fresh-contaminated"
+
+    initial_response = client.post(
+        "/query/debug",
+        json={
+            "text": "what do we know the latest about the catalog sync retry?",
+            "limit": 6,
+            "container_ref": container_ref,
+            "thread_ref": fresh_thread_ref,
+            "session_ref": fresh_session_ref,
+            "runtime_context": {
+                "turn_kind": "new_thread",
+                "session_has_sufficient_local_context": False,
+            },
+        },
+    )
+    assert initial_response.status_code == 200
+    assert all(block["block_type"] == "memory" for block in initial_response.json()["injectable_blocks"])
+
+    duplicate_question = client.post(
+        "/items",
+        json={
+            "source_type": "chat_message",
+            "source_id": "duplicate-recall-question",
+            "content_type": "text/plain",
+            "content": "What do we know the latest about the catalog sync retry?",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": container_ref,
+            "thread_ref": "chat:team:operations:thread-old-duplicate",
+            "session_ref": "session:operations-old-duplicate",
+            "occurred_at": "2026-03-11T10:03:30Z",
+        },
+    )
+    current_question = client.post(
+        "/items",
+        json={
+            "source_type": "chat_message",
+            "source_id": "fresh-recall-question",
+            "content_type": "text/plain",
+            "content": "What do we know the latest about the catalog sync retry?",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": container_ref,
+            "thread_ref": fresh_thread_ref,
+            "session_ref": fresh_session_ref,
+            "occurred_at": "2026-03-11T10:04:00Z",
+        },
+    )
+    capability_note = client.post(
+        "/items",
+        json={
+            "source_type": "assistant_artifact",
+            "source_id": "fresh-capability-note",
+            "content_type": "text/plain",
+            "content": "Capabilities: I can help summarize the latest catalog sync status and search records if needed.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": container_ref,
+            "thread_ref": fresh_thread_ref,
+            "session_ref": fresh_session_ref,
+            "occurred_at": "2026-03-11T10:04:10Z",
+        },
+    )
+    heartbeat_note = client.post(
+        "/items",
+        json={
+            "source_type": "assistant_artifact",
+            "source_id": "fresh-heartbeat-note",
+            "content_type": "text/plain",
+            "content": "Heartbeat: still monitoring the catalog sync retry for the operations channel.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": container_ref,
+            "thread_ref": fresh_thread_ref,
+            "session_ref": fresh_session_ref,
+            "occurred_at": "2026-03-11T10:04:20Z",
+        },
+    )
+    assert duplicate_question.status_code == 200
+    assert current_question.status_code == 200
+    assert capability_note.status_code == 200
+    assert heartbeat_note.status_code == 200
+
+    replay_response = client.post(
+        "/query/debug",
+        json={
+            "text": "what do we know the latest about the catalog sync retry?",
+            "limit": 6,
+            "container_ref": container_ref,
+            "thread_ref": fresh_thread_ref,
+            "session_ref": fresh_session_ref,
+            "runtime_context": {
+                "turn_kind": "new_thread",
+                "session_has_sufficient_local_context": False,
+            },
+        },
+    )
+
+    assert replay_response.status_code == 200
+    payload = replay_response.json()
+    routing = payload["trace"]["routing"]
+    excluded = {item["excluded_reason_code"] for item in routing["excluded_high_scoring_candidates"]}
+    assert payload["should_inject"] is True
+    assert payload["decision_reason"] == "carry_forward_available"
+    assert payload["injectable_blocks"]
+    assert all(block["block_type"] == "memory" for block in payload["injectable_blocks"])
+    assert any("admin portal" in block["text"].lower() or "local browser" in block["text"].lower() for block in payload["injectable_blocks"])
+    assert routing["selected_layer"] != "source_evidence"
+    contaminated_result_ids = {
+        duplicate_question.json()["source_item_id"],
+        current_question.json()["source_item_id"],
+        capability_note.json()["source_item_id"],
+        heartbeat_note.json()["source_item_id"],
+    }
+    assert not contaminated_result_ids.intersection({item["source_item_id"] for item in payload["results"] if item["result_kind"] == "source_hit"})
+    assert {"current_thread_recall_query", "duplicate_recall_query_source", "generic_capability_source", "heartbeat_source_noise"}.issubset(excluded)
+    rendered_blocks = " ".join(block["text"].lower() for block in payload["injectable_blocks"])
+    assert "capabilities:" not in rendered_blocks
+    assert "heartbeat:" not in rendered_blocks
+    assert "what do we know the latest about the catalog sync retry" not in rendered_blocks
+
 
 def test_query_fallback_plugin_reports_injection_policy_unavailable(client, drain_queue) -> None:
     client.post(

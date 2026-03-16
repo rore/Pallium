@@ -334,6 +334,7 @@ ROUTING_QUERY_SHAPE_TOKENS = {
     "big_picture": {"lesson", "pattern", "remember", "takeaway"},
     "analysis_request": {"concluded", "conclusion", "finding", "findings", "land", "outcome", "settled", "true", "verdict"},
     "carry_forward": {"again", "already", "carry", "forward", "old", "repeat", "repeated"},
+    "constraint_recall": {"auth", "authenticate", "authentication", "browser", "constraint", "jira", "login", "portal", "sign", "slack"},
     "resume_state": {"blocked", "blocker", "continue", "continued", "continuing", "left", "next", "progress", "queued", "resume", "resumed", "state", "stuck", "unblock"},
     "evidence_request": {"backed", "evidence", "prove", "quote", "source", "support", "supported", "trace"},
     "precise_lookup": {"exact", "when", "which"},
@@ -342,6 +343,7 @@ ROUTING_QUERY_SHAPE_PHRASES = {
     "history_lookup": ("what do we know", "what is the latest", "what's the latest", "what had we concluded", "what had you concluded", "what constraint had i given"),
     "big_picture": ("big picture", "general lesson", "larger lesson", "main takeaway", "should we remember", "what should we remember"),
     "analysis_request": ("where did we land", "what ended up being true", "what settled", "how did that shake out"),
+    "constraint_recall": ("what constraint had i given", "what constraint did i give", "what had i told you not to use", "what did i tell you not to use"),
     "resume_state": ("pick this back up", "pick that back up", "where did we leave off", "where were we", "what is the latest state", "what's the latest state"),
     "evidence_request": ("what backs that up", "what points to", "what points back to", "where did that come from"),
 }
@@ -447,6 +449,13 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 scored_candidates,
                 intent=intent,
                 candidate_signals=family_inference["candidate_signals"],
+                runtime_context=runtime_context,
+            )
+            _apply_recall_source_noise_suppression(
+                scored_candidates,
+                intent=intent,
+                query_text=text,
+                query_filters=query_filters,
                 runtime_context=runtime_context,
             )
         packaging_summary = None
@@ -1130,7 +1139,7 @@ def _query_shape_tags(text: str, query_tokens: tuple[str, ...]) -> list[str]:
         detected.add("precise_lookup")
     return [
         tag
-        for tag in ("history_lookup", "big_picture", "analysis_request", "carry_forward", "resume_state", "evidence_request", "precise_lookup")
+        for tag in ("history_lookup", "big_picture", "analysis_request", "carry_forward", "constraint_recall", "resume_state", "evidence_request", "precise_lookup")
         if tag in detected
     ]
 
@@ -1159,8 +1168,8 @@ def _query_family_query_shape_score(
     runtime_context: QueryRuntimeContext | None,
 ) -> tuple[int, list[str]]:
     weights = {
-        "answer_continuity": {"carry_forward": 28, "history_lookup": 8},
-        "broad_recall": {"history_lookup": 22, "big_picture": 52},
+        "answer_continuity": {"carry_forward": 28, "history_lookup": 8, "constraint_recall": 18},
+        "broad_recall": {"history_lookup": 22, "big_picture": 52, "constraint_recall": 28},
         "work_resumption": {"resume_state": 34, "carry_forward": 8},
         "precise_fact": {"precise_lookup": 18},
         "evidence_trace": {"evidence_request": 44},
@@ -1442,6 +1451,8 @@ def _query_family_candidate_score(
         and bool(candidate_signals.get("relevant_cross_thread_continuity_in_scope"))
         and sharp_lower_level_support >= supported_floor
     )
+    constraint_recall = "constraint_recall" in query_shape_tags
+    structured_summary_support = max(checkpoint_support, thread_summary_support, discussion_summary_support)
     score = 0
     reasons: list[str] = []
 
@@ -1452,12 +1463,18 @@ def _query_family_candidate_score(
         if fresh_thread_cross_thread_recall and structured_recall_support >= supported_floor:
             score += min(structured_recall_support // 2, 52)
             reasons.append("fresh_thread_structured_memory_support")
+        if fresh_thread_cross_thread_recall and constraint_recall and structured_summary_support >= supported_floor:
+            score += min(structured_summary_support // 3, 28)
+            reasons.append("constraint_carry_forward_support")
         if top_layer == "continuity_memory":
             score += 10
             reasons.append("continuity_memory_won_candidate_competition")
         if continuity_support < supported_floor and structured_recall_support < supported_floor:
             score -= 12
             reasons.append("weak_continuity_support")
+        if "evidence_request" in query_shape_tags and source_support >= supported_floor:
+            score -= 54
+            reasons.append("evidence_request_outweighs_continuity")
         return score, reasons
 
     if family == "broad_recall":
@@ -1473,6 +1490,9 @@ def _query_family_candidate_score(
         if fresh_thread_cross_thread_recall and structured_recall_support >= supported_floor:
             score += min(structured_recall_support // 2, 56)
             reasons.append("fresh_thread_structured_memory_support")
+        if structured_summary_support >= supported_floor:
+            score += min(structured_summary_support // 3, 36)
+            reasons.append("structured_summary_support")
         if fresh_thread_cross_thread_recall and "history_lookup" in query_shape_tags and structured_recall_support >= supported_floor:
             score += 28
             reasons.append("fresh_thread_history_recall")
@@ -1488,6 +1508,9 @@ def _query_family_candidate_score(
         if pattern_support < supported_floor and sharp_lower_level_support > pattern_support and "analysis_request" in query_shape_tags:
             score -= 18
             reasons.append("sharp_lower_level_outweighs_weak_pattern_memory")
+        if "evidence_request" in query_shape_tags and source_support >= supported_floor:
+            score -= 84
+            reasons.append("evidence_request_outweighs_broad_recall")
         return score, reasons
 
     if family == "work_resumption":
@@ -1566,6 +1589,9 @@ def _query_family_candidate_score(
         if fresh_thread_cross_thread_recall and structured_recall_support >= max(source_support, supported_floor) and "evidence_request" not in query_shape_tags:
             score -= 72
             reasons.append("structured_recall_outweighs_source_evidence")
+        if fresh_thread_cross_thread_recall and ("history_lookup" in query_shape_tags or constraint_recall) and structured_summary_support >= supported_floor and "evidence_request" not in query_shape_tags:
+            score -= 54
+            reasons.append("history_lookup_outweighs_evidence_trace")
         return score, reasons
 
     if sharp_lower_level_support:
@@ -1759,6 +1785,88 @@ def _apply_fresh_thread_structured_recall_preference(
             candidate["packaging_reasons"] = list(
                 OrderedDict.fromkeys([*candidate["packaging_reasons"], "fresh_thread_structured_memory_preferred"] )
             )
+
+def _apply_recall_source_noise_suppression(
+    scored_candidates: list[dict[str, object]],
+    *,
+    intent: str,
+    query_text: str,
+    query_filters: QueryFilters | None,
+    runtime_context: QueryRuntimeContext | None,
+) -> None:
+    if intent not in {"broad_recall", "answer_continuity"}:
+        return
+    for candidate in scored_candidates:
+        item = candidate["item"]
+        assert isinstance(item, QueryResultItem)
+        if item.result_kind != "source_hit":
+            continue
+        suppression = _source_noise_suppression_reason(
+            item,
+            query_text=query_text,
+            query_filters=query_filters,
+            runtime_context=runtime_context,
+        )
+        if suppression is None:
+            continue
+        reason_code, reason_text = suppression
+        penalty = 220 if reason_code in {"current_thread_recall_query", "duplicate_recall_query_source"} else 180
+        candidate["base_routing_score"] = int(candidate["base_routing_score"]) - penalty
+        candidate["support_score"] = max(0, int(candidate["support_score"]) - max(penalty // 3, 24))
+        candidate["support_grade"] = _routing_support_grade(int(candidate["support_score"]))
+        candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*candidate["packaging_reasons"], reason_code]))
+        candidate["suppression_reason_code"] = reason_code
+        candidate["suppression_reason"] = reason_text
+
+
+def _source_noise_suppression_reason(
+    item: QueryResultItem,
+    *,
+    query_text: str,
+    query_filters: QueryFilters | None,
+    runtime_context: QueryRuntimeContext | None,
+) -> tuple[str, str] | None:
+    excerpt = str(item.excerpt or "").strip()
+    if not excerpt:
+        return None
+    if _is_low_value_meta_text(excerpt):
+        return "low_value_meta_source", "Low-value orchestration source is not useful carry-forward for recall packaging."
+    if _source_hit_is_heartbeat_text(excerpt):
+        return "heartbeat_source_noise", "Heartbeat-style source noise was excluded from recall packaging."
+    if _source_hit_is_generic_capability_text(excerpt):
+        return "generic_capability_source", "Generic capability chatter was excluded from recall packaging."
+    if _source_hit_looks_like_recall_query(item, query_text):
+        if _runtime_context_prefers_cross_thread_recall(runtime_context) and query_filters is not None and query_filters.thread_ref and item.thread_ref == query_filters.thread_ref:
+            return "current_thread_recall_query", "The current fresh-thread query was excluded from cross-thread recall packaging."
+        return "duplicate_recall_query_source", "A duplicate unresolved recall question was excluded from recall packaging."
+    return None
+
+
+def _source_hit_looks_like_recall_query(item: QueryResultItem, query_text: str) -> bool:
+    excerpt = str(item.excerpt or "").strip()
+    if not excerpt:
+        return False
+    lowered = excerpt.lower()
+    if "?" not in excerpt and not lowered.startswith(("what ", "which ", "why ", "how ")):
+        return False
+    if item.role not in {None, "user"} and (item.source_type or "") not in {"chat_message", "message"}:
+        return False
+    excerpt_tokens = tuple(_routing_query_tokens(excerpt))
+    query_tokens = set(_routing_query_tokens(query_text))
+    overlap = len(set(excerpt_tokens).intersection(query_tokens))
+    excerpt_tags = set(_query_shape_tags(excerpt, excerpt_tokens))
+    return overlap >= 3 and bool(excerpt_tags.intersection({"history_lookup", "carry_forward", "constraint_recall"}))
+
+
+def _source_hit_is_generic_capability_text(text: str) -> bool:
+    lowered = text.lower()
+    return lowered.startswith("capabilities:") or "many talents" in lowered or ("i can" in lowered and "help" in lowered and "status" in lowered)
+
+
+def _source_hit_is_heartbeat_text(text: str) -> bool:
+    lowered = text.lower()
+    return "heartbeat" in lowered or "still alive" in lowered or "still monitoring" in lowered or "healthcheck" in lowered
+
 
 def _result_layer(item: QueryResultItem) -> str:
     if item.result_kind == "source_hit":
@@ -2020,7 +2128,10 @@ def _annotate_excluded_candidates(
             candidate["excluded_reason_code"] = None
             candidate["excluded_reason"] = None
             continue
-        if (
+        if candidate.get("suppression_reason_code"):
+            candidate["excluded_reason_code"] = candidate.get("suppression_reason_code")
+            candidate["excluded_reason"] = candidate.get("suppression_reason")
+        elif (
             packaging_mode == "task_checkpoint_plus_adjacent_evidence"
             and int(candidate.get("routing_rank", 0)) <= requested_limit
         ):
@@ -2331,7 +2442,17 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             memory_type=item.type,
         )
     if item.type == "task_checkpoint":
-        parts = [str(payload.get("summary") or "").strip(), str(payload.get("current_state") or "").strip()]
+        constraint = _preferred_constraint_text(
+            str(payload.get("summary") or ""),
+            str(payload.get("current_state") or ""),
+            str(payload.get("blocker_state") or ""),
+            *[str(value or "") for value in _parse_string_list(payload.get("key_findings"))],
+            *[str(value or "") for value in _parse_string_list(payload.get("evidence"))],
+        )
+        parts: list[str] = []
+        if constraint:
+            parts.append(f"Constraint: {constraint}")
+        parts.extend([str(payload.get("summary") or "").strip(), str(payload.get("current_state") or "").strip()])
         blocker = str(payload.get("blocker_state") or "").strip()
         next_step = str(payload.get("next_step") or "").strip()
         if blocker:
@@ -2342,7 +2463,7 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             result_id=str(item.result_id),
             block_type="memory",
             title="Task Checkpoint",
-            text=" ".join(part for part in parts if part),
+            text=_join_unique_text_parts(parts),
             evidence=item.evidence,
             memory_type=item.type,
         )
@@ -2365,11 +2486,13 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             memory_type=item.type,
         )
     if item.type in {"thread_summary", "discussion_summary"}:
+        summary_text = str(payload.get("summary") or "").strip()
+        constraint = _preferred_constraint_text(summary_text)
         return InjectableBlock(
             result_id=str(item.result_id),
             block_type="memory",
             title="Thread Summary" if item.type == "thread_summary" else "Discussion Summary",
-            text=str(payload.get("summary") or "").strip(),
+            text=_join_unique_text_parts([f"Constraint: {constraint}" if constraint else "", summary_text]),
             evidence=item.evidence,
             memory_type=item.type,
         )
@@ -2381,6 +2504,49 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
         evidence=item.evidence,
         memory_type=item.type,
     )
+
+
+def _join_unique_text_parts(parts: list[str]) -> str:
+    ordered_parts: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        normalized = str(part or "").strip()
+        if not normalized:
+            continue
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered_parts.append(normalized)
+    return " ".join(ordered_parts)
+
+
+def _preferred_constraint_text(*fragments: str) -> str:
+    candidates: list[str] = []
+    for fragment in fragments:
+        candidates.extend(_extract_constraint_snippets(fragment))
+    if not candidates:
+        return ""
+    unique_candidates = list(OrderedDict.fromkeys(candidate.strip() for candidate in candidates if candidate.strip()))
+    unique_candidates.sort(key=lambda value: ("do not" not in value.lower() and "don't" not in value.lower(), -len(value)))
+    return unique_candidates[0]
+
+
+def _extract_constraint_snippets(text: str) -> list[str]:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return []
+    snippets: list[str] = []
+    for fragment in re.split(r"(?<=[.!?])\s+|\n+", normalized):
+        candidate = fragment.strip(" -")
+        lowered = candidate.lower()
+        if not candidate:
+            continue
+        has_tool_marker = any(marker in lowered for marker in CONSTRAINT_TOOL_MARKERS)
+        has_constraint_marker = any(marker in lowered for marker in (*CONSTRAINT_MARKERS, "avoid", "without"))
+        if has_tool_marker and has_constraint_marker:
+            snippets.append(candidate.rstrip("."))
+    return snippets
 
 
 def _build_sharp_candidate_diagnostics(
@@ -2781,7 +2947,14 @@ def _select_final_candidates(
     packaging_summary: dict[str, object] | None,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None]:
     summary = dict(packaging_summary or {})
-    if intent != "work_resumption" or not ranked_candidates:
+    if not ranked_candidates:
+        return ranked_candidates[:requested_limit], summary or None
+    if intent in {"broad_recall", "answer_continuity"}:
+        unsuppressed_candidates = [candidate for candidate in ranked_candidates if not candidate.get("suppression_reason_code")]
+        if unsuppressed_candidates:
+            return unsuppressed_candidates[:requested_limit], summary or None
+        return ranked_candidates[:requested_limit], summary or None
+    if intent != "work_resumption":
         return ranked_candidates[:requested_limit], summary or None
 
     top_candidate = ranked_candidates[0]

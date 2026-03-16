@@ -59,7 +59,7 @@ def test_integration_readiness_scenario_surfaces_scope_guard_injection_boundary_
 
     scope_guard = summary["roles"]["scope_guard"]
     assert "privacy_leak_failure" not in scope_guard["failure_families"]
-    assert scope_guard["failure_families"] == ["routing_layer_choice_failure", "injectability_packaging_failure", "thin_agent_boundary_failure"]
+    assert scope_guard["failure_families"] == ["injectability_packaging_failure", "thin_agent_boundary_failure"]
     assert scope_guard["injection_contract_success"] is False
     assert "## Manual Run" in report
     assert "`integration_readiness_passed`: FAIL" in report

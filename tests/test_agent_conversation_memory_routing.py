@@ -1319,6 +1319,7 @@ def test_fresh_thread_broad_recall_prefers_structured_memory_over_noisy_source_e
     assert outcome.results[0].result_kind == 'memory_hit'
     assert outcome.results[0].type in {'task_checkpoint', 'thread_summary'}
     assert outcome.injectable_blocks[0].block_type == 'memory'
+    assert any('admin portal' in block.text.lower() or 'local browser' in block.text.lower() for block in outcome.injectable_blocks)
 
 
 
@@ -1416,6 +1417,179 @@ def test_fresh_thread_constraint_recall_prefers_structured_memory_over_raw_sourc
     assert any('admin portal' in block.text.lower() or 'local browser' in block.text.lower() for block in outcome.injectable_blocks)
     assert all(block.block_type == 'memory' for block in outcome.injectable_blocks)
 
+
+
+def test_fresh_thread_recall_suppresses_duplicate_queries_and_meta_source_noise() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-fresh-contaminated',
+        session_ref='session:fresh-contaminated',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='source-current-question',
+                source_type='chat_message',
+                source_id='current-question',
+                excerpt='What do we know the latest about the catalog sync retry?',
+                occurred_at=datetime(2026, 3, 11, 10, 3, tzinfo=timezone.utc),
+                role='user',
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-fresh-contaminated',
+                artifact_kind='message',
+                score=22,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-current-question',
+                        source_type='chat_message',
+                        source_id='current-question',
+                        occurred_at=datetime(2026, 3, 11, 10, 3, tzinfo=timezone.utc),
+                        role='user',
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-fresh-contaminated',
+                        artifact_kind='message',
+                    )
+                ],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='source-duplicate-question',
+                source_type='chat_message',
+                source_id='duplicate-question',
+                excerpt='What do we know the latest about the catalog sync retry?',
+                occurred_at=datetime(2026, 3, 11, 10, 1, tzinfo=timezone.utc),
+                role='user',
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-old-duplicate',
+                artifact_kind='message',
+                score=20,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-duplicate-question',
+                        source_type='chat_message',
+                        source_id='duplicate-question',
+                        occurred_at=datetime(2026, 3, 11, 10, 1, tzinfo=timezone.utc),
+                        role='user',
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-old-duplicate',
+                        artifact_kind='message',
+                    )
+                ],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='source-capability-note',
+                source_type='assistant_artifact',
+                source_id='capability-note',
+                excerpt='Capabilities: I can help summarize the latest catalog sync status and search records if needed.',
+                occurred_at=datetime(2026, 3, 11, 10, 4, tzinfo=timezone.utc),
+                role='assistant',
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-fresh-contaminated',
+                artifact_kind='assistant_output',
+                score=18,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-capability-note',
+                        source_type='assistant_artifact',
+                        source_id='capability-note',
+                        occurred_at=datetime(2026, 3, 11, 10, 4, tzinfo=timezone.utc),
+                        role='assistant',
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-fresh-contaminated',
+                        artifact_kind='assistant_output',
+                    )
+                ],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='source-heartbeat-note',
+                source_type='assistant_artifact',
+                source_id='heartbeat-note',
+                excerpt='Heartbeat: still monitoring the catalog sync retry for the operations channel.',
+                occurred_at=datetime(2026, 3, 11, 10, 5, tzinfo=timezone.utc),
+                role='assistant',
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-fresh-contaminated',
+                artifact_kind='assistant_output',
+                score=17,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-heartbeat-note',
+                        source_type='assistant_artifact',
+                        source_id='heartbeat-note',
+                        occurred_at=datetime(2026, 3, 11, 10, 5, tzinfo=timezone.utc),
+                        role='assistant',
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-fresh-contaminated',
+                        artifact_kind='assistant_output',
+                    )
+                ],
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-contaminated-1',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'Catalog sync retry is paused after partial progress and a service-token failure.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'Refreshed 312 reservation records before the service token expired.',
+                    'key_findings': ['Avoid admin portal sign-in and local browser use during the retry.'],
+                    'blocker_state': 'Catalog API returned 401 because the service token expired; do not use the admin portal or a local browser while resolving it.',
+                    'next_step': 'Refresh the catalog service token and rerun the sync from batch 313.',
+                    'evidence': ['Constraint: do not sign in to the admin portal or open a local browser.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=15,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-history',
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='thread-summary-contaminated-1',
+                type='thread_summary',
+                payload={
+                    'summary': 'The catalog sync retry refreshed 312 reservation records before the service token expired and should resume from batch 313 without using the admin portal or a local browser.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=14,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-history',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What do we know the latest about the catalog sync retry?',
+            query_tokens=('what', 'do', 'we', 'know', 'latest', 'catalog', 'sync', 'retry'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What do we know the latest about the catalog sync retry?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    assert outcome.trace.routing['selected_layer'] != 'source_evidence'
+    assert all(item.result_kind == 'memory_hit' for item in outcome.results)
+    assert all(block.block_type == 'memory' for block in outcome.injectable_blocks)
+    excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
+    assert {'current_thread_recall_query', 'duplicate_recall_query_source', 'generic_capability_source', 'heartbeat_source_noise'}.issubset(excluded)
 
 
 def test_fresh_thread_evidence_trace_still_allows_source_evidence() -> None:

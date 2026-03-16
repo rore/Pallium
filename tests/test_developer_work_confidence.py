@@ -86,7 +86,7 @@ def test_developer_work_confidence_suite_reports_packaging_and_ingest_churn_bott
     assert summary["aggregate"]["scenarios_total"] == 36
     assert summary["aggregate"]["policy_successes"] >= 29
     assert summary["aggregate"]["dominant_tuning_bottleneck"] == "packaging"
-    assert summary["aggregate"]["failure_family_counts"]["routing_layer_choice_failure"] >= 3
+    assert summary["aggregate"]["failure_family_counts"]["routing_layer_choice_failure"] >= 2
     assert summary["aggregate"]["failure_family_counts"]["injectability_packaging_failure"] >= 7
     assert summary["aggregate"]["failure_family_counts"]["thin_agent_boundary_failure"] >= 7
     assert summary["aggregate"]["failure_family_counts"]["paraphrase_or_indirect_query_failure"] >= 3

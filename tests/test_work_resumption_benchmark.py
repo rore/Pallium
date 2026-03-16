@@ -260,7 +260,7 @@ def test_work_resumption_benchmark_outputs_summary_results_and_report(monkeypatc
     assert summary["dominant_tuning_bottleneck"] == "packaging"
     assert summary["failure_family_counts"]["injectability_packaging_failure"] >= 3
     assert summary["failure_family_counts"]["thin_agent_boundary_failure"] >= 3
-    assert summary["failure_family_counts"]["routing_layer_choice_failure"] >= 1
+    assert summary["failure_family_counts"]["routing_layer_choice_failure"] == 0
     assert "## Failure Families" in report
 
 
