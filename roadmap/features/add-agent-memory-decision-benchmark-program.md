@@ -1,10 +1,10 @@
 ---
 id: add-agent-memory-decision-benchmark-program
 title: Agent memory-decision benchmark program
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary

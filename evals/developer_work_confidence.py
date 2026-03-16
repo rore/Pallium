@@ -14,6 +14,7 @@ from evals.continuity_common import (
     dominant_tuning_bottleneck,
     failure_family_counts,
 )
+from evals.low_value_churn_benchmark import run_low_value_churn_benchmark
 from evals.public_corpus_benchmark import run_public_corpus_benchmark
 from evals.work_resumption_benchmark import run_work_resumption_benchmark
 from providers.llm.base import LLMProvider
@@ -22,6 +23,7 @@ DEFAULT_OUTPUT_DIR = Path("evals/developer_work_confidence/output")
 DEFAULT_WORK_SCENARIO_FILE = Path("evals/work_resumption/scenarios.json")
 DEFAULT_WILDCHAT_MANIFEST = Path("evals/public_corpus/wildchat_review_manifest.json")
 DEFAULT_WILDBENCH_MANIFEST = Path("evals/public_corpus/wildbench_developer_continuation_manifest.json")
+DEFAULT_LOW_VALUE_CHURN_SCENARIO_FILE = Path("evals/low_value_churn/scenarios.json")
 
 
 def main() -> int:
@@ -31,6 +33,7 @@ def main() -> int:
     parser.add_argument("--wildchat-manifest", type=Path, default=DEFAULT_WILDCHAT_MANIFEST)
     parser.add_argument("--wildbench-corpus-file", type=Path, required=True)
     parser.add_argument("--wildbench-manifest", type=Path, default=DEFAULT_WILDBENCH_MANIFEST)
+    parser.add_argument("--low-value-churn-scenario-file", type=Path, default=DEFAULT_LOW_VALUE_CHURN_SCENARIO_FILE)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--consolidation-strategy", default="thread_summary_anchored")
@@ -42,6 +45,7 @@ def main() -> int:
         wildchat_manifest=args.wildchat_manifest,
         wildbench_corpus_file=args.wildbench_corpus_file,
         wildbench_manifest=args.wildbench_manifest,
+        low_value_churn_scenario_file=args.low_value_churn_scenario_file,
         output_root=args.output_dir,
         config=AppConfig.from_env(),
         run_name=args.run_name,
@@ -58,6 +62,7 @@ def run_developer_work_confidence_suite(
     wildchat_manifest: Path,
     wildbench_corpus_file: Path,
     wildbench_manifest: Path,
+    low_value_churn_scenario_file: Path = DEFAULT_LOW_VALUE_CHURN_SCENARIO_FILE,
     output_root: Path,
     config: AppConfig,
     run_name: str | None = None,
@@ -95,6 +100,12 @@ def run_developer_work_confidence_suite(
         answer_provider=public_corpus_answer_provider,
         default_consolidation_strategy=consolidation_strategy,
     )
+    low_value_churn_run_dir = run_low_value_churn_benchmark(
+        scenario_file=low_value_churn_scenario_file,
+        output_root=run_dir / "low_value_churn",
+        config=config,
+        run_name="low-value-churn",
+    )
 
     work_summary = _read_json(work_run_dir / "summary.json")
     work_results = _read_jsonl(work_run_dir / "results.jsonl")
@@ -102,11 +113,14 @@ def run_developer_work_confidence_suite(
     wildchat_results = _read_jsonl(wildchat_run_dir / "results.jsonl")
     wildbench_summary = _read_json(wildbench_run_dir / "summary.json")
     wildbench_results = _read_jsonl(wildbench_run_dir / "results.jsonl")
+    low_value_churn_summary = _read_json(low_value_churn_run_dir / "summary.json")
+    low_value_churn_results = _read_jsonl(low_value_churn_run_dir / "results.jsonl")
 
     aggregate_failure_counts = _aggregate_failure_counts(
         work_results=work_results,
         wildchat_results=wildchat_results,
         wildbench_results=wildbench_results,
+        low_value_churn_results=low_value_churn_results,
     )
     dominant_bottleneck = dominant_tuning_bottleneck(aggregate_failure_counts)
 
@@ -114,19 +128,19 @@ def run_developer_work_confidence_suite(
         "work_resumption": _work_component_summary(work_run_dir, work_summary, work_results),
         "wildchat_reviewed": _public_component_summary(wildchat_run_dir, wildchat_summary, wildchat_results),
         "wildbench_developer": _public_component_summary(wildbench_run_dir, wildbench_summary, wildbench_results),
+        "low_value_churn": _generic_component_summary(low_value_churn_run_dir, low_value_churn_summary, low_value_churn_results),
     }
 
     aggregate = {
-        "scenarios_total": len(work_results) + len(wildchat_results) + len(wildbench_results),
+        "scenarios_total": len(work_results) + len(wildchat_results) + len(wildbench_results) + len(low_value_churn_results),
         "value_scenarios": sum(1 for row in work_results if row.get("should_memory_help"))
         + sum(1 for row in wildchat_results if row.get("should_memory_help"))
         + sum(1 for row in wildbench_results if row.get("should_memory_help")),
         "non_value_scenarios": sum(1 for row in work_results if not row.get("should_memory_help"))
         + sum(1 for row in wildchat_results if not row.get("should_memory_help"))
-        + sum(1 for row in wildbench_results if not row.get("should_memory_help")),
-        "policy_successes": components["work_resumption"]["policy_successes"]
-        + components["wildchat_reviewed"]["policy_successes"]
-        + components["wildbench_developer"]["policy_successes"],
+        + sum(1 for row in wildbench_results if not row.get("should_memory_help"))
+        + len(low_value_churn_results),
+        "policy_successes": sum(component["policy_successes"] for component in components.values()),
         "failure_family_counts": aggregate_failure_counts,
         "dominant_tuning_bottleneck": dominant_bottleneck,
         "dominant_bottleneck_implication": dominant_bottleneck_implication(dominant_bottleneck),
@@ -141,9 +155,12 @@ def run_developer_work_confidence_suite(
         "zero_wrong_memory_failures": aggregate_failure_counts["wrong_memory_selection_failure"] == 0,
         "zero_stale_memory_failures": aggregate_failure_counts["stale_memory_failure"] == 0,
         "zero_no_value_overreach_failures": aggregate_failure_counts["no_value_overreach_failure"] == 0,
+        "zero_low_value_promotion_failures": aggregate_failure_counts["low_value_promotion_failure"] == 0,
+        "zero_thread_rebuild_churn_failures": aggregate_failure_counts["thread_rebuild_churn_failure"] == 0,
         "work_suite_green": components["work_resumption"]["policy_successes"] == components["work_resumption"]["scenarios_total"],
         "wildchat_suite_green": components["wildchat_reviewed"]["policy_successes"] == components["wildchat_reviewed"]["scenarios_total"],
         "wildbench_suite_green": components["wildbench_developer"]["policy_successes"] == components["wildbench_developer"]["scenarios_total"],
+        "low_value_churn_suite_green": components["low_value_churn"]["policy_successes"] == components["low_value_churn"]["scenarios_total"],
     }
     gates["confidence_gate_passed"] = all(gates.values())
 
@@ -187,16 +204,31 @@ def _public_component_summary(run_dir: Path, summary: dict[str, Any], results: l
     }
 
 
+def _generic_component_summary(run_dir: Path, summary: dict[str, Any], results: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "run_dir": str(run_dir),
+        "scenarios_total": len(results),
+        "value_scenarios": 0,
+        "non_value_scenarios": len(results),
+        "policy_successes": int(summary.get("policy_successes", 0)),
+        "failure_family_counts": {name: int(summary.get("failure_family_counts", {}).get(name, 0)) for name in CONTINUITY_FAILURE_FAMILIES},
+        "summary_file": str(run_dir / "summary.json"),
+        "results_file": str(run_dir / "results.jsonl"),
+    }
+
+
 def _aggregate_failure_counts(
     *,
     work_results: list[dict[str, Any]],
     wildchat_results: list[dict[str, Any]],
     wildbench_results: list[dict[str, Any]],
+    low_value_churn_results: list[dict[str, Any]],
 ) -> dict[str, int]:
     counts: Counter[str] = Counter()
     counts.update(failure for row in work_results for failure in row.get("failure_families", []))
     counts.update(failure for row in wildchat_results for failure in row.get("failure_families", []))
     counts.update(failure for row in wildbench_results for failure in row.get("failure_families", []))
+    counts.update(failure for row in low_value_churn_results for failure in row.get("failure_families", []))
     return {name: int(counts.get(name, 0)) for name in CONTINUITY_FAILURE_FAMILIES}
 
 

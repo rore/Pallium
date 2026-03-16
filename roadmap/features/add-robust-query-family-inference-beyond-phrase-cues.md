@@ -1,10 +1,10 @@
 ---
 id: add-robust-query-family-inference-beyond-phrase-cues
 title: Robust query-family inference beyond phrase cues
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Later
+milestone: Done
 ---
 
 ## Summary

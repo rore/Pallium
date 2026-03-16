@@ -253,13 +253,18 @@ def test_work_resumption_benchmark_outputs_summary_results_and_report(monkeypatc
     assert summary["value_scenarios"] == 11
     assert summary["non_value_scenarios"] == 2
     assert len(results) == 13
+    assert summary["query_family_matches"] >= 10
+    assert summary["injection_contract_successes"] >= 9
+    assert summary["thin_agent_boundary_successes"] >= 9
     assert summary["privacy_guard_successes"] == 3
+    assert summary["dominant_tuning_bottleneck"] == "packaging"
+    assert summary["failure_family_counts"]["injectability_packaging_failure"] >= 3
+    assert summary["failure_family_counts"]["thin_agent_boundary_failure"] >= 3
+    assert summary["failure_family_counts"]["routing_layer_choice_failure"] >= 1
     assert "## Failure Families" in report
-    assert summary["dominant_tuning_bottleneck"] is None
-    assert all(count == 0 for count in summary["failure_family_counts"].values())
 
 
-def test_work_resumption_benchmark_captures_continuity_labels_and_guarded_success(monkeypatch, tmp_path: Path) -> None:
+def test_work_resumption_benchmark_captures_successes_and_attributed_packaging_failures(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: TieredMemorySemanticProvider())
 
     run_dir = run_work_resumption_benchmark(
@@ -274,12 +279,17 @@ def test_work_resumption_benchmark_captures_continuity_labels_and_guarded_succes
     resumed = results["resume-investigation-after-pause"]
     assert resumed["winner"] == "memory_backed"
     assert resumed["expected_memory_types_found"] is True
-    assert resumed["labels"]["expected_intent"] == "broad_recall"
     assert resumed["top_layer"] == "lower_level_memory"
+    assert resumed["should_inject"] is True
+    assert resumed["decision_reason"] == "carry_forward_available"
+    assert resumed["injection_contract"]["contract_success"] is True
+    assert resumed["query_contract_mismatch_fields"] == []
+    assert set(resumed["failure_families"]).issubset({"routing_layer_choice_failure", "paraphrase_or_indirect_query_failure"})
 
     review = results["resume-review-follow-up-after-feedback"]
     assert review["winner"] == "memory_backed"
     assert review["top_layer"] == "task_checkpoint"
+    assert review["query_family"] == "resumed_session_continuation"
     assert review["labels"]["scenario_family"] == "review_continuity"
     assert review["failure_families"] == []
 
@@ -294,21 +304,22 @@ def test_work_resumption_benchmark_captures_continuity_labels_and_guarded_succes
     assert wrong_thread["failure_families"] == []
 
     evidence_followup = results["resume-exact-evidence-for-review-blocker"]
-    assert evidence_followup["routing_intent"] == "evidence_trace"
-    assert evidence_followup["top_layer"] == "source_evidence"
     assert evidence_followup["winner"] == "memory_backed"
-    assert evidence_followup["failure_families"] == []
+    assert evidence_followup["routing_intent"] == "evidence_trace"
+    assert evidence_followup["should_inject"] is True
+    assert evidence_followup["injection_contract"]["contract_success"] is True
 
     public_guard = results["public-query-must-not-leak-limited-rollout-state"]
-    assert public_guard["routing_intent"] == "broad_recall"
-    assert public_guard["top_layer"] == "lower_level_memory"
     assert public_guard["winner"] == "memory_backed"
-    assert public_guard["failure_families"] == []
+    assert public_guard["should_inject"] is True
+    assert public_guard["decision_reason"] == "carry_forward_available"
+    assert "injectability_packaging_failure" in public_guard["failure_families"]
+    assert "thin_agent_boundary_failure" in public_guard["failure_families"]
 
     limited_guard = results["limited-query-can-use-same-limited-rollout-state"]
-    assert limited_guard["top_layer"] == "task_checkpoint"
     assert limited_guard["winner"] == "memory_backed"
-    assert limited_guard["failure_families"] == []
+    assert "injectability_packaging_failure" in limited_guard["failure_families"]
+    assert "thin_agent_boundary_failure" in limited_guard["failure_families"]
 
     user_guard = results["user-private-query-stays-isolated-from-limited-channel"]
     assert user_guard["top_layer"] == "task_checkpoint"
@@ -331,9 +342,14 @@ def test_work_resumption_benchmark_keeps_no_value_continuation_guards(monkeypatc
     auth_no_value = results["same-thread-no-value-continuation"]
     assert auth_no_value["winner"] == "baseline"
     assert auth_no_value["non_value_guard_success"] is True
+    assert auth_no_value["should_inject"] is False
+    assert auth_no_value["decision_reason"] == "same_thread_context_sufficient"
     assert auth_no_value["failure_families"] == []
+    assert auth_no_value["query_contract_mismatch_fields"] == []
 
     review_no_value = results["same-thread-review-no-value-guard"]
     assert review_no_value["winner"] == "baseline"
     assert review_no_value["non_value_guard_success"] is True
+    assert review_no_value["should_inject"] is False
+    assert review_no_value["decision_reason"] == "same_thread_context_sufficient"
     assert review_no_value["failure_families"] == []

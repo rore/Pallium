@@ -1,9 +1,7 @@
 # Next
-- add-agent-memory-decision-benchmark-program
+- add-targeted-external-memory-benchmark-pressure-pack
 
 # Later
-- add-robust-query-family-inference-beyond-phrase-cues
-- add-targeted-external-memory-benchmark-pressure-pack
 - add-live-integration-improvement-loop-and-replay-pipeline
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
@@ -20,6 +18,8 @@
 - idea-optional-reranker-support
 
 # Done
+- add-robust-query-family-inference-beyond-phrase-cues
+- add-agent-memory-decision-benchmark-program
 - add-live-thread-memory-quality-hardening
 - add-cleaner-retention-and-timestamped-runtime-logs
 - add-richer-item-level-semantic-signals

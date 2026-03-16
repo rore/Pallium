@@ -4,7 +4,7 @@ title: Targeted external memory benchmark pressure pack
 status: queued
 priority: high
 commitment: committed
-milestone: Later
+milestone: Next
 ---
 
 ## Summary

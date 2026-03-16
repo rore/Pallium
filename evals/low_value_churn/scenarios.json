@@ -1,0 +1,103 @@
+[
+  {
+    "scenario_id": "single-low-value-meta-turn",
+    "description": "A single low-value assistant meta turn should not create durable memory or request a thread rebuild.",
+    "events": [
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "lv-meta-1",
+        "content_type": "text/plain",
+        "content": "Task complete. No Slack message needed. Nothing new to report.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-lv-001",
+        "session_ref": "agent-session-lv-001"
+      }
+    ],
+    "low_value_source_item_ids": [
+      "lv-meta-1"
+    ],
+    "expected_active_summary_max": 0,
+    "expected_superseded_summary_max": 0
+  },
+  {
+    "scenario_id": "low-value-only-thread-stays-quiet",
+    "description": "A low-value-only thread should not promote durable summary memory or queue rebuild churn.",
+    "events": [
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "lv-thread-1",
+        "content_type": "text/plain",
+        "content": "Understood. No browser auth, no Jira or Slack auth. I will use the local repos only.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-lv-002",
+        "session_ref": "agent-session-lv-002"
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "lv-thread-2",
+        "content_type": "text/plain",
+        "content": "Task complete. Nothing new to report.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-lv-002",
+        "session_ref": "agent-session-lv-002"
+      }
+    ],
+    "low_value_source_item_ids": [
+      "lv-thread-1",
+      "lv-thread-2"
+    ],
+    "expected_active_summary_max": 0,
+    "expected_superseded_summary_max": 0
+  },
+  {
+    "scenario_id": "sharp-decision-thread-avoids-noisy-summary-churn",
+    "description": "A useful decision thread may keep one active summary, but later low-value follow-ups should not create supersession churn.",
+    "events": [
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "lv-sharp-1",
+        "content_type": "text/plain",
+        "content": "Decision: use item event time for reservation ordering to prevent duplicate holds after sync delays.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-lv-003",
+        "session_ref": "agent-session-lv-003"
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "lv-sharp-2",
+        "content_type": "text/plain",
+        "content": "Task complete. No Slack message needed. Nothing new to report.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-lv-003",
+        "session_ref": "agent-session-lv-003"
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "lv-sharp-3",
+        "content_type": "text/plain",
+        "content": "No response requested. Nothing new to report.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-lv-003",
+        "session_ref": "agent-session-lv-003"
+      }
+    ],
+    "low_value_source_item_ids": [
+      "lv-sharp-2",
+      "lv-sharp-3"
+    ],
+    "expected_active_summary_max": 1,
+    "expected_superseded_summary_max": 0
+  }
+]

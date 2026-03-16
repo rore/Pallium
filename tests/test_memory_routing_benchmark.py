@@ -40,14 +40,18 @@ def test_memory_routing_benchmark_outputs_summary_results_and_report(monkeypatch
     results = _read_jsonl(run_dir / 'results.jsonl')
     report = (run_dir / 'report.md').read_text(encoding='utf-8')
 
-    assert summary['scenarios_total'] == 10
-    assert len(results) == 10
-    assert summary['policy_successes'] == 10
-    assert '## Aggregate' in report
+    assert summary['scenarios_total'] == 11
+    assert len(results) == 11
+    assert summary['query_contract_consistency_successes'] == 11
+    assert summary['injection_contract_successes'] == 11
+    assert summary['intent_matches'] == 11
+    assert summary['policy_successes'] == 11
+    assert summary['query_family_matches'] == 11
     assert summary['false_merge_failures'] == 0
+    assert '## Aggregate' in report
 
 
-def test_memory_routing_benchmark_captures_expected_layer_choices(monkeypatch, tmp_path: Path) -> None:
+def test_memory_routing_benchmark_captures_expected_layer_choices_and_new_verdict_slice(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr('app.dependencies.build_llm_provider', lambda config, **_: TieredMemorySemanticProvider())
 
     run_dir = run_memory_routing_benchmark(
@@ -59,18 +63,35 @@ def test_memory_routing_benchmark_captures_expected_layer_choices(monkeypatch, t
     )
     results = {item['scenario_id']: item for item in _read_jsonl(run_dir / 'results.jsonl')}
 
-    assert results['broad-recall-cross-thread']['top_layer'] == 'pattern_memory'
-    assert results['broad-recall-cross-thread']['routing_intent'] == 'broad_recall'
-    assert results['answer-continuity-repeat']['top_layer'] == 'continuity_memory'
-    assert results['precise-fact-ordering']['top_layer'] == 'lower_level_memory'
-    assert results['broad-recall-paraphrase']['top_layer'] == 'pattern_memory'
-    assert results['evidence-trace-exact']['top_layer'] == 'source_evidence'
-    assert results['evidence-trace-paraphrase-challenge']['top_layer'] == 'source_evidence'
-    assert results['same-container-false-merge-guard']['top_layer'] == 'lower_level_memory'
-    assert results['same-thread-low-value']['top_layer'] == 'none'
+    broad = results['broad-recall-cross-thread']
+    assert broad['top_layer'] == 'pattern_memory'
+    assert broad['routing_intent'] == 'broad_recall'
+    assert broad['query_family'] == 'broad_recurring_recall'
+    assert broad['should_inject'] is True
+    assert broad['injection_contract']['contract_success'] is True
+
+    repeated = results['answer-continuity-repeat']
+    assert repeated['top_layer'] == 'continuity_memory'
+    assert repeated['query_family'] == 'resumed_session_continuation'
+    assert repeated['query_contract_consistent'] is True
+    assert repeated['query_contract_mismatch_fields'] == []
+
+    verdict = results['investigative-conclusion-verdict']
+    assert verdict['routing_intent'] == 'investigative_conclusion'
+    assert verdict['query_family'] == 'investigative_conclusion'
+    assert verdict['top_layer'] == 'lower_level_memory'
+    assert verdict['top_memory_type'] == 'investigation_outcome'
+    assert verdict['injection_contract']['contract_success'] is True
+
+    same_thread_low_value = results['same-thread-low-value']
+    assert same_thread_low_value['top_layer'] == 'none'
+    assert same_thread_low_value['should_inject'] is False
+    assert same_thread_low_value['decision_reason'] == 'same_thread_context_sufficient'
+    assert same_thread_low_value['injection_contract']['contract_success'] is True
+    assert same_thread_low_value['query_contract_mismatch_fields'] == []
 
 
-def test_memory_routing_benchmark_handles_evidence_trace_paraphrase(monkeypatch, tmp_path: Path) -> None:
+def test_memory_routing_benchmark_closes_false_merge_guard_routing_gap(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr('app.dependencies.build_llm_provider', lambda config, **_: TieredMemorySemanticProvider())
 
     run_dir = run_memory_routing_benchmark(
@@ -85,9 +106,26 @@ def test_memory_routing_benchmark_handles_evidence_trace_paraphrase(monkeypatch,
     fallback_case = results['same-container-false-merge-guard']
 
     assert challenge['intent_match'] is True
+    assert challenge['query_family_match'] is True
     assert challenge['policy_success'] is True
-    assert challenge['expected_intent'] == 'evidence_trace'
+    assert challenge['query_contract_consistent'] is True
+    assert challenge['injection_contract']['contract_success'] is True
     assert challenge['routing_intent'] == 'evidence_trace'
+    assert challenge['query_trace']['routing']['family_inference']['selected_family'] == 'evidence_trace'
+
     assert fallback_case['top_layer'] == 'lower_level_memory'
-    assert fallback_case['query_trace']['routing']['fallback']['applied'] is True
-    assert fallback_case['query_trace']['routing']['fallback']['to_layer'] == 'lower_level_memory'
+    assert fallback_case['query_contract_consistent'] is True
+    assert fallback_case['injection_contract']['contract_success'] is True
+    assert fallback_case['policy_success'] is True
+    assert fallback_case['intent_match'] is True
+    assert fallback_case['query_family_match'] is True
+    assert fallback_case['routing_intent'] == 'broad_recall'
+    assert fallback_case['query_family'] == 'broad_recurring_recall'
+    assert fallback_case['expected_query_family'] == 'broad_recurring_recall'
+    family_inference = fallback_case['query_trace']['routing']['family_inference']
+    assert family_inference['selected_family'] == 'broad_recall'
+    assert family_inference['candidate_signals']['relevant_cross_thread_continuity_in_scope'] is True
+    assert family_inference['candidate_signals']['relevant_cross_thread_continuity'] is not None
+    assert len(family_inference['candidate_signals']['continuity_topic_alignment_tokens']) >= 2
+    assert 'cross_thread_carry_forward_support' in family_inference['family_scores']['broad_recall']['reasons']
+    assert 'carry_forward_history_outweighs_precise_lookup' in family_inference['family_scores']['precise_fact']['reasons']

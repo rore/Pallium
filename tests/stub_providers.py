@@ -27,6 +27,32 @@ class TieredMemoryAnswerProvider:
 
 
 def _build_item_extraction_payload(user_prompt: str) -> dict[str, object]:
+    lower = user_prompt.lower()
+    if any(
+        phrase in lower
+        for phrase in (
+            'task complete. no slack message needed. nothing new to report.',
+            'task complete. nothing new to report.',
+            'no response requested. nothing new to report.',
+            'understood. no browser auth, no jira or slack auth. i will use the local repos only.',
+        )
+    ):
+        return {
+            'summary': 'Low-value orchestration update.',
+            'candidate_type': None,
+            'decision_text': None,
+            'decision_evidence_text': None,
+            'investigation_text': None,
+            'investigation_evidence_text': None,
+            'rationale_text': None,
+            'is_low_value_meta': True,
+            'constraint_text': None,
+            'next_step_text': None,
+            'blocker_text': None,
+            'progress_text': None,
+            'key_finding_text': None,
+        }
+
     if 'Decision:' in user_prompt:
         decision_text = _extract_after_marker(user_prompt, 'Decision:')
         rationale_text = None
@@ -576,6 +602,22 @@ def _build_answer_payload(user_prompt: str) -> dict[str, object]:
             'evidence_used': [],
         }
 
+    if 'what was our verdict on the duplicate-hold sync problem?' in lower:
+        if 'memory/investigation_outcome' in lower or 'memory/decision' in lower:
+            return {
+                'answer': 'Our verdict was that arrival-time ordering applied stale hold updates during catalog sync delays, so we switched to item event time ordering.',
+                'evidence_used': ['arrival-time ordering applied stale hold updates', 'item event time ordering'],
+            }
+        if 'memory/thread_summary' in lower or 'memory/discussion_summary' in lower:
+            return {
+                'answer': 'The thread says the duplicate-hold issue was discussed and later fixed, but the sharp verdict is preserved more clearly in the investigation outcome and decision.',
+                'evidence_used': ['thread summary'],
+            }
+        return {
+            'answer': 'The visible context does not include the earlier duplicate-hold verdict.',
+            'evidence_used': [],
+        }
+
     if 'why is the rare-book reservation cutoff 48 hours?' in lower:
         return {
             'answer': 'The 48-hour cutoff reduces no-show holds before weekend pickups and gives the next patron time to collect the item.',
@@ -950,8 +992,3 @@ def _build_public_corpus_answer_payload(user_prompt: str) -> dict[str, object]:
         'answer': 'The current thread context is sufficient for this question.',
         'evidence_used': [],
     }
-
-
-
-
-

@@ -355,6 +355,240 @@ def test_evidence_trace_with_task_checkpoint_still_prefers_source_evidence(monke
         )
 
 
+def test_broad_recall_history_query_prefers_carry_forward_conclusion_shape(monkeypatch, test_db_url: str) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest_prior_events(client, 'same-container-false-merge-guard')
+        client.app.state.pallium_service.run_consolidation_pass(
+            use_case='agent_conversation_memory',
+            strategy_name='thread_summary_anchored',
+        )
+
+        payload = _run_debug_query(
+            client,
+            {
+                'text': 'What did we previously conclude about duplicate holds after catalog sync delays?',
+                'limit': 6,
+                'container_ref': 'chat:library-help',
+            },
+        )
+        routing = payload['trace']['routing']
+        family_inference = routing['family_inference']
+        candidate_signals = family_inference['candidate_signals']
+
+        assert routing['query_intent'] == 'broad_recall'
+        assert routing['query_family'] == 'broad_recurring_recall'
+        assert payload['results'][0]['type'] in {'decision', 'investigation_outcome'}
+        assert family_inference['selected_family'] == 'broad_recall'
+        assert family_inference['text_hint_family'] == 'broad_recall'
+        assert candidate_signals['relevant_cross_thread_continuity_in_scope'] is True
+        assert candidate_signals['relevant_cross_thread_continuity'] is not None
+        assert len(candidate_signals['continuity_topic_alignment_tokens']) >= 2
+        assert 'cross_thread_carry_forward_support' in family_inference['family_scores']['broad_recall']['reasons']
+        assert 'carry_forward_history_outweighs_precise_lookup' in family_inference['family_scores']['precise_fact']['reasons']
+
+
+def test_off_topic_cross_thread_continuity_does_not_boost_broad_recall() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='continuity-off-topic',
+                type='continuity_memory',
+                payload={
+                    'summary': 'We already answered that overdue notices should go out in 30-minute batches to avoid staff inbox spam.',
+                    'continuity_question': 'Have we already answered why overdue notices are batched?',
+                    'carry_forward_answer': 'Send overdue notices in 30-minute batches to avoid staff inbox spam.',
+                    'conclusions': [
+                        {'text': 'Send overdue notices in 30-minute batches.'},
+                        {'text': 'Avoid staff inbox spam.'},
+                        {'text': 'Carry this answer forward for notice batching questions.'},
+                    ],
+                },
+                score=18,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-routing-notification',
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-relevant',
+                type='decision',
+                payload={
+                    'decision': 'use item event time for reservation ordering',
+                    'decision_evidence_text': 'Decision: use item event time for reservation ordering to prevent duplicate holds after sync delays.',
+                    'rationale': 'to prevent duplicate holds after sync delays',
+                },
+                score=12,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-routing-reservation',
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='investigation-relevant',
+                type='investigation_outcome',
+                payload={
+                    'investigation_outcome': 'arrival-time ordering applied stale hold updates during catalog sync delays',
+                    'investigation_evidence_text': 'Investigation found that arrival-time ordering applied stale hold updates during catalog sync delays.',
+                },
+                score=11,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-routing-reservation',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What did we previously conclude about duplicate holds after catalog sync delays?',
+            query_tokens=('what', 'did', 'we', 'previously', 'conclude', 'about', 'duplicate', 'holds', 'after', 'catalog', 'sync', 'delays'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What did we previously conclude about duplicate holds after catalog sync delays?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(
+            turn_kind='new_thread',
+            session_has_sufficient_local_context=False,
+        ),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    family_inference = outcome.trace.routing['family_inference']
+    candidate_signals = family_inference['candidate_signals']
+    continuity_layer = candidate_signals['layer_support']['continuity_memory']
+
+    assert continuity_layer['strong_candidate'] is True
+    assert continuity_layer['best_content_overlap_count'] == 0
+    assert candidate_signals['relevant_cross_thread_continuity_in_scope'] is False
+    assert candidate_signals['relevant_cross_thread_continuity'] is None
+    assert candidate_signals['continuity_topic_alignment_tokens'] == []
+    assert 'cross_thread_carry_forward_support' not in family_inference['family_scores']['broad_recall']['reasons']
+    assert 'carry_forward_history_outweighs_precise_lookup' not in family_inference['family_scores']['precise_fact']['reasons']
+
+def test_mixed_continuity_candidates_still_detect_relevant_carry_forward() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='continuity-off-topic-strong',
+                type='continuity_memory',
+                payload={
+                    'summary': 'We already answered that overdue notices should go out in 30-minute batches to avoid staff inbox spam.',
+                    'continuity_question': 'Have we already answered why overdue notices are batched?',
+                    'carry_forward_answer': 'Send overdue notices in 30-minute batches to avoid staff inbox spam.',
+                    'conclusions': [
+                        {'text': 'Send overdue notices in 30-minute batches.'},
+                        {'text': 'Avoid staff inbox spam.'},
+                        {'text': 'Carry this answer forward for notice batching questions.'},
+                    ],
+                },
+                score=22,
+                evidence=[
+                    EvidenceReference(source_item_id='off-topic-1', source_type='assistant_artifact', source_id='off-topic-1'),
+                    EvidenceReference(source_item_id='off-topic-2', source_type='assistant_artifact', source_id='off-topic-2'),
+                    EvidenceReference(source_item_id='off-topic-3', source_type='assistant_artifact', source_id='off-topic-3'),
+                ],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-routing-notification-strong',
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='continuity-relevant-weaker',
+                type='continuity_memory',
+                payload={
+                    'summary': 'Duplicate holds persisted.',
+                    'continuity_question': 'What answer should carry forward?',
+                    'carry_forward_answer': '',
+                },
+                score=14,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-routing-reservation-carry-forward',
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-relevant-mixed',
+                type='decision',
+                payload={
+                    'decision': 'use item event time for reservation ordering',
+                    'decision_evidence_text': 'Decision: use item event time for reservation ordering to prevent duplicate holds after sync delays.',
+                    'rationale': 'to prevent duplicate holds after sync delays',
+                },
+                score=12,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-routing-reservation',
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='investigation-relevant-mixed',
+                type='investigation_outcome',
+                payload={
+                    'investigation_outcome': 'arrival-time ordering applied stale hold updates during catalog sync delays',
+                    'investigation_evidence_text': 'Investigation found that arrival-time ordering applied stale hold updates during catalog sync delays.',
+                },
+                score=11,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-routing-reservation',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What did we previously conclude about duplicate holds after catalog sync delays?',
+            query_tokens=('what', 'did', 'we', 'previously', 'conclude', 'about', 'duplicate', 'holds', 'after', 'catalog', 'sync', 'delays'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What did we previously conclude about duplicate holds after catalog sync delays?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(
+            turn_kind='new_thread',
+            session_has_sufficient_local_context=False,
+        ),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    family_inference = outcome.trace.routing['family_inference']
+    candidate_signals = family_inference['candidate_signals']
+    continuity_layer = candidate_signals['layer_support']['continuity_memory']
+    relevant_continuity = candidate_signals['relevant_cross_thread_continuity']
+
+    assert continuity_layer['best_result_id'] == 'memory_object:continuity-off-topic-strong'
+    assert continuity_layer['best_content_overlap_count'] == 0
+    assert candidate_signals['relevant_cross_thread_continuity_in_scope'] is True
+    assert relevant_continuity is not None
+    assert relevant_continuity['result_id'] == 'memory_object:continuity-relevant-weaker'
+    assert len(candidate_signals['continuity_topic_alignment_tokens']) >= 2
+    assert family_inference['selected_family'] == 'broad_recall'
+    assert 'cross_thread_carry_forward_support' in family_inference['family_scores']['broad_recall']['reasons']
+    assert 'carry_forward_history_outweighs_precise_lookup' in family_inference['family_scores']['precise_fact']['reasons']
+
+
 def test_broad_recall_filters_unrelated_continuity_memory(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
         _ingest_prior_events(client, 'same-container-false-merge-guard')
@@ -840,3 +1074,137 @@ def test_debug_trace_explains_routing_packaging_cap_and_retrieval_losses() -> No
     packaging_diagnostics = {item['result_id']: item for item in packaging_outcome.sharp_candidate_diagnostics}
     assert packaging_outcome.decision_reason == 'same_thread_context_sufficient'
     assert any(item['loss_stage'] == 'packaging' for item in packaging_diagnostics.values())
+
+def test_indirect_investigative_prompt_uses_sharp_conclusion_shape(monkeypatch, test_db_url: str) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest_prior_events(client, 'same-container-false-merge-guard')
+        client.app.state.pallium_service.run_consolidation_pass(
+            use_case='agent_conversation_memory',
+            strategy_name='thread_summary_anchored',
+        )
+
+        payload = _run_debug_query(
+            client,
+            {
+                'text': 'Where did we land on duplicate holds after catalog sync delays?',
+                'limit': 6,
+                'container_ref': 'chat:library-help',
+            },
+        )
+        routing = payload['trace']['routing']
+        family_inference = routing['family_inference']
+
+        assert routing['query_intent'] == 'investigative_conclusion'
+        assert 'analysis_request' in family_inference['query_shape_tags']
+        assert family_inference['candidate_signals']['sharp_lower_level_in_scope'] is True
+        assert 'sharp_lower_level_support' in family_inference['family_scores']['investigative_conclusion']['reasons']
+
+
+def test_vague_resumed_session_prompt_uses_checkpoint_shape_without_resume_cues() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help', thread_ref='chat:library-help:thread-routing-vague-work')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-vague-work',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'Catalog sync retry remains blocked after partial progress.',
+                    'task': 'Finish the catalog sync retry.',
+                    'current_state': 'Refreshed 312 reservation records before the retry stopped.',
+                    'key_findings': ['Service token expired during the retry window.'],
+                    'blocker_state': 'Catalog API returned 401 because the service token expired.',
+                    'next_step': 'Refresh the token and rerun from batch 313.',
+                    'evidence': ['Tool run recorded the 401 on the catalog sync retry.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
+                },
+                score=18,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-routing-vague-work',
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='source-vague-work',
+                source_type='assistant_artifact',
+                source_id='artifact-vague-work',
+                excerpt='Blocked: catalog API returned 401 because the service token expired.',
+                occurred_at=datetime(2026, 3, 11, 10, 1, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-routing-vague-work',
+                artifact_kind='tool_use_summary',
+                score=14,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-vague-work',
+                        source_type='assistant_artifact',
+                        source_id='artifact-vague-work',
+                        occurred_at=datetime(2026, 3, 11, 10, 1, tzinfo=timezone.utc),
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-routing-vague-work',
+                        artifact_kind='tool_use_summary',
+                    )
+                ],
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='Can you orient me on the catalog sync retry?',
+            query_tokens=('orient', 'catalog', 'sync', 'retry'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='Can you orient me on the catalog sync retry?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(
+            turn_kind='resumed_session',
+            session_has_sufficient_local_context=False,
+        ),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    family_inference = outcome.trace.routing['family_inference']
+    assert outcome.trace.routing['query_intent'] == 'work_resumption'
+    assert family_inference['candidate_signals']['strong_task_checkpoint_in_scope'] is True
+    assert 'resumed_session_runtime' in family_inference['family_scores']['work_resumption']['reasons']
+    assert 'missing_resume_query_shape' not in family_inference['family_scores']['work_resumption']['reasons']
+
+
+def test_routing_trace_exposes_candidate_aware_family_scorecard(monkeypatch, test_db_url: str) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest_prior_events(client, 'cross-thread-pattern-value')
+        client.app.state.pallium_service.run_consolidation_pass(
+            use_case='agent_conversation_memory',
+            strategy_name='container_topic_window',
+        )
+
+        payload = _run_debug_query(
+            client,
+            {
+                'text': 'What general lesson should we remember about duplicate holds after catalog sync delays?',
+                'limit': 6,
+                'container_ref': 'chat:library-help',
+            },
+        )
+        family_inference = payload['trace']['routing']['family_inference']
+
+        assert family_inference['selected_family'] == 'broad_recall'
+        assert family_inference['text_hint_family'] == 'broad_recall'
+        assert 'big_picture' in family_inference['query_shape_tags']
+        assert family_inference['candidate_signals']['top_layers']
+        assert family_inference['family_scores']['broad_recall']['candidate_score'] > 0
+        assert (
+            family_inference['family_scores']['broad_recall']['total']
+            > family_inference['family_scores']['precise_fact']['total']
+        )

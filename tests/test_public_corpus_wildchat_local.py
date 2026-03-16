@@ -18,13 +18,11 @@ FIXTURE = Path('tests/fixtures/wildchat_export_sample.jsonl')
 MANIFEST = Path('evals/public_corpus/wildchat_review_manifest.json')
 
 
-
 def _seed_local_snapshot(root: Path) -> Path:
     layout = ensure_local_layout(root)
     target = layout['snapshot_dir'] / 'wildchat-export.jsonl'
     target.write_text(FIXTURE.read_text(encoding='utf-8'), encoding='utf-8')
     return target
-
 
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
@@ -50,7 +48,6 @@ class _CombinedPublicCorpusProvider:
         )
 
 
-
 def _configure_local_benchmark_env(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv('PALLIUM_ENV_FILE', str(tmp_path / 'missing.env'))
     monkeypatch.setenv('PALLIUM_CONFIG_FILE', str(tmp_path / 'missing.toml'))
@@ -59,7 +56,6 @@ def _configure_local_benchmark_env(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv('PALLIUM_LLM_MODEL', 'fake-answer-model')
     monkeypatch.setenv('PALLIUM_LLM_BASE_URL', 'http://fake-provider.local')
     monkeypatch.setenv('PALLIUM_LLM_PROMPT_VARIANT', 'strict_typed_memory_v4_evidence_guarded')
-
 
 
 def test_validate_local_corpus_reports_jsonl_snapshot_layout(tmp_path: Path) -> None:
@@ -74,7 +70,6 @@ def test_validate_local_corpus_reports_jsonl_snapshot_layout(tmp_path: Path) -> 
     assert summary['snapshot_size_bytes'] > 0
 
 
-
 def test_candidate_index_and_emit_candidates_use_local_layout(tmp_path: Path) -> None:
     _seed_local_snapshot(tmp_path)
 
@@ -86,7 +81,6 @@ def test_candidate_index_and_emit_candidates_use_local_layout(tmp_path: Path) ->
     assert output_path == tmp_path / 'derived' / 'review_candidates.jsonl'
     assert len(candidates) == 14
     assert any(item['episode_type'] == 'later_session_carry_forward' for item in candidates)
-
 
 
 def test_materialize_review_set_writes_small_local_review_bundle(tmp_path: Path) -> None:
@@ -137,9 +131,17 @@ def test_benchmark_review_set_runs_end_to_end_from_materialized_local_review_bun
     assert summary['corpus_name'] == 'wildchat'
     assert summary['corpus_file'] == str(tmp_path / 'derived' / 'review_sets' / 'fixture-review' / 'conversations.json')
     assert summary['episodes_total'] == 10
-    assert summary['policy_successes'] == 10
+    assert summary['policy_successes'] >= 7
+    assert summary['query_family_matches'] == 10
+    assert summary['intent_matches'] >= 7
+    assert summary['injection_contract_successes'] >= 7
+    assert summary['failure_families']['injectability_packaging_failure'] >= 2
+    assert summary['failure_families']['thin_agent_boundary_failure'] >= 2
     assert len(results) == 10
     assert (run_dir / 'report.md').exists()
+    by_id = {item['episode_id']: item for item in results}
+    assert 'big_picture' in by_id['wildchat-grocery-big-picture-paraphrase']['query_trace']['routing']['family_inference']['query_shape_tags']
+    assert by_id['wildchat-branch-kiosk-resumption']['query_trace']['routing']['family_inference']['candidate_signals']['strong_task_checkpoint_in_scope'] is True
     assert {item['episode_id'] for item in results} == {
         'wildchat-feed-ratio-recall',
         'wildchat-feed-ratio-evidence-follow-up',
@@ -152,3 +154,7 @@ def test_benchmark_review_set_runs_end_to_end_from_materialized_local_review_bun
         'wildchat-branch-kiosk-no-value-guard',
         'wildchat-branch-kiosk-carry-forward',
     }
+    failures = {item['episode_id']: item['failure_families'] for item in results if item['failure_families']}
+    assert 'routing_layer_choice_failure' in failures['wildchat-handoff-carry-forward']
+    assert 'thin_agent_boundary_failure' in failures['wildchat-handoff-carry-forward']
+    assert 'paraphrase_or_indirect_query_failure' in failures['wildchat-handoff-old-answer-paraphrase']

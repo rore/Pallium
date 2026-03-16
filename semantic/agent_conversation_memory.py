@@ -155,7 +155,7 @@ TASK_CHECKPOINT_SYSTEM_PROMPT = (
 )
 TASK_CHECKPOINT_MAX_TEXT_CHARS = 3200
 TASK_CHECKPOINT_TEXT_VIEW = "memory_object.task_checkpoint_context"
-ROUTING_POLICY_NAME = "agent_conversation_memory.intent_routing.v3"
+ROUTING_POLICY_NAME = "agent_conversation_memory.intent_routing.v4"
 ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory", "task_checkpoint", "thread_summary", "discussion_summary"}
 ROUTING_LOWER_LEVEL_EXACT_TYPES = {"decision", "investigation_outcome"}
 ROUTING_SUMMARY_TYPES = {"thread_summary", "discussion_summary"}
@@ -329,6 +329,29 @@ WORK_RESUMPTION_STALE_SOURCE_PENALTY = 28
 WORK_RESUMPTION_FRESH_STATE_BONUS = 18
 WORK_RESUMPTION_FRESHNESS_MARGIN_SECONDS = 5400
 WORK_RESUMPTION_SIGNAL_PRIORITY = ("blocker", "next_step", "progress_update")
+ROUTING_QUERY_SHAPE_TOKENS = {
+    "history_lookup": {"before", "earlier", "historical", "history", "past", "previously", "prior"},
+    "big_picture": {"lesson", "pattern", "remember", "takeaway"},
+    "analysis_request": {"concluded", "conclusion", "finding", "findings", "land", "outcome", "settled", "true", "verdict"},
+    "carry_forward": {"again", "already", "carry", "forward", "old", "repeat", "repeated"},
+    "resume_state": {"blocked", "blocker", "continue", "continued", "continuing", "left", "next", "progress", "queued", "resume", "resumed", "state", "stuck", "unblock"},
+    "evidence_request": {"backed", "evidence", "prove", "quote", "source", "support", "supported", "trace"},
+    "precise_lookup": {"exact", "when", "which"},
+}
+ROUTING_QUERY_SHAPE_PHRASES = {
+    "big_picture": ("big picture", "general lesson", "larger lesson", "main takeaway", "should we remember", "what should we remember"),
+    "analysis_request": ("where did we land", "what ended up being true", "what settled", "how did that shake out"),
+    "resume_state": ("pick this back up", "pick that back up", "where did we leave off", "where were we", "what is the latest state", "what's the latest state"),
+    "evidence_request": ("what backs that up", "what points to", "what points back to", "where did that come from"),
+}
+ROUTING_FAMILY_INFERENCE_PRIORITY = (
+    "work_resumption",
+    "evidence_trace",
+    "investigative_conclusion",
+    "answer_continuity",
+    "broad_recall",
+    "precise_fact",
+)
 
 class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, ConsolidationSemanticPlugin):
     name = "agent_conversation_memory"
@@ -396,9 +419,16 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         include_trace: bool = False,
         debug_candidate_loader=None,
     ) -> PackageQueryOutcome:
-        intent = _classify_query_intent(text)
-        preferred_layers = ROUTING_PREFERRED_LAYERS[intent]
         query_tokens = _routing_query_tokens(text)
+        family_inference = _infer_query_intent(
+            text=text,
+            query_tokens=query_tokens,
+            retrieved_candidates=retrieval_result.results,
+            query_filters=query_filters,
+            runtime_context=runtime_context,
+        )
+        intent = str(family_inference["selected_family"])
+        preferred_layers = ROUTING_PREFERRED_LAYERS[intent]
         scored_candidates = [
             _score_routed_candidate(
                 item,
@@ -485,12 +515,14 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 visibility=retrieval_result.trace.visibility,
                 routing=_build_routing_trace(
                     intent=intent,
+                    family_inference=family_inference,
                     preferred_layers=preferred_layers,
                     layer_summary=layer_summary,
                     routing_focus=routing_focus,
                     ranked_candidates=ranked_candidates,
                     final_candidates=final_candidates,
                     packaging_summary=packaging_summary,
+                    runtime_context=runtime_context,
                     injection_summary=injection_summary,
                     sharp_candidate_diagnostics=sharp_candidate_diagnostics,
                 ),
@@ -967,7 +999,73 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         )
 
 
-def _classify_query_intent(text: str) -> str:
+def _infer_query_intent(
+    *,
+    text: str,
+    query_tokens: tuple[str, ...],
+    retrieved_candidates: list[QueryResultItem],
+    query_filters: QueryFilters | None,
+    runtime_context: QueryRuntimeContext | None,
+) -> dict[str, object]:
+    text_hint_family = _classify_query_intent_from_text(text)
+    cue_matches = _matched_query_family_cues(text)
+    query_shape_tags = _query_shape_tags(text, query_tokens)
+    candidate_signals = _summarize_query_family_candidates(
+        retrieved_candidates=retrieved_candidates,
+        query_tokens=query_tokens,
+        query_filters=query_filters,
+    )
+    family_scores: dict[str, dict[str, object]] = {}
+    for family in ROUTING_FAMILY_INFERENCE_PRIORITY:
+        cue_score = _query_family_cue_score(
+            family,
+            cue_matches=cue_matches,
+            text_hint_family=text_hint_family,
+        )
+        query_shape_score, query_shape_reasons = _query_family_query_shape_score(
+            family,
+            query_shape_tags=query_shape_tags,
+            runtime_context=runtime_context,
+        )
+        candidate_score, candidate_reasons = _query_family_candidate_score(
+            family,
+            candidate_signals=candidate_signals,
+            query_shape_tags=query_shape_tags,
+            runtime_context=runtime_context,
+        )
+        family_scores[family] = {
+            "total": cue_score + query_shape_score + candidate_score,
+            "cue_score": cue_score,
+            "query_shape_score": query_shape_score,
+            "candidate_score": candidate_score,
+            "reasons": list(OrderedDict.fromkeys([*query_shape_reasons, *candidate_reasons])),
+        }
+
+    ranked_families = sorted(
+        ROUTING_FAMILY_INFERENCE_PRIORITY,
+        key=lambda family: (
+            int(family_scores[family]["total"]),
+            int(family_scores[family]["candidate_score"]),
+            int(family_scores[family]["cue_score"]),
+            -ROUTING_FAMILY_INFERENCE_PRIORITY.index(family),
+        ),
+        reverse=True,
+    )
+    selected_family = ranked_families[0] if ranked_families else text_hint_family
+    runner_up_family = ranked_families[1] if len(ranked_families) > 1 else None
+    return {
+        "selected_family": selected_family,
+        "text_hint_family": text_hint_family,
+        "runner_up_family": runner_up_family,
+        "query_shape_tags": query_shape_tags,
+        "matched_cues": {family: matches for family, matches in cue_matches.items() if matches},
+        "candidate_signals": candidate_signals,
+        "family_scores": family_scores,
+    }
+
+
+
+def _classify_query_intent_from_text(text: str) -> str:
     lowered = text.lower()
     if any(cue in lowered for cue in EVIDENCE_TRACE_CUES):
         return "evidence_trace"
@@ -983,6 +1081,489 @@ def _classify_query_intent(text: str) -> str:
         return "precise_fact"
     return "broad_recall"
 
+
+
+def _matched_query_family_cues(text: str) -> dict[str, list[str]]:
+    lowered = text.lower()
+    matched = {
+        "answer_continuity": [cue for cue in ANSWER_CONTINUITY_CUES if cue in lowered][:3],
+        "broad_recall": [cue for cue in BROAD_RECALL_CUES if cue in lowered][:3],
+        "work_resumption": [cue for cue in WORK_RESUMPTION_CUES if cue in lowered][:3],
+        "precise_fact": [cue for cue in PRECISE_FACT_CUES if cue in lowered][:3],
+        "evidence_trace": [cue for cue in EVIDENCE_TRACE_CUES if cue in lowered][:3],
+        "investigative_conclusion": [cue for cue in INVESTIGATIVE_CONCLUSION_CUES if cue in lowered][:3],
+    }
+    if lowered.startswith("why "):
+        matched["broad_recall"] = list(OrderedDict.fromkeys([*matched["broad_recall"], "why*"]))
+    if lowered.startswith(("what ", "which ", "when ")):
+        matched["precise_fact"] = list(OrderedDict.fromkeys([*matched["precise_fact"], "wh*"]))
+    return matched
+
+
+
+def _query_shape_tags(text: str, query_tokens: tuple[str, ...]) -> list[str]:
+    lowered = text.lower()
+    token_set = set(query_tokens)
+    detected: set[str] = set()
+    for tag, tokens in ROUTING_QUERY_SHAPE_TOKENS.items():
+        if token_set.intersection(tokens):
+            detected.add(tag)
+    for tag, phrases in ROUTING_QUERY_SHAPE_PHRASES.items():
+        if any(phrase in lowered for phrase in phrases):
+            detected.add(tag)
+    if lowered.startswith("why "):
+        detected.add("big_picture")
+    if lowered.startswith(("what ", "which ", "when ")):
+        detected.add("precise_lookup")
+    return [
+        tag
+        for tag in ("history_lookup", "big_picture", "analysis_request", "carry_forward", "resume_state", "evidence_request", "precise_lookup")
+        if tag in detected
+    ]
+
+
+
+def _query_family_cue_score(
+    family: str,
+    *,
+    cue_matches: dict[str, list[str]],
+    text_hint_family: str,
+) -> int:
+    family_matches = cue_matches.get(family, [])
+    score = 0
+    if family_matches:
+        score += 44 + (min(len(family_matches), 3) * 8)
+    if family == text_hint_family:
+        score += 16
+    return score
+
+
+
+def _query_family_query_shape_score(
+    family: str,
+    *,
+    query_shape_tags: list[str],
+    runtime_context: QueryRuntimeContext | None,
+) -> tuple[int, list[str]]:
+    weights = {
+        "answer_continuity": {"carry_forward": 28, "history_lookup": 8},
+        "broad_recall": {"history_lookup": 22, "big_picture": 52},
+        "work_resumption": {"resume_state": 34, "carry_forward": 8},
+        "precise_fact": {"precise_lookup": 18},
+        "evidence_trace": {"evidence_request": 44},
+        "investigative_conclusion": {"analysis_request": 30, "history_lookup": 10},
+    }
+    score = 0
+    reasons: list[str] = []
+    for tag, bonus in weights.get(family, {}).items():
+        if tag in query_shape_tags:
+            score += bonus
+            reasons.append(f"{tag}_query_shape")
+    if runtime_context is not None and family == "work_resumption" and runtime_context.turn_kind == "resumed_session":
+        score += 12
+        reasons.append("resumed_session_runtime")
+    if runtime_context is not None and family == "answer_continuity" and runtime_context.turn_kind == "same_thread_continuation":
+        score += 10
+        reasons.append("same_thread_runtime")
+    return score, reasons
+
+
+
+def _summarize_query_family_candidates(
+    *,
+    retrieved_candidates: list[QueryResultItem],
+    query_tokens: tuple[str, ...],
+    query_filters: QueryFilters | None,
+) -> dict[str, object]:
+    layer_support: dict[str, dict[str, object]] = {}
+    continuity_candidates: list[dict[str, object]] = []
+    for item in retrieved_candidates:
+        layer = _result_layer(item)
+        overlap_tokens = _routing_overlap_tokens(item, query_tokens)
+        content_overlap_tokens = [token for token in overlap_tokens if token not in ROUTING_META_QUERY_TOKENS]
+        support_score = _candidate_evidence_shape_score(
+            item,
+            layer=layer,
+            content_overlap_tokens=content_overlap_tokens,
+            query_filters=query_filters,
+        )
+        same_thread = _candidate_matches_thread(item, query_filters)
+        same_container = _candidate_matches_container(item, query_filters)
+        work_signal_types = _work_resumption_signal_types(item)
+        work_usefulness, work_reasons = _work_resumption_usefulness_score(item, work_signal_types)
+        has_rationale = _candidate_has_rationale(item)
+        has_explicit_evidence = _candidate_has_explicit_evidence(item)
+        stats = layer_support.setdefault(
+            layer,
+            {
+                "count": 0,
+                "best_support": 0,
+                "same_thread_hits": 0,
+                "same_container_hits": 0,
+                "evidence_hits": 0,
+                "rationale_hits": 0,
+                "best_work_usefulness": 0,
+                "best_content_overlap_count": 0,
+                "best_content_overlap_tokens": [],
+                "best_result_id": None,
+                "strong_candidate": False,
+                "sharp_candidate": False,
+                "dominant_work_signals": [],
+            },
+        )
+        stats["count"] = int(stats["count"]) + 1
+        stats["same_thread_hits"] = int(stats["same_thread_hits"]) + int(same_thread)
+        stats["same_container_hits"] = int(stats["same_container_hits"]) + int(same_container)
+        stats["evidence_hits"] = int(stats["evidence_hits"]) + int(has_explicit_evidence or bool(item.evidence))
+        stats["rationale_hits"] = int(stats["rationale_hits"]) + int(has_rationale)
+        candidate_is_strong = _routing_support_grade(support_score) in {"supported", "strong"}
+        if layer == "continuity_memory":
+            continuity_candidates.append(
+                {
+                    "result_id": _routing_result_id(item),
+                    "support": support_score,
+                    "same_thread": same_thread,
+                    "content_overlap_count": len(content_overlap_tokens),
+                    "content_overlap_tokens": list(content_overlap_tokens[:6]),
+                    "strong_candidate": candidate_is_strong,
+                }
+            )
+        if support_score >= int(stats["best_support"]):
+            stats["best_support"] = support_score
+            stats["best_work_usefulness"] = work_usefulness
+            stats["best_content_overlap_count"] = len(content_overlap_tokens)
+            stats["best_content_overlap_tokens"] = list(content_overlap_tokens[:6])
+            stats["best_result_id"] = _routing_result_id(item)
+            stats["strong_candidate"] = candidate_is_strong
+            stats["sharp_candidate"] = bool(
+                ("sharp_checkpoint" in work_reasons)
+                or (layer in ROUTING_LOWER_LEVEL_EXACT_TYPES and (has_rationale or has_explicit_evidence))
+            )
+            stats["dominant_work_signals"] = list(work_signal_types[:3])
+
+    bounded_layer_support: dict[str, dict[str, object]] = {}
+    for layer, stats in layer_support.items():
+        entry = {
+            "count": int(stats["count"]),
+            "best_support": int(stats["best_support"]),
+            "same_thread_hits": int(stats["same_thread_hits"]),
+            "same_container_hits": int(stats["same_container_hits"]),
+            "evidence_hits": int(stats["evidence_hits"]),
+            "rationale_hits": int(stats["rationale_hits"]),
+            "best_work_usefulness": int(stats["best_work_usefulness"]),
+            "best_content_overlap_count": int(stats["best_content_overlap_count"]),
+            "strong_candidate": bool(stats["strong_candidate"]),
+            "sharp_candidate": bool(stats["sharp_candidate"]),
+        }
+        if stats["best_result_id"]:
+            entry["best_result_id"] = stats["best_result_id"]
+        if stats["best_content_overlap_tokens"]:
+            entry["best_content_overlap_tokens"] = list(stats["best_content_overlap_tokens"])
+        if stats["dominant_work_signals"]:
+            entry["dominant_work_signals"] = list(stats["dominant_work_signals"])
+        bounded_layer_support[layer] = entry
+
+    sharp_lower_level_topic_tokens = list(
+        OrderedDict.fromkeys(
+            token
+            for layer in ("investigation_outcome", "decision", "lower_level_memory")
+            for token in list((bounded_layer_support.get(layer) or {}).get("best_content_overlap_tokens") or [])
+            if isinstance(token, str)
+        )
+    )
+    relevant_continuity_candidates: list[dict[str, object]] = []
+    for candidate in continuity_candidates:
+        overlap_tokens = [
+            token
+            for token in list(candidate.get("content_overlap_tokens") or [])
+            if isinstance(token, str)
+        ]
+        alignment_tokens = [token for token in overlap_tokens if token in sharp_lower_level_topic_tokens][:4]
+        if (
+            bool(candidate.get("strong_candidate"))
+            and not bool(candidate.get("same_thread"))
+            and int(candidate.get("content_overlap_count") or 0) >= 2
+            and len(alignment_tokens) >= 2
+        ):
+            relevant_continuity_candidates.append(
+                {
+                    "result_id": candidate.get("result_id"),
+                    "support": int(candidate.get("support") or 0),
+                    "content_overlap_count": int(candidate.get("content_overlap_count") or 0),
+                    "content_overlap_tokens": overlap_tokens,
+                    "alignment_tokens": alignment_tokens,
+                }
+            )
+    relevant_continuity_candidates.sort(
+        key=lambda candidate: (
+            int(candidate.get("support") or 0),
+            int(candidate.get("content_overlap_count") or 0),
+        ),
+        reverse=True,
+    )
+    best_relevant_cross_thread_continuity = relevant_continuity_candidates[0] if relevant_continuity_candidates else None
+    continuity_topic_alignment_tokens = list((best_relevant_cross_thread_continuity or {}).get("alignment_tokens") or [])
+    relevant_cross_thread_continuity_in_scope = best_relevant_cross_thread_continuity is not None
+
+    top_layers = [
+        {"layer": layer, **stats}
+        for layer, stats in sorted(
+            bounded_layer_support.items(),
+            key=lambda item: (int(item[1].get("best_support", 0)), int(item[1].get("count", 0))),
+            reverse=True,
+        )[:4]
+    ]
+    return {
+        "layer_support": bounded_layer_support,
+        "top_layers": top_layers,
+        "sharp_lower_level_in_scope": any(
+            bool((bounded_layer_support.get(layer) or {}).get("strong_candidate"))
+            for layer in ("investigation_outcome", "decision", "lower_level_memory")
+        ),
+        "strong_task_checkpoint_in_scope": bool(
+            (bounded_layer_support.get("task_checkpoint") or {}).get("strong_candidate")
+            or (bounded_layer_support.get("task_checkpoint") or {}).get("sharp_candidate")
+        ),
+        "strong_source_evidence_in_scope": bool((bounded_layer_support.get("source_evidence") or {}).get("strong_candidate")),
+        "relevant_cross_thread_continuity_in_scope": relevant_cross_thread_continuity_in_scope,
+        "continuity_topic_alignment_tokens": continuity_topic_alignment_tokens,
+        "relevant_cross_thread_continuity": best_relevant_cross_thread_continuity,
+    }
+
+
+
+def _candidate_has_rationale(item: QueryResultItem) -> bool:
+    if item.result_kind != "memory_hit" or not item.payload:
+        return False
+    return bool(str(item.payload.get("rationale") or "").strip())
+
+
+
+def _candidate_has_explicit_evidence(item: QueryResultItem) -> bool:
+    if item.result_kind == "source_hit":
+        return bool(item.evidence)
+    payload = item.payload or {}
+    if str(payload.get("decision_evidence_text") or payload.get("investigation_evidence_text") or "").strip():
+        return True
+    if _parse_string_list(payload.get("evidence")):
+        return True
+    conclusions = payload.get("conclusions", [])
+    return isinstance(conclusions, list) and any(isinstance(entry, dict) and str(entry.get("text") or "").strip() for entry in conclusions)
+
+
+
+def _query_family_layer_metric(candidate_signals: dict[str, object], layer: str, metric: str) -> int:
+    layer_support = candidate_signals.get("layer_support", {})
+    if not isinstance(layer_support, dict):
+        return 0
+    stats = layer_support.get(layer, {})
+    if not isinstance(stats, dict):
+        return 0
+    value = stats.get(metric)
+    if isinstance(value, bool):
+        return int(value)
+    return int(value) if isinstance(value, int) else 0
+
+
+
+def _query_family_top_layer(candidate_signals: dict[str, object]) -> str:
+    top_layers = candidate_signals.get("top_layers", [])
+    if not isinstance(top_layers, list) or not top_layers:
+        return "none"
+    top_layer = top_layers[0]
+    if not isinstance(top_layer, dict):
+        return "none"
+    return str(top_layer.get("layer") or "none")
+
+
+
+def _query_family_candidate_score(
+    family: str,
+    *,
+    candidate_signals: dict[str, object],
+    query_shape_tags: list[str],
+    runtime_context: QueryRuntimeContext | None,
+) -> tuple[int, list[str]]:
+    pattern_support = _query_family_layer_metric(candidate_signals, "pattern_memory", "best_support")
+    pattern_count = _query_family_layer_metric(candidate_signals, "pattern_memory", "count")
+    continuity_support = _query_family_layer_metric(candidate_signals, "continuity_memory", "best_support")
+    continuity_same_thread_hits = _query_family_layer_metric(candidate_signals, "continuity_memory", "same_thread_hits")
+    checkpoint_support = _query_family_layer_metric(candidate_signals, "task_checkpoint", "best_support")
+    checkpoint_same_thread_hits = _query_family_layer_metric(candidate_signals, "task_checkpoint", "same_thread_hits")
+    checkpoint_work_usefulness = _query_family_layer_metric(candidate_signals, "task_checkpoint", "best_work_usefulness")
+    source_support = _query_family_layer_metric(candidate_signals, "source_evidence", "best_support")
+    source_same_thread_hits = _query_family_layer_metric(candidate_signals, "source_evidence", "same_thread_hits")
+    source_evidence_hits = _query_family_layer_metric(candidate_signals, "source_evidence", "evidence_hits")
+    source_work_usefulness = _query_family_layer_metric(candidate_signals, "source_evidence", "best_work_usefulness")
+    decision_support = _query_family_layer_metric(candidate_signals, "decision", "best_support")
+    investigation_support = _query_family_layer_metric(candidate_signals, "investigation_outcome", "best_support")
+    lower_level_support = _query_family_layer_metric(candidate_signals, "lower_level_memory", "best_support")
+    sharp_lower_level_support = max(decision_support, investigation_support, lower_level_support)
+    sharp_lower_level_rationale_hits = sum(
+        _query_family_layer_metric(candidate_signals, layer, "rationale_hits")
+        for layer in ("investigation_outcome", "decision", "lower_level_memory")
+    )
+    sharp_lower_level_evidence_hits = sum(
+        _query_family_layer_metric(candidate_signals, layer, "evidence_hits")
+        for layer in ("investigation_outcome", "decision", "lower_level_memory")
+    )
+    sharp_lower_level_same_thread_hits = sum(
+        _query_family_layer_metric(candidate_signals, layer, "same_thread_hits")
+        for layer in ("investigation_outcome", "decision", "lower_level_memory")
+    )
+    top_layer = _query_family_top_layer(candidate_signals)
+    supported_floor = ROUTING_SUPPORT_THRESHOLD["supported"]
+    history_recall_with_relevant_carry_forward = (
+        "history_lookup" in query_shape_tags
+        and bool(candidate_signals.get("relevant_cross_thread_continuity_in_scope"))
+        and sharp_lower_level_support >= supported_floor
+    )
+    score = 0
+    reasons: list[str] = []
+
+    if family == "answer_continuity":
+        if continuity_support:
+            score += (continuity_support // 2) + (continuity_same_thread_hits * 14)
+            reasons.append("continuity_memory_support")
+        if top_layer == "continuity_memory":
+            score += 10
+            reasons.append("continuity_memory_won_candidate_competition")
+        if continuity_support < supported_floor:
+            score -= 12
+            reasons.append("weak_continuity_support")
+        return score, reasons
+
+    if family == "broad_recall":
+        if pattern_support:
+            score += pattern_support + (min(pattern_count, 2) * 10)
+            reasons.append("pattern_memory_support")
+        if history_recall_with_relevant_carry_forward:
+            score += min(continuity_support // 3, 70) + 36
+            reasons.append("cross_thread_carry_forward_support")
+        if sharp_lower_level_support:
+            score += min(sharp_lower_level_support, 44)
+            reasons.append("sharp_lower_level_available")
+        if top_layer == "pattern_memory":
+            score += 12
+            reasons.append("pattern_memory_won_candidate_competition")
+        if history_recall_with_relevant_carry_forward and top_layer == "continuity_memory":
+            score += 18
+            reasons.append("carry_forward_memory_won_candidate_competition")
+        if pattern_support and pattern_support >= sharp_lower_level_support:
+            score += 10
+            reasons.append("pattern_memory_beats_sharp_lower_level")
+        if pattern_support < supported_floor and sharp_lower_level_support > pattern_support and "analysis_request" in query_shape_tags:
+            score -= 18
+            reasons.append("sharp_lower_level_outweighs_weak_pattern_memory")
+        return score, reasons
+
+    if family == "work_resumption":
+        if checkpoint_support:
+            score += (checkpoint_support // 2) + checkpoint_work_usefulness + (checkpoint_same_thread_hits * 16)
+            reasons.append("task_checkpoint_support")
+        if source_work_usefulness:
+            score += min(source_support // 2, 42) + source_work_usefulness + (source_same_thread_hits * 8)
+            reasons.append("work_state_source_support")
+        if bool(candidate_signals.get("strong_task_checkpoint_in_scope")):
+            score += 16
+            reasons.append("sharp_task_checkpoint_in_scope")
+        if top_layer in {"task_checkpoint", "source_evidence"}:
+            score += 8
+            reasons.append("work_state_won_candidate_competition")
+        if runtime_context is not None and runtime_context.turn_kind == "resumed_session":
+            score += 6
+            reasons.append("resumed_session_candidate_tiebreak")
+        if "resume_state" not in query_shape_tags and (runtime_context is None or runtime_context.turn_kind != "resumed_session"):
+            score -= 180
+            reasons.append("missing_resume_query_shape")
+        if checkpoint_support < supported_floor and source_work_usefulness < 18:
+            score -= 20
+            reasons.append("weak_resumption_state_support")
+        return score, reasons
+
+    if family == "precise_fact":
+        if sharp_lower_level_support:
+            score += (sharp_lower_level_support // 2) + (sharp_lower_level_same_thread_hits * 8)
+            reasons.append("sharp_lower_level_support")
+        if source_support:
+            score += min(source_support, 36)
+            reasons.append("source_evidence_fallback")
+        if top_layer in {"decision", "investigation_outcome", "lower_level_memory"}:
+            score += 8
+            reasons.append("sharp_lower_level_won_candidate_competition")
+        if sharp_lower_level_support < supported_floor:
+            score -= 12
+            reasons.append("weak_precise_fact_support")
+        if "big_picture" in query_shape_tags:
+            score -= 48
+            reasons.append("pattern_memory_points_to_broad_recall")
+        if history_recall_with_relevant_carry_forward:
+            score -= 74
+            reasons.append("carry_forward_history_outweighs_precise_lookup")
+        return score, reasons
+
+    if family == "evidence_trace":
+        if source_support:
+            score += (source_support // 2) + (source_evidence_hits * 10)
+            reasons.append("source_evidence_support")
+        if bool(candidate_signals.get("strong_source_evidence_in_scope")):
+            score += 14
+            reasons.append("sharp_source_evidence_in_scope")
+        if sharp_lower_level_evidence_hits:
+            score += sharp_lower_level_evidence_hits * 8
+            reasons.append("lower_level_evidence_available")
+        if top_layer == "source_evidence":
+            score += 12
+            reasons.append("source_evidence_won_candidate_competition")
+        if source_support < supported_floor:
+            score -= 16
+            reasons.append("weak_source_evidence_support")
+        if checkpoint_support > source_support + 20 and "resume_state" in query_shape_tags:
+            score -= 18
+            reasons.append("checkpoint_state_outweighs_weak_source_evidence")
+        return score, reasons
+
+    if sharp_lower_level_support:
+        score += (sharp_lower_level_support // 2) + (sharp_lower_level_rationale_hits * 12) + (sharp_lower_level_evidence_hits * 8) + (sharp_lower_level_same_thread_hits * 10)
+        reasons.append("sharp_lower_level_support")
+    if bool(candidate_signals.get("sharp_lower_level_in_scope")):
+        score += 14
+        reasons.append("sharp_lower_level_in_scope")
+    if source_support:
+        score += min(source_support // 2, 32)
+        reasons.append("supporting_source_evidence_available")
+    if top_layer in {"investigation_outcome", "decision", "lower_level_memory"}:
+        score += 10
+        reasons.append("sharp_lower_level_won_candidate_competition")
+    if sharp_lower_level_support < supported_floor:
+        score -= 16
+        reasons.append("weak_investigative_support")
+    if pattern_support >= sharp_lower_level_support and "big_picture" in query_shape_tags:
+        score -= 18
+        reasons.append("pattern_memory_outweighs_sharp_conclusion")
+    return score, reasons
+
+
+def _query_family_label(intent: str, *, runtime_context: QueryRuntimeContext | None) -> str:
+    turn_kind = runtime_context.turn_kind if runtime_context is not None else None
+    session_has_sufficient_local_context = (
+        runtime_context.session_has_sufficient_local_context if runtime_context is not None else None
+    )
+    if turn_kind == "same_thread_continuation" and session_has_sufficient_local_context is True:
+        return "same_thread_no_value_continuation"
+    if intent == "answer_continuity":
+        if turn_kind == "resumed_session":
+            return "resumed_session_continuation"
+        if turn_kind in {"new_thread", "new_session"}:
+            return "new_thread_continuation"
+    if intent == "work_resumption":
+        if turn_kind == "resumed_session":
+            return "resumed_session_continuation"
+        if turn_kind in {"new_thread", "new_session"}:
+            return "new_thread_continuation"
+    if intent == "broad_recall":
+        return "broad_recurring_recall"
+    return intent
 def _score_routed_candidate(
     item: QueryResultItem,
     intent: str,
@@ -1348,12 +1929,14 @@ def _annotate_excluded_candidates(
 def _build_routing_trace(
     *,
     intent: str,
+    family_inference: dict[str, object],
     preferred_layers: tuple[str, ...],
     layer_summary: dict[str, dict[str, object]],
     routing_focus: dict[str, object],
     ranked_candidates: list[dict[str, object]],
     final_candidates: list[dict[str, object]],
     packaging_summary: dict[str, object] | None,
+    runtime_context: QueryRuntimeContext | None,
     injection_summary: dict[str, object],
     sharp_candidate_diagnostics: list[dict[str, object]],
 ) -> dict[str, object]:
@@ -1377,6 +1960,8 @@ def _build_routing_trace(
     trace = {
         "policy_name": ROUTING_POLICY_NAME,
         "query_intent": intent,
+        "query_family": _query_family_label(intent, runtime_context=runtime_context),
+        "family_inference": family_inference,
         "preferred_layers": list(preferred_layers),
         "selected_layer": routing_focus["selected_layer"],
         "candidate_count_entering_routing": len(ranked_candidates),

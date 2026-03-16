@@ -16,9 +16,13 @@ from app.dependencies import build_llm_provider
 from app.main import create_app
 from evals.continuity_common import (
     CONTINUITY_FAILURE_FAMILIES,
+    PARAPHRASE_OR_INDIRECT_QUERY_LABELS,
+    default_injection_expectations,
     dominant_bottleneck_implication,
     dominant_tuning_bottleneck,
+    evaluate_query_contract,
     failure_family_counts,
+    query_family_from_intent,
     result_layer,
 )
 from providers.llm.base import LLMProvider
@@ -142,6 +146,7 @@ def _run_scenario(
     answer_provider: LLMProvider,
     consolidation_strategy: str | None,
 ) -> dict[str, Any]:
+    query_request = _scenario_query_request(scenario)
     with TemporaryDirectory() as temp_dir:
         database_url = f"sqlite:///{Path(temp_dir) / 'work-resumption.db'}"
         scenario_config = replace(
@@ -162,7 +167,11 @@ def _run_scenario(
                     strategy_name=consolidation_strategy,
                 )
 
-            query_response = client.post("/query/debug", json=_with_default_visibility(scenario["current_query"]))
+            query_contract_response = client.post("/query", json=_with_default_visibility(query_request))
+            query_contract_response.raise_for_status()
+            query_contract_payload = query_contract_response.json()
+
+            query_response = client.post("/query/debug", json=_with_default_visibility(query_request))
             query_response.raise_for_status()
             query_payload = query_response.json()
             engine = getattr(client.app.state.pallium_service._storage, "_engine", None)
@@ -187,7 +196,13 @@ def _run_scenario(
 
     routing = ((query_payload.get("trace") or {}).get("routing") or {})
     routing_intent = routing.get("query_intent")
+    query_family = routing.get("query_family") or query_family_from_intent(
+        routing_intent,
+        runtime_context=scenario.get("runtime_context"),
+        should_memory_help=bool(scenario.get("should_memory_help")),
+    )
     intent_match = routing_intent == scenario.get("expected_intent") if scenario.get("expected_intent") else True
+    query_family_match = query_family == scenario.get("expected_query_family") if scenario.get("expected_query_family") else True
 
     memory_hits = [item for item in query_payload["results"] if item.get("result_kind") == "memory_hit"]
     source_hits = [item for item in query_payload["results"] if item.get("result_kind") == "source_hit"]
@@ -202,6 +217,19 @@ def _run_scenario(
     primary_layer_match = expected_primary_layer is None or top_layer == expected_primary_layer
     forbidden_layers = list(scenario.get("forbidden_layers", []))
     forbidden_layers_hit = [layer for layer in forbidden_layers if layer == top_layer]
+
+    query_contract = evaluate_query_contract(
+        query_payload=query_contract_payload,
+        debug_payload=query_payload,
+        expected_should_inject=bool(scenario.get("expected_should_inject")),
+        expected_decision_reason=scenario.get("expected_decision_reason"),
+        acceptable_decision_reasons=scenario.get("acceptable_decision_reasons", []),
+        expected_primary_block_types=list(scenario.get("expected_primary_block_types") or scenario.get("expected_primary_injected_block_types") or []),
+        acceptable_fallback_block_types=scenario.get("acceptable_fallback_block_types", []),
+        forbidden_block_types=scenario.get("forbidden_block_types", []),
+        acceptable_injected_block_count=scenario.get("acceptable_injected_block_count"),
+        expected_cap_behavior=scenario.get("expected_cap_behavior"),
+    )
 
     baseline_rubric = _score_continuation(
         continuation=baseline_continuation,
@@ -239,10 +267,12 @@ def _run_scenario(
         memory_rubric=memory_rubric,
         expected_memory_types_found=expected_memory_types_found,
         intent_match=intent_match,
+        query_family_match=query_family_match,
         top_layer_match=top_layer_match,
         forbidden_layers_hit=forbidden_layers_hit,
         gap_breakdown=gap_breakdown,
         guard_matches=guard_matches,
+        injection_contract=query_contract["injection_contract"],
     )
     missing_dimensions_after_memory = _missing_dimensions(memory_rubric)
     forbidden_terms_found = sorted({term for matches in guard_matches.values() for term in matches})
@@ -255,14 +285,22 @@ def _run_scenario(
         "wrong_thread_state" not in scenario.get("must_not_introduce", [])
         or "wrong_memory_selection_failure" not in failure_families
     )
+    thin_agent_boundary_success = "thin_agent_boundary_failure" not in failure_families
 
     labels = {
         "scenario_family": scenario["scenario_family"],
+        "query_family": scenario.get("expected_query_family"),
+        "query_wording_label": scenario.get("query_wording_label"),
         "should_memory_help": bool(scenario.get("should_memory_help")),
         "expected_intent": scenario.get("expected_intent"),
         "expected_primary_layer": expected_primary_layer,
         "acceptable_fallback_layers": list(scenario.get("acceptable_fallback_layers", [])),
         "forbidden_layers": forbidden_layers,
+        "expected_should_inject": bool(scenario.get("expected_should_inject")),
+        "expected_decision_reason": scenario.get("expected_decision_reason"),
+        "expected_primary_injected_block_types": list(scenario.get("expected_primary_block_types") or scenario.get("expected_primary_injected_block_types") or []),
+        "acceptable_fallback_block_types": list(scenario.get("acceptable_fallback_block_types", [])),
+        "forbidden_block_types": list(scenario.get("forbidden_block_types", [])),
         "must_preserve": list(scenario.get("must_preserve", [])),
         "must_not_introduce": list(scenario.get("must_not_introduce", [])),
     }
@@ -276,6 +314,11 @@ def _run_scenario(
         "should_memory_help": bool(scenario.get("should_memory_help")),
         "expected_value": bool(scenario.get("should_memory_help")),
         "expected_non_value_reason": scenario.get("expected_non_value_reason"),
+        "runtime_context": scenario.get("runtime_context"),
+        "expected_query_family": scenario.get("expected_query_family"),
+        "query_family": query_family,
+        "query_family_match": query_family_match,
+        "query_wording_label": scenario.get("query_wording_label"),
         "expected_intent": scenario.get("expected_intent"),
         "routing_intent": routing_intent,
         "intent_match": intent_match,
@@ -297,6 +340,15 @@ def _run_scenario(
         "memory_backed_retrieval": query_payload["results"],
         "query_trace": query_payload.get("trace"),
         "routing_preferred_layers": routing.get("preferred_layers", []),
+        "thin_agent_query_response": query_contract_payload,
+        "query_contract_consistent": query_contract["query_contract_consistent"],
+        "query_contract_mismatch_fields": query_contract["query_contract_mismatch_fields"],
+        "expected_should_inject": bool(scenario.get("expected_should_inject")),
+        "expected_decision_reason": scenario.get("expected_decision_reason"),
+        "should_inject": query_contract["should_inject"],
+        "decision_reason": query_contract["decision_reason"],
+        "injectable_blocks": query_contract["injectable_blocks"],
+        "injection_contract": query_contract["injection_contract"],
         "baseline_continuation": baseline_continuation,
         "memory_backed_continuation": memory_backed_continuation,
         "rubric": {
@@ -315,11 +367,10 @@ def _run_scenario(
         "non_value_guard_success": no_value_guard_success,
         "stale_guard_success": stale_guard_success,
         "wrong_memory_guard_success": wrong_memory_guard_success,
+        "thin_agent_boundary_success": thin_agent_boundary_success,
         "consolidation_strategy": consolidation_strategy,
         "consolidation_run": _serialize_consolidation_result(consolidation_result),
     }
-
-
 def _generate_continuation(
     *,
     answer_provider: LLMProvider,
@@ -560,10 +611,12 @@ def _classify_failure_families(
     memory_rubric: dict[str, Any],
     expected_memory_types_found: bool,
     intent_match: bool,
+    query_family_match: bool,
     top_layer_match: bool,
     forbidden_layers_hit: list[str],
     gap_breakdown: dict[str, list[str]],
     guard_matches: dict[str, list[str]],
+    injection_contract: dict[str, Any],
 ) -> list[str]:
     failures: list[str] = []
 
@@ -574,14 +627,35 @@ def _classify_failure_families(
     if guard_matches.get("privacy_leak"):
         failures.append("privacy_leak_failure")
 
+    if not injection_contract["should_inject_match"] or not injection_contract["decision_reason_match"]:
+        failures.append("injection_decision_failure")
+    if (
+        not injection_contract["block_types_match"]
+        or not injection_contract["block_count_ok"]
+        or not injection_contract["cap_behavior_ok"]
+        or injection_contract["forbidden_block_types_hit"]
+    ):
+        failures.append("injectability_packaging_failure")
+    if injection_contract["semantic_compensation_needed"]:
+        failures.append("thin_agent_boundary_failure")
+
     if not bool(scenario.get("should_memory_help")):
-        if comparison["winner"] == "memory_backed" or memory_rubric["overreach"] or forbidden_layers_hit or any(guard_matches.values()):
+        if (
+            comparison["winner"] == "memory_backed"
+            or memory_rubric["overreach"]
+            or forbidden_layers_hit
+            or any(guard_matches.values())
+            or injection_contract["should_inject_actual"]
+            or injection_contract["injected_block_count"] > 0
+        ):
             failures.append("no_value_overreach_failure")
+        if scenario.get("query_wording_label") in PARAPHRASE_OR_INDIRECT_QUERY_LABELS and failures:
+            failures.append("paraphrase_or_indirect_query_failure")
         return _ordered_failure_families(failures)
 
     if gap_breakdown["retrieval_recall"] or not expected_memory_types_found:
         failures.append("retrieval_recall_failure")
-    if not intent_match or not top_layer_match or forbidden_layers_hit:
+    if not intent_match or not query_family_match or not top_layer_match or forbidden_layers_hit:
         failures.append("routing_layer_choice_failure")
     if gap_breakdown["compact_task_state"]:
         failures.append("compact_task_state_failure")
@@ -592,12 +666,30 @@ def _classify_failure_families(
     if packaging_failure and "retrieval_recall_failure" not in failures and "routing_layer_choice_failure" not in failures and "compact_task_state_failure" not in failures:
         failures.append("result_packaging_evidence_failure")
 
+    if scenario.get("query_wording_label") in PARAPHRASE_OR_INDIRECT_QUERY_LABELS and (
+        not intent_match
+        or not query_family_match
+        or not top_layer_match
+        or comparison["winner"] != "memory_backed"
+        or "injection_decision_failure" in failures
+        or "injectability_packaging_failure" in failures
+    ):
+        failures.append("paraphrase_or_indirect_query_failure")
+
     return _ordered_failure_families(failures)
-
-
 def _ordered_failure_families(families: list[str]) -> list[str]:
     unique = set(families)
     return [name for name in CONTINUITY_FAILURE_FAMILIES if name in unique]
+
+
+def _scenario_query_request(scenario: dict[str, Any]) -> dict[str, Any]:
+    request = dict(scenario["current_query"])
+    request.setdefault("runtime_context", dict(scenario.get("runtime_context") or {}))
+    if not request["runtime_context"]:
+        request.pop("runtime_context")
+    return request
+
+
 
 def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
     updated = dict(payload)
@@ -730,8 +822,14 @@ def _build_summary(
         "non_value_scenarios": sum(1 for row in results if not row["should_memory_help"]),
         "memory_backed_wins": sum(1 for row in results if row["winner"] == "memory_backed"),
         "intent_matches": sum(1 for row in results if row["intent_match"]),
+        "query_family_matches": sum(1 for row in results if row["query_family_match"]),
         "primary_layer_matches": sum(1 for row in results if row["primary_layer_match"]),
         "acceptable_layer_matches": sum(1 for row in results if row["top_layer_match"]),
+        "query_contract_consistency_successes": sum(1 for row in results if row["query_contract_consistent"]),
+        "should_inject_matches": sum(1 for row in results if row["injection_contract"]["should_inject_match"]),
+        "decision_reason_matches": sum(1 for row in results if row["injection_contract"]["decision_reason_match"]),
+        "injection_contract_successes": sum(1 for row in results if row["injection_contract"]["contract_success"]),
+        "thin_agent_boundary_successes": sum(1 for row in results if row["thin_agent_boundary_success"]),
         "non_value_guard_successes": sum(1 for row in results if row["non_value_guard_success"]),
         "stale_guard_successes": sum(1 for row in results if row["stale_guard_success"]),
         "wrong_memory_guard_successes": sum(1 for row in results if row["wrong_memory_guard_success"]),
@@ -755,8 +853,11 @@ def _build_summary(
                 "scenarios_total": len(rows),
                 "memory_backed_wins": sum(1 for row in rows if row["winner"] == "memory_backed"),
                 "intent_matches": sum(1 for row in rows if row["intent_match"]),
+                "query_family_matches": sum(1 for row in rows if row["query_family_match"]),
                 "primary_layer_matches": sum(1 for row in rows if row["primary_layer_match"]),
                 "acceptable_layer_matches": sum(1 for row in rows if row["top_layer_match"]),
+                "injection_contract_successes": sum(1 for row in rows if row["injection_contract"]["contract_success"]),
+                "thin_agent_boundary_successes": sum(1 for row in rows if row["thin_agent_boundary_success"]),
                 "failure_family_counts": failure_family_counts(rows),
             }
             for family, rows in sorted(by_family.items())
@@ -796,8 +897,14 @@ def _build_report(*, summary: dict[str, Any], results: list[dict[str, Any]]) -> 
             f"- non-value scenarios: {summary['non_value_scenarios']}",
             f"- memory-backed wins: {summary['memory_backed_wins']} / {summary['value_scenarios']}",
             f"- intent matches: {summary['intent_matches']} / {summary['scenarios_total']}",
+            f"- query-family matches: {summary['query_family_matches']} / {summary['scenarios_total']}",
             f"- primary-layer matches: {summary['primary_layer_matches']} / {summary['scenarios_total']}",
             f"- acceptable-layer matches: {summary['acceptable_layer_matches']} / {summary['scenarios_total']}",
+            f"- query-contract consistency: {summary['query_contract_consistency_successes']} / {summary['scenarios_total']}",
+            f"- should-inject matches: {summary['should_inject_matches']} / {summary['scenarios_total']}",
+            f"- decision-reason matches: {summary['decision_reason_matches']} / {summary['scenarios_total']}",
+            f"- injection-contract successes: {summary['injection_contract_successes']} / {summary['scenarios_total']}",
+            f"- thin-agent boundary successes: {summary['thin_agent_boundary_successes']} / {summary['scenarios_total']}",
             f"- non-value guard successes: {summary['non_value_guard_successes']} / {summary['non_value_scenarios']}",
             f"- stale guard successes: {summary['stale_guard_successes']} / {summary['scenarios_total']}",
             f"- wrong-memory guard successes: {summary['wrong_memory_guard_successes']} / {summary['scenarios_total']}",
@@ -815,11 +922,13 @@ def _build_report(*, summary: dict[str, Any], results: list[dict[str, Any]]) -> 
     lines.extend(["", "## Scenario Results", ""])
     for row in results:
         lines.append(
-            f"- `{row['scenario_id']}`: winner `{row['winner']}`, intent `{row['routing_intent']}`, top layer `{row['top_layer']}`, "
-            f"missing after memory {row['missing_dimensions_after_memory'] or 'none'}, failures {row['failure_families'] or 'none'}"
+            f"- `{row['scenario_id']}`: family `{row.get('query_family')}`, wording `{row.get('query_wording_label')}`, "
+            f"winner `{row['winner']}`, intent `{row['routing_intent']}`, top layer `{row['top_layer']}`, "
+            f"should_inject `{row['should_inject']}`, decision `{row['decision_reason']}`, "
+            f"injected `{row['injection_contract']['injected_block_types'] or 'none'}`, "
+            f"failures {row['failure_families'] or 'none'}"
         )
     return "\n".join(lines) + "\n"
-
 def _serialize_consolidation_result(result: Any) -> dict[str, Any] | None:
     if result is None:
         return None
@@ -885,11 +994,38 @@ def _normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
     if not must_preserve:
         must_preserve = [dimension for dimension in DIMENSION_ORDER if expected_dimensions.get(dimension)]
 
+    runtime_context = _default_runtime_context(raw, should_memory_help=should_memory_help)
+    expected_intent = raw.get("expected_intent")
+    expected_query_family = raw.get("expected_query_family") or query_family_from_intent(
+        expected_intent,
+        runtime_context=runtime_context,
+        should_memory_help=should_memory_help,
+    )
+    injection_expectations = default_injection_expectations(
+        should_memory_help=should_memory_help,
+        runtime_context=runtime_context,
+        expected_primary_layer=expected_primary_layer,
+        expected_memory_types=list(raw.get("expected_memory_types") or []),
+        acceptable_fallback_layers=acceptable_fallback_layers,
+        forbidden_layers=list(raw.get("forbidden_layers") or []),
+        expected_should_inject=raw.get("expected_should_inject"),
+        expected_decision_reason=raw.get("expected_decision_reason"),
+        acceptable_decision_reasons=list(raw.get("acceptable_decision_reasons") or []),
+        expected_primary_block_types=list(raw.get("expected_primary_injected_block_types") or []),
+        acceptable_fallback_block_types=list(raw.get("acceptable_fallback_block_types") or []),
+        forbidden_block_types=list(raw.get("forbidden_block_types") or []),
+        acceptable_injected_block_count=raw.get("acceptable_injected_block_count"),
+        expected_cap_behavior=raw.get("expected_cap_behavior"),
+    )
+
     scenario = dict(raw)
     scenario.update(
         {
             "should_memory_help": should_memory_help,
             "expected_value": should_memory_help,
+            "runtime_context": runtime_context,
+            "expected_query_family": expected_query_family,
+            "query_wording_label": raw.get("query_wording_label") or _default_query_wording_label(raw),
             "expected_primary_layer": expected_primary_layer,
             "expected_top_layer": expected_primary_layer,
             "acceptable_fallback_layers": acceptable_fallback_layers,
@@ -902,11 +1038,51 @@ def _normalize_scenario(raw: dict[str, Any]) -> dict[str, Any]:
             "forbidden_layers": list(raw.get("forbidden_layers", [])),
             "guard_terms": guard_terms,
             "forbidden_terms": forbidden_terms,
+            **injection_expectations,
         }
     )
     return scenario
 
 
+def _default_runtime_context(raw: dict[str, Any], *, should_memory_help: bool) -> dict[str, Any]:
+    explicit_runtime_context = raw.get("runtime_context") or (raw.get("current_query") or {}).get("runtime_context")
+    if isinstance(explicit_runtime_context, dict):
+        return dict(explicit_runtime_context)
+    scenario_id = str(raw.get("scenario_id") or "")
+    description = str(raw.get("description") or "").lower()
+    if not should_memory_help and (
+        "same-thread" in scenario_id
+        or "same thread" in description
+        or "current thread already" in str(raw.get("expected_non_value_reason") or "").lower()
+    ):
+        return {
+            "turn_kind": "same_thread_continuation",
+            "session_has_sufficient_local_context": True,
+        }
+    if raw.get("expected_intent") in {"broad_recall", "evidence_trace", "investigative_conclusion"}:
+        return {
+            "turn_kind": "new_thread",
+            "session_has_sufficient_local_context": False,
+        }
+    return {
+        "turn_kind": "resumed_session",
+        "session_has_sufficient_local_context": False,
+    }
+
+
+def _default_query_wording_label(raw: dict[str, Any]) -> str:
+    lowered = " ".join(
+        [
+            str(raw.get("description") or "").lower(),
+            str(raw.get("target_question") or "").lower(),
+            str((raw.get("current_query") or {}).get("text") or "").lower(),
+        ]
+    )
+    if "indirect" in lowered:
+        return "indirect"
+    if "paraphrase" in lowered or "general lesson" in lowered or "what state were we in" in lowered or "what finding should orient us" in lowered:
+        return "paraphrase"
+    return "literal"
 def _normalize_dimension_signals(raw_dimensions: dict[str, Any]) -> dict[str, list[str]]:
     normalized: dict[str, list[str]] = {dimension: [] for dimension in DIMENSION_ORDER}
     for key, value in raw_dimensions.items():
@@ -930,4 +1106,3 @@ def _build_run_id(config: AppConfig, consolidation_strategy: str | None) -> str:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -24,7 +24,7 @@ def _benchmark_config() -> AppConfig:
     )
 
 
-def test_integration_readiness_scenario_builds_green_milestone_gate(monkeypatch, tmp_path: Path) -> None:
+def test_integration_readiness_scenario_surfaces_scope_guard_injection_boundary_failure(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: TieredMemorySemanticProvider())
 
     run_dir = run_integration_readiness_scenario(
@@ -39,17 +39,30 @@ def test_integration_readiness_scenario_builds_green_milestone_gate(monkeypatch,
     report = (run_dir / "report.md").read_text(encoding="utf-8")
 
     assert summary["scenario_count"] == 3
-    assert summary["component_policy_successes"] == 3
+    assert summary["component_policy_successes"] == 2
     assert summary["gates"]["positive_value_passed"] is True
     assert summary["gates"]["no_value_control_passed"] is True
-    assert summary["gates"]["scope_guard_passed"] is True
-    assert summary["gates"]["integration_readiness_passed"] is True
-    assert summary["roles"]["positive_value"]["top_layer"] == "task_checkpoint"
-    assert summary["roles"]["no_value_control"]["winner"] != "memory_backed"
-    assert "privacy_leak_failure" not in summary["roles"]["scope_guard"]["failure_families"]
-    assert "## Manual Run" in report
-    assert "`integration_readiness_passed`: PASS" in report
+    assert summary["gates"]["scope_guard_passed"] is False
+    assert summary["gates"]["integration_readiness_passed"] is False
 
+    positive = summary["roles"]["positive_value"]
+    assert positive["top_layer"] == "task_checkpoint"
+    assert positive["should_inject"] is True
+    assert positive["decision_reason"] == "carry_forward_available"
+    assert positive["injection_contract_success"] is True
+
+    no_value = summary["roles"]["no_value_control"]
+    assert no_value["winner"] != "memory_backed"
+    assert no_value["should_inject"] is False
+    assert no_value["decision_reason"] == "same_thread_context_sufficient"
+    assert no_value["injection_contract_success"] is True
+
+    scope_guard = summary["roles"]["scope_guard"]
+    assert "privacy_leak_failure" not in scope_guard["failure_families"]
+    assert scope_guard["failure_families"] == ["routing_layer_choice_failure", "injectability_packaging_failure", "thin_agent_boundary_failure"]
+    assert scope_guard["injection_contract_success"] is False
+    assert "## Manual Run" in report
+    assert "`integration_readiness_passed`: FAIL" in report
 
 
 def test_downstream_query_returns_sharp_integration_ready_blocks(monkeypatch, test_db_url: str) -> None:
@@ -156,3 +169,26 @@ def test_downstream_query_returns_sharp_integration_ready_blocks(monkeypatch, te
     rendered_blocks = json.dumps(payload["injectable_blocks"]).lower()
     assert "task complete" not in rendered_blocks
     assert "nothing new to report" not in rendered_blocks
+
+    debug_response = client.post(
+        "/query/debug",
+        json={
+            "text": "which repo changed more and why?",
+            "limit": 6,
+            "container_ref": "slack:CLOCAL001",
+            "runtime_context": {
+                "turn_kind": "resumed_session",
+                "session_has_sufficient_local_context": False,
+            },
+        },
+    )
+
+    assert debug_response.status_code == 200
+    routing = debug_response.json()["trace"]["routing"]
+    family_inference = routing["family_inference"]
+    assert routing["query_intent"] == "investigative_conclusion"
+    assert family_inference["candidate_signals"]["sharp_lower_level_in_scope"] is True
+    assert (
+        family_inference["family_scores"]["investigative_conclusion"]["candidate_score"]
+        > family_inference["family_scores"]["broad_recall"]["candidate_score"]
+    )

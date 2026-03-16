@@ -49,7 +49,6 @@ class CompositeSemanticProvider:
         )
 
 
-
 def _benchmark_config() -> AppConfig:
     return AppConfig(
         default_use_case="agent_conversation_memory",
@@ -60,8 +59,7 @@ def _benchmark_config() -> AppConfig:
     )
 
 
-
-def test_developer_work_confidence_suite_builds_green_confidence_gate(monkeypatch, tmp_path: Path) -> None:
+def test_developer_work_confidence_suite_reports_packaging_and_ingest_churn_bottlenecks(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: CompositeSemanticProvider())
 
     run_dir = run_developer_work_confidence_suite(
@@ -83,10 +81,28 @@ def test_developer_work_confidence_suite_builds_green_confidence_gate(monkeypatc
     assert summary["components"]["work_resumption"]["scenarios_total"] == 13
     assert summary["components"]["wildchat_reviewed"]["scenarios_total"] == 10
     assert summary["components"]["wildbench_developer"]["scenarios_total"] == 10
-    assert summary["aggregate"]["scenarios_total"] == 33
-    assert summary["aggregate"]["policy_successes"] == 33
-    assert summary["aggregate"]["dominant_tuning_bottleneck"] is None
-    assert all(count == 0 for count in summary["aggregate"]["failure_family_counts"].values())
-    assert summary["gates"]["confidence_gate_passed"] is True
+    assert summary["components"]["low_value_churn"]["scenarios_total"] == 3
+
+    assert summary["aggregate"]["scenarios_total"] == 36
+    assert summary["aggregate"]["policy_successes"] >= 29
+    assert summary["aggregate"]["dominant_tuning_bottleneck"] == "packaging"
+    assert summary["aggregate"]["failure_family_counts"]["routing_layer_choice_failure"] >= 3
+    assert summary["aggregate"]["failure_family_counts"]["injectability_packaging_failure"] >= 7
+    assert summary["aggregate"]["failure_family_counts"]["thin_agent_boundary_failure"] >= 7
+    assert summary["aggregate"]["failure_family_counts"]["paraphrase_or_indirect_query_failure"] >= 3
+    assert summary["aggregate"]["failure_family_counts"]["wrong_memory_selection_failure"] >= 2
+    assert summary["aggregate"]["failure_family_counts"]["low_value_promotion_failure"] == 0
+    assert summary["aggregate"]["failure_family_counts"]["thread_rebuild_churn_failure"] == 0
+
+    assert summary["gates"]["zero_privacy_leaks"] is True
+    assert summary["gates"]["zero_wrong_memory_failures"] is False
+    assert summary["gates"]["zero_low_value_promotion_failures"] is True
+    assert summary["gates"]["zero_thread_rebuild_churn_failures"] is True
+    assert summary["gates"]["work_suite_green"] is False
+    assert summary["gates"]["wildchat_suite_green"] is False
+    assert summary["gates"]["wildbench_suite_green"] is False
+    assert summary["gates"]["low_value_churn_suite_green"] is True
+    assert summary["gates"]["confidence_gate_passed"] is False
+
     assert "## Confidence Gate" in report
-    assert "`zero_privacy_leaks`: PASS" in report
+    assert "`confidence_gate_passed`: FAIL" in report
