@@ -37,18 +37,20 @@ Current focus:
   - debug trace now explains family choice with candidate-aware signals rather than only phrase tables
 - the next integration-value work is:
   - formalize benchmark lanes in the eval program and reporting
-  - make contract and trace the explicit hard-gate lanes
-  - classify benchmark assets as iteration, confidence, or replay
-  - add the live miss-capture and replay-promotion loop so real downstream misses become durable regressions quickly
+  - expand Pallium-native scenario and replay coverage so most memory bugs can be reproduced directly against Pallium without Pelican in the loop
+  - add a direct exploratory memory conversation harness for chat-like local debugging against Pallium itself
+  - then add the live miss-capture and replay-promotion loop so real downstream misses become durable regressions quickly
 - keep privacy, query-debug traceability, retention safety, and timestamped runtime logs as permanent regression gates while the next readiness work advances
 - treat external benchmark packs as important pressure on the core memory engine, but not as the next best investment for downstream integration value
 - treat vector retrieval and hybrid fusion as lower-priority retrieval enhancements, not as the current product driver; only move them forward if the benchmark stack and live evidence show recall or paraphrase bottlenecks are now more important than memory-quality, injection, freshness, scope reuse, or routing-quality gaps
 
 Plan from the current gaps:
 - first, formalize benchmark architecture and tiered reporting so the eval stack, confidence suite, and future replay assets all use the same acceptance vocabulary
-- second, add the live miss-capture and replay-promotion loop so suspicious real cases become bounded miss bundles, reviewable promotions into replay fixtures, and safer shadow comparisons instead of staying anecdotal
-- third, adopt the targeted external memory pressure pack so Pallium gets public pressure on stale-memory handling, update correctness, long noisy recall, and incremental memory drift without confusing those checks with the product acceptance gate
-- fourth, move to explicit shared-memory derivation and then bounded cross-container memory so repeated-question reuse across later conversations becomes a stronger first-class capability rather than a byproduct of local scope only
+- second, expand Pallium-native scenario coverage and replay regressions so retrieval, routing, suppression, and packaging issues can usually be reproduced directly in-repo
+- third, add a direct exploratory memory conversation harness so engineers can do chat-style local debugging against Pallium without needing Pelican or another downstream agent in the middle
+- fourth, add the live miss-capture and replay-promotion loop so suspicious real cases become bounded miss bundles, reviewable promotions into replay fixtures, and safer shadow comparisons instead of staying anecdotal
+- fifth, adopt the targeted external memory pressure pack so Pallium gets public pressure on stale-memory handling, update correctness, long noisy recall, and incremental memory drift without confusing those checks with the product acceptance gate
+- sixth, move to explicit shared-memory derivation and then bounded cross-container memory so repeated-question reuse across later conversations becomes a stronger first-class capability rather than a byproduct of local scope only
 - only after those layers are clearer should vector retrieval, hybrid fusion, and broader retrieval expansion move up, and only if the evidence shows recall rather than memory decision quality is the real bottleneck
 
 What the current evaluation and live integration evidence established:
@@ -56,7 +58,7 @@ What the current evaluation and live integration evidence established:
 - resumed-work continuity benefits from task_checkpoint, but the stronger product question is now whether Pallium makes the right injection decision and stays quiet when local context is sufficient
 - same-thread and precise factual questions should not default to higher-level memory, and investigative verdict questions need to remain sharply separated from broad recurring recall
 - live downstream-agent runs showed that promotion noise, rebuild churn, injectability policy, and the lack of a canonical integration contract were product issues, not optional polish; those contract and routing corrections are now shipped
-- the remaining readiness gap is no longer basic routing and contract shape; it is to formalize the benchmark architecture in the actual eval stack, learn from real misses systematically, pressure freshness and update correctness more broadly, and expand safe reuse beyond local scope without regressing thin-agent behavior
+- the remaining readiness gap is no longer basic routing and contract shape; it is to formalize the benchmark architecture in the actual eval stack, give engineers a stronger Pallium-native debug surface, learn from real misses systematically, pressure freshness and update correctness more broadly, and expand safe reuse beyond local scope without regressing thin-agent behavior
 
 Still out of scope for this phase:
 - cold archive storage for expired raw evidence

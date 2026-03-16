@@ -1,5 +1,7 @@
 # Next
 - add-benchmark-architecture-formalization-and-tiered-reporting
+- add-pallium-native-scenario-coverage-and-replay-regressions
+- add-direct-memory-conversation-debug-harness
 - add-live-integration-improvement-loop-and-replay-pipeline
 
 # Later
