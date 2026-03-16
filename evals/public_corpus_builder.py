@@ -339,6 +339,7 @@ def _assemble_episode(
         "overreach_guard": bool(spec.get("overreach_guard")),
         "consolidation_strategy": spec.get("consolidation_strategy"),
         "review_notes": spec.get("review_notes"),
+        "dataset_tier": spec.get("dataset_tier", manifest.get("dataset_tier", "confidence")),
     }
 
 

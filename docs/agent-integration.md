@@ -149,6 +149,11 @@ Use `POST /query/debug` when:
 - you need to inspect visibility exclusions
 - you need to see lexical matched tokens and text views
 
+For local exploratory work, the supported way to exercise this integration
+boundary is `python -m app.agent_simulation`. The harness stays on the real
+HTTP contract, exposes scope and runtime-context controls directly, and shows
+Pallium's decision path without adding a second memory policy in the client.
+
 ## Query Input Contract
 
 The runtime should send:
@@ -225,6 +230,11 @@ One practical runtime pattern:
 6. if a result looks wrong, inspect `POST /query/debug` before changing prompts
    or retrieval code
 
+The direct harness follows this same loop. In `chat` mode it ingests the user
+turn through `/items`, calls `/query/debug` before the assistant turn, and only
+passes `injectable_blocks` to the model when Pallium says to inject. Ranked
+results and debug trace stay operator-visible, not prompt-visible.
+
 ## How To Think About The Current Memory Jobs
 
 The current package is optimizing for a few concrete jobs:
@@ -264,6 +274,7 @@ and accepts Pallium's memory decisions.
 
 ## Read Next
 
+- local exploratory workflow: [getting-started.md](getting-started.md)
 - API reference: [http-api.md](http-api.md)
 - privacy rules: [privacy-and-visibility.md](privacy-and-visibility.md)
 - memory structure and lifecycle: [memory-model.md](memory-model.md)

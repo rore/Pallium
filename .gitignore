@@ -31,3 +31,5 @@ evals/public_corpus/output/
 evals/integration_readiness/output/
 pallium.db.schema.lock
 *.schema.lock
+
+.local/harness-sessions/

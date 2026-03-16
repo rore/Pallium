@@ -1075,6 +1075,412 @@ def test_debug_trace_explains_routing_packaging_cap_and_retrieval_losses() -> No
     assert packaging_outcome.decision_reason == 'same_thread_context_sufficient'
     assert any(item['loss_stage'] == 'packaging' for item in packaging_diagnostics.values())
 
+
+
+def test_same_thread_trivial_local_context_allows_cross_thread_carry_forward() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-trivial-same-thread',
+        session_ref='session:trivial-same-thread',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='same-thread-query',
+                source_type='chat_message',
+                source_id='same-thread-query',
+                excerpt='so what do we know the latest about the catalog sync retry?',
+                occurred_at=datetime(2026, 3, 11, 12, 22, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-trivial-same-thread',
+                artifact_kind='message',
+                role='user',
+                score=11,
+                evidence=[],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='same-thread-hi',
+                source_type='chat_message',
+                source_id='same-thread-hi',
+                excerpt='hi',
+                occurred_at=datetime(2026, 3, 11, 12, 20, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-trivial-same-thread',
+                artifact_kind='message',
+                role='user',
+                score=6,
+                evidence=[],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='same-thread-hold',
+                source_type='chat_message',
+                source_id='same-thread-hold',
+                excerpt='yes, one second',
+                occurred_at=datetime(2026, 3, 11, 12, 21, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-trivial-same-thread',
+                artifact_kind='message',
+                role='user',
+                score=7,
+                evidence=[],
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='thread-summary-trivial-same-thread',
+                type='thread_summary',
+                payload={
+                    'summary': 'The thread contains a single user message about the catalog sync retry and no resolved information yet.',
+                    'conclusions': [],
+                    'selected_work_artifacts': [],
+                },
+                freshness_at=datetime(2026, 3, 11, 12, 22, tzinfo=timezone.utc),
+                score=18,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-trivial-same-thread',
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-constraint-anchor',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'Catalog sync retry is paused after partial progress and a service-token failure.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'Refreshed 312 reservation records before the service token expired.',
+                    'key_findings': ['Avoid admin portal sign-in and local browser use during the retry.'],
+                    'blocker_state': 'The service token expired, and the operator constraint forbids admin portal sign-in or local browser use.',
+                    'next_step': 'Refresh the catalog service token and rerun the sync from batch 313.',
+                    'evidence': ['Constraint: do not sign in to the admin portal or open a local browser.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=15,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-history',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='so what do we know the latest about the catalog sync retry?',
+            query_tokens=('so', 'what', 'do', 'we', 'know', 'the', 'latest', 'about', 'the', 'catalog', 'sync', 'retry'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='so what do we know the latest about the catalog sync retry?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='same_thread_continuation', session_has_sufficient_local_context=True),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    assert outcome.should_inject is True
+    assert outcome.decision_reason == 'carry_forward_available'
+    assert outcome.trace.routing['selected_layer'] != 'source_evidence'
+    assert outcome.trace.routing['query_family'] == 'broad_recurring_recall'
+    assert any(block.memory_type == 'task_checkpoint' for block in outcome.injectable_blocks)
+    assert outcome.trace.routing['injection_decision']['same_thread_context_evaluation']['reason_code'] == 'insufficient_same_thread_local_state'
+    excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
+    assert 'unresolved_thread_summary' in excluded
+    assert all(block.result_id != 'memory_object:thread-summary-trivial-same-thread' for block in outcome.injectable_blocks)
+    assert all(block.result_id != 'source_item:same-thread-query' for block in outcome.injectable_blocks)
+
+
+def test_same_thread_runtime_context_suppresses_when_no_external_carry_forward_exists() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-rewrite-same-thread',
+        session_ref='session:rewrite-same-thread',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='rewrite-request',
+                source_type='chat_message',
+                source_id='rewrite-request',
+                excerpt='Can you soften this apology text?',
+                occurred_at=datetime(2026, 3, 11, 12, 20, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-rewrite-same-thread',
+                artifact_kind='message',
+                role='user',
+                score=10,
+                evidence=[],
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='Can you paste that gentle rewrite again exactly?',
+            query_tokens=('can', 'you', 'paste', 'that', 'gentle', 'rewrite', 'again', 'exactly'),
+            limit=3,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='Can you paste that gentle rewrite again exactly?',
+        requested_limit=3,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='same_thread_continuation', session_has_sufficient_local_context=True),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    assert outcome.should_inject is False
+    assert outcome.decision_reason == 'same_thread_context_sufficient'
+    same_thread_context = outcome.trace.routing['injection_decision']['same_thread_context_evaluation']
+    assert same_thread_context['reason_code'] == 'no_external_carry_forward_available'
+    assert same_thread_context['external_carry_forward_result_ids'] == []
+    assert same_thread_context['qualifying_result_ids'] == []
+    assert outcome.injectable_blocks == []
+
+
+def test_same_thread_answer_bearing_source_counts_as_local_context_even_with_external_memory() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-answer-bearing-same-thread',
+        session_ref='session:answer-bearing-same-thread',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='same-thread-answer',
+                source_type='assistant_artifact',
+                source_id='same-thread-answer',
+                excerpt='Sure: "I missed your call earlier and wanted to apologize for going quiet. Can we try again later today?"',
+                occurred_at=datetime(2026, 3, 11, 12, 24, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-answer-bearing-same-thread',
+                artifact_kind='assistant_output',
+                role='assistant',
+                score=14,
+                evidence=[],
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-other-thread',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'Catalog sync retry remains paused after partial progress and a service-token failure.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'Refreshed 312 reservation records before the service token expired.',
+                    'key_findings': ['Avoid admin portal sign-in and local browser use during the retry.'],
+                    'blocker_state': 'The service token expired, and the operator constraint forbids admin portal sign-in or local browser use.',
+                    'next_step': 'Refresh the catalog service token and rerun the sync from batch 313.',
+                    'evidence': ['Constraint: do not sign in to the admin portal or open a local browser.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=15,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-history',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='Can you paste that gentle rewrite again exactly?',
+            query_tokens=('can', 'you', 'paste', 'that', 'gentle', 'rewrite', 'again', 'exactly'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='Can you paste that gentle rewrite again exactly?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='same_thread_continuation', session_has_sufficient_local_context=True),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    assert outcome.should_inject is False
+    assert outcome.decision_reason == 'same_thread_context_sufficient'
+    same_thread_context = outcome.trace.routing['injection_decision']['same_thread_context_evaluation']
+    assert same_thread_context['reason_code'] == 'relevant_same_thread_local_state'
+    assert 'source_item:same-thread-answer' in same_thread_context['qualifying_result_ids']
+    assert outcome.injectable_blocks == []
+
+
+
+def test_same_thread_user_status_update_does_not_block_broad_recall_carry_forward() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-user-status-same-thread',
+        session_ref='session:user-status-same-thread',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='same-thread-user-status',
+                source_type='chat_message',
+                source_id='same-thread-user-status',
+                excerpt='The catalog sync retry is blocked on the expired service token.',
+                occurred_at=datetime(2026, 3, 11, 12, 24, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-user-status-same-thread',
+                artifact_kind='message',
+                role='user',
+                score=14,
+                evidence=[],
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-other-thread-status',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'Catalog sync retry remains paused after partial progress and a service-token failure.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'Refreshed 312 reservation records before the service token expired.',
+                    'key_findings': ['Avoid admin portal sign-in and local browser use during the retry.'],
+                    'blocker_state': 'The service token expired, and the operator constraint forbids admin portal sign-in or local browser use.',
+                    'next_step': 'Refresh the catalog service token and rerun the sync from batch 313.',
+                    'evidence': ['Constraint: do not sign in to the admin portal or open a local browser.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=15,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-history',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='so what do we know the latest about the catalog sync retry?',
+            query_tokens=('so', 'what', 'do', 'we', 'know', 'the', 'latest', 'about', 'the', 'catalog', 'sync', 'retry'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='so what do we know the latest about the catalog sync retry?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='same_thread_continuation', session_has_sufficient_local_context=True),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    assert outcome.should_inject is True
+    assert outcome.decision_reason == 'carry_forward_available'
+    assert outcome.trace.routing['query_family'] == 'broad_recurring_recall'
+    same_thread_context = outcome.trace.routing['injection_decision']['same_thread_context_evaluation']
+    assert same_thread_context['reason_code'] == 'insufficient_same_thread_local_state'
+    assert 'source_item:same-thread-user-status' not in same_thread_context['qualifying_result_ids']
+    assert any(block.memory_type == 'task_checkpoint' for block in outcome.injectable_blocks)
+
+def test_same_thread_user_fact_source_counts_as_local_context_even_with_external_memory() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-user-fact-same-thread',
+        session_ref='session:user-fact-same-thread',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='same-thread-user-fact',
+                source_type='chat_message',
+                source_id='same-thread-user-fact',
+                excerpt='The catalog sync retry stopped because the service token expired during batch 312.',
+                occurred_at=datetime(2026, 3, 11, 12, 24, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-user-fact-same-thread',
+                artifact_kind='message',
+                role='user',
+                score=14,
+                evidence=[],
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-other-thread-user-fact',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'Catalog sync retry remains paused after partial progress and a service-token failure.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'Refreshed 312 reservation records before the service token expired.',
+                    'key_findings': ['Avoid admin portal sign-in and local browser use during the retry.'],
+                    'blocker_state': 'The service token expired, and the operator constraint forbids admin portal sign-in or local browser use.',
+                    'next_step': 'Refresh the catalog service token and rerun the sync from batch 313.',
+                    'evidence': ['Constraint: do not sign in to the admin portal or open a local browser.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=15,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-history',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='Which token expired during the catalog sync retry?',
+            query_tokens=('which', 'token', 'expired', 'during', 'the', 'catalog', 'sync', 'retry'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='Which token expired during the catalog sync retry?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='same_thread_continuation', session_has_sufficient_local_context=True),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    assert outcome.should_inject is False
+    assert outcome.decision_reason == 'same_thread_context_sufficient'
+    assert outcome.trace.routing['query_family'] == 'same_thread_no_value_continuation'
+    same_thread_context = outcome.trace.routing['injection_decision']['same_thread_context_evaluation']
+    assert same_thread_context['reason_code'] == 'relevant_same_thread_local_state'
+    assert 'source_item:same-thread-user-fact' in same_thread_context['qualifying_result_ids']
+    assert outcome.injectable_blocks == []
+
 def test_indirect_investigative_prompt_uses_sharp_conclusion_shape(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
         _ingest_prior_events(client, 'same-container-false-merge-guard')

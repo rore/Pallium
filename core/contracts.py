@@ -250,9 +250,25 @@ def resolve_query_filters(
     session_has_sufficient_local_context = runtime_context.session_has_sufficient_local_context
 
     if turn_kind in {"same_thread", "same_thread_continuation"}:
+        if requested_filters.container_ref is not None and (
+            requested_filters.thread_ref is not None or requested_filters.session_ref is not None
+        ):
+            effective_filters = replace(effective_filters, thread_ref=None, session_ref=None)
+            filter_scope_relaxed = True
+            filter_scope_reason = "same_thread_scope_relaxed_for_local_context_relevance_check"
+        effective_filters = build_query_filters(
+            source_type=effective_filters.source_type,
+            role=effective_filters.role,
+            artifact_kind=effective_filters.artifact_kind,
+            container_ref=effective_filters.container_ref,
+            thread_ref=effective_filters.thread_ref,
+            session_ref=effective_filters.session_ref,
+        )
         return QueryFilterResolution(
             requested_filters=requested_filters,
             effective_filters=effective_filters,
+            filter_scope_relaxed=filter_scope_relaxed,
+            filter_scope_reason=filter_scope_reason,
         )
 
     if turn_kind == "resumed_session" and requested_filters.thread_ref is not None:

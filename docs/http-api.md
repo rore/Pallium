@@ -230,7 +230,7 @@ Current shape:
 
 ```json
 {
-  "turn_kind": "new_thread" | "same_thread_continuation" | "resumed_session" | "new_session",
+  "turn_kind": "new_thread" | "same_thread" | "same_thread_continuation" | "resumed_session" | "new_session",
   "session_has_sufficient_local_context": true | false | null
 }
 ```
@@ -253,3 +253,4 @@ which memory type should win.
 - runtime integration: [agent-integration.md](agent-integration.md)
 - privacy rules: [privacy-and-visibility.md](privacy-and-visibility.md)
 - memory structure and lifecycle: [memory-model.md](memory-model.md)
+

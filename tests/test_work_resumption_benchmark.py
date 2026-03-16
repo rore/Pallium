@@ -261,7 +261,15 @@ def test_work_resumption_benchmark_outputs_summary_results_and_report(monkeypatc
     assert summary["failure_family_counts"]["injectability_packaging_failure"] >= 3
     assert summary["failure_family_counts"]["thin_agent_boundary_failure"] >= 3
     assert summary["failure_family_counts"]["routing_layer_choice_failure"] == 0
+    assert summary["benchmark"]["suite_id"] == "work_resumption"
+    assert summary["benchmark"]["dataset_tier"] == "confidence"
+    assert summary["benchmark"]["primary_lane"] == "realism"
+    assert summary["benchmark"]["hard_gate_summary"]["lanes"] == ["contract", "trace"]
+    assert summary["benchmark"]["lane_aggregates"]["contract"]["scenarios_total"] == 13
+    assert summary["benchmark"]["lane_aggregates"]["realism"]["scenarios_total"] == 13
+    assert summary["benchmark"]["lane_aggregates"]["operational"]["scenarios_total"] == 13
     assert "## Failure Families" in report
+
 
 
 def test_work_resumption_benchmark_captures_successes_and_attributed_packaging_failures(monkeypatch, tmp_path: Path) -> None:
@@ -277,6 +285,10 @@ def test_work_resumption_benchmark_captures_successes_and_attributed_packaging_f
     results = {item["scenario_id"]: item for item in _read_jsonl(run_dir / "results.jsonl")}
 
     resumed = results["resume-investigation-after-pause"]
+    assert resumed["suite_id"] == "work_resumption"
+    assert resumed["dataset_tier"] == "confidence"
+    assert resumed["primary_lane"] == "realism"
+    assert resumed["scored_lanes"] == ["contract", "trace", "usefulness", "realism", "operational"]
     assert resumed["winner"] == "memory_backed"
     assert resumed["expected_memory_types_found"] is True
     assert resumed["top_layer"] == "lower_level_memory"
@@ -325,6 +337,7 @@ def test_work_resumption_benchmark_captures_successes_and_attributed_packaging_f
     assert user_guard["top_layer"] == "task_checkpoint"
     assert user_guard["winner"] == "memory_backed"
     assert user_guard["failure_families"] == []
+
 
 
 def test_work_resumption_benchmark_keeps_no_value_continuation_guards(monkeypatch, tmp_path: Path) -> None:

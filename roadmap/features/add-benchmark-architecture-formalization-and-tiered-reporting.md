@@ -1,10 +1,10 @@
 ---
 id: add-benchmark-architecture-formalization-and-tiered-reporting
 title: Benchmark architecture formalization and tiered reporting
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary

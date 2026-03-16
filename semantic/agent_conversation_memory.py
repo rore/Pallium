@@ -106,6 +106,16 @@ QUERY_ONLY_SUMMARY_MARKERS = (
     "only this question",
     "only this request",
 )
+UNRESOLVED_SUMMARY_MARKERS = (
+    "no resolved information",
+    "no resolved details",
+    "no resolved state",
+    "no resolved context",
+    "no answer yet",
+    "no replies yet",
+    "nothing else in thread",
+    "single user message",
+)
 STRUCTURED_CONFLICT_MEMORY_TYPES = {"task_checkpoint", "thread_summary", "discussion_summary"}
 OPERATIONAL_GUIDANCE_MARKERS = (
     "next step",
@@ -608,7 +618,10 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         )
         injection_blocks, injection_summary = _build_injectable_blocks(
             final_candidates,
+            ranked_candidates=ranked_candidates,
             intent=intent,
+            query_text=text,
+            query_filters=query_filters,
             runtime_context=runtime_context,
         )
         _annotate_excluded_candidates(
@@ -1696,7 +1709,7 @@ def _query_family_candidate_score(
         if fresh_thread_cross_thread_recall and structured_recall_support >= max(source_support, supported_floor) and "evidence_request" not in query_shape_tags:
             score -= 72
             reasons.append("structured_recall_outweighs_source_evidence")
-        if fresh_thread_cross_thread_recall and ("history_lookup" in query_shape_tags or constraint_recall) and structured_summary_support >= supported_floor and "evidence_request" not in query_shape_tags:
+        if ("history_lookup" in query_shape_tags or constraint_recall) and structured_summary_support >= supported_floor and "evidence_request" not in query_shape_tags:
             score -= 54
             reasons.append("history_lookup_outweighs_evidence_trace")
         return score, reasons
@@ -1721,13 +1734,16 @@ def _query_family_candidate_score(
         reasons.append("pattern_memory_outweighs_sharp_conclusion")
     return score, reasons
 
-def _query_family_label(intent: str, *, runtime_context: QueryRuntimeContext | None) -> str:
+def _query_family_label(intent: str, *, runtime_context: QueryRuntimeContext | None, injection_summary: dict[str, object] | None = None) -> str:
     turn_kind = runtime_context.turn_kind if runtime_context is not None else None
     session_has_sufficient_local_context = (
         runtime_context.session_has_sufficient_local_context if runtime_context is not None else None
     )
     if turn_kind in {"same_thread", "same_thread_continuation"} and session_has_sufficient_local_context is True:
-        return "same_thread_no_value_continuation"
+        decision_reason = str((injection_summary or {}).get("decision_reason") or "")
+        should_inject = bool((injection_summary or {}).get("should_inject"))
+        if decision_reason == "same_thread_context_sufficient" or not should_inject and decision_reason in {"same_thread_context_sufficient", "no_relevant_memory", "only_low_value_candidates"}:
+            return "same_thread_no_value_continuation"
     if intent == "answer_continuity":
         if turn_kind == "resumed_session":
             return "resumed_session_continuation"
@@ -1994,15 +2010,40 @@ def _structured_summary_suppression_reason(
         return None
     payload = item.payload or {}
     summary_text = str(payload.get("summary") or "").strip()
-    if not summary_text:
+    rejection = _summary_low_value_reason(
+        item.type,
+        payload,
+        summary_text=summary_text,
+        query_text=query_text,
+    )
+    if rejection is None:
+        return None
+    if _runtime_context_prefers_cross_thread_recall(runtime_context) and query_filters is not None and query_filters.thread_ref and item.thread_ref == query_filters.thread_ref:
+        if rejection[0] == "query_only_thread_summary":
+            return "current_thread_empty_summary", "A current-thread query-only summary was excluded from recall packaging."
+        return "current_thread_unresolved_summary", "A current-thread unresolved summary was excluded from recall packaging."
+    return rejection
+
+
+
+def _summary_low_value_reason(
+    memory_type: str,
+    payload: dict[str, object],
+    *,
+    summary_text: str,
+    query_text: str,
+) -> tuple[str, str] | None:
+    if memory_type not in ROUTING_SUMMARY_TYPES or not summary_text:
         return None
     if payload.get("selected_work_artifacts") or payload.get("conclusions"):
         return None
-    if not _summary_text_looks_query_only(summary_text, query_text):
+    if _preferred_constraint_text(summary_text) or _summary_text_has_durable_state_cue(summary_text):
         return None
-    if _runtime_context_prefers_cross_thread_recall(runtime_context) and query_filters is not None and query_filters.thread_ref and item.thread_ref == query_filters.thread_ref:
-        return "current_thread_empty_summary", "A current-thread query-only summary was excluded from recall packaging."
-    return "query_only_thread_summary", "A query-only summary was excluded from recall packaging."
+    if _summary_text_looks_query_only(summary_text, query_text):
+        return "query_only_thread_summary", "A query-only summary was excluded from recall packaging."
+    if _summary_text_looks_unresolved(summary_text):
+        return "unresolved_thread_summary", "An unresolved summary without durable state was excluded from recall packaging."
+    return None
 
 
 
@@ -2012,6 +2053,33 @@ def _summary_text_looks_query_only(summary_text: str, query_text: str) -> bool:
         return True
     overlap = len(set(_routing_query_tokens(summary_text)).intersection(set(_routing_query_tokens(query_text))))
     return overlap >= 4 and lowered.startswith("user asked")
+
+
+
+def _summary_text_looks_unresolved(summary_text: str) -> bool:
+    lowered = summary_text.lower().strip()
+    if lowered in WEAK_THREAD_SUMMARY_TEXT or lowered.startswith("unresolved"):
+        return True
+    return any(marker in lowered for marker in UNRESOLVED_SUMMARY_MARKERS)
+
+
+
+def _summary_text_has_durable_state_cue(summary_text: str) -> bool:
+    lowered = summary_text.lower().strip()
+    return any(
+        marker in lowered
+        for marker in (
+            "constraint:",
+            "blocked by",
+            "blocker:",
+            "next step:",
+            "current state:",
+            "decision:",
+            "investigation outcome:",
+            "resolved that",
+            "concluded that",
+        )
+    )
 
 
 
@@ -2125,6 +2193,26 @@ def _source_hit_looks_like_recall_query(item: QueryResultItem, query_text: str) 
     overlap = len(set(excerpt_tokens).intersection(query_tokens))
     excerpt_tags = set(_query_shape_tags(excerpt, excerpt_tokens))
     return overlap >= 3 and bool(excerpt_tags.intersection({"history_lookup", "carry_forward", "constraint_recall"}))
+
+
+def _source_hit_looks_like_request_or_question(item: QueryResultItem) -> bool:
+    excerpt = str(item.excerpt or "").strip()
+    if not excerpt:
+        return False
+    lowered = excerpt.lower()
+    request_prefixes = (
+        "can you", "could you", "would you", "will you", "please", "what ", "which ", "why ", "how ",
+        "when ", "where ", "who ", "do we", "did we", "are we", "is there", "should we", "so what"
+    )
+    if lowered.startswith(request_prefixes):
+        return True
+    if item.role == "assistant":
+        return False
+    if "?" in excerpt:
+        return True
+    if item.role == "user" and lowered.endswith(("right", "please")) and len(lowered.split()) <= 8:
+        return True
+    return False
 
 
 def _source_hit_is_generic_capability_text(text: str) -> bool:
@@ -2448,7 +2536,7 @@ def _build_routing_trace(
     trace = {
         "policy_name": ROUTING_POLICY_NAME,
         "query_intent": intent,
-        "query_family": _query_family_label(intent, runtime_context=runtime_context),
+        "query_family": _query_family_label(intent, runtime_context=runtime_context, injection_summary=injection_summary),
         "family_inference": family_inference,
         "preferred_layers": list(preferred_layers),
         "selected_layer": routing_focus["selected_layer"],
@@ -2521,14 +2609,20 @@ def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object
 def _build_injectable_blocks(
     final_candidates: list[dict[str, object]],
     *,
+    ranked_candidates: list[dict[str, object]],
     intent: str,
+    query_text: str,
+    query_filters: QueryFilters | None,
     runtime_context: QueryRuntimeContext | None,
 ) -> tuple[list[InjectableBlock], dict[str, object]]:
-    if (
-        runtime_context is not None
-        and runtime_context.turn_kind in {"same_thread", "same_thread_continuation"}
-        and runtime_context.session_has_sufficient_local_context is True
-    ):
+    same_thread_context = _evaluate_same_thread_local_context(
+        ranked_candidates,
+        intent=intent,
+        query_text=query_text,
+        query_filters=query_filters,
+        runtime_context=runtime_context,
+    )
+    if same_thread_context["suppress_injection"]:
         return [], {
             "should_inject": False,
             "decision_reason": "same_thread_context_sufficient",
@@ -2536,6 +2630,7 @@ def _build_injectable_blocks(
             "eligible_result_ids": [],
             "dropped_by_cap_result_ids": [],
             "cap": 3,
+            "same_thread_context_evaluation": same_thread_context,
         }
     if not final_candidates:
         return [], {
@@ -2545,6 +2640,7 @@ def _build_injectable_blocks(
             "eligible_result_ids": [],
             "dropped_by_cap_result_ids": [],
             "cap": 3,
+            "same_thread_context_evaluation": same_thread_context,
         }
 
     primary_non_discussion_eligible = [
@@ -2576,6 +2672,7 @@ def _build_injectable_blocks(
             "eligible_result_ids": [],
             "dropped_by_cap_result_ids": [],
             "cap": 3,
+            "same_thread_context_evaluation": same_thread_context,
         }
 
     selected_candidates = list(primary_eligible_candidates[:3])
@@ -2624,7 +2721,153 @@ def _build_injectable_blocks(
         "eligible_result_ids": eligible_ids,
         "dropped_by_cap_result_ids": dropped_ids,
         "cap": 3,
+        "same_thread_context_evaluation": same_thread_context,
     }
+
+
+
+def _evaluate_same_thread_local_context(
+    ranked_candidates: list[dict[str, object]],
+    *,
+    intent: str,
+    query_text: str,
+    query_filters: QueryFilters | None,
+    runtime_context: QueryRuntimeContext | None,
+) -> dict[str, object]:
+    if not (
+        runtime_context is not None
+        and runtime_context.turn_kind in {"same_thread", "same_thread_continuation"}
+        and runtime_context.session_has_sufficient_local_context is True
+    ):
+        return {"evaluated": False, "suppress_injection": False}
+    if query_filters is None or not query_filters.thread_ref:
+        return {
+            "evaluated": True,
+            "suppress_injection": True,
+            "reason_code": "runtime_same_thread_context_only",
+            "qualifying_result_ids": [],
+            "external_carry_forward_result_ids": [],
+            "rejected_candidates": [],
+        }
+
+    qualifying_result_ids: list[str] = []
+    external_carry_forward_result_ids: list[str] = []
+    rejected_candidates: list[dict[str, str]] = []
+    for candidate in ranked_candidates:
+        result_id = _routing_result_id(candidate["item"])
+        if bool(candidate.get("same_thread")):
+            qualifies, reason_code = _candidate_qualifies_as_same_thread_local_state(
+                candidate,
+                intent=intent,
+                query_text=query_text,
+            )
+            if qualifies:
+                qualifying_result_ids.append(result_id)
+                continue
+            rejected_candidates.append({"result_id": result_id, "reason_code": reason_code})
+            continue
+        if _candidate_could_supply_external_carry_forward(candidate, intent=intent):
+            external_carry_forward_result_ids.append(result_id)
+
+    if qualifying_result_ids:
+        reason_code = "relevant_same_thread_local_state"
+        suppress_injection = True
+    elif not external_carry_forward_result_ids:
+        reason_code = "no_external_carry_forward_available"
+        suppress_injection = True
+    else:
+        reason_code = "insufficient_same_thread_local_state"
+        suppress_injection = False
+
+    return {
+        "evaluated": True,
+        "suppress_injection": suppress_injection,
+        "reason_code": reason_code,
+        "qualifying_result_ids": qualifying_result_ids,
+        "external_carry_forward_result_ids": external_carry_forward_result_ids[:6],
+        "rejected_candidates": rejected_candidates[:6],
+    }
+
+
+
+def _candidate_could_supply_external_carry_forward(candidate: dict[str, object], *, intent: str) -> bool:
+    if _candidate_is_low_value(candidate):
+        return False
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    if item.result_kind == "source_hit":
+        return _candidate_is_injection_eligible(
+            candidate,
+            intent=intent,
+            allow_discussion_fallback=False,
+            allow_source_companion=False,
+        )
+    return _candidate_is_injection_eligible(
+        candidate,
+        intent=intent,
+        allow_discussion_fallback=True,
+        allow_source_companion=False,
+    )
+
+
+def _candidate_qualifies_as_same_thread_local_state(
+    candidate: dict[str, object],
+    *,
+    intent: str,
+    query_text: str,
+) -> tuple[bool, str]:
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    suppression_reason = str(candidate.get("suppression_reason_code") or "")
+    if suppression_reason:
+        return False, suppression_reason
+    if _candidate_is_low_value(candidate):
+        return False, "low_value_same_thread_context"
+
+    support_grade = str(candidate.get("support_grade") or "weak")
+    support_score = int(candidate.get("support_score") or 0)
+    work_usefulness = int(candidate.get("work_usefulness_score") or 0)
+    overlap_tokens = list(candidate.get("content_overlap_tokens") or [])
+
+    if item.result_kind == "source_hit":
+        excerpt = str(item.excerpt or "")
+        if _source_hit_looks_like_recall_query(item, query_text):
+            return False, "query_like_same_thread_source"
+        if work_usefulness >= 18:
+            return True, ""
+        if support_grade in {"supported", "strong"} and _text_contains_operational_guidance(excerpt):
+            if item.role == "assistant" or _preferred_constraint_text(excerpt):
+                return True, ""
+        if support_grade in {"supported", "strong"} and len(overlap_tokens) >= 2 and not _source_hit_looks_like_request_or_question(item):
+            if item.role == "assistant" or intent in {"precise_fact", "evidence_trace", "investigative_conclusion"}:
+                return True, ""
+        return False, "weak_same_thread_source"
+
+    if item.type in {"task_checkpoint", "decision", "investigation_outcome"}:
+        if support_grade in {"supported", "strong"}:
+            return True, ""
+        return False, "weak_same_thread_structured_state"
+
+    if item.type in {"thread_summary", "discussion_summary"}:
+        payload = item.payload or {}
+        summary_text = str(payload.get("summary") or "").strip()
+        summary_rejection = _summary_low_value_reason(
+            item.type,
+            payload,
+            summary_text=summary_text,
+            query_text=query_text,
+        )
+        if summary_rejection is not None:
+            return False, summary_rejection[0]
+        if payload.get("selected_work_artifacts") or payload.get("conclusions"):
+            return True, ""
+        if _preferred_constraint_text(summary_text) or _summary_text_has_durable_state_cue(summary_text):
+            return True, ""
+        if support_grade in {"supported", "strong"} and (support_score >= ROUTING_SUPPORT_THRESHOLD["supported"] or len(overlap_tokens) >= 2):
+            return True, ""
+        return False, "weak_same_thread_summary"
+
+    return False, "non_local_state_candidate"
 
 
 def _candidate_is_injection_eligible(

@@ -1,10 +1,10 @@
 ---
 id: add-direct-memory-conversation-debug-harness
 title: Direct thin-agent simulation harness
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 ---
 
 ## Summary

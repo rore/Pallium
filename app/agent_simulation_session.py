@@ -1,0 +1,189 @@
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+
+SESSION_FORMAT_VERSION = 1
+DEFAULT_SESSION_DIR = Path(".local/harness-sessions")
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def new_ref(prefix: str) -> str:
+    return f"{prefix}:{uuid4().hex[:12]}"
+
+
+@dataclass
+class ScopeDefaults:
+    container_ref: str | None
+    thread_ref: str | None
+    session_ref: str | None
+    visibility_context: dict[str, Any] | None
+    runtime_context: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ScopeDefaults:
+        runtime_context = payload.get("runtime_context")
+        if not isinstance(runtime_context, dict):
+            runtime_context = {}
+        return cls(
+            container_ref=payload.get("container_ref"),
+            thread_ref=payload.get("thread_ref"),
+            session_ref=payload.get("session_ref"),
+            visibility_context=payload.get("visibility_context"),
+            runtime_context=runtime_context,
+        )
+
+
+@dataclass
+class HarnessSession:
+    session_id: str
+    created_at: str
+    updated_at: str
+    base_url: str
+    mode: str
+    debug_enabled: bool
+    defaults: ScopeDefaults
+    model: dict[str, Any] = field(default_factory=dict)
+    events: list[dict[str, Any]] = field(default_factory=list)
+    session_path: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "format_version": SESSION_FORMAT_VERSION,
+            "session_id": self.session_id,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "base_url": self.base_url,
+            "mode": self.mode,
+            "debug_enabled": self.debug_enabled,
+            "defaults": self.defaults.to_dict(),
+            "model": self.model,
+            "events": self.events,
+            "session_path": self.session_path,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> HarnessSession:
+        if payload.get("format_version") != SESSION_FORMAT_VERSION:
+            raise ValueError(f"Unsupported session format version: {payload.get('format_version')}")
+        return cls(
+            session_id=payload["session_id"],
+            created_at=payload["created_at"],
+            updated_at=payload["updated_at"],
+            base_url=payload["base_url"],
+            mode=payload.get("mode", "chat"),
+            debug_enabled=bool(payload.get("debug_enabled", False)),
+            defaults=ScopeDefaults.from_dict(payload["defaults"]),
+            model=payload.get("model", {}),
+            events=list(payload.get("events", [])),
+            session_path=payload.get("session_path"),
+        )
+
+    def record_event(self, event: dict[str, Any]) -> None:
+        self.events.append(event)
+        self.updated_at = utc_now().isoformat()
+
+    def set_mode(self, mode: str) -> None:
+        self.mode = mode
+        self.updated_at = utc_now().isoformat()
+
+
+def create_default_session(*, base_url: str, mode: str, model: dict[str, Any] | None = None) -> HarnessSession:
+    session_id = new_ref("harness-session")
+    now = utc_now().isoformat()
+    defaults = ScopeDefaults(
+        container_ref=f"simulation:{session_id}",
+        thread_ref=new_ref("thread"),
+        session_ref=new_ref("session"),
+        visibility_context={"kind": "public", "id": None},
+        runtime_context={
+            "turn_kind": None,
+            "session_has_sufficient_local_context": None,
+        },
+    )
+    return HarnessSession(
+        session_id=session_id,
+        created_at=now,
+        updated_at=now,
+        base_url=base_url,
+        mode=mode,
+        debug_enabled=False,
+        defaults=defaults,
+        model=model or {},
+    )
+
+
+class SessionStore:
+    def __init__(self, root: Path | None = None) -> None:
+        self._root = root or DEFAULT_SESSION_DIR
+
+    @property
+    def root(self) -> Path:
+        return self._root
+
+    def save(self, session: HarnessSession, name: str | None = None) -> Path:
+        self._root.mkdir(parents=True, exist_ok=True)
+        filename = _normalize_name(name) if name else f"{session.session_id}.json"
+        path = self._root / filename
+        path.write_text(json.dumps(session.to_dict(), indent=2), encoding="utf-8")
+        session.session_path = str(path)
+        return path
+
+    def load(self, path: str | Path) -> HarnessSession:
+        resolved = Path(path)
+        if not resolved.is_absolute():
+            resolved = self._root / resolved
+        payload = json.loads(resolved.read_text(encoding="utf-8"))
+        session = HarnessSession.from_dict(payload)
+        session.session_path = str(resolved)
+        return session
+
+
+def rewrite_session_for_replay(session: HarnessSession) -> HarnessSession:
+    replay_id = new_ref("replay")
+    cloned = HarnessSession.from_dict(session.to_dict())
+    cloned.session_id = replay_id
+    cloned.created_at = utc_now().isoformat()
+    cloned.updated_at = cloned.created_at
+    cloned.session_path = None
+    defaults = cloned.defaults
+    defaults.thread_ref = _prefixed_ref(defaults.thread_ref, replay_id)
+    defaults.session_ref = _prefixed_ref(defaults.session_ref, replay_id)
+    return cloned
+
+
+def rewrite_payload_for_replay(payload: dict[str, Any], replay_id: str) -> dict[str, Any]:
+    rewritten = json.loads(json.dumps(payload))
+    if "source_id" in rewritten:
+        rewritten["source_id"] = _prefixed_ref(rewritten["source_id"], replay_id)
+    if "thread_ref" in rewritten:
+        rewritten["thread_ref"] = _prefixed_ref(rewritten.get("thread_ref"), replay_id)
+    if "session_ref" in rewritten:
+        rewritten["session_ref"] = _prefixed_ref(rewritten.get("session_ref"), replay_id)
+    return rewritten
+
+
+def _normalize_name(name: str) -> str:
+    candidate = name.strip()
+    if not candidate:
+        raise ValueError("session file name cannot be empty")
+    if not candidate.endswith(".json"):
+        candidate = f"{candidate}.json"
+    return candidate
+
+
+def _prefixed_ref(value: str | None, replay_id: str) -> str | None:
+    if not value:
+        return value
+    return f"{replay_id}:{value}"

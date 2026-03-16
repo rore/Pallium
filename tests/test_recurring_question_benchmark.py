@@ -43,10 +43,16 @@ def test_recurring_question_benchmark_outputs_expected_shape(monkeypatch, tmp_pa
     assert summary['value_scenarios'] == 2
     assert summary['non_value_scenarios'] == 1
     assert len(results) == 3
+    assert summary['benchmark']['suite_id'] == 'recurring_question'
+    assert summary['benchmark']['dataset_tier'] == 'iteration'
+    assert summary['benchmark']['primary_lane'] == 'usefulness'
+    assert summary['benchmark']['lane_aggregates']['usefulness']['scenarios_total'] == 3
+    assert summary['benchmark']['lane_aggregates']['realism']['scenarios_total'] == 3
     assert 'baseline_answer' in results[0]
     assert 'memory_backed_answer' in results[0]
     assert 'higher_level_memory_types' in results[0]
     assert results[0]['rubric']['comparison']['winner']
+
 
 
 def test_cross_thread_scenario_marks_memory_backed_as_winner(monkeypatch, tmp_path: Path) -> None:
@@ -62,9 +68,14 @@ def test_cross_thread_scenario_marks_memory_backed_as_winner(monkeypatch, tmp_pa
     results = _read_jsonl(run_dir / 'results.jsonl')
     cross_thread = next(item for item in results if item['scenario_id'] == 'cross-thread-prior-conclusion')
 
+    assert cross_thread['suite_id'] == 'recurring_question'
+    assert cross_thread['dataset_tier'] == 'iteration'
+    assert cross_thread['primary_lane'] == 'usefulness'
+    assert cross_thread['scored_lanes'] == ['usefulness', 'realism']
     assert cross_thread['winner'] == 'memory_backed'
     assert cross_thread['rubric']['memory_backed']['memory_carry_forward'] == 2
     assert cross_thread['expected_memory_types_found'] is True
+
 
 
 def test_same_thread_low_value_does_not_mark_memory_as_winner(monkeypatch, tmp_path: Path) -> None:
@@ -84,6 +95,7 @@ def test_same_thread_low_value_does_not_mark_memory_as_winner(monkeypatch, tmp_p
     assert low_value['rubric']['comparison']['delta'] == 2
 
 
+
 def test_repeated_answer_consistency_rewards_prior_conclusion_carry_forward(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr('app.dependencies.build_llm_provider', lambda config, **_: TieredMemorySemanticProvider())
 
@@ -99,6 +111,7 @@ def test_repeated_answer_consistency_rewards_prior_conclusion_carry_forward(monk
 
     assert repeated['winner'] == 'memory_backed'
     assert repeated['rubric']['memory_backed']['consistency'] == 2
+
 
 
 def test_recurring_question_benchmark_reports_continuity_memory_for_repeated_answer_strategy(monkeypatch, tmp_path: Path) -> None:

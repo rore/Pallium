@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.config import AppConfig
 from app.main import create_app
+from evals.benchmark_architecture import annotate_result, build_suite_summary
 from evals.continuity_common import CONTINUITY_FAILURE_FAMILIES, failure_family_counts
 
 DEFAULT_SCENARIO_FILE = Path("evals/low_value_churn/scenarios.json")
@@ -52,7 +53,10 @@ def run_low_value_churn_benchmark(
     results: list[dict[str, Any]] = []
     with results_path.open("w", encoding="utf-8") as handle:
         for scenario in scenarios:
-            result = _run_scenario(scenario=scenario, config=config)
+            result = annotate_result(
+                _run_scenario(scenario=scenario, config=config),
+                suite_id="low_value_churn",
+            )
             results.append(result)
             handle.write(json.dumps(result) + "\n")
 
@@ -67,6 +71,7 @@ def run_low_value_churn_benchmark(
         "thread_rebuild_churn_successes": sum(1 for row in results if "thread_rebuild_churn_failure" not in row["failure_families"]),
         "failure_family_counts": failure_family_counts(results),
     }
+    summary["benchmark"] = build_suite_summary(suite_id="low_value_churn", results=results)
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     (run_dir / "report.md").write_text(_build_report(summary=summary, results=results), encoding="utf-8")
     return run_dir

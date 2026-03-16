@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from app.config import AppConfig
 from app.dependencies import build_llm_provider
 from app.main import create_app
+from evals.benchmark_architecture import annotate_result, build_suite_summary
 from evals.continuity_common import default_injection_expectations, evaluate_query_contract, query_family_from_intent
 from evals.recurring_question_benchmark import _compare_answers, _generate_answer, _score_answer
 from providers.llm.base import LLMProvider
@@ -65,7 +66,10 @@ def run_memory_routing_benchmark(
     results: list[dict[str, Any]] = []
     with results_path.open("w", encoding="utf-8") as results_file:
         for scenario in scenarios:
-            result = _run_scenario(scenario=scenario, config=config, answer_provider=provider)
+            result = annotate_result(
+                _run_scenario(scenario=scenario, config=config, answer_provider=provider),
+                suite_id="memory_routing",
+            )
             results.append(result)
             results_file.write(json.dumps(result) + "\n")
 
@@ -376,6 +380,7 @@ def _build_summary(*, results: list[dict[str, Any]], scenario_file: Path, config
                 "false_merge_failures": sum(1 for row in rows if row["false_merge_occurred"]),
             }
         )
+    summary["benchmark"] = build_suite_summary(suite_id="memory_routing", results=results)
     return summary
 def _build_report(*, summary: dict[str, Any], results: list[dict[str, Any]]) -> str:
     lines = [

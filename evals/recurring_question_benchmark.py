@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from app.config import AppConfig
 from app.dependencies import build_llm_provider
+from evals.benchmark_architecture import annotate_result, build_suite_summary
 from app.main import create_app
 from providers.llm.base import LLMProvider
 
@@ -103,11 +104,14 @@ def run_recurring_question_benchmark(
 
     with results_path.open("w", encoding="utf-8") as results_file:
         for scenario in scenarios:
-            result = _run_scenario(
-                scenario=scenario,
-                config=config,
-                answer_provider=provider,
-                consolidation_strategy=consolidation_strategy,
+            result = annotate_result(
+                _run_scenario(
+                    scenario=scenario,
+                    config=config,
+                    answer_provider=provider,
+                    consolidation_strategy=consolidation_strategy,
+                ),
+                suite_id="recurring_question",
             )
             if result["expected_value"]:
                 summary["value_scenarios"] += 1
@@ -119,6 +123,7 @@ def run_recurring_question_benchmark(
                     summary["non_value_memory_not_winner"] += 1
             results_file.write(json.dumps(result) + "\n")
 
+    summary["benchmark"] = build_suite_summary(suite_id="recurring_question", results=_read_results(results_path))
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return run_dir
 
@@ -497,6 +502,10 @@ def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _load_scenarios(path: Path) -> list[dict[str, Any]]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _read_results(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _build_run_id(config: AppConfig, consolidation_strategy: str | None) -> str:

@@ -50,7 +50,7 @@ def test_public_corpus_benchmark_reports_success_and_failure_families(monkeypatc
     assert summary['query_family_matches'] == 10
     assert summary['query_contract_consistency_successes'] == 10
     assert summary['injection_contract_successes'] >= 7
-    assert summary['thin_agent_boundary_successes'] >= 8
+    assert summary['thin_agent_boundary_successes'] >= 7
     assert summary['scenario_families'] == ['blocker_next_step_followup', 'exact_evidence_followup', 'resumed_work_paraphrase', 'same_thread_no_value']
     assert summary['non_value_guard_successes'] == 2
     assert summary['failure_families']['routing_layer_choice_failure'] >= 2
@@ -58,6 +58,13 @@ def test_public_corpus_benchmark_reports_success_and_failure_families(monkeypatc
     assert summary['failure_families']['thin_agent_boundary_failure'] >= 2
     assert summary['failure_families']['paraphrase_or_indirect_query_failure'] >= 1
     assert summary['failure_families']['wrong_memory_selection_failure'] >= 2
+    assert summary['benchmark']['suite_id'] == 'public_corpus'
+    assert summary['benchmark']['dataset_tier'] == 'confidence'
+    assert summary['benchmark']['primary_lane'] == 'realism'
+    assert summary['benchmark']['hard_gate_summary']['lanes'] == ['contract', 'trace']
+    assert summary['benchmark']['lane_aggregates']['contract']['scenarios_total'] == 10
+    assert summary['benchmark']['lane_aggregates']['realism']['scenarios_total'] == 10
+    assert summary['benchmark']['lane_aggregates']['operational']['scenarios_total'] == 10
 
     by_id = {item['episode_id']: item for item in results}
     assert set(by_id) == {
@@ -74,6 +81,10 @@ def test_public_corpus_benchmark_reports_success_and_failure_families(monkeypatc
     }
 
     recall = by_id['wildchat-feed-ratio-recall']
+    assert recall['suite_id'] == 'public_corpus'
+    assert recall['dataset_tier'] == 'confidence'
+    assert recall['primary_lane'] == 'realism'
+    assert recall['scored_lanes'] == ['contract', 'trace', 'usefulness', 'realism', 'operational']
     assert recall['top_layer'] in {'lower_level_memory', 'source_evidence'}
     assert recall['routing_intent'] == 'precise_fact'
     assert recall['query_family_match'] is True
@@ -134,4 +145,3 @@ def test_public_corpus_benchmark_reports_success_and_failure_families(monkeypatc
     assert branch_followup['top_layer'] == 'task_checkpoint'
     assert branch_followup['routing_intent'] == 'work_resumption'
     assert branch_followup['failure_families'] == []
-

@@ -1,7 +1,5 @@
 # Next
-- add-benchmark-architecture-formalization-and-tiered-reporting
 - add-pallium-native-scenario-coverage-and-replay-regressions
-- add-direct-memory-conversation-debug-harness
 - add-live-integration-improvement-loop-and-replay-pipeline
 
 # Later
@@ -21,6 +19,8 @@
 - idea-optional-reranker-support
 
 # Done
+- add-benchmark-architecture-formalization-and-tiered-reporting
+- add-direct-memory-conversation-debug-harness
 - add-robust-query-family-inference-beyond-phrase-cues
 - add-agent-memory-decision-benchmark-program
 - add-live-thread-memory-quality-hardening
@@ -58,3 +58,4 @@
 - add-first-semantic-layer-and-promotion
 - add-agent-memory-simulation
 - build-structured-retrieval-foundation
+

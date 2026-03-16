@@ -48,7 +48,13 @@ def test_memory_routing_benchmark_outputs_summary_results_and_report(monkeypatch
     assert summary['policy_successes'] == 11
     assert summary['query_family_matches'] == 11
     assert summary['false_merge_failures'] == 0
-    assert '## Aggregate' in report
+    assert summary['benchmark']['suite_id'] == 'memory_routing'
+    assert summary['benchmark']['dataset_tier'] == 'confidence'
+    assert summary['benchmark']['primary_lane'] == 'trace'
+    assert summary['benchmark']['hard_gate_summary']['lanes'] == ['contract', 'trace']
+    assert summary['benchmark']['lane_aggregates']['contract']['scenarios_total'] == 11
+    assert summary['benchmark']['lane_aggregates']['trace']['scenarios_total'] == 11
+    assert '# Memory Routing Benchmark Report' in report
 
 
 def test_memory_routing_benchmark_captures_expected_layer_choices_and_new_verdict_slice(monkeypatch, tmp_path: Path) -> None:
@@ -64,6 +70,10 @@ def test_memory_routing_benchmark_captures_expected_layer_choices_and_new_verdic
     results = {item['scenario_id']: item for item in _read_jsonl(run_dir / 'results.jsonl')}
 
     broad = results['broad-recall-cross-thread']
+    assert broad['suite_id'] == 'memory_routing'
+    assert broad['dataset_tier'] == 'confidence'
+    assert broad['primary_lane'] == 'trace'
+    assert broad['scored_lanes'] == ['contract', 'trace']
     assert broad['top_layer'] == 'pattern_memory'
     assert broad['routing_intent'] == 'broad_recall'
     assert broad['query_family'] == 'broad_recurring_recall'

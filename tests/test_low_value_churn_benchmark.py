@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -46,10 +46,19 @@ def test_low_value_churn_benchmark_keeps_low_value_threads_and_churn_controls_gr
     assert summary['thread_rebuild_churn_successes'] == 3
     assert summary['failure_family_counts']['low_value_promotion_failure'] == 0
     assert summary['failure_family_counts']['thread_rebuild_churn_failure'] == 0
+    assert summary['benchmark']['suite_id'] == 'low_value_churn'
+    assert summary['benchmark']['dataset_tier'] == 'confidence'
+    assert summary['benchmark']['primary_lane'] == 'operational'
+    assert summary['benchmark']['lane_aggregates']['trace']['scenarios_total'] == 3
+    assert summary['benchmark']['lane_aggregates']['operational']['scenarios_total'] == 3
     assert '# Low-Value And Churn Benchmark Report' in report
 
     by_id = {item['scenario_id']: item for item in results}
     for scenario_id in by_id:
+        assert by_id[scenario_id]['suite_id'] == 'low_value_churn'
+        assert by_id[scenario_id]['dataset_tier'] == 'confidence'
+        assert by_id[scenario_id]['primary_lane'] == 'operational'
+        assert by_id[scenario_id]['scored_lanes'] == ['trace', 'operational']
         assert by_id[scenario_id]['failure_families'] == []
         assert by_id[scenario_id]['policy_success'] is True
 
@@ -59,4 +68,3 @@ def test_low_value_churn_benchmark_keeps_low_value_threads_and_churn_controls_gr
     assert by_id['low-value-only-thread-stays-quiet']['summary_churn']['active_summary_count'] == 0
     assert by_id['sharp-decision-thread-avoids-noisy-summary-churn']['summary_churn']['active_summary_count'] == 1
     assert by_id['sharp-decision-thread-avoids-noisy-summary-churn']['summary_churn']['superseded_summary_count'] == 0
-

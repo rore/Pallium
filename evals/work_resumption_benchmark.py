@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from app.config import AppConfig
 from app.dependencies import build_llm_provider
 from app.main import create_app
+from evals.benchmark_architecture import annotate_result, build_suite_summary
 from evals.continuity_common import (
     CONTINUITY_FAILURE_FAMILIES,
     PARAPHRASE_OR_INDIRECT_QUERY_LABELS,
@@ -117,11 +118,14 @@ def run_work_resumption_benchmark(
     results: list[dict[str, Any]] = []
     with results_path.open("w", encoding="utf-8") as results_file:
         for scenario in scenarios:
-            result = _run_scenario(
-                scenario=scenario,
-                config=config,
-                answer_provider=provider,
-                consolidation_strategy=effective_consolidation_strategy,
+            result = annotate_result(
+                _run_scenario(
+                    scenario=scenario,
+                    config=config,
+                    answer_provider=provider,
+                    consolidation_strategy=effective_consolidation_strategy,
+                ),
+                suite_id="work_resumption",
             )
             results.append(result)
             results_file.write(json.dumps(result) + "\n")
@@ -808,7 +812,7 @@ def _build_summary(
     for row in results:
         by_family[row["scenario_family"]].append(row)
 
-    return {
+    summary = {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "scenario_file": str(scenario_file),
@@ -865,6 +869,9 @@ def _build_summary(
     }
 
 
+
+    summary["benchmark"] = build_suite_summary(suite_id="work_resumption", results=results)
+    return summary
 def _build_report(*, summary: dict[str, Any], results: list[dict[str, Any]]) -> str:
     lines = [
         "# Developer-Work Continuity Benchmark Report",

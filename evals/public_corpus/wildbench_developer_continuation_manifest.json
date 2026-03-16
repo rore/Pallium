@@ -1,5 +1,6 @@
 {
   "corpus_name": "wildbench",
+  "dataset_tier": "confidence",
   "default_query_limit": 6,
   "filters": {
     "language": "english",

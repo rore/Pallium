@@ -121,7 +121,7 @@ def test_raw_source_is_queryable_before_worker_completion_and_memory_after(clien
     )
 
     before = client.post(
-        "/query",
+        "/query/debug",
         json={"text": "what did we decide about reservation ordering?", "limit": 5, "artifact_kind": "assistant_output"},
     )
     assert before.status_code == 200
@@ -598,7 +598,7 @@ def test_query_returns_injection_contract_with_runtime_context(monkeypatch, test
     )
 
     response = client.post(
-        "/query",
+        "/query/debug",
         json={
             "text": "what did we decide about reservation ordering?",
             "limit": 5,
@@ -637,11 +637,13 @@ def test_query_same_thread_context_sufficient_suppresses_injection(monkeypatch, 
     )
 
     response = client.post(
-        "/query",
+        "/query/debug",
         json={
             "text": "what did we decide about reservation ordering?",
             "limit": 5,
             "container_ref": "chat:api",
+            "thread_ref": "chat:api:thread-2",
+            "session_ref": "session:api-2",
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
@@ -655,8 +657,103 @@ def test_query_same_thread_context_sufficient_suppresses_injection(monkeypatch, 
     assert payload["should_inject"] is False
     assert payload["decision_reason"] == "same_thread_context_sufficient"
     assert payload["injectable_blocks"] == []
+    assert payload["trace"]["filter_scope_relaxed"] is True
+    assert payload["trace"]["filter_scope_reason"] == "same_thread_scope_relaxed_for_local_context_relevance_check"
+    assert payload["trace"]["filters"]["thread_ref"] is None
+    assert payload["trace"]["filters"]["session_ref"] is None
+    assert payload["trace"]["routing"]["injection_decision"]["same_thread_context_evaluation"]["qualifying_result_ids"]
 
 
+
+
+
+def test_query_same_thread_trivial_local_context_allows_cross_thread_recall(monkeypatch, test_db_url: str) -> None:
+    client = _agent_conversation_client(monkeypatch, test_db_url)
+    container_ref, _old_thread_ref, _old_session_ref = _ingest_cross_thread_catalog_history(client)
+    current_thread_ref = "chat:team:operations:thread-trivial-same-thread"
+    current_session_ref = "session:operations-trivial-same-thread"
+
+    for payload in (
+        {
+            "source_type": "chat_message",
+            "source_id": "same-thread-hi",
+            "content_type": "text/plain",
+            "content": "hi",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": container_ref,
+            "thread_ref": current_thread_ref,
+            "session_ref": current_session_ref,
+            "occurred_at": "2026-03-11T12:20:00Z",
+        },
+        {
+            "source_type": "chat_message",
+            "source_id": "same-thread-hold",
+            "content_type": "text/plain",
+            "content": "yes, one second",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": container_ref,
+            "thread_ref": current_thread_ref,
+            "session_ref": current_session_ref,
+            "occurred_at": "2026-03-11T12:21:00Z",
+        },
+        {
+            "source_type": "chat_message",
+            "source_id": "same-thread-ledger-question",
+            "content_type": "text/plain",
+            "content": "so what do we know the latest about the catalog sync retry?",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": container_ref,
+            "thread_ref": current_thread_ref,
+            "session_ref": current_session_ref,
+            "occurred_at": "2026-03-11T12:22:00Z",
+        },
+    ):
+        response = client.post("/items", json=payload)
+        assert response.status_code == 200
+
+    response = client.post(
+        "/query/debug",
+        json={
+            "text": "so what do we know the latest about the catalog sync retry?",
+            "limit": 6,
+            "container_ref": container_ref,
+            "thread_ref": current_thread_ref,
+            "session_ref": current_session_ref,
+            "runtime_context": {
+                "turn_kind": "same_thread_continuation",
+                "session_has_sufficient_local_context": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    trace = payload["trace"]
+    routing = trace["routing"]
+    injection = routing["injection_decision"]
+    rendered_blocks = " ".join(block["text"].lower() for block in payload["injectable_blocks"])
+
+    assert payload["should_inject"] is True
+    assert payload["decision_reason"] == "carry_forward_available"
+    assert trace["filter_scope_relaxed"] is True
+    assert trace["filter_scope_reason"] == "same_thread_scope_relaxed_for_local_context_relevance_check"
+    assert trace["requested_filters"]["thread_ref"] == current_thread_ref
+    assert trace["requested_filters"]["session_ref"] == current_session_ref
+    assert trace["filters"]["thread_ref"] is None
+    assert trace["filters"]["session_ref"] is None
+    assert injection["same_thread_context_evaluation"]["reason_code"] == "insufficient_same_thread_local_state"
+    assert injection["same_thread_context_evaluation"]["external_carry_forward_result_ids"]
+    assert routing["selected_layer"] != "source_evidence"
+    assert any(block["memory_type"] in {"task_checkpoint", "thread_summary"} for block in payload["injectable_blocks"])
+    assert ("batch 313" in rendered_blocks or "service token expired" in rendered_blocks)
+    assert "admin portal" in rendered_blocks or "local browser" in rendered_blocks
+    returned_block_ids = {block["result_id"] for block in payload["injectable_blocks"]}
+    assert "source_item:same-thread-hi" not in returned_block_ids
+    assert "source_item:same-thread-hold" not in returned_block_ids
+    assert "source_item:same-thread-ledger-question" not in returned_block_ids
 
 def test_query_new_thread_cross_thread_recall_relaxes_thread_session_filters(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)

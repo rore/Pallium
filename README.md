@@ -80,6 +80,8 @@ Current implementation surface:
   `POST /query/debug`, and `GET /debug/queue/health`
 - lexical retrieval plus package-level query policy for the current
   conversation package
+- a supported terminal harness at `python -m app.agent_simulation` for
+  inspectable thin-agent memory loops against the real HTTP contract
 
 ## Validation
 
@@ -106,6 +108,12 @@ The runtime model is simple:
 Use `POST /query/debug` when you need to understand missing results, returned
 result shape, or visibility exclusions.
 
+For local exploratory validation, use `python -m app.agent_simulation`. The
+harness exercises the same ingest and query endpoints, shows the debug decision
+path before the assistant turn, and keeps the downstream side thin by only
+passing Pallium-approved injected blocks into the draft prompt when
+`should_inject=true`.
+
 For the current product focus, the best inputs are:
 
 - agent-mediated user messages
@@ -129,11 +137,11 @@ For the current product focus, the best inputs are:
 
 If you want to try Pallium quickly:
 
-- run the local service plus processor
-- ingest a small sample conversation
-- query a repeated question
-- query a resumed-work question
-- inspect `POST /query/debug`
+- run the local service
+- open `python -m app.agent_simulation`
+- ask a repeated-question or resumed-work prompt
+- inspect `should_inject`, `decision_reason`, injected blocks, and top results
+- save the session and replay it after a code change
 
 Follow [docs/getting-started.md](docs/getting-started.md).
 

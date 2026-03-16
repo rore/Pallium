@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from app.config import AppConfig
 from app.dependencies import build_llm_provider
 from app.main import create_app
+from evals.benchmark_architecture import annotate_result, build_suite_summary
 from evals.continuity_common import (
     CONTINUITY_FAILURE_FAMILIES,
     HIGHER_LEVEL_LAYERS,
@@ -88,11 +89,15 @@ def run_public_corpus_benchmark(
     results: list[dict[str, Any]] = []
     with results_path.open("w", encoding="utf-8") as handle:
         for episode in episodes:
-            result = _run_episode(
-                episode=episode,
-                config=config,
-                answer_provider=provider,
-                default_consolidation_strategy=default_consolidation_strategy,
+            result = annotate_result(
+                _run_episode(
+                    episode=episode,
+                    config=config,
+                    answer_provider=provider,
+                    default_consolidation_strategy=default_consolidation_strategy,
+                ),
+                suite_id="public_corpus",
+                dataset_tier=episode.get("dataset_tier"),
             )
             results.append(result)
             handle.write(json.dumps(result) + "\n")
@@ -669,6 +674,11 @@ def _build_summary(
                 },
             }
         )
+    summary["benchmark"] = build_suite_summary(
+        suite_id="public_corpus",
+        results=results,
+        dataset_tier=str(manifest.get("dataset_tier", "confidence")),
+    )
     return summary
 
 
