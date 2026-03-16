@@ -17,6 +17,11 @@ memory, and returns small reusable memory and evidence cards. Pallium also
 keeps public and private scoped memory separate by default in the current
 conversation package.
 
+The main thing Pallium tries to preserve is knowledge created during the
+agent's own work: conclusions, findings, constraints, and resumed-work
+checkpoints that may not exist cleanly in Slack, Jira, docs, or code comments
+yet.
+
 The current product focus is deliberately narrow: agent-mediated conversations,
 repeated questions, resumed-work continuity, and safe scoped recall. In other
 words, Pallium is optimized for conversation continuity, not general knowledge
@@ -36,8 +41,9 @@ Common approaches each solve part of the problem and miss part of it:
 - transcript replay is large, noisy, and expensive to keep re-feeding to a
   model
 - prompt summaries are brittle and often lose the evidence behind conclusions
-- vector search can find related text, but not durable explicit decisions,
-  investigation findings, or compact work-state checkpoints by itself
+- vector search can find related text, but technical investigations produce
+  structured outcomes such as decisions, findings, rejected paths, and compact
+  work-state checkpoints that do not behave like isolated text fragments
 - runtime-local state helps within a session, but usually does not give you
   reusable cross-thread memory with clear evidence and scoped visibility rules
 

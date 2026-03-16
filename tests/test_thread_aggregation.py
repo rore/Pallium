@@ -252,18 +252,18 @@ def test_task_checkpoint_is_created_and_superseded(monkeypatch, test_db_url: str
     assert len([item for item in checkpoints if item.lifecycle == "active"]) == 1
 
 
-def test_pelican_style_thread_promotes_verdict_and_uses_summary_fallback(monkeypatch, test_db_url: str) -> None:
+def test_downstream_agent_style_thread_promotes_verdict_and_uses_summary_fallback(monkeypatch, test_db_url: str) -> None:
     client = _create_thread_client(monkeypatch, test_db_url)
     thread_ref = "slack:thread:CLOCAL001:1773572419.417473"
-    session_ref = "pelican:3b1c949210be"
+    session_ref = "downstream-agent:3b1c949210be"
     payloads = (
-        {"source_type": "chat_message", "source_id": "pelican-ledger-msg-1", "content_type": "text/plain", "content": "summarize the latest changes in ledgers", "artifact_kind": "message", "role": "user", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
-        {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-1", "content_type": "text/plain", "content": "Here's what's been happening across the ledger services: transaction-transformer expanded transaction coverage while ledger-query focused on export and ADX plumbing.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
-        {"source_type": "chat_message", "source_id": "pelican-ledger-msg-2", "content_type": "text/plain", "content": "Assume you are blocked from opening browsers or using Jira/Slack auth. What is your best next-step plan using only the local repos?", "artifact_kind": "message", "role": "user", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
-        {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-2", "content_type": "text/plain", "content": "Understood. No browser auth, no Jira or Slack auth. I'll work with the local repos only and ask you directly if I need anything from those services.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
-        {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-3", "content_type": "text/plain", "content": "I can compare ledger-query vs transaction-transformer locally first, then explain which repo changed more from the cloned repos.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
-        {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-4", "content_type": "text/plain", "content": "Here's the verdict: transaction-transformer had the most significant recent ledger changes by a wide margin. It touched more tickets, files, and core transaction flows than ledger-query.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
-        {"source_type": "assistant_artifact", "source_id": "pelican-ledger-artifact-5", "content_type": "text/plain", "content": "Task complete. No Slack message needed. Nothing new to report.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+        {"source_type": "chat_message", "source_id": "downstream-agent-ledger-msg-1", "content_type": "text/plain", "content": "summarize the latest changes in ledgers", "artifact_kind": "message", "role": "user", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+        {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-1", "content_type": "text/plain", "content": "Here's what's been happening across the ledger services: transaction-transformer expanded transaction coverage while ledger-query focused on export and ADX plumbing.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+        {"source_type": "chat_message", "source_id": "downstream-agent-ledger-msg-2", "content_type": "text/plain", "content": "Assume you are blocked from opening browsers or using Jira/Slack auth. What is your best next-step plan using only the local repos?", "artifact_kind": "message", "role": "user", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+        {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-2", "content_type": "text/plain", "content": "Understood. No browser auth, no Jira or Slack auth. I'll work with the local repos only and ask you directly if I need anything from those services.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+        {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-3", "content_type": "text/plain", "content": "I can compare ledger-query vs transaction-transformer locally first, then explain which repo changed more from the cloned repos.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+        {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-4", "content_type": "text/plain", "content": "Here's the verdict: transaction-transformer had the most significant recent ledger changes by a wide margin. It touched more tickets, files, and core transaction flows than ledger-query.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+        {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-5", "content_type": "text/plain", "content": "Task complete. No Slack message needed. Nothing new to report.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
     )
     for payload in payloads:
         client.post("/items", json=payload)
@@ -274,7 +274,7 @@ def test_pelican_style_thread_promotes_verdict_and_uses_summary_fallback(monkeyp
         item.source_id: storage.list_memory_objects_for_source_item(item.id)
         for item in thread_items
     }
-    final_memory = memory_by_source["pelican-ledger-artifact-4"]
+    final_memory = memory_by_source["downstream-agent-ledger-artifact-4"]
     assert any(memory.type == "investigation_outcome" for memory in final_memory)
 
     thread_summaries = list({
@@ -473,3 +473,4 @@ def test_substantive_item_still_requests_thread_rebuild(monkeypatch, test_db_url
     assert processing.thread_rebuild_requested is True
     assert processing.thread_rebuild_completed is True
     assert any(memory.type == "thread_summary" for memory in memory_objects)
+

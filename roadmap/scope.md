@@ -37,7 +37,7 @@ Current focus:
   - debug trace now explains family choice with candidate-aware signals rather than only phrase tables
 - the next integration-value work is:
   - formalize benchmark lanes in the eval program and reporting
-  - expand Pallium-native scenario and replay coverage so most memory bugs can be reproduced directly against Pallium without Pelican in the loop
+  - expand Pallium-native scenario and replay coverage so most memory bugs can be reproduced directly against Pallium without a downstream agent in the loop
   - add a direct exploratory memory conversation harness for chat-like local debugging against Pallium itself
   - then add the live miss-capture and replay-promotion loop so real downstream misses become durable regressions quickly
 - keep privacy, query-debug traceability, retention safety, and timestamped runtime logs as permanent regression gates while the next readiness work advances
@@ -47,7 +47,7 @@ Current focus:
 Plan from the current gaps:
 - first, formalize benchmark architecture and tiered reporting so the eval stack, confidence suite, and future replay assets all use the same acceptance vocabulary
 - second, expand Pallium-native scenario coverage and replay regressions so retrieval, routing, suppression, and packaging issues can usually be reproduced directly in-repo
-- third, add a direct exploratory memory conversation harness so engineers can do chat-style local debugging against Pallium without needing Pelican or another downstream agent in the middle
+- third, add a direct exploratory memory conversation harness so engineers can do chat-style local debugging against Pallium without needing a downstream agent in the middle
 - fourth, add the live miss-capture and replay-promotion loop so suspicious real cases become bounded miss bundles, reviewable promotions into replay fixtures, and safer shadow comparisons instead of staying anecdotal
 - fifth, adopt the targeted external memory pressure pack so Pallium gets public pressure on stale-memory handling, update correctness, long noisy recall, and incremental memory drift without confusing those checks with the product acceptance gate
 - sixth, move to explicit shared-memory derivation and then bounded cross-container memory so repeated-question reuse across later conversations becomes a stronger first-class capability rather than a byproduct of local scope only
@@ -67,3 +67,4 @@ Still out of scope for this phase:
 - public API expansion for explicit retention administration
 - replacing lower-level evidence-backed memory with only higher-level summaries
 - turning Pallium into a workflow engine, transcript archive, or raw tool-log store
+

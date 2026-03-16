@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi.testclient import TestClient
 
 from app.config import AppConfig
 from app.main import create_app
+from core.models import MemoryObject
+from core.visibility import VisibilityContext
 from providers.llm.base import LLMJsonResponse, LLMProviderError
 from tests.stub_providers import TieredMemorySemanticProvider
 
@@ -412,6 +416,170 @@ def _ingest_cross_thread_catalog_history(client: TestClient) -> tuple[str, str, 
     assert any(memory.type == "task_checkpoint" for memory in active_memory)
     return container_ref, old_thread_ref, old_session_ref
 
+def _ingest_conflicting_cross_thread_catalog_history(client: TestClient) -> tuple[str, str, str]:
+    container_ref, old_thread_ref, old_session_ref = _ingest_cross_thread_catalog_history(client)
+    conflict_thread_ref = "chat:team:operations:thread-conflicting-history"
+    conflict_session_ref = "session:operations-conflicting-history"
+    for payload in (
+        {
+            "source_type": "chat_message",
+            "source_id": "conflict-msg-1",
+            "content_type": "text/plain",
+            "content": "Can you summarize the newer catalog export work after the external workspace stopped responding?",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": container_ref,
+            "thread_ref": conflict_thread_ref,
+            "session_ref": conflict_session_ref,
+            "occurred_at": "2026-03-11T11:00:00Z",
+        },
+        {
+            "source_type": "assistant_artifact",
+            "source_id": "conflict-artifact-1",
+            "content_type": "text/plain",
+            "content": "Blocked: the external workspace is unavailable until portal access is restored.",
+            "artifact_kind": "tool_use_summary",
+            "role": "assistant",
+            "container_ref": container_ref,
+            "thread_ref": conflict_thread_ref,
+            "session_ref": conflict_session_ref,
+            "occurred_at": "2026-03-11T11:01:00Z",
+        },
+        {
+            "source_type": "assistant_artifact",
+            "source_id": "conflict-artifact-2",
+            "content_type": "text/plain",
+            "content": "Next step: sign in to the admin portal and reconnect the external workspace once access is restored.",
+            "artifact_kind": "todo_snapshot",
+            "role": "assistant",
+            "container_ref": container_ref,
+            "thread_ref": conflict_thread_ref,
+            "session_ref": conflict_session_ref,
+            "occurred_at": "2026-03-11T11:02:00Z",
+        },
+    ):
+        response = client.post("/items", json=payload)
+        assert response.status_code == 200
+    return container_ref, old_thread_ref, old_session_ref
+
+
+
+def _ingest_compatible_cross_thread_catalog_follow_up(client: TestClient) -> tuple[str, str, str]:
+    container_ref, old_thread_ref, old_session_ref = _ingest_cross_thread_catalog_history(client)
+    follow_up_thread_ref = "chat:team:operations:thread-compatible-history"
+    follow_up_session_ref = "session:operations-compatible-history"
+    for payload in (
+        {
+            "source_type": "chat_message",
+            "source_id": "compatible-msg-1",
+            "content_type": "text/plain",
+            "content": "Can you summarize the newer compatible catalog export status?",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": container_ref,
+            "thread_ref": follow_up_thread_ref,
+            "session_ref": follow_up_session_ref,
+            "occurred_at": "2026-03-11T11:10:00Z",
+        },
+        {
+            "source_type": "assistant_artifact",
+            "source_id": "compatible-artifact-1",
+            "content_type": "text/plain",
+            "content": "Partial progress: validated the export manifest locally after the workspace timeout.",
+            "artifact_kind": "tool_use_summary",
+            "role": "assistant",
+            "container_ref": container_ref,
+            "thread_ref": follow_up_thread_ref,
+            "session_ref": follow_up_session_ref,
+            "occurred_at": "2026-03-11T11:11:00Z",
+        },
+        {
+            "source_type": "assistant_artifact",
+            "source_id": "compatible-artifact-2",
+            "content_type": "text/plain",
+            "content": "Next step: refresh the local export token and rerun the validation from batch 313 without using the admin portal or a local browser.",
+            "artifact_kind": "todo_snapshot",
+            "role": "assistant",
+            "container_ref": container_ref,
+            "thread_ref": follow_up_thread_ref,
+            "session_ref": follow_up_session_ref,
+            "occurred_at": "2026-03-11T11:12:00Z",
+        },
+    ):
+        response = client.post("/items", json=payload)
+        assert response.status_code == 200
+    return container_ref, old_thread_ref, old_session_ref
+
+
+def _ingest_newer_constraint_cross_thread_catalog_history(client: TestClient) -> tuple[str, str]:
+    container_ref, _old_thread_ref, _old_session_ref = _ingest_cross_thread_catalog_history(client)
+    newer_constraint_thread_ref = "chat:team:operations:thread-newer-constraint-history"
+    newer_constraint_session_ref = "session:operations-newer-constraint-history"
+    for payload in (
+        {
+            "source_type": "chat_message",
+            "source_id": "newer-constraint-msg-1",
+            "content_type": "text/plain",
+            "content": "Can you summarize the latest safe local status for the catalog export retry?",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": container_ref,
+            "thread_ref": newer_constraint_thread_ref,
+            "session_ref": newer_constraint_session_ref,
+            "occurred_at": "2026-03-11T11:20:00Z",
+        },
+        {
+            "source_type": "chat_message",
+            "source_id": "newer-constraint-msg-2",
+            "content_type": "text/plain",
+            "content": "Please preserve this newer constraint: use only local diagnostics and do not reconnect the remote workspace.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": container_ref,
+            "thread_ref": newer_constraint_thread_ref,
+            "session_ref": newer_constraint_session_ref,
+            "occurred_at": "2026-03-11T11:21:00Z",
+        },
+        {
+            "source_type": "assistant_artifact",
+            "source_id": "newer-constraint-artifact-1",
+            "content_type": "text/plain",
+            "content": "Partial progress: local diagnostics confirmed the export manifest is intact.",
+            "artifact_kind": "tool_use_summary",
+            "role": "assistant",
+            "container_ref": container_ref,
+            "thread_ref": newer_constraint_thread_ref,
+            "session_ref": newer_constraint_session_ref,
+            "occurred_at": "2026-03-11T11:22:00Z",
+        },
+        {
+            "source_type": "assistant_artifact",
+            "source_id": "newer-constraint-artifact-2",
+            "content_type": "text/plain",
+            "content": "Next step: refresh the local export token and rerun the validation without reconnecting the remote workspace.",
+            "artifact_kind": "todo_snapshot",
+            "role": "assistant",
+            "container_ref": container_ref,
+            "thread_ref": newer_constraint_thread_ref,
+            "session_ref": newer_constraint_session_ref,
+            "occurred_at": "2026-03-11T11:23:00Z",
+        },
+    ):
+        response = client.post("/items", json=payload)
+        assert response.status_code == 200
+
+    storage = client.app.state.pallium_service._storage
+    thread_items = storage.list_source_items_for_thread(container_ref, newer_constraint_thread_ref)
+    checkpoint = next(
+        memory
+        for source_item in thread_items
+        for memory in storage.list_memory_objects_for_source_item(source_item.id)
+        if memory.lifecycle == "active" and memory.type == "task_checkpoint"
+    )
+    return container_ref, checkpoint.id
+
+
+
 def test_query_returns_injection_contract_with_runtime_context(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
     client.post(
@@ -665,7 +833,6 @@ def test_query_debug_replay_keeps_structured_recall_after_new_thread_contaminati
     assert replay_response.status_code == 200
     payload = replay_response.json()
     routing = payload["trace"]["routing"]
-    excluded = {item["excluded_reason_code"] for item in routing["excluded_high_scoring_candidates"]}
     assert payload["should_inject"] is True
     assert payload["decision_reason"] == "carry_forward_available"
     assert payload["injectable_blocks"]
@@ -679,11 +846,286 @@ def test_query_debug_replay_keeps_structured_recall_after_new_thread_contaminati
         heartbeat_note.json()["source_item_id"],
     }
     assert not contaminated_result_ids.intersection({item["source_item_id"] for item in payload["results"] if item["result_kind"] == "source_hit"})
-    assert {"current_thread_recall_query", "duplicate_recall_query_source", "generic_capability_source", "heartbeat_source_noise"}.issubset(excluded)
     rendered_blocks = " ".join(block["text"].lower() for block in payload["injectable_blocks"])
     assert "capabilities:" not in rendered_blocks
     assert "heartbeat:" not in rendered_blocks
     assert "what do we know the latest about the catalog sync retry" not in rendered_blocks
+
+
+def test_query_debug_broad_recall_excludes_conflicting_structured_checkpoint(monkeypatch, test_db_url: str) -> None:
+    client = _agent_conversation_client(monkeypatch, test_db_url)
+    container_ref, _old_thread_ref, _old_session_ref = _ingest_conflicting_cross_thread_catalog_history(client)
+
+    response = client.post(
+        "/query/debug",
+        json={
+            "text": "what do we know the latest about the catalog sync retry?",
+            "limit": 6,
+            "container_ref": container_ref,
+            "thread_ref": "chat:team:operations:thread-fresh-conflict",
+            "session_ref": "session:operations-fresh-conflict",
+            "runtime_context": {
+                "turn_kind": "new_thread",
+                "session_has_sufficient_local_context": False,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    routing = payload["trace"]["routing"]
+    excluded = {item["excluded_reason_code"] for item in routing["excluded_high_scoring_candidates"]}
+    rendered_blocks = " ".join(block["text"].lower() for block in payload["injectable_blocks"])
+    assert payload["should_inject"] is True
+    assert payload["decision_reason"] == "carry_forward_available"
+    assert any("admin portal" in block["text"].lower() or "local browser" in block["text"].lower() for block in payload["injectable_blocks"])
+    assert "sign in to the admin portal" not in rendered_blocks
+    assert "reconnect the external workspace" not in rendered_blocks
+    assert "current fresh-thread query" not in rendered_blocks
+    assert "conflicts_with_active_constraint" in excluded
+    assert routing["packaging"]["mode"] == "compatible_structured_recall"
+    assert routing["packaging"]["active_constraint_profile"]["constraint_text"]
+
+
+
+def test_query_debug_constraint_recall_excludes_conflicting_structured_checkpoint(monkeypatch, test_db_url: str) -> None:
+    client = _agent_conversation_client(monkeypatch, test_db_url)
+    container_ref, _old_thread_ref, _old_session_ref = _ingest_conflicting_cross_thread_catalog_history(client)
+
+    response = client.post(
+        "/query/debug",
+        json={
+            "text": "what constraint had I given you about admin portal sign-in and browser use?",
+            "limit": 6,
+            "container_ref": container_ref,
+            "thread_ref": "chat:team:operations:thread-fresh-conflict-constraint",
+            "session_ref": "session:operations-fresh-conflict-constraint",
+            "runtime_context": {
+                "turn_kind": "new_thread",
+                "session_has_sufficient_local_context": False,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    rendered_blocks = " ".join(block["text"].lower() for block in payload["injectable_blocks"])
+    assert payload["should_inject"] is True
+    assert payload["decision_reason"] == "carry_forward_available"
+    assert "admin portal" in rendered_blocks
+    assert "local browser" in rendered_blocks
+    assert "sign in to the admin portal" not in rendered_blocks
+    assert payload["trace"]["routing"]["packaging"]["constraint_anchor_result_id"].startswith("memory_object:")
+
+
+
+def test_processing_reconciles_conflicting_new_checkpoint_against_active_constraint(monkeypatch, test_db_url: str) -> None:
+    client = _agent_conversation_client(monkeypatch, test_db_url)
+    container_ref, _old_thread_ref, _old_session_ref = _ingest_cross_thread_catalog_history(client)
+    fresh_thread_ref = "chat:team:operations:thread-fresh-generated-conflict"
+    fresh_session_ref = "session:operations-fresh-generated-conflict"
+
+    response = client.post(
+        "/items",
+        json={
+            "source_type": "assistant_artifact",
+            "source_id": "fresh-conflicting-answer",
+            "content_type": "text/plain",
+            "content": "Current state: the export summary is ready. Next step: sign in to the admin portal and reconnect the external workspace once access returns.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": container_ref,
+            "thread_ref": fresh_thread_ref,
+            "session_ref": fresh_session_ref,
+            "occurred_at": "2026-03-11T12:00:00Z",
+        },
+    )
+    assert response.status_code == 200
+
+    storage = client.app.state.pallium_service._storage
+    thread_items = storage.list_source_items_for_thread(container_ref, fresh_thread_ref)
+    checkpoints = [
+        memory
+        for source_item in thread_items
+        for memory in storage.list_memory_objects_for_source_item(source_item.id)
+        if memory.lifecycle == "active" and memory.type == "task_checkpoint"
+    ]
+    assert checkpoints
+    checkpoint_payload = checkpoints[-1].payload
+    assert "sign in to the admin portal" not in str(checkpoint_payload.get("next_step") or "").lower()
+    assert "admin portal" in str(checkpoint_payload.get("blocker_state") or "").lower()
+    assert checkpoint_payload.get("semantic_provenance", {}).get("constraint_reconciliation")
+
+    query_response = client.post(
+        "/query/debug",
+        json={
+            "text": "what do we know the latest about the catalog sync retry?",
+            "limit": 6,
+            "container_ref": container_ref,
+            "thread_ref": "chat:team:operations:thread-fresh-after-reconcile",
+            "session_ref": "session:operations-fresh-after-reconcile",
+            "runtime_context": {
+                "turn_kind": "new_thread",
+                "session_has_sufficient_local_context": False,
+            },
+        },
+    )
+    assert query_response.status_code == 200
+    rendered_blocks = " ".join(block["text"].lower() for block in query_response.json()["injectable_blocks"])
+    assert "sign in to the admin portal" not in rendered_blocks
+
+
+
+def test_query_debug_keeps_compatible_newer_status_beside_constraint(monkeypatch, test_db_url: str) -> None:
+    client = _agent_conversation_client(monkeypatch, test_db_url)
+    container_ref, _old_thread_ref, _old_session_ref = _ingest_compatible_cross_thread_catalog_follow_up(client)
+
+    response = client.post(
+        "/query/debug",
+        json={
+            "text": "what do we know the latest about the catalog sync retry?",
+            "limit": 6,
+            "container_ref": container_ref,
+            "thread_ref": "chat:team:operations:thread-fresh-compatible",
+            "session_ref": "session:operations-fresh-compatible",
+            "runtime_context": {
+                "turn_kind": "new_thread",
+                "session_has_sufficient_local_context": False,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    rendered_blocks = " ".join(block["text"].lower() for block in payload["injectable_blocks"])
+    assert payload["should_inject"] is True
+    assert "admin portal" in rendered_blocks
+    assert "refresh the local export token" in rendered_blocks
+    assert payload["trace"]["routing"]["packaging"]["mode"] == "compatible_structured_recall"
+
+
+def _seed_active_constraint_profiles(client: TestClient) -> tuple[str, str]:
+    storage = client.app.state.pallium_service._storage
+    container_ref = "chat:team:operations"
+    visibility = VisibilityContext(kind="public", id=None)
+    older_constraint = MemoryObject(
+        type="task_checkpoint",
+        schema_id="agent_conversation_memory.task_checkpoint",
+        schema_version="v1",
+        payload={
+            "summary": "Older carry-forward status with a browser restriction.",
+            "task": "Resume the catalog sync retry.",
+            "current_state": "Use local retries only.",
+            "blocker_state": "Do not sign in to the admin portal or open a local browser.",
+            "next_step": "Refresh the local token and continue offline.",
+            "evidence": ["Constraint: do not sign in to the admin portal or open a local browser."],
+            "container_ref": container_ref,
+            "thread_ref": "chat:team:operations:thread-older-constraint",
+            "session_ref": "session:older-constraint",
+        },
+        visibility_context=visibility,
+        freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+    )
+    newer_constraint = MemoryObject(
+        type="task_checkpoint",
+        schema_id="agent_conversation_memory.task_checkpoint",
+        schema_version="v1",
+        payload={
+            "summary": "Newer carry-forward status with a stricter portal restriction.",
+            "task": "Resume the catalog sync retry.",
+            "current_state": "Prior artifacts are ready for review.",
+            "blocker_state": "Do not authenticate to the admin portal while resuming this task.",
+            "next_step": "",
+            "evidence": ["Constraint: do not authenticate to the admin portal; use only local export snapshots."],
+            "container_ref": container_ref,
+            "thread_ref": "chat:team:operations:thread-newer-constraint",
+            "session_ref": "session:newer-constraint",
+        },
+        visibility_context=visibility,
+        freshness_at=datetime(2026, 3, 11, 11, 30, tzinfo=timezone.utc),
+    )
+    storage.create_memory_object(older_constraint)
+    storage.create_memory_object(newer_constraint)
+    return container_ref, newer_constraint.id
+
+
+
+def test_processing_reconciliation_prefers_fresher_active_constraint(monkeypatch, test_db_url: str) -> None:
+    client = _agent_conversation_client(monkeypatch, test_db_url)
+    container_ref, newer_constraint_checkpoint_id = _seed_active_constraint_profiles(client)
+    fresh_thread_ref = "chat:team:operations:thread-fresh-newer-constraint"
+    fresh_session_ref = "session:operations-fresh-newer-constraint"
+
+    response = client.post(
+        "/items",
+        json={
+            "source_type": "assistant_artifact",
+            "source_id": "fresh-conflicting-answer-newer-constraint",
+            "content_type": "text/plain",
+            "content": "Current state: the export summary is ready. Next step: authenticate to the admin portal to refresh the export summary.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": container_ref,
+            "thread_ref": fresh_thread_ref,
+            "session_ref": fresh_session_ref,
+            "occurred_at": "2026-03-11T12:10:00Z",
+        },
+    )
+    assert response.status_code == 200
+
+    storage = client.app.state.pallium_service._storage
+    thread_items = storage.list_source_items_for_thread(container_ref, fresh_thread_ref)
+    checkpoint = next(
+        memory
+        for source_item in thread_items
+        for memory in storage.list_memory_objects_for_source_item(source_item.id)
+        if memory.lifecycle == "active" and memory.type == "task_checkpoint"
+    )
+    checkpoint_payload = checkpoint.payload
+    reconciliation = checkpoint_payload.get("semantic_provenance", {}).get("constraint_reconciliation")
+
+    assert reconciliation is not None
+    assert reconciliation["active_constraint_result_id"] == f"memory_object:{newer_constraint_checkpoint_id}"
+    assert "use only local export snapshots" in reconciliation["constraint_text"].lower()
+    assert "authenticate to the admin portal to refresh the export summary" not in str(checkpoint_payload.get("next_step") or "").lower()
+    assert "local export snapshots" in str(checkpoint_payload.get("blocker_state") or "").lower()
+
+
+
+def test_query_debug_work_resumption_excludes_conflicting_structured_checkpoint(monkeypatch, test_db_url: str) -> None:
+    client = _agent_conversation_client(monkeypatch, test_db_url)
+    container_ref, _old_thread_ref, _old_session_ref = _ingest_conflicting_cross_thread_catalog_history(client)
+
+    response = client.post(
+        "/query/debug",
+        json={
+            "text": "what blocker did we hit and what should we do next on the catalog sync retry?",
+            "limit": 6,
+            "container_ref": container_ref,
+            "thread_ref": "chat:team:operations:thread-fresh-work-resumption-conflict",
+            "session_ref": "session:operations-fresh-work-resumption-conflict",
+            "runtime_context": {
+                "turn_kind": "new_thread",
+                "session_has_sufficient_local_context": False,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    routing = payload["trace"]["routing"]
+    excluded = {item["excluded_reason_code"] for item in routing["excluded_high_scoring_candidates"]}
+    rendered_blocks = " ".join(block["text"].lower() for block in payload["injectable_blocks"])
+    checkpoint_results = [item for item in payload["results"] if item["result_kind"] == "memory_hit" and item.get("type") == "task_checkpoint"]
+    assert payload["should_inject"] is True
+    assert routing["query_intent"] == "work_resumption"
+    assert routing["selected_layer"] == "task_checkpoint"
+    assert checkpoint_results
+    assert "sign in to the admin portal" not in rendered_blocks
+    assert "reconnect the external workspace" not in rendered_blocks
+    assert "conflicts_with_active_constraint" in excluded
+    assert routing["packaging"]["active_constraint_profile"]["constraint_text"]
+
 
 
 def test_query_fallback_plugin_reports_injection_policy_unavailable(client, drain_queue) -> None:

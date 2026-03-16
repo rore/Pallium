@@ -105,7 +105,7 @@ def test_downstream_query_returns_sharp_integration_ready_blocks(monkeypatch, te
             "role": "user",
             "container_ref": "slack:CLOCAL001",
             "thread_ref": "slack:CLOCAL001:thread-integration",
-            "session_ref": "pelican:integration",
+            "session_ref": "downstream-agent:integration",
         },
         {
             "source_type": "assistant_artifact",
@@ -116,7 +116,7 @@ def test_downstream_query_returns_sharp_integration_ready_blocks(monkeypatch, te
             "role": "assistant",
             "container_ref": "slack:CLOCAL001",
             "thread_ref": "slack:CLOCAL001:thread-integration",
-            "session_ref": "pelican:integration",
+            "session_ref": "downstream-agent:integration",
         },
         {
             "source_type": "assistant_artifact",
@@ -127,7 +127,7 @@ def test_downstream_query_returns_sharp_integration_ready_blocks(monkeypatch, te
             "role": "assistant",
             "container_ref": "slack:CLOCAL001",
             "thread_ref": "slack:CLOCAL001:thread-integration",
-            "session_ref": "pelican:integration",
+            "session_ref": "downstream-agent:integration",
         },
         {
             "source_type": "assistant_artifact",
@@ -138,7 +138,7 @@ def test_downstream_query_returns_sharp_integration_ready_blocks(monkeypatch, te
             "role": "assistant",
             "container_ref": "slack:CLOCAL001",
             "thread_ref": "slack:CLOCAL001:thread-integration",
-            "session_ref": "pelican:integration",
+            "session_ref": "downstream-agent:integration",
         },
     ):
         response = client.post("/items", json=payload)
@@ -192,3 +192,4 @@ def test_downstream_query_returns_sharp_integration_ready_blocks(monkeypatch, te
         family_inference["family_scores"]["investigative_conclusion"]["candidate_score"]
         > family_inference["family_scores"]["broad_recall"]["candidate_score"]
     )
+

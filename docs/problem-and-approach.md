@@ -17,6 +17,10 @@ Typical failure modes:
 
 This is the gap Pallium is aimed at.
 
+The important gap is not only recall of past text. Long-running investigations
+produce reusable knowledge during the agent's own work, and that knowledge is
+usually not represented cleanly in the source systems around the agent.
+
 ## Why Common Approaches Break Down
 
 ### Transcript Replay
@@ -43,6 +47,7 @@ Vector search is useful for finding related text. It is weaker as a full
 continuity layer because it does not by itself give you:
 
 - explicit durable conclusions
+- rejected hypotheses or changed conclusions over time
 - compact resumed-work state
 - evidence-backed memory objects
 - clear scoped visibility rules
@@ -68,8 +73,9 @@ Right now Pallium does five things:
 5. enforces scoped visibility before ranking for the current package
 
 The key distinction is that Pallium is not only retrieving past text. It is
-trying to preserve reusable continuity objects: compact conclusions, findings,
-and work-state checkpoints that remain linked to evidence.
+trying to preserve reusable continuity objects created during the work itself:
+compact conclusions, findings, constraints, and work-state checkpoints that
+remain linked to evidence.
 
 This is why the current docs describe Pallium as a memory sidecar rather than a
 transcript store or search wrapper.

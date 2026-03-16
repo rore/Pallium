@@ -1592,6 +1592,517 @@ def test_fresh_thread_recall_suppresses_duplicate_queries_and_meta_source_noise(
     assert {'current_thread_recall_query', 'duplicate_recall_query_source', 'generic_capability_source', 'heartbeat_source_noise'}.issubset(excluded)
 
 
+def test_fresh_thread_recall_excludes_conflicting_structured_checkpoint() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-fresh-conflict',
+        session_ref='session:fresh-conflict',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-constraint-anchor',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'Catalog sync retry is paused after partial progress and a service-token failure.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'Refreshed 312 reservation records before the service token expired.',
+                    'key_findings': ['Avoid admin portal sign-in and local browser use during the retry.'],
+                    'blocker_state': 'The service token expired, and the operator constraint forbids admin portal sign-in or local browser use.',
+                    'next_step': 'Refresh the catalog service token and rerun the sync from batch 313.',
+                    'evidence': ['Constraint: do not sign in to the admin portal or open a local browser.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=16,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-history',
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-conflicting-follow-up',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'The newer export follow-up is waiting on external workspace access.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'The workspace will need reconnection once portal access returns.',
+                    'key_findings': ['External workspace access is currently unavailable.'],
+                    'blocker_state': 'Retry the external workspace connection after admin portal access is restored.',
+                    'next_step': 'Sign in to the admin portal and reconnect the external workspace once access is restored.',
+                    'evidence': ['The follow-up relied on external workspace access.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T11:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 11, 2, tzinfo=timezone.utc),
+                score=18,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-conflicting-history',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What do we know the latest about the catalog sync retry?',
+            query_tokens=('what', 'do', 'we', 'know', 'latest', 'catalog', 'sync', 'retry'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What do we know the latest about the catalog sync retry?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    rendered_blocks = ' '.join(block.text.lower() for block in outcome.injectable_blocks)
+    excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
+    assert outcome.trace.routing['selected_layer'] == 'task_checkpoint'
+    assert 'admin portal' in rendered_blocks
+    assert 'reconnect the external workspace once access is restored' not in rendered_blocks
+    assert 'conflicts_with_active_constraint' in excluded
+    assert outcome.trace.routing['packaging']['mode'] == 'compatible_structured_recall'
+
+
+
+def test_fresh_thread_constraint_recall_prefers_constraint_anchor_over_conflicting_checkpoint() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-fresh-constraint-conflict',
+        session_ref='session:fresh-constraint-conflict',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-conflicting-follow-up',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'The newer export follow-up is waiting on external workspace access.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'The workspace will need reconnection once portal access returns.',
+                    'key_findings': ['External workspace access is currently unavailable.'],
+                    'blocker_state': 'Retry the external workspace connection after admin portal access is restored.',
+                    'next_step': 'Sign in to the admin portal and reconnect the external workspace once access is restored.',
+                    'evidence': ['The follow-up relied on external workspace access.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T11:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 11, 2, tzinfo=timezone.utc),
+                score=18,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-conflicting-history',
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-constraint-anchor',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'Catalog sync retry is paused after partial progress and a service-token failure.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'Refreshed 312 reservation records before the service token expired.',
+                    'key_findings': ['Avoid admin portal sign-in and local browser use during the retry.'],
+                    'blocker_state': 'The service token expired, and the operator constraint forbids admin portal sign-in or local browser use.',
+                    'next_step': 'Refresh the catalog service token and rerun the sync from batch 313.',
+                    'evidence': ['Constraint: do not sign in to the admin portal or open a local browser.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=16,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-history',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What constraint had I given you about admin portal sign-in and browser use?',
+            query_tokens=('what', 'constraint', 'had', 'i', 'given', 'you', 'about', 'admin', 'portal', 'sign', 'in', 'browser', 'use'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What constraint had I given you about admin portal sign-in and browser use?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    assert outcome.injectable_blocks
+    assert 'admin portal' in outcome.injectable_blocks[0].text.lower()
+    assert 'reconnect the external workspace once access is restored' not in ' '.join(block.text.lower() for block in outcome.injectable_blocks)
+    assert outcome.trace.routing['packaging']['constraint_anchor_result_id'] == 'memory_object:checkpoint-constraint-anchor'
+
+
+
+def test_work_resumption_excludes_conflicting_checkpoint_but_keeps_compatible_status() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-resume-conflict',
+        session_ref='session:resume-conflict',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-conflicting-follow-up',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'The newer export follow-up is waiting on external workspace access.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'The workspace will need reconnection once portal access returns.',
+                    'key_findings': ['External workspace access is currently unavailable.'],
+                    'blocker_state': 'Retry the external workspace connection after admin portal access is restored.',
+                    'next_step': 'Sign in to the admin portal and reconnect the external workspace once access is restored.',
+                    'evidence': ['The follow-up relied on external workspace access.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T11:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 11, 2, tzinfo=timezone.utc),
+                score=20,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-conflicting-history',
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-constraint-anchor',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'Catalog sync retry is paused after partial progress and a service-token failure.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'Refreshed 312 reservation records before the service token expired.',
+                    'key_findings': ['Avoid admin portal sign-in and local browser use during the retry.'],
+                    'blocker_state': 'The service token expired, and the operator constraint forbids admin portal sign-in or local browser use.',
+                    'next_step': 'Refresh the catalog service token and rerun the sync from batch 313.',
+                    'evidence': ['Constraint: do not sign in to the admin portal or open a local browser.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=16,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-history',
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='source-compatible-next-step',
+                source_type='assistant_artifact',
+                source_id='artifact-compatible-next-step',
+                excerpt='Next step: refresh the catalog service token and rerun the sync from batch 313 without using the admin portal.',
+                occurred_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-history',
+                artifact_kind='todo_snapshot',
+                score=15,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-compatible-next-step',
+                        source_type='assistant_artifact',
+                        source_id='artifact-compatible-next-step',
+                        occurred_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-history',
+                        artifact_kind='todo_snapshot',
+                    )
+                ],
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What blocker did we hit and what should we do next on the catalog sync retry?',
+            query_tokens=('what', 'blocker', 'did', 'we', 'hit', 'what', 'should', 'we', 'do', 'next', 'catalog', 'sync', 'retry'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What blocker did we hit and what should we do next on the catalog sync retry?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    rendered_blocks = ' '.join(block.text.lower() for block in outcome.injectable_blocks)
+    excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
+    assert outcome.trace.routing['query_intent'] == 'work_resumption'
+    assert outcome.trace.routing['selected_layer'] == 'task_checkpoint'
+    assert outcome.trace.routing['packaging']['mode'] == 'compatible_work_resumption'
+    assert 'refresh the catalog service token' in rendered_blocks
+    assert 'reconnect the external workspace once access is restored' not in rendered_blocks
+    assert 'conflicts_with_active_constraint' in excluded
+
+
+
+def test_work_resumption_with_only_self_conflicting_checkpoint_fails_closed() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-resume-only-bad-checkpoint',
+        session_ref='session:resume-only-bad-checkpoint',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-only-conflicting',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'The export retry depends on reconnecting the external workspace.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'Portal access has not been restored yet.',
+                    'key_findings': ['Do not sign in to the admin portal or open a local browser during this task.'],
+                    'blocker_state': 'Reconnect the external workspace after admin portal access is restored.',
+                    'next_step': 'Sign in to the admin portal and reconnect the external workspace once access is restored.',
+                    'evidence': ['Constraint: do not sign in to the admin portal or open a local browser.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T11:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 11, 2, tzinfo=timezone.utc),
+                score=20,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-conflicting-history',
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='source-only-conflicting',
+                source_type='assistant_artifact',
+                source_id='artifact-only-conflicting',
+                excerpt='Next step: sign in to the admin portal and reconnect the external workspace once access is restored.',
+                occurred_at=datetime(2026, 3, 11, 11, 2, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-conflicting-history',
+                artifact_kind='assistant_output',
+                score=19,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-only-conflicting',
+                        source_type='assistant_artifact',
+                        source_id='artifact-only-conflicting',
+                        occurred_at=datetime(2026, 3, 11, 11, 2, tzinfo=timezone.utc),
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-conflicting-history',
+                        artifact_kind='assistant_output',
+                    )
+                ],
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What blocker did we hit and what should we do next on the catalog sync retry?',
+            query_tokens=('what', 'blocker', 'did', 'we', 'hit', 'what', 'should', 'we', 'do', 'next', 'catalog', 'sync', 'retry'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What blocker did we hit and what should we do next on the catalog sync retry?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    assert outcome.results == []
+    assert outcome.injectable_blocks == []
+    assert outcome.trace.routing['packaging']['mode'] == 'compatible_work_resumption'
+    excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
+    assert 'conflicts_with_active_constraint' in excluded
+
+
+
+def test_broad_recall_with_only_self_conflicting_checkpoint_fails_closed() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-recall-only-bad-checkpoint',
+        session_ref='session:recall-only-bad-checkpoint',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-only-conflicting',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'The export retry depends on reconnecting the external workspace.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'Portal access has not been restored yet.',
+                    'key_findings': ['Do not sign in to the admin portal or open a local browser during this task.'],
+                    'blocker_state': 'Reconnect the external workspace after admin portal access is restored.',
+                    'next_step': 'Sign in to the admin portal and reconnect the external workspace once access is restored.',
+                    'evidence': ['Constraint: do not sign in to the admin portal or open a local browser.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T11:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 11, 2, tzinfo=timezone.utc),
+                score=20,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-conflicting-history',
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='source-only-conflicting',
+                source_type='assistant_artifact',
+                source_id='artifact-only-conflicting',
+                excerpt='Next step: sign in to the admin portal and reconnect the external workspace once access is restored.',
+                occurred_at=datetime(2026, 3, 11, 11, 2, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-conflicting-history',
+                artifact_kind='assistant_output',
+                score=19,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-only-conflicting',
+                        source_type='assistant_artifact',
+                        source_id='artifact-only-conflicting',
+                        occurred_at=datetime(2026, 3, 11, 11, 2, tzinfo=timezone.utc),
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-conflicting-history',
+                        artifact_kind='assistant_output',
+                    )
+                ],
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What do we know the latest about the catalog sync retry?',
+            query_tokens=('what', 'do', 'we', 'know', 'latest', 'catalog', 'sync', 'retry'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What do we know the latest about the catalog sync retry?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    assert outcome.results == []
+    assert outcome.injectable_blocks == []
+    assert outcome.trace.routing['packaging']['mode'] == 'compatible_structured_recall'
+    excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
+    assert 'conflicts_with_active_constraint' in excluded
+
+
+
+def test_query_only_current_thread_summary_is_excluded_from_recall_packaging() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-current-query-only',
+        session_ref='session:current-query-only',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='thread-summary-current-query-only',
+                type='thread_summary',
+                payload={
+                    'summary': 'User asked, "What do we know the latest about the catalog sync retry?" The thread contains only this question.',
+                    'conclusions': [],
+                    'selected_work_artifacts': [],
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 4, tzinfo=timezone.utc),
+                score=17,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-current-query-only',
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-constraint-anchor',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'Catalog sync retry is paused after partial progress and a service-token failure.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'Refreshed 312 reservation records before the service token expired.',
+                    'key_findings': ['Avoid admin portal sign-in and local browser use during the retry.'],
+                    'blocker_state': 'The service token expired, and the operator constraint forbids admin portal sign-in or local browser use.',
+                    'next_step': 'Refresh the catalog service token and rerun the sync from batch 313.',
+                    'evidence': ['Constraint: do not sign in to the admin portal or open a local browser.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=15,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-history',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What do we know the latest about the catalog sync retry?',
+            query_tokens=('what', 'do', 'we', 'know', 'latest', 'catalog', 'sync', 'retry'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What do we know the latest about the catalog sync retry?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
+    assert 'current_thread_empty_summary' in excluded
+    assert all(block.result_id != 'memory_object:thread-summary-current-query-only' for block in outcome.injectable_blocks)
+
+
 def test_fresh_thread_evidence_trace_still_allows_source_evidence() -> None:
     plugin = AgentConversationMemoryPlugin(
         provider=TieredMemorySemanticProvider(),

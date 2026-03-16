@@ -431,6 +431,14 @@ class PalliumService:
 
         try:
             direct_result = plugin.process_item(source_item)
+            reconcile_process_result = getattr(plugin, "reconcile_process_result", None)
+            if callable(reconcile_process_result):
+                direct_result = reconcile_process_result(
+                    direct_result,
+                    storage=self._storage,
+                    container_ref=source_item.container_ref,
+                    visibility_context=source_item.visibility_context,
+                )
             thread_rebuild_scope = None
             if direct_result.thread_rebuild_requested:
                 thread_rebuild_scope = self._build_thread_processing_scope(
@@ -1005,6 +1013,14 @@ class PalliumService:
         aggregate = build_thread_aggregate(thread_items)
         conclusions = self._collect_thread_conclusions(thread_items)
         thread_result = plugin.build_thread_summary(aggregate, conclusions)
+        reconcile_process_result = getattr(plugin, "reconcile_process_result", None)
+        if callable(reconcile_process_result) and thread_result is not None:
+            thread_result = reconcile_process_result(
+                thread_result,
+                storage=self._storage,
+                container_ref=thread_scope.container_ref,
+                visibility_context=thread_scope.visibility_context,
+            )
         supersede_plan: dict[str, list[str]] = {}
         for memory_object in thread_result.memory_objects:
             key = (memory_object.type, memory_object.schema_id)

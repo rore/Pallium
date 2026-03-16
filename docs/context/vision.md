@@ -20,6 +20,11 @@ not only fact storage and not only episodic transcript recall, but compact,
 evidence-backed knowledge objects such as decisions, investigation outcomes,
 and later higher-level recurring patterns.
 
+The main thing Pallium is trying to preserve is knowledge produced during the
+agent's own reasoning work: conclusions, findings, checkpoints, constraints,
+and later the evolution of those conclusions over time. That is different from
+only re-finding facts that already existed cleanly in source systems.
+
 Real downstream incidents should shape Pallium's priorities, but they should be
 translated into reusable memory behaviors rather than turning Pallium into a
 collection of scenario-specific fixes. Product decisions should therefore be

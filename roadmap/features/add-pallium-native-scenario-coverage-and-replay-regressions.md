@@ -10,8 +10,8 @@ milestone: Next
 ## Summary
 
 Expand Pallium's direct test surface so most memory-quality validation can run
-inside Pallium itself without relying on Pelican as the primary diagnostic
-surface.
+inside Pallium itself without relying on a downstream agent as the primary
+diagnostic surface.
 
 This feature makes repo-local scenario and replay coverage broader, more
 product-shaped, and easier to use for regression gating:
@@ -39,7 +39,7 @@ That means most bugs in:
 
 should be testable and debuggable directly inside Pallium.
 
-Today Pelican is still doing too much work as a debugging surface for these
+Today the downstream agent is still doing too much work as a debugging surface for these
 problems. That creates avoidable ambiguity because a live downstream run mixes:
 
 - Pallium behavior
@@ -91,7 +91,7 @@ Pallium-native scenarios, replay fixtures, and direct query-debug inspection.
 1. Most routing, packaging, suppression, and carry-forward bugs can be
    reproduced directly inside Pallium with repo-local scenarios.
 2. Multi-turn Pallium-native regressions cover the key memory-product flows that
-   previously required Pelican for diagnosis.
+   previously required downstream-agent runs for diagnosis.
 3. Scenario helpers make thread/session/container transitions and replay-style
    contamination cases straightforward to express.
 4. Direct tests assert on the thin-agent contract and routing/debug trace, not
@@ -114,5 +114,6 @@ Implementation defaults:
 - prefer extending existing API, routing, and benchmark fixtures over building a
   second scenario framework
 - keep scenarios repo-local and deterministic by default
-- use Pelican only as downstream proof after Pallium-native coverage has the
-  issue pinned down
+- use downstream-agent runs only as downstream proof after Pallium-native
+  coverage has the issue pinned down
+

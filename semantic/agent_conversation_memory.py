@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from datetime import datetime, timezone
 from collections import OrderedDict
 from typing import Iterable
@@ -97,6 +98,53 @@ IMPLICIT_NEXT_STEP_MARKERS = (
     "plan:",
 )
 WEAK_THREAD_SUMMARY_TEXT = {"unresolved", "still unresolved", "unknown", "no safe summary"}
+QUERY_ONLY_SUMMARY_MARKERS = (
+    "contains only this question",
+    "contains only the question",
+    "contains only this request",
+    "contains only the request",
+    "only this question",
+    "only this request",
+)
+STRUCTURED_CONFLICT_MEMORY_TYPES = {"task_checkpoint", "thread_summary", "discussion_summary"}
+OPERATIONAL_GUIDANCE_MARKERS = (
+    "next step",
+    "should ",
+    "need to ",
+    "must ",
+    "attempt ",
+    "retry ",
+    "resume ",
+    "rerun ",
+    "refresh ",
+    "connect ",
+    "authenticate",
+    "sign in",
+    "log in",
+    "login",
+    "open ",
+    "use ",
+)
+CONSTRAINT_POLICY_STOPWORDS = {
+    "avoid",
+    "blocked",
+    "constraint",
+    "constraints",
+    "do",
+    "dont",
+    "forbid",
+    "forbidden",
+    "forbids",
+    "from",
+    "never",
+    "not",
+    "only",
+    "operator",
+    "please",
+    "remember",
+    "using",
+    "without",
+}
 PATTERN_MEMORY_PROMPT_SCHEMA_ID = "pattern_memory_extraction"
 PATTERN_MEMORY_PROMPT_SCHEMA_VERSION = "v1"
 PATTERN_MEMORY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "pattern_label": "string"}, indent=2)
@@ -411,6 +459,56 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             supersession_hints=supersession_hints,
         )
 
+    def reconcile_process_result(
+        self,
+        result: ProcessResult,
+        *,
+        storage,
+        container_ref: str | None,
+        visibility_context,
+    ) -> ProcessResult:
+        if not container_ref or visibility_context is None or not result.memory_objects:
+            return result
+        active_constraints = _list_active_constraint_profiles(
+            storage,
+            container_ref=container_ref,
+            visibility_context=visibility_context,
+        )
+        if not active_constraints:
+            return result
+
+        reconciled_memory_objects: list[MemoryObject] = []
+        updated_index_entries = list(result.index_entries)
+        changed_ids: set[str] = set()
+        for memory_object in result.memory_objects:
+            reconciled = _reconcile_memory_object_against_active_constraints(
+                memory_object,
+                active_constraints=active_constraints,
+            )
+            reconciled_memory_objects.append(reconciled)
+            if reconciled is not memory_object:
+                changed_ids.add(reconciled.id)
+
+        if not changed_ids:
+            return result
+
+        rebuilt_index_entries = {
+            memory_object.id: _rebuild_reconciled_memory_index_entry(memory_object)
+            for memory_object in reconciled_memory_objects
+            if memory_object.id in changed_ids
+        }
+        updated_index_entries = [
+            rebuilt_index_entries.get(index_entry.target_id, index_entry)
+            if index_entry.target_kind == "memory_object"
+            else index_entry
+            for index_entry in updated_index_entries
+        ]
+        return replace(
+            result,
+            memory_objects=reconciled_memory_objects,
+            index_entries=updated_index_entries,
+        )
+
     def route_query_results(
         self,
         *,
@@ -458,6 +556,13 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 query_filters=query_filters,
                 runtime_context=runtime_context,
             )
+            _apply_recall_structured_summary_suppression(
+                scored_candidates,
+                intent=intent,
+                query_text=text,
+                query_filters=query_filters,
+                runtime_context=runtime_context,
+            )
         packaging_summary = None
         if intent == "work_resumption" and scored_candidates:
             packaging_summary = _apply_work_resumption_packaging(
@@ -497,6 +602,8 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             ranked_candidates=ranked_candidates,
             requested_limit=requested_limit,
             query_filters=query_filters,
+            query_shape_tags=list(family_inference["query_shape_tags"]),
+            runtime_context=runtime_context,
             packaging_summary=packaging_summary,
         )
         injection_blocks, injection_summary = _build_injectable_blocks(
@@ -1842,6 +1949,168 @@ def _source_noise_suppression_reason(
     return None
 
 
+def _apply_recall_structured_summary_suppression(
+    scored_candidates: list[dict[str, object]],
+    *,
+    intent: str,
+    query_text: str,
+    query_filters: QueryFilters | None,
+    runtime_context: QueryRuntimeContext | None,
+) -> None:
+    if intent not in {"broad_recall", "answer_continuity"}:
+        return
+    for candidate in scored_candidates:
+        item = candidate["item"]
+        assert isinstance(item, QueryResultItem)
+        if item.result_kind != "memory_hit" or item.type not in ROUTING_SUMMARY_TYPES:
+            continue
+        suppression = _structured_summary_suppression_reason(
+            item,
+            query_text=query_text,
+            query_filters=query_filters,
+            runtime_context=runtime_context,
+        )
+        if suppression is None:
+            continue
+        reason_code, reason_text = suppression
+        penalty = 180
+        candidate["base_routing_score"] = int(candidate["base_routing_score"]) - penalty
+        candidate["support_score"] = max(0, int(candidate["support_score"]) - max(penalty // 3, 24))
+        candidate["support_grade"] = _routing_support_grade(int(candidate["support_score"]))
+        candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*candidate["packaging_reasons"], reason_code]))
+        candidate["suppression_reason_code"] = reason_code
+        candidate["suppression_reason"] = reason_text
+
+
+
+def _structured_summary_suppression_reason(
+    item: QueryResultItem,
+    *,
+    query_text: str,
+    query_filters: QueryFilters | None,
+    runtime_context: QueryRuntimeContext | None,
+) -> tuple[str, str] | None:
+    if item.type != "thread_summary":
+        return None
+    payload = item.payload or {}
+    summary_text = str(payload.get("summary") or "").strip()
+    if not summary_text:
+        return None
+    if payload.get("selected_work_artifacts") or payload.get("conclusions"):
+        return None
+    if not _summary_text_looks_query_only(summary_text, query_text):
+        return None
+    if _runtime_context_prefers_cross_thread_recall(runtime_context) and query_filters is not None and query_filters.thread_ref and item.thread_ref == query_filters.thread_ref:
+        return "current_thread_empty_summary", "A current-thread query-only summary was excluded from recall packaging."
+    return "query_only_thread_summary", "A query-only summary was excluded from recall packaging."
+
+
+
+def _summary_text_looks_query_only(summary_text: str, query_text: str) -> bool:
+    lowered = summary_text.lower()
+    if any(marker in lowered for marker in QUERY_ONLY_SUMMARY_MARKERS):
+        return True
+    overlap = len(set(_routing_query_tokens(summary_text)).intersection(set(_routing_query_tokens(query_text))))
+    return overlap >= 4 and lowered.startswith("user asked")
+
+
+
+def _structured_constraint_profile_from_item(item: QueryResultItem) -> dict[str, object] | None:
+    if item.result_kind != "memory_hit" or item.type not in STRUCTURED_CONFLICT_MEMORY_TYPES:
+        return None
+    payload = item.payload or {}
+    return _structured_constraint_profile_from_payload(
+        memory_type=str(item.type or ""),
+        payload=payload,
+        result_id=_routing_result_id(item),
+        freshness_at=item.freshness_at,
+    )
+
+
+
+def _structured_payload_constraint_fragments(memory_type: str, payload: dict[str, object]) -> list[str]:
+    fragments: list[str] = []
+    if memory_type == "task_checkpoint":
+        fragments.extend(
+            str(payload.get(key) or "")
+            for key in ("summary", "current_state", "blocker_state")
+        )
+        fragments.extend(str(value or "") for value in _parse_string_list(payload.get("key_findings")))
+        fragments.extend(str(value or "") for value in _parse_string_list(payload.get("evidence")))
+    elif memory_type in {"thread_summary", "discussion_summary"}:
+        fragments.append(str(payload.get("summary") or ""))
+    return fragments
+
+
+
+def _structured_payload_guidance_fragments(memory_type: str, payload: dict[str, object]) -> list[str]:
+    fragments: list[str] = []
+    if memory_type == "task_checkpoint":
+        next_step = str(payload.get("next_step") or "").strip()
+        if next_step:
+            fragments.append(next_step)
+        for key in ("summary", "current_state", "blocker_state"):
+            value = str(payload.get(key) or "").strip()
+            if value and _text_contains_operational_guidance(value):
+                fragments.append(value)
+    elif memory_type in {"thread_summary", "discussion_summary"}:
+        summary = str(payload.get("summary") or "").strip()
+        if summary and _text_contains_operational_guidance(summary):
+            fragments.append(summary)
+    return fragments
+
+
+
+def _text_contains_operational_guidance(text: str) -> bool:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return False
+    if _extract_constraint_snippets(lowered):
+        return False
+    return any(marker in lowered for marker in OPERATIONAL_GUIDANCE_MARKERS)
+
+
+
+def _constraint_policy_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in _routing_query_tokens(text)
+        if len(token) > 2 and token not in CONSTRAINT_POLICY_STOPWORDS and token not in ROUTING_META_QUERY_TOKENS
+    }
+
+
+
+def _candidate_has_self_conflicting_guidance(candidate: dict[str, object]) -> bool:
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    profile = _structured_constraint_profile_from_item(item)
+    if profile is None:
+        return False
+    return _structured_item_conflicts_with_constraint(item, profile)
+
+
+
+def _structured_item_conflicts_with_constraint(item: QueryResultItem, constraint_profile: dict[str, object]) -> bool:
+    protected_tokens = set(constraint_profile.get("protected_tokens") or [])
+    if not protected_tokens:
+        return False
+    payload = item.payload or {}
+    for fragment in _structured_payload_guidance_fragments(str(item.type or ""), payload):
+        if _preferred_constraint_text(fragment):
+            continue
+        fragment_tokens = _constraint_policy_tokens(fragment)
+        if len(fragment_tokens.intersection(protected_tokens)) >= 2:
+            return True
+    return False
+
+
+def _candidate_conflicts_with_constraint(item: QueryResultItem, constraint_profile: dict[str, object]) -> bool:
+    if item.result_kind == "source_hit":
+        return _structured_text_conflicts_with_constraint(str(item.excerpt or ""), constraint_profile)
+    return _structured_item_conflicts_with_constraint(item, constraint_profile)
+
+
+
 def _source_hit_looks_like_recall_query(item: QueryResultItem, query_text: str) -> bool:
     excerpt = str(item.excerpt or "").strip()
     if not excerpt:
@@ -2944,19 +3213,34 @@ def _select_final_candidates(
     ranked_candidates: list[dict[str, object]],
     requested_limit: int,
     query_filters: QueryFilters | None,
+    query_shape_tags: list[str],
+    runtime_context: QueryRuntimeContext | None,
     packaging_summary: dict[str, object] | None,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None]:
     summary = dict(packaging_summary or {})
     if not ranked_candidates:
         return ranked_candidates[:requested_limit], summary or None
     if intent in {"broad_recall", "answer_continuity"}:
-        unsuppressed_candidates = [candidate for candidate in ranked_candidates if not candidate.get("suppression_reason_code")]
-        if unsuppressed_candidates:
-            return unsuppressed_candidates[:requested_limit], summary or None
-        return ranked_candidates[:requested_limit], summary or None
+        return _select_compatible_recall_candidates(
+            ranked_candidates=ranked_candidates,
+            requested_limit=requested_limit,
+            query_shape_tags=query_shape_tags,
+            packaging_summary=summary,
+        )
     if intent != "work_resumption":
         return ranked_candidates[:requested_limit], summary or None
 
+    ranked_candidates, summary, _constraint_anchor, active_constraint_profile = _apply_structured_constraint_compatibility(
+        ranked_candidates=ranked_candidates,
+        packaging_summary=summary,
+    )
+    if not ranked_candidates:
+        if active_constraint_profile is not None or summary.get("incompatible_structured_candidates"):
+            summary["mode"] = "compatible_work_resumption"
+        return [], summary or None
+    if summary.get("incompatible_structured_candidates") and not any(candidate["layer"] == "task_checkpoint" for candidate in ranked_candidates):
+        summary["mode"] = "compatible_work_resumption"
+        return [], summary or None
     top_candidate = ranked_candidates[0]
     summary["top_result_layer"] = top_candidate["layer"]
     if top_candidate["layer"] != "task_checkpoint" or requested_limit <= 1:
@@ -3001,8 +3285,293 @@ def _select_final_candidates(
     if adjacent_evidence:
         summary["mode"] = "task_checkpoint_plus_adjacent_evidence"
         summary["adjacent_evidence"] = adjacent_evidence
+    elif active_constraint_profile is not None or summary.get("incompatible_structured_candidates"):
+        summary["mode"] = "compatible_work_resumption"
     return selected_candidates, summary
 
+
+
+def _select_compatible_recall_candidates(
+    *,
+    ranked_candidates: list[dict[str, object]],
+    requested_limit: int,
+    query_shape_tags: list[str],
+    packaging_summary: dict[str, object],
+) -> tuple[list[dict[str, object]], dict[str, object] | None]:
+    compatible_candidates, packaging_summary, constraint_anchor, active_constraint_profile = _apply_structured_constraint_compatibility(
+        ranked_candidates=ranked_candidates,
+        packaging_summary=packaging_summary,
+    )
+    if not compatible_candidates:
+        if active_constraint_profile is not None or packaging_summary.get("incompatible_structured_candidates"):
+            packaging_summary["mode"] = "compatible_structured_recall"
+        return [], packaging_summary or None
+
+    explicit_constraint_focus = "constraint_recall" in query_shape_tags
+    if explicit_constraint_focus and constraint_anchor is not None and constraint_anchor in compatible_candidates:
+        primary_candidate = constraint_anchor
+    else:
+        primary_candidate = compatible_candidates[0]
+
+    selected_candidates = [primary_candidate]
+    used_result_ids = {_routing_result_id(primary_candidate["item"])}
+    if constraint_anchor is not None and constraint_anchor in compatible_candidates:
+        anchor_result_id = _routing_result_id(constraint_anchor["item"])
+        if anchor_result_id not in used_result_ids and len(selected_candidates) < requested_limit:
+            selected_candidates.append(constraint_anchor)
+            used_result_ids.add(anchor_result_id)
+
+    for candidate in compatible_candidates:
+        candidate_result_id = _routing_result_id(candidate["item"])
+        if candidate_result_id in used_result_ids:
+            continue
+        if len(selected_candidates) >= requested_limit:
+            break
+        selected_candidates.append(candidate)
+        used_result_ids.add(candidate_result_id)
+
+    if packaging_summary.get("incompatible_structured_candidates"):
+        packaging_summary["mode"] = "compatible_structured_recall"
+    elif active_constraint_profile is not None:
+        packaging_summary["mode"] = "compatible_structured_recall"
+    return selected_candidates, packaging_summary or None
+
+
+
+def _constraint_profile_sort_key(profile: dict[str, object]) -> tuple[datetime, int]:
+    freshness_at = profile.get("freshness_at")
+    if not isinstance(freshness_at, datetime):
+        freshness_at = datetime.min.replace(tzinfo=timezone.utc)
+    return freshness_at, len(profile.get("protected_tokens") or [])
+
+
+
+def _apply_structured_constraint_compatibility(
+    *,
+    ranked_candidates: list[dict[str, object]],
+    packaging_summary: dict[str, object],
+) -> tuple[list[dict[str, object]], dict[str, object], dict[str, object] | None, dict[str, object] | None]:
+    unsuppressed_candidates = [candidate for candidate in ranked_candidates if not candidate.get("suppression_reason_code")]
+    if not unsuppressed_candidates:
+        return [], packaging_summary, None, None
+
+    compatible_candidates: list[dict[str, object]] = []
+    incompatible_candidates: list[dict[str, str]] = []
+    constraint_anchor: dict[str, object] | None = None
+    active_constraint_profile: dict[str, object] | None = None
+    for candidate in unsuppressed_candidates:
+        profile = _structured_constraint_profile_from_item(candidate["item"])
+        if profile is None:
+            continue
+        if active_constraint_profile is None or _constraint_profile_sort_key(profile) > _constraint_profile_sort_key(active_constraint_profile):
+            active_constraint_profile = profile
+            constraint_anchor = None if _candidate_has_self_conflicting_guidance(candidate) else candidate
+
+    for candidate in unsuppressed_candidates:
+        item = candidate["item"]
+        assert isinstance(item, QueryResultItem)
+        conflict_reason = None
+        if _candidate_has_self_conflicting_guidance(candidate):
+            conflict_reason = (
+                "conflicts_with_active_constraint",
+                "Structured memory included operational guidance that conflicts with an explicit carried constraint.",
+            )
+        elif active_constraint_profile is not None and candidate is not constraint_anchor and _candidate_conflicts_with_constraint(item, active_constraint_profile):
+            conflict_reason = (
+                "conflicts_with_active_constraint",
+                "Candidate guidance was excluded because it conflicts with the active carried constraint.",
+            )
+        if conflict_reason is not None:
+            reason_code, reason_text = conflict_reason
+            candidate["suppression_reason_code"] = reason_code
+            candidate["suppression_reason"] = reason_text
+            candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*candidate["packaging_reasons"], reason_code]))
+            incompatible_candidates.append({
+                "result_id": _routing_result_id(item),
+                "reason_code": reason_code,
+            })
+            continue
+        compatible_candidates.append(candidate)
+
+    if active_constraint_profile is not None:
+        packaging_summary["active_constraint_profile"] = {
+            "result_id": str(active_constraint_profile.get("result_id") or ""),
+            "memory_type": str(active_constraint_profile.get("memory_type") or ""),
+            "constraint_text": str(active_constraint_profile.get("constraint_text") or ""),
+            "protected_tokens": list(active_constraint_profile.get("protected_tokens") or []),
+        }
+    if constraint_anchor is not None:
+        packaging_summary["constraint_anchor_result_id"] = _routing_result_id(constraint_anchor["item"])
+    if incompatible_candidates:
+        packaging_summary["incompatible_structured_candidates"] = incompatible_candidates
+
+    return compatible_candidates, packaging_summary, constraint_anchor, active_constraint_profile
+
+
+
+def _list_active_constraint_profiles(
+    storage,
+    *,
+    container_ref: str,
+    visibility_context,
+) -> list[dict[str, object]]:
+    active_profiles: list[dict[str, object]] = []
+    for memory_object in storage.list_memory_objects(
+        memory_types=list(STRUCTURED_CONFLICT_MEMORY_TYPES),
+        lifecycle="active",
+    ):
+        payload = memory_object.payload or {}
+        if str(payload.get("container_ref") or "") != container_ref:
+            continue
+        if memory_object.visibility_context != visibility_context:
+            continue
+        profile = _structured_constraint_profile_from_payload(
+            memory_type=memory_object.type,
+            payload=payload,
+            result_id=f"memory_object:{memory_object.id}",
+            freshness_at=memory_object.freshness_at,
+        )
+        if profile is None:
+            continue
+        if _structured_payload_conflicts_with_constraint(memory_object.type, payload, profile):
+            continue
+        active_profiles.append(profile)
+    active_profiles.sort(key=_constraint_profile_sort_key, reverse=True)
+    return active_profiles
+
+
+
+def _structured_constraint_profile_from_payload(
+    *,
+    memory_type: str,
+    payload: dict[str, object],
+    result_id: str,
+    freshness_at: datetime | None = None,
+) -> dict[str, object] | None:
+    constraint_text = _preferred_constraint_text(*_structured_payload_constraint_fragments(memory_type, payload))
+    if not constraint_text:
+        return None
+    protected_tokens = sorted(_constraint_policy_tokens(constraint_text))
+    if not protected_tokens:
+        return None
+    return {
+        "result_id": result_id,
+        "memory_type": memory_type,
+        "constraint_text": constraint_text,
+        "protected_tokens": protected_tokens,
+        "freshness_at": freshness_at,
+    }
+
+
+
+def _structured_payload_conflicts_with_constraint(memory_type: str, payload: dict[str, object], constraint_profile: dict[str, object]) -> bool:
+    protected_tokens = set(constraint_profile.get("protected_tokens") or [])
+    if not protected_tokens:
+        return False
+    for fragment in _structured_payload_guidance_fragments(memory_type, payload):
+        if _preferred_constraint_text(fragment):
+            continue
+        if len(_constraint_policy_tokens(fragment).intersection(protected_tokens)) >= 2:
+            return True
+    return False
+
+
+
+def _reconcile_memory_object_against_active_constraints(
+    memory_object: MemoryObject,
+    *,
+    active_constraints: list[dict[str, object]],
+) -> MemoryObject:
+    if memory_object.type != "task_checkpoint" or not active_constraints:
+        return memory_object
+    payload = dict(memory_object.payload or {})
+    active_constraint = active_constraints[0]
+    if not _structured_payload_conflicts_with_constraint(memory_object.type, payload, active_constraint):
+        return memory_object
+
+    constraint_text = str(active_constraint.get("constraint_text") or "").strip()
+    updated_payload = dict(payload)
+    updated_payload["summary"] = _strip_conflicting_guidance_text(str(payload.get("summary") or ""), active_constraint)
+    updated_payload["current_state"] = _strip_conflicting_guidance_text(str(payload.get("current_state") or ""), active_constraint)
+    blocker_state = _strip_conflicting_guidance_text(str(payload.get("blocker_state") or ""), active_constraint)
+    updated_payload["blocker_state"] = _join_unique_text_parts([constraint_text, blocker_state]) if constraint_text else blocker_state
+    updated_payload["next_step"] = _strip_conflicting_guidance_text(str(payload.get("next_step") or ""), active_constraint)
+    updated_payload["key_findings"] = [
+        text
+        for text in _parse_string_list(payload.get("key_findings"))
+        if not _structured_text_conflicts_with_constraint(text, active_constraint)
+    ]
+    evidence_lines = [
+        text
+        for text in _parse_string_list(payload.get("evidence"))
+        if not _structured_text_conflicts_with_constraint(text, active_constraint)
+    ]
+    if constraint_text and not any(constraint_text.lower() in text.lower() for text in evidence_lines):
+        evidence_lines.insert(0, f"Constraint: {constraint_text}")
+    updated_payload["evidence"] = evidence_lines
+    semantic_provenance = dict(updated_payload.get("semantic_provenance") or {})
+    semantic_provenance["constraint_reconciliation"] = {
+        "active_constraint_result_id": str(active_constraint.get("result_id") or ""),
+        "constraint_text": constraint_text,
+    }
+    updated_payload["semantic_provenance"] = semantic_provenance
+    return replace(memory_object, payload=updated_payload)
+
+
+
+def _strip_conflicting_guidance_text(text: str, constraint_profile: dict[str, object]) -> str:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return ""
+    parts = [part.strip(" -") for part in re.split(r"(?<=[.!?;])\s+|\n+", normalized) if part.strip(" -")]
+    if not parts:
+        return ""
+    kept_parts = [part for part in parts if not _structured_text_conflicts_with_constraint(part, constraint_profile)]
+    return " ".join(kept_parts)
+
+
+
+def _structured_text_conflicts_with_constraint(text: str, constraint_profile: dict[str, object]) -> bool:
+    normalized = str(text or "").strip()
+    if not normalized or not _text_contains_operational_guidance(normalized):
+        return False
+    if _preferred_constraint_text(normalized):
+        return False
+    return len(_constraint_policy_tokens(normalized).intersection(set(constraint_profile.get("protected_tokens") or []))) >= 2
+
+
+
+def _rebuild_reconciled_memory_index_entry(memory_object: MemoryObject):
+    payload = memory_object.payload or {}
+    if memory_object.type != "task_checkpoint":
+        return build_index_entry(
+            target_kind="memory_object",
+            target_id=memory_object.id,
+            index_type="lexical",
+            text_view=normalize_for_index(str(payload.get("summary") or "")),
+            text_view_name=TASK_CHECKPOINT_TEXT_VIEW if memory_object.type == "task_checkpoint" else THREAD_SUMMARY_TEXT_VIEW,
+        )
+    index_source = " ".join(
+        [
+            str(payload.get("summary") or ""),
+            str(payload.get("task") or ""),
+            str(payload.get("current_state") or ""),
+            str(payload.get("blocker_state") or ""),
+            str(payload.get("next_step") or ""),
+            str(payload.get("freshness_signal") or ""),
+            *[str(value or "") for value in _parse_string_list(payload.get("key_findings"))],
+            *[str(value or "") for value in _parse_string_list(payload.get("evidence"))],
+            *[str(item.get("text") or "") for item in payload.get("conclusions", []) if isinstance(item, dict)],
+            *[str(item.get("text") or "") for item in payload.get("selected_work_artifacts", []) if isinstance(item, dict)],
+        ]
+    )
+    return build_index_entry(
+        target_kind="memory_object",
+        target_id=memory_object.id,
+        index_type="lexical",
+        text_view=normalize_for_index(index_source),
+        text_view_name=TASK_CHECKPOINT_TEXT_VIEW,
+    )
 
 
 def _candidate_locality_compatible_for_packaging(
@@ -3479,6 +4048,35 @@ def _default_task_checkpoint_freshness_signal(latest_occurred_at) -> str:
 def _supports_thread_aggregation(source_item: SourceItem) -> bool:
     artifact_key = ((source_item.artifact_kind or "").lower(), (source_item.role or "").lower())
     return artifact_key in PRIMARY_THREAD_ARTIFACTS or artifact_key in SELECTED_THREAD_ARTIFACTS
+
+
+def _thread_is_query_only_recall_noise(
+    source_items: list[SourceItem],
+    *,
+    selected_work_artifacts: list[dict[str, str]],
+    carried_conclusions: list[MemoryObject],
+) -> bool:
+    if selected_work_artifacts or carried_conclusions:
+        return False
+    meaningful_items = [
+        item
+        for item in source_items
+        if item.content.strip() and not _is_low_value_meta_artifact(item)
+    ]
+    if not meaningful_items:
+        return False
+    return all(
+        (item.role or "").lower() == "user" and _text_looks_like_query(item.content)
+        for item in meaningful_items
+    )
+
+
+
+def _text_looks_like_query(text: str) -> bool:
+    normalized = str(text or "").strip().lower()
+    if not normalized:
+        return False
+    return "?" in normalized or normalized.startswith(("what ", "which ", "why ", "how ", "can ", "could ", "do ", "does ", "did ", "is ", "are ", "will ", "would ", "please "))
 
 
 def _build_thread_material(source_items: list[SourceItem]) -> str:
