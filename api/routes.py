@@ -140,22 +140,28 @@ def _serialize_visibility_trace(trace: QueryVisibilityTrace) -> dict[str, object
     }
 
 
+def _serialize_query_filters(filters) -> dict[str, object] | None:
+    if filters is None:
+        return None
+    return {
+        "source_type": filters.source_type,
+        "role": filters.role,
+        "artifact_kind": filters.artifact_kind,
+        "container_ref": filters.container_ref,
+        "thread_ref": filters.thread_ref,
+        "session_ref": filters.session_ref,
+    }
+
+
 def _serialize_trace(trace: QueryTrace) -> dict[str, object]:
-    filters = None
-    if trace.filters is not None:
-        filters = {
-            "source_type": trace.filters.source_type,
-            "role": trace.filters.role,
-            "artifact_kind": trace.filters.artifact_kind,
-            "container_ref": trace.filters.container_ref,
-            "thread_ref": trace.filters.thread_ref,
-            "session_ref": trace.filters.session_ref,
-        }
     return {
         "query_text": trace.query_text,
         "query_tokens": list(trace.query_tokens),
         "limit": trace.limit,
-        "filters": filters,
+        "filters": _serialize_query_filters(trace.filters),
+        "requested_filters": _serialize_query_filters(trace.requested_filters),
+        "filter_scope_relaxed": trace.filter_scope_relaxed,
+        "filter_scope_reason": trace.filter_scope_reason,
         "stages": [_serialize_stage_trace(stage) for stage in trace.stages],
         "routing": trace.routing,
         "visibility": _serialize_visibility_trace(trace.visibility) if trace.visibility is not None else None,

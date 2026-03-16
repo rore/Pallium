@@ -330,6 +330,88 @@ def _agent_conversation_client(monkeypatch, test_db_url: str) -> TestClient:
     return client
 
 
+
+def _ingest_cross_thread_catalog_history(client: TestClient) -> tuple[str, str, str]:
+    container_ref = "chat:team:operations"
+    old_thread_ref = "chat:team:operations:thread-history"
+    old_session_ref = "session:operations-history"
+    for payload in (
+        {
+            "source_type": "chat_message",
+            "source_id": "history-msg-1",
+            "content_type": "text/plain",
+            "content": "Can you summarize the latest catalog sync retry work for the operations channel?",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": container_ref,
+            "thread_ref": old_thread_ref,
+            "session_ref": old_session_ref,
+            "occurred_at": "2026-03-11T09:58:00Z",
+        },
+        {
+            "source_type": "assistant_artifact",
+            "source_id": "history-artifact-1",
+            "content_type": "text/plain",
+            "content": "Partial progress: refreshed 312 reservation records before the catalog sync tool failed.",
+            "artifact_kind": "tool_use_summary",
+            "role": "assistant",
+            "container_ref": container_ref,
+            "thread_ref": old_thread_ref,
+            "session_ref": old_session_ref,
+            "occurred_at": "2026-03-11T10:00:00Z",
+        },
+        {
+            "source_type": "assistant_artifact",
+            "source_id": "history-artifact-2",
+            "content_type": "text/plain",
+            "content": "Blocked: catalog API returned 401 because the service token expired.",
+            "artifact_kind": "tool_use_summary",
+            "role": "assistant",
+            "container_ref": container_ref,
+            "thread_ref": old_thread_ref,
+            "session_ref": old_session_ref,
+            "occurred_at": "2026-03-11T10:01:00Z",
+        },
+        {
+            "source_type": "chat_message",
+            "source_id": "history-msg-2",
+            "content_type": "text/plain",
+            "content": "Please remember not to sign in to the admin portal or open a local browser.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": container_ref,
+            "thread_ref": old_thread_ref,
+            "session_ref": old_session_ref,
+            "occurred_at": "2026-03-11T10:01:30Z",
+        },
+        {
+            "source_type": "assistant_artifact",
+            "source_id": "history-artifact-3",
+            "content_type": "text/plain",
+            "content": "Next step: refresh the catalog service token and rerun the sync from batch 313.",
+            "artifact_kind": "todo_snapshot",
+            "role": "assistant",
+            "container_ref": container_ref,
+            "thread_ref": old_thread_ref,
+            "session_ref": old_session_ref,
+            "occurred_at": "2026-03-11T10:02:00Z",
+        },
+    ):
+        response = client.post("/items", json=payload)
+        assert response.status_code == 200
+
+    storage = client.app.state.pallium_service._storage
+    thread_items = storage.list_source_items_for_thread(container_ref, old_thread_ref)
+    active_memory = [
+        memory
+        for source_item in thread_items
+        for memory in storage.list_memory_objects_for_source_item(source_item.id)
+        if memory.lifecycle == "active"
+    ]
+    assert any(memory.type == "thread_summary" for memory in active_memory)
+    assert any(memory.type == "task_checkpoint" for memory in active_memory)
+    return container_ref, old_thread_ref, old_session_ref
+
 def test_query_returns_injection_contract_with_runtime_context(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
     client.post(
@@ -406,6 +488,75 @@ def test_query_same_thread_context_sufficient_suppresses_injection(monkeypatch, 
     assert payload["decision_reason"] == "same_thread_context_sufficient"
     assert payload["injectable_blocks"] == []
 
+
+
+def test_query_new_thread_cross_thread_recall_relaxes_thread_session_filters(monkeypatch, test_db_url: str) -> None:
+    client = _agent_conversation_client(monkeypatch, test_db_url)
+    container_ref, _old_thread_ref, _old_session_ref = _ingest_cross_thread_catalog_history(client)
+    fresh_thread_ref = "chat:team:operations:thread-fresh"
+    fresh_session_ref = "session:operations-fresh"
+
+    response = client.post(
+        "/query/debug",
+        json={
+            "text": "what do we know the latest about the catalog sync retry?",
+            "limit": 6,
+            "container_ref": container_ref,
+            "thread_ref": fresh_thread_ref,
+            "session_ref": fresh_session_ref,
+            "runtime_context": {
+                "turn_kind": "new_thread",
+                "session_has_sufficient_local_context": False,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    trace = payload["trace"]
+    assert payload["should_inject"] is True
+    assert payload["decision_reason"] == "carry_forward_available"
+    assert payload["injectable_blocks"]
+    assert any(block["memory_type"] in {"task_checkpoint", "thread_summary"} for block in payload["injectable_blocks"])
+    assert any("batch 313" in block["text"].lower() or "service token expired" in block["text"].lower() for block in payload["injectable_blocks"])
+    assert trace["requested_filters"]["thread_ref"] == fresh_thread_ref
+    assert trace["requested_filters"]["session_ref"] == fresh_session_ref
+    assert trace["filters"]["container_ref"] == container_ref
+    assert trace["filters"]["thread_ref"] is None
+    assert trace["filters"]["session_ref"] is None
+    assert trace["filter_scope_relaxed"] is True
+    assert trace["filter_scope_reason"] == "fresh_thread_scope_relaxed_for_cross_thread_recall"
+    assert trace["routing"]["selected_layer"] != "source_evidence"
+
+
+
+def test_query_new_thread_constraint_recall_uses_structured_memory(monkeypatch, test_db_url: str) -> None:
+    client = _agent_conversation_client(monkeypatch, test_db_url)
+    container_ref, _old_thread_ref, _old_session_ref = _ingest_cross_thread_catalog_history(client)
+
+    response = client.post(
+        "/query/debug",
+        json={
+            "text": "what constraint had I given you about admin portal sign-in and browser use?",
+            "limit": 6,
+            "container_ref": container_ref,
+            "thread_ref": "chat:team:operations:thread-fresh-constraint",
+            "session_ref": "session:operations-fresh-constraint",
+            "runtime_context": {
+                "turn_kind": "new_thread",
+                "session_has_sufficient_local_context": False,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["should_inject"] is True
+    assert payload["decision_reason"] == "carry_forward_available"
+    assert payload["injectable_blocks"]
+    assert any("admin portal" in block["text"].lower() or "local browser" in block["text"].lower() for block in payload["injectable_blocks"])
+    assert payload["trace"]["routing"]["selected_layer"] != "source_evidence"
+    assert all(block["block_type"] == "memory" for block in payload["injectable_blocks"] )
 
 def test_query_fallback_plugin_reports_injection_policy_unavailable(client, drain_queue) -> None:
     client.post(

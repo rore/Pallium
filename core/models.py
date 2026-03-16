@@ -130,7 +130,7 @@ class QueryFilters:
     session_ref: str | None = None
 
 
-TurnKind = Literal["new_thread", "same_thread_continuation", "resumed_session", "new_session"]
+TurnKind = Literal["new_thread", "same_thread", "same_thread_continuation", "resumed_session", "new_session"]
 
 
 @dataclass(frozen=True)
@@ -216,6 +216,9 @@ class QueryTrace:
     limit: int
     filters: QueryFilters | None
     stages: tuple[RetrievalStageTrace, ...]
+    requested_filters: QueryFilters | None = None
+    filter_scope_relaxed: bool = False
+    filter_scope_reason: str | None = None
     routing: dict[str, Any] | None = None
     visibility: QueryVisibilityTrace | None = None
     result_summary: dict[str, Any] | None = None

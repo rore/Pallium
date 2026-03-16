@@ -116,6 +116,10 @@ def _build_thread_summary_payload(user_prompt: str) -> dict[str, str]:
         return {
             'summary': 'The thread kept the reservation ordering fix behind the use_item_event_time flag, finished the schema and backfill work, and still needs the admin toggle plus retry-path coverage.'
         }
+    if 'service token expired' in lower and 'batch 313' in lower and 'admin portal' in lower and 'local browser' in lower:
+        return {
+            'summary': 'The catalog sync retry refreshed 312 reservation records before a 401 from the expired service token, and the operator constraint is to avoid admin portal sign-in or opening a local browser while resuming from batch 313.'
+        }
     if 'service token expired' in lower and 'batch 313' in lower:
         return {
             'summary': 'The thread refreshed 312 reservation records before a 401 caused by an expired catalog service token, and the next step is to refresh the token and resume from batch 313.'
@@ -190,6 +194,26 @@ def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
                 'Next step: wire scheduled-job backoff before enabling notify_digest_v2.',
             ],
             'freshness_signal': 'Latest explicit update at 2026-03-11T15:32:00+00:00.',
+        }
+    if 'service token expired' in lower and 'batch 313' in lower and 'admin portal' in lower and 'local browser' in lower:
+        return {
+            'summary': 'Catalog sync retry is paused at an auth failure after partial progress, with a clear restart point and an operator login constraint.',
+            'task': 'Resume the catalog sync retry.',
+            'current_state': 'Refreshed 312 reservation records before a 401 from the expired catalog service token; resume from batch 313 after auth is refreshed without using the admin portal or a local browser.',
+            'key_findings': [
+                'catalog API returned 401 because the service token expired',
+                'refreshed 312 reservation records before the failure',
+                'avoid admin portal sign-in and local browser use during the retry',
+            ],
+            'blocker_state': 'Catalog API returned 401 because the service token expired; do not use admin portal sign-in or a local browser while resolving it.',
+            'next_step': 'Refresh the catalog service token and rerun the sync from batch 313.',
+            'evidence': [
+                'Partial progress: refreshed 312 reservation records before the catalog sync tool failed.',
+                'Blocked: catalog API returned 401 because the service token expired.',
+                'Constraint: do not sign in to the admin portal or open a local browser.',
+                'Next step: refresh the catalog service token and rerun the sync from batch 313.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
         }
     if 'service token expired' in lower and 'batch 313' in lower:
         return {
@@ -354,6 +378,26 @@ def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
                 'Next step: compare cache invalidation between delayed and immediate sync workers.',
             ],
             'freshness_signal': 'Latest explicit update at 2026-03-11T09:02:00+00:00.',
+        }
+    if 'service token expired' in lower and 'batch 313' in lower and 'admin portal' in lower and 'local browser' in lower:
+        return {
+            'summary': 'Catalog sync retry is blocked on an expired service token after partial progress through batch 312, and the operator must avoid admin portal sign-in or local browser use.',
+            'task': 'Resume the catalog sync retry.',
+            'current_state': '312 reservation records were refreshed before the retry failed with a 401 from the catalog API; continue without using the admin portal or a local browser.',
+            'key_findings': [
+                '312 reservation records were already refreshed',
+                'the catalog API returned 401 because the service token expired',
+                'avoid admin portal sign-in and local browser use during the retry',
+            ],
+            'blocker_state': 'Catalog API returned 401 because the service token expired; do not use admin portal sign-in or a local browser while resolving it.',
+            'next_step': 'Refresh the catalog service token and rerun the sync from batch 313.',
+            'evidence': [
+                'Partial progress: refreshed 312 reservation records before the catalog sync tool failed.',
+                'Blocked: catalog API returned 401 because the service token expired.',
+                'Constraint: do not sign in to the admin portal or open a local browser.',
+                'Next step: refresh the catalog service token and rerun the sync from batch 313.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00+00:00.',
         }
     if 'service token expired' in lower and 'batch 313' in lower:
         return {

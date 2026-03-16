@@ -9,7 +9,7 @@ from typing import Any
 
 from capabilities.consolidation import ConsolidationCapability, ConsolidationRunGroupResult, ConsolidationRunResult
 from capabilities.thread_aggregation import build_thread_aggregate
-from core.contracts import IngestResult, ItemProcessingResult, PackageQueryOutcome, ProcessResult, QueryResult, build_query_filters, build_source_item
+from core.contracts import IngestResult, ItemProcessingResult, PackageQueryOutcome, ProcessResult, QueryResult, build_source_item, resolve_query_filters
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
 from core.models import MemoryObject, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace, Relation, SourceItem, utc_now
 from core.observability import IntegrationDebugLogger, OBSERVABILITY_METADATA_KEY, serialize_visibility_context
@@ -586,14 +586,17 @@ class PalliumService:
         runtime_context: QueryRuntimeContext | None = None,
         include_trace: bool = False,
     ) -> QueryResult:
-        filters: QueryFilters | None = build_query_filters(
+        filter_resolution = resolve_query_filters(
             source_type=source_type,
             role=role,
             artifact_kind=artifact_kind,
             container_ref=container_ref,
             thread_ref=thread_ref,
             session_ref=session_ref,
+            runtime_context=runtime_context,
         )
+        requested_filters = filter_resolution.requested_filters
+        effective_filters = filter_resolution.effective_filters
         plugin = self._semantic_plugins[self._default_use_case]
         if plugin.requires_visibility_context and visibility_context is None:
             trace = None
@@ -602,7 +605,10 @@ class PalliumService:
                     query_text=text,
                     query_tokens=_query_tokens(text),
                     limit=limit,
-                    filters=filters,
+                    filters=effective_filters,
+                    requested_filters=requested_filters,
+                    filter_scope_relaxed=filter_resolution.filter_scope_relaxed,
+                    filter_scope_reason=filter_resolution.filter_scope_reason,
                     stages=tuple(),
                     visibility=QueryVisibilityTrace(
                         query_visibility_context=None,
@@ -626,20 +632,30 @@ class PalliumService:
         retrieval_result = self._retrieval.query(
             text=text,
             limit=retrieval_limit,
-            filters=filters,
+            filters=effective_filters,
             visibility_context=visibility_context if plugin.requires_visibility_context else None,
             include_trace=include_trace,
         )
+        if retrieval_result.trace is not None:
+            retrieval_result = replace(
+                retrieval_result,
+                trace=replace(
+                    retrieval_result.trace,
+                    requested_filters=requested_filters,
+                    filter_scope_relaxed=filter_resolution.filter_scope_relaxed,
+                    filter_scope_reason=filter_resolution.filter_scope_reason,
+                ),
+            )
         if callable(route_query_results):
             outcome = route_query_results(
                 text=text,
                 requested_limit=limit,
                 retrieval_result=retrieval_result,
-                query_filters=filters,
+                query_filters=requested_filters,
                 runtime_context=runtime_context,
                 include_trace=include_trace,
                 debug_candidate_loader=self._make_debug_candidate_loader(
-                    filters=filters,
+                    filters=effective_filters,
                     visibility_context=visibility_context if plugin.requires_visibility_context else None,
                 ),
             )
@@ -665,6 +681,7 @@ class PalliumService:
             decision_reason="injection_policy_unavailable",
             injectable_blocks=[],
         )
+
     def _resolve_supersession_pairs(self, result: ProcessResult) -> list[tuple[str, str]]:
         if not result.supersession_hints:
             return []
@@ -729,6 +746,7 @@ class PalliumService:
             return results
 
         return load_candidates
+
     @staticmethod
     def _evidence_matches_filters(evidence, filters: QueryFilters) -> bool:
         if filters.source_type is not None and evidence.source_type != filters.source_type:

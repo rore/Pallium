@@ -339,6 +339,7 @@ ROUTING_QUERY_SHAPE_TOKENS = {
     "precise_lookup": {"exact", "when", "which"},
 }
 ROUTING_QUERY_SHAPE_PHRASES = {
+    "history_lookup": ("what do we know", "what is the latest", "what's the latest", "what had we concluded", "what had you concluded", "what constraint had i given"),
     "big_picture": ("big picture", "general lesson", "larger lesson", "main takeaway", "should we remember", "what should we remember"),
     "analysis_request": ("where did we land", "what ended up being true", "what settled", "how did that shake out"),
     "resume_state": ("pick this back up", "pick that back up", "where did we leave off", "where were we", "what is the latest state", "what's the latest state"),
@@ -442,6 +443,12 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         ]
         if scored_candidates:
             _apply_same_kind_freshness_shaping(scored_candidates, intent=intent)
+            _apply_fresh_thread_structured_recall_preference(
+                scored_candidates,
+                intent=intent,
+                candidate_signals=family_inference["candidate_signals"],
+                runtime_context=runtime_context,
+            )
         packaging_summary = None
         if intent == "work_resumption" and scored_candidates:
             packaging_summary = _apply_work_resumption_packaging(
@@ -513,6 +520,9 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 filters=retrieval_result.trace.filters,
                 stages=retrieval_result.trace.stages,
                 visibility=retrieval_result.trace.visibility,
+                requested_filters=retrieval_result.trace.requested_filters,
+                filter_scope_relaxed=retrieval_result.trace.filter_scope_relaxed,
+                filter_scope_reason=retrieval_result.trace.filter_scope_reason,
                 routing=_build_routing_trace(
                     intent=intent,
                     family_inference=family_inference,
@@ -1075,6 +1085,8 @@ def _classify_query_intent_from_text(text: str) -> str:
         return "answer_continuity"
     if any(cue in lowered for cue in INVESTIGATIVE_CONCLUSION_CUES):
         return "investigative_conclusion"
+    if any(phrase in lowered for phrase in ROUTING_QUERY_SHAPE_PHRASES["history_lookup"]):
+        return "broad_recall"
     if any(cue in lowered for cue in BROAD_RECALL_CUES) or lowered.startswith("why "):
         return "broad_recall"
     if any(cue in lowered for cue in PRECISE_FACT_CUES) or lowered.startswith(("what ", "which ", "when ")):
@@ -1085,9 +1097,10 @@ def _classify_query_intent_from_text(text: str) -> str:
 
 def _matched_query_family_cues(text: str) -> dict[str, list[str]]:
     lowered = text.lower()
+    history_matches = [phrase for phrase in ROUTING_QUERY_SHAPE_PHRASES["history_lookup"] if phrase in lowered][:3]
     matched = {
         "answer_continuity": [cue for cue in ANSWER_CONTINUITY_CUES if cue in lowered][:3],
-        "broad_recall": [cue for cue in BROAD_RECALL_CUES if cue in lowered][:3],
+        "broad_recall": list(OrderedDict.fromkeys([*[cue for cue in BROAD_RECALL_CUES if cue in lowered][:3], *history_matches])),
         "work_resumption": [cue for cue in WORK_RESUMPTION_CUES if cue in lowered][:3],
         "precise_fact": [cue for cue in PRECISE_FACT_CUES if cue in lowered][:3],
         "evidence_trace": [cue for cue in EVIDENCE_TRACE_CUES if cue in lowered][:3],
@@ -1095,7 +1108,7 @@ def _matched_query_family_cues(text: str) -> dict[str, list[str]]:
     }
     if lowered.startswith("why "):
         matched["broad_recall"] = list(OrderedDict.fromkeys([*matched["broad_recall"], "why*"]))
-    if lowered.startswith(("what ", "which ", "when ")):
+    if lowered.startswith(("what ", "which ", "when ")) and not history_matches:
         matched["precise_fact"] = list(OrderedDict.fromkeys([*matched["precise_fact"], "wh*"]))
     return matched
 
@@ -1162,7 +1175,7 @@ def _query_family_query_shape_score(
     if runtime_context is not None and family == "work_resumption" and runtime_context.turn_kind == "resumed_session":
         score += 12
         reasons.append("resumed_session_runtime")
-    if runtime_context is not None and family == "answer_continuity" and runtime_context.turn_kind == "same_thread_continuation":
+    if runtime_context is not None and family == "answer_continuity" and runtime_context.turn_kind in {"same_thread", "same_thread_continuation"}:
         score += 10
         reasons.append("same_thread_runtime")
     return score, reasons
@@ -1389,6 +1402,8 @@ def _query_family_candidate_score(
     continuity_support = _query_family_layer_metric(candidate_signals, "continuity_memory", "best_support")
     continuity_same_thread_hits = _query_family_layer_metric(candidate_signals, "continuity_memory", "same_thread_hits")
     checkpoint_support = _query_family_layer_metric(candidate_signals, "task_checkpoint", "best_support")
+    thread_summary_support = _query_family_layer_metric(candidate_signals, "thread_summary", "best_support")
+    discussion_summary_support = _query_family_layer_metric(candidate_signals, "discussion_summary", "best_support")
     checkpoint_same_thread_hits = _query_family_layer_metric(candidate_signals, "task_checkpoint", "same_thread_hits")
     checkpoint_work_usefulness = _query_family_layer_metric(candidate_signals, "task_checkpoint", "best_work_usefulness")
     source_support = _query_family_layer_metric(candidate_signals, "source_evidence", "best_support")
@@ -1413,6 +1428,15 @@ def _query_family_candidate_score(
     )
     top_layer = _query_family_top_layer(candidate_signals)
     supported_floor = ROUTING_SUPPORT_THRESHOLD["supported"]
+    structured_recall_support = max(
+        pattern_support,
+        continuity_support,
+        checkpoint_support,
+        thread_summary_support,
+        discussion_summary_support,
+        sharp_lower_level_support,
+    )
+    fresh_thread_cross_thread_recall = _runtime_context_prefers_cross_thread_recall(runtime_context)
     history_recall_with_relevant_carry_forward = (
         "history_lookup" in query_shape_tags
         and bool(candidate_signals.get("relevant_cross_thread_continuity_in_scope"))
@@ -1425,10 +1449,13 @@ def _query_family_candidate_score(
         if continuity_support:
             score += (continuity_support // 2) + (continuity_same_thread_hits * 14)
             reasons.append("continuity_memory_support")
+        if fresh_thread_cross_thread_recall and structured_recall_support >= supported_floor:
+            score += min(structured_recall_support // 2, 52)
+            reasons.append("fresh_thread_structured_memory_support")
         if top_layer == "continuity_memory":
             score += 10
             reasons.append("continuity_memory_won_candidate_competition")
-        if continuity_support < supported_floor:
+        if continuity_support < supported_floor and structured_recall_support < supported_floor:
             score -= 12
             reasons.append("weak_continuity_support")
         return score, reasons
@@ -1443,6 +1470,12 @@ def _query_family_candidate_score(
         if sharp_lower_level_support:
             score += min(sharp_lower_level_support, 44)
             reasons.append("sharp_lower_level_available")
+        if fresh_thread_cross_thread_recall and structured_recall_support >= supported_floor:
+            score += min(structured_recall_support // 2, 56)
+            reasons.append("fresh_thread_structured_memory_support")
+        if fresh_thread_cross_thread_recall and "history_lookup" in query_shape_tags and structured_recall_support >= supported_floor:
+            score += 28
+            reasons.append("fresh_thread_history_recall")
         if top_layer == "pattern_memory":
             score += 12
             reasons.append("pattern_memory_won_candidate_competition")
@@ -1464,6 +1497,9 @@ def _query_family_candidate_score(
         if source_work_usefulness:
             score += min(source_support // 2, 42) + source_work_usefulness + (source_same_thread_hits * 8)
             reasons.append("work_state_source_support")
+        if fresh_thread_cross_thread_recall and checkpoint_support >= supported_floor:
+            score += min(checkpoint_support // 3, 42)
+            reasons.append("fresh_thread_checkpoint_support")
         if bool(candidate_signals.get("strong_task_checkpoint_in_scope")):
             score += 16
             reasons.append("sharp_task_checkpoint_in_scope")
@@ -1479,6 +1515,9 @@ def _query_family_candidate_score(
         if checkpoint_support < supported_floor and source_work_usefulness < 18:
             score -= 20
             reasons.append("weak_resumption_state_support")
+        if fresh_thread_cross_thread_recall and "history_lookup" in query_shape_tags and "resume_state" not in query_shape_tags:
+            score -= 56
+            reasons.append("history_lookup_outweighs_resume_state")
         return score, reasons
 
     if family == "precise_fact":
@@ -1500,6 +1539,9 @@ def _query_family_candidate_score(
         if history_recall_with_relevant_carry_forward:
             score -= 74
             reasons.append("carry_forward_history_outweighs_precise_lookup")
+        if fresh_thread_cross_thread_recall and "history_lookup" in query_shape_tags and structured_recall_support >= supported_floor:
+            score -= 56
+            reasons.append("history_lookup_outweighs_precise_lookup")
         return score, reasons
 
     if family == "evidence_trace":
@@ -1521,6 +1563,9 @@ def _query_family_candidate_score(
         if checkpoint_support > source_support + 20 and "resume_state" in query_shape_tags:
             score -= 18
             reasons.append("checkpoint_state_outweighs_weak_source_evidence")
+        if fresh_thread_cross_thread_recall and structured_recall_support >= max(source_support, supported_floor) and "evidence_request" not in query_shape_tags:
+            score -= 72
+            reasons.append("structured_recall_outweighs_source_evidence")
         return score, reasons
 
     if sharp_lower_level_support:
@@ -1543,13 +1588,12 @@ def _query_family_candidate_score(
         reasons.append("pattern_memory_outweighs_sharp_conclusion")
     return score, reasons
 
-
 def _query_family_label(intent: str, *, runtime_context: QueryRuntimeContext | None) -> str:
     turn_kind = runtime_context.turn_kind if runtime_context is not None else None
     session_has_sufficient_local_context = (
         runtime_context.session_has_sufficient_local_context if runtime_context is not None else None
     )
-    if turn_kind == "same_thread_continuation" and session_has_sufficient_local_context is True:
+    if turn_kind in {"same_thread", "same_thread_continuation"} and session_has_sufficient_local_context is True:
         return "same_thread_no_value_continuation"
     if intent == "answer_continuity":
         if turn_kind == "resumed_session":
@@ -1564,6 +1608,7 @@ def _query_family_label(intent: str, *, runtime_context: QueryRuntimeContext | N
     if intent == "broad_recall":
         return "broad_recurring_recall"
     return intent
+
 def _score_routed_candidate(
     item: QueryResultItem,
     intent: str,
@@ -1651,6 +1696,69 @@ def _apply_same_kind_freshness_shaping(scored_candidates: list[dict[str, object]
                 candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*candidate["packaging_reasons"], "fresh_same_kind_conclusion"]))
             elif freshness_delta < 0:
                 candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*candidate["packaging_reasons"], "older_same_kind_conclusion"]))
+
+
+def _runtime_context_prefers_cross_thread_recall(runtime_context: QueryRuntimeContext | None) -> bool:
+    return bool(
+        runtime_context is not None
+        and runtime_context.turn_kind in {"new_thread", "new_session"}
+        and runtime_context.session_has_sufficient_local_context is False
+    )
+
+
+def _apply_fresh_thread_structured_recall_preference(
+    scored_candidates: list[dict[str, object]],
+    *,
+    intent: str,
+    candidate_signals: dict[str, object],
+    runtime_context: QueryRuntimeContext | None,
+) -> None:
+    if intent not in {"broad_recall", "answer_continuity", "work_resumption"}:
+        return
+    if not _runtime_context_prefers_cross_thread_recall(runtime_context):
+        return
+
+    structured_support = max(
+        _query_family_layer_metric(candidate_signals, "task_checkpoint", "best_support"),
+        _query_family_layer_metric(candidate_signals, "thread_summary", "best_support"),
+        _query_family_layer_metric(candidate_signals, "discussion_summary", "best_support"),
+        _query_family_layer_metric(candidate_signals, "continuity_memory", "best_support"),
+        _query_family_layer_metric(candidate_signals, "pattern_memory", "best_support"),
+        _query_family_layer_metric(candidate_signals, "decision", "best_support"),
+        _query_family_layer_metric(candidate_signals, "investigation_outcome", "best_support"),
+        _query_family_layer_metric(candidate_signals, "lower_level_memory", "best_support"),
+    )
+    if structured_support < ROUTING_SUPPORT_THRESHOLD["supported"]:
+        return
+
+    structured_layers = {
+        "task_checkpoint",
+        "thread_summary",
+        "discussion_summary",
+        "continuity_memory",
+        "pattern_memory",
+        "decision",
+        "investigation_outcome",
+        "lower_level_memory",
+    }
+    for candidate in scored_candidates:
+        layer = str(candidate["layer"])
+        if layer == "source_evidence":
+            penalty = 120 if int(candidate["support_score"]) <= structured_support + 20 else 80
+            candidate["base_routing_score"] = int(candidate["base_routing_score"]) - penalty
+            candidate["support_score"] = max(0, int(candidate["support_score"]) - max(penalty // 3, 18))
+            candidate["support_grade"] = _routing_support_grade(int(candidate["support_score"]))
+            candidate["packaging_reasons"] = list(
+                OrderedDict.fromkeys([*candidate["packaging_reasons"], "fresh_thread_structured_memory_preferred"])
+            )
+        elif layer in structured_layers and str(candidate["support_grade"]) in {"supported", "strong"}:
+            bonus = 26 if layer in {"task_checkpoint", "decision", "investigation_outcome"} else 18
+            candidate["base_routing_score"] = int(candidate["base_routing_score"]) + bonus
+            candidate["support_score"] = int(candidate["support_score"]) + max(bonus // 2, 8)
+            candidate["support_grade"] = _routing_support_grade(int(candidate["support_score"]))
+            candidate["packaging_reasons"] = list(
+                OrderedDict.fromkeys([*candidate["packaging_reasons"], "fresh_thread_structured_memory_preferred"] )
+            )
 
 def _result_layer(item: QueryResultItem) -> str:
     if item.result_kind == "source_hit":
@@ -2038,7 +2146,7 @@ def _build_injectable_blocks(
 ) -> tuple[list[InjectableBlock], dict[str, object]]:
     if (
         runtime_context is not None
-        and runtime_context.turn_kind == "same_thread_continuation"
+        and runtime_context.turn_kind in {"same_thread", "same_thread_continuation"}
         and runtime_context.session_has_sufficient_local_context is True
     ):
         return [], {

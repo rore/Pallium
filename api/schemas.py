@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 ArtifactKind = Literal["message", "assistant_output", "tool_use_summary", "todo_snapshot", "notification"]
 VisibilityKind = Literal["public", "limited", "user"]
 ProcessingStatus = Literal["pending", "processing", "completed", "skipped", "failed"]
-TurnKind = Literal["new_thread", "same_thread_continuation", "resumed_session", "new_session"]
+TurnKind = Literal["new_thread", "same_thread", "same_thread_continuation", "resumed_session", "new_session"]
 
 
 class VisibilityContextModel(BaseModel):
@@ -206,6 +206,9 @@ class QueryTraceResponse(BaseModel):
     query_tokens: list[str]
     limit: int
     filters: QueryTraceFiltersResponse | None = None
+    requested_filters: QueryTraceFiltersResponse | None = None
+    filter_scope_relaxed: bool = False
+    filter_scope_reason: str | None = None
     stages: list[RetrievalStageTraceResponse]
     routing: dict[str, Any] | None = None
     visibility: QueryTraceVisibilityResponse | None = None
