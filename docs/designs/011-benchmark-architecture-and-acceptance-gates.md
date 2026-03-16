@@ -24,6 +24,18 @@ The benchmark program should therefore answer:
 The benchmark program should not collapse into generic assistant scoring or
 opaque end-to-end answer judging.
 
+It should also treat the benchmark system itself as a product surface with
+first-class repo-local objects:
+
+- traces
+- datasets
+- experiments
+- review queues
+- replay promotions
+
+Those should remain Pallium-owned artifacts even if external tooling later
+helps visualize or run them.
+
 ## Benchmark Lanes
 
 Pallium should organize its benchmark stack into five lanes.
@@ -186,6 +198,33 @@ Purpose:
 The benchmark program should report by lane and by dataset tier rather than
 only by runner name.
 
+## Benchmark System Objects
+
+The benchmark architecture should make a few system objects explicit instead of
+letting them remain spread across ad hoc runners and output folders.
+
+### Traces
+
+Structured records of benchmark or live-query execution that capture the
+decision path, contract output, and operational metadata needed for review.
+
+### Datasets
+
+Reviewed benchmark assets grouped into iteration, confidence, or replay tiers.
+
+### Experiments
+
+Repeatable comparisons of one Pallium version, prompt, or heuristic change
+against a chosen dataset slice with lane-aware scoring.
+
+### Review Workflow
+
+A bounded review path for suspicious cases, borderline usefulness checks, and
+promotion into replay fixtures.
+
+These should be treated as first-class repo-local benchmark concepts, not just
+implementation details hidden inside individual scripts.
+
 ## Judging Policy
 
 Deterministic grading should remain the benchmark foundation.
@@ -226,6 +265,10 @@ or authored regressions.
 External benchmark numbers should be reported separately from thin-agent
 acceptance metrics.
 
+Commercial or hosted eval products may be useful design references for how
+traces, datasets, experiments, and review workflows can fit together, but they
+should not become required dependencies for Pallium's benchmark architecture.
+
 ## Live Miss Promotion
 
 The benchmark program should support one repeatable loop:
@@ -263,3 +306,4 @@ to be inferred from:
 
 Those narrower documents should now align to this benchmark architecture rather
 than each defining a separate benchmark philosophy.
+

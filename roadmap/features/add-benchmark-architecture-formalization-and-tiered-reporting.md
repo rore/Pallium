@@ -130,3 +130,6 @@ Implementation defaults:
   stop being sufficient
 - treat replay as a first-class reporting tier even before the live replay loop
   is fully automated
+- keep benchmark truth repo-local even if external or commercial eval products later inspire UX or workflow ideas
+
+
