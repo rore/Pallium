@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import asdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,7 +11,21 @@ from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine, d
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from core.contracts import ProcessResult
-from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem, new_id, utc_now
+from core.models import (
+    Annotation,
+    EvidenceReference,
+    IndexEntry,
+    MemoryEnvelope,
+    MemoryEnvelopeDerivation,
+    MemoryEnvelopeScope,
+    MemoryObject,
+    MemorySubjectAnchor,
+    QueryFilters,
+    Relation,
+    SourceItem,
+    new_id,
+    utc_now,
+)
 from core.observability import OBSERVABILITY_METADATA_KEY
 from core.retention import (
     DEBUG_METADATA_TTL,
@@ -43,6 +58,12 @@ from storage.base import (
 
 Base = declarative_base()
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+MEMORY_ENVELOPE_SCHEMA_ID = "core.memory_envelope"
+MEMORY_ENVELOPE_SCHEMA_VERSION = "v1"
+MEMORY_ENVELOPE_KINDS = {"constraint", "finding", "episode", "next_step", "summary", "unknown"}
+MEMORY_ENVELOPE_CONFIDENCES = {"high", "medium", "low", "unknown"}
+MEMORY_ENVELOPE_PRODUCER_KINDS = {"item_extraction", "thread_aggregation", "consolidation"}
+MEMORY_SUBJECT_ANCHOR_KINDS = {"workstream", "component", "surface"}
 
 try:
     import fcntl
@@ -106,6 +127,7 @@ class MemoryObjectRecord(Base):
     schema_id = Column(String, nullable=False)
     schema_version = Column(String, nullable=False)
     payload_json = Column(Text, nullable=False)
+    envelope_json = Column(Text, nullable=True)
     lifecycle = Column(String, nullable=False, default="active")
     visibility_kind = Column(String, nullable=True)
     visibility_id = Column(String, nullable=True)
@@ -198,6 +220,7 @@ class SQLiteStorageProvider(StorageProvider):
         "visibility_kind": "ALTER TABLE memory_objects ADD COLUMN visibility_kind VARCHAR",
         "visibility_id": "ALTER TABLE memory_objects ADD COLUMN visibility_id VARCHAR",
         "freshness_at": "ALTER TABLE memory_objects ADD COLUMN freshness_at DATETIME",
+        "envelope_json": "ALTER TABLE memory_objects ADD COLUMN envelope_json TEXT",
     }
     _INDEX_ENTRY_MIGRATIONS = {
         "text_view_name": "ALTER TABLE index_entries ADD COLUMN text_view_name VARCHAR",
@@ -733,6 +756,7 @@ class SQLiteStorageProvider(StorageProvider):
             schema_id=memory_object.schema_id,
             schema_version=memory_object.schema_version,
             payload_json=self._dumps(memory_object.payload) or "{}",
+            envelope_json=self._dump_memory_envelope(memory_object.envelope),
             lifecycle=memory_object.lifecycle,
             visibility_kind=visibility_kind,
             visibility_id=visibility_id,
@@ -1585,6 +1609,7 @@ class SQLiteStorageProvider(StorageProvider):
                     schema_id=memory_object.schema_id,
                     schema_version=memory_object.schema_version,
                     payload_json=self._dumps(memory_object.payload) or "{}",
+                    envelope_json=self._dump_memory_envelope(memory_object.envelope),
                     lifecycle=memory_object.lifecycle,
                     visibility_kind=visibility_kind,
                     visibility_id=visibility_id,
@@ -1844,6 +1869,7 @@ class SQLiteStorageProvider(StorageProvider):
             schema_version=record.schema_version,
             payload=SQLiteStorageProvider._loads(record.payload_json),
             lifecycle=record.lifecycle or "active",
+            envelope=SQLiteStorageProvider._load_memory_envelope(record.envelope_json),
             visibility_context=SQLiteStorageProvider._build_visibility_context(record.visibility_kind, record.visibility_id),
             freshness_at=SQLiteStorageProvider._normalize_datetime(record.freshness_at),
             created_at=SQLiteStorageProvider._normalize_datetime(record.created_at) or utc_now(),
@@ -1940,6 +1966,145 @@ class SQLiteStorageProvider(StorageProvider):
         if not kind:
             return None
         return VisibilityContext(kind=kind, id=visibility_id)
+
+    @staticmethod
+    def _dump_memory_envelope(envelope: MemoryEnvelope | None) -> str | None:
+        if envelope is None:
+            return None
+        return json.dumps(asdict(envelope))
+
+    @staticmethod
+    def _load_memory_envelope(value: str | None) -> MemoryEnvelope | None:
+        if not value:
+            return None
+        try:
+            payload = json.loads(value)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        scope_payload = payload.get("scope")
+        derivation_payload = payload.get("derivation")
+        subjects_payload = payload.get("subjects")
+        if (
+            payload.get("schema_id") != MEMORY_ENVELOPE_SCHEMA_ID
+            or payload.get("schema_version") != MEMORY_ENVELOPE_SCHEMA_VERSION
+            or not isinstance(scope_payload, dict)
+            or not isinstance(derivation_payload, dict)
+            or not isinstance(subjects_payload, list)
+        ):
+            return None
+        kind = SQLiteStorageProvider._load_envelope_enum(payload.get("kind"), allowed=MEMORY_ENVELOPE_KINDS)
+        confidence = SQLiteStorageProvider._load_envelope_enum(payload.get("confidence"), allowed=MEMORY_ENVELOPE_CONFIDENCES)
+        producer_kind = SQLiteStorageProvider._load_envelope_enum(
+            derivation_payload.get("producer_kind"),
+            allowed=MEMORY_ENVELOPE_PRODUCER_KINDS,
+        )
+        producer_schema_id = SQLiteStorageProvider._load_required_envelope_string(
+            derivation_payload.get("producer_schema_id")
+        )
+        producer_schema_version = SQLiteStorageProvider._load_required_envelope_string(
+            derivation_payload.get("producer_schema_version")
+        )
+        if kind is None or confidence is None or producer_kind is None:
+            return None
+        if producer_schema_id is None or producer_schema_version is None:
+            return None
+        subjects: list[MemorySubjectAnchor] = []
+        for subject_payload in subjects_payload:
+            if not isinstance(subject_payload, dict):
+                return None
+            subject_kind = SQLiteStorageProvider._load_envelope_enum(
+                subject_payload.get("kind"),
+                allowed=MEMORY_SUBJECT_ANCHOR_KINDS,
+            )
+            subject_value = SQLiteStorageProvider._load_required_envelope_string(subject_payload.get("value"))
+            if subject_kind is None or subject_value is None:
+                return None
+            subjects.append(MemorySubjectAnchor(kind=subject_kind, value=subject_value))
+        container_ref, container_ref_valid = SQLiteStorageProvider._load_optional_envelope_string(
+            scope_payload,
+            "container_ref",
+        )
+        thread_ref, thread_ref_valid = SQLiteStorageProvider._load_optional_envelope_string(
+            scope_payload,
+            "thread_ref",
+        )
+        session_ref, session_ref_valid = SQLiteStorageProvider._load_optional_envelope_string(
+            scope_payload,
+            "session_ref",
+        )
+        prompt_variant, prompt_variant_valid = SQLiteStorageProvider._load_optional_envelope_string(
+            derivation_payload,
+            "prompt_variant",
+        )
+        model_role, model_role_valid = SQLiteStorageProvider._load_optional_envelope_string(
+            derivation_payload,
+            "model_role",
+        )
+        kind_basis, kind_basis_valid = SQLiteStorageProvider._load_optional_envelope_string(
+            derivation_payload,
+            "kind_basis",
+        )
+        if not all(
+            (
+                container_ref_valid,
+                thread_ref_valid,
+                session_ref_valid,
+                prompt_variant_valid,
+                model_role_valid,
+                kind_basis_valid,
+            )
+        ):
+            return None
+        return MemoryEnvelope(
+            schema_id=MEMORY_ENVELOPE_SCHEMA_ID,
+            schema_version=MEMORY_ENVELOPE_SCHEMA_VERSION,
+            kind=kind,
+            scope=MemoryEnvelopeScope(
+                container_ref=container_ref,
+                thread_ref=thread_ref,
+                session_ref=session_ref,
+            ),
+            derivation=MemoryEnvelopeDerivation(
+                producer_kind=producer_kind,
+                producer_schema_id=producer_schema_id,
+                producer_schema_version=producer_schema_version,
+                prompt_variant=prompt_variant,
+                model_role=model_role,
+                kind_basis=kind_basis,
+            ),
+            subjects=subjects,
+            confidence=confidence,
+        )
+
+    @staticmethod
+    def _load_envelope_enum(value: object, *, allowed: set[str]) -> str | None:
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        if not normalized or normalized not in allowed:
+            return None
+        return normalized
+
+    @staticmethod
+    def _load_required_envelope_string(value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        return normalized
+
+    @staticmethod
+    def _load_optional_envelope_string(payload: dict[str, object], key: str) -> tuple[str | None, bool]:
+        if key not in payload or payload.get(key) is None:
+            return None, True
+        value = payload.get(key)
+        if not isinstance(value, str):
+            return None, False
+        normalized = value.strip()
+        return normalized or None, True
 
     @staticmethod
     def _dumps(value: dict | None) -> str | None:

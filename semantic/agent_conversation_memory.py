@@ -11,11 +11,32 @@ from capabilities.consolidation import ConsolidationGroup, ConsolidationPolicy
 from capabilities.thread_aggregation import ThreadAggregate
 from core.contracts import PackageQueryOutcome, ProcessResult, SupersessionHint
 from core.indexing import build_index_entry
-from core.models import InjectableBlock, MemoryObject, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace, Relation, SourceItem
+from core.models import (
+    InjectableBlock,
+    MemoryEnvelope,
+    MemoryEnvelopeConfidence,
+    MemoryEnvelopeDerivation,
+    MemoryEnvelopeKind,
+    MemoryEnvelopeScope,
+    MemoryObject,
+    MemorySubjectAnchor,
+    QueryFilters,
+    QueryResultItem,
+    QueryRuntimeContext,
+    QueryTrace,
+    Relation,
+    SourceItem,
+)
 from providers.llm.base import LLMProvider
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
-from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY, normalize_for_index
+from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY, SemanticExtraction, normalize_for_index
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin
+
+MEMORY_ENVELOPE_SCHEMA_ID = "core.memory_envelope"
+MEMORY_ENVELOPE_SCHEMA_VERSION = "v1"
+WRITE_TIME_MODEL_ROLE = "write_time_extraction"
+SUBJECT_HINT_METADATA_KEY = "pallium_subject_hints"
+
 
 
 THREAD_SUMMARY_PROMPT_SCHEMA_ID = "thread_summary_extraction"
@@ -319,6 +340,15 @@ ROUTING_PREFERRED_LAYERS = {
     "evidence_trace": ("source_evidence", "investigation_outcome", "decision", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory"),
     "investigative_conclusion": ("investigation_outcome", "decision", "source_evidence", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory"),
 }
+ROUTING_FAMILY_ALLOWED_ENVELOPE_KINDS = {
+    "answer_continuity": ("summary", "finding"),
+    "broad_recall": ("summary", "finding"),
+    "work_resumption": ("episode", "finding", "summary"),
+    "precise_fact": ("finding",),
+    "evidence_trace": None,
+    "investigative_conclusion": ("finding", "summary"),
+}
+
 ROUTING_LAYER_WEIGHTS = {
     "answer_continuity": {"continuity_memory": 400, "investigation_outcome": 320, "decision": 300, "source_evidence": 200, "task_checkpoint": 140, "pattern_memory": 120, "thread_summary": 100, "discussion_summary": 70, "lower_level_memory": 260},
     "broad_recall": {"pattern_memory": 400, "investigation_outcome": 330, "decision": 310, "continuity_memory": 180, "task_checkpoint": 150, "source_evidence": 120, "thread_summary": 130, "discussion_summary": 80, "lower_level_memory": 250},
@@ -527,6 +557,245 @@ ROUTING_FAMILY_INFERENCE_PRIORITY = (
     "precise_fact",
 )
 
+
+def _serialize_subject_anchors(subjects: Iterable[MemorySubjectAnchor]) -> list[dict[str, str]]:
+    return [{"kind": subject.kind, "value": subject.value} for subject in subjects]
+
+
+def _merge_subject_anchors(*groups: Iterable[MemorySubjectAnchor]) -> list[MemorySubjectAnchor]:
+    merged: list[MemorySubjectAnchor] = []
+    seen: set[tuple[str, str]] = set()
+    for group in groups:
+        for subject in group:
+            value = str(subject.value or "").strip()
+            if not value:
+                continue
+            key = (subject.kind, value.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(MemorySubjectAnchor(kind=subject.kind, value=value))
+    return merged
+
+
+def _subject_anchors_from_metadata(metadata: dict[str, object] | None) -> list[MemorySubjectAnchor]:
+    if not isinstance(metadata, dict):
+        return []
+    raw_subjects = metadata.get(SUBJECT_HINT_METADATA_KEY)
+    if not isinstance(raw_subjects, list):
+        return []
+    anchors: list[MemorySubjectAnchor] = []
+    for raw_subject in raw_subjects:
+        if not isinstance(raw_subject, dict):
+            continue
+        kind = str(raw_subject.get("kind") or "").strip().lower()
+        value = str(raw_subject.get("value") or "").strip()
+        if kind not in {"workstream", "component", "surface"} or not value:
+            continue
+        anchors.append(MemorySubjectAnchor(kind=kind, value=value))
+    return _merge_subject_anchors(anchors)
+
+
+def _subject_anchors_from_source_items(source_items: Iterable[SourceItem]) -> list[MemorySubjectAnchor]:
+    return _merge_subject_anchors(*(_subject_anchors_from_metadata(source_item.metadata) for source_item in source_items))
+
+
+def _subject_anchors_from_memory_objects(memory_objects: Iterable[MemoryObject]) -> list[MemorySubjectAnchor]:
+    return _merge_subject_anchors(*(memory_object.envelope.subjects for memory_object in memory_objects if memory_object.envelope is not None))
+
+
+def _has_explicit_semantic_signals(extraction: SemanticExtraction) -> bool:
+    return any(
+        getattr(extraction, field_name)
+        for field_name in ("constraint_text", "next_step_text", "blocker_text", "progress_text", "key_finding_text")
+    )
+
+
+def _memory_kind_for_type(memory_type: str) -> MemoryEnvelopeKind:
+    return {
+        "decision": "finding",
+        "investigation_outcome": "finding",
+        "task_checkpoint": "episode",
+        "thread_summary": "summary",
+        "discussion_summary": "summary",
+        "continuity_memory": "summary",
+        "pattern_memory": "summary",
+    }.get(memory_type, "unknown")
+
+
+def _memory_confidence_for_type(memory_type: str, *, extraction: SemanticExtraction | None = None) -> MemoryEnvelopeConfidence:
+    if memory_type in {"decision", "investigation_outcome"}:
+        return "high"
+    if memory_type in {"task_checkpoint", "thread_summary", "continuity_memory", "pattern_memory"}:
+        return "medium"
+    if memory_type == "discussion_summary":
+        return "medium" if extraction is not None and _has_explicit_semantic_signals(extraction) else "low"
+    return "unknown"
+
+
+def _build_memory_envelope(
+    *,
+    kind: MemoryEnvelopeKind,
+    container_ref: str | None,
+    thread_ref: str | None,
+    session_ref: str | None,
+    confidence: MemoryEnvelopeConfidence,
+    producer_kind: str,
+    producer_schema_id: str,
+    producer_schema_version: str,
+    prompt_variant: str | None,
+    kind_basis: str,
+    subjects: list[MemorySubjectAnchor],
+) -> MemoryEnvelope:
+    return MemoryEnvelope(
+        schema_id=MEMORY_ENVELOPE_SCHEMA_ID,
+        schema_version=MEMORY_ENVELOPE_SCHEMA_VERSION,
+        kind=kind,
+        scope=MemoryEnvelopeScope(
+            container_ref=container_ref,
+            thread_ref=thread_ref,
+            session_ref=session_ref,
+        ),
+        subjects=list(subjects),
+        confidence=confidence,
+        derivation=MemoryEnvelopeDerivation(
+            producer_kind=producer_kind,
+            producer_schema_id=producer_schema_id,
+            producer_schema_version=producer_schema_version,
+            prompt_variant=prompt_variant,
+            model_role=WRITE_TIME_MODEL_ROLE if prompt_variant else None,
+            kind_basis=kind_basis,
+        ),
+    )
+
+
+def _apply_direct_memory_envelopes(
+    result: ProcessResult,
+    *,
+    source_item: SourceItem,
+    extraction: SemanticExtraction,
+) -> ProcessResult:
+    updated_metadata = dict(result.source_item_metadata_updates)
+    if extraction.subject_hints:
+        source_updates = dict(updated_metadata.get(source_item.id, {}))
+        source_updates[SUBJECT_HINT_METADATA_KEY] = _serialize_subject_anchors(extraction.subject_hints)
+        updated_metadata[source_item.id] = source_updates
+    if not result.memory_objects:
+        return replace(result, source_item_metadata_updates=updated_metadata)
+    direct_subjects = _merge_subject_anchors(extraction.subject_hints)
+    kind_basis = "llm_subject_hints" if direct_subjects else "type_map"
+    enveloped_memory_objects = []
+    for memory_object in result.memory_objects:
+        semantic_provenance = memory_object.payload.get("semantic_provenance", {}) if isinstance(memory_object.payload, dict) else {}
+        producer_schema_id = str(semantic_provenance.get("prompt_schema_id") or memory_object.schema_id)
+        producer_schema_version = str(semantic_provenance.get("prompt_schema_version") or memory_object.schema_version)
+        prompt_variant = semantic_provenance.get("prompt_variant") if isinstance(semantic_provenance, dict) else None
+        enveloped_memory_objects.append(
+            replace(
+                memory_object,
+                envelope=_build_memory_envelope(
+                    kind=_memory_kind_for_type(memory_object.type),
+                    container_ref=source_item.container_ref,
+                    thread_ref=source_item.thread_ref,
+                    session_ref=source_item.session_ref,
+                    confidence=_memory_confidence_for_type(memory_object.type, extraction=extraction),
+                    producer_kind="item_extraction",
+                    producer_schema_id=producer_schema_id,
+                    producer_schema_version=producer_schema_version,
+                    prompt_variant=str(prompt_variant) if isinstance(prompt_variant, str) and prompt_variant else None,
+                    kind_basis=kind_basis,
+                    subjects=direct_subjects,
+                ),
+            )
+        )
+    return replace(
+        result,
+        memory_objects=enveloped_memory_objects,
+        source_item_metadata_updates=updated_metadata,
+    )
+
+
+def _build_kind_prefilter_trace_entry(
+    item: QueryResultItem,
+    *,
+    status: str,
+    reason_code: str | None = None,
+    reason: str | None = None,
+) -> dict[str, object]:
+    entry = {
+        "result_id": _routing_result_id(item),
+        "result_kind": item.result_kind,
+        "memory_type": item.type,
+        "candidate_envelope_kind": item.envelope.kind if item.envelope is not None else None,
+        "status": status,
+    }
+    if item.envelope is not None:
+        entry["candidate_subjects"] = _serialize_subject_anchors(item.envelope.subjects)
+        entry["envelope_confidence"] = item.envelope.confidence
+    if reason_code is not None:
+        entry["reason_code"] = reason_code
+        entry["reason"] = reason
+    return entry
+
+
+def _kind_prefilter_candidates(
+    candidates: list[QueryResultItem],
+    *,
+    intent: str,
+) -> tuple[list[QueryResultItem], dict[str, object], dict[str, dict[str, object]]]:
+    allowed_kinds = ROUTING_FAMILY_ALLOWED_ENVELOPE_KINDS.get(intent)
+    retained: list[QueryResultItem] = []
+    fallback_candidates: list[QueryResultItem] = []
+    excluded_candidates: list[dict[str, object]] = []
+    candidate_states: dict[str, dict[str, object]] = {}
+    fallback_reason = "Candidate has no write-time envelope and remains only as mixed-mode fallback."
+    for item in candidates:
+        if item.result_kind != "memory_hit":
+            retained.append(item)
+            continue
+        result_id = _routing_result_id(item)
+        if item.envelope is None:
+            fallback_candidates.append(item)
+            candidate_states[result_id] = {
+                "kind_prefilter_status": "envelope_missing_fallback",
+                "kind_prefilter_reason_code": "envelope_missing_fallback",
+                "kind_prefilter_reason": fallback_reason,
+            }
+            continue
+        if allowed_kinds is None or item.envelope.kind in allowed_kinds:
+            candidate_states[result_id] = {"kind_prefilter_status": "allowed"}
+            retained.append(item)
+            continue
+        excluded_candidates.append(
+            _build_kind_prefilter_trace_entry(
+                item,
+                status="excluded",
+                reason_code="kind_not_allowed",
+                reason="Candidate envelope kind is not allowed for this query family.",
+            )
+        )
+    ordered_candidates = [*retained, *fallback_candidates]
+    summary: dict[str, object] = {
+        "allowed_kinds": list(allowed_kinds) if allowed_kinds is not None else None,
+        "input_candidate_count": len(candidates),
+        "retained_candidate_count": len(ordered_candidates),
+        "excluded_by_kind_count": len(excluded_candidates),
+        "envelope_missing_fallback_count": len(fallback_candidates),
+    }
+    if excluded_candidates:
+        summary["excluded_candidates"] = excluded_candidates[:5]
+    if fallback_candidates:
+        summary["fallback_candidates"] = [
+            _build_kind_prefilter_trace_entry(
+                item,
+                status="envelope_missing_fallback",
+                reason_code="envelope_missing_fallback",
+                reason=fallback_reason,
+            )
+            for item in fallback_candidates[:5]
+        ]
+    return ordered_candidates, summary, candidate_states
+
 class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, ConsolidationSemanticPlugin):
     name = "agent_conversation_memory"
 
@@ -570,7 +839,12 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         return "agent_conversation_memory.task_checkpoint"
 
     def process_item(self, source_item: SourceItem) -> ProcessResult:
-        direct_result = self._delegate.process_item(source_item)
+        direct_trace = self._delegate.analyze_item(source_item)
+        direct_result = _apply_direct_memory_envelopes(
+            direct_trace.process_result,
+            source_item=source_item,
+            extraction=direct_trace.extraction,
+        )
         supersession_hints = self._build_supersession_hints(source_item, direct_result)
         return ProcessResult(
             annotations=direct_result.annotations,
@@ -653,6 +927,10 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         )
         intent = str(family_inference["selected_family"])
         preferred_layers = ROUTING_PREFERRED_LAYERS[intent]
+        prefiltered_candidates, kind_prefilter_summary, kind_prefilter_states = _kind_prefilter_candidates(
+            retrieval_result.results,
+            intent=intent,
+        )
         scored_candidates = [
             _score_routed_candidate(
                 item,
@@ -662,8 +940,10 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 lexical_rank=index,
                 query_filters=query_filters,
             )
-            for index, item in enumerate(retrieval_result.results, start=1)
+            for index, item in enumerate(prefiltered_candidates, start=1)
         ]
+        for candidate in scored_candidates:
+            candidate.update(kind_prefilter_states.get(_routing_result_id(candidate["item"]), {}))
         if scored_candidates:
             _apply_same_kind_freshness_shaping(scored_candidates, intent=intent)
             _apply_fresh_thread_structured_recall_preference(
@@ -778,6 +1058,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                     runtime_context=runtime_context,
                     injection_summary=injection_summary,
                     sharp_candidate_diagnostics=sharp_candidate_diagnostics,
+                    kind_prefilter_summary=kind_prefilter_summary,
                 ),
             )
 
@@ -883,6 +1164,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             "prompt_schema_version": THREAD_SUMMARY_PROMPT_SCHEMA_VERSION,
         }
         conclusion_payload = _build_conclusion_payload(carried_conclusions)
+        thread_subjects = _merge_subject_anchors(_subject_anchors_from_memory_objects(carried_conclusions), _subject_anchors_from_source_items(aggregate.source_items))
         thread_summary_memory = MemoryObject(
             type="thread_summary",
             schema_id=self.thread_summary_schema_id,
@@ -899,6 +1181,22 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             },
             visibility_context=aggregate.visibility_context,
             freshness_at=aggregate.latest_occurred_at,
+        )
+        thread_summary_memory = replace(
+            thread_summary_memory,
+            envelope=_build_memory_envelope(
+                kind=_memory_kind_for_type(thread_summary_memory.type),
+                container_ref=aggregate.container_ref,
+                thread_ref=aggregate.thread_ref,
+                session_ref=aggregate.session_ref,
+                confidence=_memory_confidence_for_type(thread_summary_memory.type),
+                producer_kind="thread_aggregation",
+                producer_schema_id=THREAD_SUMMARY_PROMPT_SCHEMA_ID,
+                producer_schema_version=THREAD_SUMMARY_PROMPT_SCHEMA_VERSION,
+                prompt_variant=self.prompt_variant,
+                kind_basis="inherited_from_children" if thread_subjects else "type_map",
+                subjects=thread_subjects,
+            ),
         )
         relations = [
             Relation(
@@ -943,6 +1241,22 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 summary=summary,
                 conclusion_payload=conclusion_payload,
                 selected_work_artifacts=selected_work_artifacts,
+            )
+            task_checkpoint_memory = replace(
+                task_checkpoint_memory,
+                envelope=_build_memory_envelope(
+                    kind=_memory_kind_for_type(task_checkpoint_memory.type),
+                    container_ref=aggregate.container_ref,
+                    thread_ref=aggregate.thread_ref,
+                    session_ref=aggregate.session_ref,
+                    confidence=_memory_confidence_for_type(task_checkpoint_memory.type),
+                    producer_kind="thread_aggregation",
+                    producer_schema_id=TASK_CHECKPOINT_PROMPT_SCHEMA_ID,
+                    producer_schema_version=TASK_CHECKPOINT_PROMPT_SCHEMA_VERSION,
+                    prompt_variant=self.prompt_variant,
+                    kind_basis="inherited_from_children" if thread_subjects else "type_map",
+                    subjects=thread_subjects,
+                ),
             )
             memory_objects.append(task_checkpoint_memory)
             index_entries.append(task_checkpoint_index_entry)
@@ -1107,6 +1421,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         if not isinstance(pattern_label, str) or not pattern_label.strip():
             pattern_label = group.strategy_name
 
+        consolidated_subjects = _subject_anchors_from_memory_objects(candidate.memory_object for candidate in group.candidates)
         semantic_provenance = {
             "semantic_plugin": self.name,
             "prompt_variant": self.prompt_variant,
@@ -1138,6 +1453,22 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             },
             visibility_context=group.visibility_context,
             freshness_at=group.latest_occurred_at,
+        )
+        memory_object = replace(
+            memory_object,
+            envelope=_build_memory_envelope(
+                kind=_memory_kind_for_type(memory_object.type),
+                container_ref=group.container_ref,
+                thread_ref=group.thread_ref,
+                session_ref=group.session_ref,
+                confidence=_memory_confidence_for_type(memory_object.type),
+                producer_kind="consolidation",
+                producer_schema_id=PATTERN_MEMORY_PROMPT_SCHEMA_ID,
+                producer_schema_version=PATTERN_MEMORY_PROMPT_SCHEMA_VERSION,
+                prompt_variant=self.prompt_variant,
+                kind_basis="inherited_from_children" if consolidated_subjects else "type_map",
+                subjects=consolidated_subjects,
+            ),
         )
         index_source = " ".join(
             [
@@ -1173,6 +1504,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         if len(group_material) > CONTINUITY_MEMORY_MAX_TEXT_CHARS:
             group_material = group_material[:CONTINUITY_MEMORY_MAX_TEXT_CHARS].rstrip() + "\n[group material truncated for token budget]"
 
+        consolidated_subjects = _subject_anchors_from_memory_objects(candidate.memory_object for candidate in group.candidates)
         response = self._provider.generate_json(
             system_prompt=CONTINUITY_MEMORY_SYSTEM_PROMPT,
             user_prompt=(
@@ -1228,6 +1560,22 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             },
             visibility_context=group.visibility_context,
             freshness_at=group.latest_occurred_at,
+        )
+        memory_object = replace(
+            memory_object,
+            envelope=_build_memory_envelope(
+                kind=_memory_kind_for_type(memory_object.type),
+                container_ref=group.container_ref,
+                thread_ref=group.thread_ref,
+                session_ref=group.session_ref,
+                confidence=_memory_confidence_for_type(memory_object.type),
+                producer_kind="consolidation",
+                producer_schema_id=CONTINUITY_MEMORY_PROMPT_SCHEMA_ID,
+                producer_schema_version=CONTINUITY_MEMORY_PROMPT_SCHEMA_VERSION,
+                prompt_variant=self.prompt_variant,
+                kind_basis="inherited_from_children" if consolidated_subjects else "type_map",
+                subjects=consolidated_subjects,
+            ),
         )
         index_source = " ".join(
             [
@@ -1931,6 +2279,9 @@ def _score_routed_candidate(
         "routing_score": base_routing_score,
         "support_score": evidence_shape_score,
         "support_grade": support_grade,
+        "envelope_kind": item.envelope.kind if item.envelope is not None else None,
+        "envelope_subjects": _serialize_subject_anchors(item.envelope.subjects) if item.envelope is not None else [],
+        "envelope_confidence": item.envelope.confidence if item.envelope is not None else None,
         "reason": "",
         "strategy_name": _routing_strategy_name(item),
         "content_overlap_tokens": content_overlap_tokens,
@@ -2799,6 +3150,7 @@ def _build_routing_trace(
     runtime_context: QueryRuntimeContext | None,
     injection_summary: dict[str, object],
     sharp_candidate_diagnostics: list[dict[str, object]],
+    kind_prefilter_summary: dict[str, object],
 ) -> dict[str, object]:
     selected_results = [_build_routing_trace_entry(candidate) for candidate in final_candidates]
     demoted_higher_level_hits = [
@@ -2834,6 +3186,7 @@ def _build_routing_trace(
             "reason": routing_focus["reason"],
         },
         "candidate_summary": layer_summary,
+        "kind_prefilter": kind_prefilter_summary,
         "selected_results": selected_results,
         "excluded_high_scoring_candidates": excluded_high_scoring_candidates,
         "demoted_higher_level_hits": demoted_higher_level_hits,
@@ -2861,10 +3214,20 @@ def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object
         "support_score": candidate["support_score"],
         "support_grade": candidate["support_grade"],
         "reason": candidate["reason"],
+        "candidate_envelope_kind": candidate.get("envelope_kind"),
+        "envelope_confidence": candidate.get("envelope_confidence"),
     }
     content_overlap_tokens = list(candidate["content_overlap_tokens"])
     if content_overlap_tokens:
         entry["content_overlap_terms"] = content_overlap_tokens
+    envelope_subjects = list(candidate.get("envelope_subjects") or [])
+    if envelope_subjects:
+        entry["candidate_subjects"] = envelope_subjects
+    if candidate.get("kind_prefilter_status"):
+        entry["kind_prefilter_status"] = candidate["kind_prefilter_status"]
+    if candidate.get("kind_prefilter_reason_code"):
+        entry["kind_prefilter_reason_code"] = candidate["kind_prefilter_reason_code"]
+        entry["kind_prefilter_reason"] = candidate.get("kind_prefilter_reason")
     if candidate["evidence_count"]:
         entry["evidence_count"] = candidate["evidence_count"]
     if candidate["same_thread"]:

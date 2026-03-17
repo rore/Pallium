@@ -27,49 +27,69 @@ class TieredMemoryAnswerProvider:
 
 
 def _build_inventory_batch_thread_summary_payload(lower: str) -> dict[str, str] | None:
-    if 'inventory batch digest' in lower and 'bin-103' in lower and 'local browser' in lower:
+    if 'export manifest locally after the workspace timeout' in lower and 'refresh the local export token' in lower:
         return {
-            'summary': 'The thread preserved the inventory batch digest context for BIN-103, BIN-204, BIN-317, and BIN-418, and the standing constraint is to avoid operations-portal sign-in or opening a local browser.'
+            'summary': 'The newer compatible catalog export status kept the local validation progress, and the next step is to refresh the local export token and rerun validation from batch 313.'
         }
-    if 'channel filters' in lower and 'authentication is restored' in lower:
+    if (
+        (
+            ('inventory batch digest' in lower and 'bin-103' in lower)
+            or ('batch digest' in lower and 'slot-103' in lower)
+        )
+        and ('local browser' in lower or 'browser sign-in' in lower or 'control-panel sign-in' in lower)
+    ):
         return {
-            'summary': 'The thread preserved the inventory batch digest blocker, noted that the remote channel filter is unauthenticated, and suggested retrying the batch digest after authentication is restored.'
+            'summary': 'The thread preserved the batch digest context for the staged segments, and the standing restriction is to avoid control-panel sign-in or browser sign-in.'
         }
-    if 'mirror-based batch digest' in lower and 'attempt to authenticate to the operations portal' in lower:
+    if ('channel filters' in lower and 'authentication is restored' in lower) or ('manifest filters' in lower and 'authentication is restored' in lower):
         return {
-            'summary': 'The thread captured the mirror-based batch digest blocker and suggested attempting authentication to the operations portal and the message console before retrying the inventory batch digest.'
+            'summary': 'The thread preserved the batch digest blocker, noted that the remote mirror was unauthenticated, and suggested retrying the digest after authentication is restored.'
         }
-    if 'sign in to the operations portal manually' in lower and 'local browser' in lower and 'retry after authentication is restored' in lower:
+    if ('mirror-based batch digest' in lower or 'mirrored batch digest' in lower) and (
+        'attempt to authenticate to the operations portal' in lower or 'attempt control-panel sign-in' in lower
+    ):
         return {
-            'summary': 'The thread repeated the no-login and no-browser constraint, but also preserved contradictory next steps to sign in to the operations portal manually, provide a reference code, and retry after authentication is restored.'
+            'summary': 'The thread captured the newer batch digest blocker and suggested attempting control-panel sign-in before retrying the digest.'
+        }
+    if (
+        ('sign in to the operations portal manually' in lower or 'attempt control-panel sign-in' in lower)
+        and ('local browser' in lower or 'browser sign-in' in lower)
+        and 'retry after authentication is restored' in lower
+    ):
+        return {
+            'summary': 'The thread repeated the no-login restriction, but also preserved contradictory authentication-retry guidance.'
         }
     return None
 
 
 def _build_wallet_thread_summary_payload(lower: str) -> dict[str, str] | None:
-    if 'wallet reserve snapshot' in lower and 'wal-102' in lower and 'publish the wallet reserve note' in lower:
+    if ('wallet reserve snapshot' in lower and 'wal-102' in lower and 'publish the wallet reserve note' in lower) or (
+        'reserve snapshot' in lower and 'pouch-102' in lower and 'publish the reserve note' in lower
+    ):
         return {
-            'summary': 'The thread preserved the wallet reserve snapshot for WAL-102 and WAL-208, and the next step is to publish the wallet reserve note after confirming the local snapshot.'
+            'summary': 'The thread preserved the reserve snapshot, and the next step is to publish the reserve note after confirming the local snapshot.'
         }
     return None
 
 
 
 def _build_wallet_task_checkpoint_payload(lower: str) -> dict[str, object] | None:
-    if 'wallet reserve snapshot' in lower and 'wal-102' in lower and 'publish the wallet reserve note' in lower:
+    if ('wallet reserve snapshot' in lower and 'wal-102' in lower and 'publish the wallet reserve note' in lower) or (
+        'reserve snapshot' in lower and 'pouch-102' in lower and 'publish the reserve note' in lower
+    ):
         return {
-            'summary': 'The wallet reserve snapshot is ready for the local wallet review.',
-            'task': 'Resume the wallet reserve snapshot review.',
-            'current_state': 'The wallet reserve snapshot is reconciled for WAL-102 and WAL-208.',
+            'summary': 'The reserve snapshot is ready for the local review.',
+            'task': 'Resume the reserve snapshot review.',
+            'current_state': 'The reserve snapshot is reconciled for the tracked pouches.',
             'key_findings': [
-                'The wallet reserve snapshot is reconciled for WAL-102 and WAL-208.',
-                'The reserve note still needs the local snapshot confirmation before publication.',
+                'The reserve snapshot is reconciled for the tracked pouches.',
+                'The reserve note still needs local snapshot confirmation before publication.',
             ],
             'blocker_state': '',
-            'next_step': 'Publish the wallet reserve note after confirming the local snapshot.',
+            'next_step': 'Publish the reserve note after confirming the local snapshot.',
             'evidence': [
-                'Partial progress: the wallet reserve snapshot is reconciled for WAL-102 and WAL-208.',
-                'Next step: publish the wallet reserve note after confirming the local snapshot.',
+                'Partial progress: the reserve snapshot is reconciled for the tracked pouches.',
+                'Next step: publish the reserve note after confirming the local snapshot.',
             ],
             'freshness_signal': 'Latest explicit update at 2026-03-11T12:35:00Z.',
         }
@@ -78,79 +98,107 @@ def _build_wallet_task_checkpoint_payload(lower: str) -> dict[str, object] | Non
 
 
 def _build_inventory_batch_task_checkpoint_payload(lower: str) -> dict[str, object] | None:
-    if 'inventory batch digest' in lower and 'bin-103' in lower and 'local browser' in lower:
+    if 'export manifest locally after the workspace timeout' in lower and 'refresh the local export token' in lower:
         return {
-            'summary': 'The inventory batch digest is preserved with an explicit no-login and no-browser constraint.',
-            'task': 'Resume the inventory batch digest.',
-            'current_state': 'The inventory batch digest is prepared for BIN-103, BIN-204, BIN-317, and BIN-418.',
+            'summary': 'The newer compatible catalog export status is ready for the next local retry step.',
+            'task': 'Resume the catalog sync retry.',
+            'current_state': 'Validated the export manifest locally after the workspace timeout.',
             'key_findings': [
-                'The inventory batch digest already covers BIN-103, BIN-204, BIN-317, and BIN-418.',
-                'Do not try to sign in to the operations portal or open a local browser.',
+                'The export manifest was validated locally after the workspace timeout.',
+                'The next safe retry still uses the local export token and resume point at batch 313.',
             ],
-            'blocker_state': 'The operator constraint forbids operations-portal sign-in and local-browser login during this batch digest work.',
-            'next_step': 'Refresh the local digest token and rerun the inventory batch digest from the last confirmed batch.',
+            'blocker_state': '',
+            'next_step': 'Refresh the local export token and rerun the validation from batch 313.',
             'evidence': [
-                'Partial progress: prepared the inventory batch digest for BIN-103, BIN-204, BIN-317, and BIN-418.',
-                "Constraint: do not try to sign in to the operations portal and don't open a local browser to log in.",
-                'Next step: refresh the local digest token and rerun the inventory batch digest from the last confirmed batch.',
+                'Partial progress: validated the export manifest locally after the workspace timeout.',
+                'Next step: refresh the local export token and rerun the validation from batch 313 without using the admin portal or a local browser.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T11:12:00Z.',
+        }
+    if (
+        (
+            ('inventory batch digest' in lower and 'bin-103' in lower)
+            or ('batch digest' in lower and 'slot-103' in lower)
+        )
+        and ('local browser' in lower or 'browser sign-in' in lower or 'control-panel sign-in' in lower)
+    ):
+        return {
+            'summary': 'The batch digest is preserved with an explicit no-login restriction.',
+            'task': 'Resume the batch digest.',
+            'current_state': 'The batch digest is prepared for the staged segments.',
+            'key_findings': [
+                'The batch digest already covers the staged segments.',
+                'Do not use control-panel sign-in or open a browser sign-in flow.',
+            ],
+            'blocker_state': 'The operator restriction forbids control-panel sign-in and browser sign-in during this batch digest work.',
+            'next_step': 'Refresh the local digest token and rerun the batch digest from the last confirmed segment.',
+            'evidence': [
+                'Partial progress: prepared the batch digest for the staged segments.',
+                'Constraint: do not use control-panel sign-in and do not open a browser sign-in flow.',
+                'Next step: refresh the local digest token and rerun the batch digest from the last confirmed segment.',
             ],
             'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
         }
-    if 'channel filters' in lower and 'authentication is restored' in lower:
+    if ('channel filters' in lower and 'authentication is restored' in lower) or ('manifest filters' in lower and 'authentication is restored' in lower):
         return {
-            'summary': 'Older inventory batch digest work is blocked by missing authentication.',
-            'task': 'Resume the inventory batch digest after the auth blocker is resolved.',
-            'current_state': 'Channel filters and digest scheduling are ready, but the remote channel filter is unauthenticated.',
+            'summary': 'Older batch digest work is blocked by missing authentication.',
+            'task': 'Resume the batch digest after the auth blocker is resolved.',
+            'current_state': 'Manifest filters and digest scheduling are ready, but the remote mirror is unauthenticated.',
             'key_findings': [
-                'Batch manifests and channel filters are staged for digest scheduling.',
-                'The remote channel filter is unauthenticated.',
+                'Manifest filters and digest scheduling are staged.',
+                'The remote mirror is unauthenticated.',
             ],
-            'blocker_state': 'The inventory batch digest cannot proceed until authentication is restored for the remote channel filter.',
-            'next_step': 'Retry the inventory batch digest after authentication is restored.',
+            'blocker_state': 'The batch digest cannot proceed until authentication is restored for the remote mirror.',
+            'next_step': 'Retry the batch digest after authentication is restored.',
             'evidence': [
-                'Partial progress: batch manifests, channel filters, and digest scheduling are staged.',
-                'Blocked: the inventory batch digest is unauthenticated for the remote channel filter.',
-                'Next step: retry the inventory batch digest after authentication is restored.',
+                'Partial progress: manifest filters and digest scheduling are staged.',
+                'Blocked: the batch digest is unauthenticated for the remote mirror.',
+                'Next step: retry the batch digest after authentication is restored.',
             ],
             'freshness_signal': 'Latest explicit update at 2026-03-11T11:02:00Z.',
         }
-    if 'mirror-based batch digest' in lower and 'attempt to authenticate to the operations portal' in lower:
+    if ('mirror-based batch digest' in lower or 'mirrored batch digest' in lower) and (
+        'attempt to authenticate to the operations portal' in lower or 'attempt control-panel sign-in' in lower
+    ):
         return {
-            'summary': 'A newer mirror-based batch digest is blocked by remote authentication.',
-            'task': 'Resume the mirror-based batch digest.',
-            'current_state': 'The mirror-based batch digest is prepared, but remote authentication still blocks it.',
+            'summary': 'A newer batch digest is blocked by remote authentication.',
+            'task': 'Resume the newer batch digest.',
+            'current_state': 'The newer batch digest is prepared, but remote authentication still blocks it.',
             'key_findings': [
-                'The mirror-based batch digest is prepared for the batch manifests.',
+                'The newer batch digest is prepared for the staged manifests.',
                 'Remote authentication still blocks it.',
             ],
-            'blocker_state': 'The mirror-based batch digest cannot proceed until remote authentication succeeds.',
-            'next_step': 'Attempt to authenticate to the operations portal and the message console before retrying the inventory batch digest.',
+            'blocker_state': 'The newer batch digest cannot proceed until remote authentication succeeds.',
+            'next_step': 'Attempt control-panel sign-in and auxiliary-console sign-in before retrying the batch digest.',
             'evidence': [
-                'Partial progress: built the mirror-based batch digest for the batch manifests.',
-                'Blocked: the mirror-based batch digest cannot proceed until remote authentication succeeds.',
-                'Next step: attempt to authenticate to the operations portal and the message console before retrying the inventory batch digest.',
+                'Partial progress: built the mirrored batch digest for the staged manifests.',
+                'Blocked: the mirrored batch digest cannot proceed until remote authentication succeeds.',
+                'Next step: attempt control-panel sign-in and auxiliary-console sign-in before retrying the batch digest.',
             ],
             'freshness_signal': 'Latest explicit update at 2026-03-11T12:02:00Z.',
         }
-    if 'sign in to the operations portal manually' in lower and 'local browser' in lower and 'retry after authentication is restored' in lower:
+    if (
+        ('sign in to the operations portal manually' in lower or 'attempt control-panel sign-in' in lower)
+        and ('local browser' in lower or 'browser sign-in' in lower)
+        and 'retry after authentication is restored' in lower
+    ):
         return {
-            'summary': 'The inventory batch digest thread mixed an explicit no-login constraint with contradictory authentication-retry guidance.',
-            'task': 'Resume the inventory batch digest after the current failure.',
-            'current_state': 'The inventory batch digest summary is ready, and the thread repeated the no-login and no-browser constraint.',
+            'summary': 'The batch digest thread mixed an explicit no-login restriction with contradictory authentication-retry guidance.',
+            'task': 'Resume the batch digest after the current failure.',
+            'current_state': 'The batch digest summary is ready, and the thread repeated the no-login restriction.',
             'key_findings': [
-                "Do not try to sign in to the operations portal and don't open a local browser to log in.",
-                'The draft also said to sign in to the operations portal manually and retry after authentication is restored.',
+                'Do not use control-panel sign-in or open a browser sign-in flow.',
+                'The draft also said to attempt control-panel sign-in and retry after authentication is restored.',
             ],
-            'blocker_state': 'The thread says not to use operations-portal sign-in or a local browser, but also says the next step depends on authentication retry.',
-            'next_step': 'Sign in to the operations portal manually, provide a reference code, and retry after authentication is restored.',
+            'blocker_state': 'The thread says not to use control-panel sign-in or browser sign-in, but also says the next step depends on authentication retry.',
+            'next_step': 'Attempt control-panel sign-in, provide a reference code, and retry after authentication is restored.',
             'evidence': [
-                "Constraint: do not try to sign in to the operations portal and don't open a local browser to log in.",
-                'Next step: sign in to the operations portal manually, provide a reference code, and retry after authentication is restored.',
+                'Constraint: do not use control-panel sign-in and do not open a browser sign-in flow.',
+                'Next step: attempt control-panel sign-in, provide a reference code, and retry after authentication is restored.',
             ],
             'freshness_signal': 'Latest explicit update at 2026-03-11T13:05:00Z.',
         }
     return None
-
 
 def _build_item_extraction_payload(user_prompt: str) -> dict[str, object]:
     lower = user_prompt.lower()
@@ -1087,7 +1135,6 @@ def _build_public_corpus_answer_payload(user_prompt: str) -> dict[str, object]:
             'answer': 'The visible context does not show the earlier handoff-template answer.',
             'evidence_used': [],
         }
-
     if ('what blocker is still live' in lower and 'what should i do next' in lower) or ('what blocker remained' in lower and 'what should happen next' in lower) or 'blocker and next step are already visible in this thread' in lower:
         if ('branch kiosk fallback coverage is still missing' in lower and 'kiosk smoke tests' in lower) or ('memory/task_checkpoint' in lower and 'branch kiosk' in lower):
             return {
@@ -1158,7 +1205,6 @@ def _build_public_corpus_answer_payload(user_prompt: str) -> dict[str, object]:
             'answer': 'The visible context does not include the earlier log evidence.',
             'evidence_used': [],
         }
-
     if ('what is the current blocker' in lower and 'what should i do next' in lower) or ('what is the live blocker' in lower and 'resume point now' in lower) or ('what blocker did we hit now' in lower and 'where do i resume from' in lower) or 'current blocker and resume point are already visible in this thread' in lower:
         if ('retry window was exhausted' in lower and 'batch 418' in lower) or ('memory/task_checkpoint' in lower and 'catalog sync retry' in lower):
             return {
@@ -1174,6 +1220,10 @@ def _build_public_corpus_answer_payload(user_prompt: str) -> dict[str, object]:
         'answer': 'The current thread context is sufficient for this question.',
         'evidence_used': [],
     }
+
+
+
+
 
 
 

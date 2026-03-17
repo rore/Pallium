@@ -76,6 +76,9 @@ stabilization step, not a follow-on optimization.
   classification
 - require explicit unknown or abstain behavior when the extractor cannot assign
   a field confidently rather than fabricating a precise type
+- keep the extraction role aligned with the shared prompt-role contract owned by
+  `add-semantic-prompt-role-contracts-and-replay-governance` once that later
+  feature lands
 - define write-time operational rules for extraction quality and cost,
   including at least:
   - per-role prompt versioning
@@ -135,3 +138,6 @@ Implementation defaults:
   behavior should remain deterministic once the fields exist
 - improve prompts through smaller typed extraction tasks, versioning, and
   replay-backed review rather than by growing one broad summarization prompt
+- treat this feature as the first concrete consumer of the later shared
+  `write_extraction` prompt-role contract, not as the long-term owner of prompt
+  governance rules

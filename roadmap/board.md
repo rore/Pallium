@@ -6,6 +6,7 @@
 - add-bounded-query-intent-resolution
 
 # Later
+- add-semantic-prompt-role-contracts-and-replay-governance
 - add-write-time-contextual-enrichment-and-background-consolidation
 - add-vector-retrieval-provider
 - add-hybrid-retrieval-fusion

@@ -7,7 +7,17 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from core.models import EvidenceReference, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace, SourceItem
+from core.models import (
+    EvidenceReference,
+    MemoryEnvelope,
+    MemoryEnvelopeDerivation,
+    MemoryEnvelopeScope,
+    QueryFilters,
+    QueryResultItem,
+    QueryRuntimeContext,
+    QueryTrace,
+    SourceItem,
+)
 from core.visibility import VisibilityContext
 from retrieval.base import RetrievalQueryResult
 from semantic.agent_conversation_memory import (
@@ -59,6 +69,24 @@ def _run_debug_query(client: TestClient, payload: dict[str, object]) -> dict[str
     response = client.post('/query/debug', json=payload)
     assert response.status_code == 200
     return response.json()
+
+
+def _memory_envelope(kind: str, *, confidence: str = 'medium') -> MemoryEnvelope:
+    return MemoryEnvelope(
+        schema_id='core.memory_envelope',
+        schema_version='v1',
+        kind=kind,
+        scope=MemoryEnvelopeScope(container_ref='chat:library-help'),
+        confidence=confidence,
+        derivation=MemoryEnvelopeDerivation(
+            producer_kind='item_extraction',
+            producer_schema_id='typed_memory_extraction',
+            producer_schema_version='v6',
+            prompt_variant='strict_typed_memory_v4_evidence_guarded',
+            model_role='write_time_extraction',
+            kind_basis='type_map',
+        ),
+    )
 
 
 def _ingest_resumption_work(client: TestClient, *, thread_ref: str) -> None:
@@ -169,16 +197,20 @@ def test_precise_fact_routes_sharp_decision_ahead_of_higher_level_memory(monkeyp
 
         payload = _run_debug_query(client, scenario['current_query'])
         routing = payload['trace']['routing']
+        kind_prefilter = routing['kind_prefilter']
 
         assert routing['query_intent'] == 'precise_fact'
         assert routing['preferred_layers'][0] == 'decision'
         assert payload['results'][0]['result_kind'] == 'memory_hit'
         assert payload['results'][0]['type'] == 'decision'
+        assert kind_prefilter['allowed_kinds'] == ['finding']
         assert any(
             item['memory_type'] == 'thread_summary'
-            and item['lexical_rank'] < item['routing_rank']
-            for item in routing['demoted_higher_level_hits']
+            and item['candidate_envelope_kind'] == 'summary'
+            and item['reason_code'] == 'kind_not_allowed'
+            for item in kind_prefilter.get('excluded_candidates', [])
         )
+        assert all(item['memory_type'] != 'thread_summary' for item in routing['demoted_higher_level_hits'])
 
 
 def test_evidence_trace_routes_source_evidence_first(monkeypatch, test_db_url: str) -> None:
@@ -228,6 +260,86 @@ def test_work_resumption_routes_task_checkpoint_first(monkeypatch, test_db_url: 
         assert 'refresh the catalog service token' in checkpoint_payload['next_step'].lower()
         assert 'blocker' in routing['selected_results'][0]['work_signal_types']
         assert 'freshness' in routing['selected_results'][0]['work_signal_types']
+        assert routing['kind_prefilter']['allowed_kinds'] == ['episode', 'finding', 'summary']
+        assert routing['selected_results'][0]['candidate_envelope_kind'] == 'episode'
+        assert routing['selected_results'][0]['kind_prefilter_status'] == 'allowed'
+
+
+def test_precise_fact_prefers_enveloped_finding_and_keeps_legacy_memory_only_as_fallback() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='legacy-checkpoint',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'Retry paused after the catalog sync failure.',
+                    'current_state': 'The retry stopped after the sync tool failed.',
+                },
+                score=22,
+                evidence=[],
+                container_ref='chat:library-help',
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='finding-1',
+                type='decision',
+                payload={'decision': 'Use item event time reservation ordering.'},
+                score=18,
+                evidence=[],
+                container_ref='chat:library-help',
+                envelope=_memory_envelope('finding', confidence='high'),
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='summary-1',
+                type='thread_summary',
+                payload={'summary': 'We discussed reservation ordering tradeoffs.'},
+                score=21,
+                evidence=[],
+                container_ref='chat:library-help',
+                envelope=_memory_envelope('summary', confidence='medium'),
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What did we decide about reservation ordering?',
+            query_tokens=('what', 'did', 'we', 'decide', 'about', 'reservation', 'ordering'),
+            limit=3,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What did we decide about reservation ordering?',
+        requested_limit=3,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    routing = outcome.trace.routing
+    assert [item.memory_object_id for item in outcome.results if item.result_kind == 'memory_hit'] == ['finding-1', 'legacy-checkpoint']
+    assert routing['kind_prefilter']['allowed_kinds'] == ['finding']
+    assert routing['kind_prefilter']['excluded_by_kind_count'] == 1
+    assert routing['kind_prefilter']['envelope_missing_fallback_count'] == 1
+    assert any(
+        item['result_id'] == 'memory_object:legacy-checkpoint'
+        and item['kind_prefilter_status'] == 'envelope_missing_fallback'
+        for item in routing['selected_results']
+    )
+    assert any(
+        item['result_id'] == 'memory_object:summary-1'
+        and item['reason_code'] == 'kind_not_allowed'
+        for item in routing['kind_prefilter'].get('excluded_candidates', [])
+    )
 
 
 def test_work_resumption_demotes_thin_checkpoint_when_fresher_source_state_is_sharper() -> None:

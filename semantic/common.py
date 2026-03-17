@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from core.contracts import ProcessResult
 from core.indexing import build_index_entry
-from core.models import Annotation, MemoryObject, Relation, SourceItem
+from core.models import Annotation, MemoryObject, MemorySubjectAnchor, Relation, SourceItem
 
 
 SEMANTIC_SIGNAL_METADATA_KEY = "pallium_semantic_signals"
@@ -95,6 +95,7 @@ class SemanticExtraction:
     blocker_text: str | None = None
     progress_text: str | None = None
     key_finding_text: str | None = None
+    subject_hints: tuple[MemorySubjectAnchor, ...] = field(default_factory=tuple)
 
 
 def summarize_content(content: str) -> str:

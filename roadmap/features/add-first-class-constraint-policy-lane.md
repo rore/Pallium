@@ -53,6 +53,9 @@ Pallium's highest-value policy classes deterministic in the hot path.
 - allow typed constraint fields to be extracted with bounded semantic
   classification, but do not rely on free-form prompt prose as the enforcement
   mechanism
+- use the later shared `write_reconciliation` prompt-role contract for typed
+  update or supersession decisions once prompt-role formalization lands, rather
+  than defining a one-off reconciliation prompt inside this feature
 - make query-time selection filter or demote incompatible candidates using the
   typed constraint lane
 - make write-time reconciliation of `task_checkpoint`, `thread_summary`, and
@@ -109,3 +112,6 @@ Implementation defaults:
 - avoid reintroducing phrase-chasing as the primary conflict mechanism
 - use prompt improvements to sharpen typed extraction boundaries and abstention,
   not to encode product-specific constraint wording into longer prompts
+- keep this feature focused on typed compatibility semantics; shared
+  prompt-contract ownership should live in
+  `add-semantic-prompt-role-contracts-and-replay-governance`

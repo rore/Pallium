@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.contracts import ProcessResult
-from core.models import SourceItem
+from core.models import MemorySubjectAnchor, SourceItem
 from providers.llm.base import LLMJsonResponse, LLMProvider
 from semantic.base import SemanticPlugin
 from semantic.common import SemanticExtraction, build_process_result
@@ -13,7 +13,7 @@ from semantic.common import SemanticExtraction, build_process_result
 
 DEFAULT_PROMPT_VARIANT = "strict_typed_memory_v4_evidence_guarded"
 PROMPT_SCHEMA_ID = "typed_memory_extraction"
-PROMPT_SCHEMA_VERSION = "v5"
+PROMPT_SCHEMA_VERSION = "v6"
 PROMPT_VARIANTS: dict[str, str] = {
     "baseline": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
 
@@ -69,7 +69,7 @@ If you are not certain the source contains explicit evidence, return candidate_t
 Your task is conservative typed-memory extraction with evidence grounding.
 A decision exists only when the source explicitly records a concrete choice that has already been made.
 An investigation_outcome exists only when the source explicitly records an established finding, root cause, conclusion, diagnostic outcome, or evidence-backed analytical verdict.
-Also extract optional internal-only semantic signals when the source explicitly states them: low-value meta chatter, constraints, blocker state, progress state, next step, and key findings.
+Also extract optional internal-only semantic signals when the source explicitly states them: low-value meta chatter, constraints, blocker state, progress state, next step, and key findings. Also extract optional subject_hints when the source explicitly names a durable workstream, component, or surface.
 If the source only states a need, a symptom, a proposal, a preference, a recommendation, a status update, or something to watch, candidate_type must be null.
 
 Evidence rule:
@@ -86,7 +86,7 @@ Source-type guidance:
 
 When candidate_type is `decision`, fill only decision_text and decision_evidence_text.
 When candidate_type is `investigation_outcome`, fill only investigation_text and investigation_evidence_text.
-For the optional internal fields, only populate them when the source explicitly states that exact state.
+For the optional internal fields, only populate them when the source explicitly states that exact state. subject_hints must be a list of objects with kind and value, using only the kinds workstream, component, or surface. Return an empty list when no explicit anchors are present, and do not invent anchors from weak implication or broad topic guesses.
 Internal-field rules:
 - Populate key_finding_text for explicit verdicts, conclusions, findings, and root causes. For an explicit analytical verdict, key_finding_text should usually restate the resolved conclusion in one sentence.
 - If is_low_value_meta is true for pure orchestration chatter, constraint_text, next_step_text, blocker_text, progress_text, and key_finding_text must all be null.
@@ -118,6 +118,7 @@ SCHEMA_DESCRIPTION = json.dumps(
         "blocker_text": "string or null",
         "progress_text": "string or null",
         "key_finding_text": "string or null",
+        "subject_hints": "array of {kind: workstream|component|surface, value: string} or null",
     },
     indent=2,
 )
@@ -231,6 +232,7 @@ def _normalize_extraction(payload: dict[str, Any]) -> SemanticExtraction:
     blocker_text = _normalize_optional_string(payload.get("blocker_text"), field_name="blocker_text")
     progress_text = _normalize_optional_string(payload.get("progress_text"), field_name="progress_text")
     key_finding_text = _normalize_optional_string(payload.get("key_finding_text"), field_name="key_finding_text")
+    subject_hints = _normalize_subject_hints(payload.get("subject_hints"))
 
     if candidate_type is not None:
         candidate_type = candidate_type.lower()
@@ -251,8 +253,28 @@ def _normalize_extraction(payload: dict[str, Any]) -> SemanticExtraction:
         blocker_text=blocker_text,
         progress_text=progress_text,
         key_finding_text=key_finding_text,
+        subject_hints=subject_hints,
     )
 
+
+
+def _normalize_subject_hints(value: Any) -> tuple[MemorySubjectAnchor, ...]:
+    if value is None or value == "unknown":
+        return ()
+    if not isinstance(value, list):
+        return ()
+    normalized: list[MemorySubjectAnchor] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip().lower()
+        anchor_value = str(item.get("value") or "").strip()
+        if kind not in {"workstream", "component", "surface"}:
+            continue
+        if not anchor_value or anchor_value.lower() == "unknown":
+            continue
+        normalized.append(MemorySubjectAnchor(kind=kind, value=anchor_value))
+    return tuple(normalized)
 
 def _normalize_required_string(value: Any, *, field_name: str) -> str:
     if not isinstance(value, str):

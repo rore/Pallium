@@ -10,6 +10,12 @@ from core.models import MemoryObject
 from core.visibility import VisibilityContext
 from providers.llm.base import LLMJsonResponse, LLMProviderError
 from tests.stub_providers import TieredMemorySemanticProvider
+from tests.agent_conversation_replay_helpers import (
+    _agent_conversation_client,
+    _render_injected_text,
+    _seed_batch_digest_polluted_history,
+    _seed_short_noun_isolation_history,
+)
 
 
 class StubLLMProvider:
@@ -296,42 +302,6 @@ def test_worker_failure_is_reported_via_processing_endpoint(monkeypatch, test_db
     assert status_response.status_code == 200
     assert status_response.json()["processing_status"] == "failed"
     assert status_response.json()["processing_error"] == "provider failed"
-
-
-
-def _agent_conversation_client(monkeypatch, test_db_url: str) -> TestClient:
-    monkeypatch.setattr(
-        "app.dependencies.build_llm_provider",
-        lambda config, **_: TieredMemorySemanticProvider(),
-    )
-    client = TestClient(
-        create_app(
-            AppConfig(
-                storage_backend="sqlite",
-                sqlite_url=test_db_url,
-                default_use_case="agent_conversation_memory",
-                llm_provider="openai_compatible",
-                llm_model="fake-model",
-                llm_base_url="http://fake-provider.local",
-                llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
-            )
-        )
-    )
-    original_post = client.post
-
-    def post_with_public_visibility(url: str, *args, **kwargs):
-        payload = kwargs.get("json")
-        if isinstance(payload, dict) and url in {"/items", "/query", "/query/debug"} and "visibility_context" not in payload:
-            payload = dict(payload)
-            payload["visibility_context"] = {"kind": "public", "id": None}
-            kwargs["json"] = payload
-        response = original_post(url, *args, **kwargs)
-        if url == "/items" and response.status_code == 200:
-            client.app.state.pallium_service.drain_processing_queue(worker_id="api-contract-test")
-        return response
-
-    client.post = post_with_public_visibility
-    return client
 
 
 
@@ -1339,431 +1309,14 @@ def test_query_debug_exposes_injection_decision_and_sharp_candidate_diagnostics(
 
 
 
-def _inventory_batch_visibility_context() -> dict[str, str]:
-    return {"kind": "limited", "id": "slack:channel:CLOCAL001"}
-
-
-
-def _ingest_inventory_batch_polluted_history(client: TestClient) -> dict[str, object]:
-    container_ref = "slack:channel:CLOCAL001"
-    visibility_context = _inventory_batch_visibility_context()
-    threads = {
-        "constraint": "slack:thread:CLOCAL001:inventory-batch-constraint",
-        "auth_retry_old": "slack:thread:CLOCAL001:inventory-batch-auth-retry-old",
-        "auth_retry_new": "slack:thread:CLOCAL001:inventory-batch-auth-retry-new",
-        "same_thread": "slack:thread:CLOCAL001:inventory-batch-reminder",
-    }
-    sessions = {
-        "constraint": "agent-session:inventory-batch-constraint",
-        "auth_retry_old": "agent-session:inventory-batch-auth-retry-old",
-        "auth_retry_new": "agent-session:inventory-batch-auth-retry-new",
-        "same_thread": "agent-session:inventory-batch-reminder",
-    }
-    payloads = (
-        {
-            "source_type": "chat_message",
-            "source_id": "inventory-batch-a-msg-1",
-            "content_type": "text/plain",
-            "content": "Please summarize the latest inventory batch digest work for the local channel.",
-            "artifact_kind": "message",
-            "role": "user",
-            "container_ref": container_ref,
-            "thread_ref": threads["constraint"],
-            "session_ref": sessions["constraint"],
-            "occurred_at": "2026-03-11T10:00:00Z",
-            "visibility_context": visibility_context,
-        },
-        {
-            "source_type": "assistant_artifact",
-            "source_id": "inventory-batch-a-artifact-1",
-            "content_type": "text/plain",
-            "content": "Partial progress: prepared the inventory batch digest for BIN-103, BIN-204, BIN-317, and BIN-418.",
-            "artifact_kind": "tool_use_summary",
-            "role": "assistant",
-            "container_ref": container_ref,
-            "thread_ref": threads["constraint"],
-            "session_ref": sessions["constraint"],
-            "occurred_at": "2026-03-11T10:01:00Z",
-            "visibility_context": visibility_context,
-        },
-        {
-            "source_type": "chat_message",
-            "source_id": "inventory-batch-a-msg-2",
-            "content_type": "text/plain",
-            "content": "Please remember not to try to sign in to the operations portal, and don't open a local browser to log in.",
-            "artifact_kind": "message",
-            "role": "user",
-            "container_ref": container_ref,
-            "thread_ref": threads["constraint"],
-            "session_ref": sessions["constraint"],
-            "occurred_at": "2026-03-11T10:01:30Z",
-            "visibility_context": visibility_context,
-        },
-        {
-            "source_type": "assistant_artifact",
-            "source_id": "inventory-batch-a-artifact-2",
-            "content_type": "text/plain",
-            "content": "Next step: refresh the local digest token and rerun the inventory batch digest from the last confirmed batch.",
-            "artifact_kind": "todo_snapshot",
-            "role": "assistant",
-            "container_ref": container_ref,
-            "thread_ref": threads["constraint"],
-            "session_ref": sessions["constraint"],
-            "occurred_at": "2026-03-11T10:02:00Z",
-            "visibility_context": visibility_context,
-        },
-        {
-            "source_type": "chat_message",
-            "source_id": "inventory-batch-b-msg-1",
-            "content_type": "text/plain",
-            "content": "Please summarize the older inventory batch digest blocker.",
-            "artifact_kind": "message",
-            "role": "user",
-            "container_ref": container_ref,
-            "thread_ref": threads["auth_retry_old"],
-            "session_ref": sessions["auth_retry_old"],
-            "occurred_at": "2026-03-11T11:00:00Z",
-            "visibility_context": visibility_context,
-        },
-        {
-            "source_type": "assistant_artifact",
-            "source_id": "inventory-batch-b-artifact-0",
-            "content_type": "text/plain",
-            "content": "Partial progress: batch manifests, channel filters, and digest scheduling are staged.",
-            "artifact_kind": "tool_use_summary",
-            "role": "assistant",
-            "container_ref": container_ref,
-            "thread_ref": threads["auth_retry_old"],
-            "session_ref": sessions["auth_retry_old"],
-            "occurred_at": "2026-03-11T11:00:30Z",
-            "visibility_context": visibility_context,
-        },
-        {
-            "source_type": "assistant_artifact",
-            "source_id": "inventory-batch-b-artifact-1",
-            "content_type": "text/plain",
-            "content": "Blocked: the inventory batch digest is unauthenticated for the remote channel filter.",
-            "artifact_kind": "tool_use_summary",
-            "role": "assistant",
-            "container_ref": container_ref,
-            "thread_ref": threads["auth_retry_old"],
-            "session_ref": sessions["auth_retry_old"],
-            "occurred_at": "2026-03-11T11:01:00Z",
-            "visibility_context": visibility_context,
-        },
-        {
-            "source_type": "assistant_artifact",
-            "source_id": "inventory-batch-b-artifact-2",
-            "content_type": "text/plain",
-            "content": "Next step: retry the inventory batch digest after authentication is restored.",
-            "artifact_kind": "todo_snapshot",
-            "role": "assistant",
-            "container_ref": container_ref,
-            "thread_ref": threads["auth_retry_old"],
-            "session_ref": sessions["auth_retry_old"],
-            "occurred_at": "2026-03-11T11:02:00Z",
-            "visibility_context": visibility_context,
-        },
-        {
-            "source_type": "chat_message",
-            "source_id": "inventory-batch-c-msg-1",
-            "content_type": "text/plain",
-            "content": "Please summarize the newer batch digest blocker.",
-            "artifact_kind": "message",
-            "role": "user",
-            "container_ref": container_ref,
-            "thread_ref": threads["auth_retry_new"],
-            "session_ref": sessions["auth_retry_new"],
-            "occurred_at": "2026-03-11T12:00:00Z",
-            "visibility_context": visibility_context,
-        },
-        {
-            "source_type": "assistant_artifact",
-            "source_id": "inventory-batch-c-artifact-0",
-            "content_type": "text/plain",
-            "content": "Partial progress: built the mirror-based batch digest for the batch manifests.",
-            "artifact_kind": "tool_use_summary",
-            "role": "assistant",
-            "container_ref": container_ref,
-            "thread_ref": threads["auth_retry_new"],
-            "session_ref": sessions["auth_retry_new"],
-            "occurred_at": "2026-03-11T12:00:30Z",
-            "visibility_context": visibility_context,
-        },
-        {
-            "source_type": "assistant_artifact",
-            "source_id": "inventory-batch-c-artifact-1",
-            "content_type": "text/plain",
-            "content": "Blocked: the mirror-based batch digest cannot proceed until remote authentication succeeds.",
-            "artifact_kind": "tool_use_summary",
-            "role": "assistant",
-            "container_ref": container_ref,
-            "thread_ref": threads["auth_retry_new"],
-            "session_ref": sessions["auth_retry_new"],
-            "occurred_at": "2026-03-11T12:01:00Z",
-            "visibility_context": visibility_context,
-        },
-        {
-            "source_type": "assistant_artifact",
-            "source_id": "inventory-batch-c-artifact-2",
-            "content_type": "text/plain",
-            "content": "Next step: attempt to authenticate to the operations portal and the message console before retrying the inventory batch digest.",
-            "artifact_kind": "todo_snapshot",
-            "role": "assistant",
-            "container_ref": container_ref,
-            "thread_ref": threads["auth_retry_new"],
-            "session_ref": sessions["auth_retry_new"],
-            "occurred_at": "2026-03-11T12:02:00Z",
-            "visibility_context": visibility_context,
-        },
-        {
-            "source_type": "chat_message",
-            "source_id": "inventory-batch-d-msg-1",
-            "content_type": "text/plain",
-            "content": "good morning",
-            "artifact_kind": "message",
-            "role": "user",
-            "container_ref": container_ref,
-            "thread_ref": threads["same_thread"],
-            "session_ref": sessions["same_thread"],
-            "occurred_at": "2026-03-11T13:00:00Z",
-            "visibility_context": visibility_context,
-        },
-        {
-            "source_type": "assistant_artifact",
-            "source_id": "inventory-batch-d-artifact-1",
-            "content_type": "text/plain",
-            "content": "Good morning. I can help with the latest batch status when you are ready.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
-            "container_ref": container_ref,
-            "thread_ref": threads["same_thread"],
-            "session_ref": sessions["same_thread"],
-            "occurred_at": "2026-03-11T13:00:10Z",
-            "visibility_context": visibility_context,
-        },
-        {
-            "source_type": "chat_message",
-            "source_id": "inventory-batch-d-msg-2",
-            "content_type": "text/plain",
-            "content": "can you remind me what we had latest about batches?",
-            "artifact_kind": "message",
-            "role": "user",
-            "container_ref": container_ref,
-            "thread_ref": threads["same_thread"],
-            "session_ref": sessions["same_thread"],
-            "occurred_at": "2026-03-11T13:00:20Z",
-            "visibility_context": visibility_context,
-        },
-    )
-    for payload in payloads:
-        response = client.post("/items", json=payload)
-        assert response.status_code == 200
-
-    storage = client.app.state.pallium_service._storage
-    def active_memory(thread_ref: str, memory_type: str) -> list[MemoryObject]:
-        return [
-            memory
-            for source_item in storage.list_source_items_for_thread(container_ref, thread_ref)
-            for memory in storage.list_memory_objects_for_source_item(source_item.id)
-            if memory.lifecycle == "active" and memory.type == memory_type
-        ]
-
-    def rendered_memory(thread_ref: str) -> list[str]:
-        rendered: list[str] = []
-        for memory_type in ("task_checkpoint", "thread_summary"):
-            for memory in active_memory(thread_ref, memory_type):
-                payload = memory.payload or {}
-                rendered.append(
-                    " ".join(
-                        [
-                            str(payload.get("summary") or ""),
-                            str(payload.get("current_state") or ""),
-                            str(payload.get("blocker_state") or ""),
-                            str(payload.get("next_step") or ""),
-                            *[str(value or "") for value in payload.get("key_findings", []) if isinstance(value, str)],
-                            *[str(value or "") for value in payload.get("evidence", []) if isinstance(value, str)],
-                        ]
-                    ).lower()
-                )
-        return rendered
-
-    constraint_rendered = rendered_memory(threads["constraint"])
-    auth_retry_old_rendered = rendered_memory(threads["auth_retry_old"])
-    auth_retry_new_rendered = rendered_memory(threads["auth_retry_new"])
-    assert any("inventory batch digest" in rendered for rendered in constraint_rendered)
-    assert any("local browser" in rendered for rendered in constraint_rendered)
-    assert any("authentication is restored" in rendered for rendered in auth_retry_old_rendered)
-    assert any("attempting authentication" in rendered or "operations portal and the message console" in rendered for rendered in auth_retry_new_rendered)
-
-    return {
-        "container_ref": container_ref,
-        "visibility_context": visibility_context,
-        "threads": threads,
-        "sessions": sessions,
-    }
-
-
-
-def _ingest_inventory_wallet_polluted_history(client: TestClient) -> dict[str, object]:
-    scenario = _ingest_inventory_batch_polluted_history(client)
-    container_ref = scenario['container_ref']
-    visibility_context = scenario['visibility_context']
-    threads = dict(scenario['threads'])
-    sessions = dict(scenario['sessions'])
-    threads.update({
-        'same_thread_x': 'slack:thread:CLOCAL001:inventory-batch-thread-x',
-        'same_thread_y': 'slack:thread:CLOCAL001:inventory-batch-thread-y',
-        'wallet': 'slack:thread:CLOCAL001:wallet-snapshot-thread',
-        'noise': 'slack:thread:CLOCAL001:generic-noise-thread',
-    })
-    sessions.update({
-        'same_thread_x': 'agent-session:inventory-batch-thread-x',
-        'same_thread_y': 'agent-session:inventory-batch-thread-y',
-        'wallet': 'agent-session:wallet-snapshot-thread',
-        'noise': 'agent-session:generic-noise-thread',
-    })
-
-    payloads = (
-        {
-            'source_type': 'assistant_artifact',
-            'source_id': 'inventory-wallet-noise-capability',
-            'content_type': 'text/plain',
-            'content': 'Well, I am a helper of many talents across batch digests and wallet summaries.',
-            'artifact_kind': 'assistant_output',
-            'role': 'assistant',
-            'container_ref': container_ref,
-            'thread_ref': threads['noise'],
-            'session_ref': sessions['noise'],
-            'occurred_at': '2026-03-11T08:55:00Z',
-            'visibility_context': visibility_context,
-        },
-        {
-            'source_type': 'assistant_artifact',
-            'source_id': 'inventory-wallet-noise-heartbeat',
-            'content_type': 'text/plain',
-            'content': 'Heartbeat: still monitoring the local channel.',
-            'artifact_kind': 'assistant_output',
-            'role': 'assistant',
-            'container_ref': container_ref,
-            'thread_ref': threads['noise'],
-            'session_ref': sessions['noise'],
-            'occurred_at': '2026-03-11T08:56:00Z',
-            'visibility_context': visibility_context,
-        },
-        {
-            'source_type': 'chat_message',
-            'source_id': 'wallet-thread-msg-1',
-            'content_type': 'text/plain',
-            'content': 'Please summarize the latest wallet reserve snapshot for the local wallet review.',
-            'artifact_kind': 'message',
-            'role': 'user',
-            'container_ref': container_ref,
-            'thread_ref': threads['wallet'],
-            'session_ref': sessions['wallet'],
-            'occurred_at': '2026-03-11T12:30:00Z',
-            'visibility_context': visibility_context,
-        },
-        {
-            'source_type': 'assistant_artifact',
-            'source_id': 'wallet-thread-artifact-1',
-            'content_type': 'text/plain',
-            'content': 'Partial progress: the wallet reserve snapshot is reconciled for WAL-102 and WAL-208.',
-            'artifact_kind': 'tool_use_summary',
-            'role': 'assistant',
-            'container_ref': container_ref,
-            'thread_ref': threads['wallet'],
-            'session_ref': sessions['wallet'],
-            'occurred_at': '2026-03-11T12:31:00Z',
-            'visibility_context': visibility_context,
-        },
-        {
-            'source_type': 'assistant_artifact',
-            'source_id': 'wallet-thread-artifact-2',
-            'content_type': 'text/plain',
-            'content': 'Next step: publish the wallet reserve note after confirming the local snapshot.',
-            'artifact_kind': 'todo_snapshot',
-            'role': 'assistant',
-            'container_ref': container_ref,
-            'thread_ref': threads['wallet'],
-            'session_ref': sessions['wallet'],
-            'occurred_at': '2026-03-11T12:35:00Z',
-            'visibility_context': visibility_context,
-        },
-        {
-            'source_type': 'chat_message',
-            'source_id': 'thread-x-msg-1',
-            'content_type': 'text/plain',
-            'content': 'good afternnon sir',
-            'artifact_kind': 'message',
-            'role': 'user',
-            'container_ref': container_ref,
-            'thread_ref': threads['same_thread_x'],
-            'session_ref': sessions['same_thread_x'],
-            'occurred_at': '2026-03-11T13:00:00Z',
-            'visibility_context': visibility_context,
-        },
-        {
-            'source_type': 'assistant_artifact',
-            'source_id': 'thread-x-artifact-1',
-            'content_type': 'text/plain',
-            'content': 'Good afternoon. I can help with the latest batch digest status when you are ready.',
-            'artifact_kind': 'assistant_output',
-            'role': 'assistant',
-            'container_ref': container_ref,
-            'thread_ref': threads['same_thread_x'],
-            'session_ref': sessions['same_thread_x'],
-            'occurred_at': '2026-03-11T13:00:10Z',
-            'visibility_context': visibility_context,
-        },
-        {
-            'source_type': 'chat_message',
-            'source_id': 'thread-y-msg-1',
-            'content_type': 'text/plain',
-            'content': 'hello again',
-            'artifact_kind': 'message',
-            'role': 'user',
-            'container_ref': container_ref,
-            'thread_ref': threads['same_thread_y'],
-            'session_ref': sessions['same_thread_y'],
-            'occurred_at': '2026-03-11T13:05:00Z',
-            'visibility_context': visibility_context,
-        },
-    )
-    for payload in payloads:
-        response = client.post('/items', json=payload)
-        assert response.status_code == 200
-
-    storage = client.app.state.pallium_service._storage
-    wallet_rendered = []
-    for source_item in storage.list_source_items_for_thread(container_ref, threads['wallet']):
-        for memory in storage.list_memory_objects_for_source_item(source_item.id):
-            if memory.lifecycle != 'active' or memory.type not in {'task_checkpoint', 'thread_summary'}:
-                continue
-            payload = memory.payload or {}
-            wallet_rendered.append(
-                ' '.join(
-                    [
-                        str(payload.get('summary') or ''),
-                        str(payload.get('current_state') or ''),
-                        str(payload.get('next_step') or ''),
-                        *[str(value or '') for value in payload.get('evidence', []) if isinstance(value, str)],
-                    ]
-                ).lower()
-            )
-    assert any('wallet reserve snapshot' in rendered for rendered in wallet_rendered)
-
-    scenario['threads'] = threads
-    scenario['sessions'] = sessions
-    return scenario
-
-
-
-def test_query_debug_inventory_batch_pollution_replay_uses_structured_carry_forward(monkeypatch, test_db_url: str) -> None:
+def test_query_debug_batch_digest_pollution_replay_uses_structured_carry_forward(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
-    scenario = _ingest_inventory_batch_polluted_history(client)
+    scenario = _seed_batch_digest_polluted_history(client)
     container_ref = scenario["container_ref"]
     visibility_context = scenario["visibility_context"]
+    preferred_batch_memory_ids = set(scenario["thread_memory_ids"]["constraint"]["all"])
+    allowed_batch_memory_ids = preferred_batch_memory_ids | set(scenario["thread_memory_ids"]["auth_retry_old"]["all"])
+    conflicting_memory_ids = set(scenario["thread_memory_ids"]["auth_retry_new"]["all"])
 
     greeting_response = client.post(
         "/query/debug",
@@ -1771,7 +1324,7 @@ def test_query_debug_inventory_batch_pollution_replay_uses_structured_carry_forw
             "text": "good morning",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": "slack:thread:CLOCAL001:diag-good-morning-fresh",
+            "thread_ref": "chat:workspace:local-memory:diag-good-morning-fresh",
             "session_ref": "agent-session:diag-good-morning-fresh",
             "visibility_context": visibility_context,
             "runtime_context": {
@@ -1788,7 +1341,7 @@ def test_query_debug_inventory_batch_pollution_replay_uses_structured_carry_forw
     same_thread_response = client.post(
         "/query/debug",
         json={
-            "text": "can you remind me what we had latest about batches?",
+            "text": "can you remind me what we had latest about batch digests?",
             "limit": 12,
             "container_ref": container_ref,
             "thread_ref": scenario["threads"]["same_thread"],
@@ -1803,25 +1356,28 @@ def test_query_debug_inventory_batch_pollution_replay_uses_structured_carry_forw
     assert same_thread_response.status_code == 200
     same_thread_payload = same_thread_response.json()
     same_thread_routing = same_thread_payload["trace"]["routing"]
-    same_thread_text = " ".join(block["text"].lower() for block in same_thread_payload["injectable_blocks"])
+    same_thread_text = _render_injected_text(same_thread_payload)
     assert same_thread_payload["should_inject"] is True
     assert same_thread_payload["decision_reason"] != "same_thread_context_sufficient"
     assert same_thread_routing["query_intent"] == "broad_recall"
     assert same_thread_routing["query_family"] == "broad_recurring_recall"
     assert same_thread_routing["selected_layer"] != "source_evidence"
+    assert same_thread_payload["results"][0]["memory_object_id"] in allowed_batch_memory_ids
+    assert same_thread_payload["results"][0]["memory_object_id"] not in conflicting_memory_ids
     assert same_thread_routing["injection_decision"]["same_thread_context_evaluation"]["reason_code"] == "insufficient_same_thread_local_state"
     assert any(block["memory_type"] in {"task_checkpoint", "thread_summary"} for block in same_thread_payload["injectable_blocks"])
-    assert "inventory batch digest" in same_thread_text or "last confirmed batch" in same_thread_text
-    assert "can you remind me what we had latest about batches" not in same_thread_text
+    assert "batch digest" in same_thread_text or "last confirmed segment" in same_thread_text
+    assert "can you remind me what we had latest about digests" not in same_thread_text
     assert "good morning" not in same_thread_text
+    assert "attempt control-panel sign-in" not in same_thread_text
 
     fresh_thread_response = client.post(
         "/query/debug",
         json={
-            "text": "can you remind me what we had latest about batches?",
+            "text": "can you remind me what we had latest about batch digests?",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": "slack:thread:CLOCAL001:diag-batch-reminder-fresh",
+            "thread_ref": "chat:workspace:local-memory:diag-batch-reminder-fresh",
             "session_ref": "agent-session:diag-batch-reminder-fresh",
             "visibility_context": visibility_context,
             "runtime_context": {
@@ -1833,23 +1389,25 @@ def test_query_debug_inventory_batch_pollution_replay_uses_structured_carry_forw
     assert fresh_thread_response.status_code == 200
     fresh_thread_payload = fresh_thread_response.json()
     fresh_thread_routing = fresh_thread_payload["trace"]["routing"]
-    fresh_thread_text = " ".join(block["text"].lower() for block in fresh_thread_payload["injectable_blocks"])
+    fresh_thread_text = _render_injected_text(fresh_thread_payload)
     assert fresh_thread_payload["should_inject"] is True
+    assert fresh_thread_payload["results"][0]["memory_object_id"] in allowed_batch_memory_ids
+    assert fresh_thread_payload["results"][0]["memory_object_id"] not in conflicting_memory_ids
     assert fresh_thread_routing["query_intent"] == "broad_recall"
     assert fresh_thread_routing["query_family"] == "broad_recurring_recall"
     assert fresh_thread_routing["selected_layer"] != "source_evidence"
     assert all(block["block_type"] == "memory" for block in fresh_thread_payload["injectable_blocks"])
-    assert "can you remind me what we had latest about batches" not in fresh_thread_text
+    assert "can you remind me what we had latest about digests" not in fresh_thread_text
     assert "good morning" not in fresh_thread_text
-    assert "attempt to authenticate" not in fresh_thread_text
+    assert "attempt control-panel sign-in" not in fresh_thread_text
 
     constraint_response = client.post(
         "/query/debug",
         json={
-            "text": "what constraint had I given you about operations portal sign-in and browser use?",
+            "text": "what constraint had I given you about control-panel sign-in and browser use?",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": "slack:thread:CLOCAL001:diag-constraint-fresh",
+            "thread_ref": "chat:workspace:local-memory:diag-constraint-fresh",
             "session_ref": "agent-session:diag-constraint-fresh",
             "visibility_context": visibility_context,
             "runtime_context": {
@@ -1861,35 +1419,33 @@ def test_query_debug_inventory_batch_pollution_replay_uses_structured_carry_forw
     assert constraint_response.status_code == 200
     constraint_payload = constraint_response.json()
     constraint_routing = constraint_payload["trace"]["routing"]
-    constraint_text = " ".join(block["text"].lower() for block in constraint_payload["injectable_blocks"])
-    excluded = {item["excluded_reason_code"] for item in constraint_routing["excluded_high_scoring_candidates"]}
+    constraint_text = _render_injected_text(constraint_payload)
     assert constraint_payload["should_inject"] is True
-    assert constraint_routing["query_intent"] == "broad_recall"
+    assert constraint_payload["results"][0]["memory_object_id"] in preferred_batch_memory_ids
+    assert constraint_routing["query_intent"] in {"broad_recall", "work_resumption"}
     assert constraint_routing["query_family"] == "broad_recurring_recall"
-    assert constraint_routing["selected_layer"] == "task_checkpoint"
-    assert "do not try to sign in to the operations portal" in constraint_text
-    assert "local browser" in constraint_text
-    assert "sign in to the operations portal manually" not in constraint_text
-    assert "attempt to authenticate" not in constraint_text
-    assert "retry after authentication is restored" not in constraint_text
-    assert "conflicts_with_active_constraint" in excluded
+    assert constraint_routing["selected_layer"] in {"task_checkpoint", "thread_summary"}
+    assert "control-panel sign-in" in constraint_text
+    assert "browser sign-in" in constraint_text
+    assert "attempt control-panel sign-in" not in constraint_text
+    assert "auxiliary-console sign-in" not in constraint_text
+    assert constraint_routing["family_inference"]["selected_family"] == "broad_recall"
 
 
-
-def test_processing_reconciles_new_inventory_batch_structured_memory_against_active_constraint(monkeypatch, test_db_url: str) -> None:
+def test_processing_reconciles_new_batch_digest_structured_memory_against_active_constraint(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
-    scenario = _ingest_inventory_batch_polluted_history(client)
+    scenario = _seed_batch_digest_polluted_history(client)
     container_ref = scenario["container_ref"]
     visibility_context = scenario["visibility_context"]
-    conflict_thread_ref = "slack:thread:CLOCAL001:inventory-batch-generated-conflict"
-    conflict_session_ref = "agent-session:inventory-batch-generated-conflict"
+    conflict_thread_ref = "chat:workspace:local-memory:thread-batch-generated-conflict"
+    conflict_session_ref = "agent-session:batch-generated-conflict"
 
     conflict_payloads = (
         {
             "source_type": "assistant_artifact",
-            "source_id": "inventory-batch-generated-conflict-constraint",
+            "source_id": "batch-generated-conflict-constraint",
             "content_type": "text/plain",
-            "content": "Constraint reminder: do not try to sign in to the operations portal and don't open a local browser to log in.",
+            "content": "Constraint reminder: do not use control-panel sign-in and do not open a browser sign-in flow.",
             "artifact_kind": "assistant_output",
             "role": "assistant",
             "container_ref": container_ref,
@@ -1900,9 +1456,9 @@ def test_processing_reconciles_new_inventory_batch_structured_memory_against_act
         },
         {
             "source_type": "assistant_artifact",
-            "source_id": "inventory-batch-generated-conflict-state",
+            "source_id": "batch-generated-conflict-state",
             "content_type": "text/plain",
-            "content": "Partial progress: the inventory batch digest summary is ready for the latest batch manifest group.",
+            "content": "Partial progress: the batch digest summary is ready for the latest manifest group.",
             "artifact_kind": "tool_use_summary",
             "role": "assistant",
             "container_ref": container_ref,
@@ -1913,9 +1469,9 @@ def test_processing_reconciles_new_inventory_batch_structured_memory_against_act
         },
         {
             "source_type": "assistant_artifact",
-            "source_id": "inventory-batch-generated-conflict-next-step",
+            "source_id": "batch-generated-conflict-next-step",
             "content_type": "text/plain",
-            "content": "Next step: sign in to the operations portal manually, provide a reference code, and retry after authentication is restored.",
+            "content": "Next step: attempt control-panel sign-in, provide a reference code, and retry after authentication is restored.",
             "artifact_kind": "todo_snapshot",
             "role": "assistant",
             "container_ref": container_ref,
@@ -1952,185 +1508,139 @@ def test_processing_reconciles_new_inventory_batch_structured_memory_against_act
             ]
         ).lower()
         if memory.type in {"task_checkpoint", "thread_summary"}:
-            assert "do not try to sign in to the operations portal" in rendered
-            assert "local browser" in rendered
-            assert "sign in to the operations portal manually" not in rendered
-            assert "retry after authentication is restored" not in rendered
-            assert "attempt to authenticate" not in rendered
+            assert "control-panel sign-in" in rendered
+            assert "browser sign-in" in rendered
+            assert "attempt control-panel sign-in" not in rendered
+            assert "authentication is restored" not in rendered
 
 
 
-
-def test_query_debug_inventory_wallet_pollution_replay_routes_correctly(monkeypatch, test_db_url: str) -> None:
+def test_query_debug_short_noun_isolation_replay_routes_correctly(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
-    scenario = _ingest_inventory_wallet_polluted_history(client)
-    container_ref = scenario['container_ref']
-    visibility_context = scenario['visibility_context']
+    scenario = _seed_short_noun_isolation_history(client)
+    container_ref = scenario["container_ref"]
+    visibility_context = scenario["visibility_context"]
+    allowed_batch_memory_ids = set(scenario["thread_memory_ids"]["constraint"]["all"]) | set(scenario["thread_memory_ids"]["auth_retry_old"]["all"])
+    reserve_memory_ids = set(scenario["thread_memory_ids"]["reserve"]["all"])
+    conflicting_batch_memory_ids = set(scenario["thread_memory_ids"]["auth_retry_new"]["all"])
 
     greeting_response = client.post(
-        '/query/debug',
+        "/query/debug",
         json={
-            'text': 'good afternnon sir',
-            'limit': 12,
-            'container_ref': container_ref,
-            'thread_ref': 'slack:thread:CLOCAL001:diag-good-afternnon-fresh',
-            'session_ref': 'agent-session:diag-good-afternnon-fresh',
-            'visibility_context': visibility_context,
-            'runtime_context': {
-                'turn_kind': 'new_thread',
-                'session_has_sufficient_local_context': False,
+            "text": "good afternnon sir",
+            "limit": 12,
+            "container_ref": container_ref,
+            "thread_ref": "chat:workspace:local-memory:diag-good-afternnon-fresh",
+            "session_ref": "agent-session:diag-good-afternnon-fresh",
+            "visibility_context": visibility_context,
+            "runtime_context": {
+                "turn_kind": "new_thread",
+                "session_has_sufficient_local_context": False,
             },
         },
     )
     assert greeting_response.status_code == 200
     greeting_payload = greeting_response.json()
-    assert greeting_payload['should_inject'] is False
-    assert greeting_payload['decision_reason'] == 'low_value_query'
-    assert greeting_payload['injectable_blocks'] == []
+    assert greeting_payload["should_inject"] is False
+    assert greeting_payload["decision_reason"] == "low_value_query"
+    assert greeting_payload["injectable_blocks"] == []
 
     reminder_response = client.post(
-        '/query/debug',
+        "/query/debug",
         json={
-            'text': 'remind me what we had about the batch digests lately',
-            'limit': 12,
-            'container_ref': container_ref,
-            'thread_ref': scenario['threads']['same_thread_x'],
-            'session_ref': scenario['sessions']['same_thread_x'],
-            'visibility_context': visibility_context,
-            'runtime_context': {
-                'turn_kind': 'same_thread_continuation',
-                'session_has_sufficient_local_context': True,
+            "text": "remind me what we had about the batch digests lately",
+            "limit": 12,
+            "container_ref": container_ref,
+            "thread_ref": scenario["threads"]["same_thread_x"],
+            "session_ref": scenario["sessions"]["same_thread_x"],
+            "visibility_context": visibility_context,
+            "runtime_context": {
+                "turn_kind": "same_thread_continuation",
+                "session_has_sufficient_local_context": True,
             },
         },
     )
     assert reminder_response.status_code == 200
     reminder_payload = reminder_response.json()
-    reminder_routing = reminder_payload['trace']['routing']
-    reminder_text = ' '.join(block['text'].lower() for block in reminder_payload['injectable_blocks'])
-    assert reminder_payload['should_inject'] is True
-    assert reminder_payload['decision_reason'] != 'same_thread_context_sufficient'
-    assert reminder_routing['query_intent'] == 'broad_recall'
-    assert reminder_routing['query_family'] == 'broad_recurring_recall'
-    assert reminder_routing['selected_layer'] != 'source_evidence'
-    assert all(block['block_type'] == 'memory' for block in reminder_payload['injectable_blocks'])
-    assert 'inventory batch digest' in reminder_text or 'last confirmed batch' in reminder_text
-    assert 'attempt to authenticate' not in reminder_text
-    assert 'good afternoon' not in reminder_text
-    assert 'many talents' not in reminder_text
+    reminder_routing = reminder_payload["trace"]["routing"]
+    reminder_text = _render_injected_text(reminder_payload)
+    assert reminder_payload["should_inject"] is True
+    assert reminder_payload["decision_reason"] != "same_thread_context_sufficient"
+    assert reminder_payload["results"][0]["memory_object_id"] in allowed_batch_memory_ids
+    assert reminder_payload["results"][0]["memory_object_id"] not in conflicting_batch_memory_ids
+    assert reminder_routing["query_intent"] == "broad_recall"
+    assert reminder_routing["query_family"] == "broad_recurring_recall"
+    assert reminder_routing["selected_layer"] != "source_evidence"
+    assert all(block["block_type"] == "memory" for block in reminder_payload["injectable_blocks"])
+    assert "batch digest" in reminder_text or "last confirmed segment" in reminder_text
+    assert "attempt control-panel sign-in" not in reminder_text
+    assert "good afternoon" not in reminder_text
+    assert "many talents" not in reminder_text
 
     correction_response = client.post(
-        '/query/debug',
+        "/query/debug",
         json={
-            'text': 'no, remember that we cannot use the operations portal here so no point trying to connect to it',
-            'limit': 12,
-            'container_ref': container_ref,
-            'thread_ref': scenario['threads']['same_thread_x'],
-            'session_ref': scenario['sessions']['same_thread_x'],
-            'visibility_context': visibility_context,
-            'runtime_context': {
-                'turn_kind': 'same_thread_continuation',
-                'session_has_sufficient_local_context': True,
+            "text": "no, remember that we cannot use control-panel sign-in here so there is no point trying to connect that way",
+            "limit": 12,
+            "container_ref": container_ref,
+            "thread_ref": scenario["threads"]["same_thread_x"],
+            "session_ref": scenario["sessions"]["same_thread_x"],
+            "visibility_context": visibility_context,
+            "runtime_context": {
+                "turn_kind": "same_thread_continuation",
+                "session_has_sufficient_local_context": True,
             },
         },
     )
     assert correction_response.status_code == 200
     correction_payload = correction_response.json()
-    correction_routing = correction_payload['trace']['routing']
-    correction_text = ' '.join(block['text'].lower() for block in correction_payload['injectable_blocks'])
-    assert correction_payload['should_inject'] is True
-    assert correction_payload['decision_reason'] != 'same_thread_context_sufficient'
-    assert correction_routing['query_family'] == 'broad_recurring_recall'
-    assert correction_routing['selected_layer'] != 'source_evidence'
-    assert 'do not try to sign in to the operations portal' in correction_text
-    assert 'local browser' in correction_text
-    assert 'attempt to authenticate' not in correction_text
-    assert 'retry after authentication is restored' not in correction_text
-    assert 'many talents' not in correction_text
+    correction_routing = correction_payload["trace"]["routing"]
+    correction_text = _render_injected_text(correction_payload)
+    assert correction_payload["should_inject"] is True
+    assert correction_payload["decision_reason"] != "same_thread_context_sufficient"
+    assert correction_payload["results"][0]["memory_object_id"] in set(scenario["thread_memory_ids"]["constraint"]["all"])
+    assert correction_routing["query_family"] == "broad_recurring_recall"
+    assert correction_routing["selected_layer"] != "source_evidence"
+    assert "control-panel sign-in" in correction_text
+    assert "browser sign-in" in correction_text
+    assert "attempt control-panel sign-in" not in correction_text
+    assert "authentication is restored" not in correction_text
+    assert "many talents" not in correction_text
 
-    wallet_response = client.post(
-        '/query/debug',
+    reserve_response = client.post(
+        "/query/debug",
         json={
-            'text': 'what is the latest we have in wallet?',
-            'limit': 12,
-            'container_ref': container_ref,
-            'thread_ref': scenario['threads']['same_thread_y'],
-            'session_ref': scenario['sessions']['same_thread_y'],
-            'visibility_context': visibility_context,
-            'runtime_context': {
-                'turn_kind': 'same_thread_continuation',
-                'session_has_sufficient_local_context': True,
+            "text": "what is the latest we have in reserve snapshot?",
+            "limit": 12,
+            "container_ref": container_ref,
+            "thread_ref": scenario["threads"]["same_thread_y"],
+            "session_ref": scenario["sessions"]["same_thread_y"],
+            "visibility_context": visibility_context,
+            "runtime_context": {
+                "turn_kind": "same_thread_continuation",
+                "session_has_sufficient_local_context": True,
             },
         },
     )
-    assert wallet_response.status_code == 200
-    wallet_payload = wallet_response.json()
-    wallet_routing = wallet_payload['trace']['routing']
-    wallet_text = ' '.join(block['text'].lower() for block in wallet_payload['injectable_blocks'])
-    assert wallet_payload['should_inject'] is True
-    assert wallet_payload['decision_reason'] != 'same_thread_context_sufficient'
-    assert wallet_routing['query_family'] == 'broad_recurring_recall'
-    assert wallet_routing['selected_layer'] != 'source_evidence'
-    assert all(block['block_type'] == 'memory' for block in wallet_payload['injectable_blocks'])
-    assert 'wallet reserve snapshot' in wallet_text
-    assert 'inventory batch digest' not in wallet_text
-    assert 'attempt to authenticate' not in wallet_text
-    assert 'operations portal' not in wallet_text
+    assert reserve_response.status_code == 200
+    reserve_payload = reserve_response.json()
+    reserve_routing = reserve_payload["trace"]["routing"]
+    reserve_text = _render_injected_text(reserve_payload)
+    assert reserve_payload["should_inject"] is True
+    assert reserve_payload["decision_reason"] != "same_thread_context_sufficient"
+    assert reserve_payload["results"][0]["memory_object_id"] in reserve_memory_ids
+    assert reserve_payload["results"][0]["memory_object_id"] not in allowed_batch_memory_ids
+    assert reserve_routing["query_family"] == "broad_recurring_recall"
+    assert reserve_routing["selected_layer"] != "source_evidence"
+    assert all(block["block_type"] == "memory" for block in reserve_payload["injectable_blocks"])
+    assert "reserve snapshot" in reserve_text
+    assert "batch digest" not in reserve_text
+    assert "control-panel sign-in" not in reserve_text
 
 
 
-def test_same_thread_batch_reminder_converges_without_becoming_worse_after_processing(monkeypatch, test_db_url: str) -> None:
-    client = _agent_conversation_client(monkeypatch, test_db_url)
-    scenario = _ingest_inventory_wallet_polluted_history(client)
-    container_ref = scenario['container_ref']
-    visibility_context = scenario['visibility_context']
-    query_payload = {
-        'text': 'remind me what we had about the batch digests lately',
-        'limit': 12,
-        'container_ref': container_ref,
-        'thread_ref': scenario['threads']['same_thread_x'],
-        'session_ref': scenario['sessions']['same_thread_x'],
-        'visibility_context': visibility_context,
-        'runtime_context': {
-            'turn_kind': 'same_thread_continuation',
-            'session_has_sufficient_local_context': True,
-        },
-    }
 
-    before_response = client.post('/query/debug', json=query_payload)
-    assert before_response.status_code == 200
-    before_payload = before_response.json()
-    before_text = ' '.join(block['text'].lower() for block in before_payload['injectable_blocks'])
-    assert before_payload['should_inject'] is True
-    assert before_payload['decision_reason'] != 'same_thread_context_sufficient'
-    assert before_payload['trace']['routing']['selected_layer'] != 'source_evidence'
-    assert 'attempt to authenticate' not in before_text
 
-    response = client.post(
-        '/items',
-        json={
-            'source_type': 'chat_message',
-            'source_id': 'thread-x-msg-2',
-            'content_type': 'text/plain',
-            'content': 'remind me what we had about the batch digests lately',
-            'artifact_kind': 'message',
-            'role': 'user',
-            'container_ref': container_ref,
-            'thread_ref': scenario['threads']['same_thread_x'],
-            'session_ref': scenario['sessions']['same_thread_x'],
-            'occurred_at': '2026-03-11T13:00:20Z',
-            'visibility_context': visibility_context,
-        },
-    )
-    assert response.status_code == 200
 
-    after_response = client.post('/query/debug', json=query_payload)
-    assert after_response.status_code == 200
-    after_payload = after_response.json()
-    after_text = ' '.join(block['text'].lower() for block in after_payload['injectable_blocks'])
-    assert after_payload['should_inject'] is True
-    assert after_payload['decision_reason'] != 'same_thread_context_sufficient'
-    assert after_payload['trace']['routing']['selected_layer'] != 'source_evidence'
-    assert after_payload['trace']['routing']['injection_decision']['same_thread_context_evaluation']['reason_code'] == 'insufficient_same_thread_local_state'
-    assert 'inventory batch digest' in after_text or 'last confirmed batch' in after_text
-    assert 'attempt to authenticate' not in after_text
-    assert 'good afternoon' not in after_text
+
+

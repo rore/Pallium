@@ -54,6 +54,13 @@ Current focus:
   - add subject and workstream anchors so adjacent-topic separation happens before final ranking
   - define a bounded query-policy contract and selective semantic ambiguity resolution only for unresolved cases
   - expand Pallium-native scenario and replay coverage in parallel so each stabilization change lands with deterministic regression protection
+- current stabilization features can continue to use bounded prompt contracts
+  locally, but after the stabilization foundation lands Pallium should unify
+  prompt-backed semantic work into explicit prompt roles with shared schema,
+  no-op, versioning, and replay-governance rules
+- prompt lifecycle should be treated as a governed semantic-contract problem,
+  not as ad hoc prompt tweaking inside whatever feature currently happens to use
+  a model call
 - keep privacy, query-debug traceability, retention safety, and timestamped runtime logs as permanent regression gates while the stabilization lane advances
 - treat live miss capture as valuable but later: once the architecture is more stable, captured misses can become durable replay assets instead of mostly rediscovering known heuristic weaknesses
 - treat external benchmark packs as useful pressure on the core memory engine, but not as the next best investment for product stability
@@ -80,7 +87,15 @@ Planned future query pipeline:
   - add subject and workstream anchors so adjacent-topic contamination is filtered before final selection
 - fourth, define the bounded query-policy contract and selective semantic ambiguity resolution for the minority of cases that remain unresolved after deterministic narrowing
 - keep Pallium-native scenario and replay expansion active across all of the above so new structure is backed by deterministic tests, convergence checks, and replay fixtures
-- after the core stabilization architecture is in place, add write-time contextual enrichment and background consolidation so retrieval quality improves without pushing more work into the query hot path
+- after the core stabilization architecture is in place, add the shared
+  semantic prompt-role contract layer so later extraction, reconciliation,
+  enrichment, and selective query-ambiguity work inherit one governed prompt
+  lifecycle instead of continuing to define prompt behavior independently
+- then add write-time contextual enrichment and background consolidation so
+  retrieval quality improves without pushing more work into the query hot path
+- query-time prompt use should remain selective and bounded even after that
+  prompt-role formalization; it does not justify an always-on query-time model
+  router
 - then add the live miss-capture and replay-promotion loop so real traffic becomes bounded miss bundles and permanent regressions quickly
 - after that, move vector retrieval up as the bounded semantic candidate-generation layer for durable memory, then add hybrid fusion so lexical precision and paraphrase recall operate over the same narrowed candidate space
 - after those retrieval-substrate layers are in place, use the targeted external memory pressure pack to pressure stale-memory handling, update correctness, long noisy recall, and incremental memory drift without confusing those checks with the product acceptance gate
@@ -96,6 +111,8 @@ Parallel workstreams for the next phase:
   - this should start once the envelope fields exist and can then split into two parallel semantic-policy workers with a shared metadata contract
 - Stream D (`stabilization-enrichment`): write-time contextual enrichment and background consolidation
   - this should start only after the typed write path and deterministic hot path are stable enough to enrich without masking structural problems
+- Stream E (`semantic-contract-governance`): semantic prompt-role contracts and replay-governed prompt lifecycle
+  - this should start after the current stabilization-foundation work is clear enough that extraction, reconciliation, enrichment, and selective query ambiguity can inherit one shared prompt contract model
 
 Test posture for the stabilization phase:
 - every architecture feature must land with focused deterministic tests that exercise generic failure classes rather than downstream-specific wording or nouns

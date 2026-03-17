@@ -69,6 +69,46 @@ class Annotation:
     created_at: datetime = field(default_factory=utc_now)
 
 
+MemoryEnvelopeKind = Literal["constraint", "finding", "episode", "next_step", "summary", "unknown"]
+MemorySubjectAnchorKind = Literal["workstream", "component", "surface"]
+MemoryEnvelopeConfidence = Literal["high", "medium", "low", "unknown"]
+MemoryEnvelopeProducerKind = Literal["item_extraction", "thread_aggregation", "consolidation"]
+
+
+@dataclass(frozen=True)
+class MemorySubjectAnchor:
+    kind: MemorySubjectAnchorKind
+    value: str
+
+
+@dataclass(frozen=True)
+class MemoryEnvelopeScope:
+    container_ref: str | None = None
+    thread_ref: str | None = None
+    session_ref: str | None = None
+
+
+@dataclass(frozen=True)
+class MemoryEnvelopeDerivation:
+    producer_kind: MemoryEnvelopeProducerKind
+    producer_schema_id: str
+    producer_schema_version: str
+    prompt_variant: str | None = None
+    model_role: str | None = None
+    kind_basis: str | None = None
+
+
+@dataclass(frozen=True)
+class MemoryEnvelope:
+    schema_id: str
+    schema_version: str
+    kind: MemoryEnvelopeKind
+    scope: MemoryEnvelopeScope
+    derivation: MemoryEnvelopeDerivation
+    subjects: list[MemorySubjectAnchor] = field(default_factory=list)
+    confidence: MemoryEnvelopeConfidence = "unknown"
+
+
 @dataclass(frozen=True)
 class MemoryObject:
     type: str
@@ -78,6 +118,7 @@ class MemoryObject:
     lifecycle: str = "active"
     visibility_context: VisibilityContext | None = None
     freshness_at: datetime | None = None
+    envelope: MemoryEnvelope | None = None
     id: str = field(default_factory=new_id)
     created_at: datetime = field(default_factory=utc_now)
 
@@ -149,6 +190,7 @@ class QueryResultItem:
     type: str | None = None
     payload: dict[str, Any] | None = None
     freshness_at: datetime | None = None
+    envelope: MemoryEnvelope | None = None
     source_item_id: str | None = None
     source_type: str | None = None
     source_id: str | None = None

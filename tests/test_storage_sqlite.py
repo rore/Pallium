@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+import json
 import multiprocessing
+
+import pytest
 from pathlib import Path
 
-from core.models import Annotation, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
+from core.models import (
+    Annotation,
+    IndexEntry,
+    MemoryEnvelope,
+    MemoryEnvelopeDerivation,
+    MemoryEnvelopeScope,
+    MemoryObject,
+    MemorySubjectAnchor,
+    QueryFilters,
+    Relation,
+    SourceItem,
+)
 from core.visibility import VisibilityContext
 from storage.sqlite import SQLiteStorageProvider
 
@@ -42,8 +56,37 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         schema_version="v1",
         payload={"investigation_outcome": "arrival-time ordering missed hold updates during sync delays"},
         visibility_context=VisibilityContext(kind="limited", id="channel-a"),
+        envelope=MemoryEnvelope(
+            schema_id="core.memory_envelope",
+            schema_version="v1",
+            kind="finding",
+            scope=MemoryEnvelopeScope(
+                container_ref="slack:C123",
+                thread_ref="thread-a",
+                session_ref="session-a",
+            ),
+            subjects=[MemorySubjectAnchor(kind="component", value="reservation ordering")],
+            confidence="high",
+            derivation=MemoryEnvelopeDerivation(
+                producer_kind="item_extraction",
+                producer_schema_id="typed_memory_extraction",
+                producer_schema_version="v6",
+                prompt_variant="strict_typed_memory_v4_evidence_guarded",
+                model_role="write_time_extraction",
+                kind_basis="llm_subject_hints",
+            ),
+        ),
     )
     storage.create_memory_object(memory_object)
+
+    legacy_memory_object = MemoryObject(
+        type="discussion_summary",
+        schema_id="demo.discussion_summary",
+        schema_version="v1",
+        payload={"summary": "We discussed reservation ordering."},
+        visibility_context=VisibilityContext(kind="limited", id="channel-a"),
+    )
+    storage.create_memory_object(legacy_memory_object)
 
     relation = Relation(
         from_kind="memory_object",
@@ -83,7 +126,10 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     assert loaded_source.artifact_kind == "message"
     assert loaded_source.visibility_context == VisibilityContext(kind="limited", id="channel-a")
     assert storage.get_annotation(annotation.id).id == annotation.id
-    assert storage.get_memory_object(memory_object.id).lifecycle == "active"
+    loaded_memory = storage.get_memory_object(memory_object.id)
+    assert loaded_memory.lifecycle == "active"
+    assert loaded_memory.envelope == memory_object.envelope
+    assert storage.get_memory_object(legacy_memory_object.id).envelope is None
 
     loaded_index_entries = storage.list_index_entries_for_target("memory_object", memory_object.id)
     assert len(loaded_index_entries) == 1
@@ -141,6 +187,129 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     assert evidence[0].thread_ref == "thread-a"
     assert evidence[0].source_ref == "https://example.test/thread-1"
     assert evidence[0].visibility_context == VisibilityContext(kind="limited", id="channel-a")
+
+
+@pytest.mark.parametrize(
+    ("label", "payload"),
+    [
+        (
+            "unknown_schema_version",
+            {
+                "schema_id": "core.memory_envelope",
+                "schema_version": "v2",
+                "kind": "finding",
+                "scope": {},
+                "subjects": [],
+                "confidence": "high",
+                "derivation": {
+                    "producer_kind": "item_extraction",
+                    "producer_schema_id": "typed_memory_extraction",
+                    "producer_schema_version": "v6",
+                },
+            },
+        ),
+        (
+            "unknown_kind",
+            {
+                "schema_id": "core.memory_envelope",
+                "schema_version": "v1",
+                "kind": "unsupported_kind",
+                "scope": {},
+                "subjects": [],
+                "confidence": "high",
+                "derivation": {
+                    "producer_kind": "item_extraction",
+                    "producer_schema_id": "typed_memory_extraction",
+                    "producer_schema_version": "v6",
+                },
+            },
+        ),
+        (
+            "unknown_confidence",
+            {
+                "schema_id": "core.memory_envelope",
+                "schema_version": "v1",
+                "kind": "finding",
+                "scope": {},
+                "subjects": [],
+                "confidence": "certain",
+                "derivation": {
+                    "producer_kind": "item_extraction",
+                    "producer_schema_id": "typed_memory_extraction",
+                    "producer_schema_version": "v6",
+                },
+            },
+        ),
+        (
+            "unknown_producer_kind",
+            {
+                "schema_id": "core.memory_envelope",
+                "schema_version": "v1",
+                "kind": "finding",
+                "scope": {},
+                "subjects": [],
+                "confidence": "high",
+                "derivation": {
+                    "producer_kind": "future_writer",
+                    "producer_schema_id": "typed_memory_extraction",
+                    "producer_schema_version": "v6",
+                },
+            },
+        ),
+        (
+            "unknown_subject_kind",
+            {
+                "schema_id": "core.memory_envelope",
+                "schema_version": "v1",
+                "kind": "finding",
+                "scope": {},
+                "subjects": [{"kind": "topic", "value": "reservation ordering"}],
+                "confidence": "high",
+                "derivation": {
+                    "producer_kind": "item_extraction",
+                    "producer_schema_id": "typed_memory_extraction",
+                    "producer_schema_version": "v6",
+                },
+            },
+        ),
+        (
+            "invalid_optional_scope_type",
+            {
+                "schema_id": "core.memory_envelope",
+                "schema_version": "v1",
+                "kind": "finding",
+                "scope": {"container_ref": 42},
+                "subjects": [],
+                "confidence": "high",
+                "derivation": {
+                    "producer_kind": "item_extraction",
+                    "producer_schema_id": "typed_memory_extraction",
+                    "producer_schema_version": "v6",
+                },
+            },
+        ),
+        (
+            "invalid_optional_derivation_type",
+            {
+                "schema_id": "core.memory_envelope",
+                "schema_version": "v1",
+                "kind": "finding",
+                "scope": {},
+                "subjects": [],
+                "confidence": "high",
+                "derivation": {
+                    "producer_kind": "item_extraction",
+                    "producer_schema_id": "typed_memory_extraction",
+                    "producer_schema_version": "v6",
+                    "prompt_variant": ["wrong"],
+                },
+            },
+        ),
+    ],
+)
+def test_sqlite_storage_provider_rejects_invalid_memory_envelopes(label: str, payload: dict[str, object]) -> None:
+    assert label
+    assert SQLiteStorageProvider._load_memory_envelope(json.dumps(payload)) is None
 
 
 def _initialize_sqlite_storage_process(database_url: str, result_queue) -> None:

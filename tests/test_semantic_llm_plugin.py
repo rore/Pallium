@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.models import SourceItem
+from core.models import MemorySubjectAnchor, SourceItem
 from providers.llm.base import LLMJsonResponse, LLMProviderError
 from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin, build_analysis_request
@@ -60,7 +60,7 @@ def test_llm_plugin_promotes_decision_memory_from_valid_extraction() -> None:
     assert result.memory_objects[0].payload["decision"] == "use item item event time reservation ordering"
     assert result.memory_objects[0].payload["decision_evidence_text"] == "Decision: use item item event time reservation ordering"
     assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_id"] == "typed_memory_extraction"
-    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_version"] == "v5"
+    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_version"] == "v6"
     assert result.memory_objects[0].payload["semantic_provenance"]["prompt_variant"] == "strict_typed_memory_v4_evidence_guarded"
 
 
@@ -103,6 +103,53 @@ def test_llm_plugin_promotes_investigation_outcome_from_explicit_verdict_extract
     assert result.memory_objects[0].payload["investigation_outcome"] == "transaction-transformer had the most significant recent ledger changes"
     assert result.memory_objects[0].payload["investigation_evidence_text"] == "Here's the verdict: transaction-transformer had the most significant recent ledger changes by a wide margin."
     assert result.source_item_metadata_updates[source_item.id][SEMANTIC_SIGNAL_METADATA_KEY]["key_finding_text"].startswith("transaction-transformer")
+
+
+def test_llm_plugin_preserves_valid_subject_hints_and_ignores_invalid_entries() -> None:
+    plugin = LLMAgentMemoryPlugin(
+        provider=StubLLMProvider(
+            response=LLMJsonResponse(
+                raw_text='{"summary":"Decision discussion","candidate_type":"decision","decision_text":"use item item event time reservation ordering","decision_evidence_text":"Decision: use item item event time reservation ordering","investigation_text":null,"investigation_evidence_text":null,"rationale_text":"to avoid missed hold updates","is_low_value_meta":false,"constraint_text":null,"next_step_text":null,"blocker_text":null,"progress_text":null,"key_finding_text":null,"subject_hints":[{"kind":"component","value":"reservation ordering"},{"kind":"surface","value":"   catalog sync   "},{"kind":"unknown","value":"ignored"},{"kind":"component","value":"unknown"},{"kind":"bad_kind","value":"ignored"},{"kind":"workstream","value":""}]}',
+                parsed_json={
+                    "summary": "Decision discussion",
+                    "candidate_type": "decision",
+                    "decision_text": "use item item event time reservation ordering",
+                    "decision_evidence_text": "Decision: use item item event time reservation ordering",
+                    "investigation_text": None,
+                    "investigation_evidence_text": None,
+                    "rationale_text": "to avoid missed hold updates",
+                    "is_low_value_meta": False,
+                    "constraint_text": None,
+                    "next_step_text": None,
+                    "blocker_text": None,
+                    "progress_text": None,
+                    "key_finding_text": None,
+                    "subject_hints": [
+                        {"kind": "component", "value": "reservation ordering"},
+                        {"kind": "surface", "value": "   catalog sync   "},
+                        {"kind": "unknown", "value": "ignored"},
+                        {"kind": "component", "value": "unknown"},
+                        {"kind": "bad_kind", "value": "ignored"},
+                        {"kind": "workstream", "value": ""},
+                    ],
+                },
+            )
+        )
+    )
+    source_item = SourceItem(
+        source_type="decision_note",
+        source_id="decision-subjects-123",
+        content_type="text/plain",
+        content="Decision: use item item event time reservation ordering for reservation ordering to avoid missed hold updates.",
+    )
+
+    trace = plugin.analyze_item(source_item)
+
+    assert trace.extraction.subject_hints == (
+        MemorySubjectAnchor(kind="component", value="reservation ordering"),
+        MemorySubjectAnchor(kind="surface", value="catalog sync"),
+    )
+
 
 
 def test_llm_plugin_returns_internal_signals_and_metadata_patch_from_single_call() -> None:
@@ -368,7 +415,7 @@ def test_build_analysis_request_uses_requested_prompt_variant() -> None:
 
     assert request.prompt_variant == "strict_decision_v1"
     assert request.prompt_schema_id == "typed_memory_extraction"
-    assert request.prompt_schema_version == "v5"
+    assert request.prompt_schema_version == "v6"
     assert 'investigation_outcome' in request.schema_description
     assert 'constraint_text' in request.schema_description
     assert 'Artifact kind: message' in request.user_prompt

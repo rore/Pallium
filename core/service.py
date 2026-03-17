@@ -746,6 +746,7 @@ class PalliumService:
                         type=memory_object.type,
                         payload=memory_object.payload,
                         freshness_at=memory_object.freshness_at,
+                        envelope=memory_object.envelope,
                         score=0,
                         evidence=evidence,
                         visibility_context=memory_object.visibility_context,
