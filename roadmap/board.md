@@ -1,8 +1,12 @@
 # Next
+- add-bounded-query-intent-resolution
 - add-pallium-native-scenario-coverage-and-replay-regressions
-- add-live-integration-improvement-loop-and-replay-pipeline
+- add-write-time-memory-envelope-and-kind-prefiltering
+- add-first-class-constraint-policy-lane
+- add-subject-workstream-anchor-filtering
 
 # Later
+- add-live-integration-improvement-loop-and-replay-pipeline
 - add-targeted-external-memory-benchmark-pressure-pack
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
@@ -58,4 +62,3 @@
 - add-first-semantic-layer-and-promotion
 - add-agent-memory-simulation
 - build-structured-retrieval-foundation
-

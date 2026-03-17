@@ -5,6 +5,7 @@ status: queued
 priority: high
 commitment: committed
 milestone: Next
+lane: stabilization-safety
 ---
 
 ## Summary
@@ -39,8 +40,9 @@ That means most bugs in:
 
 should be testable and debuggable directly inside Pallium.
 
-Today the downstream agent is still doing too much work as a debugging surface for these
-problems. That creates avoidable ambiguity because a live downstream run mixes:
+Today the downstream agent is still doing too much work as a debugging surface
+for these problems. That creates avoidable ambiguity because a live downstream
+run mixes:
 
 - Pallium behavior
 - model behavior
@@ -51,6 +53,11 @@ problems. That creates avoidable ambiguity because a live downstream run mixes:
 
 This feature shifts the primary validation surface back where it belongs:
 Pallium-native scenarios, replay fixtures, and direct query-debug inspection.
+
+It also becomes the main safety rail while the new stabilization architecture
+lands. Intent resolution, typed envelopes, constraints, and subject anchors all
+need deterministic regression coverage that expresses generic failure classes
+instead of one-off wording fixes.
 
 ## In Scope
 
@@ -76,11 +83,17 @@ Pallium-native scenarios, replay fixtures, and direct query-debug inspection.
 - keep test fixtures anonymized and generic rather than downstream-specific
 - align new scenarios with the benchmark architecture so they can be classified
   as iteration, confidence, or replay assets over time
+- add failure-class coverage for the stabilization lane, including at least:
+  - intent misclassification
+  - wrong-kind selection
+  - wrong-subject contamination
+  - constraint-compatibility failure
+  - stale or superseded memory winning incorrectly
 
 ## Out of Scope
 
 - replacing the downstream integration checks entirely
-- turning this feature into a UI or interactive harness
+- turning this feature into a second interactive harness
 - committing private downstream transcripts or provider outputs into repo
   fixtures
 - broadening the test surface into generic assistant-answer scoring unrelated to
@@ -98,22 +111,28 @@ Pallium-native scenarios, replay fixtures, and direct query-debug inspection.
    only on broad output success.
 5. New scenario assets stay anonymized and are clearly usable as iteration,
    confidence, or replay material.
+6. Each stabilization feature can land with a corresponding deterministic
+   regression surface rather than relying on live debugging only.
 
 ## Notes
 
 Recommended sequencing:
 
-1. keep benchmark architecture formalization first so lane/tier vocabulary is
-   stable
-2. then land this Pallium-native scenario expansion
-3. then add the direct exploratory harness so interactive debugging and replay
-   scenarios reinforce each other
+1. keep benchmark architecture formalization first so lane and tier vocabulary
+   is stable
+2. keep this feature active in parallel with bounded intent resolution and the
+   write-time envelope lane so architecture changes have immediate regression
+   protection
+3. use the shipped direct exploratory harness as a feeder and verifier for
+   candidate replay scenarios
 
 Implementation defaults:
 
 - prefer extending existing API, routing, and benchmark fixtures over building a
   second scenario framework
 - keep scenarios repo-local and deterministic by default
+- express failure classes generically rather than encoding downstream-specific
+  nouns or phrasing into fixtures
 - use downstream-agent runs only as downstream proof after Pallium-native
   coverage has the issue pinned down
 

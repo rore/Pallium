@@ -4,7 +4,8 @@ title: Live miss capture and replay promotion loop
 status: queued
 priority: high
 commitment: committed
-milestone: Next
+milestone: Later
+lane: integration-feedback
 ---
 
 ## Summary
@@ -13,8 +14,9 @@ Add a productized live-improvement loop for Pallium so real integration traffic
 can be turned into privacy-safe miss bundles, reviewed efficiently, and
 promoted into the benchmark program instead of remaining anecdotal debugging.
 
-The goal is to make Pallium continuously improvable once real downstream-agent
-traffic exists.
+The goal is to make Pallium continuously improvable once real integration
+traffic exists and the core stabilization architecture is trustworthy enough to
+capture misses in a durable, reviewable form.
 
 - detect suspicious behavior automatically
 - capture the right bounded trace when a miss happens
@@ -54,90 +56,119 @@ What is still missing is the operational loop that connects those pieces.
 That loop is what turns live integration from ad hoc debugging into systematic
 product tuning.
 
+It is no longer the immediate next stability move, however. Pallium first needs
+a more stable architecture for intent, typed memory, constraints, and subject
+filtering so captured misses do not mostly reflect known structural weaknesses.
+
 ## In Scope
 
-- reuse the benchmark program's existing failure taxonomy and replay-fixture vocabulary rather than inventing a second parallel one in production tooling
+- reuse the benchmark program's existing failure taxonomy and replay-fixture
+  vocabulary rather than inventing a second parallel one in production tooling
 - add automatic suspicious-case detectors over live/debug traces
 - suspicious-case detectors should cover at least:
-  generic summary selected while sharper active memory exists in scope
-  same-thread continuation with sufficient local context still injecting
-  low-value items creating durable memory
-  low-value-only items scheduling thread rebuilds
-  fresher same-kind conclusions losing to older ones
-  suspiciously high rebuild or supersession churn in a thread
-  `should_inject=true` with weak or fallback-only blocks
+  - generic summary selected while sharper active memory exists in scope
+  - same-thread continuation with sufficient local context still injecting
+  - low-value items creating durable memory
+  - low-value-only items scheduling thread rebuilds
+  - fresher same-kind conclusions losing to older ones
+  - suspiciously high rebuild or supersession churn in a thread
+  - `should_inject=true` with weak or fallback-only blocks
 - add a bounded review-inbox export for suspicious cases
 - review-inbox exports should capture at least:
-  relevant source items
-  relevant active memory objects
-  query input and runtime context
-  retrieval, routing, and injection trace
-  final returned results and injected blocks
+  - relevant source items
+  - relevant active memory objects
+  - query input and runtime context
+  - retrieval, routing, and injection trace
+  - final returned results and injected blocks
 - keep review-inbox export privacy-safe and bounded
 - privacy and scope rules for export should include:
-  no raw giant transcript dumps
-  no unrelated rows from outside the current scope
-  support scrubbing and generalization into committed fixtures
-- add one replay-promotion tool or workflow that turns a captured miss bundle into a benchmark-ready scenario skeleton
+  - no raw giant transcript dumps
+  - no unrelated rows from outside the current scope
+  - support scrubbing and generalization into committed fixtures
+- add one replay-promotion tool or workflow that turns a captured miss bundle
+  into a benchmark-ready scenario skeleton
 - replay-promotion skeletons should include at least:
-  prior events
-  current thread context
-  runtime context
-  expected injection decision
-  expected decision reason
-  expected winning memory kind or injected block
-  forbidden outcomes
-  failure-family label
+  - prior events
+  - current thread context
+  - runtime context
+  - expected injection decision
+  - expected decision reason
+  - expected winning memory kind or injected block
+  - forbidden outcomes
+  - failure-family label
 - add operational drift metrics that can be inspected over time
 - operational drift metrics should include at least:
-  durable memories created per source item
-  rebuilds per thread
-  superseded summaries per thread
-  low-value promotion rate
-  injection rate by runtime turn kind
-  average injected block count
-  generic-summary wins vs sharp-memory wins
-  failure-family counts over time
-- add one simple shadow-comparison path for candidate tuning changes so Pallium can compare current vs proposed memory decisions on captured bundles before a rollout
+  - durable memories created per source item
+  - rebuilds per thread
+  - superseded summaries per thread
+  - low-value promotion rate
+  - injection rate by runtime turn kind
+  - average injected block count
+  - generic-summary wins vs sharp-memory wins
+  - failure-family counts over time
+- add one simple shadow-comparison path for candidate tuning changes so Pallium
+  can compare current vs proposed memory decisions on captured bundles before a
+  rollout
 - shadow-comparison diffs should include at least:
-  `should_inject`
-  `decision_reason`
-  injected block ids or types
-- keep the improvement loop package-owned where semantics are package-specific; generic layers may provide bounded storage/export helpers and review-inbox plumbing, but should not own `agent_conversation_memory` policy judgments
+  - `should_inject`
+  - `decision_reason`
+  - injected block ids or types
+- keep the improvement loop package-owned where semantics are package-specific;
+  generic layers may provide bounded storage/export helpers and review-inbox
+  plumbing, but should not own `agent_conversation_memory` policy judgments
 
 ## Out of Scope
 
 - full production incident-management tooling
-- committing private downstream traffic or raw unsanitized captures into the repo
+- committing private downstream traffic or raw unsanitized captures into the
+  repo
 - building a broad analytics platform unrelated to Pallium memory quality
 - replacing authored benchmark suites with only live replay fixtures
 - turning the downstream agent into the miss classifier or semantic triage layer
 - online auto-learning or fully automatic prompt rewriting
-- owning the benchmark program's replay runner, fixture schema, or scoring contract inside this feature
+- owning the benchmark program's replay runner, fixture schema, or scoring
+  contract inside this feature
 
 ## Done When
 
-1. Pallium can automatically flag suspicious live cases instead of relying only on humans reading logs.
-2. Suspicious cases can be exported as bounded, privacy-safe miss bundles with the data needed to reproduce the issue.
-3. Engineers can promote a miss bundle into a replay scenario without manually reconstructing the entire conversation from logs.
-4. The promotion flow targets the benchmark program's existing replay schema and failure vocabulary instead of introducing a second fixture format.
-5. Changes to prompts, heuristics, routing, or packaging can be shadow-compared on captured bundles before rollout.
-6. Drift metrics make it obvious when Pallium is over-promoting low-value content, rebuilding too often, or over-injecting memory.
-7. The improvement loop reinforces a thin-agent boundary by detecting when the downstream agent would otherwise need to compensate semantically.
+1. Pallium can automatically flag suspicious live cases instead of relying only
+   on humans reading logs.
+2. Suspicious cases can be exported as bounded, privacy-safe miss bundles with
+   the data needed to reproduce the issue.
+3. Engineers can promote a miss bundle into a replay scenario without manually
+   reconstructing the entire conversation from logs.
+4. The promotion flow targets the benchmark program's existing replay schema and
+   failure vocabulary instead of introducing a second fixture format.
+5. Changes to prompts, heuristics, routing, or packaging can be shadow-compared
+   on captured bundles before rollout.
+6. Drift metrics make it obvious when Pallium is over-promoting low-value
+   content, rebuilding too often, or over-injecting memory.
+7. The improvement loop reinforces a thin-agent boundary by detecting when the
+   downstream agent would otherwise need to compensate semantically.
 
 ## Notes
 
 Recommended sequencing:
 
-1. finish the live memory-quality and agent-contract slice
-2. land the agent memory-decision benchmark program
-3. then add this live-improvement loop so benchmark vocabulary, replay schema, and injection expectations already exist
+1. land bounded intent resolution and the write-time memory envelope so the
+   retrieval architecture is less phrase-sensitive
+2. land first-class constraints and subject/workstream filtering so the main
+   current bug classes are captured in typed form
+3. keep Pallium-native scenario and replay coverage active so failure families
+   and replay assets are already stable
+4. then add this live-improvement loop so captured misses feed a trustworthy
+   replay and shadow-comparison workflow instead of automating unstable
+   heuristics
 
 Implementation defaults:
 
-- prefer JSON bundle capture plus explicit promotion manifests over hidden SQLite state or manual notebook workflows
+- prefer JSON bundle capture plus explicit promotion manifests over hidden
+  SQLite state or manual notebook workflows
 - keep capture/export bounded and scope-aware by default
-- treat human review as the confirmation step after automatic suspicious-case detection, not as the only detection mechanism
-- every confirmed live miss should be promotable into a permanent replay regression owned by the benchmark program
-- use current observability and debug surfaces as the data source rather than inventing a second tracing system first
+- treat human review as the confirmation step after automatic suspicious-case
+  detection, not as the only detection mechanism
+- every confirmed live miss should be promotable into a permanent replay
+  regression owned by the benchmark program
+- use current observability and debug surfaces as the data source rather than
+  inventing a second tracing system first
 

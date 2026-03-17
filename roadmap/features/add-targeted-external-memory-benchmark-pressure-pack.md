@@ -5,6 +5,7 @@ status: queued
 priority: high
 commitment: committed
 milestone: Later
+lane: external-pressure
 ---
 
 ## Summary
@@ -208,4 +209,5 @@ Implementation defaults:
   Pallium-specific regression or tuning work
 - treat the main output as pressure on Pallium's realism and replay layers, not
   as a replacement for contract or trace hard-gate reporting
+
 
