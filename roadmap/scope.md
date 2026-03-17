@@ -57,7 +57,11 @@ Current focus:
 - keep privacy, query-debug traceability, retention safety, and timestamped runtime logs as permanent regression gates while the stabilization lane advances
 - treat live miss capture as valuable but later: once the architecture is more stable, captured misses can become durable replay assets instead of mostly rediscovering known heuristic weaknesses
 - treat external benchmark packs as useful pressure on the core memory engine, but not as the next best investment for product stability
-- treat vector retrieval and hybrid fusion as lower-priority retrieval enhancements, not as the current product driver; only move them forward if the evidence shows recall rather than memory decision quality is the real bottleneck
+- treat vector retrieval and hybrid fusion as important follow-on retrieval work, but not as the next stabilization bottleneck:
+  - vector retrieval should not be the immediate next feature while write-time structure, constraints, and subject anchors are still missing
+  - once those deterministic narrowing layers land, vector retrieval becomes the expected semantic retrieval substrate for durable memory
+  - it should stay bounded by scope, kind, and subject/workstream filters rather than acting as an unconstrained semantic fallback
+  - it should not become the main mechanism for constraint/policy lookup or short-term local state
 
 Plan from the current gaps:
 Planned future query pipeline:
@@ -78,8 +82,9 @@ Planned future query pipeline:
 - keep Pallium-native scenario and replay expansion active across all of the above so new structure is backed by deterministic tests, convergence checks, and replay fixtures
 - after the core stabilization architecture is in place, add write-time contextual enrichment and background consolidation so retrieval quality improves without pushing more work into the query hot path
 - then add the live miss-capture and replay-promotion loop so real traffic becomes bounded miss bundles and permanent regressions quickly
-- after that, use the targeted external memory pressure pack to pressure stale-memory handling, update correctness, long noisy recall, and incremental memory drift without confusing those checks with the product acceptance gate
-- only after those layers are clearer should explicit shared-memory derivation, cross-container bounded memory, vector retrieval, and hybrid fusion move up, and only if the evidence shows they are the bottleneck
+- after that, move vector retrieval up as the bounded semantic candidate-generation layer for durable memory, then add hybrid fusion so lexical precision and paraphrase recall operate over the same narrowed candidate space
+- after those retrieval-substrate layers are in place, use the targeted external memory pressure pack to pressure stale-memory handling, update correctness, long noisy recall, and incremental memory drift without confusing those checks with the product acceptance gate
+- only after those layers are clearer should explicit shared-memory derivation and cross-container bounded memory move up
 
 Parallel workstreams for the next phase:
 - Stream A (`stabilization-foundation`): write-time envelope first, then bounded query policy and selective ambiguity resolution

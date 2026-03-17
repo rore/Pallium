@@ -7,12 +7,12 @@
 
 # Later
 - add-write-time-contextual-enrichment-and-background-consolidation
+- add-vector-retrieval-provider
+- add-hybrid-retrieval-fusion
 - add-live-integration-improvement-loop-and-replay-pipeline
 - add-targeted-external-memory-benchmark-pressure-pack
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
-- add-vector-retrieval-provider
-- add-hybrid-retrieval-fusion
 
 # Ideas
 - idea-evidence-backed-agent-memory
