@@ -343,6 +343,7 @@ function makeBoardItemSummary(itemSummary) {
     commitment: itemSummary.commitment,
     milestone: itemSummary.milestone,
     kind: itemSummary.kind,
+    metadata: { ...itemSummary.metadata },
     overviewHeading: itemSummary.overviewHeading,
     overviewExcerpt: itemSummary.overviewExcerpt,
   };
@@ -1100,8 +1101,8 @@ export async function readItemById(repoRoot, id) {
     kind: item.kind,
     filePath: path.relative(repoRoot, item.filePath),
     metadata: {
-      ...item.parsed.frontmatter,
-      milestone: item.parsed.frontmatter.milestone ?? "",
+      ...item.parsed.metadataValues,
+      milestone: item.parsed.metadataValues.milestone ?? "",
     },
     sections: Object.fromEntries(KNOWN_SECTIONS.map((heading) => [heading, item.parsed.sections[heading] ?? ""])),
     sectionOrder: item.parsed.segments.map((segment) => segment.heading),
@@ -1239,6 +1240,8 @@ export async function saveBoardByGroups(repoRoot, groupsPayload) {
   await fs.writeFile(boardPath, serialized, "utf8");
   return loadWorkspace(repoRoot);
 }
+
+
 
 
 

@@ -100,6 +100,7 @@ const fields = {
   commitment: document.querySelector("#field-commitment"),
   boardGroup: document.querySelector("#field-board-group"),
   milestone: document.querySelector("#field-milestone"),
+  extraMetadataContainer: document.querySelector("#extra-metadata-fields"),
 };
 
 function loadStoredScopePreference() {
@@ -891,26 +892,77 @@ function getBadgeTone(field, value) {
   return "neutral";
 }
 
-function renderBadge(value, field = "") {
+const CORE_METADATA_FIELDS = ["status", "priority", "commitment", "milestone"];
+const RESERVED_METADATA_KEYS = new Set(["id", "title", "kind", "labels", ...CORE_METADATA_FIELDS]);
+
+function normalizeMetadataValue(value) {
+  if (value === null || value === undefined || Array.isArray(value) || typeof value === "object") {
+    return "";
+  }
+
+  return String(value).trim();
+}
+
+function getCustomMetadataEntries(metadata, options = {}) {
+  const excludeKey = normalizeBadgeToken(options.excludeKey || "");
+  const maxCount = Number.isFinite(options.maxCount) ? options.maxCount : Number.POSITIVE_INFINITY;
+  const entries = Object.entries(metadata || {})
+    .map(([key, value]) => ({ key, value: normalizeMetadataValue(value) }))
+    .filter((entry) => entry.value && !RESERVED_METADATA_KEYS.has(entry.key) && normalizeBadgeToken(entry.key) !== excludeKey)
+    .sort((left, right) => humanizeFilterKey(left.key).localeCompare(humanizeFilterKey(right.key)));
+
+  return entries.slice(0, maxCount);
+}
+
+function buildMetadataBadgeEntries(metadata, options = {}) {
+  const excludeKey = normalizeBadgeToken(options.excludeKey || "");
+  const cardMode = options.cardMode === true;
+  const entries = CORE_METADATA_FIELDS
+    .filter((field) => normalizeBadgeToken(field) !== excludeKey)
+    .map((field) => ({ field, value: normalizeMetadataValue(metadata?.[field]), showFieldLabel: false }))
+    .filter((entry) => entry.value);
+
+  const customEntries = getCustomMetadataEntries(metadata, { excludeKey, maxCount: cardMode ? 2 : Number.POSITIVE_INFINITY })
+    .map((entry) => ({ field: entry.key, value: entry.value, showFieldLabel: true }));
+
+  return [...entries, ...customEntries];
+}
+
+function renderBadge(value, field = "", options = {}) {
   const normalizedField = normalizeBadgeToken(field);
   const tone = getBadgeTone(normalizedField, value);
   const classes = ["badge", `badge-tone-${tone}`];
   if (normalizedField) {
     classes.push(`badge-field-${normalizedField}`);
   }
-  return `<span class="${classes.join(" ")}">${escapeHtml(value)}</span>`;
+  const label = options.showFieldLabel && normalizedField
+    ? `${humanizeFilterKey(normalizedField)}: ${value}`
+    : value;
+  return `<span class="${classes.join(" ")}">${escapeHtml(label)}</span>`;
 }
 
-function renderBadges(item, excludeKey = "") {
-  return [
-    excludeKey === "status" ? null : { field: "status", value: item.status },
-    excludeKey === "priority" ? null : { field: "priority", value: item.priority },
-    excludeKey === "commitment" ? null : { field: "commitment", value: item.commitment },
-    excludeKey === "milestone" ? null : { field: "milestone", value: item.milestone },
-  ]
-    .filter((entry) => entry?.value)
-    .map((entry) => renderBadge(entry.value, entry.field))
+function getBadgeMetadata(item) {
+  if (!item || typeof item !== "object") {
+    return {};
+  }
+
+  if (item.metadata && typeof item.metadata === "object") {
+    return item.metadata;
+  }
+
+  return Object.fromEntries(CORE_METADATA_FIELDS
+    .map((field) => [field, normalizeMetadataValue(item[field])])
+    .filter(([, value]) => value));
+}
+
+function renderMetadataBadges(metadata, excludeKey = "", options = {}) {
+  return buildMetadataBadgeEntries(metadata || {}, { ...options, excludeKey })
+    .map((entry) => renderBadge(entry.value, entry.field, { showFieldLabel: entry.showFieldLabel }))
     .join("");
+}
+
+function renderBadges(item, excludeKey = "", options = {}) {
+  return renderMetadataBadges(getBadgeMetadata(item), excludeKey, options);
 }
 
 function updateDocumentTitle() {
@@ -1626,6 +1678,66 @@ function renderBoardGroupField(itemId = state.selectedItemId) {
   fields.boardGroup.value = selectedIndex >= 0 ? String(selectedIndex) : "";
 }
 
+function getEditableMetadataOptions(key, currentValue = "") {
+  const values = [];
+  const lens = state.workspace?.availableLenses?.find((entry) => entry.key === key);
+  const facet = state.workspace?.availableFilters?.find((entry) => entry.key === key);
+
+  if (Array.isArray(lens?.values)) {
+    values.push(...lens.values);
+  }
+  if (Array.isArray(facet?.values)) {
+    values.push(...facet.values);
+  }
+  if (currentValue) {
+    values.push(currentValue);
+  }
+
+  return Array.from(new Set(values.map((value) => String(value).trim()).filter(Boolean)));
+}
+
+function renderExtraMetadataFields(item = state.currentItem) {
+  if (!fields.extraMetadataContainer) {
+    return;
+  }
+
+  const entries = getCustomMetadataEntries(item?.metadata, { maxCount: Number.POSITIVE_INFINITY });
+  if (entries.length === 0) {
+    fields.extraMetadataContainer.hidden = true;
+    fields.extraMetadataContainer.innerHTML = "";
+    return;
+  }
+
+  fields.extraMetadataContainer.hidden = false;
+  fields.extraMetadataContainer.innerHTML = entries.map((entry) => {
+    const key = escapeHtml(entry.key);
+    const label = escapeHtml(humanizeFilterKey(entry.key));
+    const value = escapeHtml(entry.value);
+    const options = getEditableMetadataOptions(entry.key, entry.value);
+
+    if (options.length >= 2) {
+      const optionMarkup = ['<option value=""></option>', ...options.map((option) => {
+        const selected = option === entry.value ? " selected" : "";
+        return `<option value="${escapeHtml(option)}"${selected}>${escapeHtml(option)}</option>`;
+      })].join("");
+      return `<label><span>${label}</span><select data-extra-metadata-key="${key}">${optionMarkup}</select></label>`;
+    }
+
+    return `<label><span>${label}</span><input data-extra-metadata-key="${key}" type="text" value="${value}" /></label>`;
+  }).join("");
+
+  for (const input of fields.extraMetadataContainer.querySelectorAll("[data-extra-metadata-key]")) {
+    input.addEventListener("input", () => {
+      setDirtyState("structured", true);
+      renderPreview();
+    });
+    input.addEventListener("change", () => {
+      setDirtyState("structured", true);
+      renderPreview();
+    });
+  }
+}
+
 function buildBoardGroupsWithMovedItem(itemId, targetGroupIndex, boardGroups = buildBoardGroupsPayload()) {
   if (!itemId || !Number.isInteger(targetGroupIndex) || targetGroupIndex < 0 || targetGroupIndex >= boardGroups.length) {
     return null;
@@ -1725,7 +1837,7 @@ function buildBoardCardBodyMarkup(item, activeLensKey, extraMetaHtml = "") {
     </span>
     <span class="board-item-id">${escapeHtml(item.id)}</span>
     ${overview}
-    <span class="badge-row">${renderBadges(item, activeLensKey)}</span>
+    <span class="badge-row">${renderBadges(item, activeLensKey, { cardMode: true })}</span>
   `;
 }
 
@@ -2468,6 +2580,10 @@ function resetEditor() {
     fields.boardGroup.innerHTML = "";
     fields.boardGroup.disabled = true;
   }
+  if (fields.extraMetadataContainer) {
+    fields.extraMetadataContainer.hidden = true;
+    fields.extraMetadataContainer.innerHTML = "";
+  }
   sectionsContainer.innerHTML = "";
   rawTextElement.value = "";
   previewElement.className = "preview-surface preview-empty";
@@ -2548,7 +2664,8 @@ function getStructuredSections() {
 }
 
 function getStructuredMetadata() {
-  return {
+  const metadata = {
+    ...(state.currentItem?.metadata || {}),
     id: fields.id.value,
     title: fields.title.value,
     status: fields.status.value,
@@ -2556,6 +2673,18 @@ function getStructuredMetadata() {
     commitment: fields.commitment.value,
     milestone: fields.milestone.value.trim(),
   };
+
+  if (fields.extraMetadataContainer) {
+    for (const input of fields.extraMetadataContainer.querySelectorAll("[data-extra-metadata-key]")) {
+      const key = input.dataset.extraMetadataKey;
+      if (!key) {
+        continue;
+      }
+      metadata[key] = input.value.trim();
+    }
+  }
+
+  return metadata;
 }
 
 function renderPreview() {
@@ -2565,19 +2694,15 @@ function renderPreview() {
     return;
   }
 
-  const metadata = getStructuredMetadata();
-  const sections = getStructuredSections();
-  const orderedSections = getStructuredSectionHeadings().filter((heading) => Object.hasOwn(sections, heading));
-  const previewBadges = [
-    { field: "status", value: metadata.status },
-    { field: "priority", value: metadata.priority },
-    { field: "commitment", value: metadata.commitment },
-    { field: "milestone", value: metadata.milestone },
-  ]
-    .filter((entry) => entry.value)
-    .map((entry) => renderBadge(entry.value, entry.field))
-    .join("");
-  const sectionHtml = orderedSections.map((heading) => `
+  const useDraftState = state.dirtyStructured;
+  const metadata = useDraftState ? getStructuredMetadata() : state.currentItem.metadata;
+  const orderedSections = getStructuredSectionHeadings(state.currentItem);
+  const sections = useDraftState
+    ? getStructuredSections()
+    : Object.fromEntries(orderedSections.map((heading) => [heading, getSectionValueFromItem(state.currentItem, heading)]));
+  const visibleSections = orderedSections.filter((heading) => Object.hasOwn(sections, heading));
+  const previewBadges = renderMetadataBadges(metadata);
+  const sectionHtml = visibleSections.map((heading) => `
     <section class="preview-section">
       <div class="preview-section-header">
         <h3>${escapeHtml(heading)}</h3>
@@ -2606,6 +2731,7 @@ function renderItem(item) {
   ensureSelectValue(fields.commitment, item.metadata.commitment || "uncommitted");
   renderBoardGroupField(item.metadata.id || item.id);
   fields.milestone.value = item.metadata.milestone || "";
+  renderExtraMetadataFields(item);
   renderStructuredSections(item);
   rawTextElement.value = item.rawText || "";
   autosizeStructuredTextareas();
@@ -3047,7 +3173,10 @@ saveButton.addEventListener("click", () => {
 });
 
 refreshButton.addEventListener("click", () => {
-  void loadWorkspace();
+  void loadWorkspace(state.selectedItemId, {
+    forceReloadItem: Boolean(state.selectedItemId),
+    replaceRoute: true,
+  });
 });
 
 setupViewElement.addEventListener("click", (event) => {
@@ -3266,4 +3395,9 @@ void loadWorkspace(initialRoute.itemId || state.selectedItemId, {
     syncRouteState({ replace: true });
   }
 });
+
+
+
+
+
 

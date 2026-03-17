@@ -1081,6 +1081,10 @@ h3 {
   gap: 12px;
 }
 
+.metadata-extra-fields {
+  display: contents;
+}
+
 .metadata-grid label,
 .section-stack label {
   display: grid;
