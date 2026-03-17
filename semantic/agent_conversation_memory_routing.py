@@ -3030,20 +3030,13 @@ def _select_final_candidates(
             adjacent_evidence.append({"signal_type": signal_type, "result_id": candidate_result_id})
             break
 
-    for candidate in ranked_candidates[1:]:
-        if len(selected_candidates) >= requested_limit:
-            break
-        candidate_result_id = _routing_result_id(candidate["item"])
-        if candidate_result_id in used_result_ids:
-            continue
-        selected_candidates.append(candidate)
-        used_result_ids.add(candidate_result_id)
-
     if adjacent_evidence:
         summary["mode"] = "task_checkpoint_plus_adjacent_evidence"
         summary["adjacent_evidence"] = adjacent_evidence
     elif constraint_state is not None or summary.get("incompatible_structured_candidates"):
         summary["mode"] = "compatible_work_resumption"
+    else:
+        summary["mode"] = "task_checkpoint_only"
     return selected_candidates, summary
 
 def _select_compatible_recall_candidates(

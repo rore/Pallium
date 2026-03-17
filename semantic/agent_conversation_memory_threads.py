@@ -69,6 +69,7 @@ LOW_VALUE_ASSISTANT_META_PATTERNS = (
     re.compile(r"\bno response (?:requested|needed)\b", re.IGNORECASE),
     re.compile(r"\bno (?:chat |email |message )?needed\b", re.IGNORECASE),
     re.compile(r"\bno (?:chat |email |slack )?message needed\b", re.IGNORECASE),
+    re.compile(r"\bno [a-z/ ]*(?:auth|authentication)\b.*\bi will use the local (?:repos|cache) only\b", re.IGNORECASE),
 )
 
 IMPLICIT_FINDING_MARKERS = (

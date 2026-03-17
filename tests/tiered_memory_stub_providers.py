@@ -210,6 +210,9 @@ def _build_item_extraction_payload(user_prompt: str) -> dict[str, object]:
             'no response requested. nothing new to report.',
             'understood. no browser auth, no portal or console auth. i will use the local cache only.',
         )
+    ) or (
+        ('i will use the local repos only' in lower or 'i will use the local cache only' in lower)
+        and ('auth' in lower or 'authentication' in lower)
     ):
         return {
             'summary': 'Low-value orchestration update.',

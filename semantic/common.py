@@ -484,8 +484,32 @@ def _is_selected_assistant_work_artifact(source_item: SourceItem, extraction: Se
     )
 
 
-def _is_substantive_summary(source_item: SourceItem, extraction: SemanticExtraction) -> bool:
+def _looks_like_low_value_meta_update(source_item: SourceItem, extraction: SemanticExtraction) -> bool:
     if extraction.is_low_value_meta:
+        return True
+    if (source_item.role or "").lower() != "assistant":
+        return False
+    normalized_text = normalize_for_index(" ".join(part for part in (source_item.content, extraction.summary) if part))
+    if not normalized_text:
+        return False
+    if any(
+        phrase in normalized_text
+        for phrase in (
+            "task complete",
+            "nothing new to report",
+            "no response requested",
+            "no response needed",
+            "no message needed",
+        )
+    ):
+        return True
+    return (
+        ("local repos only" in normalized_text or "local cache only" in normalized_text)
+        and (" auth " in f" {normalized_text} " or "authentication" in normalized_text)
+    )
+
+def _is_substantive_summary(source_item: SourceItem, extraction: SemanticExtraction) -> bool:
+    if _looks_like_low_value_meta_update(source_item, extraction):
         return False
     if _has_explicit_thread_signal(extraction):
         return True
@@ -497,7 +521,7 @@ def _is_substantive_summary(source_item: SourceItem, extraction: SemanticExtract
 
 
 def _should_create_discussion_summary(source_item: SourceItem, extraction: SemanticExtraction) -> bool:
-    if extraction.is_low_value_meta:
+    if _looks_like_low_value_meta_update(source_item, extraction):
         return False
     if _is_selected_assistant_work_artifact(source_item, extraction):
         return True
@@ -509,7 +533,7 @@ def _should_request_thread_rebuild(
     extraction: SemanticExtraction,
     memory_objects: list[MemoryObject],
 ) -> bool:
-    if extraction.is_low_value_meta:
+    if _looks_like_low_value_meta_update(source_item, extraction):
         return False
     has_supported_typed_memory = any(
         memory_object.type in {"decision", "investigation_outcome"}

@@ -22,6 +22,7 @@ def test_work_resumption_routes_task_checkpoint_first(monkeypatch, test_db_url: 
         assert [item['signal_type'] for item in routing['packaging']['adjacent_evidence'][:2]] == ['blocker', 'next_step']
         assert payload['results'][0]['result_kind'] == 'memory_hit'
         assert payload['results'][0]['type'] == 'task_checkpoint'
+        assert all(result['result_kind'] == 'source_hit' for result in payload['results'][1:])
         assert {payload['results'][1]['artifact_kind'], payload['results'][2]['artifact_kind']} == {'tool_use_summary', 'todo_snapshot'}
         checkpoint_payload = payload['results'][0]['payload']
         assert 'service token expired' in checkpoint_payload['blocker_state'].lower()

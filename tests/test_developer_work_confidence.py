@@ -104,9 +104,9 @@ def test_developer_work_confidence_suite_reports_hard_gates_and_pressure_signals
     assert summary['aggregate']['benchmark']['replay_summary']['assets_total'] == 0
     assert summary['aggregate']['benchmark']['replay_summary']['has_replay_assets'] is False
     assert summary['aggregate']['failure_family_counts']['routing_layer_choice_failure'] >= 2
-    assert summary['aggregate']['failure_family_counts']['injectability_packaging_failure'] >= 7
-    assert summary['aggregate']['failure_family_counts']['thin_agent_boundary_failure'] >= 7
-    assert summary['aggregate']['failure_family_counts']['paraphrase_or_indirect_query_failure'] >= 3
+    assert summary['aggregate']['failure_family_counts']['injectability_packaging_failure'] >= 5
+    assert summary['aggregate']['failure_family_counts']['thin_agent_boundary_failure'] >= 5
+    assert summary['aggregate']['failure_family_counts']['paraphrase_or_indirect_query_failure'] >= 2
     assert summary['aggregate']['failure_family_counts']['wrong_memory_selection_failure'] >= 2
     assert summary['aggregate']['failure_family_counts']['low_value_promotion_failure'] == 0
     assert summary['aggregate']['failure_family_counts']['thread_rebuild_churn_failure'] == 0
