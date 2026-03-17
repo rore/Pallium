@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.config import AppConfig
 from app.main import create_app
-from tests.stub_providers import TieredMemorySemanticProvider
+from tests.tiered_memory_stub_providers import TieredMemorySemanticProvider
 
 
 def _agent_conversation_client(monkeypatch, test_db_url: str, *, auto_drain_items: bool = True) -> TestClient:
@@ -477,6 +477,3 @@ def _render_thread_memory(client: TestClient, *, container_ref: str, thread_ref:
                 ).lower()
             )
     return rendered
-
-
-
