@@ -58,6 +58,9 @@ def test_thread_local_strategy_groups_only_same_thread_and_creates_continuity_me
         assert result is not None
         assert len(result.groups) == 1
         assert result.groups[0].created_memory_types == ('continuity_memory',)
+        storage = client.app.state.pallium_service._storage
+        continuity = storage.get_memory_object(result.groups[0].created_memory_ids[0])
+        assert continuity.payload['retrieval_enrichment']['semantic_provenance']['prompt_role'] == 'write_enrichment'
 
 
 def test_container_topic_window_strategy_can_merge_cross_thread_related_memory(monkeypatch, test_db_url: str) -> None:
@@ -67,6 +70,9 @@ def test_container_topic_window_strategy_can_merge_cross_thread_related_memory(m
         assert result is not None
         assert result.groups
         assert 'pattern_memory' in result.groups[0].created_memory_types
+        storage = client.app.state.pallium_service._storage
+        pattern_memory = storage.get_memory_object(result.groups[0].created_memory_ids[0])
+        assert pattern_memory.payload['retrieval_enrichment']['semantic_provenance']['prompt_role'] == 'write_enrichment'
 
 
 def test_thread_summary_anchored_strategy_anchors_on_thread_summary(monkeypatch, test_db_url: str) -> None:
@@ -120,3 +126,5 @@ def test_task_checkpoint_preserves_work_state_and_evidence(monkeypatch, test_db_
         payload = checkpoints[0].payload
         assert payload['blocker_state'] == 'Catalog API returned 401 because the service token expired.'
         assert payload['next_step'] == 'Refresh the catalog service token and rerun the sync from batch 313.'
+        assert payload['retrieval_enrichment']['semantic_provenance']['prompt_role'] == 'write_enrichment'
+        assert 'batch 313' in payload['retrieval_enrichment']['retrieval_context'].lower()

@@ -19,6 +19,9 @@ CONTINUITY_FAILURE_FAMILIES = (
     "stale_memory_failure",
     "wrong_memory_selection_failure",
     "privacy_leak_failure",
+    "temporal_reasoning_failure",
+    "update_conflict_handling_failure",
+    "unsupported_memory_overreach",
 )
 
 HIGHER_LEVEL_LAYERS = {"pattern_memory", "continuity_memory", "task_checkpoint"}
@@ -46,6 +49,9 @@ FAILURE_FAMILY_TO_BOTTLENECK = {
     "injection_decision_failure": "injection_decision",
     "low_value_promotion_failure": "ingest_noise_churn",
     "thread_rebuild_churn_failure": "ingest_noise_churn",
+    "temporal_reasoning_failure": "temporal_reasoning",
+    "update_conflict_handling_failure": "update_conflict_handling",
+    "unsupported_memory_overreach": "unsupported_memory",
 }
 
 BOTTLENECK_IMPLICATIONS = {
@@ -57,6 +63,9 @@ BOTTLENECK_IMPLICATIONS = {
     "packaging": "The current suite points to injectability packaging and thin-agent-ready output as the next tuning target.",
     "injection_decision": "The current suite points to injection-decision quality as the next tuning target.",
     "ingest_noise_churn": "The current suite points to ingest-time noise suppression and rebuild-churn control as the next tuning target.",
+    "temporal_reasoning": "The current suite points to temporal reasoning under carried memory as the next tuning target.",
+    "update_conflict_handling": "The current suite points to stale-versus-updated memory resolution as the next tuning target.",
+    "unsupported_memory": "The current suite points to abstention and unsupported-memory boundaries as the next tuning target.",
 }
 
 

@@ -14,7 +14,7 @@ def test_prompt_role_registry_contains_expected_roles() -> None:
     }
     assert contracts["write_extraction"].status == "implemented"
     assert contracts["write_reconciliation"].status == "contract_only"
-    assert contracts["write_enrichment"].status == "contract_only"
+    assert contracts["write_enrichment"].status == "implemented"
     assert contracts["query_ambiguity_resolution"].status == "contract_only"
 
 

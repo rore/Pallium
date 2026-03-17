@@ -13,7 +13,9 @@ from providers.llm.base import LLMJsonResponse
 
 class ThreadAwareStubProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
-        if "key_findings" in schema_description and "freshness_signal" in schema_description:
+        if "retrieval_context" in schema_description and "ENRICH or NO_OP" in schema_description:
+            payload = _build_write_enrichment_payload(user_prompt)
+        elif "key_findings" in schema_description and "freshness_signal" in schema_description:
             payload = _build_task_checkpoint_payload(user_prompt)
         elif "Thread items:" in user_prompt:
             lower = user_prompt.lower()
@@ -125,6 +127,28 @@ class ThreadAwareStubProvider:
         return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
 
 
+def _build_write_enrichment_payload(user_prompt: str) -> dict[str, object]:
+    lower = user_prompt.lower()
+    if 'memory type: thread_summary' in lower and 'lib-241' in lower:
+        return {
+            'action': 'ENRICH',
+            'retrieval_context': 'Flag-gated LIB-241 reservation ordering rollout with remaining admin-toggle and retry-path coverage work.',
+        }
+    if 'memory type: task_checkpoint' in lower and 'batch 313' in lower:
+        return {
+            'action': 'ENRICH',
+            'retrieval_context': 'Catalog sync retry resume state anchored on the batch 313 restart after service-token expiry.',
+        }
+    if 'memory type: task_checkpoint' in lower and 'lib-241' in lower:
+        return {
+            'action': 'ENRICH',
+            'retrieval_context': 'Flag-gated LIB-241 task state with remaining admin-toggle and retry-path coverage work.',
+        }
+    return {
+        'action': 'NO_OP',
+        'retrieval_context': None,
+    }
+
 def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
     lower = user_prompt.lower()
     if "schema change and backfill done" in lower and "admin toggle" in lower:
@@ -229,9 +253,20 @@ def test_thread_summary_and_task_checkpoint_preserve_selected_work_artifacts(mon
 
     query_response = client.post("/query", json={"text": "what state were we in on ticket lib 241 and what should i do next?", "limit": 8, "container_ref": "chat:library-help"})
     memory_hits = [item for item in query_response.json()["results"] if item["result_kind"] == "memory_hit"]
-    assert any(item["type"] == "thread_summary" for item in memory_hits)
+    storage = client.app.state.pallium_service._storage
+    thread_items = storage.list_source_items_for_thread("chat:library-help", "chat:library-help:thread-agg-work-001")
+    active_thread_summary = next(
+        memory
+        for item in thread_items
+        for memory in storage.list_memory_objects_for_source_item(item.id)
+        if memory.type == "thread_summary" and memory.lifecycle == "active"
+    )
+    assert active_thread_summary.payload["retrieval_enrichment"]["semantic_provenance"]["prompt_role"] == "write_enrichment"
+    assert "lib-241" in active_thread_summary.payload["retrieval_enrichment"]["retrieval_context"].lower()
     task_checkpoint = next(item for item in memory_hits if item["type"] == "task_checkpoint")
     assert task_checkpoint["payload"]["next_step"] == "Wire the admin toggle and add retry-path coverage before enabling the flag."
+    assert task_checkpoint["payload"]["retrieval_enrichment"]["semantic_provenance"]["prompt_role"] == "write_enrichment"
+    assert "flag" in task_checkpoint["payload"]["retrieval_enrichment"]["retrieval_context"].lower()
 
 
 def test_task_checkpoint_is_created_and_superseded(monkeypatch, test_db_url: str) -> None:
@@ -249,7 +284,9 @@ def test_task_checkpoint_is_created_and_superseded(monkeypatch, test_db_url: str
     thread_items = storage.list_source_items_for_thread("chat:library-help", "chat:library-help:thread-agg-work-003")
     checkpoints = list({memory.id: memory for item in thread_items for memory in storage.list_memory_objects_for_source_item(item.id) if memory.type == "task_checkpoint"}.values())
     assert len(checkpoints) >= 2
-    assert len([item for item in checkpoints if item.lifecycle == "active"]) == 1
+    active_checkpoint = next(item for item in checkpoints if item.lifecycle == "active")
+    assert active_checkpoint.payload["retrieval_enrichment"]["semantic_provenance"]["prompt_role"] == "write_enrichment"
+    assert "batch 313" in active_checkpoint.payload["retrieval_enrichment"]["retrieval_context"].lower()
 
 
 def test_downstream_agent_style_thread_promotes_verdict_and_uses_summary_fallback(monkeypatch, test_db_url: str) -> None:

@@ -55,10 +55,10 @@ Current focus:
   - the first-class constraint/policy lane is now shipped with typed compatibility checks
   - the shipped subject/workstream anchor filter now separates adjacent topics before final ranking
   - define a bounded query-policy contract and selective semantic ambiguity resolution only for unresolved cases
-- the shared semantic prompt-role governance layer is now shipped for contract ownership and normalized `write_extraction` provenance
-- the first shipped slice is intentionally narrow:
-  - only `write_extraction` runtime is migrated onto the shared contract today
-  - `write_reconciliation`, `write_enrichment`, and `query_ambiguity_resolution` now exist as owned contract definitions for later features
+- the shared semantic prompt-role governance layer is now shipped for contract ownership and normalized provenance across semantic prompt roles
+- the first live `write_enrichment` runtime is now shipped on top of that contract:
+  - higher-level memory can carry bounded retrieval enrichment without changing the query hot path
+  - `write_reconciliation` and `query_ambiguity_resolution` still remain contract-owned later roles
 - prompt lifecycle should be treated as a governed semantic-contract problem,
   not as ad hoc prompt tweaking inside whatever feature currently happens to use
   a model call
@@ -90,14 +90,13 @@ Planned future query pipeline:
 - keep extending the shipped Pallium-native replay safety rail across all of the above so new structure is backed by deterministic tests, convergence checks, and replay fixtures
 - keep Pallium-native scenario and replay expansion active across all of the above so new structure is backed by deterministic tests, convergence checks, and replay fixtures
 - use the shipped shared semantic prompt-role contract layer as the governance owner for later extraction, reconciliation, enrichment, and selective query-ambiguity work
-- then add write-time contextual enrichment and background consolidation so
-  retrieval quality improves without pushing more work into the query hot path
+- write-time contextual enrichment and bounded background consolidation are now shipped so retrieval quality can improve without pushing more work into the query hot path
 - query-time prompt use should remain selective and bounded even after that
   prompt-role formalization; it does not justify an always-on query-time model
   router
 - then add the live miss-capture and replay-promotion loop so real traffic becomes bounded miss bundles and permanent regressions quickly
 - after that, move vector retrieval up as the bounded semantic candidate-generation layer for durable memory, then add hybrid fusion so lexical precision and paraphrase recall operate over the same narrowed candidate space
-- after those retrieval-substrate layers are in place, use the targeted external memory pressure pack to pressure stale-memory handling, update correctness, long noisy recall, and incremental memory drift without confusing those checks with the product acceptance gate
+- the targeted external memory pressure pack is now shipped as a non-gating confidence lane for stale-memory handling, update correctness, long noisy recall, and incremental drift; future retrieval-substrate work should use it as pressure, not as the product acceptance gate
 - only after those layers are clearer should explicit shared-memory derivation and cross-container bounded memory move up
 
 Parallel workstreams for the next phase:
@@ -108,8 +107,8 @@ Parallel workstreams for the next phase:
   - it should keep protecting deterministic hot-path behavior, abstention behavior, low-confidence fallback, and selective semantic escalation boundaries as later features land
 - Stream C (stabilization-semantics): shipped first-class constraints and subject/workstream anchors
   - the typed constraint lane and subject/workstream anchor filter are now shipped; this stream now continues with later semantic-policy refinement on top of the shipped compatibility model
-- Stream D (`stabilization-enrichment`): write-time contextual enrichment and background consolidation
-  - this should start only after the typed write path and deterministic hot path are stable enough to enrich without masking structural problems
+- Stream D (`stabilization-enrichment`): write-time contextual enrichment and background consolidation are now shipped as the first bounded enrichment slice
+  - future work in this stream should stay additive and background-oriented rather than pushing more semantic work into query-time routing
 - Stream E (`semantic-contract-governance`): shared prompt-role governance is now available as the contract owner for later semantic features
   - future work in this stream should extend the shipped contract layer beyond `write_extraction` when reconciliation, enrichment, and selective query ambiguity land
 

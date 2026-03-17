@@ -60,7 +60,7 @@ PROMPT_ROLE_CONTRACTS: dict[PromptRole, PromptRoleContract] = {
         supports_abstain=False,
         abstain_outcome=None,
         no_op_outcome="NO_OP",
-        status="contract_only",
+        status="implemented",
         owner_feature="add-semantic-prompt-role-contracts-and-replay-governance",
         default_model_role="write_enrichment",
     ),

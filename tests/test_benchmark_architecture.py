@@ -14,6 +14,7 @@ def test_suite_benchmark_catalog_maps_expected_lanes_and_tiers() -> None:
     memory_routing = suite_benchmark_config('memory_routing')
     recurring_question = suite_benchmark_config('recurring_question')
     work_resumption = suite_benchmark_config('work_resumption')
+    external_memory_pressure = suite_benchmark_config('external_memory_pressure')
 
     assert memory_routing.dataset_tier is DatasetTier.CONFIDENCE
     assert memory_routing.primary_lane is BenchmarkLane.TRACE
@@ -31,6 +32,11 @@ def test_suite_benchmark_catalog_maps_expected_lanes_and_tiers() -> None:
         'realism',
         'operational',
     ]
+
+    assert external_memory_pressure.dataset_tier is DatasetTier.CONFIDENCE
+    assert external_memory_pressure.primary_lane is BenchmarkLane.REALISM
+    assert [lane.value for lane in external_memory_pressure.scored_lanes] == ['realism', 'operational']
+    assert [lane.value for lane in external_memory_pressure.hard_gate_lanes] == []
 
 
 def test_aggregate_summary_reports_hard_gate_rollups_and_zero_replay_assets() -> None:
@@ -106,3 +112,18 @@ def test_suite_summary_keeps_realism_and_operational_distinct_from_contract() ->
     assert summary['lane_aggregates']['contract']['failures'] == 1
     assert summary['lane_aggregates']['realism']['successes'] == 1
     assert summary['lane_aggregates']['operational']['failures'] == 1
+
+def test_external_memory_pressure_suite_stays_out_of_hard_gate_rollups() -> None:
+    result = annotate_result({
+        "episode_id": "external-pressure-case",
+        "policy_success": False,
+        "failure_families": ["temporal_reasoning_failure"],
+    }, suite_id="external_memory_pressure")
+
+    summary = build_suite_summary(suite_id="external_memory_pressure", results=[result])
+
+    assert summary["hard_gate_summary"]["lanes"] == []
+    assert summary["lane_aggregates"]["realism"]["scenarios_total"] == 1
+    assert summary["lane_aggregates"]["operational"]["scenarios_total"] == 1
+    assert summary["lane_aggregates"]["contract"]["scenarios_total"] == 0
+    assert summary["lane_aggregates"]["trace"]["scenarios_total"] == 0

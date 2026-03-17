@@ -27,6 +27,8 @@ def test_work_resumption_routes_task_checkpoint_first(monkeypatch, test_db_url: 
         checkpoint_payload = payload['results'][0]['payload']
         assert 'service token expired' in checkpoint_payload['blocker_state'].lower()
         assert 'refresh the catalog service token' in checkpoint_payload['next_step'].lower()
+        assert checkpoint_payload['retrieval_enrichment']['semantic_provenance']['prompt_role'] == 'write_enrichment'
+        assert 'batch 313' in checkpoint_payload['retrieval_enrichment']['retrieval_context'].lower()
         assert 'blocker' in routing['selected_results'][0]['work_signal_types']
         assert 'freshness' in routing['selected_results'][0]['work_signal_types']
         assert routing['kind_prefilter']['allowed_kinds'] == ['episode', 'finding', 'summary']

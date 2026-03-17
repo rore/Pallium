@@ -25,6 +25,7 @@ def test_broad_recall_routes_pattern_memory_first(monkeypatch, test_db_url: str)
         assert routing['selected_layer'] == 'pattern_memory'
         assert payload['results'][0]['result_kind'] == 'memory_hit'
         assert payload['results'][0]['type'] == 'pattern_memory'
+        assert payload['results'][0]['payload']['retrieval_enrichment']['semantic_provenance']['prompt_role'] == 'write_enrichment'
 
 def test_repeated_answer_routes_continuity_memory_first(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:

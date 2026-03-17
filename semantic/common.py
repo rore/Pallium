@@ -487,6 +487,8 @@ def _is_selected_assistant_work_artifact(source_item: SourceItem, extraction: Se
 def _looks_like_low_value_meta_update(source_item: SourceItem, extraction: SemanticExtraction) -> bool:
     if extraction.is_low_value_meta:
         return True
+    if _has_explicit_thread_signal(extraction):
+        return False
     if (source_item.role or "").lower() != "assistant":
         return False
     normalized_text = normalize_for_index(" ".join(part for part in (source_item.content, extraction.summary) if part))

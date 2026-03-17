@@ -7,7 +7,9 @@ from providers.llm.base import LLMJsonResponse
 
 class TieredMemorySemanticProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
-        if 'freshness_signal' in schema_description:
+        if 'retrieval_context' in schema_description and 'ENRICH or NO_OP' in schema_description:
+            payload = _build_write_enrichment_payload(user_prompt)
+        elif 'freshness_signal' in schema_description:
             payload = _build_task_checkpoint_payload(user_prompt)
         elif 'carry_forward_answer' in schema_description:
             payload = _build_continuity_payload(user_prompt)
@@ -24,6 +26,38 @@ class TieredMemoryAnswerProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
         payload = _build_answer_payload(user_prompt)
         return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
+
+def _build_write_enrichment_payload(user_prompt: str) -> dict[str, object]:
+    lower = user_prompt.lower()
+    if 'memory type: task_checkpoint' in lower and 'batch 313' in lower:
+        return {
+            'action': 'ENRICH',
+            'retrieval_context': 'Catalog sync retry resume state anchored on the batch 313 restart after service-token failure.',
+        }
+    if 'memory type: thread_summary' in lower and 'lib-241' in lower:
+        return {
+            'action': 'ENRICH',
+            'retrieval_context': 'Flag-gated LIB-241 reservation ordering rollout with remaining admin-toggle and retry-path coverage work.',
+        }
+    if 'memory type: pattern_memory' in lower and 'duplicate holds' in lower:
+        return {
+            'action': 'ENRICH',
+            'retrieval_context': 'Cross-thread reservation ordering lesson about duplicate holds after catalog sync delays.',
+        }
+    if 'memory type: continuity_memory' in lower and '30-minute batches' in lower:
+        return {
+            'action': 'ENRICH',
+            'retrieval_context': 'Carry-forward answer for overdue notice batching and staff inbox spam questions.',
+        }
+    if 'memory type: continuity_memory' in lower:
+        return {
+            'action': 'ENRICH',
+            'retrieval_context': 'Carry-forward answer for a repeated question from the same conversation thread.',
+        }
+    return {
+        'action': 'NO_OP',
+        'retrieval_context': None,
+    }
 
 
 def _build_inventory_batch_thread_summary_payload(lower: str) -> dict[str, str] | None:

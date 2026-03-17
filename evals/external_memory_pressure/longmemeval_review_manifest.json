@@ -1,0 +1,15 @@
+{
+  "name": "longmemeval-reviewed-pressure-slice",
+  "source_benchmark_family": "longmemeval",
+  "dataset_tier": "confidence",
+  "episodes": [
+    {"episode_id": "lme-update-stale-001", "pressure_family": "update_vs_stale_memory", "expected_failure_target": "update_conflict_handling_failure", "suggested_native_lane": "work_resumption", "promotable": true},
+    {"episode_id": "lme-update-stale-002", "pressure_family": "update_vs_stale_memory", "expected_failure_target": "stale_memory_failure", "suggested_native_lane": "memory_routing", "promotable": true},
+    {"episode_id": "lme-temporal-001", "pressure_family": "temporal_ordering", "expected_failure_target": "temporal_reasoning_failure", "suggested_native_lane": "public_corpus", "promotable": true},
+    {"episode_id": "lme-temporal-002", "pressure_family": "temporal_ordering", "expected_failure_target": "temporal_reasoning_failure", "suggested_native_lane": "replay_direct", "promotable": true},
+    {"episode_id": "lme-cross-session-001", "pressure_family": "cross_session_carry_forward", "expected_failure_target": "wrong_memory_selection_failure", "suggested_native_lane": "memory_routing", "promotable": true},
+    {"episode_id": "lme-cross-session-002", "pressure_family": "cross_session_carry_forward", "expected_failure_target": "retrieval_recall_failure", "suggested_native_lane": "work_resumption", "promotable": true},
+    {"episode_id": "lme-unsupported-001", "pressure_family": "unsupported_or_ambiguous_memory_abstention", "expected_failure_target": "unsupported_memory_overreach", "suggested_native_lane": "memory_routing", "promotable": true},
+    {"episode_id": "lme-unsupported-002", "pressure_family": "unsupported_or_ambiguous_memory_abstention", "expected_failure_target": "unsupported_memory_overreach", "suggested_native_lane": "memory_routing", "promotable": true}
+  ]
+}

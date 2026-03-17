@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
@@ -93,6 +93,13 @@ SUITE_BENCHMARK_CONFIGS: dict[str, SuiteBenchmarkConfig] = {
         dataset_tier=DatasetTier.ITERATION,
         primary_lane=BenchmarkLane.USEFULNESS,
         scored_lanes=(BenchmarkLane.USEFULNESS, BenchmarkLane.REALISM),
+        hard_gate_lanes=(),
+    ),
+    "external_memory_pressure": SuiteBenchmarkConfig(
+        suite_id="external_memory_pressure",
+        dataset_tier=DatasetTier.CONFIDENCE,
+        primary_lane=BenchmarkLane.REALISM,
+        scored_lanes=(BenchmarkLane.REALISM, BenchmarkLane.OPERATIONAL),
         hard_gate_lanes=(),
     ),
 }
@@ -404,8 +411,11 @@ def _realism_success(row: dict[str, Any], *, suite_id: str) -> bool | None:
         return bool(row["realism_success"])
     if suite_id in {"work_resumption", "public_corpus", "recurring_question"}:
         return _usefulness_success(row)
+    if suite_id == "external_memory_pressure":
+        if "policy_success" in row:
+            return bool(row["policy_success"])
+        return _usefulness_success(row)
     return None
-
 
 def _operational_success(row: dict[str, Any], *, suite_id: str) -> bool | None:
     failure_families = set(row.get("failure_families", []))
@@ -413,12 +423,16 @@ def _operational_success(row: dict[str, Any], *, suite_id: str) -> bool | None:
         return not any(name in failure_families for name in OPERATIONAL_FAILURE_FAMILIES)
     if suite_id in {"work_resumption", "public_corpus"}:
         return not any(name in failure_families for name in OPERATIONAL_FAILURE_FAMILIES)
+    if suite_id == "external_memory_pressure":
+        if "policy_success" in row:
+            return bool(row["policy_success"])
+        return not any(name in failure_families for name in OPERATIONAL_FAILURE_FAMILIES)
     if row.get("should_memory_help") is False or row.get("expected_value") is False:
         return "no_value_overreach_failure" not in failure_families
     return None
-
 
 def _normalize_dataset_tier(value: str | DatasetTier) -> DatasetTier:
     if isinstance(value, DatasetTier):
         return value
     return DatasetTier(str(value))
+

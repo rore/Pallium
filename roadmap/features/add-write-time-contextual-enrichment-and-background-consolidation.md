@@ -1,7 +1,7 @@
 ---
 id: add-write-time-contextual-enrichment-and-background-consolidation
 title: Write-time contextual enrichment and background consolidation
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: Later

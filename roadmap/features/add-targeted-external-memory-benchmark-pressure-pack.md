@@ -1,7 +1,7 @@
 ---
 id: add-targeted-external-memory-benchmark-pressure-pack
 title: Targeted external memory benchmark pressure pack
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: Later

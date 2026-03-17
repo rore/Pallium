@@ -14,6 +14,7 @@ from core.models import MemoryObject, QueryResultItem, Relation, SourceItem
 from providers.llm.base import LLMProvider
 from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY, normalize_for_index
 from semantic.agent_conversation_memory_constraints import CONSTRAINT_MARKERS, CONSTRAINT_TOOL_MARKERS, _merge_subject_anchors, _subject_anchors_from_memory_objects, _subject_anchors_from_source_items
+from semantic.agent_conversation_memory_enrichment import apply_write_enrichment
 from semantic.agent_conversation_memory_memory import _build_memory_envelope, _memory_confidence_for_type, _memory_kind_for_type
 
 THREAD_SUMMARY_PROMPT_SCHEMA_ID = "thread_summary_extraction"
@@ -319,11 +320,24 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
             text_view=normalize_for_index(index_source),
             text_view_name=THREAD_SUMMARY_TEXT_VIEW,
         )
+        thread_summary_memory, thread_summary_enrichment_index_entry = apply_write_enrichment(
+            provider=provider,
+            prompt_variant=prompt_variant,
+            plugin_name=plugin_name,
+            memory_object=thread_summary_memory,
+            support_lines=[
+                f"Summary: {summary}",
+                *[f"Conclusion: {item['text']}" for item in conclusion_payload if item.get("text")],
+                *[f"Work artifact: {item['text']}" for item in selected_work_artifacts if item.get("text")],
+            ],
+        )
         memory_objects = [thread_summary_memory]
         index_entries = [thread_summary_index_entry]
+        if thread_summary_enrichment_index_entry is not None:
+            index_entries.append(thread_summary_enrichment_index_entry)
 
         if _should_build_task_checkpoint(selected_work_artifacts):
-            task_checkpoint_memory, task_checkpoint_index_entry = build_task_checkpoint_memory(
+            task_checkpoint_memory, task_checkpoint_index_entries = build_task_checkpoint_memory(
                 aggregate=aggregate,
                 summary=summary,
                 conclusion_payload=conclusion_payload,
@@ -350,7 +364,7 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 ),
             )
             memory_objects.append(task_checkpoint_memory)
-            index_entries.append(task_checkpoint_index_entry)
+            index_entries.extend(task_checkpoint_index_entries)
             relations.extend(
                 Relation(
                     from_kind="memory_object",
@@ -388,7 +402,7 @@ def build_task_checkpoint_memory(
     prompt_variant: str,
     plugin_name: str,
     task_checkpoint_schema_id: str,
-) -> tuple[MemoryObject, object]:
+) -> tuple[MemoryObject, list[object]]:
         checkpoint_material = "\n".join(
             [
                 f"Thread summary: {summary}",
@@ -474,7 +488,25 @@ def build_task_checkpoint_memory(
             text_view=normalize_for_index(index_source),
             text_view_name=TASK_CHECKPOINT_TEXT_VIEW,
         )
-        return memory_object, index_entry
+        memory_object, enrichment_index_entry = apply_write_enrichment(
+            provider=provider,
+            prompt_variant=prompt_variant,
+            plugin_name=plugin_name,
+            memory_object=memory_object,
+            support_lines=[
+                f"Summary: {parsed_summary}",
+                f"Task: {task}",
+                f"Current state: {current_state}",
+                f"Blocker state: {blocker_state}",
+                f"Next step: {next_step}",
+                *[f"Key finding: {item}" for item in key_findings],
+                *[f"Evidence: {item}" for item in evidence],
+            ],
+        )
+        index_entries = [index_entry]
+        if enrichment_index_entry is not None:
+            index_entries.append(enrichment_index_entry)
+        return memory_object, index_entries
 
 def build_consolidated_memory(*, provider: LLMProvider, prompt_variant: str, plugin_name: str, pattern_memory_schema_id: str, continuity_memory_schema_id: str, group: ConsolidationGroup) -> ProcessResult:
         if _should_build_continuity_memory(group):
@@ -578,11 +610,25 @@ def build_pattern_memory(*, provider: LLMProvider, prompt_variant: str, plugin_n
             text_view=normalize_for_index(index_source),
             text_view_name=PATTERN_MEMORY_TEXT_VIEW,
         )
+        memory_object, enrichment_index_entry = apply_write_enrichment(
+            provider=provider,
+            prompt_variant=prompt_variant,
+            plugin_name=plugin_name,
+            memory_object=memory_object,
+            support_lines=[
+                f"Summary: {parsed_summary.strip()}",
+                f"Pattern label: {pattern_label.strip()}",
+                *[f"Conclusion: {conclusion['text']}" for conclusion in conclusion_payload if conclusion.get("text")],
+            ],
+        )
+        index_entries = [index_entry]
+        if enrichment_index_entry is not None:
+            index_entries.append(enrichment_index_entry)
         return ProcessResult(
             annotations=[],
             memory_objects=[memory_object],
             relations=[],
-            index_entries=[index_entry],
+            index_entries=index_entries,
         )
 
 def build_continuity_memory(*, provider: LLMProvider, prompt_variant: str, plugin_name: str, continuity_memory_schema_id: str, group: ConsolidationGroup) -> ProcessResult:
@@ -686,11 +732,26 @@ def build_continuity_memory(*, provider: LLMProvider, prompt_variant: str, plugi
             text_view=normalize_for_index(index_source),
             text_view_name=CONTINUITY_MEMORY_TEXT_VIEW,
         )
+        memory_object, enrichment_index_entry = apply_write_enrichment(
+            provider=provider,
+            prompt_variant=prompt_variant,
+            plugin_name=plugin_name,
+            memory_object=memory_object,
+            support_lines=[
+                f"Summary: {parsed_summary.strip()}",
+                f"Continuity question: {continuity_question.strip()}",
+                f"Carry-forward answer: {carry_forward_answer.strip()}",
+                *[f"Conclusion: {conclusion['text']}" for conclusion in conclusion_payload if conclusion.get("text")],
+            ],
+        )
+        index_entries = [index_entry]
+        if enrichment_index_entry is not None:
+            index_entries.append(enrichment_index_entry)
         return ProcessResult(
             annotations=[],
             memory_objects=[memory_object],
             relations=[],
-            index_entries=[index_entry],
+            index_entries=index_entries,
         )
 
 def _collect_conclusions(group: ConsolidationGroup) -> list[dict[str, str]]:
