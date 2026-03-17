@@ -1,10 +1,10 @@
 ---
 id: add-subject-workstream-anchor-filtering
 title: Subject and workstream anchor filtering before semantic ranking
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 lane: stabilization-semantics
 ---
 

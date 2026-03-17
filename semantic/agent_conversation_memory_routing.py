@@ -8,6 +8,12 @@ from typing import Iterable
 from core.contracts import PackageQueryOutcome
 from core.models import InjectableBlock, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace
 from semantic.common import normalize_for_index
+from semantic.agent_conversation_memory_anchors import (
+    _classify_memory_candidate_anchor_state,
+    _infer_selected_query_anchor,
+    _serialize_subject_anchor,
+    _serialize_subject_anchors,
+)
 from semantic.agent_conversation_memory_constraints import (
     CONSTRAINT_MEMORY_TYPE,
     _apply_structured_constraint_compatibility,
@@ -15,7 +21,6 @@ from semantic.agent_conversation_memory_constraints import (
     _candidate_aligns_with_constraint_state,
     _candidate_has_self_conflicting_guidance,
     _preferred_constraint_text,
-    _serialize_subject_anchors,
     _text_contains_operational_guidance,
 )
 from semantic.agent_conversation_memory_threads import (
@@ -342,6 +347,10 @@ def route_query_results(
             retrieval_result.results,
             intent=intent,
         )
+        anchor_prefiltered_candidates, anchor_prefilter_summary, anchor_prefilter_states = _anchor_prefilter_candidates(
+            prefiltered_candidates,
+            query_tokens=query_tokens,
+        )
         scored_candidates = [
             _score_routed_candidate(
                 item,
@@ -351,10 +360,12 @@ def route_query_results(
                 lexical_rank=index,
                 query_filters=query_filters,
             )
-            for index, item in enumerate(prefiltered_candidates, start=1)
+            for index, item in enumerate(anchor_prefiltered_candidates, start=1)
         ]
         for candidate in scored_candidates:
-            candidate.update(kind_prefilter_states.get(_routing_result_id(candidate["item"]), {}))
+            result_id = _routing_result_id(candidate["item"])
+            candidate.update(kind_prefilter_states.get(result_id, {}))
+            candidate.update(anchor_prefilter_states.get(result_id, {}))
         if scored_candidates:
             _apply_same_kind_freshness_shaping(scored_candidates, intent=intent)
             _apply_fresh_thread_structured_recall_preference(
@@ -470,6 +481,7 @@ def route_query_results(
                     injection_summary=injection_summary,
                     sharp_candidate_diagnostics=sharp_candidate_diagnostics,
                     kind_prefilter_summary=kind_prefilter_summary,
+                    anchor_prefilter_summary=anchor_prefilter_summary,
                 ),
             )
 
@@ -561,6 +573,124 @@ def _kind_prefilter_candidates(
             for item in fallback_candidates[:5]
         ]
     return ordered_candidates, summary, candidate_states
+
+def _build_anchor_prefilter_trace_entry(
+    item: QueryResultItem,
+    *,
+    status: str,
+    reason_code: str | None = None,
+    reason: str | None = None,
+) -> dict[str, object]:
+    entry = {
+        "result_id": _routing_result_id(item),
+        "result_kind": item.result_kind,
+        "memory_type": item.type,
+        "candidate_envelope_kind": item.envelope.kind if item.envelope is not None else None,
+        "status": status,
+    }
+    if item.envelope is not None:
+        entry["candidate_subjects"] = _serialize_subject_anchors(item.envelope.subjects)
+        entry["envelope_confidence"] = item.envelope.confidence
+    if reason_code is not None:
+        entry["reason_code"] = reason_code
+        entry["reason"] = reason
+    return entry
+
+
+def _anchor_prefilter_candidates(
+    candidates: list[QueryResultItem],
+    *,
+    query_tokens: tuple[str, ...],
+) -> tuple[list[QueryResultItem], dict[str, object], dict[str, dict[str, object]]]:
+    memory_candidates = [item for item in candidates if item.result_kind == "memory_hit"]
+    inference = _infer_selected_query_anchor(query_tokens, memory_candidates)
+    selected_anchor = inference.get("selected_anchor")
+    selected_anchor_kind = inference.get("selected_anchor_kind")
+    status = str(inference.get("status") or "none")
+    summary: dict[str, object] = {
+        "query_anchor_status": status,
+        "selected_query_anchor_kind": selected_anchor_kind,
+        "selected_query_anchor": _serialize_subject_anchor(selected_anchor) if selected_anchor is not None else None,
+        "input_candidate_count": len(memory_candidates),
+        "aligned_candidate_count": 0,
+        "insufficient_candidate_count": 0,
+        "legacy_fallback_count": 0,
+        "excluded_by_anchor_count": 0,
+        "fallback_mode": "none",
+    }
+    if selected_anchor is None:
+        return candidates, summary, {}
+
+    aligned: list[QueryResultItem] = []
+    insufficient: list[QueryResultItem] = []
+    legacy: list[QueryResultItem] = []
+    conflicting: list[QueryResultItem] = []
+    candidate_states: dict[str, dict[str, object]] = {}
+    for item in memory_candidates:
+        result_id = _routing_result_id(item)
+        anchor_state = _classify_memory_candidate_anchor_state(item, selected_anchor)
+        if anchor_state == "anchored_aligned":
+            aligned.append(item)
+            candidate_states[result_id] = {
+                "anchor_prefilter_status": "aligned",
+                "anchor_prefilter_reason_code": "anchor_aligned",
+                "anchor_prefilter_reason": "Candidate matched the selected query anchor.",
+            }
+        elif anchor_state == "anchored_conflicting":
+            conflicting.append(item)
+        elif anchor_state == "anchored_insufficient":
+            insufficient.append(item)
+        else:
+            legacy.append(item)
+    summary["aligned_candidate_count"] = len(aligned)
+    summary["insufficient_candidate_count"] = len(insufficient)
+    summary["excluded_by_anchor_count"] = len(conflicting)
+    if conflicting:
+        summary["excluded_candidates"] = [
+            _build_anchor_prefilter_trace_entry(
+                item,
+                status="conflicting_excluded",
+                reason_code="anchor_conflict",
+                reason="Candidate conflicted with the selected query anchor.",
+            )
+            for item in conflicting[:5]
+        ]
+
+    retained_memory_ids: set[int]
+    legacy_retained: list[QueryResultItem] = []
+    if aligned:
+        retained_memory_ids = {id(item) for item in aligned}
+        summary["fallback_mode"] = "aligned_only"
+    elif insufficient:
+        legacy_retained = legacy
+        retained_memory_ids = {id(item) for item in [*insufficient, *legacy_retained]}
+        summary["fallback_mode"] = "insufficient_then_legacy"
+        for item in insufficient:
+            candidate_states[_routing_result_id(item)] = {
+                "anchor_prefilter_status": "insufficient_retained",
+                "anchor_prefilter_reason_code": "anchor_insufficient",
+                "anchor_prefilter_reason": "Candidate lacked the selected query-anchor kind and remained as anchored fallback.",
+            }
+    else:
+        legacy_retained = legacy
+        retained_memory_ids = {id(item) for item in legacy_retained}
+        summary["fallback_mode"] = "legacy_only"
+    if legacy_retained:
+        summary["legacy_fallback_count"] = len(legacy_retained)
+        for item in legacy_retained:
+            candidate_states[_routing_result_id(item)] = {
+                "anchor_prefilter_status": "legacy_fallback_retained",
+                "anchor_prefilter_reason_code": "anchor_missing_legacy_fallback",
+                "anchor_prefilter_reason": "Candidate had no write-time anchors and remained only as legacy fallback.",
+            }
+
+    retained_candidates = [
+        item
+        for item in candidates
+        if item.result_kind != "memory_hit" or id(item) in retained_memory_ids
+    ]
+    return retained_candidates, summary, candidate_states
+
 
 def _infer_query_intent(
     *,
@@ -1921,6 +2051,7 @@ def _build_routing_trace(
     injection_summary: dict[str, object],
     sharp_candidate_diagnostics: list[dict[str, object]],
     kind_prefilter_summary: dict[str, object],
+    anchor_prefilter_summary: dict[str, object],
 ) -> dict[str, object]:
     selected_results = [_build_routing_trace_entry(candidate) for candidate in final_candidates]
     demoted_higher_level_hits = [
@@ -1957,6 +2088,7 @@ def _build_routing_trace(
         },
         "candidate_summary": layer_summary,
         "kind_prefilter": kind_prefilter_summary,
+        "anchor_prefilter": anchor_prefilter_summary,
         "selected_results": selected_results,
         "excluded_high_scoring_candidates": excluded_high_scoring_candidates,
         "demoted_higher_level_hits": demoted_higher_level_hits,
@@ -1997,6 +2129,11 @@ def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object
     if candidate.get("kind_prefilter_reason_code"):
         entry["kind_prefilter_reason_code"] = candidate["kind_prefilter_reason_code"]
         entry["kind_prefilter_reason"] = candidate.get("kind_prefilter_reason")
+    if candidate.get("anchor_prefilter_status"):
+        entry["anchor_prefilter_status"] = candidate["anchor_prefilter_status"]
+    if candidate.get("anchor_prefilter_reason_code"):
+        entry["anchor_prefilter_reason_code"] = candidate["anchor_prefilter_reason_code"]
+        entry["anchor_prefilter_reason"] = candidate.get("anchor_prefilter_reason")
     if candidate["evidence_count"]:
         entry["evidence_count"] = candidate["evidence_count"]
     if candidate["same_thread"]:

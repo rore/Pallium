@@ -3,10 +3,13 @@ from __future__ import annotations
 import pytest
 
 from core.models import MemorySubjectAnchor, SourceItem
-from providers.llm.base import LLMJsonResponse, LLMProviderError
+from providers.llm.base import LLMCallMetadata, LLMJsonResponse, LLMProviderError
 from semantic.common import ConstraintCandidate, SEMANTIC_SIGNAL_METADATA_KEY
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin, build_analysis_request
+from semantic.prompt_roles import get_prompt_role_contract
 
+
+WRITE_EXTRACTION_PROMPT_ROLE = get_prompt_role_contract("write_extraction")
 
 class StubLLMProvider:
     def __init__(self, *, response: LLMJsonResponse | None = None, error: Exception | None = None) -> None:
@@ -27,6 +30,7 @@ def test_llm_plugin_promotes_decision_memory_from_valid_extraction() -> None:
         provider=StubLLMProvider(
             response=LLMJsonResponse(
                 raw_text='{"summary":"Decision discussion","candidate_type":"decision","decision_text":"use item item event time reservation ordering","decision_evidence_text":"Decision: use item item event time reservation ordering","investigation_text":null,"investigation_evidence_text":null,"rationale_text":"to avoid missed hold updates","is_low_value_meta":false,"constraint_text":null,"next_step_text":null,"blocker_text":null,"progress_text":null,"key_finding_text":null}',
+                metadata=LLMCallMetadata(provider_name="stub_provider", provider_kind="stub_kind", model="stub-model"),
                 parsed_json={
                     "summary": "Decision discussion",
                     "candidate_type": "decision",
@@ -59,9 +63,14 @@ def test_llm_plugin_promotes_decision_memory_from_valid_extraction() -> None:
     assert result.memory_objects[0].schema_id == "llm.decision"
     assert result.memory_objects[0].payload["decision"] == "use item item event time reservation ordering"
     assert result.memory_objects[0].payload["decision_evidence_text"] == "Decision: use item item event time reservation ordering"
-    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_id"] == "typed_memory_extraction"
-    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_version"] == "v7"
+    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_role"] == WRITE_EXTRACTION_PROMPT_ROLE.role
+    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_id"] == WRITE_EXTRACTION_PROMPT_ROLE.schema_id
+    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_version"] == WRITE_EXTRACTION_PROMPT_ROLE.schema_version
     assert result.memory_objects[0].payload["semantic_provenance"]["prompt_variant"] == "strict_typed_memory_v4_evidence_guarded"
+    assert result.memory_objects[0].payload["semantic_provenance"]["model_role"] == WRITE_EXTRACTION_PROMPT_ROLE.default_model_role
+    assert result.memory_objects[0].payload["semantic_provenance"]["provider_name"] == "stub_provider"
+    assert result.memory_objects[0].payload["semantic_provenance"]["provider_kind"] == "stub_kind"
+    assert result.memory_objects[0].payload["semantic_provenance"]["model"] == "stub-model"
 
 
 def test_llm_plugin_promotes_investigation_outcome_from_explicit_verdict_extraction() -> None:
@@ -69,6 +78,7 @@ def test_llm_plugin_promotes_investigation_outcome_from_explicit_verdict_extract
         provider=StubLLMProvider(
             response=LLMJsonResponse(
                 raw_text='{"summary":"Comparative verdict","candidate_type":"investigation_outcome","decision_text":null,"decision_evidence_text":null,"investigation_text":"transaction-transformer had the most significant recent ledger changes","investigation_evidence_text":"Here\'s the verdict: transaction-transformer had the most significant recent ledger changes by a wide margin.","rationale_text":"because it touched more tickets, files, and transaction flows","is_low_value_meta":false,"constraint_text":null,"next_step_text":null,"blocker_text":null,"progress_text":null,"key_finding_text":"transaction-transformer had the most significant recent ledger changes because it touched more tickets, files, and transaction flows than ledger-query"}',
+                metadata=LLMCallMetadata(provider_name="stub_provider", provider_kind="stub_kind", model="stub-model"),
                 parsed_json={
                     "summary": "Comparative verdict",
                     "candidate_type": "investigation_outcome",
@@ -110,6 +120,7 @@ def test_llm_plugin_preserves_valid_subject_hints_and_ignores_invalid_entries() 
         provider=StubLLMProvider(
             response=LLMJsonResponse(
                 raw_text='{"summary":"Decision discussion","candidate_type":"decision","decision_text":"use item item event time reservation ordering","decision_evidence_text":"Decision: use item item event time reservation ordering","investigation_text":null,"investigation_evidence_text":null,"rationale_text":"to avoid missed hold updates","is_low_value_meta":false,"constraint_text":null,"next_step_text":null,"blocker_text":null,"progress_text":null,"key_finding_text":null,"subject_hints":[{"kind":"component","value":"reservation ordering"},{"kind":"surface","value":"   catalog sync   "},{"kind":"unknown","value":"ignored"},{"kind":"component","value":"unknown"},{"kind":"bad_kind","value":"ignored"},{"kind":"workstream","value":""}]}',
+                metadata=LLMCallMetadata(provider_name="stub_provider", provider_kind="stub_kind", model="stub-model"),
                 parsed_json={
                     "summary": "Decision discussion",
                     "candidate_type": "decision",
@@ -156,6 +167,7 @@ def test_llm_plugin_preserves_valid_constraint_candidates_and_ignores_invalid_en
         provider=StubLLMProvider(
             response=LLMJsonResponse(
                 raw_text='{"summary":"Constraint note","candidate_type":null,"decision_text":null,"decision_evidence_text":null,"investigation_text":null,"investigation_evidence_text":null,"rationale_text":null,"is_low_value_meta":false,"constraint_text":"Do not use the operations portal for the inventory batch digest.","next_step_text":null,"blocker_text":null,"progress_text":null,"key_finding_text":null,"constraint_candidates":[{"primary_scope_anchor":{"kind":"workstream","value":"inventory batch digest"},"target_anchor":{"kind":"surface","value":"operations portal"},"action_class":"use_surface","polarity":"prohibit","confidence":"high","constraint_text":"Do not use the operations portal for the inventory batch digest."},{"primary_scope_anchor":{"kind":"bad_kind","value":"ignored"},"target_anchor":{"kind":"surface","value":"local browser"},"action_class":"use_surface","polarity":"prohibit","confidence":"high","constraint_text":"ignored"},{"primary_scope_anchor":{"kind":"workstream","value":"inventory batch digest"},"target_anchor":{"kind":"surface","value":"unknown"},"action_class":"use_surface","polarity":"prohibit","confidence":"high","constraint_text":"ignored"},{"primary_scope_anchor":{"kind":"workstream","value":"inventory batch digest"},"target_anchor":{"kind":"surface","value":"local browser"},"action_class":"invalid_action","polarity":"prohibit","confidence":"high","constraint_text":"ignored"},{"primary_scope_anchor":{"kind":"workstream","value":"inventory batch digest"},"target_anchor":{"kind":"surface","value":"local browser"},"action_class":"use_surface","polarity":"prohibit","confidence":"bad","constraint_text":"Do not open a local browser."}]}',
+                metadata=LLMCallMetadata(provider_name="stub_provider", provider_kind="stub_kind", model="stub-model"),
                 parsed_json={
                     "summary": "Constraint note",
                     "candidate_type": None,
@@ -339,6 +351,7 @@ def test_llm_plugin_promotes_investigation_outcome_from_valid_extraction() -> No
         provider=StubLLMProvider(
             response=LLMJsonResponse(
                 raw_text='{"summary":"Investigation summary","candidate_type":"investigation_outcome","decision_text":null,"decision_evidence_text":null,"investigation_text":"arrival-time ordering missed hold updates during sync delays","investigation_evidence_text":"Investigation found that arrival-time ordering missed hold updates during sync delays","rationale_text":"because the catalog provider delivered updates late","is_low_value_meta":false,"constraint_text":null,"next_step_text":null,"blocker_text":null,"progress_text":null,"key_finding_text":"arrival-time ordering missed hold updates during sync delays because the catalog provider delivered updates late"}',
+                metadata=LLMCallMetadata(provider_name="stub_provider", provider_kind="stub_kind", model="stub-model"),
                 parsed_json={
                     "summary": "Investigation summary",
                     "candidate_type": "investigation_outcome",
@@ -378,6 +391,7 @@ def test_llm_plugin_uses_discussion_summary_when_typed_output_lacks_evidence_tex
         provider=StubLLMProvider(
             response=LLMJsonResponse(
                 raw_text='{"summary":"We discussed reservation ordering","candidate_type":"investigation_outcome","decision_text":null,"decision_evidence_text":null,"investigation_text":"arrival-time ordering missed hold updates","investigation_evidence_text":null,"rationale_text":null,"is_low_value_meta":false,"constraint_text":null,"next_step_text":null,"blocker_text":null,"progress_text":null,"key_finding_text":null}',
+                metadata=LLMCallMetadata(provider_name="stub_provider", provider_kind="stub_kind", model="stub-model"),
                 parsed_json={
                     "summary": "We discussed reservation ordering",
                     "candidate_type": "investigation_outcome",
@@ -415,6 +429,7 @@ def test_llm_plugin_rejects_weak_decision_evidence_and_falls_back_to_discussion_
         provider=StubLLMProvider(
             response=LLMJsonResponse(
                 raw_text='{"summary":"Playbook note","candidate_type":"decision","decision_text":"create a clearer librarian playbook","decision_evidence_text":"The team agreed that we need a clearer librarian playbook for catalog sync incidents.","investigation_text":null,"investigation_evidence_text":null,"rationale_text":null,"is_low_value_meta":false,"constraint_text":null,"next_step_text":null,"blocker_text":null,"progress_text":null,"key_finding_text":null}',
+                metadata=LLMCallMetadata(provider_name="stub_provider", provider_kind="stub_kind", model="stub-model"),
                 parsed_json={
                     "summary": "Playbook note",
                     "candidate_type": "decision",
@@ -452,6 +467,7 @@ def test_llm_plugin_rejects_weak_investigation_evidence_and_falls_back_to_discus
         provider=StubLLMProvider(
             response=LLMJsonResponse(
                 raw_text='{"summary":"Status update","candidate_type":"investigation_outcome","decision_text":null,"decision_evidence_text":null,"investigation_text":"catalog sync delay increased after the provider restart","investigation_evidence_text":"Catalog sync delay increased after the provider restart, and we should watch it closely tonight.","rationale_text":null,"is_low_value_meta":false,"constraint_text":null,"next_step_text":"Watch it closely tonight.","blocker_text":null,"progress_text":null,"key_finding_text":null}',
+                metadata=LLMCallMetadata(provider_name="stub_provider", provider_kind="stub_kind", model="stub-model"),
                 parsed_json={
                     "summary": "Status update",
                     "candidate_type": "investigation_outcome",
@@ -509,9 +525,11 @@ def test_build_analysis_request_uses_requested_prompt_variant() -> None:
 
     request = build_analysis_request(source_item, prompt_variant="strict_decision_v1")
 
+    assert request.prompt_role == WRITE_EXTRACTION_PROMPT_ROLE.role
     assert request.prompt_variant == "strict_decision_v1"
-    assert request.prompt_schema_id == "typed_memory_extraction"
-    assert request.prompt_schema_version == "v7"
+    assert request.prompt_schema_id == WRITE_EXTRACTION_PROMPT_ROLE.schema_id
+    assert request.prompt_schema_version == WRITE_EXTRACTION_PROMPT_ROLE.schema_version
+    assert request.model_role == WRITE_EXTRACTION_PROMPT_ROLE.default_model_role
     assert 'investigation_outcome' in request.schema_description
     assert 'constraint_text' in request.schema_description
     assert 'Artifact kind: message' in request.user_prompt

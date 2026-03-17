@@ -1204,3 +1204,158 @@ def test_same_thread_wallet_recall_prefers_wallet_memory_over_adjacent_batch_aut
     assert 'attempt to authenticate' not in rendered_blocks
     assert 'operations portal' not in rendered_blocks
     assert 'hello again' not in rendered_blocks
+
+def test_surface_anchor_prefilter_keeps_same_surface_constraints_even_with_different_workstreams_in_v1() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='slack:channel:CLOCAL001')
+    inventory_scope = MemorySubjectAnchor(kind='workstream', value='inventory batch digest')
+    wallet_scope = MemorySubjectAnchor(kind='workstream', value='wallet reserve snapshot')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            _inventory_batch_typed_constraint_result(score=19),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='constraint-wallet-portal-surface-query',
+                type='constraint_memory',
+                payload={
+                    'summary': 'Constraint: do not use operations portal for wallet reserve snapshot.',
+                    'constraint_text': 'Do not use the operations portal for the wallet reserve snapshot.',
+                    'primary_scope_anchor': {'kind': 'workstream', 'value': 'wallet reserve snapshot'},
+                    'target_anchor': {'kind': 'surface', 'value': 'operations portal'},
+                    'action_class': 'use_surface',
+                    'polarity': 'prohibit',
+                    'strength': 'hard',
+                    'status': 'active',
+                    'evidence': ['Do not use the operations portal for the wallet reserve snapshot.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T12:15:00Z.',
+                    'confidence': 'high',
+                },
+                freshness_at=datetime(2026, 3, 11, 12, 15, tzinfo=timezone.utc),
+                score=18,
+                evidence=[],
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-wallet-constraint',
+                envelope=_memory_envelope('constraint', confidence='high', subjects=[wallet_scope, MemorySubjectAnchor(kind='surface', value='operations portal')]),
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What constraint had I given you about operations portal?',
+            query_tokens=('what', 'constraint', 'had', 'i', 'given', 'you', 'about', 'operations', 'portal'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What constraint had I given you about operations portal?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    anchor_prefilter = outcome.trace.routing['anchor_prefilter']
+    returned_ids = [result.memory_object_id for result in outcome.results if result.result_kind == 'memory_hit']
+    assert anchor_prefilter['query_anchor_status'] == 'clear'
+    assert anchor_prefilter['selected_query_anchor_kind'] == 'surface'
+    assert anchor_prefilter['selected_query_anchor'] == {'kind': 'surface', 'value': 'operations portal'}
+    assert anchor_prefilter['excluded_by_anchor_count'] == 0
+    assert 'constraint-batch-portal' in returned_ids
+    assert 'constraint-wallet-portal-surface-query' in returned_ids
+
+
+def test_workstream_anchor_prefilter_excludes_same_surface_off_topic_constraint() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='slack:channel:CLOCAL001')
+    inventory_scope = MemorySubjectAnchor(kind='workstream', value='inventory batch digest')
+    wallet_scope = MemorySubjectAnchor(kind='workstream', value='wallet reserve snapshot')
+    wallet_constraint = QueryResultItem(
+        result_kind='memory_hit',
+        memory_object_id='constraint-wallet-portal-off-topic',
+        type='constraint_memory',
+        payload={
+            'summary': 'Constraint: do not use operations portal for wallet reserve snapshot.',
+            'constraint_text': 'Do not use the operations portal for the wallet reserve snapshot.',
+            'primary_scope_anchor': {'kind': 'workstream', 'value': 'wallet reserve snapshot'},
+            'target_anchor': {'kind': 'surface', 'value': 'operations portal'},
+            'action_class': 'use_surface',
+            'polarity': 'prohibit',
+            'strength': 'hard',
+            'status': 'active',
+            'evidence': ['Do not use the operations portal for the wallet reserve snapshot.'],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T12:15:00Z.',
+            'confidence': 'high',
+        },
+        freshness_at=datetime(2026, 3, 11, 12, 15, tzinfo=timezone.utc),
+        score=20,
+        evidence=[],
+        container_ref='slack:channel:CLOCAL001',
+        thread_ref='slack:thread:CLOCAL001:thread-wallet-constraint',
+        envelope=_memory_envelope('constraint', confidence='high', subjects=[wallet_scope, MemorySubjectAnchor(kind='surface', value='operations portal')]),
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            wallet_constraint,
+            _inventory_batch_typed_constraint_result(score=18),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-inventory-anchor',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'The inventory batch digest is prepared for the local rerun.',
+                    'task': 'Resume the inventory batch digest.',
+                    'current_state': 'The local digest is prepared for BIN-103, BIN-204, BIN-317, and BIN-418.',
+                    'blocker_state': 'The local digest token expired before the final rerun.',
+                    'next_step': 'Refresh the local digest token and rerun the inventory batch digest.',
+                },
+                score=16,
+                evidence=[],
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-inventory-anchor',
+                envelope=_memory_envelope('episode', subjects=[inventory_scope, MemorySubjectAnchor(kind='surface', value='operations portal')]),
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What constraint did we have on inventory batch digest?',
+            query_tokens=('what', 'constraint', 'did', 'we', 'have', 'on', 'inventory', 'batch', 'digest'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What constraint did we have on inventory batch digest?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    anchor_prefilter = outcome.trace.routing['anchor_prefilter']
+    returned_ids = [result.memory_object_id for result in outcome.results if result.result_kind == 'memory_hit']
+    assert anchor_prefilter['query_anchor_status'] == 'clear'
+    assert anchor_prefilter['selected_query_anchor_kind'] == 'workstream'
+    assert anchor_prefilter['selected_query_anchor'] == {'kind': 'workstream', 'value': 'inventory batch digest'}
+    assert anchor_prefilter['fallback_mode'] == 'aligned_only'
+    assert anchor_prefilter['excluded_by_anchor_count'] == 1
+    assert 'constraint-wallet-portal-off-topic' not in returned_ids
+    assert 'constraint-batch-portal' in returned_ids
+    assert any(
+        item['result_id'] == 'memory_object:constraint-wallet-portal-off-topic'
+        and item['reason_code'] == 'anchor_conflict'
+        for item in anchor_prefilter.get('excluded_candidates', [])
+    )

@@ -8,7 +8,10 @@ from app.config import AppConfig
 from evals.semantic_runner import run_semantic_eval
 from providers.llm.base import LLMJsonResponse
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin
+from semantic.prompt_roles import get_prompt_role_contract
 
+
+WRITE_EXTRACTION_PROMPT_ROLE = get_prompt_role_contract("write_extraction")
 
 class VariantAwareStubLLMProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
@@ -138,22 +141,25 @@ def test_run_semantic_eval_writes_summary_and_jsonl_results(tmp_path: Path) -> N
     assert summary["promoted_counts"]["decision"] == 1
     assert summary["input_file"] == str(input_file)
     assert summary["results_file"] == "results.jsonl"
-    assert summary["prompt_schema_id"] == "typed_memory_extraction"
-    assert summary["prompt_schema_version"] == "v5"
+    assert summary["prompt_role"] == WRITE_EXTRACTION_PROMPT_ROLE.role
+    assert summary["prompt_schema_id"] == WRITE_EXTRACTION_PROMPT_ROLE.schema_id
+    assert summary["prompt_schema_version"] == WRITE_EXTRACTION_PROMPT_ROLE.schema_version
     assert summary["split_output"] is False
     assert summary["split_outputs"] == []
     assert summary["prompt_variants"] == ["strict_typed_memory_v4_evidence_guarded"]
     assert summary["max_concurrency"] == 1
     variant = summary["per_variant"]["strict_typed_memory_v4_evidence_guarded"]
-    assert variant["prompt_schema_id"] == "typed_memory_extraction"
-    assert variant["prompt_schema_version"] == "v5"
+    assert variant["prompt_role"] == WRITE_EXTRACTION_PROMPT_ROLE.role
+    assert variant["prompt_schema_id"] == WRITE_EXTRACTION_PROMPT_ROLE.schema_id
+    assert variant["prompt_schema_version"] == WRITE_EXTRACTION_PROMPT_ROLE.schema_version
     assert variant["promoted_counts"]["decision"] == 1
     assert variant["type_metrics"]["decision"]["correct"] == 1
     assert summary["run_id"].startswith("semantic-smoke__openai-compatible__fake-model__")
     assert len(results) == 1
     assert results[0]["status"] == "ok"
-    assert results[0]["request"]["prompt_schema_id"] == "typed_memory_extraction"
-    assert results[0]["request"]["prompt_schema_version"] == "v5"
+    assert results[0]["request"]["prompt_role"] == WRITE_EXTRACTION_PROMPT_ROLE.role
+    assert results[0]["request"]["prompt_schema_id"] == WRITE_EXTRACTION_PROMPT_ROLE.schema_id
+    assert results[0]["request"]["prompt_schema_version"] == WRITE_EXTRACTION_PROMPT_ROLE.schema_version
     assert results[0]["normalized_extraction"]["candidate_type"] == "decision"
     assert results[0]["artifacts"]["memory_objects"][0]["type"] == "decision"
 

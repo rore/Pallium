@@ -13,13 +13,15 @@ from app.config import AppConfig
 from app.dependencies import build_semantic_plugins
 from core.contracts import build_source_item
 from core.models import SourceItem
-from semantic.llm_agent_memory import LLMAgentMemoryPlugin, PROMPT_SCHEMA_ID, PROMPT_SCHEMA_VERSION
+from semantic.llm_agent_memory import LLMAgentMemoryPlugin
+from semantic.prompt_roles import get_prompt_role_contract
 
 
 DEFAULT_INPUT_FILE = Path("evals/semantic/input/items.jsonl")
 DEFAULT_OUTPUT_DIR = Path("evals/semantic/output")
 SANITIZE_PATTERN = re.compile(r"[^a-z0-9]+")
 TRACKED_TYPED_KINDS = ("decision", "investigation_outcome")
+WRITE_EXTRACTION_PROMPT_ROLE = get_prompt_role_contract("write_extraction")
 
 
 @dataclass(frozen=True)
@@ -115,8 +117,9 @@ def run_semantic_eval(
         "use_case": plugin.name,
         "input_file": str(input_file),
         "prompt_variants": resolved_variants,
-        "prompt_schema_id": PROMPT_SCHEMA_ID,
-        "prompt_schema_version": PROMPT_SCHEMA_VERSION,
+        "prompt_role": WRITE_EXTRACTION_PROMPT_ROLE.role,
+        "prompt_schema_id": WRITE_EXTRACTION_PROMPT_ROLE.schema_id,
+        "prompt_schema_version": WRITE_EXTRACTION_PROMPT_ROLE.schema_version,
         "max_concurrency": max_concurrency,
         "results_file": results_path.name,
         "split_output": split_output,
@@ -267,8 +270,9 @@ def _expected_kind(source_item: Any) -> str | None:
 
 def _empty_variant_summary(*, items_total: int) -> dict[str, Any]:
     return {
-        "prompt_schema_id": PROMPT_SCHEMA_ID,
-        "prompt_schema_version": PROMPT_SCHEMA_VERSION,
+        "prompt_role": WRITE_EXTRACTION_PROMPT_ROLE.role,
+        "prompt_schema_id": WRITE_EXTRACTION_PROMPT_ROLE.schema_id,
+        "prompt_schema_version": WRITE_EXTRACTION_PROMPT_ROLE.schema_version,
         "items_total": items_total,
         "items_succeeded": 0,
         "items_failed": 0,

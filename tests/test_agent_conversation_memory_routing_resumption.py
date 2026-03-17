@@ -404,3 +404,81 @@ def test_work_resumption_with_only_self_conflicting_checkpoint_fails_closed() ->
     assert outcome.trace.routing['packaging']['mode'] == 'compatible_work_resumption'
     excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
     assert 'conflicts_with_active_constraint' in excluded
+
+def test_work_resumption_anchor_prefilter_excludes_adjacent_workstream_checkpoint() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='slack:channel:CLOCAL001')
+    inventory_scope = MemorySubjectAnchor(kind='workstream', value='inventory batch digest')
+    wallet_scope = MemorySubjectAnchor(kind='workstream', value='wallet reserve snapshot')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-wallet-adjacent',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'The wallet reserve snapshot still needs the portal review before publication.',
+                    'task': 'Resume the wallet reserve snapshot review.',
+                    'current_state': 'The wallet reserve snapshot is prepared for WAL-102 and WAL-208.',
+                    'blocker_state': 'Portal review is still pending for the wallet reserve snapshot.',
+                    'next_step': 'Complete the portal review and publish the wallet reserve note.',
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T12:35:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 12, 35, tzinfo=timezone.utc),
+                score=20,
+                evidence=[],
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-wallet',
+                envelope=_memory_envelope('episode', subjects=[wallet_scope, MemorySubjectAnchor(kind='surface', value='operations portal')]),
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-inventory-resume',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'The inventory batch digest paused after partial progress and a digest-token failure.',
+                    'task': 'Resume the inventory batch digest.',
+                    'current_state': 'Prepared BIN-103, BIN-204, BIN-317, and BIN-418 before the digest token expired.',
+                    'blocker_state': 'The local digest token expired before the final rerun.',
+                    'next_step': 'Refresh the local digest token and rerun the inventory batch digest.',
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T12:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 12, 2, tzinfo=timezone.utc),
+                score=18,
+                evidence=[],
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-inventory',
+                envelope=_memory_envelope('episode', subjects=[inventory_scope, MemorySubjectAnchor(kind='surface', value='operations portal')]),
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What blocker did we hit and what should we do next on inventory batch digest?',
+            query_tokens=('what', 'blocker', 'did', 'we', 'hit', 'and', 'what', 'should', 'we', 'do', 'next', 'on', 'inventory', 'batch', 'digest'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What blocker did we hit and what should we do next on inventory batch digest?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    anchor_prefilter = outcome.trace.routing['anchor_prefilter']
+    assert outcome.results[0].memory_object_id == 'checkpoint-inventory-resume'
+    assert all(result.memory_object_id != 'checkpoint-wallet-adjacent' for result in outcome.results if result.result_kind == 'memory_hit')
+    assert anchor_prefilter['query_anchor_status'] == 'clear'
+    assert anchor_prefilter['selected_query_anchor_kind'] == 'workstream'
+    assert anchor_prefilter['selected_query_anchor'] == {'kind': 'workstream', 'value': 'inventory batch digest'}
+    assert anchor_prefilter['fallback_mode'] == 'aligned_only'
+    assert anchor_prefilter['excluded_by_anchor_count'] == 1

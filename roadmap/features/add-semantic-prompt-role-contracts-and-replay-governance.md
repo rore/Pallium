@@ -1,10 +1,10 @@
 ---
 id: add-semantic-prompt-role-contracts-and-replay-governance
 title: Semantic prompt-role contracts and replay-governed prompt lifecycle
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Later
+milestone: Done
 lane: semantic-contract-governance
 ---
 
@@ -136,6 +136,13 @@ Recommended sequencing:
    contract instead of continuing to define prompt behavior locally
 3. use the Pallium-native scenario and replay lane plus semantic regression
    assets to review prompt changes against bounded contracts
+
+Shipped narrow first slice on `main`:
+
+- shared semantic prompt-role registry and provenance helper exist in the semantic layer
+- only the live `write_extraction` runtime path now uses the shared contract and normalized provenance
+- `write_reconciliation`, `write_enrichment`, and `query_ambiguity_resolution` are now explicit contract-only roles for later feature consumers
+- thread/consolidation runtime provenance remains on its local pattern in this slice by design
 
 Implementation defaults:
 

@@ -80,7 +80,7 @@ always-on semantic classifier into the hot path.
   - closed structured output
   - versioned prompt text or classifier contract
   - deterministic fallback when classification is low-confidence or invalid
-- keep the semantic step aligned with the later shared
+- keep the semantic step aligned with the shared
   `query_ambiguity_resolution` prompt-role contract instead of treating this
   feature as the long-term owner of query-time prompt governance
 - define query-time operational rules, including at least:
@@ -183,6 +183,6 @@ Implementation defaults:
 - do not treat prompt growth as the primary way to fix new incidents; new bugs
   should first be categorized as hot-path filter gaps, subject gaps,
   compatibility gaps, freshness gaps, or bounded ambiguity-resolution failures
-- this feature owns the concrete query-policy behavior, but the later shared
+- this feature owns the concrete query-policy behavior, but the shared
   prompt-role feature should own the durable query-time prompt contract and its
   replay-governed lifecycle

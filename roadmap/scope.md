@@ -53,12 +53,12 @@ Current focus:
   - direct deterministic replay covers polluted recall, adjacent-topic isolation, constraint contradictions, and pending-to-processed convergence
 - the next stabilization phase is now:
   - the first-class constraint/policy lane is now shipped with typed compatibility checks
-  - add subject and workstream anchors so adjacent-topic separation happens before final ranking
+  - the shipped subject/workstream anchor filter now separates adjacent topics before final ranking
   - define a bounded query-policy contract and selective semantic ambiguity resolution only for unresolved cases
-- current stabilization features can continue to use bounded prompt contracts
-  locally, but after the stabilization foundation lands Pallium should unify
-  prompt-backed semantic work into explicit prompt roles with shared schema,
-  no-op, versioning, and replay-governance rules
+- the shared semantic prompt-role governance layer is now shipped for contract ownership and normalized `write_extraction` provenance
+- the first shipped slice is intentionally narrow:
+  - only `write_extraction` runtime is migrated onto the shared contract today
+  - `write_reconciliation`, `write_enrichment`, and `query_ambiguity_resolution` now exist as owned contract definitions for later features
 - prompt lifecycle should be treated as a governed semantic-contract problem,
   not as ad hoc prompt tweaking inside whatever feature currently happens to use
   a model call
@@ -66,7 +66,7 @@ Current focus:
 - treat live miss capture as valuable but later: once the architecture is more stable, captured misses can become durable replay assets instead of mostly rediscovering known heuristic weaknesses
 - treat external benchmark packs as useful pressure on the core memory engine, but not as the next best investment for product stability
 - treat vector retrieval and hybrid fusion as important follow-on retrieval work, but not as the next stabilization bottleneck:
-  - vector retrieval should not be the immediate next feature while write-time structure, constraints, and subject anchors are still missing
+  - vector retrieval should not be the immediate next feature while bounded query policy and selective ambiguity resolution are still missing
   - once those deterministic narrowing layers land, vector retrieval becomes the expected semantic retrieval substrate for durable memory
   - it should stay bounded by scope, kind, and subject/workstream filters rather than acting as an unconstrained semantic fallback
   - it should not become the main mechanism for constraint/policy lookup or short-term local state
@@ -85,14 +85,11 @@ Planned future query pipeline:
 - first, build on the shipped write-time memory envelope so retrieval can filter by generic memory kind and other deterministic metadata before semantic ranking
 - second and third, in parallel:
   - build on the shipped first-class constraint and policy lane so hard prohibitions and preferences stay enforced semantically across later routing and lifecycle work
-  - add subject and workstream anchors so adjacent-topic contamination is filtered before final selection
+  - the shipped subject/workstream anchor filter already removes adjacent-topic contamination before final selection
 - fourth, define the bounded query-policy contract and selective semantic ambiguity resolution for the minority of cases that remain unresolved after deterministic narrowing
 - keep extending the shipped Pallium-native replay safety rail across all of the above so new structure is backed by deterministic tests, convergence checks, and replay fixtures
 - keep Pallium-native scenario and replay expansion active across all of the above so new structure is backed by deterministic tests, convergence checks, and replay fixtures
-- after the core stabilization architecture is in place, add the shared
-  semantic prompt-role contract layer so later extraction, reconciliation,
-  enrichment, and selective query-ambiguity work inherit one governed prompt
-  lifecycle instead of continuing to define prompt behavior independently
+- use the shipped shared semantic prompt-role contract layer as the governance owner for later extraction, reconciliation, enrichment, and selective query-ambiguity work
 - then add write-time contextual enrichment and background consolidation so
   retrieval quality improves without pushing more work into the query hot path
 - query-time prompt use should remain selective and bounded even after that
@@ -109,12 +106,12 @@ Parallel workstreams for the next phase:
 - Stream B (`stabilization-safety`): extend the shipped Pallium-native scenario and replay rail
   - this is the safety rail and should keep turning real misses into generic deterministic regressions
   - it should keep protecting deterministic hot-path behavior, abstention behavior, low-confidence fallback, and selective semantic escalation boundaries as later features land
-- Stream C (stabilization-semantics): shipped first-class constraints, next subject/workstream anchors
-  - the typed constraint lane is now shipped; this stream now continues with subject/workstream anchors and later semantic-policy refinement on top of the shipped compatibility model
+- Stream C (stabilization-semantics): shipped first-class constraints and subject/workstream anchors
+  - the typed constraint lane and subject/workstream anchor filter are now shipped; this stream now continues with later semantic-policy refinement on top of the shipped compatibility model
 - Stream D (`stabilization-enrichment`): write-time contextual enrichment and background consolidation
   - this should start only after the typed write path and deterministic hot path are stable enough to enrich without masking structural problems
-- Stream E (`semantic-contract-governance`): semantic prompt-role contracts and replay-governed prompt lifecycle
-  - this should start after the current stabilization-foundation work is clear enough that extraction, reconciliation, enrichment, and selective query ambiguity can inherit one shared prompt contract model
+- Stream E (`semantic-contract-governance`): shared prompt-role governance is now available as the contract owner for later semantic features
+  - future work in this stream should extend the shipped contract layer beyond `write_extraction` when reconciliation, enrichment, and selective query ambiguity land
 
 Test posture for the stabilization phase:
 - every architecture feature must land with focused deterministic tests that exercise generic failure classes rather than downstream-specific wording or nouns

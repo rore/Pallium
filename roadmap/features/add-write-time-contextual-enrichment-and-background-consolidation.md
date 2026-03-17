@@ -62,7 +62,7 @@ current scope.
   re-synthesis where possible
 - preserve typed memory envelopes, provenance, and current evidence-backed
   product boundaries
-- keep enrichment prompt behavior aligned with the later shared
+- keep enrichment prompt behavior aligned with the shared
   `write_enrichment` prompt-role contract instead of inventing a feature-local
   prompt lifecycle
 - expose enrichment and consolidation provenance in debug trace or memory
@@ -119,6 +119,6 @@ Implementation defaults:
   canonical evidence-backed memory payload
 - use prompt or model improvements only behind bounded schemas, versioning, and
   replay-backed review
-- treat this feature as the first concrete consumer of the later shared
+- treat this feature as the first concrete consumer of the shared
   `write_enrichment` prompt-role contract rather than the owner of prompt
   governance itself

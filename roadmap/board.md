@@ -1,9 +1,7 @@
 # Next
-- add-subject-workstream-anchor-filtering
 - add-bounded-query-intent-resolution
 
 # Later
-- add-semantic-prompt-role-contracts-and-replay-governance
 - add-write-time-contextual-enrichment-and-background-consolidation
 - add-vector-retrieval-provider
 - add-hybrid-retrieval-fusion
@@ -22,6 +20,8 @@
 - idea-optional-reranker-support
 
 # Done
+- add-subject-workstream-anchor-filtering
+- add-semantic-prompt-role-contracts-and-replay-governance
 - add-first-class-constraint-policy-lane
 - add-pallium-native-scenario-coverage-and-replay-regressions
 - add-write-time-memory-envelope-and-kind-prefiltering
@@ -64,4 +64,3 @@
 - add-first-semantic-layer-and-promotion
 - add-agent-memory-simulation
 - build-structured-retrieval-foundation
-

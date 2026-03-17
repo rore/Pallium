@@ -618,3 +618,145 @@ def test_routing_trace_exposes_candidate_aware_family_scorecard(monkeypatch, tes
             family_inference['family_scores']['broad_recall']['total']
             > family_inference['family_scores']['precise_fact']['total']
         )
+
+def test_workstream_anchor_prefilter_excludes_same_surface_off_topic_memory() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='slack:channel:CLOCAL001')
+    inventory_scope = MemorySubjectAnchor(kind='workstream', value='inventory batch digest')
+    wallet_scope = MemorySubjectAnchor(kind='workstream', value='wallet reserve snapshot')
+    portal_surface = MemorySubjectAnchor(kind='surface', value='operations portal')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-wallet-off-topic',
+                type='decision',
+                payload={
+                    'decision': 'The wallet reserve snapshot should wait for the operations portal review before publication.',
+                    'rationale': 'The wallet review still depends on the portal review.',
+                },
+                score=20,
+                evidence=[],
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:wallet',
+                envelope=_memory_envelope('finding', subjects=[wallet_scope, portal_surface]),
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-inventory-aligned',
+                type='decision',
+                payload={
+                    'decision': 'The inventory batch digest should continue on the local digest path.',
+                    'rationale': 'The inventory batch digest already has a confirmed local rerun path.',
+                },
+                score=16,
+                evidence=[],
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:inventory',
+                envelope=_memory_envelope('finding', subjects=[inventory_scope, portal_surface]),
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What had we concluded about inventory batch digest?',
+            query_tokens=('what', 'had', 'we', 'concluded', 'about', 'inventory', 'batch', 'digest'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What had we concluded about inventory batch digest?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    anchor_prefilter = outcome.trace.routing['anchor_prefilter']
+    assert outcome.results[0].memory_object_id == 'decision-inventory-aligned'
+    assert all(result.memory_object_id != 'decision-wallet-off-topic' for result in outcome.results if result.result_kind == 'memory_hit')
+    assert anchor_prefilter['query_anchor_status'] == 'clear'
+    assert anchor_prefilter['selected_query_anchor_kind'] == 'workstream'
+    assert anchor_prefilter['selected_query_anchor'] == {'kind': 'workstream', 'value': 'inventory batch digest'}
+    assert anchor_prefilter['fallback_mode'] == 'aligned_only'
+    assert anchor_prefilter['excluded_by_anchor_count'] == 1
+    assert any(
+        item['result_id'] == 'memory_object:decision-wallet-off-topic'
+        and item['reason_code'] == 'anchor_conflict'
+        for item in anchor_prefilter.get('excluded_candidates', [])
+    )
+
+
+def test_component_anchor_prefilter_stays_local_to_component_in_v1() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help')
+    reservation_component = MemorySubjectAnchor(kind='component', value='reservation ordering')
+    duplicate_holds_scope = MemorySubjectAnchor(kind='workstream', value='duplicate hold investigation')
+    notification_scope = MemorySubjectAnchor(kind='workstream', value='notice scheduling review')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-reservation-duplicate-holds',
+                type='decision',
+                payload={
+                    'decision': 'Use item event time for reservation ordering to prevent duplicate holds after sync delays.',
+                },
+                score=17,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-reservation-a',
+                envelope=_memory_envelope('finding', subjects=[duplicate_holds_scope, reservation_component]),
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-reservation-notices',
+                type='decision',
+                payload={
+                    'decision': 'Reservation ordering still controls the notice export window for the scheduling review.',
+                },
+                score=16,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-reservation-b',
+                envelope=_memory_envelope('finding', subjects=[notification_scope, reservation_component]),
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What is the latest on reservation ordering?',
+            query_tokens=('what', 'is', 'the', 'latest', 'on', 'reservation', 'ordering'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What is the latest on reservation ordering?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    anchor_prefilter = outcome.trace.routing['anchor_prefilter']
+    returned_ids = [result.memory_object_id for result in outcome.results if result.result_kind == 'memory_hit']
+    assert anchor_prefilter['query_anchor_status'] == 'clear'
+    assert anchor_prefilter['selected_query_anchor_kind'] == 'component'
+    assert anchor_prefilter['selected_query_anchor'] == {'kind': 'component', 'value': 'reservation ordering'}
+    assert anchor_prefilter['excluded_by_anchor_count'] == 0
+    assert 'decision-reservation-duplicate-holds' in returned_ids
+    assert 'decision-reservation-notices' in returned_ids

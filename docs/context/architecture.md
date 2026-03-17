@@ -1,4 +1,4 @@
-﻿# Architecture
+# Architecture
 
 ## Top-Level Shape
 
@@ -104,9 +104,16 @@ Current `agent_conversation_memory` evidence now includes selected assistant-ori
 
 Prompt provenance fields currently tracked:
 
+- `prompt_role`
 - `prompt_schema_id`
 - `prompt_schema_version`
 - `prompt_variant`
+- `model_role`
+- `provider_name`
+- `provider_kind`
+- `model`
+
+The shared prompt-role governance layer now owns the canonical role/schema contract for semantic prompt-backed work. In the first shipped slice, only the live `write_extraction` runtime path is migrated onto that shared contract; thread and consolidation prompts remain on their local runtime pattern until the later enrichment work consumes the shared contract directly.
 
 ## Provider Resilience
 

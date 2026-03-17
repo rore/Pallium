@@ -9,11 +9,16 @@ from core.models import MemorySubjectAnchor, SourceItem
 from providers.llm.base import LLMJsonResponse, LLMProvider
 from semantic.base import SemanticPlugin
 from semantic.common import ConstraintCandidate, SemanticExtraction, build_process_result
+from semantic.prompt_provenance import build_prompt_provenance
+from semantic.prompt_roles import get_prompt_role_contract
 
 
 DEFAULT_PROMPT_VARIANT = "strict_typed_memory_v4_evidence_guarded"
-PROMPT_SCHEMA_ID = "typed_memory_extraction"
-PROMPT_SCHEMA_VERSION = "v7"
+WRITE_EXTRACTION_PROMPT_ROLE = get_prompt_role_contract("write_extraction")
+PROMPT_ROLE = WRITE_EXTRACTION_PROMPT_ROLE.role
+PROMPT_SCHEMA_ID = WRITE_EXTRACTION_PROMPT_ROLE.schema_id
+PROMPT_SCHEMA_VERSION = WRITE_EXTRACTION_PROMPT_ROLE.schema_version
+MODEL_ROLE = WRITE_EXTRACTION_PROMPT_ROLE.default_model_role
 PROMPT_VARIANTS: dict[str, str] = {
     "baseline": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
 
@@ -128,9 +133,11 @@ SCHEMA_DESCRIPTION = json.dumps(
 
 @dataclass(frozen=True)
 class LLMAnalysisRequest:
+    prompt_role: str
     prompt_variant: str
     prompt_schema_id: str
     prompt_schema_version: str
+    model_role: str | None
     system_prompt: str
     user_prompt: str
     schema_description: str
@@ -166,12 +173,13 @@ class LLMAgentMemoryPlugin(SemanticPlugin):
             schema_description=request.schema_description,
         )
         extraction = _normalize_extraction(response.parsed_json)
-        semantic_metadata = {
-            "semantic_plugin": self.name,
-            "prompt_variant": request.prompt_variant,
-            "prompt_schema_id": request.prompt_schema_id,
-            "prompt_schema_version": request.prompt_schema_version,
-        }
+        semantic_metadata = build_prompt_provenance(
+            semantic_plugin=self.name,
+            contract=WRITE_EXTRACTION_PROMPT_ROLE,
+            prompt_variant=request.prompt_variant,
+            model_role=request.model_role,
+            llm_metadata=response.metadata,
+        )
         process_result = build_process_result(
             source_item,
             extraction,
@@ -193,9 +201,11 @@ def build_analysis_request(source_item: SourceItem, *, prompt_variant: str = DEF
     resolved_prompt_variant = _resolve_prompt_variant(prompt_variant)
     metadata_text = json.dumps(source_item.metadata or {}, sort_keys=True)
     return LLMAnalysisRequest(
+        prompt_role=PROMPT_ROLE,
         prompt_variant=resolved_prompt_variant,
         prompt_schema_id=PROMPT_SCHEMA_ID,
         prompt_schema_version=PROMPT_SCHEMA_VERSION,
+        model_role=MODEL_ROLE,
         system_prompt=PROMPT_VARIANTS[resolved_prompt_variant],
         user_prompt=(
             f"Source type: {source_item.source_type}\n"
@@ -323,6 +333,7 @@ def _normalize_subject_hints(value: Any) -> tuple[MemorySubjectAnchor, ...]:
             continue
         normalized.append(anchor)
     return tuple(normalized)
+
 
 def _normalize_required_string(value: Any, *, field_name: str) -> str:
     if not isinstance(value, str):
