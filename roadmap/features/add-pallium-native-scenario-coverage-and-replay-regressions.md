@@ -55,9 +55,10 @@ This feature shifts the primary validation surface back where it belongs:
 Pallium-native scenarios, replay fixtures, and direct query-debug inspection.
 
 It also becomes the main safety rail while the new stabilization architecture
-lands. Intent resolution, typed envelopes, constraints, and subject anchors all
-need deterministic regression coverage that expresses generic failure classes
-instead of one-off wording fixes.
+lands. Write-time structure, deterministic hot-path filtering, selective
+semantic escalation, constraints, and subject anchors all need deterministic
+regression coverage that expresses generic failure classes instead of one-off
+wording fixes.
 
 ## In Scope
 
@@ -84,7 +85,8 @@ instead of one-off wording fixes.
 - align new scenarios with the benchmark architecture so they can be classified
   as iteration, confidence, or replay assets over time
 - add failure-class coverage for the stabilization lane, including at least:
-  - intent misclassification
+  - hot-path deterministic success without semantic escalation
+  - semantic escalation triggered only for ambiguous cases
   - wrong-kind selection
   - wrong-subject contamination
   - constraint-compatibility failure
@@ -113,6 +115,9 @@ instead of one-off wording fixes.
    confidence, or replay material.
 6. Each stabilization feature can land with a corresponding deterministic
    regression surface rather than relying on live debugging only.
+7. The scenario surface can distinguish hot-path behavior from semantic
+   escalation behavior clearly enough to prevent the model-backed path from
+   silently expanding into the default query loop.
 
 ## Notes
 
@@ -120,8 +125,8 @@ Recommended sequencing:
 
 1. keep benchmark architecture formalization first so lane and tier vocabulary
    is stable
-2. keep this feature active in parallel with bounded intent resolution and the
-   write-time envelope lane so architecture changes have immediate regression
+2. keep this feature active in parallel with the write-time envelope and later
+   semantic-policy slices so architecture changes have immediate regression
    protection
 3. use the shipped direct exploratory harness as a feeder and verifier for
    candidate replay scenarios
@@ -135,4 +140,3 @@ Implementation defaults:
   nouns or phrasing into fixtures
 - use downstream-agent runs only as downstream proof after Pallium-native
   coverage has the issue pinned down
-

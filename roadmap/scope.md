@@ -39,6 +39,7 @@ The main modeling lesson is that moving away from phrase chasing does not mean r
 - require structured schema outputs, versioned prompt contracts, and explicit abstain or unknown behavior
 - keep later routing, filtering, compatibility, and packaging policy deterministic once typed outputs exist
 - review prompt changes like code changes, backed by replay and deterministic regressions rather than anecdotal improvement claims
+- allow separate model roles for query-time ambiguity resolution and write-time extraction so latency-sensitive query paths are not forced to use the same model profile as richer write-time typing work
 
 Current focus:
 - the benchmark-program lane is now shipped:
@@ -48,10 +49,10 @@ Current focus:
   - engineers can drive Pallium through the real HTTP contract with a thin generic agent loop
   - interactive replay and session capture now exist without needing a downstream integration
 - the next phase is architecture stabilization plus test-surface reinforcement:
-  - add bounded query intent resolution before retrieval routing
   - add a typed write-time memory envelope and kind-aware prefiltering
   - add a first-class constraint/policy lane with typed compatibility checks
   - add subject and workstream anchors so adjacent-topic separation happens before final ranking
+  - define a bounded query-policy contract and selective semantic ambiguity resolution only for unresolved cases
   - expand Pallium-native scenario and replay coverage in parallel so each stabilization change lands with deterministic regression protection
 - keep privacy, query-debug traceability, retention safety, and timestamped runtime logs as permanent regression gates while the stabilization lane advances
 - treat live miss capture as valuable but later: once the architecture is more stable, captured misses can become durable replay assets instead of mostly rediscovering known heuristic weaknesses
@@ -59,25 +60,37 @@ Current focus:
 - treat vector retrieval and hybrid fusion as lower-priority retrieval enhancements, not as the current product driver; only move them forward if the evidence shows recall rather than memory decision quality is the real bottleneck
 
 Plan from the current gaps:
-- first, land bounded query intent resolution so greeting/noise, recall, latest-status, resumed-work, and constraint-check queries stop competing mainly through phrase lists
-- second, add a write-time memory envelope so retrieval can filter by generic memory kind and other deterministic metadata before semantic ranking
-- third and fourth, in parallel once the envelope contract exists:
+Planned future query pipeline:
+- cheap pre-guards for obvious no-value cases
+- hard scope and visibility filtering
+- kind filtering from the write-time envelope
+- subject or workstream filtering when anchors exist
+- constraint compatibility filtering when a typed constraint lane exists
+- direct retrieval and ranking inside the narrowed set
+- bounded semantic ambiguity resolution only if the deterministic path still leaves multiple plausible behaviors or candidate sets
+- final packaging and `should_inject` decision
+- full query/debug trace for the staged path
+- first, land the write-time memory envelope so retrieval can filter by generic memory kind and other deterministic metadata before semantic ranking
+- second and third, in parallel once the envelope contract exists:
   - add a first-class constraint and policy lane so hard prohibitions and preferences are enforced semantically
   - add subject and workstream anchors so adjacent-topic contamination is filtered before final selection
+- fourth, define the bounded query-policy contract and selective semantic ambiguity resolution for the minority of cases that remain unresolved after deterministic narrowing
 - keep Pallium-native scenario and replay expansion active across all of the above so new structure is backed by deterministic tests, convergence checks, and replay fixtures
-- after the stabilization architecture is in place, add the live miss-capture and replay-promotion loop so real traffic becomes bounded miss bundles and permanent regressions quickly
+- after the core stabilization architecture is in place, add write-time contextual enrichment and background consolidation so retrieval quality improves without pushing more work into the query hot path
+- then add the live miss-capture and replay-promotion loop so real traffic becomes bounded miss bundles and permanent regressions quickly
 - after that, use the targeted external memory pressure pack to pressure stale-memory handling, update correctness, long noisy recall, and incremental memory drift without confusing those checks with the product acceptance gate
 - only after those layers are clearer should explicit shared-memory derivation, cross-container bounded memory, vector retrieval, and hybrid fusion move up, and only if the evidence shows they are the bottleneck
 
 Parallel workstreams for the next phase:
-- Stream A (`stabilization-foundation`): bounded intent resolution plus the write-time envelope
-  - this is the architecture foundation and should own the new query and memory contracts
-  - it should also own the bounded classifier prompts, extraction schemas, and versioning rules
+- Stream A (`stabilization-foundation`): write-time envelope first, then bounded query policy and selective ambiguity resolution
+  - this is the architecture foundation and should own the new memory metadata contract, the bounded query-policy contract, the classifier prompts, extraction schemas, versioning rules, and model-role split
 - Stream B (`stabilization-safety`): Pallium-native scenario and replay expansion
   - this is the safety rail and should keep turning real misses into generic deterministic regressions
-  - it should add replay assets that specifically protect prompt contracts, abstention behavior, and low-confidence fallback
+  - it should add replay assets that specifically protect deterministic hot-path behavior, abstention behavior, low-confidence fallback, and selective semantic escalation boundaries
 - Stream C (`stabilization-semantics`): first-class constraints plus subject/workstream anchors
   - this should start once the envelope fields exist and can then split into two parallel semantic-policy workers with a shared metadata contract
+- Stream D (`stabilization-enrichment`): write-time contextual enrichment and background consolidation
+  - this should start only after the typed write path and deterministic hot path are stable enough to enrich without masking structural problems
 
 Test posture for the stabilization phase:
 - every architecture feature must land with focused deterministic tests that exercise generic failure classes rather than downstream-specific wording or nouns
@@ -93,6 +106,10 @@ Test posture for the stabilization phase:
   - abstain or unknown behavior
   - low-confidence fallback
   - prompt-versioned replay stability on representative paraphrase sets
+- query-time semantic work should also report:
+  - escalation rate
+  - added latency and cost when escalation occurs
+  - how often deterministic short-circuits avoided a model call
 - benchmark and readiness slices should continue to run unchanged unless the architecture change intentionally changes semantic expectations
 - live misses should be generalized into reusable routing, compatibility, freshness, or contamination failure classes before they become repo fixtures
 
@@ -104,4 +121,3 @@ Still out of scope for this phase:
 - public API expansion for explicit retention administration
 - replacing lower-level evidence-backed memory with only higher-level summaries
 - turning Pallium into a workflow engine, transcript archive, or raw tool-log store
-

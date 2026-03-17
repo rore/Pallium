@@ -57,8 +57,9 @@ That loop is what turns live integration from ad hoc debugging into systematic
 product tuning.
 
 It is no longer the immediate next stability move, however. Pallium first needs
-a more stable architecture for intent, typed memory, constraints, and subject
-filtering so captured misses do not mostly reflect known structural weaknesses.
+a more stable deterministic hot path for scope, kind, subject, and constraint
+handling, with selective semantic escalation only where ambiguity remains, so
+captured misses do not mostly reflect known structural weaknesses.
 
 ## In Scope
 
@@ -73,6 +74,8 @@ filtering so captured misses do not mostly reflect known structural weaknesses.
   - fresher same-kind conclusions losing to older ones
   - suspiciously high rebuild or supersession churn in a thread
   - `should_inject=true` with weak or fallback-only blocks
+  - unexpectedly high semantic-escalation rate on queries that should stay on
+    the deterministic hot path
 - add a bounded review-inbox export for suspicious cases
 - review-inbox exports should capture at least:
   - relevant source items
@@ -106,6 +109,7 @@ filtering so captured misses do not mostly reflect known structural weaknesses.
   - average injected block count
   - generic-summary wins vs sharp-memory wins
   - failure-family counts over time
+  - semantic-escalation rate over time
 - add one simple shadow-comparison path for candidate tuning changes so Pallium
   can compare current vs proposed memory decisions on captured bundles before a
   rollout
@@ -113,6 +117,7 @@ filtering so captured misses do not mostly reflect known structural weaknesses.
   - `should_inject`
   - `decision_reason`
   - injected block ids or types
+  - whether semantic escalation occurred
 - keep the improvement loop package-owned where semantics are package-specific;
   generic layers may provide bounded storage/export helpers and review-inbox
   plumbing, but should not own `agent_conversation_memory` policy judgments
@@ -142,7 +147,8 @@ filtering so captured misses do not mostly reflect known structural weaknesses.
 5. Changes to prompts, heuristics, routing, or packaging can be shadow-compared
    on captured bundles before rollout.
 6. Drift metrics make it obvious when Pallium is over-promoting low-value
-   content, rebuilding too often, or over-injecting memory.
+   content, rebuilding too often, over-injecting memory, or over-using semantic
+   escalation.
 7. The improvement loop reinforces a thin-agent boundary by detecting when the
    downstream agent would otherwise need to compensate semantically.
 
@@ -150,13 +156,15 @@ filtering so captured misses do not mostly reflect known structural weaknesses.
 
 Recommended sequencing:
 
-1. land bounded intent resolution and the write-time memory envelope so the
-   retrieval architecture is less phrase-sensitive
+1. land the write-time memory envelope so the hot path can narrow by kind before
+   ranking
 2. land first-class constraints and subject/workstream filtering so the main
-   current bug classes are captured in typed form
-3. keep Pallium-native scenario and replay coverage active so failure families
+   current bug classes are captured in typed deterministic form
+3. land the bounded query-policy contract and selective semantic ambiguity
+   resolution so any model-backed query step is truly selective
+4. keep Pallium-native scenario and replay coverage active so failure families
    and replay assets are already stable
-4. then add this live-improvement loop so captured misses feed a trustworthy
+5. then add this live-improvement loop so captured misses feed a trustworthy
    replay and shadow-comparison workflow instead of automating unstable
    heuristics
 
@@ -171,4 +179,3 @@ Implementation defaults:
   regression owned by the benchmark program
 - use current observability and debug surfaces as the data source rather than
   inventing a second tracing system first
-

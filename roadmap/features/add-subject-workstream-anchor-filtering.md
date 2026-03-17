@@ -36,6 +36,10 @@ of the final carry-forward set.
 
 A small anchor layer is the shortest generic fix for this class of bug.
 
+It also reduces the need for query-time semantic adjudication by making topic
+separation happen before final ranking rather than after contamination is
+already present.
+
 ## In Scope
 
 - add lightweight subject/workstream anchors to write-time memory metadata
@@ -75,7 +79,9 @@ A small anchor layer is the shortest generic fix for this class of bug.
 4. Debug trace shows anchor overlap or anchor-based exclusion clearly.
 5. Anchor extraction and normalization are bounded, inspectable, and not mainly
    driven by scenario-specific keyword growth.
-6. The anchor model remains lightweight and local-first rather than expanding
+6. Ordinary in-scope topical queries no longer need semantic escalation just to
+   separate nearby workstreams.
+7. The anchor model remains lightweight and local-first rather than expanding
    into a broad graph platform.
 
 ## Notes
@@ -95,4 +101,3 @@ Implementation defaults:
 - use semantic ranking inside anchored candidate sets, not instead of them
 - improve prompts through tighter anchor schemas, alias normalization, and
   explicit unknown handling rather than growing product-specific term lists
-

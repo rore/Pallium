@@ -31,12 +31,15 @@ The existing heuristic path keeps creating variants of the same bug class:
 - contradictory next steps survive because the conflict check is token-based
 - newer lower-quality structured memory can still poison later recall
 
-Stronger systems typically separate durable instruction or policy memory from
+Stronger systems usually separate durable instruction or policy memory from
 ordinary episodic state. Pallium needs a small version of that split now.
 
 This is still generic Pallium work because the lane models memory behavior
 classes such as prohibited action, preferred source, and compatibility, not any
 one tool or downstream integration.
+
+It also reduces the need for query-time semantic adjudication by making one of
+Pallium's highest-value policy classes deterministic in the hot path.
 
 ## In Scope
 
@@ -86,6 +89,9 @@ one tool or downstream integration.
    deemed compatible or incompatible.
 6. Constraint extraction and compatibility stay generic and typed rather than
    regressing into scenario-specific token lists as the main policy mechanism.
+7. Ordinary constraint-aware queries can stay on the deterministic hot path
+   rather than needing semantic escalation just to understand prohibitions or
+   preferences.
 
 ## Notes
 
@@ -103,4 +109,3 @@ Implementation defaults:
 - avoid reintroducing phrase-chasing as the primary conflict mechanism
 - use prompt improvements to sharpen typed extraction boundaries and abstention,
   not to encode product-specific constraint wording into longer prompts
-
