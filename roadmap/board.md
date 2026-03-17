@@ -1,6 +1,4 @@
 # Next
-- add-write-time-memory-envelope-and-kind-prefiltering
-- add-pallium-native-scenario-coverage-and-replay-regressions
 - add-first-class-constraint-policy-lane
 - add-subject-workstream-anchor-filtering
 - add-bounded-query-intent-resolution
@@ -25,6 +23,8 @@
 - idea-optional-reranker-support
 
 # Done
+- add-pallium-native-scenario-coverage-and-replay-regressions
+- add-write-time-memory-envelope-and-kind-prefiltering
 - add-benchmark-architecture-formalization-and-tiered-reporting
 - add-direct-memory-conversation-debug-harness
 - add-robust-query-family-inference-beyond-phrase-cues

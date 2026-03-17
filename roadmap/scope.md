@@ -48,12 +48,13 @@ Current focus:
 - the direct exploratory harness is now shipped:
   - engineers can drive Pallium through the real HTTP contract with a thin generic agent loop
   - interactive replay and session capture now exist without needing a downstream integration
-- the next phase is architecture stabilization plus test-surface reinforcement:
-  - add a typed write-time memory envelope and kind-aware prefiltering
+- the typed write-time envelope and direct Pallium-native replay safety rail are now shipped:
+  - retrieval can narrow by generic memory kind before final selection
+  - direct deterministic replay covers polluted recall, adjacent-topic isolation, constraint contradictions, and pending-to-processed convergence
+- the next stabilization phase is now:
   - add a first-class constraint/policy lane with typed compatibility checks
   - add subject and workstream anchors so adjacent-topic separation happens before final ranking
   - define a bounded query-policy contract and selective semantic ambiguity resolution only for unresolved cases
-  - expand Pallium-native scenario and replay coverage in parallel so each stabilization change lands with deterministic regression protection
 - current stabilization features can continue to use bounded prompt contracts
   locally, but after the stabilization foundation lands Pallium should unify
   prompt-backed semantic work into explicit prompt roles with shared schema,
@@ -81,11 +82,12 @@ Planned future query pipeline:
 - bounded semantic ambiguity resolution only if the deterministic path still leaves multiple plausible behaviors or candidate sets
 - final packaging and `should_inject` decision
 - full query/debug trace for the staged path
-- first, land the write-time memory envelope so retrieval can filter by generic memory kind and other deterministic metadata before semantic ranking
-- second and third, in parallel once the envelope contract exists:
+- first, build on the shipped write-time memory envelope so retrieval can filter by generic memory kind and other deterministic metadata before semantic ranking
+- second and third, in parallel:
   - add a first-class constraint and policy lane so hard prohibitions and preferences are enforced semantically
   - add subject and workstream anchors so adjacent-topic contamination is filtered before final selection
 - fourth, define the bounded query-policy contract and selective semantic ambiguity resolution for the minority of cases that remain unresolved after deterministic narrowing
+- keep extending the shipped Pallium-native replay safety rail across all of the above so new structure is backed by deterministic tests, convergence checks, and replay fixtures
 - keep Pallium-native scenario and replay expansion active across all of the above so new structure is backed by deterministic tests, convergence checks, and replay fixtures
 - after the core stabilization architecture is in place, add the shared
   semantic prompt-role contract layer so later extraction, reconciliation,
@@ -102,11 +104,11 @@ Planned future query pipeline:
 - only after those layers are clearer should explicit shared-memory derivation and cross-container bounded memory move up
 
 Parallel workstreams for the next phase:
-- Stream A (`stabilization-foundation`): write-time envelope first, then bounded query policy and selective ambiguity resolution
-  - this is the architecture foundation and should own the new memory metadata contract, the bounded query-policy contract, the classifier prompts, extraction schemas, versioning rules, and model-role split
-- Stream B (`stabilization-safety`): Pallium-native scenario and replay expansion
+- Stream A (`stabilization-foundation`): build on the shipped write-time envelope with bounded query policy and selective ambiguity resolution
+  - this is the architecture foundation and should now own the bounded query-policy contract, ambiguity-resolution classifier prompts, extraction schema inheritance, versioning rules, and model-role split on top of the landed metadata contract
+- Stream B (`stabilization-safety`): extend the shipped Pallium-native scenario and replay rail
   - this is the safety rail and should keep turning real misses into generic deterministic regressions
-  - it should add replay assets that specifically protect deterministic hot-path behavior, abstention behavior, low-confidence fallback, and selective semantic escalation boundaries
+  - it should keep protecting deterministic hot-path behavior, abstention behavior, low-confidence fallback, and selective semantic escalation boundaries as later features land
 - Stream C (`stabilization-semantics`): first-class constraints plus subject/workstream anchors
   - this should start once the envelope fields exist and can then split into two parallel semantic-policy workers with a shared metadata contract
 - Stream D (`stabilization-enrichment`): write-time contextual enrichment and background consolidation
@@ -143,3 +145,5 @@ Still out of scope for this phase:
 - public API expansion for explicit retention administration
 - replacing lower-level evidence-backed memory with only higher-level summaries
 - turning Pallium into a workflow engine, transcript archive, or raw tool-log store
+
+

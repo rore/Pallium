@@ -1,10 +1,10 @@
 ---
 id: add-write-time-memory-envelope-and-kind-prefiltering
 title: Write-time memory envelope and kind prefiltering
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 lane: stabilization-foundation
 ---
 
@@ -116,6 +116,19 @@ stabilization step, not a follow-on optimization.
 
 ## Notes
 
+Shipped in the typed memory-envelope slice on `main`:
+
+- additive `MemoryEnvelope` / `MemorySubjectAnchor` support on memory objects and
+  query candidates
+- additive `envelope_json` persistence with fail-closed loader validation for
+  malformed rows
+- package-owned envelope construction for direct, thread, checkpoint, and
+  continuity-style memory
+- kind-aware query prefiltering, mixed old/new fallback, and envelope-aware
+  debug trace coverage
+- deterministic regression coverage for storage round-trip, extraction
+  normalization, and kind-aware routing
+
 Recommended sequencing:
 
 1. land this envelope slice before or alongside selective query ambiguity
@@ -141,3 +154,5 @@ Implementation defaults:
 - treat this feature as the first concrete consumer of the later shared
   `write_extraction` prompt-role contract, not as the long-term owner of prompt
   governance rules
+
+

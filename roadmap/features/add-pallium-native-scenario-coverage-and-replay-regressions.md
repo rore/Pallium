@@ -1,10 +1,10 @@
 ---
 id: add-pallium-native-scenario-coverage-and-replay-regressions
 title: Pallium-native scenario coverage and replay regressions
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 lane: stabilization-safety
 ---
 
@@ -121,6 +121,18 @@ wording fixes.
 
 ## Notes
 
+Shipped as the first direct replay safety-rail slice on `main`:
+
+- lightweight shared replay helpers for deterministic ingest/query/query-debug
+  authored corpora
+- generic replay/API coverage for greeting-noise suppression, structured recall
+  under pollution, adjacent-topic isolation, and constraint-vs-contradiction
+  cases
+- a dedicated convergence test for pending-to-processed improvement without
+  regressing payload semantics
+- stronger payload-semantic assertions, including stable top-result ids where
+  fixtures are deterministic
+
 Recommended sequencing:
 
 1. keep benchmark architecture formalization first so lane and tier vocabulary
@@ -140,3 +152,5 @@ Implementation defaults:
   nouns or phrasing into fixtures
 - use downstream-agent runs only as downstream proof after Pallium-native
   coverage has the issue pinned down
+
+
