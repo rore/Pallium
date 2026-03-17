@@ -46,6 +46,37 @@ def _build_inventory_batch_thread_summary_payload(lower: str) -> dict[str, str] 
     return None
 
 
+def _build_wallet_thread_summary_payload(lower: str) -> dict[str, str] | None:
+    if 'wallet reserve snapshot' in lower and 'wal-102' in lower and 'publish the wallet reserve note' in lower:
+        return {
+            'summary': 'The thread preserved the wallet reserve snapshot for WAL-102 and WAL-208, and the next step is to publish the wallet reserve note after confirming the local snapshot.'
+        }
+    return None
+
+
+
+def _build_wallet_task_checkpoint_payload(lower: str) -> dict[str, object] | None:
+    if 'wallet reserve snapshot' in lower and 'wal-102' in lower and 'publish the wallet reserve note' in lower:
+        return {
+            'summary': 'The wallet reserve snapshot is ready for the local wallet review.',
+            'task': 'Resume the wallet reserve snapshot review.',
+            'current_state': 'The wallet reserve snapshot is reconciled for WAL-102 and WAL-208.',
+            'key_findings': [
+                'The wallet reserve snapshot is reconciled for WAL-102 and WAL-208.',
+                'The reserve note still needs the local snapshot confirmation before publication.',
+            ],
+            'blocker_state': '',
+            'next_step': 'Publish the wallet reserve note after confirming the local snapshot.',
+            'evidence': [
+                'Partial progress: the wallet reserve snapshot is reconciled for WAL-102 and WAL-208.',
+                'Next step: publish the wallet reserve note after confirming the local snapshot.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T12:35:00Z.',
+        }
+    return None
+
+
+
 def _build_inventory_batch_task_checkpoint_payload(lower: str) -> dict[str, object] | None:
     if 'inventory batch digest' in lower and 'bin-103' in lower and 'local browser' in lower:
         return {
@@ -194,6 +225,9 @@ def _build_thread_summary_payload(user_prompt: str) -> dict[str, str]:
     inventory_batch = _build_inventory_batch_thread_summary_payload(lower)
     if inventory_batch is not None:
         return inventory_batch
+    wallet_snapshot = _build_wallet_thread_summary_payload(lower)
+    if wallet_snapshot is not None:
+        return wallet_snapshot
     if 'branch kiosk fallback' in lower and 're-request review' in lower:
         return {
             'summary': 'The thread kept the use_item_event_time flag off for branch kiosks, confirmed the admin toggle wiring was ready, and still needs branch kiosk fallback coverage before review can pass.'
@@ -408,6 +442,9 @@ def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
     inventory_batch = _build_inventory_batch_task_checkpoint_payload(lower)
     if inventory_batch is not None:
         return inventory_batch
+    wallet_snapshot = _build_wallet_task_checkpoint_payload(lower)
+    if wallet_snapshot is not None:
+        return wallet_snapshot
     if 'retry window was exhausted' in lower and 'batch 418' in lower:
         return {
             'summary': 'Catalog sync retry resumed after auth refresh and is now blocked by a retry-window limit.',

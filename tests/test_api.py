@@ -1605,6 +1605,160 @@ def _ingest_inventory_batch_polluted_history(client: TestClient) -> dict[str, ob
 
 
 
+def _ingest_inventory_wallet_polluted_history(client: TestClient) -> dict[str, object]:
+    scenario = _ingest_inventory_batch_polluted_history(client)
+    container_ref = scenario['container_ref']
+    visibility_context = scenario['visibility_context']
+    threads = dict(scenario['threads'])
+    sessions = dict(scenario['sessions'])
+    threads.update({
+        'same_thread_x': 'slack:thread:CLOCAL001:inventory-batch-thread-x',
+        'same_thread_y': 'slack:thread:CLOCAL001:inventory-batch-thread-y',
+        'wallet': 'slack:thread:CLOCAL001:wallet-snapshot-thread',
+        'noise': 'slack:thread:CLOCAL001:generic-noise-thread',
+    })
+    sessions.update({
+        'same_thread_x': 'agent-session:inventory-batch-thread-x',
+        'same_thread_y': 'agent-session:inventory-batch-thread-y',
+        'wallet': 'agent-session:wallet-snapshot-thread',
+        'noise': 'agent-session:generic-noise-thread',
+    })
+
+    payloads = (
+        {
+            'source_type': 'assistant_artifact',
+            'source_id': 'inventory-wallet-noise-capability',
+            'content_type': 'text/plain',
+            'content': 'Well, I am a helper of many talents across batch digests and wallet summaries.',
+            'artifact_kind': 'assistant_output',
+            'role': 'assistant',
+            'container_ref': container_ref,
+            'thread_ref': threads['noise'],
+            'session_ref': sessions['noise'],
+            'occurred_at': '2026-03-11T08:55:00Z',
+            'visibility_context': visibility_context,
+        },
+        {
+            'source_type': 'assistant_artifact',
+            'source_id': 'inventory-wallet-noise-heartbeat',
+            'content_type': 'text/plain',
+            'content': 'Heartbeat: still monitoring the local channel.',
+            'artifact_kind': 'assistant_output',
+            'role': 'assistant',
+            'container_ref': container_ref,
+            'thread_ref': threads['noise'],
+            'session_ref': sessions['noise'],
+            'occurred_at': '2026-03-11T08:56:00Z',
+            'visibility_context': visibility_context,
+        },
+        {
+            'source_type': 'chat_message',
+            'source_id': 'wallet-thread-msg-1',
+            'content_type': 'text/plain',
+            'content': 'Please summarize the latest wallet reserve snapshot for the local wallet review.',
+            'artifact_kind': 'message',
+            'role': 'user',
+            'container_ref': container_ref,
+            'thread_ref': threads['wallet'],
+            'session_ref': sessions['wallet'],
+            'occurred_at': '2026-03-11T12:30:00Z',
+            'visibility_context': visibility_context,
+        },
+        {
+            'source_type': 'assistant_artifact',
+            'source_id': 'wallet-thread-artifact-1',
+            'content_type': 'text/plain',
+            'content': 'Partial progress: the wallet reserve snapshot is reconciled for WAL-102 and WAL-208.',
+            'artifact_kind': 'tool_use_summary',
+            'role': 'assistant',
+            'container_ref': container_ref,
+            'thread_ref': threads['wallet'],
+            'session_ref': sessions['wallet'],
+            'occurred_at': '2026-03-11T12:31:00Z',
+            'visibility_context': visibility_context,
+        },
+        {
+            'source_type': 'assistant_artifact',
+            'source_id': 'wallet-thread-artifact-2',
+            'content_type': 'text/plain',
+            'content': 'Next step: publish the wallet reserve note after confirming the local snapshot.',
+            'artifact_kind': 'todo_snapshot',
+            'role': 'assistant',
+            'container_ref': container_ref,
+            'thread_ref': threads['wallet'],
+            'session_ref': sessions['wallet'],
+            'occurred_at': '2026-03-11T12:35:00Z',
+            'visibility_context': visibility_context,
+        },
+        {
+            'source_type': 'chat_message',
+            'source_id': 'thread-x-msg-1',
+            'content_type': 'text/plain',
+            'content': 'good afternnon sir',
+            'artifact_kind': 'message',
+            'role': 'user',
+            'container_ref': container_ref,
+            'thread_ref': threads['same_thread_x'],
+            'session_ref': sessions['same_thread_x'],
+            'occurred_at': '2026-03-11T13:00:00Z',
+            'visibility_context': visibility_context,
+        },
+        {
+            'source_type': 'assistant_artifact',
+            'source_id': 'thread-x-artifact-1',
+            'content_type': 'text/plain',
+            'content': 'Good afternoon. I can help with the latest batch digest status when you are ready.',
+            'artifact_kind': 'assistant_output',
+            'role': 'assistant',
+            'container_ref': container_ref,
+            'thread_ref': threads['same_thread_x'],
+            'session_ref': sessions['same_thread_x'],
+            'occurred_at': '2026-03-11T13:00:10Z',
+            'visibility_context': visibility_context,
+        },
+        {
+            'source_type': 'chat_message',
+            'source_id': 'thread-y-msg-1',
+            'content_type': 'text/plain',
+            'content': 'hello again',
+            'artifact_kind': 'message',
+            'role': 'user',
+            'container_ref': container_ref,
+            'thread_ref': threads['same_thread_y'],
+            'session_ref': sessions['same_thread_y'],
+            'occurred_at': '2026-03-11T13:05:00Z',
+            'visibility_context': visibility_context,
+        },
+    )
+    for payload in payloads:
+        response = client.post('/items', json=payload)
+        assert response.status_code == 200
+
+    storage = client.app.state.pallium_service._storage
+    wallet_rendered = []
+    for source_item in storage.list_source_items_for_thread(container_ref, threads['wallet']):
+        for memory in storage.list_memory_objects_for_source_item(source_item.id):
+            if memory.lifecycle != 'active' or memory.type not in {'task_checkpoint', 'thread_summary'}:
+                continue
+            payload = memory.payload or {}
+            wallet_rendered.append(
+                ' '.join(
+                    [
+                        str(payload.get('summary') or ''),
+                        str(payload.get('current_state') or ''),
+                        str(payload.get('next_step') or ''),
+                        *[str(value or '') for value in payload.get('evidence', []) if isinstance(value, str)],
+                    ]
+                ).lower()
+            )
+    assert any('wallet reserve snapshot' in rendered for rendered in wallet_rendered)
+
+    scenario['threads'] = threads
+    scenario['sessions'] = sessions
+    return scenario
+
+
+
 def test_query_debug_inventory_batch_pollution_replay_uses_structured_carry_forward(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
     scenario = _ingest_inventory_batch_polluted_history(client)
@@ -1805,3 +1959,178 @@ def test_processing_reconciles_new_inventory_batch_structured_memory_against_act
             assert "attempt to authenticate" not in rendered
 
 
+
+
+def test_query_debug_inventory_wallet_pollution_replay_routes_correctly(monkeypatch, test_db_url: str) -> None:
+    client = _agent_conversation_client(monkeypatch, test_db_url)
+    scenario = _ingest_inventory_wallet_polluted_history(client)
+    container_ref = scenario['container_ref']
+    visibility_context = scenario['visibility_context']
+
+    greeting_response = client.post(
+        '/query/debug',
+        json={
+            'text': 'good afternnon sir',
+            'limit': 12,
+            'container_ref': container_ref,
+            'thread_ref': 'slack:thread:CLOCAL001:diag-good-afternnon-fresh',
+            'session_ref': 'agent-session:diag-good-afternnon-fresh',
+            'visibility_context': visibility_context,
+            'runtime_context': {
+                'turn_kind': 'new_thread',
+                'session_has_sufficient_local_context': False,
+            },
+        },
+    )
+    assert greeting_response.status_code == 200
+    greeting_payload = greeting_response.json()
+    assert greeting_payload['should_inject'] is False
+    assert greeting_payload['decision_reason'] == 'low_value_query'
+    assert greeting_payload['injectable_blocks'] == []
+
+    reminder_response = client.post(
+        '/query/debug',
+        json={
+            'text': 'remind me what we had about the batch digests lately',
+            'limit': 12,
+            'container_ref': container_ref,
+            'thread_ref': scenario['threads']['same_thread_x'],
+            'session_ref': scenario['sessions']['same_thread_x'],
+            'visibility_context': visibility_context,
+            'runtime_context': {
+                'turn_kind': 'same_thread_continuation',
+                'session_has_sufficient_local_context': True,
+            },
+        },
+    )
+    assert reminder_response.status_code == 200
+    reminder_payload = reminder_response.json()
+    reminder_routing = reminder_payload['trace']['routing']
+    reminder_text = ' '.join(block['text'].lower() for block in reminder_payload['injectable_blocks'])
+    assert reminder_payload['should_inject'] is True
+    assert reminder_payload['decision_reason'] != 'same_thread_context_sufficient'
+    assert reminder_routing['query_intent'] == 'broad_recall'
+    assert reminder_routing['query_family'] == 'broad_recurring_recall'
+    assert reminder_routing['selected_layer'] != 'source_evidence'
+    assert all(block['block_type'] == 'memory' for block in reminder_payload['injectable_blocks'])
+    assert 'inventory batch digest' in reminder_text or 'last confirmed batch' in reminder_text
+    assert 'attempt to authenticate' not in reminder_text
+    assert 'good afternoon' not in reminder_text
+    assert 'many talents' not in reminder_text
+
+    correction_response = client.post(
+        '/query/debug',
+        json={
+            'text': 'no, remember that we cannot use the operations portal here so no point trying to connect to it',
+            'limit': 12,
+            'container_ref': container_ref,
+            'thread_ref': scenario['threads']['same_thread_x'],
+            'session_ref': scenario['sessions']['same_thread_x'],
+            'visibility_context': visibility_context,
+            'runtime_context': {
+                'turn_kind': 'same_thread_continuation',
+                'session_has_sufficient_local_context': True,
+            },
+        },
+    )
+    assert correction_response.status_code == 200
+    correction_payload = correction_response.json()
+    correction_routing = correction_payload['trace']['routing']
+    correction_text = ' '.join(block['text'].lower() for block in correction_payload['injectable_blocks'])
+    assert correction_payload['should_inject'] is True
+    assert correction_payload['decision_reason'] != 'same_thread_context_sufficient'
+    assert correction_routing['query_family'] == 'broad_recurring_recall'
+    assert correction_routing['selected_layer'] != 'source_evidence'
+    assert 'do not try to sign in to the operations portal' in correction_text
+    assert 'local browser' in correction_text
+    assert 'attempt to authenticate' not in correction_text
+    assert 'retry after authentication is restored' not in correction_text
+    assert 'many talents' not in correction_text
+
+    wallet_response = client.post(
+        '/query/debug',
+        json={
+            'text': 'what is the latest we have in wallet?',
+            'limit': 12,
+            'container_ref': container_ref,
+            'thread_ref': scenario['threads']['same_thread_y'],
+            'session_ref': scenario['sessions']['same_thread_y'],
+            'visibility_context': visibility_context,
+            'runtime_context': {
+                'turn_kind': 'same_thread_continuation',
+                'session_has_sufficient_local_context': True,
+            },
+        },
+    )
+    assert wallet_response.status_code == 200
+    wallet_payload = wallet_response.json()
+    wallet_routing = wallet_payload['trace']['routing']
+    wallet_text = ' '.join(block['text'].lower() for block in wallet_payload['injectable_blocks'])
+    assert wallet_payload['should_inject'] is True
+    assert wallet_payload['decision_reason'] != 'same_thread_context_sufficient'
+    assert wallet_routing['query_family'] == 'broad_recurring_recall'
+    assert wallet_routing['selected_layer'] != 'source_evidence'
+    assert all(block['block_type'] == 'memory' for block in wallet_payload['injectable_blocks'])
+    assert 'wallet reserve snapshot' in wallet_text
+    assert 'inventory batch digest' not in wallet_text
+    assert 'attempt to authenticate' not in wallet_text
+    assert 'operations portal' not in wallet_text
+
+
+
+def test_same_thread_batch_reminder_converges_without_becoming_worse_after_processing(monkeypatch, test_db_url: str) -> None:
+    client = _agent_conversation_client(monkeypatch, test_db_url)
+    scenario = _ingest_inventory_wallet_polluted_history(client)
+    container_ref = scenario['container_ref']
+    visibility_context = scenario['visibility_context']
+    query_payload = {
+        'text': 'remind me what we had about the batch digests lately',
+        'limit': 12,
+        'container_ref': container_ref,
+        'thread_ref': scenario['threads']['same_thread_x'],
+        'session_ref': scenario['sessions']['same_thread_x'],
+        'visibility_context': visibility_context,
+        'runtime_context': {
+            'turn_kind': 'same_thread_continuation',
+            'session_has_sufficient_local_context': True,
+        },
+    }
+
+    before_response = client.post('/query/debug', json=query_payload)
+    assert before_response.status_code == 200
+    before_payload = before_response.json()
+    before_text = ' '.join(block['text'].lower() for block in before_payload['injectable_blocks'])
+    assert before_payload['should_inject'] is True
+    assert before_payload['decision_reason'] != 'same_thread_context_sufficient'
+    assert before_payload['trace']['routing']['selected_layer'] != 'source_evidence'
+    assert 'attempt to authenticate' not in before_text
+
+    response = client.post(
+        '/items',
+        json={
+            'source_type': 'chat_message',
+            'source_id': 'thread-x-msg-2',
+            'content_type': 'text/plain',
+            'content': 'remind me what we had about the batch digests lately',
+            'artifact_kind': 'message',
+            'role': 'user',
+            'container_ref': container_ref,
+            'thread_ref': scenario['threads']['same_thread_x'],
+            'session_ref': scenario['sessions']['same_thread_x'],
+            'occurred_at': '2026-03-11T13:00:20Z',
+            'visibility_context': visibility_context,
+        },
+    )
+    assert response.status_code == 200
+
+    after_response = client.post('/query/debug', json=query_payload)
+    assert after_response.status_code == 200
+    after_payload = after_response.json()
+    after_text = ' '.join(block['text'].lower() for block in after_payload['injectable_blocks'])
+    assert after_payload['should_inject'] is True
+    assert after_payload['decision_reason'] != 'same_thread_context_sufficient'
+    assert after_payload['trace']['routing']['selected_layer'] != 'source_evidence'
+    assert after_payload['trace']['routing']['injection_decision']['same_thread_context_evaluation']['reason_code'] == 'insufficient_same_thread_local_state'
+    assert 'inventory batch digest' in after_text or 'last confirmed batch' in after_text
+    assert 'attempt to authenticate' not in after_text
+    assert 'good afternoon' not in after_text

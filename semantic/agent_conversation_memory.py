@@ -350,6 +350,20 @@ ROUTING_META_QUERY_TOKENS = {
     "we",
     "what",
     "which",
+    "again",
+    "can",
+    "had",
+    "have",
+    "here",
+    "in",
+    "is",
+    "lately",
+    "latest",
+    "me",
+    "sir",
+    "that",
+    "there",
+    "you",
 }
 ROUTING_WEAK_HIGHER_LEVEL_MATCH_PENALTY = {
     "answer_continuity": 0,
@@ -368,6 +382,11 @@ ROUTING_SAFE_FALLBACK_LAYERS = {
     "investigative_conclusion": ("decision", "source_evidence", "thread_summary"),
 }
 ROUTING_SUPPORT_THRESHOLD = {"weak": 0, "supported": 60, "strong": 110}
+ROUTING_TOPIC_LOW_SIGNAL_TOKENS = {
+    "about", "already", "before", "carry", "constraint", "concluded", "did", "do", "earlier",
+    "forward", "history", "latest", "lately", "old", "past", "prior", "previously", "remember",
+    "remind", "repeat", "repeated", "resume", "state", "use", "using", "what", "which", "why",
+}
 ROUTING_FALLBACK_MARGIN = 35
 ROUTING_FOCUS_BOOST = 120
 ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY = 90
@@ -482,7 +501,7 @@ WORK_RESUMPTION_FRESH_STATE_BONUS = 18
 WORK_RESUMPTION_FRESHNESS_MARGIN_SECONDS = 5400
 WORK_RESUMPTION_SIGNAL_PRIORITY = ("blocker", "next_step", "progress_update")
 ROUTING_QUERY_SHAPE_TOKENS = {
-    "history_lookup": {"before", "earlier", "historical", "history", "past", "previously", "prior"},
+    "history_lookup": {"before", "earlier", "historical", "history", "past", "previously", "prior", "latest", "lately"},
     "big_picture": {"lesson", "pattern", "remember", "takeaway"},
     "analysis_request": {"concluded", "conclusion", "finding", "findings", "land", "outcome", "settled", "true", "verdict"},
     "carry_forward": {"again", "already", "carry", "forward", "old", "remind", "repeat", "repeated"},
@@ -492,7 +511,7 @@ ROUTING_QUERY_SHAPE_TOKENS = {
     "precise_lookup": {"exact", "when", "which"},
 }
 ROUTING_QUERY_SHAPE_PHRASES = {
-    "history_lookup": ("what do we know", "what is the latest", "what's the latest", "what had we concluded", "what had you concluded", "what constraint had i given", "remind me what we had latest", "remind me what we had latest about"),
+    "history_lookup": ("what do we know", "what is the latest", "what's the latest", "what had we concluded", "what had you concluded", "what constraint had i given", "remind me what we had latest", "remind me what we had latest about", "remind me what we had about", "what we had about"),
     "big_picture": ("big picture", "general lesson", "larger lesson", "main takeaway", "should we remember", "what should we remember"),
     "analysis_request": ("where did we land", "what ended up being true", "what settled", "how did that shake out"),
     "constraint_recall": ("what constraint had i given", "what constraint did i give", "what had i told you not to use", "what did i tell you not to use"),
@@ -709,6 +728,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             query_shape_tags=list(family_inference["query_shape_tags"]),
             runtime_context=runtime_context,
             packaging_summary=packaging_summary,
+            local_constraint_profile=_build_local_query_constraint_profile(text, runtime_context),
         )
         injection_blocks, injection_summary = _build_injectable_blocks(
             final_candidates,
@@ -1285,6 +1305,10 @@ def _infer_query_intent(
         reverse=True,
     )
     selected_family = ranked_families[0] if ranked_families else text_hint_family
+    if _preferred_constraint_text(text):
+        selected_family = "broad_recall"
+    elif text_hint_family == "broad_recall" and "history_lookup" in query_shape_tags and "evidence_request" not in query_shape_tags:
+        selected_family = "broad_recall"
     runner_up_family = ranked_families[1] if len(ranked_families) > 1 else None
     return {
         "selected_family": selected_family,
@@ -1300,7 +1324,9 @@ def _infer_query_intent(
 
 def _classify_query_intent_from_text(text: str) -> str:
     lowered = text.lower()
-    if "remind me" in lowered and "latest" in lowered:
+    if _preferred_constraint_text(text):
+        return "broad_recall"
+    if "remind me" in lowered and ("latest" in lowered or "lately" in lowered or "what we had about" in lowered):
         return "broad_recall"
     if any(cue in lowered for cue in EVIDENCE_TRACE_CUES):
         return "evidence_trace"
@@ -1351,6 +1377,10 @@ def _query_shape_tags(text: str, query_tokens: tuple[str, ...]) -> list[str]:
             detected.add(tag)
     if "remind me" in lowered:
         detected.update({"history_lookup", "carry_forward"})
+    if "remind me" in lowered and ("lately" in lowered or "latest" in lowered or "what we had about" in lowered):
+        detected.update({"history_lookup", "carry_forward"})
+    if _preferred_constraint_text(text):
+        detected.add("constraint_recall")
     if lowered.startswith("why "):
         detected.add("big_picture")
     if lowered.startswith(("what ", "which ", "when ")):
@@ -1875,6 +1905,8 @@ def _score_routed_candidate(
     lexical_score = int(item.score)
     overlap_tokens = _routing_overlap_tokens(item, query_tokens)
     content_overlap_tokens = [token for token in overlap_tokens if token not in ROUTING_META_QUERY_TOKENS]
+    query_topic_tokens = _query_topic_tokens(query_tokens)
+    topic_overlap_tokens = [token for token in content_overlap_tokens if token in query_topic_tokens]
     evidence_shape_score = _candidate_evidence_shape_score(
         item,
         layer=layer,
@@ -1887,6 +1919,7 @@ def _score_routed_candidate(
         + _specificity_bonus(item, intent, query_text=query_text)
         + evidence_shape_score
         + _routing_overlap_adjustment(layer, intent, content_overlap_tokens)
+        + _topic_alignment_adjustment(layer=layer, query_topic_tokens=query_topic_tokens, topic_overlap_tokens=topic_overlap_tokens)
     )
     support_grade = _routing_support_grade(evidence_shape_score)
     return {
@@ -1901,6 +1934,7 @@ def _score_routed_candidate(
         "reason": "",
         "strategy_name": _routing_strategy_name(item),
         "content_overlap_tokens": content_overlap_tokens,
+        "topic_overlap_tokens": topic_overlap_tokens,
         "evidence_count": len(item.evidence),
         "same_thread": _candidate_matches_thread(item, query_filters),
         "same_container": _candidate_matches_container(item, query_filters),
@@ -2357,6 +2391,19 @@ def _source_hit_looks_like_request_or_question(item: QueryResultItem) -> bool:
     return False
 
 
+def _assistant_source_is_answer_bearing_local_state(excerpt: str, query_text: str) -> bool:
+    lowered_query = query_text.lower()
+    if not any(marker in lowered_query for marker in ("paste", "repeat", "rewrite", "again", "exact", "exactly")):
+        return False
+    normalized_excerpt = str(excerpt or "").strip()
+    if len(normalized_excerpt.split()) < 8:
+        return False
+    lowered_excerpt = normalized_excerpt.lower()
+    if lowered_excerpt.startswith(("sure:", "here is", "here's", "try this", "rewrite:")):
+        return True
+    return '"' in normalized_excerpt or "'" in normalized_excerpt
+
+
 def _source_hit_is_generic_capability_text(text: str) -> bool:
     lowered = text.lower()
     return lowered.startswith("capabilities:") or "many talents" in lowered or ("i can" in lowered and "help" in lowered and "status" in lowered)
@@ -2437,17 +2484,58 @@ def _query_contains_any(text: str, cues: Iterable[str]) -> bool:
     return any(cue in lowered for cue in cues)
 
 
+def _edit_distance_with_limit(left: str, right: str, limit: int) -> int:
+    if abs(len(left) - len(right)) > limit:
+        return limit + 1
+    previous = list(range(len(right) + 1))
+    for left_index, left_char in enumerate(left, start=1):
+        current = [left_index]
+        row_min = current[0]
+        for right_index, right_char in enumerate(right, start=1):
+            cost = 0 if left_char == right_char else 1
+            value = min(
+                previous[right_index] + 1,
+                current[right_index - 1] + 1,
+                previous[right_index - 1] + cost,
+            )
+            current.append(value)
+            row_min = min(row_min, value)
+        if row_min > limit:
+            return limit + 1
+        previous = current
+    return previous[-1]
+
+
+
+def _looks_like_low_value_greeting_variant(normalized: str) -> bool:
+    tokens = [token for token in normalized.split() if token]
+    if not tokens:
+        return False
+    if normalized in LOW_VALUE_GREETING_NOISE_QUERIES:
+        return True
+    low_value_trailing_tokens = {"again", "sir", "team", "friend", "folks", "maam", "madam"}
+    if tokens[0] == "good" and len(tokens) >= 2:
+        if any(_edit_distance_with_limit(tokens[1], marker, 2) <= 2 for marker in ("morning", "afternoon", "evening")):
+            return all(token in low_value_trailing_tokens for token in tokens[2:])
+    for marker in ("hello", "hi", "hey", "thanks"):
+        if _edit_distance_with_limit(tokens[0], marker, 1) <= 1:
+            return all(token in low_value_trailing_tokens for token in tokens[1:])
+    return False
+
+
 def _source_hit_is_greeting_or_noise_text(text: str) -> bool:
     normalized = normalize_for_index(text)
     if not normalized:
         return False
-    if normalized in LOW_VALUE_GREETING_NOISE_QUERIES:
+    if _looks_like_low_value_greeting_variant(normalized):
         return True
     for prefix in LOW_VALUE_GREETING_NOISE_PREFIXES:
         if not normalized.startswith(prefix):
             continue
         remainder = normalized[len(prefix):].strip()
         if not remainder:
+            return True
+        if _looks_like_low_value_greeting_variant(f"{prefix} {remainder}".strip()):
             return True
         if remainder.startswith(("i can help", "let me know", "when you are ready", "how can i help")):
             return True
@@ -2458,7 +2546,7 @@ def _query_is_low_value_greeting_or_noise(text: str) -> bool:
     normalized = normalize_for_index(text)
     if not normalized:
         return False
-    if normalized in LOW_VALUE_GREETING_NOISE_QUERIES:
+    if _looks_like_low_value_greeting_variant(normalized):
         return True
     return len(normalized.split()) <= 4 and _source_hit_is_greeting_or_noise_text(text)
 
@@ -2498,6 +2586,27 @@ def _routing_item_tokens(item: QueryResultItem) -> tuple[str, ...]:
     if not normalized:
         return ()
     return tuple(token for token in normalized.split() if token)
+
+
+def _query_topic_tokens(query_tokens: tuple[str, ...]) -> set[str]:
+    return {
+        token
+        for token in query_tokens
+        if token not in ROUTING_META_QUERY_TOKENS and token not in ROUTING_TOPIC_LOW_SIGNAL_TOKENS
+    }
+
+
+
+def _topic_alignment_adjustment(*, layer: str, query_topic_tokens: set[str], topic_overlap_tokens: list[str]) -> int:
+    if not query_topic_tokens:
+        return 0
+    if topic_overlap_tokens:
+        return min(len(topic_overlap_tokens), 2) * 36
+    if layer in {"task_checkpoint", "thread_summary", "discussion_summary", "continuity_memory", "pattern_memory"}:
+        return -140
+    if layer == "source_evidence":
+        return -110
+    return -90
 
 
 def _routing_item_text(item: QueryResultItem) -> str:
@@ -3022,6 +3131,8 @@ def _candidate_qualifies_as_same_thread_local_state(
             return False, "greeting_or_noise_same_thread_source"
         if _source_hit_looks_like_recall_query(item, query_text):
             return False, "query_like_same_thread_source"
+        if item.role == "assistant" and _assistant_source_is_answer_bearing_local_state(excerpt, query_text):
+            return True, ""
         if work_usefulness >= 18:
             return True, ""
         if support_grade in {"supported", "strong"} and _text_contains_operational_guidance(excerpt):
@@ -3255,7 +3366,8 @@ def _extract_constraint_snippets(text: str) -> list[str]:
             if not candidate:
                 continue
             has_tool_marker = any(marker in lowered for marker in CONSTRAINT_TOOL_MARKERS)
-            has_constraint_marker = any(marker in lowered for marker in (*CONSTRAINT_MARKERS, "avoid", "without"))
+            explicit_local_constraint = any(marker in lowered for marker in ("cannot use", "can't use", "cannot open", "can't open", "cannot connect", "can't connect"))
+            has_constraint_marker = any(marker in lowered for marker in (*CONSTRAINT_MARKERS, "avoid", "without")) or explicit_local_constraint
             if has_constraint_marker and (has_tool_marker or fragment_has_tool_marker):
                 snippets.append(candidate.rstrip("."))
     return list(OrderedDict.fromkeys(snippets))
@@ -3697,6 +3809,7 @@ def _select_final_candidates(
     query_shape_tags: list[str],
     runtime_context: QueryRuntimeContext | None,
     packaging_summary: dict[str, object] | None,
+    local_constraint_profile: dict[str, object] | None,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None]:
     summary = dict(packaging_summary or {})
     if not ranked_candidates:
@@ -3707,6 +3820,7 @@ def _select_final_candidates(
             requested_limit=requested_limit,
             query_shape_tags=query_shape_tags,
             packaging_summary=summary,
+            local_constraint_profile=local_constraint_profile,
         )
     if intent != "work_resumption":
         return ranked_candidates[:requested_limit], summary or None
@@ -3714,6 +3828,7 @@ def _select_final_candidates(
     ranked_candidates, summary, _constraint_anchor, active_constraint_profile = _apply_structured_constraint_compatibility(
         ranked_candidates=ranked_candidates,
         packaging_summary=summary,
+        local_constraint_profile=local_constraint_profile,
     )
     if not ranked_candidates:
         if active_constraint_profile is not None or summary.get("incompatible_structured_candidates"):
@@ -3778,10 +3893,12 @@ def _select_compatible_recall_candidates(
     requested_limit: int,
     query_shape_tags: list[str],
     packaging_summary: dict[str, object],
+    local_constraint_profile: dict[str, object] | None,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None]:
     compatible_candidates, packaging_summary, constraint_anchor, active_constraint_profile = _apply_structured_constraint_compatibility(
         ranked_candidates=ranked_candidates,
         packaging_summary=packaging_summary,
+        local_constraint_profile=local_constraint_profile,
     )
     if not compatible_candidates:
         if active_constraint_profile is not None or packaging_summary.get("incompatible_structured_candidates"):
@@ -3796,20 +3913,63 @@ def _select_compatible_recall_candidates(
 
     selected_candidates = [primary_candidate]
     used_result_ids = {_routing_result_id(primary_candidate["item"])}
+    primary_topic_tokens = set(primary_candidate.get("topic_overlap_tokens") or [])
+    strict_primary_topic_filter = bool(primary_topic_tokens)
+    primary_aligns_with_active_constraint = _candidate_aligns_with_constraint_profile(primary_candidate, active_constraint_profile)
     if constraint_anchor is not None and constraint_anchor in compatible_candidates:
         anchor_result_id = _routing_result_id(constraint_anchor["item"])
-        if anchor_result_id not in used_result_ids and len(selected_candidates) < requested_limit:
+        anchor_topic_tokens = set(constraint_anchor.get("topic_overlap_tokens") or [])
+        if (
+            anchor_result_id not in used_result_ids
+            and len(selected_candidates) < requested_limit
+            and (
+                explicit_constraint_focus
+                or not strict_primary_topic_filter
+                or primary_topic_tokens.intersection(anchor_topic_tokens)
+            )
+        ):
             selected_candidates.append(constraint_anchor)
             used_result_ids.add(anchor_result_id)
 
-    for candidate in compatible_candidates:
-        candidate_result_id = _routing_result_id(candidate["item"])
-        if candidate_result_id in used_result_ids:
-            continue
+    remaining_candidates = [
+        candidate
+        for candidate in compatible_candidates
+        if _routing_result_id(candidate["item"]) not in used_result_ids
+    ]
+    structured_remaining = [
+        candidate
+        for candidate in remaining_candidates
+        if getattr(candidate["item"], "result_kind", None) == "memory_hit"
+    ]
+    source_remaining = [
+        candidate
+        for candidate in remaining_candidates
+        if getattr(candidate["item"], "result_kind", None) != "memory_hit"
+    ]
+    for candidate_group in (structured_remaining, source_remaining):
+        for candidate in candidate_group:
+            candidate_result_id = _routing_result_id(candidate["item"])
+            if candidate_result_id in used_result_ids:
+                continue
+            if len(selected_candidates) >= requested_limit:
+                break
+            candidate_topic_tokens = set(candidate.get("topic_overlap_tokens") or [])
+            if strict_primary_topic_filter and not primary_topic_tokens.intersection(candidate_topic_tokens):
+                if not (
+                    primary_aligns_with_active_constraint
+                    and _candidate_aligns_with_constraint_profile(candidate, active_constraint_profile)
+                ):
+                    continue
+            if (
+                primary_topic_tokens
+                and not candidate_topic_tokens.intersection(primary_topic_tokens)
+                and str(candidate.get("layer")) in {"continuity_memory", "pattern_memory", "thread_summary", "discussion_summary"}
+            ):
+                continue
+            selected_candidates.append(candidate)
+            used_result_ids.add(candidate_result_id)
         if len(selected_candidates) >= requested_limit:
             break
-        selected_candidates.append(candidate)
-        used_result_ids.add(candidate_result_id)
 
     if packaging_summary.get("incompatible_structured_candidates"):
         packaging_summary["mode"] = "compatible_structured_recall"
@@ -3826,11 +3986,43 @@ def _constraint_profile_sort_key(profile: dict[str, object]) -> tuple[datetime, 
     return freshness_at, len(profile.get("protected_tokens") or [])
 
 
+def _build_local_query_constraint_profile(
+    query_text: str,
+    runtime_context: QueryRuntimeContext | None,
+) -> dict[str, object] | None:
+    if runtime_context is None or runtime_context.turn_kind not in {"same_thread", "same_thread_continuation"}:
+        return None
+    constraint_text = _preferred_constraint_text(query_text)
+    if not constraint_text:
+        return None
+    return _structured_constraint_profile_from_payload(
+        memory_type="thread_summary",
+        payload={"summary": constraint_text},
+        result_id="query_text:local_constraint",
+    )
+
+
+
+def _candidate_aligns_with_constraint_profile(candidate: dict[str, object], constraint_profile: dict[str, object] | None) -> bool:
+    if constraint_profile is None:
+        return False
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    candidate_tokens = set(_routing_item_tokens(item))
+    if not candidate_tokens:
+        return False
+    focus_tokens = set(constraint_profile.get("focus_tokens") or [])
+    protected_tokens = set(constraint_profile.get("protected_tokens") or [])
+    target_tokens = focus_tokens or protected_tokens
+    return bool(target_tokens.intersection(candidate_tokens))
+
+
 
 def _apply_structured_constraint_compatibility(
     *,
     ranked_candidates: list[dict[str, object]],
     packaging_summary: dict[str, object],
+    local_constraint_profile: dict[str, object] | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, object], dict[str, object] | None, dict[str, object] | None]:
     unsuppressed_candidates = [candidate for candidate in ranked_candidates if not candidate.get("suppression_reason_code")]
     if not unsuppressed_candidates:
@@ -3852,7 +4044,10 @@ def _apply_structured_constraint_compatibility(
         if active_constraint_profile is None or _constraint_profile_sort_key(profile) > _constraint_profile_sort_key(active_constraint_profile):
             active_constraint_profile = profile
             constraint_anchor = candidate
-    if active_constraint_profile is None:
+    if local_constraint_profile is not None:
+        active_constraint_profile = local_constraint_profile
+        packaging_summary["active_constraint_profile_source"] = "local_query_constraint"
+    elif active_constraint_profile is None:
         active_constraint_profile = fallback_conflicting_profile
 
     for candidate in unsuppressed_candidates:
@@ -4259,6 +4454,12 @@ def _select_routing_focus(
     best_fallback_summary = None
     if fallback_candidates:
         if intent == "broad_recall":
+            structured_fallback = [
+                (layer, summary)
+                for layer, summary in fallback_candidates
+                if layer in {"task_checkpoint", "thread_summary", "discussion_summary", "lower_level_memory"}
+                and str(summary.get("best_support_grade", "weak")) in {"supported", "strong"}
+            ]
             supported_lower_level = next(
                 (
                     (layer, summary)
@@ -4268,7 +4469,15 @@ def _select_routing_focus(
                 ),
                 None,
             )
-            if supported_lower_level is not None:
+            if structured_fallback:
+                best_fallback_layer, best_fallback_summary = max(
+                    structured_fallback,
+                    key=lambda item: (
+                        int(item[1].get("best_support_score", 0)),
+                        int(item[1].get("best_lexical_score", 0)),
+                    ),
+                )
+            elif supported_lower_level is not None:
                 best_fallback_layer, best_fallback_summary = supported_lower_level
             else:
                 best_fallback_layer, best_fallback_summary = max(
