@@ -68,6 +68,9 @@ CONSTRAINT_TOOL_MARKERS = (
     "authenticate",
     "authentication",
     "login",
+    "tracker",
+    "portal",
+    "workspace",
     "local repo",
     "local repos",
 )
@@ -79,6 +82,10 @@ CONSTRAINT_MARKERS = (
     "ask the user directly",
     "do not",
     "don't",
+    "forbid",
+    "forbids",
+    "prohibit",
+    "prohibits",
 )
 IMPLICIT_FINDING_MARKERS = (
     "here's the verdict",
@@ -136,6 +143,7 @@ OPERATIONAL_GUIDANCE_MARKERS = (
     "use ",
 )
 CONSTRAINT_POLICY_STOPWORDS = {
+    "and",
     "avoid",
     "blocked",
     "constraint",
@@ -143,6 +151,7 @@ CONSTRAINT_POLICY_STOPWORDS = {
     "do",
     "dont",
     "forbid",
+    "for",
     "forbidden",
     "forbids",
     "from",
@@ -150,10 +159,95 @@ CONSTRAINT_POLICY_STOPWORDS = {
     "not",
     "only",
     "operator",
+    "or",
     "please",
     "remember",
     "using",
     "without",
+}
+LOW_VALUE_GREETING_NOISE_PREFIXES = (
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "hello",
+    "hi",
+    "hey",
+    "thanks",
+    "thank you",
+)
+LOW_VALUE_GREETING_NOISE_QUERIES = {
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "hello",
+    "hi",
+    "hey",
+    "thanks",
+    "thank you",
+}
+CONSTRAINT_POLICY_ACTION_TOKENS = {
+    "attempt",
+    "attempted",
+    "attempting",
+    "attempts",
+    "auth",
+    "authenticate",
+    "authentication",
+    "connect",
+    "connected",
+    "connecting",
+    "fetch",
+    "fetched",
+    "fetching",
+    "log",
+    "login",
+    "manual",
+    "manually",
+    "open",
+    "refresh",
+    "refreshed",
+    "refreshing",
+    "rerun",
+    "resume",
+    "restore",
+    "restored",
+    "retry",
+    "sign",
+    "signin",
+    "use",
+    "using",
+}
+CONSTRAINT_POLICY_LOW_SIGNAL_TOKENS = {
+    "local",
+    "note",
+    "noted",
+    "operator",
+    "state",
+}
+CONSTRAINT_FOCUS_TOOL_TOKENS = {
+    "auth",
+    "authenticate",
+    "authentication",
+    "browser",
+    "jira",
+    "login",
+    "portal",
+    "repo",
+    "repos",
+    "slack",
+    "tracker",
+    "workspace",
+}
+CONSTRAINT_ONLY_RESIDUAL_TOKENS = {
+    "and",
+    "constraint",
+    "constraints",
+    "current",
+    "note",
+    "noted",
+    "reminder",
+    "remember",
+    "state",
 }
 PATTERN_MEMORY_PROMPT_SCHEMA_ID = "pattern_memory_extraction"
 PATTERN_MEMORY_PROMPT_SCHEMA_VERSION = "v1"
@@ -267,7 +361,7 @@ ROUTING_WEAK_HIGHER_LEVEL_MATCH_PENALTY = {
 }
 ROUTING_SAFE_FALLBACK_LAYERS = {
     "answer_continuity": ("lower_level_memory", "source_evidence"),
-    "broad_recall": ("lower_level_memory", "source_evidence", "task_checkpoint"),
+    "broad_recall": ("task_checkpoint", "thread_summary", "lower_level_memory", "source_evidence"),
     "work_resumption": ("source_evidence", "lower_level_memory"),
     "precise_fact": ("source_evidence",),
     "evidence_trace": ("lower_level_memory",),
@@ -391,14 +485,14 @@ ROUTING_QUERY_SHAPE_TOKENS = {
     "history_lookup": {"before", "earlier", "historical", "history", "past", "previously", "prior"},
     "big_picture": {"lesson", "pattern", "remember", "takeaway"},
     "analysis_request": {"concluded", "conclusion", "finding", "findings", "land", "outcome", "settled", "true", "verdict"},
-    "carry_forward": {"again", "already", "carry", "forward", "old", "repeat", "repeated"},
+    "carry_forward": {"again", "already", "carry", "forward", "old", "remind", "repeat", "repeated"},
     "constraint_recall": {"auth", "authenticate", "authentication", "browser", "constraint", "jira", "login", "portal", "sign", "slack"},
     "resume_state": {"blocked", "blocker", "continue", "continued", "continuing", "left", "next", "progress", "queued", "resume", "resumed", "state", "stuck", "unblock"},
     "evidence_request": {"backed", "evidence", "prove", "quote", "source", "support", "supported", "trace"},
     "precise_lookup": {"exact", "when", "which"},
 }
 ROUTING_QUERY_SHAPE_PHRASES = {
-    "history_lookup": ("what do we know", "what is the latest", "what's the latest", "what had we concluded", "what had you concluded", "what constraint had i given"),
+    "history_lookup": ("what do we know", "what is the latest", "what's the latest", "what had we concluded", "what had you concluded", "what constraint had i given", "remind me what we had latest", "remind me what we had latest about"),
     "big_picture": ("big picture", "general lesson", "larger lesson", "main takeaway", "should we remember", "what should we remember"),
     "analysis_request": ("where did we land", "what ended up being true", "what settled", "how did that shake out"),
     "constraint_recall": ("what constraint had i given", "what constraint did i give", "what had i told you not to use", "what did i tell you not to use"),
@@ -1206,6 +1300,8 @@ def _infer_query_intent(
 
 def _classify_query_intent_from_text(text: str) -> str:
     lowered = text.lower()
+    if "remind me" in lowered and "latest" in lowered:
+        return "broad_recall"
     if any(cue in lowered for cue in EVIDENCE_TRACE_CUES):
         return "evidence_trace"
     if any(cue in lowered for cue in WORK_RESUMPTION_CUES):
@@ -1253,6 +1349,8 @@ def _query_shape_tags(text: str, query_tokens: tuple[str, ...]) -> list[str]:
     for tag, phrases in ROUTING_QUERY_SHAPE_PHRASES.items():
         if any(phrase in lowered for phrase in phrases):
             detected.add(tag)
+    if "remind me" in lowered:
+        detected.update({"history_lookup", "carry_forward"})
     if lowered.startswith("why "):
         detected.add("big_picture")
     if lowered.startswith(("what ", "which ", "when ")):
@@ -1289,7 +1387,7 @@ def _query_family_query_shape_score(
 ) -> tuple[int, list[str]]:
     weights = {
         "answer_continuity": {"carry_forward": 28, "history_lookup": 8, "constraint_recall": 18},
-        "broad_recall": {"history_lookup": 22, "big_picture": 52, "constraint_recall": 28},
+        "broad_recall": {"history_lookup": 22, "big_picture": 52, "constraint_recall": 28, "carry_forward": 12},
         "work_resumption": {"resume_state": 34, "carry_forward": 8},
         "precise_fact": {"precise_lookup": 18},
         "evidence_trace": {"evidence_request": 44},
@@ -1613,6 +1711,9 @@ def _query_family_candidate_score(
         if structured_summary_support >= supported_floor:
             score += min(structured_summary_support // 3, 36)
             reasons.append("structured_summary_support")
+        if checkpoint_support >= supported_floor and {"history_lookup", "carry_forward"}.issubset(set(query_shape_tags)):
+            score += min(checkpoint_support // 2, 72)
+            reasons.append("checkpoint_carry_forward_support")
         if fresh_thread_cross_thread_recall and "history_lookup" in query_shape_tags and structured_recall_support >= supported_floor:
             score += 28
             reasons.append("fresh_thread_history_recall")
@@ -1709,6 +1810,9 @@ def _query_family_candidate_score(
         if fresh_thread_cross_thread_recall and structured_recall_support >= max(source_support, supported_floor) and "evidence_request" not in query_shape_tags:
             score -= 72
             reasons.append("structured_recall_outweighs_source_evidence")
+        if {"history_lookup", "carry_forward"}.issubset(set(query_shape_tags)) and checkpoint_support >= supported_floor and "evidence_request" not in query_shape_tags:
+            score -= 84
+            reasons.append("checkpoint_carry_forward_outweighs_evidence_trace")
         if ("history_lookup" in query_shape_tags or constraint_recall) and structured_summary_support >= supported_floor and "evidence_request" not in query_shape_tags:
             score -= 54
             reasons.append("history_lookup_outweighs_evidence_trace")
@@ -1954,6 +2058,8 @@ def _source_noise_suppression_reason(
         return None
     if _is_low_value_meta_text(excerpt):
         return "low_value_meta_source", "Low-value orchestration source is not useful carry-forward for recall packaging."
+    if _source_hit_is_greeting_or_noise_text(excerpt):
+        return "greeting_source_noise", "Greeting or pleasantry chatter was excluded from recall packaging."
     if _source_hit_is_heartbeat_text(excerpt):
         return "heartbeat_source_noise", "Heartbeat-style source noise was excluded from recall packaging."
     if _source_hit_is_generic_capability_text(excerpt):
@@ -2130,12 +2236,13 @@ def _structured_payload_guidance_fragments(memory_type: str, payload: dict[str, 
 
 
 def _text_contains_operational_guidance(text: str) -> bool:
-    lowered = str(text or "").strip().lower()
-    if not lowered:
+    normalized = str(text or "").strip()
+    if not normalized:
         return False
-    if _extract_constraint_snippets(lowered):
-        return False
-    return any(marker in lowered for marker in OPERATIONAL_GUIDANCE_MARKERS)
+    lowered = normalized.lower()
+    non_constraint = _strip_constraint_snippets(normalized).strip()
+    target = non_constraint.lower() if re.search(r"\w", non_constraint) else lowered
+    return any(marker in target for marker in OPERATIONAL_GUIDANCE_MARKERS)
 
 
 
@@ -2143,9 +2250,51 @@ def _constraint_policy_tokens(text: str) -> set[str]:
     return {
         token
         for token in _routing_query_tokens(text)
-        if len(token) > 2 and token not in CONSTRAINT_POLICY_STOPWORDS and token not in ROUTING_META_QUERY_TOKENS
+        if (
+            len(token) > 2
+            and token not in CONSTRAINT_POLICY_STOPWORDS
+            and token not in ROUTING_META_QUERY_TOKENS
+        )
     }
 
+
+def _constraint_focus_tokens(tokens: Iterable[str]) -> set[str]:
+    return {
+        token
+        for token in tokens
+        if token not in CONSTRAINT_POLICY_ACTION_TOKENS and token not in CONSTRAINT_POLICY_LOW_SIGNAL_TOKENS
+    }
+
+
+def _exclusive_constraint_tokens(text: str) -> set[str]:
+    normalized = str(text or "").strip().lower()
+    if not normalized:
+        return set()
+    clauses: list[str] = []
+    for pattern in (
+        r"use only (?P<clause>.+?)(?: instead of| rather than|$)",
+        r"only use (?P<clause>.+?)(?: instead of| rather than|$)",
+    ):
+        for match in re.finditer(pattern, normalized):
+            clause = str(match.group("clause") or "").strip(" .,;:")
+            if clause:
+                clauses.append(clause)
+    if not clauses:
+        return set()
+    return _constraint_focus_tokens(_constraint_policy_tokens(" ".join(clauses)))
+
+
+def _prohibited_constraint_focus_tokens(text: str) -> set[str]:
+    focus_tokens: set[str] = set()
+    for snippet in _extract_constraint_snippets(text):
+        lowered = snippet.lower()
+        if "use only" in lowered or "only use" in lowered:
+            continue
+        tokens = _constraint_policy_tokens(snippet)
+        tool_tokens = tokens.intersection(CONSTRAINT_FOCUS_TOOL_TOKENS)
+        if tool_tokens:
+            focus_tokens.update(tool_tokens)
+    return focus_tokens
 
 
 def _candidate_has_self_conflicting_guidance(candidate: dict[str, object]) -> bool:
@@ -2159,17 +2308,11 @@ def _candidate_has_self_conflicting_guidance(candidate: dict[str, object]) -> bo
 
 
 def _structured_item_conflicts_with_constraint(item: QueryResultItem, constraint_profile: dict[str, object]) -> bool:
-    protected_tokens = set(constraint_profile.get("protected_tokens") or [])
-    if not protected_tokens:
-        return False
     payload = item.payload or {}
-    for fragment in _structured_payload_guidance_fragments(str(item.type or ""), payload):
-        if _preferred_constraint_text(fragment):
-            continue
-        fragment_tokens = _constraint_policy_tokens(fragment)
-        if len(fragment_tokens.intersection(protected_tokens)) >= 2:
-            return True
-    return False
+    return any(
+        _structured_text_conflicts_with_constraint(fragment, constraint_profile)
+        for fragment in _structured_payload_guidance_fragments(str(item.type or ""), payload)
+    )
 
 
 def _candidate_conflicts_with_constraint(item: QueryResultItem, constraint_profile: dict[str, object]) -> bool:
@@ -2183,8 +2326,7 @@ def _source_hit_looks_like_recall_query(item: QueryResultItem, query_text: str) 
     excerpt = str(item.excerpt or "").strip()
     if not excerpt:
         return False
-    lowered = excerpt.lower()
-    if "?" not in excerpt and not lowered.startswith(("what ", "which ", "why ", "how ")):
+    if not _source_hit_looks_like_request_or_question(item):
         return False
     if item.role not in {None, "user"} and (item.source_type or "") not in {"chat_message", "message"}:
         return False
@@ -2201,7 +2343,7 @@ def _source_hit_looks_like_request_or_question(item: QueryResultItem) -> bool:
         return False
     lowered = excerpt.lower()
     request_prefixes = (
-        "can you", "could you", "would you", "will you", "please", "what ", "which ", "why ", "how ",
+        "can you", "could you", "would you", "will you", "please", "remind me", "what ", "which ", "why ", "how ",
         "when ", "where ", "who ", "do we", "did we", "are we", "is there", "should we", "so what"
     )
     if lowered.startswith(request_prefixes):
@@ -2293,6 +2435,39 @@ def _specificity_bonus(item: QueryResultItem, intent: str, *, query_text: str) -
 def _query_contains_any(text: str, cues: Iterable[str]) -> bool:
     lowered = text.lower()
     return any(cue in lowered for cue in cues)
+
+
+def _source_hit_is_greeting_or_noise_text(text: str) -> bool:
+    normalized = normalize_for_index(text)
+    if not normalized:
+        return False
+    if normalized in LOW_VALUE_GREETING_NOISE_QUERIES:
+        return True
+    for prefix in LOW_VALUE_GREETING_NOISE_PREFIXES:
+        if not normalized.startswith(prefix):
+            continue
+        remainder = normalized[len(prefix):].strip()
+        if not remainder:
+            return True
+        if remainder.startswith(("i can help", "let me know", "when you are ready", "how can i help")):
+            return True
+    return False
+
+
+def _query_is_low_value_greeting_or_noise(text: str) -> bool:
+    normalized = normalize_for_index(text)
+    if not normalized:
+        return False
+    if normalized in LOW_VALUE_GREETING_NOISE_QUERIES:
+        return True
+    return len(normalized.split()) <= 4 and _source_hit_is_greeting_or_noise_text(text)
+
+
+def _strip_constraint_snippets(text: str) -> str:
+    stripped = str(text or "")
+    for snippet in _extract_constraint_snippets(stripped):
+        stripped = re.sub(re.escape(snippet), " ", stripped, flags=re.IGNORECASE)
+    return stripped
 
 
 def _routing_query_tokens(text: str) -> tuple[str, ...]:
@@ -2632,6 +2807,16 @@ def _build_injectable_blocks(
             "cap": 3,
             "same_thread_context_evaluation": same_thread_context,
         }
+    if _query_is_low_value_greeting_or_noise(query_text):
+        return [], {
+            "should_inject": False,
+            "decision_reason": "low_value_query",
+            "returned_block_ids": [],
+            "eligible_result_ids": [],
+            "dropped_by_cap_result_ids": [],
+            "cap": 3,
+            "same_thread_context_evaluation": same_thread_context,
+        }
     if not final_candidates:
         return [], {
             "should_inject": False,
@@ -2831,6 +3016,10 @@ def _candidate_qualifies_as_same_thread_local_state(
 
     if item.result_kind == "source_hit":
         excerpt = str(item.excerpt or "")
+        if normalize_for_index(excerpt) == normalize_for_index(query_text):
+            return False, "current_query_same_thread_source"
+        if _source_hit_is_greeting_or_noise_text(excerpt):
+            return False, "greeting_or_noise_same_thread_source"
         if _source_hit_looks_like_recall_query(item, query_text):
             return False, "query_like_same_thread_source"
         if work_usefulness >= 18:
@@ -3040,8 +3229,16 @@ def _preferred_constraint_text(*fragments: str) -> str:
     if not candidates:
         return ""
     unique_candidates = list(OrderedDict.fromkeys(candidate.strip() for candidate in candidates if candidate.strip()))
-    unique_candidates.sort(key=lambda value: ("do not" not in value.lower() and "don't" not in value.lower(), -len(value)))
-    return unique_candidates[0]
+    ordered_candidates = sorted(
+        unique_candidates,
+        key=lambda candidate: (
+            "do not" not in candidate.lower() and "don't" not in candidate.lower(),
+            "use only" not in candidate.lower() and "instead of" not in candidate.lower(),
+            "avoid" not in candidate.lower() and "without" not in candidate.lower(),
+            -len(candidate),
+        ),
+    )
+    return _join_unique_text_parts(ordered_candidates)
 
 
 def _extract_constraint_snippets(text: str) -> list[str]:
@@ -3050,15 +3247,56 @@ def _extract_constraint_snippets(text: str) -> list[str]:
         return []
     snippets: list[str] = []
     for fragment in re.split(r"(?<=[.!?])\s+|\n+", normalized):
-        candidate = fragment.strip(" -")
-        lowered = candidate.lower()
-        if not candidate:
-            continue
-        has_tool_marker = any(marker in lowered for marker in CONSTRAINT_TOOL_MARKERS)
-        has_constraint_marker = any(marker in lowered for marker in (*CONSTRAINT_MARKERS, "avoid", "without"))
-        if has_tool_marker and has_constraint_marker:
-            snippets.append(candidate.rstrip("."))
-    return snippets
+        fragment_lowered = fragment.lower()
+        fragment_has_tool_marker = any(marker in fragment_lowered for marker in CONSTRAINT_TOOL_MARKERS)
+        for clause in re.split(r"(?<=[,;])\s+|\s+\b(?:and|but|while)\b\s+", fragment):
+            candidate = clause.strip(" -,:;")
+            lowered = candidate.lower()
+            if not candidate:
+                continue
+            has_tool_marker = any(marker in lowered for marker in CONSTRAINT_TOOL_MARKERS)
+            has_constraint_marker = any(marker in lowered for marker in (*CONSTRAINT_MARKERS, "avoid", "without"))
+            if has_constraint_marker and (has_tool_marker or fragment_has_tool_marker):
+                snippets.append(candidate.rstrip("."))
+    return list(OrderedDict.fromkeys(snippets))
+
+
+def _fragment_is_constraint_only(text: str) -> bool:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    strong_positive_markers = (
+        "next step",
+        "should ",
+        "need to ",
+        "must ",
+        "attempt ",
+        "retry ",
+        "resume ",
+        "rerun ",
+        "refresh ",
+        "connect ",
+        "authenticate",
+        "sign in",
+        "log in manually",
+        "login manually",
+    )
+    has_tool_marker = any(marker in lowered for marker in CONSTRAINT_TOOL_MARKERS)
+    has_constraint_language = any(marker in lowered for marker in (*CONSTRAINT_MARKERS, "avoid", "without", "no-login", "no browser", "no-browser"))
+    if not has_tool_marker or not has_constraint_language:
+        return False
+    if any(marker in lowered for marker in strong_positive_markers):
+        return False
+    residual = normalize_for_index(_strip_constraint_snippets(normalized))
+    if not residual:
+        return True
+    residual_tokens = [
+        token
+        for token in residual.split()
+        if token not in CONSTRAINT_ONLY_RESIDUAL_TOKENS and token not in CONSTRAINT_POLICY_STOPWORDS
+    ]
+    return not residual_tokens or not any(marker in residual for marker in strong_positive_markers)
 
 
 def _build_sharp_candidate_diagnostics(
@@ -3602,13 +3840,20 @@ def _apply_structured_constraint_compatibility(
     incompatible_candidates: list[dict[str, str]] = []
     constraint_anchor: dict[str, object] | None = None
     active_constraint_profile: dict[str, object] | None = None
+    fallback_conflicting_profile: dict[str, object] | None = None
     for candidate in unsuppressed_candidates:
         profile = _structured_constraint_profile_from_item(candidate["item"])
         if profile is None:
             continue
+        if _candidate_has_self_conflicting_guidance(candidate):
+            if fallback_conflicting_profile is None or _constraint_profile_sort_key(profile) > _constraint_profile_sort_key(fallback_conflicting_profile):
+                fallback_conflicting_profile = profile
+            continue
         if active_constraint_profile is None or _constraint_profile_sort_key(profile) > _constraint_profile_sort_key(active_constraint_profile):
             active_constraint_profile = profile
-            constraint_anchor = None if _candidate_has_self_conflicting_guidance(candidate) else candidate
+            constraint_anchor = candidate
+    if active_constraint_profile is None:
+        active_constraint_profile = fallback_conflicting_profile
 
     for candidate in unsuppressed_candidates:
         item = candidate["item"]
@@ -3642,6 +3887,8 @@ def _apply_structured_constraint_compatibility(
             "memory_type": str(active_constraint_profile.get("memory_type") or ""),
             "constraint_text": str(active_constraint_profile.get("constraint_text") or ""),
             "protected_tokens": list(active_constraint_profile.get("protected_tokens") or []),
+            "focus_tokens": list(active_constraint_profile.get("focus_tokens") or []),
+            "exclusive_tokens": list(active_constraint_profile.get("exclusive_tokens") or []),
         }
     if constraint_anchor is not None:
         packaging_summary["constraint_anchor_result_id"] = _routing_result_id(constraint_anchor["item"])
@@ -3694,7 +3941,14 @@ def _structured_constraint_profile_from_payload(
     constraint_text = _preferred_constraint_text(*_structured_payload_constraint_fragments(memory_type, payload))
     if not constraint_text:
         return None
-    protected_tokens = sorted(_constraint_policy_tokens(constraint_text))
+    protected_tokens = set(_constraint_policy_tokens(constraint_text))
+    if protected_tokens.intersection({"issue", "jira", "log", "login", "portal", "sign", "slack", "tracker"}):
+        protected_tokens.update({"auth", "authenticate", "authentication", "retry"})
+    focus_tokens = _prohibited_constraint_focus_tokens(constraint_text) or _constraint_focus_tokens(protected_tokens)
+    exclusive_tokens = _exclusive_constraint_tokens(constraint_text)
+    protected_tokens = sorted(protected_tokens)
+    focus_tokens = sorted(focus_tokens)
+    exclusive_tokens = sorted(exclusive_tokens)
     if not protected_tokens:
         return None
     return {
@@ -3702,21 +3956,18 @@ def _structured_constraint_profile_from_payload(
         "memory_type": memory_type,
         "constraint_text": constraint_text,
         "protected_tokens": protected_tokens,
+        "focus_tokens": focus_tokens,
+        "exclusive_tokens": exclusive_tokens,
         "freshness_at": freshness_at,
     }
 
 
 
 def _structured_payload_conflicts_with_constraint(memory_type: str, payload: dict[str, object], constraint_profile: dict[str, object]) -> bool:
-    protected_tokens = set(constraint_profile.get("protected_tokens") or [])
-    if not protected_tokens:
-        return False
-    for fragment in _structured_payload_guidance_fragments(memory_type, payload):
-        if _preferred_constraint_text(fragment):
-            continue
-        if len(_constraint_policy_tokens(fragment).intersection(protected_tokens)) >= 2:
-            return True
-    return False
+    return any(
+        _structured_text_conflicts_with_constraint(fragment, constraint_profile)
+        for fragment in _structured_payload_guidance_fragments(memory_type, payload)
+    )
 
 
 
@@ -3725,7 +3976,7 @@ def _reconcile_memory_object_against_active_constraints(
     *,
     active_constraints: list[dict[str, object]],
 ) -> MemoryObject:
-    if memory_object.type != "task_checkpoint" or not active_constraints:
+    if memory_object.type not in STRUCTURED_CONFLICT_MEMORY_TYPES or not active_constraints:
         return memory_object
     payload = dict(memory_object.payload or {})
     active_constraint = active_constraints[0]
@@ -3734,24 +3985,41 @@ def _reconcile_memory_object_against_active_constraints(
 
     constraint_text = str(active_constraint.get("constraint_text") or "").strip()
     updated_payload = dict(payload)
-    updated_payload["summary"] = _strip_conflicting_guidance_text(str(payload.get("summary") or ""), active_constraint)
-    updated_payload["current_state"] = _strip_conflicting_guidance_text(str(payload.get("current_state") or ""), active_constraint)
-    blocker_state = _strip_conflicting_guidance_text(str(payload.get("blocker_state") or ""), active_constraint)
-    updated_payload["blocker_state"] = _join_unique_text_parts([constraint_text, blocker_state]) if constraint_text else blocker_state
-    updated_payload["next_step"] = _strip_conflicting_guidance_text(str(payload.get("next_step") or ""), active_constraint)
-    updated_payload["key_findings"] = [
-        text
-        for text in _parse_string_list(payload.get("key_findings"))
-        if not _structured_text_conflicts_with_constraint(text, active_constraint)
-    ]
-    evidence_lines = [
-        text
-        for text in _parse_string_list(payload.get("evidence"))
-        if not _structured_text_conflicts_with_constraint(text, active_constraint)
-    ]
-    if constraint_text and not any(constraint_text.lower() in text.lower() for text in evidence_lines):
-        evidence_lines.insert(0, f"Constraint: {constraint_text}")
-    updated_payload["evidence"] = evidence_lines
+    if memory_object.type == "task_checkpoint":
+        updated_payload["summary"] = _strip_conflicting_guidance_text(str(payload.get("summary") or ""), active_constraint)
+        updated_payload["current_state"] = _strip_conflicting_guidance_text(str(payload.get("current_state") or ""), active_constraint)
+        blocker_state = _strip_conflicting_guidance_text(str(payload.get("blocker_state") or ""), active_constraint)
+        updated_payload["blocker_state"] = _join_unique_text_parts([constraint_text, blocker_state]) if constraint_text else blocker_state
+        updated_payload["next_step"] = _strip_conflicting_guidance_text(str(payload.get("next_step") or ""), active_constraint)
+        updated_payload["key_findings"] = [
+            text
+            for text in _parse_string_list(payload.get("key_findings"))
+            if not _structured_text_conflicts_with_constraint(text, active_constraint)
+        ]
+        evidence_lines = [
+            text
+            for text in _parse_string_list(payload.get("evidence"))
+            if not _structured_text_conflicts_with_constraint(text, active_constraint)
+        ]
+        if constraint_text and not any(constraint_text.lower() in text.lower() for text in evidence_lines):
+            evidence_lines.insert(0, f"Constraint: {constraint_text}")
+        updated_payload["evidence"] = evidence_lines
+    else:
+        summary = _strip_conflicting_guidance_text(str(payload.get("summary") or ""), active_constraint)
+        updated_payload["summary"] = _join_unique_text_parts([constraint_text, summary]) if constraint_text else summary
+        if memory_object.type == "thread_summary":
+            updated_payload["selected_work_artifacts"] = [
+                artifact
+                for artifact in payload.get("selected_work_artifacts", [])
+                if isinstance(artifact, dict)
+                and not _structured_text_conflicts_with_constraint(str(artifact.get("text") or ""), active_constraint)
+            ]
+            updated_payload["conclusions"] = [
+                conclusion
+                for conclusion in payload.get("conclusions", [])
+                if isinstance(conclusion, dict)
+                and not _structured_text_conflicts_with_constraint(str(conclusion.get("text") or ""), active_constraint)
+            ]
     semantic_provenance = dict(updated_payload.get("semantic_provenance") or {})
     semantic_provenance["constraint_reconciliation"] = {
         "active_constraint_result_id": str(active_constraint.get("result_id") or ""),
@@ -3769,18 +4037,59 @@ def _strip_conflicting_guidance_text(text: str, constraint_profile: dict[str, ob
     parts = [part.strip(" -") for part in re.split(r"(?<=[.!?;])\s+|\n+", normalized) if part.strip(" -")]
     if not parts:
         return ""
-    kept_parts = [part for part in parts if not _structured_text_conflicts_with_constraint(part, constraint_profile)]
-    return " ".join(kept_parts)
-
+    kept_parts: list[str] = []
+    for part in parts:
+        if not _structured_text_conflicts_with_constraint(part, constraint_profile):
+            kept_parts.append(part)
+            continue
+        preferred_constraint = _preferred_constraint_text(part)
+        if preferred_constraint:
+            kept_parts.append(preferred_constraint)
+    return _join_unique_text_parts(kept_parts)
 
 
 def _structured_text_conflicts_with_constraint(text: str, constraint_profile: dict[str, object]) -> bool:
     normalized = str(text or "").strip()
     if not normalized or not _text_contains_operational_guidance(normalized):
         return False
-    if _preferred_constraint_text(normalized):
+    if _fragment_is_constraint_only(normalized):
         return False
-    return len(_constraint_policy_tokens(normalized).intersection(set(constraint_profile.get("protected_tokens") or []))) >= 2
+    stripped = _strip_constraint_snippets(normalized).strip()
+    candidate_text = stripped if re.search(r"\w", stripped) else normalized
+    if candidate_text != normalized and not _text_contains_operational_guidance(candidate_text):
+        return False
+    protected_tokens = set(constraint_profile.get("protected_tokens") or [])
+    if not protected_tokens:
+        return False
+    candidate_tokens = _constraint_policy_tokens(candidate_text)
+    if not candidate_tokens:
+        return False
+    focus_tokens = set(constraint_profile.get("focus_tokens") or [])
+    focus_basis = focus_tokens or {
+        token for token in protected_tokens if token not in CONSTRAINT_POLICY_LOW_SIGNAL_TOKENS
+    }
+    focus_overlap = candidate_tokens.intersection(focus_basis)
+    exclusive_tokens = set(constraint_profile.get("exclusive_tokens") or [])
+    if len(focus_overlap) >= 2:
+        if exclusive_tokens:
+            forbidden_focus_overlap = focus_overlap.difference(exclusive_tokens)
+            lowered_candidate = candidate_text.lower()
+            if candidate_tokens.intersection(exclusive_tokens) and not forbidden_focus_overlap and re.search(r"\buse\b", lowered_candidate):
+                return False
+            residual_tokens = candidate_tokens.difference(
+                exclusive_tokens,
+                CONSTRAINT_POLICY_ACTION_TOKENS,
+                CONSTRAINT_POLICY_LOW_SIGNAL_TOKENS,
+                ROUTING_META_QUERY_TOKENS,
+                {"next", "step", "instead", "rather", "than"},
+            )
+            if candidate_tokens.intersection(exclusive_tokens) and not forbidden_focus_overlap and not residual_tokens:
+                return False
+        return True
+    if focus_overlap and len(focus_basis) <= 2:
+        return True
+    action_overlap = candidate_tokens.intersection(protected_tokens).intersection(CONSTRAINT_POLICY_ACTION_TOKENS)
+    return bool(focus_basis) and len(action_overlap) >= 2
 
 
 
@@ -4585,3 +4894,5 @@ def _memory_hit_has_selected_work_artifacts(item: QueryResultItem) -> bool:
         return False
     selected = item.payload.get("selected_work_artifacts", [])
     return isinstance(selected, list) and any(isinstance(entry, dict) and entry.get("text") for entry in selected)
+
+

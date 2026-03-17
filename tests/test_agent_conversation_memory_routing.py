@@ -10,7 +10,11 @@ from app.main import create_app
 from core.models import EvidenceReference, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace, SourceItem
 from core.visibility import VisibilityContext
 from retrieval.base import RetrievalQueryResult
-from semantic.agent_conversation_memory import AgentConversationMemoryPlugin
+from semantic.agent_conversation_memory import (
+    AgentConversationMemoryPlugin,
+    _structured_constraint_profile_from_payload,
+    _structured_text_conflicts_with_constraint,
+)
 from tests.config_helpers import build_llm_test_config
 from tests.stub_providers import TieredMemorySemanticProvider
 
@@ -2616,3 +2620,486 @@ def test_routing_trace_exposes_candidate_aware_family_scorecard(monkeypatch, tes
             family_inference['family_scores']['broad_recall']['total']
             > family_inference['family_scores']['precise_fact']['total']
         )
+
+
+
+def _inventory_batch_constraint_checkpoint_result(*, memory_object_id: str = 'checkpoint-batch-constraint', score: int = 16) -> QueryResultItem:
+    return QueryResultItem(
+        result_kind='memory_hit',
+        memory_object_id=memory_object_id,
+        type='task_checkpoint',
+        payload={
+            'summary': 'The inventory batch digest is preserved with an explicit no-login and no-browser constraint.',
+            'task': 'Resume the inventory batch digest.',
+            'current_state': 'The inventory batch digest is prepared for BIN-103, BIN-204, BIN-317, and BIN-418.',
+            'key_findings': [
+                'The inventory batch digest already covers BIN-103, BIN-204, BIN-317, and BIN-418.',
+                'Do not try to sign in to the operations portal or open a local browser.',
+            ],
+            'blocker_state': 'The operator constraint forbids operations-portal sign-in and local-browser login during this batch digest work.',
+            'next_step': 'Refresh the local digest token and rerun the inventory batch digest from the last confirmed batch.',
+            'evidence': [
+                'Partial progress: prepared the inventory batch digest for BIN-103, BIN-204, BIN-317, and BIN-418.',
+                "Constraint: do not try to sign in to the operations portal and don't open a local browser to log in.",
+                'Next step: refresh the local digest token and rerun the inventory batch digest from the last confirmed batch.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
+        },
+        freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+        score=score,
+        evidence=[],
+        container_ref='slack:channel:CLOCAL001',
+        thread_ref='slack:thread:CLOCAL001:thread-a',
+    )
+
+
+
+def _inventory_batch_constraint_summary_result(*, memory_object_id: str = 'summary-batch-constraint', score: int = 15) -> QueryResultItem:
+    return QueryResultItem(
+        result_kind='memory_hit',
+        memory_object_id=memory_object_id,
+        type='thread_summary',
+        payload={
+            'summary': 'The thread preserved the inventory batch digest context for BIN-103, BIN-204, BIN-317, and BIN-418, and the standing constraint is to avoid operations-portal sign-in or opening a local browser.',
+            'conclusions': [],
+            'selected_work_artifacts': [
+                {'signal_type': 'progress_update', 'text': 'Prepared the inventory batch digest.'},
+                {'signal_type': 'constraint', 'text': "Do not try to sign in to the operations portal and don't open a local browser to log in."},
+            ],
+        },
+        freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+        score=score,
+        evidence=[],
+        container_ref='slack:channel:CLOCAL001',
+        thread_ref='slack:thread:CLOCAL001:thread-a',
+    )
+
+
+
+def _inventory_batch_conflicting_retry_checkpoint_result(*, memory_object_id: str = 'checkpoint-batch-auth-retry', score: int = 14) -> QueryResultItem:
+    return QueryResultItem(
+        result_kind='memory_hit',
+        memory_object_id=memory_object_id,
+        type='task_checkpoint',
+        payload={
+            'summary': 'A newer mirror-based batch digest is blocked by remote authentication.',
+            'task': 'Resume the mirror-based batch digest.',
+            'current_state': 'The mirror-based batch digest is prepared, but remote authentication still blocks it.',
+            'key_findings': [
+                'The mirror-based batch digest is prepared for the batch manifests.',
+                'Remote authentication still blocks it.',
+            ],
+            'blocker_state': 'The mirror-based batch digest cannot proceed until remote authentication succeeds.',
+            'next_step': 'Attempt to authenticate to the operations portal and the message console before retrying the inventory batch digest.',
+            'evidence': [
+                'Partial progress: built the mirror-based batch digest for the batch manifests.',
+                'Blocked: the mirror-based batch digest cannot proceed until remote authentication succeeds.',
+                'Next step: attempt to authenticate to the operations portal and the message console before retrying the inventory batch digest.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T12:02:00Z.',
+        },
+        freshness_at=datetime(2026, 3, 11, 12, 2, tzinfo=timezone.utc),
+        score=score,
+        evidence=[],
+        container_ref='slack:channel:CLOCAL001',
+        thread_ref='slack:thread:CLOCAL001:thread-c',
+    )
+
+
+
+def test_fresh_thread_greeting_noise_fails_closed_without_memory_injection() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='slack:channel:CLOCAL001',
+        thread_ref='slack:thread:CLOCAL001:diag-good-morning-fresh',
+        session_ref='agent-session:diag-good-morning-fresh',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='thread-d-artifact-1',
+                source_type='assistant_artifact',
+                source_id='thread-d-artifact-1',
+                excerpt='Good morning. I can help with the latest batch status when you are ready.',
+                occurred_at=datetime(2026, 3, 11, 13, 0, 10, tzinfo=timezone.utc),
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-d',
+                artifact_kind='assistant_output',
+                role='assistant',
+                score=18,
+                evidence=[],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='thread-d-msg-1',
+                source_type='chat_message',
+                source_id='thread-d-msg-1',
+                excerpt='good morning',
+                occurred_at=datetime(2026, 3, 11, 13, 0, tzinfo=timezone.utc),
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-d',
+                artifact_kind='message',
+                role='user',
+                score=17,
+                evidence=[],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='thread-capability-note',
+                source_type='assistant_artifact',
+                source_id='thread-capability-note',
+                excerpt='Many talents: I can help summarize batch digests and search task status.',
+                occurred_at=datetime(2026, 3, 11, 9, 0, tzinfo=timezone.utc),
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-capabilities',
+                artifact_kind='assistant_output',
+                role='assistant',
+                score=8,
+                evidence=[],
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='good morning',
+            query_tokens=('good', 'morning'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='good morning',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    assert outcome.should_inject is False
+    assert outcome.decision_reason != 'carry_forward_available'
+    assert outcome.injectable_blocks == []
+    assert all(item.result_kind == 'source_hit' for item in outcome.results)
+
+
+
+def test_same_thread_batch_reminder_after_trivial_greetings_uses_carry_forward_memory() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='slack:channel:CLOCAL001',
+        thread_ref='slack:thread:CLOCAL001:thread-d',
+        session_ref='agent-session:batch-d',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='thread-d-msg-2',
+                source_type='chat_message',
+                source_id='thread-d-msg-2',
+                excerpt='can you remind me what we had latest about batches?',
+                occurred_at=datetime(2026, 3, 11, 13, 0, 20, tzinfo=timezone.utc),
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-d',
+                artifact_kind='message',
+                role='user',
+                score=18,
+                evidence=[],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='thread-d-artifact-1',
+                source_type='assistant_artifact',
+                source_id='thread-d-artifact-1',
+                excerpt='Good morning. I can help with the latest batch status when you are ready.',
+                occurred_at=datetime(2026, 3, 11, 13, 0, 10, tzinfo=timezone.utc),
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-d',
+                artifact_kind='assistant_output',
+                role='assistant',
+                score=16,
+                evidence=[],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='thread-d-msg-1',
+                source_type='chat_message',
+                source_id='thread-d-msg-1',
+                excerpt='good morning',
+                occurred_at=datetime(2026, 3, 11, 13, 0, tzinfo=timezone.utc),
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-d',
+                artifact_kind='message',
+                role='user',
+                score=15,
+                evidence=[],
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='summary-batch-current-thread',
+                type='thread_summary',
+                payload={
+                    'summary': 'User asked, "can you remind me what we had latest about batches?" The thread contains only this question.',
+                    'conclusions': [],
+                    'selected_work_artifacts': [],
+                },
+                freshness_at=datetime(2026, 3, 11, 13, 0, 20, tzinfo=timezone.utc),
+                score=17,
+                evidence=[],
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-d',
+            ),
+            _inventory_batch_constraint_checkpoint_result(),
+            _inventory_batch_constraint_summary_result(),
+        ],
+        trace=QueryTrace(
+            query_text='can you remind me what we had latest about batches?',
+            query_tokens=('can', 'you', 'remind', 'me', 'what', 'we', 'had', 'latest', 'about', 'batches'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='can you remind me what we had latest about batches?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='same_thread_continuation', session_has_sufficient_local_context=True),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    rendered_blocks = ' '.join(block.text.lower() for block in outcome.injectable_blocks)
+    same_thread = outcome.trace.routing['injection_decision']['same_thread_context_evaluation']
+    assert outcome.should_inject is True
+    assert outcome.decision_reason == 'carry_forward_available'
+    assert outcome.decision_reason != 'same_thread_context_sufficient'
+    assert outcome.trace.routing['query_intent'] == 'broad_recall'
+    assert outcome.trace.routing['query_family'] == 'broad_recurring_recall'
+    assert outcome.trace.routing['selected_layer'] != 'source_evidence'
+    assert same_thread['reason_code'] == 'insufficient_same_thread_local_state'
+    assert any(block.memory_type in {'task_checkpoint', 'thread_summary'} for block in outcome.injectable_blocks)
+    assert 'inventory batch digest' in rendered_blocks or 'last confirmed batch' in rendered_blocks
+    assert 'can you remind me what we had latest about batches' not in rendered_blocks
+    assert 'good morning' not in rendered_blocks
+
+
+
+def test_fresh_thread_batch_reminder_prefers_structured_carry_forward_over_source_evidence() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='slack:channel:CLOCAL001',
+        thread_ref='slack:thread:CLOCAL001:diag-batch-reminder-fresh',
+        session_ref='agent-session:diag-batch-reminder-fresh',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='thread-d-msg-2',
+                source_type='chat_message',
+                source_id='thread-d-msg-2',
+                excerpt='can you remind me what we had latest about batches?',
+                occurred_at=datetime(2026, 3, 11, 13, 0, 20, tzinfo=timezone.utc),
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-d',
+                artifact_kind='message',
+                role='user',
+                score=18,
+                evidence=[],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='thread-d-artifact-1',
+                source_type='assistant_artifact',
+                source_id='thread-d-artifact-1',
+                excerpt='Good morning. I can help with the latest batch status when you are ready.',
+                occurred_at=datetime(2026, 3, 11, 13, 0, 10, tzinfo=timezone.utc),
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-d',
+                artifact_kind='assistant_output',
+                role='assistant',
+                score=16,
+                evidence=[],
+            ),
+            _inventory_batch_constraint_checkpoint_result(score=17),
+            _inventory_batch_constraint_summary_result(score=16),
+        ],
+        trace=QueryTrace(
+            query_text='can you remind me what we had latest about batches?',
+            query_tokens=('can', 'you', 'remind', 'me', 'what', 'we', 'had', 'latest', 'about', 'batches'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='can you remind me what we had latest about batches?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    rendered_blocks = ' '.join(block.text.lower() for block in outcome.injectable_blocks)
+    assert outcome.should_inject is True
+    assert outcome.decision_reason == 'carry_forward_available'
+    assert outcome.trace.routing['query_intent'] == 'broad_recall'
+    assert outcome.trace.routing['query_family'] == 'broad_recurring_recall'
+    assert outcome.trace.routing['selected_layer'] != 'source_evidence'
+    assert all(block.block_type == 'memory' for block in outcome.injectable_blocks)
+    assert any(block.memory_type in {'task_checkpoint', 'thread_summary'} for block in outcome.injectable_blocks)
+    assert 'can you remind me what we had latest about batches' not in rendered_blocks
+    assert 'good morning' not in rendered_blocks
+    assert 'attempt to authenticate' not in rendered_blocks
+
+
+
+def test_constraint_recall_prefers_explicit_no_login_constraint_over_auth_retry_guidance() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='slack:channel:CLOCAL001',
+        thread_ref='slack:thread:CLOCAL001:diag-constraint-fresh',
+        session_ref='agent-session:diag-constraint-fresh',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            _inventory_batch_constraint_checkpoint_result(score=17),
+            _inventory_batch_constraint_summary_result(score=16),
+            _inventory_batch_conflicting_retry_checkpoint_result(score=15),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='thread-c-artifact-2',
+                source_type='assistant_artifact',
+                source_id='thread-c-artifact-2',
+                excerpt='Next step: attempt to authenticate to the operations portal and the message console before retrying the inventory batch digest.',
+                occurred_at=datetime(2026, 3, 11, 12, 2, tzinfo=timezone.utc),
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-c',
+                artifact_kind='todo_snapshot',
+                role='assistant',
+                score=14,
+                evidence=[],
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='what constraint had I given you about operations portal sign-in and browser use?',
+            query_tokens=('what', 'constraint', 'had', 'i', 'given', 'you', 'about', 'operations', 'portal', 'sign', 'in', 'browser', 'use'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='what constraint had I given you about operations portal sign-in and browser use?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    rendered_blocks = ' '.join(block.text.lower() for block in outcome.injectable_blocks)
+    excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
+    assert outcome.should_inject is True
+    assert outcome.decision_reason == 'carry_forward_available'
+    assert outcome.trace.routing['query_intent'] == 'broad_recall'
+    assert outcome.trace.routing['query_family'] == 'broad_recurring_recall'
+    assert outcome.trace.routing['selected_layer'] == 'task_checkpoint'
+    assert 'do not try to sign in to the operations portal' in rendered_blocks
+    assert 'local browser' in rendered_blocks
+    assert 'attempt to authenticate' not in rendered_blocks
+    assert 'retry after authentication is restored' not in rendered_blocks
+    assert 'conflicts_with_active_constraint' in excluded
+
+
+
+
+
+def test_constraint_conflict_detection_treats_single_tool_prohibition_as_conflicting() -> None:
+    profile = _structured_constraint_profile_from_payload(
+        memory_type='task_checkpoint',
+        payload={
+            'summary': '',
+            'evidence': ['Constraint: do not open a local browser.'],
+        },
+        result_id='memory_object:browser-only-constraint',
+    )
+
+    assert profile is not None
+    assert profile['focus_tokens'] == ['browser']
+    assert _structured_text_conflicts_with_constraint('Next step: open the local browser.', profile) is True
+    assert _structured_text_conflicts_with_constraint('Next step: sign in with the local browser.', profile) is True
+    assert _structured_text_conflicts_with_constraint('Next step: refresh the local digest token.', profile) is False
+    assert _structured_text_conflicts_with_constraint('Next step: retry after authentication is restored.', profile) is False
+
+
+def test_constraint_conflict_detection_enforces_use_only_clause_tokens() -> None:
+    profile = _structured_constraint_profile_from_payload(
+        memory_type='task_checkpoint',
+        payload={
+            'summary': '',
+            'evidence': [
+                'Constraint: do not sign in to the operations portal; use only local mirror snapshots for the batch digest.'
+            ],
+        },
+        result_id='memory_object:mirror-only-constraint',
+    )
+
+    assert profile is not None
+    assert {'mirror', 'snapshots'}.issubset(set(profile['protected_tokens']))
+    assert {'mirror', 'snapshots'}.issubset(set(profile['focus_tokens']))
+    assert _structured_text_conflicts_with_constraint(
+        'Next step: fetch tracker data instead of the local mirror snapshots.',
+        profile,
+    ) is True
+    assert _structured_text_conflicts_with_constraint(
+        'Next step: use the local mirror snapshots for the next batch digest.',
+        profile,
+    ) is False
+    assert _structured_text_conflicts_with_constraint(
+        'Next step: use the local mirror snapshots instead of the tracker export.',
+        profile,
+    ) is False
+
+
+def test_constraint_conflict_detection_keeps_single_tool_focus_with_context_nouns() -> None:
+    profile = _structured_constraint_profile_from_payload(
+        memory_type='task_checkpoint',
+        payload={
+            'summary': '',
+            'evidence': ['Constraint: do not open a local browser for the batch digest export.'],
+        },
+        result_id='memory_object:browser-context-constraint',
+    )
+
+    assert profile is not None
+    assert profile['focus_tokens'] == ['browser']
+    assert _structured_text_conflicts_with_constraint('Next step: open the local browser.', profile) is True
+    assert _structured_text_conflicts_with_constraint('Next step: sign in with the local browser.', profile) is True
+    assert _structured_text_conflicts_with_constraint('Next step: refresh the batch digest export token.', profile) is False

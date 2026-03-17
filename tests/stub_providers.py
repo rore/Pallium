@@ -26,6 +26,101 @@ class TieredMemoryAnswerProvider:
         return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
 
 
+def _build_inventory_batch_thread_summary_payload(lower: str) -> dict[str, str] | None:
+    if 'inventory batch digest' in lower and 'bin-103' in lower and 'local browser' in lower:
+        return {
+            'summary': 'The thread preserved the inventory batch digest context for BIN-103, BIN-204, BIN-317, and BIN-418, and the standing constraint is to avoid operations-portal sign-in or opening a local browser.'
+        }
+    if 'channel filters' in lower and 'authentication is restored' in lower:
+        return {
+            'summary': 'The thread preserved the inventory batch digest blocker, noted that the remote channel filter is unauthenticated, and suggested retrying the batch digest after authentication is restored.'
+        }
+    if 'mirror-based batch digest' in lower and 'attempt to authenticate to the operations portal' in lower:
+        return {
+            'summary': 'The thread captured the mirror-based batch digest blocker and suggested attempting authentication to the operations portal and the message console before retrying the inventory batch digest.'
+        }
+    if 'sign in to the operations portal manually' in lower and 'local browser' in lower and 'retry after authentication is restored' in lower:
+        return {
+            'summary': 'The thread repeated the no-login and no-browser constraint, but also preserved contradictory next steps to sign in to the operations portal manually, provide a reference code, and retry after authentication is restored.'
+        }
+    return None
+
+
+def _build_inventory_batch_task_checkpoint_payload(lower: str) -> dict[str, object] | None:
+    if 'inventory batch digest' in lower and 'bin-103' in lower and 'local browser' in lower:
+        return {
+            'summary': 'The inventory batch digest is preserved with an explicit no-login and no-browser constraint.',
+            'task': 'Resume the inventory batch digest.',
+            'current_state': 'The inventory batch digest is prepared for BIN-103, BIN-204, BIN-317, and BIN-418.',
+            'key_findings': [
+                'The inventory batch digest already covers BIN-103, BIN-204, BIN-317, and BIN-418.',
+                'Do not try to sign in to the operations portal or open a local browser.',
+            ],
+            'blocker_state': 'The operator constraint forbids operations-portal sign-in and local-browser login during this batch digest work.',
+            'next_step': 'Refresh the local digest token and rerun the inventory batch digest from the last confirmed batch.',
+            'evidence': [
+                'Partial progress: prepared the inventory batch digest for BIN-103, BIN-204, BIN-317, and BIN-418.',
+                "Constraint: do not try to sign in to the operations portal and don't open a local browser to log in.",
+                'Next step: refresh the local digest token and rerun the inventory batch digest from the last confirmed batch.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
+        }
+    if 'channel filters' in lower and 'authentication is restored' in lower:
+        return {
+            'summary': 'Older inventory batch digest work is blocked by missing authentication.',
+            'task': 'Resume the inventory batch digest after the auth blocker is resolved.',
+            'current_state': 'Channel filters and digest scheduling are ready, but the remote channel filter is unauthenticated.',
+            'key_findings': [
+                'Batch manifests and channel filters are staged for digest scheduling.',
+                'The remote channel filter is unauthenticated.',
+            ],
+            'blocker_state': 'The inventory batch digest cannot proceed until authentication is restored for the remote channel filter.',
+            'next_step': 'Retry the inventory batch digest after authentication is restored.',
+            'evidence': [
+                'Partial progress: batch manifests, channel filters, and digest scheduling are staged.',
+                'Blocked: the inventory batch digest is unauthenticated for the remote channel filter.',
+                'Next step: retry the inventory batch digest after authentication is restored.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T11:02:00Z.',
+        }
+    if 'mirror-based batch digest' in lower and 'attempt to authenticate to the operations portal' in lower:
+        return {
+            'summary': 'A newer mirror-based batch digest is blocked by remote authentication.',
+            'task': 'Resume the mirror-based batch digest.',
+            'current_state': 'The mirror-based batch digest is prepared, but remote authentication still blocks it.',
+            'key_findings': [
+                'The mirror-based batch digest is prepared for the batch manifests.',
+                'Remote authentication still blocks it.',
+            ],
+            'blocker_state': 'The mirror-based batch digest cannot proceed until remote authentication succeeds.',
+            'next_step': 'Attempt to authenticate to the operations portal and the message console before retrying the inventory batch digest.',
+            'evidence': [
+                'Partial progress: built the mirror-based batch digest for the batch manifests.',
+                'Blocked: the mirror-based batch digest cannot proceed until remote authentication succeeds.',
+                'Next step: attempt to authenticate to the operations portal and the message console before retrying the inventory batch digest.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T12:02:00Z.',
+        }
+    if 'sign in to the operations portal manually' in lower and 'local browser' in lower and 'retry after authentication is restored' in lower:
+        return {
+            'summary': 'The inventory batch digest thread mixed an explicit no-login constraint with contradictory authentication-retry guidance.',
+            'task': 'Resume the inventory batch digest after the current failure.',
+            'current_state': 'The inventory batch digest summary is ready, and the thread repeated the no-login and no-browser constraint.',
+            'key_findings': [
+                "Do not try to sign in to the operations portal and don't open a local browser to log in.",
+                'The draft also said to sign in to the operations portal manually and retry after authentication is restored.',
+            ],
+            'blocker_state': 'The thread says not to use operations-portal sign-in or a local browser, but also says the next step depends on authentication retry.',
+            'next_step': 'Sign in to the operations portal manually, provide a reference code, and retry after authentication is restored.',
+            'evidence': [
+                "Constraint: do not try to sign in to the operations portal and don't open a local browser to log in.",
+                'Next step: sign in to the operations portal manually, provide a reference code, and retry after authentication is restored.',
+            ],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T13:05:00Z.',
+        }
+    return None
+
+
 def _build_item_extraction_payload(user_prompt: str) -> dict[str, object]:
     lower = user_prompt.lower()
     if any(
@@ -34,7 +129,7 @@ def _build_item_extraction_payload(user_prompt: str) -> dict[str, object]:
             'task complete. no slack message needed. nothing new to report.',
             'task complete. nothing new to report.',
             'no response requested. nothing new to report.',
-            'understood. no browser auth, no jira or slack auth. i will use the local repos only.',
+            'understood. no browser auth, no portal or console auth. i will use the local cache only.',
         )
     ):
         return {
@@ -96,6 +191,9 @@ def _build_item_extraction_payload(user_prompt: str) -> dict[str, object]:
 
 def _build_thread_summary_payload(user_prompt: str) -> dict[str, str]:
     lower = user_prompt.lower()
+    inventory_batch = _build_inventory_batch_thread_summary_payload(lower)
+    if inventory_batch is not None:
+        return inventory_batch
     if 'branch kiosk fallback' in lower and 're-request review' in lower:
         return {
             'summary': 'The thread kept the use_item_event_time flag off for branch kiosks, confirmed the admin toggle wiring was ready, and still needs branch kiosk fallback coverage before review can pass.'
@@ -307,6 +405,9 @@ def _build_pattern_payload(user_prompt: str) -> dict[str, str]:
 
 def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
     lower = user_prompt.lower()
+    inventory_batch = _build_inventory_batch_task_checkpoint_payload(lower)
+    if inventory_batch is not None:
+        return inventory_batch
     if 'retry window was exhausted' in lower and 'batch 418' in lower:
         return {
             'summary': 'Catalog sync retry resumed after auth refresh and is now blocked by a retry-window limit.',
@@ -1036,3 +1137,7 @@ def _build_public_corpus_answer_payload(user_prompt: str) -> dict[str, object]:
         'answer': 'The current thread context is sufficient for this question.',
         'evidence_used': [],
     }
+
+
+
+
