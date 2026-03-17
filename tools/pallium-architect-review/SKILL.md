@@ -73,13 +73,24 @@ Treat these as canonical truths:
    - extensible later without speculative generalization now
    - scaled to Pallium's actual local-first single-service needs
 
-7. Check verification.
+7. Check refactor pressure.
+   If planning or reviewing a feature exposes code that is already too large,
+   too coupled, or too branch-heavy for the next change to stay safe and
+   understandable, call that out explicitly.
+
+   Do not treat this as optional polish. Either:
+   - add the smallest bounded refactor needed to keep the feature
+     implementation hygienic and reviewable, or
+   - explicitly defer it with a stated risk if the current slice truly does not
+     justify the extra work yet
+
+8. Check verification.
    Require the smallest meaningful proof:
    - focused unit or integration tests
    - eval or benchmark updates when semantic or retrieval behavior changes
    - roadmap/doc updates when the durable project truth changes
 
-8. Call out drift explicitly.
+9. Call out drift explicitly.
    If roadmap, context docs, and code disagree, say so before endorsing the plan. Do not quietly optimize against stale docs or stale roadmap state.
 
 ## Pallium-Specific Heuristics
@@ -105,6 +116,8 @@ When giving a review or coordination response, keep the structure tight:
 
 3. Recommended shape
    Propose the smallest defensible version of the feature or change.
+   If a bounded refactor is needed for code hygiene, include it in the shape or
+   implementation plan rather than leaving it as an implied follow-up.
 
 4. Verification
    State what should be tested, benchmarked, or documented before the work is considered complete.
@@ -120,4 +133,130 @@ When coordinating work across threads:
 - challenge duplicate abstractions and duplicate roadmap items early
 - insist that each thread leaves behind durable truth in code, tests, docs, or roadmap files when appropriate
 
+## Delegation Workflow
+
+Use this workflow whenever work is delegated to a subagent or coordinated across parallel worker threads.
+
+### 1. Decide if delegation is appropriate
+
+- delegate only bounded, well-scoped work
+- define ownership, boundaries, and the expected deliverable before handing work off
+- do not delegate unresolved architecture decisions as implementation work
+- default delegated work to the latest available frontier model with high reasoning effort unless the user explicitly requested otherwise
+- if you believe a lower model or lower reasoning is sufficient, ask the user before using it and state the quality/speed tradeoff explicitly
+
+### 2. Prepare the handoff
+
+Ground the task in repo truth first and hand off:
+
+- the active roadmap item or accepted work slice
+- accepted architectural decisions and constraints
+- explicit in-scope and out-of-scope boundaries
+- all accepted context you already have, not a compressed re-derivation when a detailed plan or decision record already exists
+- prior agreed plans, accepted design decisions, review findings, and relevant repo truth so the worker does not need to rethink settled architecture
+- the expected deliverable:
+  - plan
+  - implementation
+  - verification
+  - review assistance
+
+### 3. Require structured first-pass output
+
+For delegated planning work, require:
+
+- Repo Fit
+- Open Drift / Constraints
+- Plan
+- include any bounded refactor work needed to keep the implementation
+  understandable and maintainable
+- Test Matrix
+- Verification Sequence
+
+For delegated implementation work, require:
+
+- root-cause or repo-fit notes
+- what changed
+- tests added or updated
+- exact verification commands and results
+- any roadmap, docs, or code drift found
+
+### 4. Mandatory reviewer loop
+
+The delegating architect must review every worker result. Do not accept first-pass output blindly.
+
+Review delegated work against:
+
+- roadmap truth
+- repo boundaries
+- generic core vs package-owned semantics
+- safety and explainability
+- test sufficiency
+- scope proportionality
+
+### 5. Fix-loop iteration
+
+If review finds issues:
+
+- send concrete comments back to the worker
+- require the worker to address the findings and return updated verification
+- re-review the result
+- iterate until there are no material findings left
+
+### 6. Planning vs implementation review
+
+- delegated planning is not complete until the plan is decision-complete and leaves no decisions to the implementer
+- delegated implementation is not complete until it has passed real feature review and all material findings are addressed
+
+### Delegated Feature Continuity
+
+- when a delegated worker plans a feature and that plan is later approved for implementation, keep the same delegated agent on the feature by default
+- continue using that same agent through implementation, review, fixes, and re-review unless there is a concrete reason to switch ownership
+- if you must switch agents, pass the full approved plan, accepted review findings, and current repo truth so the new worker does not reconstruct settled decisions
+- act as the manager of the delegated worker: keep the loop moving, assign the next step explicitly, and do not stop at approval when the feature is expected to continue into implementation
+
+
+### 7. Closure requirements
+
+When delegated work lands, align durable repo truth as part of completion:
+
+- `roadmap` feature frontmatter
+- `roadmap/board.md` ordering when status changed
+- `roadmap/scope.md` when current-focus narrative changed
+- any docs needed to reflect the accepted behavior
+
+Do not leave shipped work queued in the roadmap.
+
+### 8. Thread consistency rule
+
+When multiple subagents or threads are involved, the architect thread is the integration authority. It owns:
+
+- final terminology
+- accepted design decisions
+- final review comments
+- final sign-off that the work is ready
+
+### Review Protocol
+
+Use this loop as required behavior:
+
+- delegate
+- review
+- comment
+- revise
+- re-review
+- approve only when no material findings remain
+
+### Completion Handling
+
+- after spawning a worker or sending it review comments, explicitly wait for its next result and continue the loop yourself
+- treat worker completion as a trigger to review immediately; do not wait for the user to point out that it is your turn
+- the user should not need to schedule turn-taking between the architect thread and delegated workers
+- completion notifications are manager triggers: immediately pick up the result, review it, and either approve or send the next instruction without waiting for the user to prompt you
+
+Apply the same workflow to human-managed parallel worker threads and tool-spawned subagents.
+
 Keep the review practical. The goal is not to defend architecture purity in the abstract. The goal is to help Pallium advance through minimal, coherent, testable, value-based steps.
+
+
+
+

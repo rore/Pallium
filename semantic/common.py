@@ -80,6 +80,16 @@ GROUNDED_INVESTIGATION_MARKER_PATTERN = re.compile(
 
 
 @dataclass(frozen=True)
+class ConstraintCandidate:
+    primary_scope_anchor: MemorySubjectAnchor
+    target_anchor: MemorySubjectAnchor
+    action_class: str
+    polarity: str
+    confidence: str
+    constraint_text: str
+
+
+@dataclass(frozen=True)
 class SemanticExtraction:
     summary: str
     candidate_type: str | None = None
@@ -96,6 +106,7 @@ class SemanticExtraction:
     progress_text: str | None = None
     key_finding_text: str | None = None
     subject_hints: tuple[MemorySubjectAnchor, ...] = field(default_factory=tuple)
+    constraint_candidates: tuple[ConstraintCandidate, ...] = field(default_factory=tuple)
 
 
 def summarize_content(content: str) -> str:
@@ -459,7 +470,7 @@ SELECTED_ASSISTANT_WORK_ARTIFACT_KINDS = {"tool_use_summary", "todo_snapshot"}
 
 
 def _has_explicit_thread_signal(extraction: SemanticExtraction) -> bool:
-    return any(
+    return bool(extraction.constraint_candidates) or any(
         getattr(extraction, field_name)
         for field_name in ("constraint_text", "blocker_text", "progress_text", "next_step_text", "key_finding_text")
     )

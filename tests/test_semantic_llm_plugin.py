@@ -4,7 +4,7 @@ import pytest
 
 from core.models import MemorySubjectAnchor, SourceItem
 from providers.llm.base import LLMJsonResponse, LLMProviderError
-from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY
+from semantic.common import ConstraintCandidate, SEMANTIC_SIGNAL_METADATA_KEY
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin, build_analysis_request
 
 
@@ -60,7 +60,7 @@ def test_llm_plugin_promotes_decision_memory_from_valid_extraction() -> None:
     assert result.memory_objects[0].payload["decision"] == "use item item event time reservation ordering"
     assert result.memory_objects[0].payload["decision_evidence_text"] == "Decision: use item item event time reservation ordering"
     assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_id"] == "typed_memory_extraction"
-    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_version"] == "v6"
+    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_version"] == "v7"
     assert result.memory_objects[0].payload["semantic_provenance"]["prompt_variant"] == "strict_typed_memory_v4_evidence_guarded"
 
 
@@ -148,6 +148,102 @@ def test_llm_plugin_preserves_valid_subject_hints_and_ignores_invalid_entries() 
     assert trace.extraction.subject_hints == (
         MemorySubjectAnchor(kind="component", value="reservation ordering"),
         MemorySubjectAnchor(kind="surface", value="catalog sync"),
+    )
+
+
+def test_llm_plugin_preserves_valid_constraint_candidates_and_ignores_invalid_entries() -> None:
+    plugin = LLMAgentMemoryPlugin(
+        provider=StubLLMProvider(
+            response=LLMJsonResponse(
+                raw_text='{"summary":"Constraint note","candidate_type":null,"decision_text":null,"decision_evidence_text":null,"investigation_text":null,"investigation_evidence_text":null,"rationale_text":null,"is_low_value_meta":false,"constraint_text":"Do not use the operations portal for the inventory batch digest.","next_step_text":null,"blocker_text":null,"progress_text":null,"key_finding_text":null,"constraint_candidates":[{"primary_scope_anchor":{"kind":"workstream","value":"inventory batch digest"},"target_anchor":{"kind":"surface","value":"operations portal"},"action_class":"use_surface","polarity":"prohibit","confidence":"high","constraint_text":"Do not use the operations portal for the inventory batch digest."},{"primary_scope_anchor":{"kind":"bad_kind","value":"ignored"},"target_anchor":{"kind":"surface","value":"local browser"},"action_class":"use_surface","polarity":"prohibit","confidence":"high","constraint_text":"ignored"},{"primary_scope_anchor":{"kind":"workstream","value":"inventory batch digest"},"target_anchor":{"kind":"surface","value":"unknown"},"action_class":"use_surface","polarity":"prohibit","confidence":"high","constraint_text":"ignored"},{"primary_scope_anchor":{"kind":"workstream","value":"inventory batch digest"},"target_anchor":{"kind":"surface","value":"local browser"},"action_class":"invalid_action","polarity":"prohibit","confidence":"high","constraint_text":"ignored"},{"primary_scope_anchor":{"kind":"workstream","value":"inventory batch digest"},"target_anchor":{"kind":"surface","value":"local browser"},"action_class":"use_surface","polarity":"prohibit","confidence":"bad","constraint_text":"Do not open a local browser."}]}',
+                parsed_json={
+                    "summary": "Constraint note",
+                    "candidate_type": None,
+                    "decision_text": None,
+                    "decision_evidence_text": None,
+                    "investigation_text": None,
+                    "investigation_evidence_text": None,
+                    "rationale_text": None,
+                    "is_low_value_meta": False,
+                    "constraint_text": "Do not use the operations portal for the inventory batch digest.",
+                    "next_step_text": None,
+                    "blocker_text": None,
+                    "progress_text": None,
+                    "key_finding_text": None,
+                    "constraint_candidates": [
+                        {
+                            "primary_scope_anchor": {"kind": "workstream", "value": "inventory batch digest"},
+                            "target_anchor": {"kind": "surface", "value": "operations portal"},
+                            "action_class": "use_surface",
+                            "polarity": "prohibit",
+                            "confidence": "high",
+                            "constraint_text": "Do not use the operations portal for the inventory batch digest.",
+                        },
+                        {
+                            "primary_scope_anchor": {"kind": "bad_kind", "value": "ignored"},
+                            "target_anchor": {"kind": "surface", "value": "local browser"},
+                            "action_class": "use_surface",
+                            "polarity": "prohibit",
+                            "confidence": "high",
+                            "constraint_text": "ignored",
+                        },
+                        {
+                            "primary_scope_anchor": {"kind": "workstream", "value": "inventory batch digest"},
+                            "target_anchor": {"kind": "surface", "value": "unknown"},
+                            "action_class": "use_surface",
+                            "polarity": "prohibit",
+                            "confidence": "high",
+                            "constraint_text": "ignored",
+                        },
+                        {
+                            "primary_scope_anchor": {"kind": "workstream", "value": "inventory batch digest"},
+                            "target_anchor": {"kind": "surface", "value": "local browser"},
+                            "action_class": "invalid_action",
+                            "polarity": "prohibit",
+                            "confidence": "high",
+                            "constraint_text": "ignored",
+                        },
+                        {
+                            "primary_scope_anchor": {"kind": "workstream", "value": "inventory batch digest"},
+                            "target_anchor": {"kind": "surface", "value": "local browser"},
+                            "action_class": "use_surface",
+                            "polarity": "prohibit",
+                            "confidence": "bad",
+                            "constraint_text": "Do not open a local browser.",
+                        },
+                    ],
+                },
+            )
+        )
+    )
+    source_item = SourceItem(
+        source_type="assistant_output",
+        source_id="constraint-candidates-123",
+        content_type="text/plain",
+        content="Do not use the operations portal for the inventory batch digest, and do not open a local browser.",
+        artifact_kind="assistant_output",
+        role="assistant",
+    )
+
+    trace = plugin.analyze_item(source_item)
+
+    assert trace.extraction.constraint_candidates == (
+        ConstraintCandidate(
+            primary_scope_anchor=MemorySubjectAnchor(kind="workstream", value="inventory batch digest"),
+            target_anchor=MemorySubjectAnchor(kind="surface", value="operations portal"),
+            action_class="use_surface",
+            polarity="prohibit",
+            confidence="high",
+            constraint_text="Do not use the operations portal for the inventory batch digest.",
+        ),
+        ConstraintCandidate(
+            primary_scope_anchor=MemorySubjectAnchor(kind="workstream", value="inventory batch digest"),
+            target_anchor=MemorySubjectAnchor(kind="surface", value="local browser"),
+            action_class="use_surface",
+            polarity="prohibit",
+            confidence="unknown",
+            constraint_text="Do not open a local browser.",
+        ),
     )
 
 
@@ -415,7 +511,7 @@ def test_build_analysis_request_uses_requested_prompt_variant() -> None:
 
     assert request.prompt_variant == "strict_decision_v1"
     assert request.prompt_schema_id == "typed_memory_extraction"
-    assert request.prompt_schema_version == "v6"
+    assert request.prompt_schema_version == "v7"
     assert 'investigation_outcome' in request.schema_description
     assert 'constraint_text' in request.schema_description
     assert 'Artifact kind: message' in request.user_prompt

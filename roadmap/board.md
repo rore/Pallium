@@ -1,5 +1,4 @@
 # Next
-- add-first-class-constraint-policy-lane
 - add-subject-workstream-anchor-filtering
 - add-bounded-query-intent-resolution
 
@@ -23,6 +22,7 @@
 - idea-optional-reranker-support
 
 # Done
+- add-first-class-constraint-policy-lane
 - add-pallium-native-scenario-coverage-and-replay-regressions
 - add-write-time-memory-envelope-and-kind-prefiltering
 - add-benchmark-architecture-formalization-and-tiered-reporting
@@ -64,3 +64,4 @@
 - add-first-semantic-layer-and-promotion
 - add-agent-memory-simulation
 - build-structured-retrieval-foundation
+

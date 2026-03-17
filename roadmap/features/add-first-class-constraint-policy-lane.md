@@ -1,10 +1,10 @@
 ---
 id: add-first-class-constraint-policy-lane
 title: First-class constraint and policy compatibility lane
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 lane: stabilization-semantics
 ---
 
@@ -115,3 +115,4 @@ Implementation defaults:
 - keep this feature focused on typed compatibility semantics; shared
   prompt-contract ownership should live in
   `add-semantic-prompt-role-contracts-and-replay-governance`
+

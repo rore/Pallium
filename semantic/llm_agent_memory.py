@@ -8,12 +8,12 @@ from core.contracts import ProcessResult
 from core.models import MemorySubjectAnchor, SourceItem
 from providers.llm.base import LLMJsonResponse, LLMProvider
 from semantic.base import SemanticPlugin
-from semantic.common import SemanticExtraction, build_process_result
+from semantic.common import ConstraintCandidate, SemanticExtraction, build_process_result
 
 
 DEFAULT_PROMPT_VARIANT = "strict_typed_memory_v4_evidence_guarded"
 PROMPT_SCHEMA_ID = "typed_memory_extraction"
-PROMPT_SCHEMA_VERSION = "v6"
+PROMPT_SCHEMA_VERSION = "v7"
 PROMPT_VARIANTS: dict[str, str] = {
     "baseline": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
 
@@ -87,6 +87,7 @@ Source-type guidance:
 When candidate_type is `decision`, fill only decision_text and decision_evidence_text.
 When candidate_type is `investigation_outcome`, fill only investigation_text and investigation_evidence_text.
 For the optional internal fields, only populate them when the source explicitly states that exact state. subject_hints must be a list of objects with kind and value, using only the kinds workstream, component, or surface. Return an empty list when no explicit anchors are present, and do not invent anchors from weak implication or broad topic guesses.
+When the source states a durable operational constraint that can be normalized cleanly, also populate constraint_candidates as a list of objects with primary_scope_anchor, target_anchor, action_class, polarity, confidence, and constraint_text. Use only action_class values use_surface, use_source, or perform_step; use only polarity values prohibit, prefer, or require; and emit an empty list when any required field cannot be normalized safely.
 Internal-field rules:
 - Populate key_finding_text for explicit verdicts, conclusions, findings, and root causes. For an explicit analytical verdict, key_finding_text should usually restate the resolved conclusion in one sentence.
 - If is_low_value_meta is true for pure orchestration chatter, constraint_text, next_step_text, blocker_text, progress_text, and key_finding_text must all be null.
@@ -119,6 +120,7 @@ SCHEMA_DESCRIPTION = json.dumps(
         "progress_text": "string or null",
         "key_finding_text": "string or null",
         "subject_hints": "array of {kind: workstream|component|surface, value: string} or null",
+        "constraint_candidates": "array of {primary_scope_anchor: {kind: workstream|component|surface, value: string}, target_anchor: {kind: workstream|component|surface, value: string}, action_class: use_surface|use_source|perform_step, polarity: prohibit|prefer|require, confidence: high|medium|low|unknown, constraint_text: string} or null",
     },
     indent=2,
 )
@@ -233,6 +235,7 @@ def _normalize_extraction(payload: dict[str, Any]) -> SemanticExtraction:
     progress_text = _normalize_optional_string(payload.get("progress_text"), field_name="progress_text")
     key_finding_text = _normalize_optional_string(payload.get("key_finding_text"), field_name="key_finding_text")
     subject_hints = _normalize_subject_hints(payload.get("subject_hints"))
+    constraint_candidates = _normalize_constraint_candidates(payload.get("constraint_candidates"))
 
     if candidate_type is not None:
         candidate_type = candidate_type.lower()
@@ -254,8 +257,58 @@ def _normalize_extraction(payload: dict[str, Any]) -> SemanticExtraction:
         progress_text=progress_text,
         key_finding_text=key_finding_text,
         subject_hints=subject_hints,
+        constraint_candidates=constraint_candidates,
     )
 
+
+def _normalize_constraint_candidates(value: Any) -> tuple[ConstraintCandidate, ...]:
+    if value is None or value == "unknown":
+        return ()
+    if not isinstance(value, list):
+        return ()
+    normalized: list[ConstraintCandidate] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        primary_scope_anchor = _normalize_subject_anchor(item.get("primary_scope_anchor"))
+        target_anchor = _normalize_subject_anchor(item.get("target_anchor"))
+        action_class = str(item.get("action_class") or "").strip().lower()
+        polarity = str(item.get("polarity") or "").strip().lower()
+        confidence = str(item.get("confidence") or "").strip().lower() or "unknown"
+        constraint_text = str(item.get("constraint_text") or "").strip()
+        if primary_scope_anchor is None or target_anchor is None:
+            continue
+        if action_class not in {"use_surface", "use_source", "perform_step"}:
+            continue
+        if polarity not in {"prohibit", "prefer", "require"}:
+            continue
+        if confidence not in {"high", "medium", "low", "unknown"}:
+            confidence = "unknown"
+        if not constraint_text or constraint_text.lower() == "unknown":
+            continue
+        normalized.append(
+            ConstraintCandidate(
+                primary_scope_anchor=primary_scope_anchor,
+                target_anchor=target_anchor,
+                action_class=action_class,
+                polarity=polarity,
+                confidence=confidence,
+                constraint_text=constraint_text,
+            )
+        )
+    return tuple(normalized)
+
+
+def _normalize_subject_anchor(value: Any) -> MemorySubjectAnchor | None:
+    if not isinstance(value, dict):
+        return None
+    kind = str(value.get("kind") or "").strip().lower()
+    anchor_value = str(value.get("value") or "").strip()
+    if kind not in {"workstream", "component", "surface"}:
+        return None
+    if not anchor_value or anchor_value.lower() == "unknown":
+        return None
+    return MemorySubjectAnchor(kind=kind, value=anchor_value)
 
 
 def _normalize_subject_hints(value: Any) -> tuple[MemorySubjectAnchor, ...]:
@@ -265,15 +318,10 @@ def _normalize_subject_hints(value: Any) -> tuple[MemorySubjectAnchor, ...]:
         return ()
     normalized: list[MemorySubjectAnchor] = []
     for item in value:
-        if not isinstance(item, dict):
+        anchor = _normalize_subject_anchor(item)
+        if anchor is None:
             continue
-        kind = str(item.get("kind") or "").strip().lower()
-        anchor_value = str(item.get("value") or "").strip()
-        if kind not in {"workstream", "component", "surface"}:
-            continue
-        if not anchor_value or anchor_value.lower() == "unknown":
-            continue
-        normalized.append(MemorySubjectAnchor(kind=kind, value=anchor_value))
+        normalized.append(anchor)
     return tuple(normalized)
 
 def _normalize_required_string(value: Any, *, field_name: str) -> str:

@@ -5,7 +5,7 @@ import re
 from dataclasses import replace
 from datetime import datetime, timezone
 from collections import OrderedDict
-from typing import Iterable
+from typing import Iterable, Sequence
 
 from capabilities.consolidation import ConsolidationGroup, ConsolidationPolicy
 from capabilities.thread_aggregation import ThreadAggregate
@@ -29,14 +29,22 @@ from core.models import (
 )
 from providers.llm.base import LLMProvider
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
-from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY, SemanticExtraction, normalize_for_index
+from semantic.common import ConstraintCandidate, SEMANTIC_SIGNAL_METADATA_KEY, SemanticExtraction, normalize_for_index
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin
 
 MEMORY_ENVELOPE_SCHEMA_ID = "core.memory_envelope"
 MEMORY_ENVELOPE_SCHEMA_VERSION = "v1"
 WRITE_TIME_MODEL_ROLE = "write_time_extraction"
 SUBJECT_HINT_METADATA_KEY = "pallium_subject_hints"
-
+CONSTRAINT_MEMORY_TYPE = "constraint_memory"
+CONSTRAINT_MEMORY_SCHEMA_ID = "agent_conversation_memory.constraint_memory"
+CONSTRAINT_MEMORY_SCHEMA_VERSION = "v1"
+CONSTRAINT_ALLOWED_ANCHOR_KINDS = {"workstream", "component", "surface"}
+CONSTRAINT_ACTION_CLASSES = {"use_surface", "use_source", "perform_step"}
+CONSTRAINT_POLARITIES = {"prohibit", "prefer", "require"}
+CONSTRAINT_CONFIDENCES = {"high", "medium", "low", "unknown"}
+CONSTRAINT_HARD_POLARITIES = {"prohibit", "require"}
+CONSTRAINT_STATUSES = {"active", "superseded"}
 
 
 THREAD_SUMMARY_PROMPT_SCHEMA_ID = "thread_summary_extraction"
@@ -270,6 +278,13 @@ CONSTRAINT_ONLY_RESIDUAL_TOKENS = {
     "remember",
     "state",
 }
+CONSTRAINT_SURFACE_ANCHOR_PATTERN = re.compile(r"\b(?P<value>(?:[a-z0-9]+(?:[- ][a-z0-9]+){0,3})\s+(?:portal|browser|console|dashboard|ui|endpoint|surface))\b", re.IGNORECASE)
+CONSTRAINT_SOURCE_ANCHOR_PATTERN = re.compile(r"\b(?P<value>(?:[a-z0-9]+(?:[- ][a-z0-9]+){0,3})\s+(?:mirror|mirrors|snapshot|snapshots|export|exports))\b", re.IGNORECASE)
+CONSTRAINT_STEP_ANCHOR_PATTERN = re.compile(r"\b(?P<value>(?:manual\s+)?(?:retry|rerun|reset|refresh|reconnect|connect))\b", re.IGNORECASE)
+CONSTRAINT_PREFER_MARKERS = ("use only", "only use", "prefer", "preferred", "rather than", "instead of")
+CONSTRAINT_REQUIRE_MARKERS = ("must use", "required", "require", "must", "needs to use")
+CONSTRAINT_PROHIBIT_MARKERS = ("do not", "don't", "dont", "cannot", "can't", "avoid", "forbid", "forbidden", "prohibit")
+CONSTRAINT_GUIDANCE_POSITIVE_MARKERS = ("use ", "open ", "attempt ", "try ", "trying ", "connect ", "sign in", "log in", "authenticate", "retry", "rerun", "refresh", "reset", "reconnect")
 PATTERN_MEMORY_PROMPT_SCHEMA_ID = "pattern_memory_extraction"
 PATTERN_MEMORY_PROMPT_SCHEMA_VERSION = "v1"
 PATTERN_MEMORY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "pattern_label": "string"}, indent=2)
@@ -329,33 +344,33 @@ TASK_CHECKPOINT_SYSTEM_PROMPT = (
 TASK_CHECKPOINT_MAX_TEXT_CHARS = 3200
 TASK_CHECKPOINT_TEXT_VIEW = "memory_object.task_checkpoint_context"
 ROUTING_POLICY_NAME = "agent_conversation_memory.intent_routing.v4"
-ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory", "task_checkpoint", "thread_summary", "discussion_summary"}
+ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory", "task_checkpoint", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE}
 ROUTING_LOWER_LEVEL_EXACT_TYPES = {"decision", "investigation_outcome"}
 ROUTING_SUMMARY_TYPES = {"thread_summary", "discussion_summary"}
 ROUTING_PREFERRED_LAYERS = {
-    "answer_continuity": ("continuity_memory", "investigation_outcome", "decision", "source_evidence", "task_checkpoint", "pattern_memory", "thread_summary", "discussion_summary"),
-    "broad_recall": ("pattern_memory", "investigation_outcome", "decision", "continuity_memory", "task_checkpoint", "source_evidence", "thread_summary", "discussion_summary"),
-    "work_resumption": ("task_checkpoint", "source_evidence", "investigation_outcome", "decision", "continuity_memory", "pattern_memory", "thread_summary", "discussion_summary"),
-    "precise_fact": ("decision", "investigation_outcome", "source_evidence", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory"),
+    "answer_continuity": ("continuity_memory", "investigation_outcome", "decision", "source_evidence", "task_checkpoint", "pattern_memory", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE),
+    "broad_recall": ("pattern_memory", "investigation_outcome", "decision", "continuity_memory", "task_checkpoint", "source_evidence", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE),
+    "work_resumption": ("task_checkpoint", "source_evidence", "investigation_outcome", "decision", "continuity_memory", "pattern_memory", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE),
+    "precise_fact": ("decision", "investigation_outcome", "source_evidence", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory", CONSTRAINT_MEMORY_TYPE),
     "evidence_trace": ("source_evidence", "investigation_outcome", "decision", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory"),
-    "investigative_conclusion": ("investigation_outcome", "decision", "source_evidence", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory"),
+    "investigative_conclusion": ("investigation_outcome", "decision", "source_evidence", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory", CONSTRAINT_MEMORY_TYPE),
 }
 ROUTING_FAMILY_ALLOWED_ENVELOPE_KINDS = {
-    "answer_continuity": ("summary", "finding"),
-    "broad_recall": ("summary", "finding"),
+    "answer_continuity": ("constraint", "summary", "finding"),
+    "broad_recall": ("constraint", "summary", "finding"),
     "work_resumption": ("episode", "finding", "summary"),
     "precise_fact": ("finding",),
     "evidence_trace": None,
-    "investigative_conclusion": ("finding", "summary"),
+    "investigative_conclusion": ("constraint", "finding", "summary"),
 }
 
 ROUTING_LAYER_WEIGHTS = {
-    "answer_continuity": {"continuity_memory": 400, "investigation_outcome": 320, "decision": 300, "source_evidence": 200, "task_checkpoint": 140, "pattern_memory": 120, "thread_summary": 100, "discussion_summary": 70, "lower_level_memory": 260},
-    "broad_recall": {"pattern_memory": 400, "investigation_outcome": 330, "decision": 310, "continuity_memory": 180, "task_checkpoint": 150, "source_evidence": 120, "thread_summary": 130, "discussion_summary": 80, "lower_level_memory": 250},
-    "work_resumption": {"task_checkpoint": 470, "source_evidence": 390, "investigation_outcome": 300, "decision": 290, "continuity_memory": 180, "pattern_memory": 70, "thread_summary": 130, "discussion_summary": 70, "lower_level_memory": 250},
-    "precise_fact": {"decision": 440, "investigation_outcome": 430, "source_evidence": 320, "thread_summary": 110, "discussion_summary": 70, "continuity_memory": 140, "task_checkpoint": 110, "pattern_memory": 60, "lower_level_memory": 340},
-    "evidence_trace": {"source_evidence": 460, "investigation_outcome": 380, "decision": 360, "thread_summary": 120, "discussion_summary": 80, "continuity_memory": 120, "task_checkpoint": 90, "pattern_memory": 40, "lower_level_memory": 300},
-    "investigative_conclusion": {"investigation_outcome": 480, "decision": 430, "source_evidence": 360, "thread_summary": 220, "discussion_summary": 120, "continuity_memory": 110, "task_checkpoint": 100, "pattern_memory": 80, "lower_level_memory": 320},
+    "answer_continuity": {"continuity_memory": 400, CONSTRAINT_MEMORY_TYPE: 360, "investigation_outcome": 320, "decision": 300, "source_evidence": 200, "task_checkpoint": 140, "pattern_memory": 120, "thread_summary": 100, "discussion_summary": 70, "lower_level_memory": 260},
+    "broad_recall": {CONSTRAINT_MEMORY_TYPE: 430, "pattern_memory": 400, "investigation_outcome": 330, "decision": 310, "continuity_memory": 180, "task_checkpoint": 150, "source_evidence": 120, "thread_summary": 130, "discussion_summary": 80, "lower_level_memory": 250},
+    "work_resumption": {CONSTRAINT_MEMORY_TYPE: 490, "task_checkpoint": 470, "source_evidence": 390, "investigation_outcome": 300, "decision": 290, "continuity_memory": 180, "pattern_memory": 70, "thread_summary": 130, "discussion_summary": 70, "lower_level_memory": 250},
+    "precise_fact": {"decision": 440, "investigation_outcome": 430, CONSTRAINT_MEMORY_TYPE: 260, "source_evidence": 320, "thread_summary": 110, "discussion_summary": 70, "continuity_memory": 140, "task_checkpoint": 110, "pattern_memory": 60, "lower_level_memory": 340},
+    "evidence_trace": {"source_evidence": 460, "investigation_outcome": 380, "decision": 360, CONSTRAINT_MEMORY_TYPE: 110, "thread_summary": 120, "discussion_summary": 80, "continuity_memory": 120, "task_checkpoint": 90, "pattern_memory": 40, "lower_level_memory": 300},
+    "investigative_conclusion": {"investigation_outcome": 480, "decision": 430, CONSTRAINT_MEMORY_TYPE: 220, "source_evidence": 360, "thread_summary": 220, "discussion_summary": 120, "continuity_memory": 110, "task_checkpoint": 100, "pattern_memory": 80, "lower_level_memory": 320},
 }
 ROUTING_META_QUERY_TOKENS = {
     "a",
@@ -562,6 +577,91 @@ def _serialize_subject_anchors(subjects: Iterable[MemorySubjectAnchor]) -> list[
     return [{"kind": subject.kind, "value": subject.value} for subject in subjects]
 
 
+def _serialize_subject_anchor(subject: MemorySubjectAnchor) -> dict[str, str]:
+    return {"kind": subject.kind, "value": subject.value}
+
+
+def _deserialize_subject_anchor(payload: object) -> MemorySubjectAnchor | None:
+    if not isinstance(payload, dict):
+        return None
+    kind = str(payload.get("kind") or "").strip().lower()
+    value = str(payload.get("value") or "").strip()
+    if kind not in CONSTRAINT_ALLOWED_ANCHOR_KINDS or not value:
+        return None
+    return MemorySubjectAnchor(kind=kind, value=value)
+
+
+def _anchor_display_value(value: str) -> str:
+    normalized = normalize_for_index(value).split()
+    if not normalized:
+        return ""
+    leading_noise_tokens = {
+        "a",
+        "an",
+        "and",
+        "attempt",
+        "authenticate",
+        "by",
+        "can",
+        "cannot",
+        "connect",
+        "don",
+        "for",
+        "from",
+        "in",
+        "into",
+        "log",
+        "login",
+        "no",
+        "not",
+        "of",
+        "on",
+        "only",
+        "open",
+        "opening",
+        "or",
+        "point",
+        "sign",
+        "t",
+        "the",
+        "to",
+        "try",
+        "trying",
+        "use",
+        "using",
+        "with",
+    }
+    trailing_noise_tokens = {"again", "here", "manually", "please", "there"}
+    while normalized and (normalized[0] in leading_noise_tokens or (len(normalized[0]) == 1 and not normalized[0].isdigit())):
+        normalized = normalized[1:]
+    while normalized and normalized[-1] in trailing_noise_tokens:
+        normalized = normalized[:-1]
+    singular_map = {"mirrors": "mirror", "snapshots": "snapshot", "exports": "export"}
+    normalized = [singular_map.get(token, token) for token in normalized]
+    return " ".join(normalized)
+
+
+def _anchor_key(subject: MemorySubjectAnchor) -> str:
+    return f"{subject.kind}:{_anchor_display_value(subject.value)}"
+
+
+def _constraint_supersession_identity(primary_scope_anchor: MemorySubjectAnchor, target_anchor: MemorySubjectAnchor, action_class: str) -> str:
+    return "|".join((_anchor_key(primary_scope_anchor), _anchor_key(target_anchor), action_class))
+
+
+def _constraint_compatibility_domain(primary_scope_anchor: MemorySubjectAnchor, action_class: str) -> str:
+    return "|".join((_anchor_key(primary_scope_anchor), action_class))
+
+
+def _constraint_strength_for_polarity(polarity: str) -> str:
+    return "hard" if polarity in CONSTRAINT_HARD_POLARITIES else "soft"
+
+
+def _constraint_confidence_from_candidate(candidate: ConstraintCandidate) -> MemoryEnvelopeConfidence:
+    confidence = str(candidate.confidence or "unknown").strip().lower()
+    return confidence if confidence in CONSTRAINT_CONFIDENCES else "unknown"
+
+
 def _merge_subject_anchors(*groups: Iterable[MemorySubjectAnchor]) -> list[MemorySubjectAnchor]:
     merged: list[MemorySubjectAnchor] = []
     seen: set[tuple[str, str]] = set()
@@ -615,6 +715,7 @@ def _memory_kind_for_type(memory_type: str) -> MemoryEnvelopeKind:
     return {
         "decision": "finding",
         "investigation_outcome": "finding",
+        CONSTRAINT_MEMORY_TYPE: "constraint",
         "task_checkpoint": "episode",
         "thread_summary": "summary",
         "discussion_summary": "summary",
@@ -626,6 +727,8 @@ def _memory_kind_for_type(memory_type: str) -> MemoryEnvelopeKind:
 def _memory_confidence_for_type(memory_type: str, *, extraction: SemanticExtraction | None = None) -> MemoryEnvelopeConfidence:
     if memory_type in {"decision", "investigation_outcome"}:
         return "high"
+    if memory_type == CONSTRAINT_MEMORY_TYPE:
+        return "medium"
     if memory_type in {"task_checkpoint", "thread_summary", "continuity_memory", "pattern_memory"}:
         return "medium"
     if memory_type == "discussion_summary":
@@ -669,6 +772,123 @@ def _build_memory_envelope(
     )
 
 
+def _semantic_provenance_from_process_result(result: ProcessResult) -> dict[str, object]:
+    for annotation in result.annotations:
+        payload = annotation.payload if isinstance(annotation.payload, dict) else {}
+        semantic_provenance = payload.get("semantic_provenance")
+        if isinstance(semantic_provenance, dict) and semantic_provenance:
+            return dict(semantic_provenance)
+    for memory_object in result.memory_objects:
+        payload = memory_object.payload if isinstance(memory_object.payload, dict) else {}
+        semantic_provenance = payload.get("semantic_provenance")
+        if isinstance(semantic_provenance, dict) and semantic_provenance:
+            return dict(semantic_provenance)
+    return {}
+
+
+def _constraint_summary_text(candidate: ConstraintCandidate) -> str:
+    if candidate.polarity == "prohibit":
+        return f"Constraint: do not use {candidate.target_anchor.value}."
+    if candidate.polarity == "require":
+        return f"Constraint: require {candidate.target_anchor.value} for {candidate.primary_scope_anchor.value}."
+    return f"Constraint: prefer {candidate.target_anchor.value} for {candidate.primary_scope_anchor.value}."
+
+
+def _append_typed_constraint_memory_objects(
+    result: ProcessResult,
+    *,
+    source_item: SourceItem,
+    extraction: SemanticExtraction,
+) -> ProcessResult:
+    if not extraction.constraint_candidates:
+        return result
+    semantic_provenance = _semantic_provenance_from_process_result(result)
+    producer_schema_id = str(semantic_provenance.get("prompt_schema_id") or CONSTRAINT_MEMORY_SCHEMA_ID)
+    producer_schema_version = str(semantic_provenance.get("prompt_schema_version") or CONSTRAINT_MEMORY_SCHEMA_VERSION)
+    prompt_variant = semantic_provenance.get("prompt_variant") if isinstance(semantic_provenance.get("prompt_variant"), str) else None
+    memory_objects = list(result.memory_objects)
+    relations = list(result.relations)
+    index_entries = list(result.index_entries)
+    for candidate in extraction.constraint_candidates:
+        canonical_key = _constraint_supersession_identity(candidate.primary_scope_anchor, candidate.target_anchor, candidate.action_class)
+        constraint_text = candidate.constraint_text.strip()
+        envelope_subjects = _merge_subject_anchors((candidate.primary_scope_anchor,), (candidate.target_anchor,), extraction.subject_hints)
+        payload = {
+            "summary": _constraint_summary_text(candidate),
+            "constraint_text": constraint_text,
+            "primary_scope_anchor": _serialize_subject_anchor(candidate.primary_scope_anchor),
+            "target_anchor": _serialize_subject_anchor(candidate.target_anchor),
+            "action_class": candidate.action_class,
+            "polarity": candidate.polarity,
+            "strength": _constraint_strength_for_polarity(candidate.polarity),
+            "status": "active",
+            "evidence": [constraint_text],
+            "freshness_signal": source_item.occurred_at.isoformat() if source_item.occurred_at is not None else None,
+            "confidence": candidate.confidence,
+            "canonical_key": canonical_key,
+            "compatibility_domain_key": _constraint_compatibility_domain(candidate.primary_scope_anchor, candidate.action_class),
+            "precise_coverage_key": canonical_key,
+            "container_ref": source_item.container_ref,
+            "thread_ref": source_item.thread_ref,
+            "session_ref": source_item.session_ref,
+            "semantic_provenance": dict(semantic_provenance),
+        }
+        memory_object = MemoryObject(
+            type=CONSTRAINT_MEMORY_TYPE,
+            schema_id=CONSTRAINT_MEMORY_SCHEMA_ID,
+            schema_version=CONSTRAINT_MEMORY_SCHEMA_VERSION,
+            payload=payload,
+            visibility_context=source_item.visibility_context,
+            freshness_at=source_item.occurred_at,
+            envelope=_build_memory_envelope(
+                kind="constraint",
+                container_ref=source_item.container_ref,
+                thread_ref=source_item.thread_ref,
+                session_ref=source_item.session_ref,
+                confidence=_constraint_confidence_from_candidate(candidate),
+                producer_kind="item_extraction",
+                producer_schema_id=producer_schema_id,
+                producer_schema_version=producer_schema_version,
+                prompt_variant=prompt_variant,
+                kind_basis="constraint_candidate",
+                subjects=envelope_subjects,
+            ),
+        )
+        memory_objects.append(memory_object)
+        relations.append(
+            Relation(
+                from_kind="memory_object",
+                from_id=memory_object.id,
+                relation_type="supported_by",
+                to_kind="source_item",
+                to_id=source_item.id,
+            )
+        )
+        index_entries.append(
+            build_index_entry(
+                target_kind="memory_object",
+                target_id=memory_object.id,
+                index_type="lexical",
+                text_view=normalize_for_index(
+                    " ".join(
+                        part
+                        for part in (
+                            payload["summary"],
+                            constraint_text,
+                            candidate.primary_scope_anchor.value,
+                            candidate.target_anchor.value,
+                            candidate.action_class,
+                            candidate.polarity,
+                        )
+                        if part
+                    )
+                ),
+                text_view_name="memory_object.constraint_memory_context",
+            )
+        )
+    return replace(result, memory_objects=memory_objects, relations=relations, index_entries=index_entries)
+
+
 def _apply_direct_memory_envelopes(
     result: ProcessResult,
     *,
@@ -686,6 +906,9 @@ def _apply_direct_memory_envelopes(
     kind_basis = "llm_subject_hints" if direct_subjects else "type_map"
     enveloped_memory_objects = []
     for memory_object in result.memory_objects:
+        if memory_object.envelope is not None:
+            enveloped_memory_objects.append(memory_object)
+            continue
         semantic_provenance = memory_object.payload.get("semantic_provenance", {}) if isinstance(memory_object.payload, dict) else {}
         producer_schema_id = str(semantic_provenance.get("prompt_schema_id") or memory_object.schema_id)
         producer_schema_version = str(semantic_provenance.get("prompt_schema_version") or memory_object.schema_version)
@@ -840,8 +1063,13 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
 
     def process_item(self, source_item: SourceItem) -> ProcessResult:
         direct_trace = self._delegate.analyze_item(source_item)
-        direct_result = _apply_direct_memory_envelopes(
+        direct_result = _append_typed_constraint_memory_objects(
             direct_trace.process_result,
+            source_item=source_item,
+            extraction=direct_trace.extraction,
+        )
+        direct_result = _apply_direct_memory_envelopes(
+            direct_result,
             source_item=source_item,
             extraction=direct_trace.extraction,
         )
@@ -866,12 +1094,12 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
     ) -> ProcessResult:
         if not container_ref or visibility_context is None or not result.memory_objects:
             return result
-        active_constraints = _list_active_constraint_profiles(
+        active_constraints = _list_active_constraint_state(
             storage,
             container_ref=container_ref,
             visibility_context=visibility_context,
         )
-        if not active_constraints:
+        if not active_constraints.get("has_any"):
             return result
 
         reconciled_memory_objects: list[MemoryObject] = []
@@ -880,7 +1108,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         for memory_object in result.memory_objects:
             reconciled = _reconcile_memory_object_against_active_constraints(
                 memory_object,
-                active_constraints=active_constraints,
+                constraint_state=active_constraints,
             )
             reconciled_memory_objects.append(reconciled)
             if reconciled is not memory_object:
@@ -1008,7 +1236,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             query_shape_tags=list(family_inference["query_shape_tags"]),
             runtime_context=runtime_context,
             packaging_summary=packaging_summary,
-            local_constraint_profile=_build_local_query_constraint_profile(text, runtime_context),
+            local_constraint_profile=_build_local_query_constraint_profile(text, runtime_context, ranked_candidates),
         )
         injection_blocks, injection_summary = _build_injectable_blocks(
             final_candidates,
@@ -1076,7 +1304,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             return []
         hints: list[SupersessionHint] = []
         for memory_object in result.memory_objects:
-            if memory_object.type not in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+            if memory_object.type not in ROUTING_LOWER_LEVEL_EXACT_TYPES and memory_object.type != CONSTRAINT_MEMORY_TYPE:
                 continue
             canonical_key = str(memory_object.payload.get("canonical_key") or "").strip()
             if not canonical_key:
@@ -2975,6 +3203,15 @@ def _routing_item_text(item: QueryResultItem) -> str:
                 str(item.payload.get(key) or "")
                 for key in ("investigation_outcome", "investigation_evidence_text", "rationale")
             )
+        elif item.type == CONSTRAINT_MEMORY_TYPE:
+            fragments.extend(
+                str(item.payload.get(key) or "")
+                for key in ("summary", "constraint_text", "action_class", "polarity")
+            )
+            for key in ("primary_scope_anchor", "target_anchor"):
+                anchor = item.payload.get(key)
+                if isinstance(anchor, dict):
+                    fragments.append(str(anchor.get("value") or ""))
         elif item.type == "task_checkpoint":
             fragments.extend(
                 str(item.payload.get(key) or "")
@@ -3011,6 +3248,7 @@ def _routing_item_text(item: QueryResultItem) -> str:
         else:
             fragments.append(json.dumps(item.payload, sort_keys=True))
     return " ".join(fragment for fragment in fragments if fragment)
+
 
 def _routing_reason(
     intent: str,
@@ -3244,6 +3482,10 @@ def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object
         entry["work_signal_types"] = list(candidate["work_signal_types"])
     if candidate["packaging_reasons"]:
         entry["packaging_reasons"] = list(candidate["packaging_reasons"])
+    if candidate.get("constraint_compatibility"):
+        entry["constraint_compatibility"] = candidate["constraint_compatibility"]
+    if candidate.get("constraint_governing_rule"):
+        entry["constraint_governing_rule"] = candidate["constraint_governing_rule"]
     if candidate.get("excluded_reason_code"):
         entry["excluded_reason_code"] = candidate["excluded_reason_code"]
         entry["excluded_reason"] = candidate.get("excluded_reason")
@@ -3506,7 +3748,7 @@ def _candidate_qualifies_as_same_thread_local_state(
                 return True, ""
         return False, "weak_same_thread_source"
 
-    if item.type in {"task_checkpoint", "decision", "investigation_outcome"}:
+    if item.type in {"task_checkpoint", "decision", "investigation_outcome", CONSTRAINT_MEMORY_TYPE}:
         if support_grade in {"supported", "strong"}:
             return True, ""
         return False, "weak_same_thread_structured_state"
@@ -3548,7 +3790,7 @@ def _candidate_is_injection_eligible(
         if _source_candidate_is_primary_injection_eligible(intent):
             return True
         return allow_source_companion and _source_candidate_is_companion_injection_eligible(intent)
-    if item.type in {"decision", "investigation_outcome", "task_checkpoint", "continuity_memory", "pattern_memory", "thread_summary"}:
+    if item.type in {"decision", "investigation_outcome", "task_checkpoint", "continuity_memory", "pattern_memory", "thread_summary", CONSTRAINT_MEMORY_TYPE}:
         return True
     if item.type == "discussion_summary":
         return allow_discussion_fallback
@@ -3639,6 +3881,21 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             block_type="memory",
             title="Task Checkpoint",
             text=_join_unique_text_parts(parts),
+            evidence=item.evidence,
+            memory_type=item.type,
+        )
+    if item.type == CONSTRAINT_MEMORY_TYPE:
+        constraint_text = str(payload.get("constraint_text") or payload.get("summary") or "").strip()
+        summary_text = str(payload.get("summary") or "").strip()
+        constraint_line = f"Constraint: {constraint_text}" if constraint_text else ""
+        summary_line = ""
+        if summary_text and normalize_for_index(summary_text) != normalize_for_index(constraint_line):
+            summary_line = summary_text
+        return InjectableBlock(
+            result_id=str(item.result_id),
+            block_type="memory",
+            title="Active Constraint",
+            text=_join_unique_text_parts([constraint_line, summary_line]),
             evidence=item.evidence,
             memory_type=item.type,
         )
@@ -4188,13 +4445,13 @@ def _select_final_candidates(
     if intent != "work_resumption":
         return ranked_candidates[:requested_limit], summary or None
 
-    ranked_candidates, summary, _constraint_anchor, active_constraint_profile = _apply_structured_constraint_compatibility(
+    ranked_candidates, summary, _constraint_anchor, constraint_state = _apply_structured_constraint_compatibility(
         ranked_candidates=ranked_candidates,
         packaging_summary=summary,
         local_constraint_profile=local_constraint_profile,
     )
     if not ranked_candidates:
-        if active_constraint_profile is not None or summary.get("incompatible_structured_candidates"):
+        if constraint_state is not None or summary.get("incompatible_structured_candidates"):
             summary["mode"] = "compatible_work_resumption"
         return [], summary or None
     if summary.get("incompatible_structured_candidates") and not any(candidate["layer"] == "task_checkpoint" for candidate in ranked_candidates):
@@ -4244,7 +4501,7 @@ def _select_final_candidates(
     if adjacent_evidence:
         summary["mode"] = "task_checkpoint_plus_adjacent_evidence"
         summary["adjacent_evidence"] = adjacent_evidence
-    elif active_constraint_profile is not None or summary.get("incompatible_structured_candidates"):
+    elif constraint_state is not None or summary.get("incompatible_structured_candidates"):
         summary["mode"] = "compatible_work_resumption"
     return selected_candidates, summary
 
@@ -4258,13 +4515,13 @@ def _select_compatible_recall_candidates(
     packaging_summary: dict[str, object],
     local_constraint_profile: dict[str, object] | None,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None]:
-    compatible_candidates, packaging_summary, constraint_anchor, active_constraint_profile = _apply_structured_constraint_compatibility(
+    compatible_candidates, packaging_summary, constraint_anchor, constraint_state = _apply_structured_constraint_compatibility(
         ranked_candidates=ranked_candidates,
         packaging_summary=packaging_summary,
         local_constraint_profile=local_constraint_profile,
     )
     if not compatible_candidates:
-        if active_constraint_profile is not None or packaging_summary.get("incompatible_structured_candidates"):
+        if constraint_state is not None or packaging_summary.get("incompatible_structured_candidates"):
             packaging_summary["mode"] = "compatible_structured_recall"
         return [], packaging_summary or None
 
@@ -4278,7 +4535,7 @@ def _select_compatible_recall_candidates(
     used_result_ids = {_routing_result_id(primary_candidate["item"])}
     primary_topic_tokens = set(primary_candidate.get("topic_overlap_tokens") or [])
     strict_primary_topic_filter = bool(primary_topic_tokens)
-    primary_aligns_with_active_constraint = _candidate_aligns_with_constraint_profile(primary_candidate, active_constraint_profile)
+    primary_aligns_with_active_constraint = _candidate_aligns_with_constraint_state(primary_candidate, constraint_state)
     if constraint_anchor is not None and constraint_anchor in compatible_candidates:
         anchor_result_id = _routing_result_id(constraint_anchor["item"])
         anchor_topic_tokens = set(constraint_anchor.get("topic_overlap_tokens") or [])
@@ -4320,7 +4577,7 @@ def _select_compatible_recall_candidates(
             if strict_primary_topic_filter and not primary_topic_tokens.intersection(candidate_topic_tokens):
                 if not (
                     primary_aligns_with_active_constraint
-                    and _candidate_aligns_with_constraint_profile(candidate, active_constraint_profile)
+                    and _candidate_aligns_with_constraint_state(candidate, constraint_state)
                 ):
                     continue
             if (
@@ -4336,35 +4593,570 @@ def _select_compatible_recall_candidates(
 
     if packaging_summary.get("incompatible_structured_candidates"):
         packaging_summary["mode"] = "compatible_structured_recall"
-    elif active_constraint_profile is not None:
+    elif constraint_state is not None:
         packaging_summary["mode"] = "compatible_structured_recall"
     return selected_candidates, packaging_summary or None
 
 
 
-def _constraint_profile_sort_key(profile: dict[str, object]) -> tuple[datetime, int]:
+def _constraint_profile_sort_key(profile: dict[str, object]) -> tuple[datetime, int, int]:
     freshness_at = profile.get("freshness_at")
     if not isinstance(freshness_at, datetime):
         freshness_at = datetime.min.replace(tzinfo=timezone.utc)
-    return freshness_at, len(profile.get("protected_tokens") or [])
+    source_priority = 1 if profile.get("profile_source") == "local_typed" else 0
+    text_length = len(str(profile.get("constraint_text") or ""))
+    return freshness_at, source_priority, text_length
+
+
+
+def _constraint_anchor_matches(pattern: re.Pattern[str], text: str, *, kind: str = "surface") -> list[MemorySubjectAnchor]:
+    matches: list[MemorySubjectAnchor] = []
+    seen: set[tuple[str, str]] = set()
+    for match in pattern.finditer(text):
+        value = str(match.group("value") or "").strip(" .,:;-")
+        display_value = _anchor_display_value(value)
+        if not display_value:
+            continue
+        key = (kind, display_value)
+        if key in seen:
+            continue
+        seen.add(key)
+        matches.append(MemorySubjectAnchor(kind=kind, value=display_value))
+    return matches
+
+
+
+def _constraint_action_target_pairs(text: str) -> list[tuple[str, MemorySubjectAnchor]]:
+    normalized = str(text or "").strip().lower()
+    if not normalized:
+        return []
+    pairs: list[tuple[str, MemorySubjectAnchor]] = []
+    seen: set[tuple[str, str]] = set()
+    for action_class, pattern in (
+        ("use_source", CONSTRAINT_SOURCE_ANCHOR_PATTERN),
+        ("use_surface", CONSTRAINT_SURFACE_ANCHOR_PATTERN),
+        ("perform_step", CONSTRAINT_STEP_ANCHOR_PATTERN),
+    ):
+        for anchor in _constraint_anchor_matches(pattern, normalized):
+            key = (action_class, _anchor_key(anchor))
+            if key in seen:
+                continue
+            seen.add(key)
+            pairs.append((action_class, anchor))
+    return pairs
+
+
+
+def _constraint_primary_scope_anchor(
+    fallback_subjects: Iterable[MemorySubjectAnchor],
+    target_anchor: MemorySubjectAnchor,
+) -> MemorySubjectAnchor | None:
+    target_key = _anchor_key(target_anchor)
+    distinct_scope_anchors: list[MemorySubjectAnchor] = []
+    seen_scope_keys: set[str] = set()
+    for subject in fallback_subjects:
+        subject_key = _anchor_key(subject)
+        if subject_key == target_key or subject_key in seen_scope_keys:
+            continue
+        seen_scope_keys.add(subject_key)
+        distinct_scope_anchors.append(MemorySubjectAnchor(kind=subject.kind, value=subject.value))
+    if len(distinct_scope_anchors) == 1:
+        return distinct_scope_anchors[0]
+    if len(distinct_scope_anchors) > 1:
+        return None
+    return MemorySubjectAnchor(kind=target_anchor.kind, value=target_anchor.value)
+
+
+def _constraint_entry_has_distinct_scope(entry: dict[str, object]) -> bool:
+    primary_scope_anchor = entry.get("primary_scope_anchor")
+    target_anchor = entry.get("target_anchor")
+    if not isinstance(primary_scope_anchor, MemorySubjectAnchor) or not isinstance(target_anchor, MemorySubjectAnchor):
+        return False
+    return _anchor_key(primary_scope_anchor) != _anchor_key(target_anchor)
+
+
+
+def _constraint_fallback_subjects_from_item(item: QueryResultItem) -> list[MemorySubjectAnchor]:
+    if item.envelope is None:
+        return []
+    return [MemorySubjectAnchor(kind=subject.kind, value=subject.value) for subject in item.envelope.subjects]
+
+
+
+def _constraint_fallback_subjects_from_memory_object(memory_object: MemoryObject) -> list[MemorySubjectAnchor]:
+    if memory_object.envelope is None:
+        return []
+    return [MemorySubjectAnchor(kind=subject.kind, value=subject.value) for subject in memory_object.envelope.subjects]
+
+def _constraint_polarity_from_text(text: str) -> str | None:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return None
+    if any(marker in lowered for marker in CONSTRAINT_PROHIBIT_MARKERS):
+        return "prohibit"
+    if any(marker in lowered for marker in CONSTRAINT_REQUIRE_MARKERS):
+        return "require"
+    if any(marker in lowered for marker in CONSTRAINT_PREFER_MARKERS):
+        return "prefer"
+    return None
+
+
+
+def _normalized_constraint_rule_entries(
+    text: str,
+    *,
+    fallback_subjects: Iterable[MemorySubjectAnchor] = (),
+) -> list[dict[str, object]]:
+    polarity = _constraint_polarity_from_text(text)
+    if polarity not in CONSTRAINT_POLARITIES:
+        return []
+    entries: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for action_class, target_anchor in _constraint_action_target_pairs(text):
+        primary_scope_anchor = _constraint_primary_scope_anchor(fallback_subjects, target_anchor)
+        if primary_scope_anchor is None:
+            continue
+        precise_key = _constraint_supersession_identity(primary_scope_anchor, target_anchor, action_class)
+        if precise_key in seen:
+            continue
+        seen.add(precise_key)
+        entries.append(
+            {
+                "primary_scope_anchor": primary_scope_anchor,
+                "target_anchor": target_anchor,
+                "action_class": action_class,
+                "polarity": polarity,
+                "strength": _constraint_strength_for_polarity(polarity),
+                "supersession_identity": precise_key,
+                "compatibility_domain": _constraint_compatibility_domain(primary_scope_anchor, action_class),
+                "precise_coverage_key": precise_key,
+                "target_key": _anchor_key(target_anchor),
+            }
+        )
+    return entries
+
+
+
+def _normalized_guidance_entries(
+    text: str,
+    *,
+    fallback_subjects: Iterable[MemorySubjectAnchor] = (),
+) -> list[dict[str, object]]:
+    lowered = str(text or "").strip().lower()
+    if not lowered or not any(marker in lowered for marker in CONSTRAINT_GUIDANCE_POSITIVE_MARKERS):
+        return []
+    entries: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for action_class, target_anchor in _constraint_action_target_pairs(lowered):
+        primary_scope_anchor = _constraint_primary_scope_anchor(fallback_subjects, target_anchor)
+        if primary_scope_anchor is None:
+            continue
+        precise_key = _constraint_supersession_identity(primary_scope_anchor, target_anchor, action_class)
+        if precise_key in seen:
+            continue
+        seen.add(precise_key)
+        entries.append(
+            {
+                "primary_scope_anchor": primary_scope_anchor,
+                "target_anchor": target_anchor,
+                "action_class": action_class,
+                "compatibility_domain": _constraint_compatibility_domain(primary_scope_anchor, action_class),
+                "target_key": _anchor_key(target_anchor),
+            }
+        )
+    return entries
+
+
+
+def _typed_constraint_profile_from_payload(
+    *,
+    payload: dict[str, object],
+    result_id: str,
+    freshness_at: datetime | None,
+    profile_source: str = "durable_typed",
+    memory_type: str = CONSTRAINT_MEMORY_TYPE,
+) -> dict[str, object] | None:
+    primary_scope_anchor = _deserialize_subject_anchor(payload.get("primary_scope_anchor"))
+    target_anchor = _deserialize_subject_anchor(payload.get("target_anchor"))
+    action_class = str(payload.get("action_class") or "").strip().lower()
+    polarity = str(payload.get("polarity") or "").strip().lower()
+    status = str(payload.get("status") or "active").strip().lower()
+    confidence = str(payload.get("confidence") or "unknown").strip().lower() or "unknown"
+    constraint_text = str(payload.get("constraint_text") or payload.get("summary") or "").strip()
+    if primary_scope_anchor is None or target_anchor is None:
+        return None
+    if action_class not in CONSTRAINT_ACTION_CLASSES or polarity not in CONSTRAINT_POLARITIES:
+        return None
+    if status not in CONSTRAINT_STATUSES or status != "active":
+        return None
+    if confidence not in CONSTRAINT_CONFIDENCES:
+        confidence = "unknown"
+    if not constraint_text:
+        return None
+    precise_key = _constraint_supersession_identity(primary_scope_anchor, target_anchor, action_class)
+    return {
+        "result_id": result_id,
+        "memory_type": memory_type,
+        "constraint_text": constraint_text,
+        "primary_scope_anchor": primary_scope_anchor,
+        "target_anchor": target_anchor,
+        "action_class": action_class,
+        "polarity": polarity,
+        "strength": str(payload.get("strength") or _constraint_strength_for_polarity(polarity)),
+        "freshness_at": freshness_at,
+        "profile_source": profile_source,
+        "confidence": confidence,
+        "supersession_identity": precise_key,
+        "compatibility_domain": _constraint_compatibility_domain(primary_scope_anchor, action_class),
+        "precise_coverage_key": precise_key,
+        "target_key": _anchor_key(target_anchor),
+        "anchor_result_id": result_id,
+    }
+
+
+
+def _typed_constraint_profile_from_item(item: QueryResultItem) -> dict[str, object] | None:
+    if item.result_kind != "memory_hit" or item.type != CONSTRAINT_MEMORY_TYPE or not isinstance(item.payload, dict):
+        return None
+    return _typed_constraint_profile_from_payload(
+        payload=item.payload,
+        result_id=_routing_result_id(item),
+        freshness_at=item.freshness_at,
+    )
+
+
+
+def _matching_constraint_scope_anchors_from_candidate(
+    candidate: dict[str, object],
+    *,
+    matching_pairs: set[tuple[str, str]],
+) -> list[MemorySubjectAnchor]:
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    matched_scope_anchors: list[MemorySubjectAnchor] = []
+
+    typed_profile = _typed_constraint_profile_from_item(item)
+    if typed_profile is not None:
+        pair = (str(typed_profile.get("action_class") or ""), str(typed_profile.get("target_key") or ""))
+        if pair in matching_pairs and isinstance(typed_profile.get("primary_scope_anchor"), MemorySubjectAnchor):
+            primary_scope_anchor = typed_profile["primary_scope_anchor"]
+            target_anchor = typed_profile.get("target_anchor")
+            if isinstance(target_anchor, MemorySubjectAnchor) and _anchor_key(primary_scope_anchor) != _anchor_key(target_anchor):
+                matched_scope_anchors.append(primary_scope_anchor)
+
+    fallback_subjects = _constraint_fallback_subjects_from_item(item)
+    if fallback_subjects:
+        legacy_profile = _structured_constraint_profile_from_item(item)
+        if legacy_profile is not None:
+            constraint_text = str(legacy_profile.get("constraint_text") or "")
+            for entry in _normalized_constraint_rule_entries(constraint_text, fallback_subjects=fallback_subjects):
+                pair = (str(entry.get("action_class") or ""), str(entry.get("target_key") or ""))
+                if pair in matching_pairs and _constraint_entry_has_distinct_scope(entry):
+                    primary_scope_anchor = entry.get("primary_scope_anchor")
+                    if isinstance(primary_scope_anchor, MemorySubjectAnchor):
+                        matched_scope_anchors.append(primary_scope_anchor)
+
+    guidance_entries, _guidance_unknown = _candidate_guidance_entries(candidate)
+    for entry in guidance_entries:
+        pair = (str(entry.get("action_class") or ""), str(entry.get("target_key") or ""))
+        if pair in matching_pairs and _constraint_entry_has_distinct_scope(entry):
+            primary_scope_anchor = entry.get("primary_scope_anchor")
+            if isinstance(primary_scope_anchor, MemorySubjectAnchor):
+                matched_scope_anchors.append(primary_scope_anchor)
+    return _merge_subject_anchors(matched_scope_anchors)
+
+
+
+def _local_query_constraint_fallback_subjects(
+    query_text: str,
+    ranked_candidates: Sequence[dict[str, object]],
+) -> list[MemorySubjectAnchor]:
+    matching_pairs = {
+        (action_class, _anchor_key(target_anchor))
+        for action_class, target_anchor in _constraint_action_target_pairs(query_text)
+    }
+    if not matching_pairs:
+        return []
+    return _merge_subject_anchors(
+        *(
+            _matching_constraint_scope_anchors_from_candidate(candidate, matching_pairs=matching_pairs)
+            for candidate in ranked_candidates
+        )
+    )
+
 
 
 def _build_local_query_constraint_profile(
     query_text: str,
     runtime_context: QueryRuntimeContext | None,
+    ranked_candidates: Sequence[dict[str, object]],
 ) -> dict[str, object] | None:
     if runtime_context is None or runtime_context.turn_kind not in {"same_thread", "same_thread_continuation"}:
         return None
-    constraint_text = _preferred_constraint_text(query_text)
-    if not constraint_text:
+    fallback_subjects = _local_query_constraint_fallback_subjects(query_text, ranked_candidates)
+    if not fallback_subjects:
         return None
-    return _structured_constraint_profile_from_payload(
-        memory_type="thread_summary",
-        payload={"summary": constraint_text},
-        result_id="query_text:local_constraint",
+    entries = [
+        entry
+        for entry in _normalized_constraint_rule_entries(query_text, fallback_subjects=fallback_subjects)
+        if _constraint_entry_has_distinct_scope(entry)
+    ]
+    if not entries:
+        return None
+    entry = dict(entries[0])
+    entry.update(
+        {
+            "result_id": "query_text:local_constraint",
+            "memory_type": CONSTRAINT_MEMORY_TYPE,
+            "constraint_text": query_text.strip(),
+            "freshness_at": datetime.max.replace(tzinfo=timezone.utc),
+            "profile_source": "local_typed",
+            "confidence": "unknown",
+            "anchor_result_id": None,
+        }
     )
+    return entry
+
+def _apply_exact_constraint_supersession(profiles: list[dict[str, object]]) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    chosen: dict[str, dict[str, object]] = {}
+    shadowed: list[dict[str, object]] = []
+    for profile in sorted(profiles, key=_constraint_profile_sort_key, reverse=True):
+        key = str(profile.get("supersession_identity") or "")
+        if not key:
+            continue
+        if key in chosen:
+            shadowed.append(profile)
+            continue
+        chosen[key] = profile
+    return list(chosen.values()), shadowed
 
 
+
+def _reduce_constraint_domain_policies(profiles: list[dict[str, object]]) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    grouped: dict[str, list[dict[str, object]]] = {}
+    for profile in profiles:
+        grouped.setdefault(str(profile.get("compatibility_domain") or ""), []).append(profile)
+    policies: list[dict[str, object]] = []
+    shadowed: list[dict[str, object]] = []
+    for domain_key, domain_profiles in grouped.items():
+        sorted_profiles = sorted(domain_profiles, key=_constraint_profile_sort_key, reverse=True)
+        prohibit_rules = [profile for profile in sorted_profiles if profile.get("polarity") == "prohibit"]
+        require_rules = [profile for profile in sorted_profiles if profile.get("polarity") == "require"]
+        prefer_rules = [profile for profile in sorted_profiles if profile.get("polarity") == "prefer"]
+        authoritative_require = require_rules[0] if require_rules else None
+        authoritative_prefer = prefer_rules[0] if not authoritative_require and prefer_rules else None
+        shadowed.extend(require_rules[1:] if len(require_rules) > 1 else [])
+        shadowed.extend(prefer_rules[1:] if len(prefer_rules) > 1 else [])
+        if authoritative_require is not None:
+            conflicting_prohibits = [
+                profile
+                for profile in prohibit_rules
+                if profile.get("target_key") == authoritative_require.get("target_key")
+            ]
+            if conflicting_prohibits:
+                newest_prohibit = max(conflicting_prohibits, key=_constraint_profile_sort_key)
+                if _constraint_profile_sort_key(newest_prohibit) > _constraint_profile_sort_key(authoritative_require):
+                    shadowed.append(authoritative_require)
+                    authoritative_require = None
+                else:
+                    for profile in conflicting_prohibits:
+                        shadowed.append(profile)
+                    prohibit_rules = [profile for profile in prohibit_rules if profile not in conflicting_prohibits]
+        if authoritative_prefer is not None:
+            conflicting_prefer_prohibits = [
+                profile
+                for profile in prohibit_rules
+                if profile.get("target_key") == authoritative_prefer.get("target_key")
+            ]
+            if conflicting_prefer_prohibits:
+                shadowed.append(authoritative_prefer)
+                authoritative_prefer = None
+        authoritative_rule = authoritative_require or authoritative_prefer
+        policies.append(
+            {
+                "domain_key": domain_key,
+                "prohibit_rules": prohibit_rules,
+                "authoritative_rule": authoritative_rule,
+            }
+        )
+    return policies, shadowed
+
+
+
+def _serialize_constraint_rule_profile(profile: dict[str, object]) -> dict[str, object]:
+    return {
+        "result_id": str(profile.get("result_id") or ""),
+        "memory_type": str(profile.get("memory_type") or ""),
+        "profile_source": str(profile.get("profile_source") or ""),
+        "constraint_text": str(profile.get("constraint_text") or ""),
+        "primary_scope_anchor": _serialize_subject_anchor(profile["primary_scope_anchor"]),
+        "target_anchor": _serialize_subject_anchor(profile["target_anchor"]),
+        "action_class": str(profile.get("action_class") or ""),
+        "polarity": str(profile.get("polarity") or ""),
+        "compatibility_domain": str(profile.get("compatibility_domain") or ""),
+        "precise_coverage_key": str(profile.get("precise_coverage_key") or ""),
+        "supersession_identity": str(profile.get("supersession_identity") or ""),
+    }
+
+def _serialize_constraint_domain_policy(policy: dict[str, object]) -> dict[str, object]:
+    authoritative_rule = policy.get("authoritative_rule")
+    return {
+        "domain_key": str(policy.get("domain_key") or ""),
+        "prohibit_rules": [_serialize_constraint_rule_profile(profile) for profile in policy.get("prohibit_rules", [])],
+        "authoritative_rule": _serialize_constraint_rule_profile(authoritative_rule) if isinstance(authoritative_rule, dict) else None,
+    }
+
+
+
+def _candidate_guidance_entries(candidate: dict[str, object]) -> tuple[list[dict[str, object]], bool]:
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    if item.result_kind == "memory_hit" and item.type == CONSTRAINT_MEMORY_TYPE:
+        return [], False
+    fallback_subjects = item.envelope.subjects if item.envelope is not None else []
+    fragments: list[str]
+    if item.result_kind == "source_hit":
+        fragments = [str(item.excerpt or "")]
+    else:
+        fragments = _structured_payload_guidance_fragments(str(item.type or ""), item.payload or {})
+    entries: list[dict[str, object]] = []
+    unknown = False
+    for fragment in fragments:
+        normalized = str(fragment or "").strip()
+        if not normalized or not _text_contains_operational_guidance(normalized):
+            continue
+        if _fragment_is_constraint_only(normalized):
+            continue
+        stripped = _strip_constraint_snippets(normalized).strip()
+        candidate_text = stripped if re.search(r"\w", stripped) else normalized
+        normalized_entries = _normalized_guidance_entries(candidate_text, fallback_subjects=fallback_subjects)
+        if normalized_entries:
+            entries.extend(normalized_entries)
+        else:
+            unknown = True
+    return entries, unknown
+
+
+
+def _evaluate_guidance_entries_against_domain_policies(
+    guidance_entries: list[dict[str, object]],
+    domain_policies: list[dict[str, object]],
+) -> tuple[str, dict[str, object] | None]:
+    outcome = "compatible"
+    winning_rule: dict[str, object] | None = None
+    for entry in guidance_entries:
+        for policy in domain_policies:
+            if entry.get("compatibility_domain") != policy.get("domain_key"):
+                continue
+            prohibit_rules = list(policy.get("prohibit_rules") or [])
+            if any(rule.get("target_key") == entry.get("target_key") for rule in prohibit_rules):
+                return "incompatible", next(rule for rule in prohibit_rules if rule.get("target_key") == entry.get("target_key"))
+            authoritative_rule = policy.get("authoritative_rule")
+            if not isinstance(authoritative_rule, dict):
+                continue
+            if authoritative_rule.get("target_key") == entry.get("target_key"):
+                winning_rule = authoritative_rule
+                continue
+            if authoritative_rule.get("polarity") == "require":
+                return "incompatible", authoritative_rule
+            if authoritative_rule.get("polarity") == "prefer":
+                outcome = "competing_preference"
+                winning_rule = authoritative_rule
+    return outcome, winning_rule
+
+
+
+def _build_constraint_state(
+    unsuppressed_candidates: list[dict[str, object]],
+    *,
+    local_constraint_profile: dict[str, object] | None,
+) -> dict[str, object]:
+    typed_profiles: list[dict[str, object]] = []
+    typed_anchor_candidates: dict[str, dict[str, object]] = {}
+    legacy_profiles: list[dict[str, object]] = []
+    legacy_anchor_candidates: dict[str, dict[str, object]] = {}
+    for candidate in unsuppressed_candidates:
+        item = candidate["item"]
+        assert isinstance(item, QueryResultItem)
+        typed_profile = _typed_constraint_profile_from_item(item)
+        if typed_profile is not None:
+            typed_profiles.append(typed_profile)
+            typed_anchor_candidates[str(typed_profile["result_id"])] = candidate
+            continue
+        legacy_profile = _structured_constraint_profile_from_item(item)
+        if legacy_profile is not None:
+            legacy_profile = {
+                **legacy_profile,
+                "fallback_subjects": _constraint_fallback_subjects_from_item(item),
+            }
+            legacy_profiles.append(legacy_profile)
+            legacy_anchor_candidates[str(legacy_profile.get("result_id") or "")] = candidate
+    if local_constraint_profile is not None:
+        typed_profiles.append(local_constraint_profile)
+
+    active_typed_profiles, superseded_typed_profiles = _apply_exact_constraint_supersession(typed_profiles)
+    typed_domain_policies, domain_shadowed_typed_profiles = _reduce_constraint_domain_policies(active_typed_profiles)
+    typed_coverage_keys = {str(profile.get("precise_coverage_key") or "") for profile in active_typed_profiles}
+
+    normalized_legacy_profiles: list[dict[str, object]] = []
+    opaque_legacy_profiles: list[dict[str, object]] = []
+    for legacy_profile in legacy_profiles:
+        constraint_text = str(legacy_profile.get("constraint_text") or "")
+        fallback_subjects = list(legacy_profile.get("fallback_subjects") or [])
+        entries = [
+            entry
+            for entry in _normalized_constraint_rule_entries(constraint_text, fallback_subjects=fallback_subjects)
+            if _constraint_entry_has_distinct_scope(entry)
+        ]
+        if not entries:
+            opaque_legacy_profiles.append(legacy_profile)
+            continue
+        for entry in entries:
+            precise_key = str(entry.get("precise_coverage_key") or "")
+            if precise_key in typed_coverage_keys:
+                continue
+            normalized_legacy_profiles.append(
+                {
+                    **entry,
+                    "result_id": f"{legacy_profile['result_id']}::{precise_key}",
+                    "anchor_result_id": str(legacy_profile.get("result_id") or ""),
+                    "memory_type": str(legacy_profile.get("memory_type") or ""),
+                    "constraint_text": constraint_text,
+                    "freshness_at": legacy_profile.get("freshness_at"),
+                    "profile_source": "legacy_fallback",
+                    "confidence": "unknown",
+                }
+            )
+
+    retained_legacy_profiles, shadowed_legacy_profiles = _apply_exact_constraint_supersession(normalized_legacy_profiles)
+    legacy_domain_policies, domain_shadowed_legacy_profiles = _reduce_constraint_domain_policies(retained_legacy_profiles)
+
+    constraint_anchor: dict[str, object] | None = None
+    for profile in sorted(active_typed_profiles, key=_constraint_profile_sort_key, reverse=True):
+        anchor_candidate = typed_anchor_candidates.get(str(profile.get("anchor_result_id") or profile.get("result_id") or ""))
+        if anchor_candidate is not None:
+            constraint_anchor = anchor_candidate
+            break
+    if constraint_anchor is None:
+        for profile in sorted(retained_legacy_profiles, key=_constraint_profile_sort_key, reverse=True):
+            anchor_candidate = legacy_anchor_candidates.get(str(profile.get("anchor_result_id") or ""))
+            if anchor_candidate is not None:
+                constraint_anchor = anchor_candidate
+                break
+    if constraint_anchor is None and opaque_legacy_profiles:
+        freshest_legacy_profile = max(opaque_legacy_profiles, key=_constraint_profile_sort_key)
+        constraint_anchor = legacy_anchor_candidates.get(str(freshest_legacy_profile.get("result_id") or ""))
+
+    return {
+        "active_typed_profiles": active_typed_profiles,
+        "typed_domain_policies": typed_domain_policies,
+        "retained_legacy_profiles": retained_legacy_profiles,
+        "legacy_domain_policies": legacy_domain_policies,
+        "opaque_legacy_profiles": opaque_legacy_profiles,
+        "constraint_anchor": constraint_anchor,
+        "shadowed_typed_profiles": [*superseded_typed_profiles, *domain_shadowed_typed_profiles],
+        "shadowed_legacy_profiles": [*shadowed_legacy_profiles, *domain_shadowed_legacy_profiles],
+    }
 
 def _candidate_aligns_with_constraint_profile(candidate: dict[str, object], constraint_profile: dict[str, object] | None) -> bool:
     if constraint_profile is None:
@@ -4380,6 +5172,24 @@ def _candidate_aligns_with_constraint_profile(candidate: dict[str, object], cons
     return bool(target_tokens.intersection(candidate_tokens))
 
 
+def _candidate_aligns_with_constraint_state(candidate: dict[str, object], constraint_state: dict[str, object] | None) -> bool:
+    if not constraint_state:
+        return False
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    if item.result_kind == "memory_hit" and item.type == CONSTRAINT_MEMORY_TYPE:
+        return True
+    guidance_entries, _unknown = _candidate_guidance_entries(candidate)
+    if guidance_entries:
+        all_policies = [*constraint_state.get("typed_domain_policies", []), *constraint_state.get("legacy_domain_policies", [])]
+        outcome, _rule = _evaluate_guidance_entries_against_domain_policies(guidance_entries, all_policies)
+        return outcome in {"compatible", "competing_preference"}
+    for legacy_profile in constraint_state.get("opaque_legacy_profiles", []):
+        if _candidate_aligns_with_constraint_profile(candidate, legacy_profile):
+            return True
+    return False
+
+
 
 def _apply_structured_constraint_compatibility(
     *,
@@ -4391,42 +5201,47 @@ def _apply_structured_constraint_compatibility(
     if not unsuppressed_candidates:
         return [], packaging_summary, None, None
 
+    constraint_state = _build_constraint_state(
+        unsuppressed_candidates,
+        local_constraint_profile=local_constraint_profile,
+    )
     compatible_candidates: list[dict[str, object]] = []
     incompatible_candidates: list[dict[str, str]] = []
-    constraint_anchor: dict[str, object] | None = None
-    active_constraint_profile: dict[str, object] | None = None
-    fallback_conflicting_profile: dict[str, object] | None = None
-    for candidate in unsuppressed_candidates:
-        profile = _structured_constraint_profile_from_item(candidate["item"])
-        if profile is None:
-            continue
-        if _candidate_has_self_conflicting_guidance(candidate):
-            if fallback_conflicting_profile is None or _constraint_profile_sort_key(profile) > _constraint_profile_sort_key(fallback_conflicting_profile):
-                fallback_conflicting_profile = profile
-            continue
-        if active_constraint_profile is None or _constraint_profile_sort_key(profile) > _constraint_profile_sort_key(active_constraint_profile):
-            active_constraint_profile = profile
-            constraint_anchor = candidate
-    if local_constraint_profile is not None:
-        active_constraint_profile = local_constraint_profile
-        packaging_summary["active_constraint_profile_source"] = "local_query_constraint"
-    elif active_constraint_profile is None:
-        active_constraint_profile = fallback_conflicting_profile
+    all_domain_policies = [*constraint_state["typed_domain_policies"], *constraint_state["legacy_domain_policies"]]
 
     for candidate in unsuppressed_candidates:
         item = candidate["item"]
         assert isinstance(item, QueryResultItem)
-        conflict_reason = None
-        if _candidate_has_self_conflicting_guidance(candidate):
-            conflict_reason = (
-                "conflicts_with_active_constraint",
-                "Structured memory included operational guidance that conflicts with an explicit carried constraint.",
-            )
-        elif active_constraint_profile is not None and candidate is not constraint_anchor and _candidate_conflicts_with_constraint(item, active_constraint_profile):
-            conflict_reason = (
-                "conflicts_with_active_constraint",
-                "Candidate guidance was excluded because it conflicts with the active carried constraint.",
-            )
+        guidance_entries, guidance_unknown = _candidate_guidance_entries(candidate)
+        candidate["constraint_compatibility"] = "compatible"
+        conflict_reason: tuple[str, str] | None = None
+        packaging_adjustment = int(candidate.get("packaging_adjustment") or 0)
+
+        if guidance_entries:
+            compatibility_outcome, governing_rule = _evaluate_guidance_entries_against_domain_policies(guidance_entries, all_domain_policies)
+            candidate["constraint_compatibility"] = compatibility_outcome
+            if compatibility_outcome == "incompatible":
+                conflict_reason = (
+                    "conflicts_with_active_constraint",
+                    "Candidate guidance was excluded because it conflicts with the active carried constraint.",
+                )
+            elif compatibility_outcome == "competing_preference":
+                packaging_adjustment -= 140
+                candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*candidate["packaging_reasons"], "demoted_by_active_preference"]))
+                candidate["constraint_governing_rule"] = str((governing_rule or {}).get("result_id") or "")
+        elif guidance_unknown:
+            candidate["constraint_compatibility"] = "unknown"
+
+        if conflict_reason is None:
+            for legacy_profile in constraint_state["opaque_legacy_profiles"]:
+                if _candidate_conflicts_with_constraint(item, legacy_profile):
+                    candidate["constraint_compatibility"] = "incompatible"
+                    conflict_reason = (
+                        "conflicts_with_active_constraint",
+                        "Candidate guidance was excluded because it conflicts with the retained legacy carried constraint.",
+                    )
+                    break
+
         if conflict_reason is not None:
             reason_code, reason_text = conflict_reason
             candidate["suppression_reason_code"] = reason_code
@@ -4437,57 +5252,152 @@ def _apply_structured_constraint_compatibility(
                 "reason_code": reason_code,
             })
             continue
+
+        if packaging_adjustment:
+            candidate["packaging_adjustment"] = packaging_adjustment
         compatible_candidates.append(candidate)
 
-    if active_constraint_profile is not None:
-        packaging_summary["active_constraint_profile"] = {
-            "result_id": str(active_constraint_profile.get("result_id") or ""),
-            "memory_type": str(active_constraint_profile.get("memory_type") or ""),
-            "constraint_text": str(active_constraint_profile.get("constraint_text") or ""),
-            "protected_tokens": list(active_constraint_profile.get("protected_tokens") or []),
-            "focus_tokens": list(active_constraint_profile.get("focus_tokens") or []),
-            "exclusive_tokens": list(active_constraint_profile.get("exclusive_tokens") or []),
-        }
+    compatible_candidates = sorted(
+        compatible_candidates,
+        key=lambda candidate: (int(candidate["routing_score"]) + int(candidate.get("packaging_adjustment") or 0), int(candidate["lexical_score"])),
+        reverse=True,
+    )
+
+    if constraint_state["active_typed_profiles"]:
+        packaging_summary["active_typed_constraints"] = [
+            _serialize_constraint_rule_profile(profile)
+            for profile in constraint_state["active_typed_profiles"]
+        ]
+    if constraint_state["typed_domain_policies"]:
+        packaging_summary["typed_domain_policies"] = [
+            _serialize_constraint_domain_policy(policy)
+            for policy in constraint_state["typed_domain_policies"]
+        ]
+    if constraint_state["retained_legacy_profiles"]:
+        packaging_summary["retained_legacy_fallback_profiles"] = [
+            _serialize_constraint_rule_profile(profile)
+            for profile in constraint_state["retained_legacy_profiles"]
+        ]
+    if constraint_state["opaque_legacy_profiles"]:
+        packaging_summary["retained_opaque_legacy_fallback_profiles"] = [
+            {
+                "result_id": str(profile.get("result_id") or ""),
+                "memory_type": str(profile.get("memory_type") or ""),
+                "constraint_text": str(profile.get("constraint_text") or ""),
+            }
+            for profile in constraint_state["opaque_legacy_profiles"]
+        ]
+    if constraint_state["shadowed_typed_profiles"]:
+        packaging_summary["shadowed_typed_constraints"] = [
+            _serialize_constraint_rule_profile(profile)
+            for profile in constraint_state["shadowed_typed_profiles"]
+        ]
+    if constraint_state["shadowed_legacy_profiles"]:
+        packaging_summary["shadowed_legacy_fallback_profiles"] = [
+            _serialize_constraint_rule_profile(profile)
+            for profile in constraint_state["shadowed_legacy_profiles"]
+            if isinstance(profile.get("primary_scope_anchor"), MemorySubjectAnchor)
+        ]
+    constraint_anchor = constraint_state["constraint_anchor"]
     if constraint_anchor is not None:
         packaging_summary["constraint_anchor_result_id"] = _routing_result_id(constraint_anchor["item"])
     if incompatible_candidates:
         packaging_summary["incompatible_structured_candidates"] = incompatible_candidates
+    if constraint_state["active_typed_profiles"] or constraint_state["retained_legacy_profiles"] or constraint_state["opaque_legacy_profiles"]:
+        return compatible_candidates, packaging_summary, constraint_anchor, constraint_state
+    return compatible_candidates, packaging_summary, constraint_anchor, None
 
-    return compatible_candidates, packaging_summary, constraint_anchor, active_constraint_profile
 
 
-
-def _list_active_constraint_profiles(
+def _list_active_constraint_state(
     storage,
     *,
     container_ref: str,
     visibility_context,
-) -> list[dict[str, object]]:
-    active_profiles: list[dict[str, object]] = []
+) -> dict[str, object]:
+    typed_profiles: list[dict[str, object]] = []
+    legacy_profiles: list[dict[str, object]] = []
     for memory_object in storage.list_memory_objects(
-        memory_types=list(STRUCTURED_CONFLICT_MEMORY_TYPES),
+        memory_types=[CONSTRAINT_MEMORY_TYPE, *STRUCTURED_CONFLICT_MEMORY_TYPES],
         lifecycle="active",
     ):
         payload = memory_object.payload or {}
-        if str(payload.get("container_ref") or "") != container_ref:
+        payload_container_ref = str(payload.get("container_ref") or payload.get("scope_container_ref") or "")
+        if payload_container_ref and payload_container_ref != container_ref:
             continue
         if memory_object.visibility_context != visibility_context:
             continue
-        profile = _structured_constraint_profile_from_payload(
+        if memory_object.type == CONSTRAINT_MEMORY_TYPE:
+            typed_profile = _typed_constraint_profile_from_payload(
+                payload=payload,
+                result_id=f"memory_object:{memory_object.id}",
+                freshness_at=memory_object.freshness_at,
+            )
+            if typed_profile is not None:
+                typed_profiles.append(typed_profile)
+            continue
+        legacy_profile = _structured_constraint_profile_from_payload(
             memory_type=memory_object.type,
             payload=payload,
             result_id=f"memory_object:{memory_object.id}",
             freshness_at=memory_object.freshness_at,
         )
-        if profile is None:
+        if legacy_profile is None:
             continue
-        if _structured_payload_conflicts_with_constraint(memory_object.type, payload, profile):
+        legacy_profiles.append(
+            {
+                **legacy_profile,
+                "fallback_subjects": _constraint_fallback_subjects_from_memory_object(memory_object),
+            }
+        )
+
+    active_typed_profiles, superseded_typed_profiles = _apply_exact_constraint_supersession(typed_profiles)
+    typed_domain_policies, domain_shadowed_typed_profiles = _reduce_constraint_domain_policies(active_typed_profiles)
+    typed_coverage_keys = {str(profile.get("precise_coverage_key") or "") for profile in active_typed_profiles}
+
+    normalized_legacy_profiles: list[dict[str, object]] = []
+    opaque_legacy_profiles: list[dict[str, object]] = []
+    for legacy_profile in legacy_profiles:
+        fallback_subjects = list(legacy_profile.get("fallback_subjects") or [])
+        entries = [
+            entry
+            for entry in _normalized_constraint_rule_entries(
+                str(legacy_profile.get("constraint_text") or ""),
+                fallback_subjects=fallback_subjects,
+            )
+            if _constraint_entry_has_distinct_scope(entry)
+        ]
+        if not entries:
+            opaque_legacy_profiles.append(legacy_profile)
             continue
-        active_profiles.append(profile)
-    active_profiles.sort(key=_constraint_profile_sort_key, reverse=True)
-    return active_profiles
-
-
+        for entry in entries:
+            precise_key = str(entry.get("precise_coverage_key") or "")
+            if precise_key in typed_coverage_keys:
+                continue
+            normalized_legacy_profiles.append(
+                {
+                    **entry,
+                    "result_id": f"{legacy_profile['result_id']}::{precise_key}",
+                    "anchor_result_id": str(legacy_profile.get("result_id") or ""),
+                    "memory_type": str(legacy_profile.get("memory_type") or ""),
+                    "constraint_text": str(legacy_profile.get("constraint_text") or ""),
+                    "freshness_at": legacy_profile.get("freshness_at"),
+                    "profile_source": "legacy_fallback",
+                    "confidence": "unknown",
+                }
+            )
+    retained_legacy_profiles, shadowed_legacy_profiles = _apply_exact_constraint_supersession(normalized_legacy_profiles)
+    legacy_domain_policies, domain_shadowed_legacy_profiles = _reduce_constraint_domain_policies(retained_legacy_profiles)
+    return {
+        "active_typed_profiles": active_typed_profiles,
+        "typed_domain_policies": typed_domain_policies,
+        "retained_legacy_profiles": retained_legacy_profiles,
+        "legacy_domain_policies": legacy_domain_policies,
+        "opaque_legacy_profiles": opaque_legacy_profiles,
+        "shadowed_typed_profiles": [*superseded_typed_profiles, *domain_shadowed_typed_profiles],
+        "shadowed_legacy_profiles": [*shadowed_legacy_profiles, *domain_shadowed_legacy_profiles],
+        "has_any": bool(active_typed_profiles or retained_legacy_profiles or opaque_legacy_profiles),
+    }
 
 def _structured_constraint_profile_from_payload(
     *,
@@ -4532,13 +5442,25 @@ def _structured_payload_conflicts_with_constraint(memory_type: str, payload: dic
 def _reconcile_memory_object_against_active_constraints(
     memory_object: MemoryObject,
     *,
-    active_constraints: list[dict[str, object]],
+    constraint_state: dict[str, object],
 ) -> MemoryObject:
-    if memory_object.type not in STRUCTURED_CONFLICT_MEMORY_TYPES or not active_constraints:
+    if memory_object.type not in STRUCTURED_CONFLICT_MEMORY_TYPES or not constraint_state.get("has_any"):
         return memory_object
     payload = dict(memory_object.payload or {})
-    active_constraint = active_constraints[0]
-    if not _structured_payload_conflicts_with_constraint(memory_object.type, payload, active_constraint):
+    candidate = {"item": QueryResultItem(result_kind="memory_hit", memory_object_id=memory_object.id, type=memory_object.type, payload=payload, freshness_at=memory_object.freshness_at, evidence=[])}
+    all_domain_policies = [*constraint_state.get("typed_domain_policies", []), *constraint_state.get("legacy_domain_policies", [])]
+    guidance_entries, _guidance_unknown = _candidate_guidance_entries(candidate)
+    active_constraint = None
+    if guidance_entries:
+        compatibility_outcome, active_constraint = _evaluate_guidance_entries_against_domain_policies(guidance_entries, all_domain_policies)
+        if compatibility_outcome != "incompatible":
+            active_constraint = None
+    if active_constraint is None:
+        for legacy_profile in constraint_state.get("opaque_legacy_profiles", []):
+            if _structured_payload_conflicts_with_constraint(memory_object.type, payload, legacy_profile):
+                active_constraint = legacy_profile
+                break
+    if active_constraint is None:
         return memory_object
 
     constraint_text = str(active_constraint.get("constraint_text") or "").strip()
@@ -4616,6 +5538,17 @@ def _structured_text_conflicts_with_constraint(text: str, constraint_profile: di
     candidate_text = stripped if re.search(r"\w", stripped) else normalized
     if candidate_text != normalized and not _text_contains_operational_guidance(candidate_text):
         return False
+    if isinstance(constraint_profile.get("primary_scope_anchor"), MemorySubjectAnchor):
+        guidance_entries = _normalized_guidance_entries(candidate_text)
+        if not guidance_entries:
+            return False
+        policy = {
+            "domain_key": str(constraint_profile.get("compatibility_domain") or ""),
+            "prohibit_rules": [constraint_profile] if constraint_profile.get("polarity") == "prohibit" else [],
+            "authoritative_rule": constraint_profile if constraint_profile.get("polarity") in {"require", "prefer"} else None,
+        }
+        outcome, _governing_rule = _evaluate_guidance_entries_against_domain_policies(guidance_entries, [policy])
+        return outcome == "incompatible"
     protected_tokens = set(constraint_profile.get("protected_tokens") or [])
     if not protected_tokens:
         return False
@@ -4648,7 +5581,6 @@ def _structured_text_conflicts_with_constraint(text: str, constraint_profile: di
         return True
     action_overlap = candidate_tokens.intersection(protected_tokens).intersection(CONSTRAINT_POLICY_ACTION_TOKENS)
     return bool(focus_basis) and len(action_overlap) >= 2
-
 
 
 def _rebuild_reconciled_memory_index_entry(memory_object: MemoryObject):

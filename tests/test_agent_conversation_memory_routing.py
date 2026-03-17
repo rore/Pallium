@@ -12,6 +12,7 @@ from core.models import (
     MemoryEnvelope,
     MemoryEnvelopeDerivation,
     MemoryEnvelopeScope,
+    MemorySubjectAnchor,
     QueryFilters,
     QueryResultItem,
     QueryRuntimeContext,
@@ -19,9 +20,11 @@ from core.models import (
     SourceItem,
 )
 from core.visibility import VisibilityContext
+from providers.llm.base import LLMJsonResponse
 from retrieval.base import RetrievalQueryResult
 from semantic.agent_conversation_memory import (
     AgentConversationMemoryPlugin,
+    _build_constraint_state,
     _structured_constraint_profile_from_payload,
     _structured_text_conflicts_with_constraint,
 )
@@ -71,7 +74,21 @@ def _run_debug_query(client: TestClient, payload: dict[str, object]) -> dict[str
     return response.json()
 
 
-def _memory_envelope(kind: str, *, confidence: str = 'medium') -> MemoryEnvelope:
+class _FixedLLMProvider:
+    def __init__(self, parsed_json: dict[str, object]) -> None:
+        self._parsed_json = parsed_json
+
+    def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+        return LLMJsonResponse(raw_text=json.dumps(self._parsed_json), parsed_json=self._parsed_json)
+
+
+
+def _memory_envelope(
+    kind: str,
+    *,
+    confidence: str = 'medium',
+    subjects: list[MemorySubjectAnchor] | None = None,
+) -> MemoryEnvelope:
     return MemoryEnvelope(
         schema_id='core.memory_envelope',
         schema_version='v1',
@@ -81,11 +98,12 @@ def _memory_envelope(kind: str, *, confidence: str = 'medium') -> MemoryEnvelope
         derivation=MemoryEnvelopeDerivation(
             producer_kind='item_extraction',
             producer_schema_id='typed_memory_extraction',
-            producer_schema_version='v6',
+            producer_schema_version='v7',
             prompt_variant='strict_typed_memory_v4_evidence_guarded',
             model_role='write_time_extraction',
             kind_basis='type_map',
         ),
+        subjects=subjects or [],
     )
 
 
@@ -857,6 +875,68 @@ def test_process_item_emits_same_thread_supersession_hint_for_sharp_conclusion()
     assert hint.container_ref == 'chat:library-help'
     assert hint.thread_ref == 'chat:library-help:thread-supersession'
     assert hint.canonical_key == 'use item event time for reservation ordering'
+
+
+def test_process_item_emits_typed_constraint_memory_and_supersession_hint() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=_FixedLLMProvider(
+            {
+                'summary': 'Constraint reminder',
+                'candidate_type': None,
+                'decision_text': None,
+                'decision_evidence_text': None,
+                'investigation_text': None,
+                'investigation_evidence_text': None,
+                'rationale_text': None,
+                'is_low_value_meta': False,
+                'constraint_text': 'Do not use the operations portal for the inventory batch digest.',
+                'next_step_text': None,
+                'blocker_text': None,
+                'progress_text': None,
+                'key_finding_text': None,
+                'subject_hints': [{'kind': 'workstream', 'value': 'inventory batch digest'}],
+                'constraint_candidates': [
+                    {
+                        'primary_scope_anchor': {'kind': 'workstream', 'value': 'inventory batch digest'},
+                        'target_anchor': {'kind': 'surface', 'value': 'operations portal'},
+                        'action_class': 'use_surface',
+                        'polarity': 'prohibit',
+                        'confidence': 'high',
+                        'constraint_text': 'Do not use the operations portal for the inventory batch digest.',
+                    }
+                ],
+            }
+        ),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    result = plugin.process_item(
+        SourceItem(
+            source_type='assistant_output',
+            source_id='constraint-source-1',
+            content_type='text/plain',
+            content='Do not use the operations portal for the inventory batch digest.',
+            artifact_kind='assistant_output',
+            role='assistant',
+            container_ref='chat:library-help',
+            thread_ref='chat:library-help:thread-constraint',
+            session_ref='session:constraint',
+            occurred_at=datetime(2026, 3, 11, 12, 10, tzinfo=timezone.utc),
+            visibility_context=VisibilityContext(kind='public', id=None),
+        )
+    )
+
+    constraint_memory = next(memory for memory in result.memory_objects if memory.type == 'constraint_memory')
+    assert constraint_memory.schema_id == 'agent_conversation_memory.constraint_memory'
+    assert constraint_memory.payload['polarity'] == 'prohibit'
+    assert constraint_memory.payload['action_class'] == 'use_surface'
+    assert constraint_memory.payload['primary_scope_anchor'] == {'kind': 'workstream', 'value': 'inventory batch digest'}
+    assert constraint_memory.payload['target_anchor'] == {'kind': 'surface', 'value': 'operations portal'}
+    assert constraint_memory.envelope is not None
+    assert constraint_memory.envelope.kind == 'constraint'
+    assert len(result.supersession_hints) == 1
+    hint = result.supersession_hints[0]
+    assert hint.memory_type == 'constraint_memory'
+    assert hint.canonical_key == 'workstream:inventory batch digest|surface:operations portal|use_surface'
 
 
 def test_broad_recall_injection_prefers_compact_memory_over_source_hits() -> None:
@@ -2735,7 +2815,7 @@ def test_routing_trace_exposes_candidate_aware_family_scorecard(monkeypatch, tes
 
 
 
-def _inventory_batch_constraint_checkpoint_result(*, memory_object_id: str = 'checkpoint-batch-constraint', score: int = 16) -> QueryResultItem:
+def _inventory_batch_constraint_checkpoint_result(*, memory_object_id: str = 'checkpoint-batch-constraint', score: int = 16, envelope: MemoryEnvelope | None = None) -> QueryResultItem:
     return QueryResultItem(
         result_kind='memory_hit',
         memory_object_id=memory_object_id,
@@ -2762,11 +2842,12 @@ def _inventory_batch_constraint_checkpoint_result(*, memory_object_id: str = 'ch
         evidence=[],
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:thread-a',
+        envelope=envelope,
     )
 
 
 
-def _inventory_batch_constraint_summary_result(*, memory_object_id: str = 'summary-batch-constraint', score: int = 15) -> QueryResultItem:
+def _inventory_batch_constraint_summary_result(*, memory_object_id: str = 'summary-batch-constraint', score: int = 15, envelope: MemoryEnvelope | None = None) -> QueryResultItem:
     return QueryResultItem(
         result_kind='memory_hit',
         memory_object_id=memory_object_id,
@@ -2784,11 +2865,12 @@ def _inventory_batch_constraint_summary_result(*, memory_object_id: str = 'summa
         evidence=[],
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:thread-a',
+        envelope=envelope,
     )
 
 
 
-def _inventory_batch_conflicting_retry_checkpoint_result(*, memory_object_id: str = 'checkpoint-batch-auth-retry', score: int = 14) -> QueryResultItem:
+def _inventory_batch_conflicting_retry_checkpoint_result(*, memory_object_id: str = 'checkpoint-batch-auth-retry', score: int = 14, envelope: MemoryEnvelope | None = None) -> QueryResultItem:
     return QueryResultItem(
         result_kind='memory_hit',
         memory_object_id=memory_object_id,
@@ -2815,6 +2897,47 @@ def _inventory_batch_conflicting_retry_checkpoint_result(*, memory_object_id: st
         evidence=[],
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:thread-c',
+        envelope=envelope,
+    )
+
+def _inventory_batch_typed_constraint_result(*, memory_object_id: str = 'constraint-batch-portal', score: int = 19) -> QueryResultItem:
+    scope_anchor = MemorySubjectAnchor(kind='workstream', value='inventory batch digest')
+    target_anchor = MemorySubjectAnchor(kind='surface', value='operations portal')
+    return QueryResultItem(
+        result_kind='memory_hit',
+        memory_object_id=memory_object_id,
+        type='constraint_memory',
+        payload={
+            'summary': 'Constraint: do not use operations portal.',
+            'constraint_text': 'Do not use the operations portal for the inventory batch digest.',
+            'primary_scope_anchor': {'kind': 'workstream', 'value': 'inventory batch digest'},
+            'target_anchor': {'kind': 'surface', 'value': 'operations portal'},
+            'action_class': 'use_surface',
+            'polarity': 'prohibit',
+            'strength': 'hard',
+            'status': 'active',
+            'evidence': ['Do not use the operations portal for the inventory batch digest.'],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T12:10:00Z.',
+            'confidence': 'high',
+            'canonical_key': 'workstream:inventory batch digest|surface:operations portal|use_surface',
+            'compatibility_domain_key': 'workstream:inventory batch digest|use_surface',
+            'precise_coverage_key': 'workstream:inventory batch digest|surface:operations portal|use_surface',
+            'container_ref': 'slack:channel:CLOCAL001',
+            'thread_ref': 'slack:thread:CLOCAL001:thread-typed-constraint',
+            'session_ref': 'agent-session:typed-constraint',
+            'semantic_provenance': {
+                'semantic_plugin': 'llm_agent_memory',
+                'prompt_variant': 'strict_typed_memory_v4_evidence_guarded',
+                'prompt_schema_id': 'typed_memory_extraction',
+                'prompt_schema_version': 'v7',
+            },
+        },
+        freshness_at=datetime(2026, 3, 11, 12, 10, tzinfo=timezone.utc),
+        score=score,
+        evidence=[],
+        container_ref='slack:channel:CLOCAL001',
+        thread_ref='slack:thread:CLOCAL001:thread-typed-constraint',
+        envelope=_memory_envelope('constraint', confidence='high', subjects=[scope_anchor, target_anchor]),
     )
 
 
@@ -3204,6 +3327,80 @@ def test_constraint_recall_prefers_explicit_no_login_constraint_over_auth_retry_
 
 
 
+def test_constraint_recall_prefers_typed_constraint_memory_and_excludes_conflicting_guidance() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='slack:channel:CLOCAL001',
+        thread_ref='slack:thread:CLOCAL001:diag-typed-constraint',
+        session_ref='agent-session:diag-typed-constraint',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            _inventory_batch_typed_constraint_result(score=19),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-batch-auth-retry-enveloped',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'A newer mirror-based batch digest is blocked by remote authentication.',
+                    'task': 'Resume the mirror-based batch digest.',
+                    'current_state': 'The mirror-based batch digest is prepared, but remote authentication still blocks it.',
+                    'key_findings': [
+                        'The mirror-based batch digest is prepared for the batch manifests.',
+                        'Remote authentication still blocks it.',
+                    ],
+                    'blocker_state': 'The mirror-based batch digest cannot proceed until remote authentication succeeds.',
+                    'next_step': 'Attempt to authenticate to the operations portal before retrying the inventory batch digest.',
+                    'evidence': [
+                        'Blocked: the mirror-based batch digest cannot proceed until remote authentication succeeds.',
+                        'Next step: attempt to authenticate to the operations portal before retrying the inventory batch digest.',
+                    ],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T12:12:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 12, 12, tzinfo=timezone.utc),
+                score=18,
+                evidence=[],
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-c',
+                envelope=_memory_envelope(
+                    'episode',
+                    subjects=[MemorySubjectAnchor(kind='workstream', value='inventory batch digest')],
+                ),
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='what constraint had i given you about operations portal use?',
+            query_tokens=('what', 'constraint', 'had', 'i', 'given', 'you', 'about', 'operations', 'portal', 'use'),
+            limit=5,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='what constraint had i given you about operations portal use?',
+        requested_limit=5,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    rendered_blocks = ' '.join(block.text.lower() for block in outcome.injectable_blocks)
+    active_typed = outcome.trace.routing['packaging']['active_typed_constraints']
+    assert outcome.should_inject is True
+    assert outcome.results[0].type == 'constraint_memory'
+    assert 'do not use the operations portal' in rendered_blocks
+    assert 'attempt to authenticate' not in rendered_blocks
+    assert active_typed[0]['memory_type'] == 'constraint_memory'
+    assert all(result.result_id != 'memory_object:checkpoint-batch-auth-retry-enveloped' for result in outcome.results)
+
+
 def test_multi_token_wallet_recall_excludes_unrelated_batch_checkpoint() -> None:
     plugin = AgentConversationMemoryPlugin(
         provider=TieredMemorySemanticProvider(),
@@ -3584,6 +3781,262 @@ def test_same_thread_local_constraint_correction_prefers_constraint_memory_and_e
     assert 'many talents' not in rendered_blocks
 
 
+
+
+def test_same_thread_local_typed_constraint_shares_domain_with_durable_constraint_and_excludes_conflicting_guidance() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='slack:channel:CLOCAL001',
+        thread_ref='slack:thread:CLOCAL001:thread-x',
+        session_ref='agent-session:thread-x',
+    )
+    inventory_scope = MemorySubjectAnchor(kind='workstream', value='inventory batch digest')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='thread-x-msg-4',
+                source_type='chat_message',
+                source_id='thread-x-msg-4',
+                excerpt='no, remember that we cannot use the operations portal here so no point trying to connect to it',
+                occurred_at=datetime(2026, 3, 11, 13, 0, 30, tzinfo=timezone.utc),
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-x',
+                artifact_kind='message',
+                role='user',
+                score=20,
+                evidence=[],
+            ),
+            _inventory_batch_typed_constraint_result(score=19),
+            _inventory_batch_conflicting_retry_checkpoint_result(
+                score=18,
+                envelope=_memory_envelope('episode', subjects=[inventory_scope]),
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='no, remember that we cannot use the operations portal here so no point trying to connect to it',
+            query_tokens=('no', 'remember', 'that', 'we', 'cannot', 'use', 'the', 'operations', 'portal', 'here', 'so', 'no', 'point', 'trying', 'to', 'connect', 'to', 'it'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='no, remember that we cannot use the operations portal here so no point trying to connect to it',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='same_thread_continuation', session_has_sufficient_local_context=True),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    packaging = outcome.trace.routing['packaging']
+    active_typed = packaging['active_typed_constraints']
+    shadowed_typed = packaging['shadowed_typed_constraints']
+    expected_domain = 'workstream:inventory batch digest|use_surface'
+    expected_key = 'workstream:inventory batch digest|surface:operations portal|use_surface'
+    assert outcome.should_inject is True
+    assert any(
+        profile['result_id'] == 'query_text:local_constraint'
+        and profile['profile_source'] == 'local_typed'
+        and profile['compatibility_domain'] == expected_domain
+        and profile['precise_coverage_key'] == expected_key
+        for profile in active_typed
+    )
+    assert any(
+        profile['result_id'] == 'memory_object:constraint-batch-portal'
+        and profile['profile_source'] == 'durable_typed'
+        and profile['compatibility_domain'] == expected_domain
+        and profile['precise_coverage_key'] == expected_key
+        for profile in shadowed_typed
+    )
+    assert all(result.result_id != 'memory_object:checkpoint-batch-auth-retry' for result in outcome.results)
+    rendered_blocks = ' '.join(block.text.lower() for block in outcome.injectable_blocks)
+    assert 'attempt to authenticate' not in rendered_blocks
+
+
+
+
+def test_same_thread_local_typed_constraint_abstains_when_scope_is_ambiguous() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='slack:channel:CLOCAL001',
+        thread_ref='slack:thread:CLOCAL001:thread-x',
+        session_ref='agent-session:thread-x',
+    )
+    inventory_scope = MemorySubjectAnchor(kind='workstream', value='inventory batch digest')
+    wallet_scope = MemorySubjectAnchor(kind='workstream', value='wallet reserve snapshot')
+    wallet_constraint = QueryResultItem(
+        result_kind='memory_hit',
+        memory_object_id='constraint-wallet-portal',
+        type='constraint_memory',
+        payload={
+            'summary': 'Constraint: do not use operations portal for wallet reserve snapshot.',
+            'constraint_text': 'Do not use the operations portal for the wallet reserve snapshot.',
+            'primary_scope_anchor': {'kind': 'workstream', 'value': 'wallet reserve snapshot'},
+            'target_anchor': {'kind': 'surface', 'value': 'operations portal'},
+            'action_class': 'use_surface',
+            'polarity': 'prohibit',
+            'strength': 'hard',
+            'status': 'active',
+            'evidence': ['Do not use the operations portal for the wallet reserve snapshot.'],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T12:15:00Z.',
+            'confidence': 'high',
+        },
+        freshness_at=datetime(2026, 3, 11, 12, 15, tzinfo=timezone.utc),
+        score=18,
+        evidence=[],
+        container_ref='slack:channel:CLOCAL001',
+        thread_ref='slack:thread:CLOCAL001:thread-wallet-constraint',
+        envelope=_memory_envelope('constraint', confidence='high', subjects=[wallet_scope, MemorySubjectAnchor(kind='surface', value='operations portal')]),
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='thread-x-msg-5',
+                source_type='chat_message',
+                source_id='thread-x-msg-5',
+                excerpt='no, remember that we cannot use the operations portal here so no point trying to connect to it',
+                occurred_at=datetime(2026, 3, 11, 13, 1, tzinfo=timezone.utc),
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:thread-x',
+                artifact_kind='message',
+                role='user',
+                score=20,
+                evidence=[],
+            ),
+            _inventory_batch_typed_constraint_result(score=19),
+            wallet_constraint,
+        ],
+        trace=QueryTrace(
+            query_text='no, remember that we cannot use the operations portal here so no point trying to connect to it',
+            query_tokens=('no', 'remember', 'that', 'we', 'cannot', 'use', 'the', 'operations', 'portal', 'here', 'so', 'no', 'point', 'trying', 'to', 'connect', 'to', 'it'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='no, remember that we cannot use the operations portal here so no point trying to connect to it',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='same_thread_continuation', session_has_sufficient_local_context=True),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    packaging = outcome.trace.routing['packaging']
+    active_typed = packaging['active_typed_constraints']
+    shadowed_typed = packaging.get('shadowed_typed_constraints', [])
+    assert all(profile['profile_source'] != 'local_typed' for profile in active_typed)
+    assert all(profile['profile_source'] != 'local_typed' for profile in shadowed_typed)
+
+
+
+def test_legacy_mixed_mode_normalization_abstains_when_scope_is_ambiguous() -> None:
+    inventory_scope = MemorySubjectAnchor(kind='workstream', value='inventory batch digest')
+    wallet_scope = MemorySubjectAnchor(kind='workstream', value='wallet reserve snapshot')
+    ambiguous_legacy = QueryResultItem(
+        result_kind='memory_hit',
+        memory_object_id='checkpoint-ambiguous-legacy-constraint',
+        type='task_checkpoint',
+        payload={
+            'summary': 'The carried context says not to use the operations portal.',
+            'task': 'Resume the carried work.',
+            'current_state': 'Both workstreams are mentioned near the same portal warning.',
+            'key_findings': ['Do not use the operations portal for this carried work.'],
+            'blocker_state': 'The carried note forbids operations-portal sign-in.',
+            'next_step': 'Proceed with the confirmed local path instead.',
+            'evidence': ['Constraint: do not use the operations portal for this carried work.'],
+            'freshness_signal': 'Latest explicit update at 2026-03-11T11:50:00Z.',
+        },
+        freshness_at=datetime(2026, 3, 11, 11, 50, tzinfo=timezone.utc),
+        score=17,
+        evidence=[],
+        container_ref='slack:channel:CLOCAL001',
+        thread_ref='slack:thread:CLOCAL001:thread-ambiguous-legacy',
+        envelope=_memory_envelope('episode', subjects=[inventory_scope, wallet_scope]),
+    )
+
+    constraint_state = _build_constraint_state(
+        [{'item': ambiguous_legacy}],
+        local_constraint_profile=None,
+    )
+
+    assert constraint_state['retained_legacy_profiles'] == []
+    assert any(
+        profile['result_id'] == 'memory_object:checkpoint-ambiguous-legacy-constraint'
+        for profile in constraint_state['opaque_legacy_profiles']
+    )
+
+def test_typed_precise_coverage_suppresses_only_equivalent_legacy_fallback() -> None:
+    inventory_scope = MemorySubjectAnchor(kind='workstream', value='inventory batch digest')
+    wallet_scope = MemorySubjectAnchor(kind='workstream', value='wallet reserve snapshot')
+    constraint_state = _build_constraint_state(
+        [
+            {'item': _inventory_batch_typed_constraint_result(score=20)},
+            {
+                'item': _inventory_batch_constraint_checkpoint_result(
+                    memory_object_id='checkpoint-batch-constraint-covered-legacy',
+                    score=18,
+                    envelope=_memory_envelope('episode', subjects=[inventory_scope]),
+                )
+            },
+            {
+                'item': QueryResultItem(
+                    result_kind='memory_hit',
+                    memory_object_id='checkpoint-wallet-constraint-legacy',
+                    type='task_checkpoint',
+                    payload={
+                        'summary': 'The wallet reserve snapshot carries an explicit no-login constraint.',
+                        'task': 'Resume the wallet reserve snapshot review.',
+                        'current_state': 'The wallet reserve snapshot is prepared for WAL-102 and WAL-208.',
+                        'key_findings': [
+                            'Do not use the operations portal for the wallet reserve snapshot.',
+                        ],
+                        'blocker_state': 'The wallet reserve snapshot forbids operations-portal sign-in during this review.',
+                        'next_step': 'Confirm the local snapshot before publishing the wallet reserve note.',
+                        'evidence': [
+                            'Constraint: do not use the operations portal for the wallet reserve snapshot.',
+                        ],
+                        'freshness_signal': 'Latest explicit update at 2026-03-11T11:20:00Z.',
+                    },
+                    freshness_at=datetime(2026, 3, 11, 11, 20, tzinfo=timezone.utc),
+                    score=17,
+                    evidence=[],
+                    container_ref='slack:channel:CLOCAL001',
+                    thread_ref='slack:thread:CLOCAL001:thread-wallet-constraint',
+                    envelope=_memory_envelope('episode', subjects=[wallet_scope]),
+                )
+            },
+        ],
+        local_constraint_profile=None,
+    )
+
+    active_typed = constraint_state['active_typed_profiles']
+    retained_legacy = constraint_state['retained_legacy_profiles']
+    typed_inventory_key = 'workstream:inventory batch digest|surface:operations portal|use_surface'
+    wallet_legacy_key = 'workstream:wallet reserve snapshot|surface:operations portal|use_surface'
+    assert any(profile['precise_coverage_key'] == typed_inventory_key for profile in active_typed)
+    assert all(profile['precise_coverage_key'] != typed_inventory_key for profile in retained_legacy)
+    assert any(
+        profile['anchor_result_id'] == 'memory_object:checkpoint-wallet-constraint-legacy'
+        and profile['precise_coverage_key'] == wallet_legacy_key
+        for profile in retained_legacy
+    )
 
 def test_same_thread_wallet_recall_prefers_wallet_memory_over_adjacent_batch_auth_pollution() -> None:
     plugin = AgentConversationMemoryPlugin(

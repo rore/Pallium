@@ -52,7 +52,7 @@ Current focus:
   - retrieval can narrow by generic memory kind before final selection
   - direct deterministic replay covers polluted recall, adjacent-topic isolation, constraint contradictions, and pending-to-processed convergence
 - the next stabilization phase is now:
-  - add a first-class constraint/policy lane with typed compatibility checks
+  - the first-class constraint/policy lane is now shipped with typed compatibility checks
   - add subject and workstream anchors so adjacent-topic separation happens before final ranking
   - define a bounded query-policy contract and selective semantic ambiguity resolution only for unresolved cases
 - current stabilization features can continue to use bounded prompt contracts
@@ -84,7 +84,7 @@ Planned future query pipeline:
 - full query/debug trace for the staged path
 - first, build on the shipped write-time memory envelope so retrieval can filter by generic memory kind and other deterministic metadata before semantic ranking
 - second and third, in parallel:
-  - add a first-class constraint and policy lane so hard prohibitions and preferences are enforced semantically
+  - build on the shipped first-class constraint and policy lane so hard prohibitions and preferences stay enforced semantically across later routing and lifecycle work
   - add subject and workstream anchors so adjacent-topic contamination is filtered before final selection
 - fourth, define the bounded query-policy contract and selective semantic ambiguity resolution for the minority of cases that remain unresolved after deterministic narrowing
 - keep extending the shipped Pallium-native replay safety rail across all of the above so new structure is backed by deterministic tests, convergence checks, and replay fixtures
@@ -109,8 +109,8 @@ Parallel workstreams for the next phase:
 - Stream B (`stabilization-safety`): extend the shipped Pallium-native scenario and replay rail
   - this is the safety rail and should keep turning real misses into generic deterministic regressions
   - it should keep protecting deterministic hot-path behavior, abstention behavior, low-confidence fallback, and selective semantic escalation boundaries as later features land
-- Stream C (`stabilization-semantics`): first-class constraints plus subject/workstream anchors
-  - this should start once the envelope fields exist and can then split into two parallel semantic-policy workers with a shared metadata contract
+- Stream C (stabilization-semantics): shipped first-class constraints, next subject/workstream anchors
+  - the typed constraint lane is now shipped; this stream now continues with subject/workstream anchors and later semantic-policy refinement on top of the shipped compatibility model
 - Stream D (`stabilization-enrichment`): write-time contextual enrichment and background consolidation
   - this should start only after the typed write path and deterministic hot path are stable enough to enrich without masking structural problems
 - Stream E (`semantic-contract-governance`): semantic prompt-role contracts and replay-governed prompt lifecycle
@@ -145,5 +145,7 @@ Still out of scope for this phase:
 - public API expansion for explicit retention administration
 - replacing lower-level evidence-backed memory with only higher-level summaries
 - turning Pallium into a workflow engine, transcript archive, or raw tool-log store
+
+
 
 
