@@ -372,3 +372,109 @@ def test_chat_mode_uses_task_checkpoint_for_natural_language_resumed_work_histor
     assert "retry window" in rendered_blocks
     assert "batch 418" in rendered_blocks
     assert model.calls[0]["injectable_blocks"] == query_response["injectable_blocks"]
+
+def test_chat_mode_uses_pattern_memory_after_consolidation_for_broad_recall(monkeypatch, test_db_url: str) -> None:
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: PublicCorpusSemanticProvider())
+    client = TestClient(create_app(build_llm_test_config(default_use_case="agent_conversation_memory", sqlite_url=test_db_url)))
+
+    _seed_history(
+        client,
+        [
+            {
+                "source_type": "chat_message",
+                "source_id": "grocery-history-u1",
+                "content_type": "text/plain",
+                "content": "We keep wasting time in the store. What is the real lesson?",
+                "artifact_kind": "message",
+                "role": "user",
+                "container_ref": "chat:grocery-pattern",
+                "thread_ref": "chat:grocery-pattern:one",
+                "session_ref": "session:grocery-pattern:one",
+                "visibility_context": dict(_PUBLIC),
+            },
+            {
+                "source_type": "assistant_artifact",
+                "source_id": "grocery-history-a1",
+                "content_type": "text/plain",
+                "content": "You keep zig-zagging. Investigation found that aisle-by-aisle shopping leads to repeated backtracking when the list is unordered.",
+                "artifact_kind": "assistant_output",
+                "role": "assistant",
+                "container_ref": "chat:grocery-pattern",
+                "thread_ref": "chat:grocery-pattern:one",
+                "session_ref": "session:grocery-pattern:one",
+                "visibility_context": dict(_PUBLIC),
+            },
+            {
+                "source_type": "assistant_artifact",
+                "source_id": "grocery-history-a2",
+                "content_type": "text/plain",
+                "content": "Decision: sort the list by store section before leaving home.",
+                "artifact_kind": "assistant_output",
+                "role": "assistant",
+                "container_ref": "chat:grocery-pattern",
+                "thread_ref": "chat:grocery-pattern:one",
+                "session_ref": "session:grocery-pattern:one",
+                "visibility_context": dict(_PUBLIC),
+            },
+            {
+                "source_type": "chat_message",
+                "source_id": "grocery-history-u2",
+                "content_type": "text/plain",
+                "content": "This happened again with a different list.",
+                "artifact_kind": "message",
+                "role": "user",
+                "container_ref": "chat:grocery-pattern",
+                "thread_ref": "chat:grocery-pattern:two",
+                "session_ref": "session:grocery-pattern:two",
+                "visibility_context": dict(_PUBLIC),
+            },
+            {
+                "source_type": "assistant_artifact",
+                "source_id": "grocery-history-a3",
+                "content_type": "text/plain",
+                "content": "Different surface, same problem. Investigation found that recipe-order shopping created the same backtracking problem in the store.",
+                "artifact_kind": "assistant_output",
+                "role": "assistant",
+                "container_ref": "chat:grocery-pattern",
+                "thread_ref": "chat:grocery-pattern:two",
+                "session_ref": "session:grocery-pattern:two",
+                "visibility_context": dict(_PUBLIC),
+            },
+            {
+                "source_type": "assistant_artifact",
+                "source_id": "grocery-history-a4",
+                "content_type": "text/plain",
+                "content": "Decision: group the shopping list by produce, dairy, pantry, and freezer before you shop.",
+                "artifact_kind": "assistant_output",
+                "role": "assistant",
+                "container_ref": "chat:grocery-pattern",
+                "thread_ref": "chat:grocery-pattern:two",
+                "session_ref": "session:grocery-pattern:two",
+                "visibility_context": dict(_PUBLIC),
+            },
+        ],
+    )
+    client.app.state.pallium_service.run_consolidation_pass(
+        use_case="agent_conversation_memory",
+        strategy_name="container_topic_window",
+    )
+
+    harness, model = _build_harness(
+        client,
+        container_ref="chat:grocery-pattern",
+        thread_ref="chat:grocery-pattern:fresh",
+        session_ref="session:grocery-pattern:fresh",
+    )
+
+    harness.process_chat_message("Give me the big picture across those conversations, not one specific tactic.")
+
+    query_response = harness.session.events[0]["query_debug"]["response"]
+    routing = query_response["trace"]["routing"]
+    rendered_blocks = " ".join(block["text"].lower() for block in query_response["injectable_blocks"])
+
+    assert query_response["should_inject"] is True
+    assert routing["selected_layer"] == "pattern_memory"
+    assert any(block["memory_type"] == "pattern_memory" for block in query_response["injectable_blocks"])
+    assert "backtracking" in rendered_blocks
+    assert "store section" in rendered_blocks
+    assert model.calls[0]["injectable_blocks"] == query_response["injectable_blocks"]

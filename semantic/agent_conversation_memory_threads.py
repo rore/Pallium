@@ -431,7 +431,13 @@ def build_task_checkpoint_memory(
             raise ValueError("task checkpoint extraction must return a non-empty summary string")
         parsed_summary = parsed_summary.strip()
         task = str(response.parsed_json.get("task") or "").strip() or _default_task_checkpoint_task(summary, conclusion_payload)
-        current_state = str(response.parsed_json.get("current_state") or "").strip() or _default_task_checkpoint_state(summary, selected_work_artifacts)
+        derived_current_state = _default_task_checkpoint_state(summary, selected_work_artifacts)
+        parsed_current_state = str(response.parsed_json.get("current_state") or "").strip()
+        current_state = _normalize_task_checkpoint_current_state(
+            current_state=parsed_current_state,
+            derived_current_state=derived_current_state,
+            selected_work_artifacts=selected_work_artifacts,
+        ) or derived_current_state
         key_findings = _parse_string_list(response.parsed_json.get("key_findings")) or _default_task_checkpoint_findings(conclusion_payload, selected_work_artifacts)
         blocker_state = str(response.parsed_json.get("blocker_state") or "").strip() or _default_task_checkpoint_blocker(selected_work_artifacts)
         next_step = str(response.parsed_json.get("next_step") or "").strip() or _default_task_checkpoint_next_step(selected_work_artifacts)
@@ -865,18 +871,59 @@ def _default_task_checkpoint_state(summary: str, selected_work_artifacts: list[d
     blockers = _signal_texts(selected_work_artifacts, "blocker")
     constraints = _signal_texts(selected_work_artifacts, "constraint")
     if progress_updates:
-        fragments.append(progress_updates[0])
+        fragments.append(progress_updates[-1])
     if blockers:
-        fragments.append(blockers[0])
+        fragments.append(blockers[-1])
     if not fragments:
         next_steps = _signal_texts(selected_work_artifacts, "next_step")
         if next_steps:
-            fragments.append(f"Pending: {next_steps[0]}")
+            fragments.append(f"Pending: {next_steps[-1]}")
     if not fragments and constraints:
-        fragments.append(f"Constraint: {constraints[0]}")
+        fragments.append(f"Constraint: {constraints[-1]}")
     if fragments:
         return " ".join(fragments)
     return summary
+
+def _normalize_task_checkpoint_current_state(
+    *,
+    current_state: str,
+    derived_current_state: str,
+    selected_work_artifacts: list[dict[str, str]],
+) -> str:
+    if not current_state:
+        return derived_current_state
+    if not derived_current_state:
+        return current_state
+    blockers = _signal_texts(selected_work_artifacts, "blocker")
+    progress_updates = _signal_texts(selected_work_artifacts, "progress_update")
+    next_steps = _signal_texts(selected_work_artifacts, "next_step")
+    latest_blocker = blockers[-1] if blockers else ""
+    stale_blockers = blockers[:-1]
+    active_signals = [text for text in (latest_blocker, progress_updates[-1] if progress_updates else "", next_steps[-1] if next_steps else "") if text]
+    current_state_normalized = normalize_for_index(current_state)
+    derived_state_normalized = normalize_for_index(derived_current_state)
+    if stale_blockers:
+        stale_norms = [normalize_for_index(text) for text in stale_blockers if text]
+        fragments = [fragment.strip() for fragment in re.split(r"(?<=[.!?])\s+|\s*;\s*", current_state) if fragment.strip()]
+        kept_fragments = [
+            fragment
+            for fragment in fragments
+            if not any(stale_norm in normalize_for_index(fragment) for stale_norm in stale_norms)
+        ]
+        if kept_fragments:
+            cleaned_state = " ".join(kept_fragments)
+            cleaned_norm = normalize_for_index(cleaned_state)
+            if latest_blocker and normalize_for_index(latest_blocker) not in cleaned_norm:
+                cleaned_state = f"{cleaned_state} {latest_blocker}".strip()
+                cleaned_norm = normalize_for_index(cleaned_state)
+            if any(normalize_for_index(text) in cleaned_norm for text in active_signals):
+                return cleaned_state
+    if any(normalize_for_index(text) in current_state_normalized for text in active_signals):
+        return current_state
+    if active_signals and current_state_normalized != derived_state_normalized:
+        return derived_current_state
+    return current_state
+
 
 def _default_task_checkpoint_findings(conclusions: list[dict[str, str]], selected_work_artifacts: list[dict[str, str]]) -> list[str]:
     findings: list[str] = []
@@ -892,11 +939,11 @@ def _default_task_checkpoint_findings(conclusions: list[dict[str, str]], selecte
 
 def _default_task_checkpoint_blocker(selected_work_artifacts: list[dict[str, str]]) -> str:
     blockers = _signal_texts(selected_work_artifacts, "blocker")
-    return blockers[0] if blockers else ""
+    return blockers[-1] if blockers else ""
 
 def _default_task_checkpoint_next_step(selected_work_artifacts: list[dict[str, str]]) -> str:
     next_steps = _signal_texts(selected_work_artifacts, "next_step")
-    return next_steps[0] if next_steps else ""
+    return next_steps[-1] if next_steps else ""
 
 def _default_task_checkpoint_evidence(conclusions: list[dict[str, str]], selected_work_artifacts: list[dict[str, str]], summary: str) -> list[str]:
     evidence: list[str] = []

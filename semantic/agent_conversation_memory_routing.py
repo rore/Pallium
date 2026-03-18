@@ -2510,7 +2510,7 @@ def _candidate_is_injection_eligible(
     if item.result_kind == "source_hit":
         if normalize_for_index(str(item.excerpt or "")) == normalize_for_index(query_text):
             return False
-        if _source_candidate_is_primary_injection_eligible(intent):
+        if _source_candidate_is_primary_injection_eligible(candidate, intent, query_text=query_text):
             return True
         return allow_source_companion and _source_candidate_is_companion_injection_eligible(intent)
     if item.type in {"decision", "investigation_outcome", "task_checkpoint", "continuity_memory", "pattern_memory", "thread_summary", CONSTRAINT_MEMORY_TYPE}:
@@ -2519,8 +2519,52 @@ def _candidate_is_injection_eligible(
         return allow_discussion_fallback
     return False
 
-def _source_candidate_is_primary_injection_eligible(intent: str) -> bool:
-    return intent in {"evidence_trace", "investigative_conclusion"}
+def _query_requests_quote_grade_source(query_text: str) -> bool:
+    lowered = query_text.lower()
+    if any(
+        cue in lowered
+        for cue in (
+            "exact line",
+            "exact log line",
+            "proof line",
+            "smoking gun",
+            "exact wording",
+            "exact text",
+            "quote the",
+            "quote that",
+        )
+    ):
+        return True
+    if ("which line" in lowered or "what line" in lowered) and any(
+        cue in lowered for cue in ("prove", "proved", "proof", "backed", "support", "supported", "log")
+    ):
+        return True
+    return False
+
+def _source_candidate_has_quote_grade_support(candidate: dict[str, object], *, query_text: str) -> bool:
+    if not _query_requests_quote_grade_source(query_text):
+        return False
+    overlap_tokens = {str(token) for token in candidate.get("content_overlap_tokens") or []}
+    proof_overlap = overlap_tokens.intersection({"exact", "line", "log", "proof", "quote"})
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    excerpt = str(item.excerpt or "")
+    excerpt_lower = excerpt.lower()
+    if any(hedge in excerpt_lower for hedge in ("probably", "maybe", "somewhere", "did not keep", "don't have", "not sure")):
+        return False
+    proof_like_excerpt = any(
+        cue in excerpt_lower
+        for cue in ("investigation found", "exact log line", "smoking gun", "showed", "proved", "backed")
+    )
+    quoted_evidence = (excerpt.count("'") >= 2 or excerpt.count('"') >= 2) and bool(proof_overlap)
+    support_grade = str(candidate.get("support_grade") or "weak")
+    return (support_grade in {"supported", "strong"} and proof_like_excerpt) or quoted_evidence
+
+
+def _source_candidate_is_primary_injection_eligible(candidate: dict[str, object], intent: str, *, query_text: str) -> bool:
+    if intent in {"evidence_trace", "investigative_conclusion"}:
+        return True
+    return intent == "precise_fact" and _source_candidate_has_quote_grade_support(candidate, query_text=query_text)
 
 def _source_candidate_is_companion_injection_eligible(intent: str) -> bool:
     return intent == "work_resumption"
@@ -2534,6 +2578,34 @@ def _candidate_is_low_value(candidate: dict[str, object]) -> bool:
         payload = item.payload or {}
         return _is_low_value_meta_text(str(payload.get("summary") or ""))
     return False
+
+def _task_checkpoint_injection_text(payload: dict[str, object]) -> str:
+    constraint = _preferred_constraint_text(
+        str(payload.get("summary") or ""),
+        str(payload.get("current_state") or ""),
+        str(payload.get("blocker_state") or ""),
+        *[str(value or "") for value in _parse_string_list(payload.get("key_findings"))],
+        *[str(value or "") for value in _parse_string_list(payload.get("evidence"))],
+    )
+    summary = str(payload.get("summary") or "").strip()
+    current_state = str(payload.get("current_state") or "").strip()
+    blocker = str(payload.get("blocker_state") or "").strip()
+    next_step = str(payload.get("next_step") or "").strip()
+    parts: list[str] = []
+    if constraint:
+        parts.append(f"Constraint: {constraint}")
+    if current_state:
+        parts.append(f"Current state: {current_state}")
+    elif summary:
+        parts.append(summary)
+    if blocker and normalize_for_index(blocker) not in normalize_for_index(current_state):
+        parts.append(f"Blocker: {blocker}")
+    if next_step:
+        parts.append(f"Next step: {next_step}")
+    if not current_state and not next_step and summary:
+        parts.append(summary)
+    return _join_unique_text_parts(parts)
+
 
 def _build_injectable_block_from_candidate(candidate: dict[str, object], *, intent: str) -> InjectableBlock:
     item = candidate["item"]
@@ -2578,28 +2650,11 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             memory_type=item.type,
         )
     if item.type == "task_checkpoint":
-        constraint = _preferred_constraint_text(
-            str(payload.get("summary") or ""),
-            str(payload.get("current_state") or ""),
-            str(payload.get("blocker_state") or ""),
-            *[str(value or "") for value in _parse_string_list(payload.get("key_findings"))],
-            *[str(value or "") for value in _parse_string_list(payload.get("evidence"))],
-        )
-        parts: list[str] = []
-        if constraint:
-            parts.append(f"Constraint: {constraint}")
-        parts.extend([str(payload.get("summary") or "").strip(), str(payload.get("current_state") or "").strip()])
-        blocker = str(payload.get("blocker_state") or "").strip()
-        next_step = str(payload.get("next_step") or "").strip()
-        if blocker:
-            parts.append(f"Blocker: {blocker}")
-        if next_step:
-            parts.append(f"Next step: {next_step}")
         return InjectableBlock(
             result_id=str(item.result_id),
             block_type="memory",
             title="Task Checkpoint",
-            text=_join_unique_text_parts(parts),
+            text=_task_checkpoint_injection_text(payload),
             evidence=item.evidence,
             memory_type=item.type,
         )

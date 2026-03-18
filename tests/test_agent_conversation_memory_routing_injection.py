@@ -1020,6 +1020,164 @@ def test_fresh_thread_evidence_trace_still_allows_source_evidence() -> None:
     assert outcome.results[0].result_kind == 'source_hit'
     assert outcome.injectable_blocks[0].block_type == 'source_evidence'
 
+def test_precise_fact_quote_grade_recall_allows_supported_source_evidence() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:realistic:overlap',
+        thread_ref='chat:realistic:overlap:current',
+        session_ref='session:realistic:overlap:current',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='source-evidence-log',
+                source_type='assistant_artifact',
+                source_id='overlap-log',
+                excerpt="The smoking gun was right in the logs. Investigation found that the exact log line 'job already running, skipping new start' showed the retries were overlapping.",
+                occurred_at=datetime(2026, 3, 11, 10, 1, tzinfo=timezone.utc),
+                container_ref='chat:realistic:overlap',
+                thread_ref='chat:realistic:overlap:history',
+                artifact_kind='tool_use_summary',
+                role='assistant',
+                score=18,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-evidence-log',
+                        source_type='assistant_artifact',
+                        source_id='overlap-log',
+                        occurred_at=datetime(2026, 3, 11, 10, 1, tzinfo=timezone.utc),
+                        container_ref='chat:realistic:overlap',
+                        thread_ref='chat:realistic:overlap:history',
+                        artifact_kind='tool_use_summary',
+                    )
+                ],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='current-query-echo',
+                source_type='chat_message',
+                source_id='current-query-echo',
+                excerpt='Which exact log line was it again?',
+                occurred_at=datetime(2026, 3, 11, 10, 3, tzinfo=timezone.utc),
+                container_ref='chat:realistic:overlap',
+                thread_ref='chat:realistic:overlap:current',
+                artifact_kind='message',
+                role='user',
+                score=20,
+                evidence=[],
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='Which exact log line was it again?',
+            query_tokens=('which', 'exact', 'log', 'line', 'proved', 'the', 'retries', 'were', 'overlapping'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='Which exact log line was it again?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    assert outcome.trace.routing['query_intent'] == 'precise_fact'
+    assert outcome.trace.routing['selected_layer'] == 'source_evidence'
+    assert outcome.trace.routing['injection_decision']['should_inject'] is True
+    assert outcome.trace.routing['injection_decision']['decision_reason'] == 'carry_forward_available'
+    assert outcome.results[0].source_item_id == 'source-evidence-log'
+    assert outcome.injectable_blocks[0].block_type == 'source_evidence'
+    assert 'job already running, skipping new start' in outcome.injectable_blocks[0].text
+
+
+def test_precise_fact_quote_grade_recall_keeps_weak_source_evidence_non_injectable() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:realistic:overlap',
+        thread_ref='chat:realistic:overlap:current',
+        session_ref='session:realistic:overlap:current',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='source-evidence-weak',
+                source_type='assistant_artifact',
+                source_id='overlap-weak',
+                excerpt='We probably saw it somewhere in the logs, but I did not keep the exact line.',
+                occurred_at=datetime(2026, 3, 11, 10, 1, tzinfo=timezone.utc),
+                container_ref='chat:realistic:overlap',
+                thread_ref='chat:realistic:overlap:history',
+                artifact_kind='tool_use_summary',
+                role='assistant',
+                score=18,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-evidence-weak',
+                        source_type='assistant_artifact',
+                        source_id='overlap-weak',
+                        occurred_at=datetime(2026, 3, 11, 10, 1, tzinfo=timezone.utc),
+                        container_ref='chat:realistic:overlap',
+                        thread_ref='chat:realistic:overlap:history',
+                        artifact_kind='tool_use_summary',
+                    )
+                ],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='current-query-echo-weak',
+                source_type='chat_message',
+                source_id='current-query-echo-weak',
+                excerpt='Which exact log line was it again?',
+                occurred_at=datetime(2026, 3, 11, 10, 3, tzinfo=timezone.utc),
+                container_ref='chat:realistic:overlap',
+                thread_ref='chat:realistic:overlap:current',
+                artifact_kind='message',
+                role='user',
+                score=20,
+                evidence=[],
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='Which exact log line was it again?',
+            query_tokens=('which', 'exact', 'log', 'line', 'was', 'it', 'again'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='Which exact log line was it again?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    assert outcome.trace.routing['query_intent'] == 'precise_fact'
+    assert outcome.trace.routing['selected_layer'] == 'source_evidence'
+    assert outcome.trace.routing['injection_decision']['should_inject'] is False
+    assert outcome.trace.routing['injection_decision']['decision_reason'] == 'no_relevant_memory'
+    assert outcome.injectable_blocks == []
+
+
 def test_fresh_thread_greeting_noise_fails_closed_without_memory_injection() -> None:
     plugin = AgentConversationMemoryPlugin(
         provider=TieredMemorySemanticProvider(),

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from app.config import AppConfig
 from tests.config_helpers import build_llm_test_config
 from app.main import create_app
+from semantic.agent_conversation_memory_threads import _normalize_task_checkpoint_current_state
 from evals.agent_conversation_runner import run_agent_conversation_scenarios
 from providers.llm.base import LLMJsonResponse
 
@@ -173,6 +174,17 @@ def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
             "next_step": "Refresh the catalog service token and rerun the sync from batch 313.",
             "evidence": ["Partial progress: refreshed 312 reservation records before the catalog sync tool failed.", "Blocked: catalog API returned 401 because the service token expired.", "Next step: refresh the catalog service token and rerun the sync from batch 313."],
             "freshness_signal": "Latest explicit update at 2026-03-11T10:02:00Z.",
+        }
+    if "retry window is exhausted" in lower and "batch 418" in lower:
+        return {
+            "summary": "Catalog sync retry moved past auth recovery and is now blocked on the retry window.",
+            "task": "Resume the catalog sync retry.",
+            "current_state": "Sync completed through batch 417, but the retry window is exhausted now.",
+            "key_findings": ["the token refresh worked", "the sync completed through batch 417"],
+            "blocker_state": "The retry window is exhausted now.",
+            "next_step": "Wait 15 minutes and resume from batch 418.",
+            "evidence": ["Partial progress: the token refresh worked and the sync completed through batch 417.", "Blocked: the retry window is exhausted now.", "Next step: wait 15 minutes and resume from batch 418."],
+            "freshness_signal": "Latest explicit update at 2026-03-11T13:02:00Z.",
         }
     return {
         "summary": "Resume the previously recorded work from this thread.",
@@ -527,6 +539,39 @@ def test_natural_language_assistant_output_creates_task_checkpoint_from_metadata
     assert any(item["signal_type"] == "next_step" and item["signal_origin"] == "llm" and "batch 418" in item["text"].lower() for item in selected_work_artifacts)
 
 
+def test_task_checkpoint_current_state_prefers_active_blocker_over_resolved_key_finding(monkeypatch, test_db_url: str) -> None:
+    client = _create_thread_client(monkeypatch, test_db_url)
+    for payload in (
+        {"source_type": "chat_message", "source_id": "thread-msg-natural-3", "content_type": "text/plain", "content": "I need to leave myself a clean sync handoff.", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-003", "session_ref": "agent-session-agg-natural-003", "occurred_at": "2026-03-11T13:00:00Z"},
+        {"source_type": "assistant_artifact", "source_id": "thread-natural-artifact-3", "content_type": "text/plain", "content": "Token refresh succeeded. Sync completed through batch 417, but the retry window is exhausted now. Resume at batch 418 after the retry window clears.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-003", "session_ref": "agent-session-agg-natural-003", "occurred_at": "2026-03-11T13:02:00Z"},
+    ):
+        client.post("/items", json=payload)
+
+    query_response = client.post("/query", json={"text": "what is still blocking the sync and where do i resume?", "limit": 8, "container_ref": "chat:library-help"})
+    memory_hits = [item for item in query_response.json()["results"] if item["result_kind"] == "memory_hit"]
+    task_checkpoint = next(item for item in memory_hits if item["type"] == "task_checkpoint")
+    current_state = task_checkpoint["payload"]["current_state"].lower()
+    assert "retry window" in current_state
+    assert "token refresh succeeded" not in current_state
+
+
+
+def test_normalize_task_checkpoint_current_state_preserves_richer_active_state_when_aligned() -> None:
+    current_state = "Sync completed through batch 417, but the retry window is exhausted now."
+    derived_current_state = "The retry window is exhausted now."
+    selected_work_artifacts = [
+        {"signal_type": "progress_update", "text": "Partial progress: the sync completed through batch 417."},
+        {"signal_type": "blocker", "text": "Blocked: the retry window is exhausted now."},
+        {"signal_type": "next_step", "text": "Next step: wait 15 minutes and resume from batch 418."},
+    ]
+
+    normalized = _normalize_task_checkpoint_current_state(
+        current_state=current_state,
+        derived_current_state=derived_current_state,
+        selected_work_artifacts=selected_work_artifacts,
+    )
+
+    assert normalized == current_state
 def test_key_finding_only_signal_does_not_create_task_checkpoint(monkeypatch, test_db_url: str) -> None:
     client = _create_thread_client(monkeypatch, test_db_url)
     for payload in (
