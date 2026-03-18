@@ -13,7 +13,8 @@ from app.config import AppConfig
 from app.dependencies import build_semantic_plugins
 from core.contracts import build_source_item
 from core.models import SourceItem
-from semantic.llm_agent_memory import LLMAgentMemoryPlugin
+from semantic.llm_agent_memory import LLMAgentMemoryPlugin, get_prompt_variant_text
+from semantic.prompt_variant_metrics import prompt_text_metrics
 from semantic.prompt_roles import get_prompt_role_contract
 
 
@@ -21,6 +22,16 @@ DEFAULT_INPUT_FILE = Path("evals/semantic/input/items.jsonl")
 DEFAULT_OUTPUT_DIR = Path("evals/semantic/output")
 SANITIZE_PATTERN = re.compile(r"[^a-z0-9]+")
 TRACKED_TYPED_KINDS = ("decision", "investigation_outcome")
+TRACKED_SIGNAL_FIELDS = (
+    "is_low_value_meta",
+    "constraint_text",
+    "next_step_text",
+    "blocker_text",
+    "progress_text",
+    "key_finding_text",
+    "subject_hints",
+    "constraint_candidates",
+)
 WRITE_EXTRACTION_PROMPT_ROLE = get_prompt_role_contract("write_extraction")
 
 
@@ -120,6 +131,7 @@ def run_semantic_eval(
         "prompt_role": WRITE_EXTRACTION_PROMPT_ROLE.role,
         "prompt_schema_id": WRITE_EXTRACTION_PROMPT_ROLE.schema_id,
         "prompt_schema_version": WRITE_EXTRACTION_PROMPT_ROLE.schema_version,
+        "prompt_text_metrics": {variant: prompt_text_metrics(get_prompt_variant_text(variant)) for variant in resolved_variants},
         "max_concurrency": max_concurrency,
         "results_file": results_path.name,
         "split_output": split_output,
@@ -132,7 +144,10 @@ def run_semantic_eval(
     }
 
     for variant in resolved_variants:
-        summary["per_variant"][variant] = _empty_variant_summary(items_total=len(records))
+        summary["per_variant"][variant] = _empty_variant_summary(
+            items_total=len(records),
+            prompt_text_metrics=prompt_text_metrics(get_prompt_variant_text(variant)),
+        )
 
     with results_path.open("w", encoding="utf-8") as results_file:
         for result in results:
@@ -140,6 +155,7 @@ def run_semantic_eval(
             payload = result.payload
             variant_summary = summary["per_variant"][task.prompt_variant]
             expected_kind = _expected_kind(task.source_item)
+            expected_signal_truths = _expected_signal_truths(task.source_item)
 
             if payload["status"] == "ok":
                 summary["items_succeeded"] += 1
@@ -149,6 +165,11 @@ def run_semantic_eval(
                 if result.promoted_type in variant_summary["promoted_counts"]:
                     variant_summary["promoted_counts"][result.promoted_type] += 1
                 _update_expected_metrics(variant_summary, expected_kind=expected_kind, predicted_type=result.promoted_type)
+                _update_signal_metrics(
+                    variant_summary,
+                    expected_signal_truths=expected_signal_truths,
+                    normalized_extraction=payload.get("normalized_extraction") or {},
+                )
             else:
                 summary["items_failed"] += 1
                 variant_summary["items_failed"] += 1
@@ -230,7 +251,7 @@ def _evaluate_task(task: EvalTask, plugin: LLMAgentMemoryPlugin) -> EvalResult:
         }
         payload["normalized_extraction"] = _serialize(trace.extraction)
         payload["artifacts"] = _serialize(trace.process_result)
-        promoted_type = trace.process_result.memory_objects[0].type
+        promoted_type = trace.process_result.memory_objects[0].type if trace.process_result.memory_objects else None
         return EvalResult(task=task, payload=payload, promoted_type=promoted_type)
     except Exception as exc:
         payload["error"] = {
@@ -268,20 +289,39 @@ def _expected_kind(source_item: Any) -> str | None:
     return normalized or None
 
 
-def _empty_variant_summary(*, items_total: int) -> dict[str, Any]:
+def _expected_signal_truths(source_item: Any) -> dict[str, bool]:
+    metadata = getattr(source_item, "metadata", None) or {}
+    raw = metadata.get("expected_signal_truths")
+    if not isinstance(raw, dict):
+        return {}
+    normalized: dict[str, bool] = {}
+    for key, value in raw.items():
+        if isinstance(key, str) and isinstance(value, bool) and key in TRACKED_SIGNAL_FIELDS:
+            normalized[key] = value
+    return normalized
+
+
+def _empty_variant_summary(*, items_total: int, prompt_text_metrics: dict[str, Any]) -> dict[str, Any]:
     return {
         "prompt_role": WRITE_EXTRACTION_PROMPT_ROLE.role,
         "prompt_schema_id": WRITE_EXTRACTION_PROMPT_ROLE.schema_id,
         "prompt_schema_version": WRITE_EXTRACTION_PROMPT_ROLE.schema_version,
+        "prompt_text_metrics": prompt_text_metrics,
         "items_total": items_total,
         "items_succeeded": 0,
         "items_failed": 0,
         "overall_correct": 0,
+        "signal_cases_total": 0,
+        "signal_cases_correct": 0,
         "promoted_counts": {"decision": 0, "investigation_outcome": 0, "discussion_summary": 0},
         "expected_counts": {"decision": 0, "investigation_outcome": 0, "discussion_summary": 0},
         "type_metrics": {
             kind: {"expected": 0, "predicted": 0, "correct": 0, "false_positive": 0, "false_negative": 0}
             for kind in TRACKED_TYPED_KINDS
+        },
+        "signal_metrics": {
+            field: {"expected_true": 0, "expected_false": 0, "correct": 0, "false_positive": 0, "false_negative": 0}
+            for field in TRACKED_SIGNAL_FIELDS
         },
     }
 
@@ -308,6 +348,49 @@ def _update_expected_metrics(variant_summary: dict[str, Any], *, expected_kind: 
         return
     if predicted_type == expected_kind:
         variant_summary["overall_correct"] += 1
+
+
+def _update_signal_metrics(
+    variant_summary: dict[str, Any],
+    *,
+    expected_signal_truths: dict[str, bool],
+    normalized_extraction: dict[str, Any],
+) -> None:
+    if not expected_signal_truths:
+        return
+
+    variant_summary["signal_cases_total"] += 1
+    case_correct = True
+    for signal_name, expected_present in expected_signal_truths.items():
+        entry = variant_summary["signal_metrics"][signal_name]
+        if expected_present:
+            entry["expected_true"] += 1
+        else:
+            entry["expected_false"] += 1
+        actual_present = _signal_present(normalized_extraction.get(signal_name))
+        if actual_present == expected_present:
+            entry["correct"] += 1
+            continue
+        case_correct = False
+        if actual_present and not expected_present:
+            entry["false_positive"] += 1
+        else:
+            entry["false_negative"] += 1
+
+    if case_correct:
+        variant_summary["signal_cases_correct"] += 1
+
+
+def _signal_present(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, dict)):
+        return bool(value)
+    return True
 
 
 def _slugify(value: str) -> str:

@@ -4,7 +4,7 @@ from app.config import AppConfig, LLMProviderConfig, SemanticPackageConfig
 from capabilities.consolidation import ConsolidationPolicy, DEFAULT_CONSOLIDATION_STRATEGIES
 
 
-DEFAULT_PROMPT_VARIANT = "strict_typed_memory_v4_evidence_guarded"
+DEFAULT_PROMPT_VARIANT = "strict_typed_memory_v5_compact_examples"
 DEFAULT_CONSOLIDATION_POLICY = ConsolidationPolicy(
     enabled_strategies=DEFAULT_CONSOLIDATION_STRATEGIES,
     default_strategy="thread_summary_anchored",

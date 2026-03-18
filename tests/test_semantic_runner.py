@@ -7,44 +7,67 @@ from pathlib import Path
 from app.config import AppConfig
 from evals.semantic_runner import run_semantic_eval
 from providers.llm.base import LLMJsonResponse
-from semantic.llm_agent_memory import LLMAgentMemoryPlugin
+from semantic.llm_agent_memory import LLMAgentMemoryPlugin, describe_prompt_variants
 from semantic.prompt_roles import get_prompt_role_contract
 
 
 WRITE_EXTRACTION_PROMPT_ROLE = get_prompt_role_contract("write_extraction")
+DEFAULT_VARIANT = "strict_typed_memory_v5_compact_examples"
+
 
 class VariantAwareStubLLMProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+        parsed_json = {
+            "summary": "Semantic summary",
+            "candidate_type": None,
+            "decision_text": None,
+            "decision_evidence_text": None,
+            "investigation_text": None,
+            "investigation_evidence_text": None,
+            "rationale_text": None,
+            "is_low_value_meta": False,
+            "constraint_text": None,
+            "next_step_text": None,
+            "blocker_text": None,
+            "progress_text": None,
+            "key_finding_text": None,
+            "subject_hints": [],
+            "constraint_candidates": [],
+        }
         if 'Investigation found that arrival-time ordering missed hold updates during sync delays.' in user_prompt:
-            parsed_json = {
-                "summary": "Investigation summary",
-                "candidate_type": "investigation_outcome",
-                "decision_text": None,
-                "decision_evidence_text": None,
-                "investigation_text": "arrival-time ordering missed hold updates during sync delays",
-                "investigation_evidence_text": "Investigation found that arrival-time ordering missed hold updates during sync delays",
-                "rationale_text": "because the catalog provider delivered updates late",
-            }
-        elif 'Classify candidate_type as \"decision\" only when the source explicitly records a committed choice' in system_prompt:
-            parsed_json = {
-                "summary": "Strict summary",
-                "candidate_type": None,
-                "decision_text": None,
-                "decision_evidence_text": None,
-                "investigation_text": None,
-                "investigation_evidence_text": None,
-                "rationale_text": None,
-            }
+            parsed_json.update(
+                {
+                    "candidate_type": "investigation_outcome",
+                    "investigation_text": "arrival-time ordering missed hold updates during sync delays",
+                    "investigation_evidence_text": "Investigation found that arrival-time ordering missed hold updates during sync delays.",
+                    "rationale_text": "because the catalog provider delivered updates late",
+                    "key_finding_text": "arrival-time ordering missed hold updates during sync delays",
+                }
+            )
+        elif 'Task complete. No Slack message needed. Nothing new to report.' in user_prompt:
+            parsed_json.update(
+                {
+                    "is_low_value_meta": True,
+                }
+            )
+        elif 'Constraint: do not open a browser.' in user_prompt:
+            parsed_json.update(
+                {
+                    "constraint_text": "Do not open a browser.",
+                    "next_step_text": "Compare ledger-query vs transaction-transformer locally.",
+                }
+            )
+        elif 'Classify candidate_type as "decision" only when the source explicitly records a committed choice' in system_prompt:
+            parsed_json["summary"] = "Strict summary"
         else:
-            parsed_json = {
-                "summary": "Baseline summary",
-                "candidate_type": "decision",
-                "decision_text": "use item item event time reservation ordering",
-                "decision_evidence_text": "Decision: use item item event time reservation ordering",
-                "investigation_text": None,
-                "investigation_evidence_text": None,
-                "rationale_text": "to avoid missed hold updates during sync delays",
-            }
+            parsed_json.update(
+                {
+                    "candidate_type": "decision",
+                    "decision_text": "use item item event time reservation ordering",
+                    "decision_evidence_text": "Decision: use item item event time reservation ordering",
+                    "rationale_text": "to avoid missed hold updates during sync delays",
+                }
+            )
         return LLMJsonResponse(raw_text=json.dumps(parsed_json), parsed_json=parsed_json)
 
 
@@ -58,8 +81,16 @@ class DelayedVariantAwareStubLLMProvider:
                 "decision_text": None,
                 "decision_evidence_text": None,
                 "investigation_text": "arrival-time ordering missed hold updates during sync delays",
-                "investigation_evidence_text": "Investigation found that arrival-time ordering missed hold updates during sync delays",
+                "investigation_evidence_text": "Investigation found that arrival-time ordering missed hold updates during sync delays.",
                 "rationale_text": None,
+                "is_low_value_meta": False,
+                "constraint_text": None,
+                "next_step_text": None,
+                "blocker_text": None,
+                "progress_text": None,
+                "key_finding_text": None,
+                "subject_hints": [],
+                "constraint_candidates": [],
             }
         else:
             time.sleep(0.08)
@@ -71,6 +102,14 @@ class DelayedVariantAwareStubLLMProvider:
                 "investigation_text": None,
                 "investigation_evidence_text": None,
                 "rationale_text": None,
+                "is_low_value_meta": False,
+                "constraint_text": None,
+                "next_step_text": None,
+                "blocker_text": None,
+                "progress_text": None,
+                "key_finding_text": None,
+                "subject_hints": [],
+                "constraint_candidates": [],
             }
         return LLMJsonResponse(raw_text=json.dumps(parsed_json), parsed_json=parsed_json)
 
@@ -109,7 +148,23 @@ def _investigation_record(source_id: str, content: str, *, expected_kind: str = 
         "content": content,
         "artifact_kind": "tool_use_summary",
         "role": "assistant",
-        "metadata": {"topic": "reservation ordering", "expected_kind": expected_kind},
+        "metadata": {
+            "topic": "reservation ordering",
+            "expected_kind": expected_kind,
+            "expected_signal_truths": {"key_finding_text": True},
+        },
+    }
+
+
+def _signal_record(source_id: str, content: str, expected_signal_truths: dict[str, bool], *, expected_kind: str | None = "discussion_summary") -> dict[str, object]:
+    return {
+        "source_type": "assistant_output",
+        "source_id": source_id,
+        "content_type": "text/plain",
+        "content": content,
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "metadata": {key: value for key, value in {"topic": "ops", "expected_kind": expected_kind, "expected_signal_truths": expected_signal_truths}.items() if value is not None},
     }
 
 
@@ -128,13 +183,14 @@ def test_run_semantic_eval_writes_summary_and_jsonl_results(tmp_path: Path) -> N
             llm_provider="openai_compatible",
             llm_model="fake-model",
             llm_base_url="http://fake.local/v1",
-            llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
+            llm_prompt_variant=DEFAULT_VARIANT,
         ),
         suite_name="semantic smoke",
     )
 
     summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
     results = _read_jsonl(run_dir / "results.jsonl")
+    metrics = describe_prompt_variants()
 
     assert summary["suite_name"] == "semantic smoke"
     assert summary["items_succeeded"] == 1
@@ -146,12 +202,14 @@ def test_run_semantic_eval_writes_summary_and_jsonl_results(tmp_path: Path) -> N
     assert summary["prompt_schema_version"] == WRITE_EXTRACTION_PROMPT_ROLE.schema_version
     assert summary["split_output"] is False
     assert summary["split_outputs"] == []
-    assert summary["prompt_variants"] == ["strict_typed_memory_v4_evidence_guarded"]
+    assert summary["prompt_variants"] == [DEFAULT_VARIANT]
+    assert summary["prompt_text_metrics"][DEFAULT_VARIANT] == metrics[DEFAULT_VARIANT]
     assert summary["max_concurrency"] == 1
-    variant = summary["per_variant"]["strict_typed_memory_v4_evidence_guarded"]
+    variant = summary["per_variant"][DEFAULT_VARIANT]
     assert variant["prompt_role"] == WRITE_EXTRACTION_PROMPT_ROLE.role
     assert variant["prompt_schema_id"] == WRITE_EXTRACTION_PROMPT_ROLE.schema_id
     assert variant["prompt_schema_version"] == WRITE_EXTRACTION_PROMPT_ROLE.schema_version
+    assert variant["prompt_text_metrics"] == metrics[DEFAULT_VARIANT]
     assert variant["promoted_counts"]["decision"] == 1
     assert variant["type_metrics"]["decision"]["correct"] == 1
     assert summary["run_id"].startswith("semantic-smoke__openai-compatible__fake-model__")
@@ -164,13 +222,23 @@ def test_run_semantic_eval_writes_summary_and_jsonl_results(tmp_path: Path) -> N
     assert results[0]["artifacts"]["memory_objects"][0]["type"] == "decision"
 
 
-def test_run_semantic_eval_can_compare_prompt_variants_in_one_run(tmp_path: Path) -> None:
+def test_run_semantic_eval_can_compare_prompt_variants_and_signal_metrics(tmp_path: Path) -> None:
     input_file = tmp_path / "items.jsonl"
     output_dir = tmp_path / "output"
     _write_input_file(
         input_file,
         _decision_record("decision-1", "Decision: use item item event time reservation ordering."),
         _investigation_record("investigation-1", "Investigation found that arrival-time ordering missed hold updates during sync delays."),
+        _signal_record(
+            "signal-1",
+            "Constraint: do not open a browser. Next step: compare ledger-query vs transaction-transformer locally.",
+            {"constraint_text": True, "next_step_text": True, "is_low_value_meta": False},
+        ),
+        _signal_record(
+            "signal-2",
+            "Task complete. No Slack message needed. Nothing new to report.",
+            {"is_low_value_meta": True, "constraint_text": False, "next_step_text": False},
+        ),
     )
 
     plugin = LLMAgentMemoryPlugin(provider=VariantAwareStubLLMProvider())
@@ -178,20 +246,27 @@ def test_run_semantic_eval_can_compare_prompt_variants_in_one_run(tmp_path: Path
         input_file=input_file,
         output_root=output_dir,
         plugin=plugin,
-        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant="strict_typed_memory_v4_evidence_guarded"),
+        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant=DEFAULT_VARIANT),
         run_name="variant-run",
-        prompt_variants=["baseline", "strict_decision_v1"],
+        prompt_variants=["baseline", "strict_decision_v1", DEFAULT_VARIANT],
         split_output=True,
     )
 
     summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
     results = _read_jsonl(run_dir / "results.jsonl")
 
-    assert summary["prompt_variants"] == ["baseline", "strict_decision_v1"]
-    assert len(summary["split_outputs"]) == 4
-    assert len(results) == 4
+    assert summary["prompt_variants"] == ["baseline", "strict_decision_v1", DEFAULT_VARIANT]
+    assert len(summary["split_outputs"]) == 12
+    assert len(results) == 12
     assert summary["per_variant"]["baseline"]["promoted_counts"]["decision"] == 1
     assert summary["per_variant"]["baseline"]["promoted_counts"]["investigation_outcome"] == 1
+    assert summary["per_variant"][DEFAULT_VARIANT]["signal_cases_total"] == 3
+    assert summary["per_variant"][DEFAULT_VARIANT]["signal_cases_correct"] == 3
+    assert summary["per_variant"][DEFAULT_VARIANT]["signal_metrics"]["constraint_text"]["correct"] == 2
+    assert summary["per_variant"][DEFAULT_VARIANT]["signal_metrics"]["is_low_value_meta"]["correct"] == 2
+    metrics = describe_prompt_variants()
+    assert summary["prompt_text_metrics"][DEFAULT_VARIANT]["estimated_tokens"] == metrics[DEFAULT_VARIANT]["estimated_tokens"]
+    assert metrics[DEFAULT_VARIANT]["estimated_tokens"] < metrics["strict_typed_memory_v4_evidence_guarded"]["estimated_tokens"]
 
 
 def test_run_semantic_eval_parallel_keeps_stable_result_order(tmp_path: Path) -> None:
@@ -208,7 +283,7 @@ def test_run_semantic_eval_parallel_keeps_stable_result_order(tmp_path: Path) ->
         input_file=input_file,
         output_root=output_dir,
         plugin=plugin,
-        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant="strict_typed_memory_v4_evidence_guarded"),
+        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant=DEFAULT_VARIANT),
         run_name="parallel-order-run",
         prompt_variants=["baseline", "strict_decision_v1"],
         max_concurrency=4,
@@ -239,7 +314,7 @@ def test_run_semantic_eval_records_errors(tmp_path: Path) -> None:
         input_file=input_file,
         output_root=output_dir,
         plugin=plugin,
-        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant="strict_typed_memory_v4_evidence_guarded"),
+        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant=DEFAULT_VARIANT),
         run_name="error-run",
     )
 
@@ -247,7 +322,7 @@ def test_run_semantic_eval_records_errors(tmp_path: Path) -> None:
     results = _read_jsonl(run_dir / "results.jsonl")
 
     assert summary["items_failed"] == 1
-    assert summary["per_variant"]["strict_typed_memory_v4_evidence_guarded"]["items_failed"] == 1
+    assert summary["per_variant"][DEFAULT_VARIANT]["items_failed"] == 1
     assert len(results) == 1
     assert results[0]["status"] == "error"
     assert results[0]["error"]["type"] == "RuntimeError"

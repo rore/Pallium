@@ -9,11 +9,12 @@ from core.models import MemorySubjectAnchor, SourceItem
 from providers.llm.base import LLMJsonResponse, LLMProvider
 from semantic.base import SemanticPlugin
 from semantic.common import ConstraintCandidate, SemanticExtraction, build_process_result
+from semantic.prompt_variant_metrics import prompt_text_metrics
 from semantic.prompt_provenance import build_prompt_provenance
 from semantic.prompt_roles import get_prompt_role_contract
 
 
-DEFAULT_PROMPT_VARIANT = "strict_typed_memory_v4_evidence_guarded"
+DEFAULT_PROMPT_VARIANT = "strict_typed_memory_v5_compact_examples"
 WRITE_EXTRACTION_PROMPT_ROLE = get_prompt_role_contract("write_extraction")
 PROMPT_ROLE = WRITE_EXTRACTION_PROMPT_ROLE.role
 PROMPT_SCHEMA_ID = WRITE_EXTRACTION_PROMPT_ROLE.schema_id
@@ -25,13 +26,13 @@ PROMPT_VARIANTS: dict[str, str] = {
 Use candidate_type as one of: decision, investigation_outcome, or null.""",
     "strict_decision_v1": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
 
-Classify candidate_type as \"decision\" only when the source explicitly records a committed choice that has already been made.
-Classify candidate_type as \"investigation_outcome\" only when the source explicitly records an established finding, root cause, conclusion, or diagnostic outcome.
+Classify candidate_type as "decision" only when the source explicitly records a committed choice that has already been made.
+Classify candidate_type as "investigation_outcome" only when the source explicitly records an established finding, root cause, conclusion, or diagnostic outcome.
 Use null for hypotheses, preferences, proposals, observations, symptoms, risks, next steps, recommendations, or statements that something is needed.
 If the text discusses options without an explicit choice, candidate_type must be null.
 If the text reports symptoms without an explicit finding or conclusion, candidate_type must be null.
-When candidate_type is \"decision\", decision_text and decision_evidence_text must be populated and the investigation fields must be null.
-When candidate_type is \"investigation_outcome\", investigation_text and investigation_evidence_text must be populated and the decision fields must be null.
+When candidate_type is "decision", decision_text and decision_evidence_text must be populated and the investigation fields must be null.
+When candidate_type is "investigation_outcome", investigation_text and investigation_evidence_text must be populated and the decision fields must be null.
 If you cannot quote explicit evidence for the chosen candidate_type, candidate_type must be null.""",
     "strict_decision_v2_source_aware": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
 
@@ -107,6 +108,42 @@ Examples:
 - Input: "Catalog sync delay increased after the provider restart, and we should watch it closely tonight." -> candidate_type null; key_finding_text should usually be null because this is a status/monitoring note, not a durable conclusion.
 Set is_low_value_meta true only for clearly non-durable orchestration chatter such as no-op completion/status messages; otherwise false.
 If no explicit proof phrase exists, candidate_type must be null.""",
+    "strict_typed_memory_v5_compact_contract": """You extract reusable typed memory and explicit semantic signals from one technical source item. Return exactly one JSON object and no extra prose.
+
+Typed memory:
+- decision only for an explicit concrete choice already made.
+- investigation_outcome only for an explicit established finding, root cause, conclusion, diagnostic outcome, or analytical verdict.
+- otherwise candidate_type=null.
+- non-null candidate_type requires an exact quoted proof phrase in the matching evidence field.
+- never promote needs, proposals, preferences, recommendations, symptoms, risks, monitoring notes, or unresolved discussion into typed memory.
+- fill only decision_* fields for decision and only investigation_* fields for investigation_outcome.
+
+Optional signals:
+- populate is_low_value_meta, constraint_text, next_step_text, blocker_text, progress_text, key_finding_text, subject_hints, and constraint_candidates only when the source explicitly states them.
+- subject_hints may use only workstream|component|surface; otherwise return [].
+- constraint_candidates may use only use_surface|use_source|perform_step with prohibit|prefer|require; otherwise return [].
+- if is_low_value_meta is true, optional text fields must be null and list fields should be [].
+- next_step_text must be a future action. progress_text must be substantive resumption state. key_finding_text is only for durable conclusions or verdicts.
+- prefer null or [] over weak inference.""",
+    "strict_typed_memory_v5_compact_examples": """You extract reusable typed memory and explicit semantic signals from one technical source item. Return exactly one JSON object and no extra prose.
+
+Only create typed memory when the source gives explicit proof.
+- decision: an explicit concrete choice already made.
+- investigation_outcome: an explicit established finding, root cause, conclusion, diagnostic outcome, or analytical verdict.
+- otherwise candidate_type = null.
+- a non-null type requires an exact quoted proof phrase in the matching evidence field.
+- fill only the decision fields for decision and only the investigation fields for investigation_outcome.
+
+Populate optional signals only when they are explicitly stated: is_low_value_meta, constraint_text, next_step_text, blocker_text, progress_text, key_finding_text, subject_hints, constraint_candidates. Never infer anchors or normalized constraints. subject_hints may use only workstream|component|surface. constraint_candidates may use only use_surface|use_source|perform_step with prohibit|prefer|require. Return [] when anchors or constraints are not safely explicit.
+
+If is_low_value_meta is true, all optional text fields must be null and list fields should be []. Prefer null or [] over weak paraphrases. next_step_text must be a future action. progress_text must be substantive resumption state. key_finding_text is only for durable explicit conclusions, not monitoring chatter.
+
+Examples:
+- "Decision: use item event time for reservation ordering." -> decision.
+- "Investigation found that arrival-time ordering missed hold updates during sync delays." -> investigation_outcome.
+- "We need to decide whether to change ordering." -> null.
+- "Task complete. No message needed. Nothing new to report." -> candidate_type null, is_low_value_meta true.
+- "Constraint: do not open a browser. Next step: compare the local repos." -> candidate_type null, constraint_text and next_step_text populated.""",
 }
 
 SCHEMA_DESCRIPTION = json.dumps(
@@ -222,6 +259,14 @@ def build_analysis_request(source_item: SourceItem, *, prompt_variant: str = DEF
 
 def list_prompt_variants() -> list[str]:
     return list(PROMPT_VARIANTS.keys())
+
+
+def get_prompt_variant_text(prompt_variant: str) -> str:
+    return PROMPT_VARIANTS[_resolve_prompt_variant(prompt_variant)]
+
+
+def describe_prompt_variants() -> dict[str, dict[str, int]]:
+    return {name: prompt_text_metrics(text) for name, text in PROMPT_VARIANTS.items()}
 
 
 def _resolve_prompt_variant(prompt_variant: str) -> str:

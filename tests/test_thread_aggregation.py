@@ -129,17 +129,17 @@ class ThreadAwareStubProvider:
 
 def _build_write_enrichment_payload(user_prompt: str) -> dict[str, object]:
     lower = user_prompt.lower()
-    if 'memory type: thread_summary' in lower and 'lib-241' in lower:
+    if 'record type: thread_summary' in lower and 'lib-241' in lower:
         return {
             'action': 'ENRICH',
             'retrieval_context': 'Flag-gated LIB-241 reservation ordering rollout with remaining admin-toggle and retry-path coverage work.',
         }
-    if 'memory type: task_checkpoint' in lower and 'batch 313' in lower:
+    if 'record type: task_checkpoint' in lower and 'batch 313' in lower:
         return {
             'action': 'ENRICH',
             'retrieval_context': 'Catalog sync retry resume state anchored on the batch 313 restart after service-token expiry.',
         }
-    if 'memory type: task_checkpoint' in lower and 'lib-241' in lower:
+    if 'record type: task_checkpoint' in lower and 'lib-241' in lower:
         return {
             'action': 'ENRICH',
             'retrieval_context': 'Flag-gated LIB-241 task state with remaining admin-toggle and retry-path coverage work.',

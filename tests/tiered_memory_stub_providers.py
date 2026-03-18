@@ -29,27 +29,27 @@ class TieredMemoryAnswerProvider:
 
 def _build_write_enrichment_payload(user_prompt: str) -> dict[str, object]:
     lower = user_prompt.lower()
-    if 'memory type: task_checkpoint' in lower and 'batch 313' in lower:
+    if 'record type: task_checkpoint' in lower and 'batch 313' in lower:
         return {
             'action': 'ENRICH',
             'retrieval_context': 'Catalog sync retry resume state anchored on the batch 313 restart after service-token failure.',
         }
-    if 'memory type: thread_summary' in lower and 'lib-241' in lower:
+    if 'record type: thread_summary' in lower and 'lib-241' in lower:
         return {
             'action': 'ENRICH',
             'retrieval_context': 'Flag-gated LIB-241 reservation ordering rollout with remaining admin-toggle and retry-path coverage work.',
         }
-    if 'memory type: pattern_memory' in lower and 'duplicate holds' in lower:
+    if 'record type: pattern_memory' in lower and 'duplicate holds' in lower:
         return {
             'action': 'ENRICH',
             'retrieval_context': 'Cross-thread reservation ordering lesson about duplicate holds after catalog sync delays.',
         }
-    if 'memory type: continuity_memory' in lower and '30-minute batches' in lower:
+    if 'record type: continuity_memory' in lower and '30-minute batches' in lower:
         return {
             'action': 'ENRICH',
             'retrieval_context': 'Carry-forward answer for overdue notice batching and staff inbox spam questions.',
         }
-    if 'memory type: continuity_memory' in lower:
+    if 'record type: continuity_memory' in lower:
         return {
             'action': 'ENRICH',
             'retrieval_context': 'Carry-forward answer for a repeated question from the same conversation thread.',
