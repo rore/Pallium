@@ -130,7 +130,7 @@ def test_benchmark_review_set_runs_end_to_end_from_materialized_local_review_bun
     assert summary['corpus_file'] == str(tmp_path / 'derived' / 'review_sets' / 'fixture-review' / 'conversations.json')
     assert summary['episodes_total'] == 4
     assert summary['failure_families']['retrieval_recall_failure'] == 0
-    assert summary['policy_successes'] == 2
+    assert summary['policy_successes'] == 4
     assert len(results) == 4
     assert (run_dir / 'report.md').exists()
     assert {item['episode_id'] for item in results} == {

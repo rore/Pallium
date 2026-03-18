@@ -253,7 +253,7 @@ def test_llm_plugin_path_processes_after_worker_completion(monkeypatch, test_db_
             "source_type": "investigation_summary",
             "source_id": "investigation-llm-1",
             "content_type": "text/plain",
-            "content": "An LLM should identify this as an investigation outcome about reservation ordering.",
+            "content": "Investigation found that arrival-time ordering missed hold updates during sync delays. The catalog provider delivered updates late.",
             "artifact_kind": "tool_use_summary",
             "role": "assistant",
         },

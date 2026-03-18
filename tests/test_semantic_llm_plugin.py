@@ -3,6 +3,51 @@ from __future__ import annotations
 import pytest
 
 from core.models import MemorySubjectAnchor, SourceItem
+from semantic.common import (
+    _normalize_for_containment,
+    has_grounded_decision_evidence,
+    has_grounded_investigation_evidence,
+)
+
+
+def test_normalize_for_containment_collapses_whitespace() -> None:
+    assert _normalize_for_containment("hello   world") == "hello world"
+    assert _normalize_for_containment("hello\nworld") == "hello world"
+    assert _normalize_for_containment("hello\r\n  world") == "hello world"
+    assert _normalize_for_containment("  Hello  WORLD  ") == "hello world"
+
+
+def test_grounded_decision_evidence_tolerates_whitespace_normalization() -> None:
+    source = SourceItem(
+        source_type="note", source_id="ws-1", content_type="text/plain",
+        content="Decision: use item\n  event time for\n  reservation ordering.",
+    )
+    assert has_grounded_decision_evidence(source, "Decision: use item event time for reservation ordering.") is True
+
+
+def test_grounded_decision_evidence_rejects_fabricated_quote() -> None:
+    source = SourceItem(
+        source_type="note", source_id="fab-1", content_type="text/plain",
+        content="We discussed reservation ordering approaches.",
+    )
+    assert has_grounded_decision_evidence(source, "Decision: use item event time for reservation ordering.") is False
+
+
+def test_grounded_investigation_evidence_requires_source_containment() -> None:
+    source = SourceItem(
+        source_type="note", source_id="inv-1", content_type="text/plain",
+        content="Investigation found that arrival-time ordering missed hold updates.",
+    )
+    assert has_grounded_investigation_evidence(source, "Investigation found that arrival-time ordering missed hold updates.") is True
+    assert has_grounded_investigation_evidence(source, "Investigation found something completely different.") is False
+
+
+def test_grounded_investigation_evidence_tolerates_whitespace_normalization() -> None:
+    source = SourceItem(
+        source_type="note", source_id="inv-ws-1", content_type="text/plain",
+        content="Investigation found that\n  arrival-time ordering missed\n  hold updates.",
+    )
+    assert has_grounded_investigation_evidence(source, "Investigation found that arrival-time ordering missed hold updates.") is True
 from providers.llm.base import LLMCallMetadata, LLMJsonResponse, LLMProviderError
 from semantic.common import ConstraintCandidate, SEMANTIC_SIGNAL_METADATA_KEY
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin, build_analysis_request

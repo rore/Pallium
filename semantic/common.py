@@ -229,6 +229,23 @@ def has_explicit_decision_evidence(text: str | None) -> bool:
     return any(pattern.search(text) for pattern in DECISION_EVIDENCE_PATTERNS)
 
 
+def _normalize_for_containment(text: str) -> str:
+    return " ".join(text.lower().split())
+
+
+def has_grounded_decision_evidence(source_item: SourceItem, text: str | None) -> bool:
+    if not text:
+        return False
+    normalized = text.strip()
+    if not normalized:
+        return False
+    if not has_explicit_decision_evidence(normalized):
+        return False
+    if _normalize_for_containment(normalized) not in _normalize_for_containment(source_item.content):
+        return False
+    return True
+
+
 def has_explicit_investigation_evidence(text: str | None) -> bool:
     if not text:
         return False
@@ -237,14 +254,18 @@ def has_explicit_investigation_evidence(text: str | None) -> bool:
 
 def has_grounded_investigation_evidence(source_item: SourceItem, text: str | None) -> bool:
     if has_explicit_investigation_evidence(text):
+        normalized = (text or "").strip()
+        if not normalized:
+            return False
+        if _normalize_for_containment(normalized) not in _normalize_for_containment(source_item.content):
+            return False
         return True
     if not text:
         return False
     normalized = text.strip()
     if not normalized:
         return False
-    lowered = normalized.lower()
-    if lowered not in source_item.content.lower():
+    if _normalize_for_containment(normalized) not in _normalize_for_containment(source_item.content):
         return False
     if WEAK_INVESTIGATION_EVIDENCE_PATTERN.search(normalized):
         return False
@@ -292,7 +313,7 @@ def build_process_result(
         extraction.candidate_type == "decision"
         and extraction.decision_text
         and extraction.decision_evidence_text
-        and has_explicit_decision_evidence(extraction.decision_evidence_text)
+        and has_grounded_decision_evidence(source_item, extraction.decision_evidence_text)
     ):
         canonical_key = normalize_for_index(extraction.decision_text)
         candidate_payload = {

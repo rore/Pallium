@@ -327,7 +327,7 @@ def test_fresh_thread_recall_suppresses_duplicate_queries_and_meta_source_noise(
     assert all(item.result_kind == 'memory_hit' for item in outcome.results)
     assert all(block.block_type == 'memory' for block in outcome.injectable_blocks)
     excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
-    assert {'current_thread_recall_query', 'duplicate_recall_query_source', 'generic_capability_source', 'heartbeat_source_noise'}.issubset(excluded)
+    assert {'current_query_source_echo', 'duplicate_recall_query_source', 'generic_capability_source', 'heartbeat_source_noise'}.issubset(excluded)
 
 def test_fresh_thread_recall_excludes_conflicting_structured_checkpoint() -> None:
     plugin = AgentConversationMemoryPlugin(
