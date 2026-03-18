@@ -347,6 +347,20 @@ def _resolve_prompt_variant(prompt_variant: str) -> str:
     return prompt_variant
 
 
+def resolve_prompt_variant_for_role(
+    role: str,
+    *,
+    prompt_variants: dict[str, str] | None,
+    prompt_variant: str | None,
+    default: str = DEFAULT_PROMPT_VARIANT,
+) -> str:
+    if prompt_variants and role in prompt_variants:
+        return prompt_variants[role]
+    if prompt_variant:
+        return prompt_variant
+    return default
+
+
 def _normalize_extraction(payload: dict[str, Any]) -> SemanticExtraction:
     summary = _normalize_required_string(payload.get("summary"), field_name="summary")
     candidate_type = _normalize_optional_string(payload.get("candidate_type"), field_name="candidate_type")

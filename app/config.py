@@ -45,7 +45,10 @@ class SemanticPackageConfig:
     llm_provider: str | None = None
     model: str | None = None
     prompt_variant: str | None = None
+    prompt_variants: dict[str, str] | None = None
     consolidation: ConsolidationPolicy | None = None
+    resolver_enabled: bool = True
+    resolver_timeout_ms: int = 800
 
 
 @dataclass(frozen=True)
@@ -120,7 +123,10 @@ class AppConfig:
                     llm_provider=LEGACY_PROVIDER_KEY,
                     model=self.llm_model or current.model,
                     prompt_variant=self.llm_prompt_variant or current.prompt_variant,
+                    prompt_variants=current.prompt_variants,
                     consolidation=current.consolidation,
+                    resolver_enabled=current.resolver_enabled,
+                    resolver_timeout_ms=current.resolver_timeout_ms,
                 )
 
         object.__setattr__(self, "llm_providers", providers)
@@ -430,16 +436,21 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
             package_name = str(name).strip().lower()
             current = packages.get(package_name, SemanticPackageConfig(name=package_name, implementation=package_name))
             consolidation = _build_consolidation_policy(raw_value.get("consolidation"), current.consolidation)
+            prompt_variants = _build_prompt_variants(raw_value.get("prompt_variants"), current.prompt_variants)
             packages[package_name] = SemanticPackageConfig(
                 name=package_name,
                 implementation=_as_string(raw_value.get("implementation", current.implementation)),
                 llm_provider=_as_optional_string(raw_value.get("llm_provider", current.llm_provider)),
                 model=_as_optional_string(raw_value.get("model", current.model)),
                 prompt_variant=_as_optional_string(raw_value.get("prompt_variant", current.prompt_variant)),
+                prompt_variants=prompt_variants,
                 consolidation=consolidation,
+                resolver_enabled=_parse_bool(raw_value.get("resolver_enabled"), current.resolver_enabled),
+                resolver_timeout_ms=int(raw_value.get("resolver_timeout_ms", current.resolver_timeout_ms)),
             )
 
     prefix = "PALLIUM_PACKAGE__"
+    prompt_variants_prefix = "PROMPT_VARIANTS__"
     for env_key, env_value in env_values.items():
         if not env_key.startswith(prefix):
             continue
@@ -449,6 +460,28 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
             continue
         package_name = parts[0].strip().lower()
         field_name = parts[1].strip().lower()
+
+        if field_name.startswith(prompt_variants_prefix.lower()):
+            role = field_name[len(prompt_variants_prefix):].strip().lower()
+            if not role:
+                continue
+            current = packages.get(package_name, SemanticPackageConfig(name=package_name, implementation=package_name))
+            existing = dict(current.prompt_variants) if current.prompt_variants else {}
+            existing[role] = env_value
+            updated = {
+                "name": current.name,
+                "implementation": current.implementation,
+                "llm_provider": current.llm_provider,
+                "model": current.model,
+                "prompt_variant": current.prompt_variant,
+                "prompt_variants": existing,
+                "consolidation": current.consolidation,
+                "resolver_enabled": current.resolver_enabled,
+                "resolver_timeout_ms": current.resolver_timeout_ms,
+            }
+            packages[package_name] = SemanticPackageConfig(**updated)
+            continue
+
         current = packages.get(package_name, SemanticPackageConfig(name=package_name, implementation=package_name))
         updated = {
             "name": current.name,
@@ -456,7 +489,10 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
             "llm_provider": current.llm_provider,
             "model": current.model,
             "prompt_variant": current.prompt_variant,
+            "prompt_variants": current.prompt_variants,
             "consolidation": current.consolidation,
+            "resolver_enabled": current.resolver_enabled,
+            "resolver_timeout_ms": current.resolver_timeout_ms,
         }
         if field_name == "implementation":
             updated["implementation"] = env_value
@@ -466,6 +502,10 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
             updated["model"] = env_value
         elif field_name == "prompt_variant":
             updated["prompt_variant"] = env_value
+        elif field_name == "resolver_enabled":
+            updated["resolver_enabled"] = _parse_bool(env_value, current.resolver_enabled)
+        elif field_name == "resolver_timeout_ms":
+            updated["resolver_timeout_ms"] = int(env_value)
         packages[package_name] = SemanticPackageConfig(**updated)
 
     return packages
@@ -491,6 +531,20 @@ def _build_consolidation_policy(raw_value: Any, current: ConsolidationPolicy | N
         time_window_hours=int(raw_value.get("time_window_hours", base.time_window_hours)),
         lexical_overlap_threshold=int(raw_value.get("lexical_overlap_threshold", base.lexical_overlap_threshold)),
     )
+
+
+def _build_prompt_variants(raw_value: Any, current: dict[str, str] | None) -> dict[str, str] | None:
+    if raw_value is None:
+        return current
+    if not isinstance(raw_value, dict):
+        return current
+    merged = dict(current) if current else {}
+    for key, val in raw_value.items():
+        normalized_key = str(key).strip().lower()
+        normalized_val = str(val).strip()
+        if normalized_key and normalized_val:
+            merged[normalized_key] = normalized_val
+    return merged or None
 
 
 def _as_string(value: Any) -> str:

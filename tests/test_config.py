@@ -173,3 +173,166 @@ def test_retention_config_reads_toml_and_env_override(monkeypatch, tmp_path: Pat
     assert config.retention.run_interval_seconds == 600
     assert config.retention.lease_seconds == 420
     assert config.retention.batch_size == 80
+
+
+def test_prompt_variants_from_toml(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        """
+        default_use_case = "agent_conversation_memory"
+
+        [semantic_packages.agent_conversation_memory]
+        implementation = "agent_conversation_memory"
+        prompt_variant = "strict_decision_v1"
+
+        [semantic_packages.agent_conversation_memory.prompt_variants]
+        query_ambiguity_resolution = "qar_v1_compact_contract"
+        write_extraction = "strict_typed_memory_v6_work_state_examples"
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    config = AppConfig.from_env()
+    package = config.package_config("agent_conversation_memory")
+
+    assert package.prompt_variant == "strict_decision_v1"
+    assert package.prompt_variants == {
+        "query_ambiguity_resolution": "qar_v1_compact_contract",
+        "write_extraction": "strict_typed_memory_v6_work_state_examples",
+    }
+
+
+def test_prompt_variants_role_specific_env_override(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        """
+        default_use_case = "agent_conversation_memory"
+
+        [semantic_packages.agent_conversation_memory]
+        implementation = "agent_conversation_memory"
+        prompt_variant = "strict_decision_v1"
+
+        [semantic_packages.agent_conversation_memory.prompt_variants]
+        query_ambiguity_resolution = "qar_v1_compact_contract"
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv(
+        "PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__PROMPT_VARIANTS__QUERY_AMBIGUITY_RESOLUTION",
+        "qar_v1_compact_examples",
+    )
+    config = AppConfig.from_env()
+    package = config.package_config("agent_conversation_memory")
+
+    assert package.prompt_variants["query_ambiguity_resolution"] == "qar_v1_compact_examples"
+    assert package.prompt_variant == "strict_decision_v1"
+
+
+def test_prompt_variants_absent_inherits_package_default() -> None:
+    from app.config import SemanticPackageConfig
+
+    package = SemanticPackageConfig(
+        name="test", implementation="test", prompt_variant="default_variant"
+    )
+    assert package.prompt_variants is None
+
+
+def test_prompt_variants_legacy_fallback_unaffected(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env.local"
+    env_file.write_text(
+        "\n".join(
+            [
+                "PALLIUM_DEFAULT_USE_CASE=agent_conversation_memory",
+                "PALLIUM_LLM_PROVIDER=openai_compatible",
+                "PALLIUM_LLM_MODEL=legacy-model",
+                "PALLIUM_LLM_BASE_URL=https://legacy.example/v1",
+                "PALLIUM_LLM_API_KEY=legacy-key",
+                "PALLIUM_LLM_PROMPT_VARIANT=strict_decision_v1",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_ENV_FILE", str(env_file))
+    config = AppConfig.from_env()
+    package = config.package_config("agent_conversation_memory")
+
+    assert package.prompt_variant == "strict_decision_v1"
+    assert package.prompt_variants is None
+
+
+def test_resolve_prompt_variant_for_role() -> None:
+    from semantic.llm_agent_memory import resolve_prompt_variant_for_role
+
+    assert resolve_prompt_variant_for_role(
+        "query_ambiguity_resolution",
+        prompt_variants={"query_ambiguity_resolution": "qar_v1_compact_contract"},
+        prompt_variant="strict_decision_v1",
+    ) == "qar_v1_compact_contract"
+
+    assert resolve_prompt_variant_for_role(
+        "write_extraction",
+        prompt_variants={"query_ambiguity_resolution": "qar_v1_compact_contract"},
+        prompt_variant="strict_decision_v1",
+    ) == "strict_decision_v1"
+
+    assert resolve_prompt_variant_for_role(
+        "write_extraction",
+        prompt_variants=None,
+        prompt_variant=None,
+        default="fallback_default",
+    ) == "fallback_default"
+
+
+def test_resolver_enabled_defaults_to_true() -> None:
+    from app.config import SemanticPackageConfig
+
+    package = SemanticPackageConfig(name="test", implementation="test")
+    assert package.resolver_enabled is True
+    assert package.resolver_timeout_ms == 800
+
+
+def test_resolver_enabled_from_toml(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        """
+        default_use_case = "agent_conversation_memory"
+
+        [semantic_packages.agent_conversation_memory]
+        implementation = "agent_conversation_memory"
+        resolver_enabled = false
+        resolver_timeout_ms = 500
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    config = AppConfig.from_env()
+    package = config.package_config("agent_conversation_memory")
+
+    assert package.resolver_enabled is False
+    assert package.resolver_timeout_ms == 500
+
+
+def test_resolver_enabled_env_override(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        """
+        default_use_case = "agent_conversation_memory"
+
+        [semantic_packages.agent_conversation_memory]
+        implementation = "agent_conversation_memory"
+        resolver_enabled = true
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__RESOLVER_ENABLED", "false")
+    config = AppConfig.from_env()
+    package = config.package_config("agent_conversation_memory")
+
+    assert package.resolver_enabled is False

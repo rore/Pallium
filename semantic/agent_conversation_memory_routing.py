@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import OrderedDict
+from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime, timezone
 from typing import Iterable
 
@@ -37,6 +38,24 @@ from semantic.agent_conversation_memory_threads import (
 )
 
 ROUTING_POLICY_NAME = "agent_conversation_memory.intent_routing.v4"
+
+
+@dataclass(frozen=True)
+class PolicySelectedContext:
+    query_policy_family: str
+    allowed_query_intents: frozenset[str] | None = None
+    resolver_invoked: bool = False
+    resolver_action: str | None = None
+    resolver_confidence: str | None = None
+    resolver_reason_codes: tuple[str, ...] = ()
+    option_a_family: str | None = None
+    option_b_family: str | None = None
+    deterministic_option: str | None = None
+    ambiguity_pair_type: str | None = None
+
+
+PASSTHROUGH_POLICY = PolicySelectedContext(query_policy_family="passthrough", allowed_query_intents=None)
+
 
 ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory", "task_checkpoint", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE}
 
@@ -129,6 +148,23 @@ ROUTING_SAFE_FALLBACK_LAYERS = {
 }
 
 ROUTING_SUPPORT_THRESHOLD = {"weak": 0, "supported": 60, "strong": 110}
+
+# Policy layer constants
+QUERY_POLICY_FAMILY_ALLOWED_INTENTS: dict[str, frozenset[str]] = {
+    "noise": frozenset(),
+    "recall_fact": frozenset({"answer_continuity", "broad_recall", "precise_fact", "evidence_trace", "investigative_conclusion"}),
+    "latest_status": frozenset({"broad_recall", "work_resumption"}),
+    "resume_work": frozenset({"work_resumption"}),
+    "check_constraints": frozenset({"broad_recall", "work_resumption"}),
+}
+LATEST_STATUS_COLLAPSED_INTENTS = frozenset({"broad_recall"})
+LATEST_STATUS_WORDING_TOKENS = {"latest", "lately"}
+LATEST_STATUS_HISTORY_PHRASES = ("what is the latest", "what's the latest")
+LATEST_STATUS_RESUME_PHRASES = ("what is the latest state", "what's the latest state")
+POLICY_WORK_STATE_USEFULNESS_THRESHOLD = 24
+POLICY_SUPPORT_THRESHOLD = ROUTING_SUPPORT_THRESHOLD["supported"]
+AMBIGUITY_MARGIN_LATEST_VS_RESUME = 12
+AMBIGUITY_MARGIN_CONSTRAINTS_VS_RECALL = 10
 
 ROUTING_TOPIC_LOW_SIGNAL_TOKENS = {
     "about", "already", "before", "carry", "constraint", "concluded", "did", "do", "earlier",
@@ -332,6 +368,7 @@ def route_query_results(
     runtime_context: QueryRuntimeContext | None = None,
     include_trace: bool = False,
     debug_candidate_loader=None,
+    resolver_config: dict[str, object] | None = None,
 ) -> PackageQueryOutcome:
         query_tokens = _routing_query_tokens(text)
         family_inference = _infer_query_intent(
@@ -341,15 +378,68 @@ def route_query_results(
             query_filters=query_filters,
             runtime_context=runtime_context,
         )
-        intent = str(family_inference["selected_family"])
-        preferred_layers = ROUTING_PREFERRED_LAYERS[intent]
-        prefiltered_candidates, kind_prefilter_summary, kind_prefilter_states = _kind_prefilter_candidates(
-            retrieval_result.results,
-            intent=intent,
-        )
+        # Step 1: Family-independent anchor prefilter (before policy, before kind prefilter)
         anchor_prefiltered_candidates, anchor_prefilter_summary, anchor_prefilter_states = _anchor_prefilter_candidates(
-            prefiltered_candidates,
+            retrieval_result.results,
             query_tokens=query_tokens,
+        )
+        # Step 2: Policy classification from post-anchor-prefilter evidence
+        policy_evidence = _build_policy_evidence(anchor_prefiltered_candidates)
+        query_shape_tags = list(family_inference["query_shape_tags"]) if isinstance(family_inference.get("query_shape_tags"), (list, tuple)) else []
+        policy_family = _classify_query_policy_family(
+            text,
+            query_shape_tags=query_shape_tags,
+            runtime_context=runtime_context,
+            initial_intent=str(family_inference["selected_family"]),
+        )
+        policy_ctx, policy_options = _build_ambiguity_options(
+            policy_family,
+            text=text,
+            policy_evidence=policy_evidence,
+            family_inference=family_inference,
+            runtime_context=runtime_context,
+            query_shape_tags=query_shape_tags,
+        )
+        if policy_ctx.query_policy_family == "noise":
+            empty_trace = None
+            if include_trace and retrieval_result.trace is not None:
+                empty_trace = QueryTrace(
+                    query_text=retrieval_result.trace.query_text,
+                    query_tokens=retrieval_result.trace.query_tokens,
+                    limit=requested_limit,
+                    filters=retrieval_result.trace.filters,
+                    stages=retrieval_result.trace.stages,
+                    visibility=retrieval_result.trace.visibility,
+                    requested_filters=retrieval_result.trace.requested_filters,
+                    filter_scope_relaxed=retrieval_result.trace.filter_scope_relaxed,
+                    filter_scope_reason=retrieval_result.trace.filter_scope_reason,
+                    routing={"policy_name": ROUTING_POLICY_NAME, "query_policy_family": "noise", "query_intent": "noise", "query_family": "noise"},
+                )
+            return PackageQueryOutcome(
+                results=[],
+                trace=empty_trace,
+                should_inject=False,
+                decision_reason="low_value_query",
+                injectable_blocks=[],
+                sharp_candidate_diagnostics=[],
+            )
+        # Step 3: Optional resolver for ambiguity pairs
+        if policy_options and len(policy_options) == 2:
+            policy_ctx = _maybe_invoke_resolver(
+                policy_ctx=policy_ctx,
+                policy_options=policy_options,
+                anchor_prefiltered_candidates=anchor_prefiltered_candidates,
+                query_text=text,
+                runtime_context=runtime_context,
+                resolver_config=resolver_config,
+            )
+        # Step 4: Intent restriction from policy
+        intent = _apply_policy_intent_restriction(family_inference, policy_ctx)
+        preferred_layers = ROUTING_PREFERRED_LAYERS[intent]
+        # Step 5: Kind prefilter AFTER policy intent restriction
+        kind_filtered_candidates, kind_prefilter_summary, kind_prefilter_states = _kind_prefilter_candidates(
+            anchor_prefiltered_candidates,
+            intent=intent,
         )
         scored_candidates = [
             _score_routed_candidate(
@@ -360,7 +450,7 @@ def route_query_results(
                 lexical_rank=index,
                 query_filters=query_filters,
             )
-            for index, item in enumerate(anchor_prefiltered_candidates, start=1)
+            for index, item in enumerate(kind_filtered_candidates, start=1)
         ]
         for candidate in scored_candidates:
             result_id = _routing_result_id(candidate["item"])
@@ -488,6 +578,7 @@ def route_query_results(
                     sharp_candidate_diagnostics=sharp_candidate_diagnostics,
                     kind_prefilter_summary=kind_prefilter_summary,
                     anchor_prefilter_summary=anchor_prefilter_summary,
+                    policy_ctx=policy_ctx,
                 ),
             )
 
@@ -2088,6 +2179,460 @@ def _annotate_excluded_candidates(
             candidate["excluded_reason_code"] = "lower_routing_score_than_selected_limit"
             candidate["excluded_reason"] = "Candidate remained below the final routed cutoff."
 
+# ---------------------------------------------------------------------------
+# Policy layer: evidence building, classification, option construction
+# ---------------------------------------------------------------------------
+
+def _build_policy_evidence(
+    candidates: list[QueryResultItem],
+) -> dict[str, object]:
+    task_checkpoint_best_work_usefulness = 0
+    source_evidence_best_work_usefulness = 0
+    strong_task_checkpoint_survives = False
+    structured_best_support = 0
+    cross_thread_continuity_survives = False
+    constraint_best_support = 0
+    constraint_best_kind = ""
+    structured_layers = {"thread_summary", "discussion_summary", "continuity_memory"}
+
+    for item in candidates:
+        layer = _result_layer(item)
+        support = _policy_candidate_support_estimate(item, layer)
+        if layer == "task_checkpoint":
+            signal_types = _work_resumption_signal_types(item)
+            usefulness, _ = _work_resumption_usefulness_score(item, signal_types)
+            task_checkpoint_best_work_usefulness = max(task_checkpoint_best_work_usefulness, usefulness)
+            if support >= POLICY_SUPPORT_THRESHOLD:
+                strong_task_checkpoint_survives = True
+        elif layer == "source_evidence":
+            signal_types = _work_resumption_signal_types(item)
+            usefulness, _ = _work_resumption_usefulness_score(item, signal_types)
+            source_evidence_best_work_usefulness = max(source_evidence_best_work_usefulness, usefulness)
+        if layer in structured_layers:
+            structured_best_support = max(structured_best_support, support)
+        if layer == "continuity_memory" and item.thread_ref is None:
+            if support >= POLICY_SUPPORT_THRESHOLD:
+                cross_thread_continuity_survives = True
+        if item.result_kind == "memory_hit" and item.type == CONSTRAINT_MEMORY_TYPE:
+            if support > constraint_best_support:
+                constraint_best_support = support
+                constraint_best_kind = CONSTRAINT_MEMORY_TYPE
+        elif item.result_kind == "memory_hit" and item.type in {"task_checkpoint", "thread_summary"}:
+            # Structured types can carry constraint signals
+            payload = item.payload or {}
+            if payload.get("constraint_text") or payload.get("blocker_state"):
+                if support > constraint_best_support:
+                    constraint_best_support = support
+                    constraint_best_kind = item.type
+
+    return {
+        "task_checkpoint_best_work_usefulness": task_checkpoint_best_work_usefulness,
+        "source_evidence_best_work_usefulness": source_evidence_best_work_usefulness,
+        "strong_task_checkpoint_survives": strong_task_checkpoint_survives,
+        "structured_best_support": structured_best_support,
+        "cross_thread_continuity_survives": cross_thread_continuity_survives,
+        "constraint_best_support": constraint_best_support,
+        "constraint_best_kind": constraint_best_kind,
+    }
+
+
+def _policy_candidate_support_estimate(item: QueryResultItem, layer: str) -> int:
+    """Lightweight support estimate for policy-level gates without query token overlap."""
+    score = min(len(item.evidence), 3) * 8
+    if item.result_kind == "source_hit":
+        score += 18
+        return score
+    payload = item.payload or {}
+    if layer == "task_checkpoint":
+        explicit_fields = sum(1 for f in ("task", "current_state", "blocker_state", "next_step", "key_findings", "evidence") if payload.get(f))
+        score += 18 + min(explicit_fields, 5) * 8
+        if payload.get("blocker_state") and payload.get("next_step"):
+            score += 10
+    elif layer in {"decision", "investigation_outcome"}:
+        score += 34
+        if payload.get("decision_evidence_text") or payload.get("investigation_evidence_text"):
+            score += 10
+    elif layer == "continuity_memory":
+        score += 18
+        if payload.get("carry_forward_answer"):
+            score += 18
+    elif layer in {"thread_summary", "discussion_summary"}:
+        score += 8
+    elif item.result_kind == "memory_hit" and item.type == CONSTRAINT_MEMORY_TYPE:
+        score += 24
+        payload = item.payload or {}
+        if payload.get("constraint_text"):
+            score += 18
+        if payload.get("primary_scope_anchor") and payload.get("target_anchor"):
+            score += 12
+    return score
+
+
+def _has_latest_status_wording(text: str) -> bool:
+    """Detect queries specifically asking about current status/state, not general recall with 'latest'."""
+    lowered = text.lower()
+    if any(phrase in lowered for phrase in LATEST_STATUS_RESUME_PHRASES):
+        return True
+    if any(phrase in lowered for phrase in LATEST_STATUS_HISTORY_PHRASES):
+        # "what is the latest" / "what's the latest" are status queries only when NOT followed
+        # by broad recall patterns like "about" or when standing alone
+        for phrase in LATEST_STATUS_HISTORY_PHRASES:
+            idx = lowered.find(phrase)
+            if idx < 0:
+                continue
+            after = lowered[idx + len(phrase):].strip()
+            # "what's the latest state" is a resume phrase (already handled above)
+            # "what's the latest on X" or "what's the latest?" = status query
+            # "what do we know the latest about X" = broad recall, not status
+            if not after or after.startswith("on ") or after.startswith("?") or after.startswith("with "):
+                return True
+    return False
+
+
+def _work_state_evidence_gate_passes(policy_evidence: dict[str, object]) -> bool:
+    if bool(policy_evidence["strong_task_checkpoint_survives"]):
+        return True
+    if int(policy_evidence["task_checkpoint_best_work_usefulness"]) >= POLICY_WORK_STATE_USEFULNESS_THRESHOLD:
+        return True
+    if int(policy_evidence["source_evidence_best_work_usefulness"]) >= POLICY_WORK_STATE_USEFULNESS_THRESHOLD:
+        return True
+    return False
+
+
+def _classify_query_policy_family(
+    text: str,
+    *,
+    query_shape_tags: list[str],
+    runtime_context: QueryRuntimeContext | None,
+    initial_intent: str | None = None,
+) -> str:
+    if _query_is_low_value_greeting_or_noise(text):
+        return "noise"
+    if _has_latest_status_wording(text):
+        return "latest_status"
+    if "resume_state" in query_shape_tags:
+        return "resume_work"
+    if runtime_context is not None and runtime_context.turn_kind == "resumed_session" and initial_intent == "work_resumption":
+        return "resume_work"
+    if _preferred_constraint_text(text) or "constraint_recall" in query_shape_tags:
+        return "check_constraints"
+    return "recall_fact"
+
+
+def _build_ambiguity_options(
+    policy_family: str,
+    *,
+    text: str,
+    policy_evidence: dict[str, object],
+    family_inference: dict[str, object],
+    runtime_context: QueryRuntimeContext | None,
+    query_shape_tags: list[str],
+) -> tuple[PolicySelectedContext, list[dict[str, object]]]:
+    if policy_family == "noise":
+        return PolicySelectedContext(
+            query_policy_family="noise",
+            allowed_query_intents=frozenset(),
+        ), []
+
+    if policy_family == "latest_status":
+        if _work_state_evidence_gate_passes(policy_evidence):
+            return _build_latest_vs_resume_pair(
+                policy_evidence=policy_evidence,
+                runtime_context=runtime_context,
+                query_shape_tags=query_shape_tags,
+            )
+        return PolicySelectedContext(
+            query_policy_family="latest_status",
+            allowed_query_intents=LATEST_STATUS_COLLAPSED_INTENTS,
+        ), []
+
+    if policy_family == "resume_work":
+        return PolicySelectedContext(
+            query_policy_family="resume_work",
+            allowed_query_intents=QUERY_POLICY_FAMILY_ALLOWED_INTENTS["resume_work"],
+        ), []
+
+    if policy_family == "check_constraints":
+        family_scores = family_inference.get("family_scores", {})
+        recall_fact_intents = QUERY_POLICY_FAMILY_ALLOWED_INTENTS["recall_fact"]
+        if isinstance(family_scores, dict):
+            max_recall_score = max(
+                (int((family_scores.get(f) or {}).get("total", 0) if isinstance(family_scores.get(f), dict) else 0) for f in recall_fact_intents),
+                default=0,
+            )
+        else:
+            max_recall_score = 0
+        has_constraint_support = bool(_preferred_constraint_text(text)) or "constraint_recall" in query_shape_tags
+        if has_constraint_support and max_recall_score > 0:
+            return _build_constraints_vs_recall_pair(
+                text=text,
+                policy_evidence=policy_evidence,
+                family_inference=family_inference,
+                query_shape_tags=query_shape_tags,
+            )
+        return PolicySelectedContext(
+            query_policy_family="check_constraints",
+            allowed_query_intents=QUERY_POLICY_FAMILY_ALLOWED_INTENTS["check_constraints"],
+        ), []
+
+    # recall_fact — default
+    return PolicySelectedContext(
+        query_policy_family="recall_fact",
+        allowed_query_intents=QUERY_POLICY_FAMILY_ALLOWED_INTENTS["recall_fact"],
+    ), []
+
+
+def _build_latest_vs_resume_pair(
+    *,
+    policy_evidence: dict[str, object],
+    runtime_context: QueryRuntimeContext | None,
+    query_shape_tags: list[str],
+) -> tuple[PolicySelectedContext, list[dict[str, object]]]:
+    resume_work_score = 0
+    if runtime_context is not None and runtime_context.turn_kind == "resumed_session":
+        resume_work_score += 12
+    if "resume_state" in query_shape_tags:
+        resume_work_score += 18
+    resume_work_score += min(int(policy_evidence["task_checkpoint_best_work_usefulness"]), 40)
+    resume_work_score += min(int(policy_evidence["source_evidence_best_work_usefulness"]), 16)
+
+    latest_status_score = 0
+    latest_status_score += 18  # latest_status wording is always present when this pair is eligible
+    if "history_lookup" in query_shape_tags:
+        latest_status_score += 14
+    if bool(policy_evidence["cross_thread_continuity_survives"]):
+        latest_status_score += 12
+    latest_status_score += min(int(policy_evidence["structured_best_support"]), 24)
+
+    # Determine option A
+    if resume_work_score > latest_status_score:
+        option_a_family = "resume_work"
+    elif resume_work_score == latest_status_score:
+        option_a_family = "resume_work" if (runtime_context is not None and runtime_context.turn_kind == "resumed_session") else "latest_status"
+    else:
+        option_a_family = "latest_status"
+    option_b_family = "latest_status" if option_a_family == "resume_work" else "resume_work"
+
+    options = [
+        {
+            "option_id": "A",
+            "query_policy_family": option_a_family,
+            "allowed_query_intents": list({"work_resumption"} if option_a_family == "resume_work" else {"broad_recall"}),
+            "score": resume_work_score if option_a_family == "resume_work" else latest_status_score,
+        },
+        {
+            "option_id": "B",
+            "query_policy_family": option_b_family,
+            "allowed_query_intents": list({"work_resumption"} if option_b_family == "resume_work" else {"broad_recall"}),
+            "score": resume_work_score if option_b_family == "resume_work" else latest_status_score,
+        },
+    ]
+
+    # Phase 3: always use option A (deterministic). Phase 4 will add resolver here.
+    selected_family = option_a_family
+    allowed_intents = frozenset({"work_resumption"}) if selected_family == "resume_work" else frozenset({"broad_recall"})
+
+    return PolicySelectedContext(
+        query_policy_family=selected_family,
+        allowed_query_intents=allowed_intents,
+        option_a_family=option_a_family,
+        option_b_family=option_b_family,
+        deterministic_option="A",
+        ambiguity_pair_type="latest_status_vs_resume_work",
+    ), options
+
+
+def _build_constraints_vs_recall_pair(
+    *,
+    text: str,
+    policy_evidence: dict[str, object],
+    family_inference: dict[str, object],
+    query_shape_tags: list[str],
+) -> tuple[PolicySelectedContext, list[dict[str, object]]]:
+    check_constraints_score = 0
+    if _preferred_constraint_text(text):
+        check_constraints_score += 24
+    if "constraint_recall" in query_shape_tags:
+        check_constraints_score += 18
+    # Constraint support from post-anchor-prefilter policy evidence
+    constraint_best_support = int(policy_evidence.get("constraint_best_support", 0))
+    if constraint_best_support >= POLICY_SUPPORT_THRESHOLD:
+        check_constraints_score += 20
+        constraint_best_kind = str(policy_evidence.get("constraint_best_kind", ""))
+        if constraint_best_kind in {"task_checkpoint", "thread_summary"}:
+            check_constraints_score += 12
+
+    family_scores = family_inference.get("family_scores")
+    recall_fact_intents = QUERY_POLICY_FAMILY_ALLOWED_INTENTS["recall_fact"]
+    if isinstance(family_scores, dict):
+        recall_fact_score = max(
+            (int((family_scores.get(f) or {}).get("total", 0) if isinstance(family_scores.get(f), dict) else 0) for f in recall_fact_intents),
+            default=0,
+        )
+    else:
+        recall_fact_score = 0
+
+    if check_constraints_score >= recall_fact_score:
+        option_a_family = "check_constraints"
+    else:
+        option_a_family = "recall_fact"
+    option_b_family = "recall_fact" if option_a_family == "check_constraints" else "check_constraints"
+
+    options = [
+        {
+            "option_id": "A",
+            "query_policy_family": option_a_family,
+            "allowed_query_intents": list(QUERY_POLICY_FAMILY_ALLOWED_INTENTS[option_a_family]),
+            "score": check_constraints_score if option_a_family == "check_constraints" else recall_fact_score,
+        },
+        {
+            "option_id": "B",
+            "query_policy_family": option_b_family,
+            "allowed_query_intents": list(QUERY_POLICY_FAMILY_ALLOWED_INTENTS[option_b_family]),
+            "score": check_constraints_score if option_b_family == "check_constraints" else recall_fact_score,
+        },
+    ]
+
+    # Phase 3: always use option A
+    selected_family = option_a_family
+    allowed_intents = QUERY_POLICY_FAMILY_ALLOWED_INTENTS[selected_family]
+
+    return PolicySelectedContext(
+        query_policy_family=selected_family,
+        allowed_query_intents=allowed_intents,
+        option_a_family=option_a_family,
+        option_b_family=option_b_family,
+        deterministic_option="A",
+        ambiguity_pair_type="check_constraints_vs_recall_fact",
+    ), options
+
+
+def _maybe_invoke_resolver(
+    *,
+    policy_ctx: PolicySelectedContext,
+    policy_options: list[dict[str, object]],
+    anchor_prefiltered_candidates: list[QueryResultItem],
+    query_text: str,
+    runtime_context: QueryRuntimeContext | None,
+    resolver_config: dict[str, object] | None,
+) -> PolicySelectedContext:
+    if resolver_config is None:
+        return policy_ctx
+    if not resolver_config.get("resolver_enabled", True):
+        return policy_ctx
+    if policy_ctx.ambiguity_pair_type is None:
+        return policy_ctx
+    if len(policy_options) != 2:
+        return policy_ctx
+
+    # Check score delta against ambiguity margin
+    score_a = int(policy_options[0].get("score", 0))
+    score_b = int(policy_options[1].get("score", 0))
+    delta = abs(score_a - score_b)
+    margin = AMBIGUITY_MARGIN_LATEST_VS_RESUME if policy_ctx.ambiguity_pair_type == "latest_status_vs_resume_work" else AMBIGUITY_MARGIN_CONSTRAINTS_VS_RECALL
+    if delta > margin:
+        return policy_ctx
+
+    from semantic.agent_conversation_memory_resolver import (
+        build_resolver_packet,
+        resolve_query_ambiguity,
+    )
+
+    provider = resolver_config.get("provider")
+    if provider is None:
+        return policy_ctx
+
+    packet = build_resolver_packet(
+        query_text=query_text,
+        turn_kind=runtime_context.turn_kind if runtime_context else None,
+        ambiguity_pair_type=policy_ctx.ambiguity_pair_type,
+        option_a=policy_options[0],
+        option_b=policy_options[1],
+        candidates=[
+            {
+                "result_id": getattr(item, "memory_object_id", None) or getattr(item, "source_item_id", None) or "",
+                "layer": _result_layer(item),
+                "memory_type": item.type if item.result_kind == "memory_hit" else "source_hit",
+                "support_score": _policy_candidate_support_estimate(item, _result_layer(item)),
+                "summary": str((item.payload or {}).get("summary", item.excerpt or ""))[:200],
+            }
+            for item in anchor_prefiltered_candidates[:10]
+        ],
+    )
+
+    timeout_ms = int(resolver_config.get("resolver_timeout_ms", 800))
+    prompt_variant = str(resolver_config.get("prompt_variant", "qar_v1_compact_contract"))
+
+    result = resolve_query_ambiguity(
+        provider=provider,
+        model=None,
+        prompt_variant=prompt_variant,
+        resolver_packet=packet,
+        timeout_ms=timeout_ms,
+    )
+
+    # Apply resolver result
+    if result.is_valid_selection and result.selected_option_id in {"A", "B"}:
+        selected_idx = 0 if result.selected_option_id == "A" else 1
+        selected_option = policy_options[selected_idx]
+        selected_family = str(selected_option.get("query_policy_family", policy_ctx.query_policy_family))
+        allowed = QUERY_POLICY_FAMILY_ALLOWED_INTENTS.get(selected_family)
+        if allowed is None:
+            allowed = policy_ctx.allowed_query_intents
+        return PolicySelectedContext(
+            query_policy_family=selected_family,
+            allowed_query_intents=allowed,
+            resolver_invoked=True,
+            resolver_action=result.action,
+            resolver_confidence=result.confidence,
+            resolver_reason_codes=result.reason_codes,
+            option_a_family=policy_ctx.option_a_family,
+            option_b_family=policy_ctx.option_b_family,
+            deterministic_option=policy_ctx.deterministic_option,
+            ambiguity_pair_type=policy_ctx.ambiguity_pair_type,
+        )
+
+    # Fallback: keep deterministic option A
+    return PolicySelectedContext(
+        query_policy_family=policy_ctx.query_policy_family,
+        allowed_query_intents=policy_ctx.allowed_query_intents,
+        resolver_invoked=True,
+        resolver_action="FALLBACK",
+        resolver_confidence=result.confidence,
+        resolver_reason_codes=result.reason_codes,
+        option_a_family=policy_ctx.option_a_family,
+        option_b_family=policy_ctx.option_b_family,
+        deterministic_option=policy_ctx.deterministic_option,
+        ambiguity_pair_type=policy_ctx.ambiguity_pair_type,
+    )
+
+
+def _apply_policy_intent_restriction(
+    family_inference: dict[str, object],
+    policy_ctx: PolicySelectedContext,
+) -> str:
+    selected = str(family_inference["selected_family"])
+    allowed = policy_ctx.allowed_query_intents
+    if allowed is None:
+        return selected
+    if selected in allowed:
+        return selected
+    # Override to the highest-scoring allowed intent
+    family_scores = family_inference.get("family_scores")
+    best_intent = None
+    best_score = -1
+    for intent in allowed:
+        if isinstance(family_scores, dict):
+            score_data = family_scores.get(intent)
+            score = int(score_data.get("total", 0)) if isinstance(score_data, dict) else 0
+        else:
+            score = 0
+        if score > best_score:
+            best_score = score
+            best_intent = intent
+    return best_intent if best_intent else (next(iter(allowed)) if allowed else selected)
+
+
 def _build_routing_trace(
     *,
     intent: str,
@@ -2103,6 +2648,7 @@ def _build_routing_trace(
     sharp_candidate_diagnostics: list[dict[str, object]],
     kind_prefilter_summary: dict[str, object],
     anchor_prefilter_summary: dict[str, object],
+    policy_ctx: PolicySelectedContext = PASSTHROUGH_POLICY,
 ) -> dict[str, object]:
     selected_results = [_build_routing_trace_entry(candidate) for candidate in final_candidates]
     demoted_higher_level_hits = [
@@ -2145,9 +2691,21 @@ def _build_routing_trace(
         "demoted_higher_level_hits": demoted_higher_level_hits,
         "injection_decision": injection_summary,
         "sharp_candidate_diagnostics": sharp_candidate_diagnostics,
+        "query_policy_family": policy_ctx.query_policy_family,
     }
     if packaging_summary:
         trace["packaging"] = packaging_summary
+    if policy_ctx.resolver_invoked:
+        trace["policy_resolver"] = {
+            "resolver_invoked": True,
+            "resolver_action": policy_ctx.resolver_action,
+            "resolver_confidence": policy_ctx.resolver_confidence,
+            "resolver_reason_codes": list(policy_ctx.resolver_reason_codes),
+            "option_a_family": policy_ctx.option_a_family,
+            "option_b_family": policy_ctx.option_b_family,
+            "deterministic_option": policy_ctx.deterministic_option,
+            "ambiguity_pair_type": policy_ctx.ambiguity_pair_type,
+        }
     return trace
 
 def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object]:

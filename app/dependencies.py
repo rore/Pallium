@@ -83,13 +83,33 @@ def _build_plugin_for_package(*, config: AppConfig, package_config: SemanticPack
         prompt_variant = package_config.prompt_variant or default_prompt_variant
         if implementation == "llm_agent_memory":
             return LLMAgentMemoryPlugin(provider=provider, prompt_variant=prompt_variant)
+        resolver_config = _build_resolver_config(provider=provider, package_config=package_config)
         return AgentConversationMemoryPlugin(
             provider=provider,
             prompt_variant=prompt_variant,
             consolidation_config=package_config.consolidation,
+            resolver_config=resolver_config,
         )
 
     raise ValueError(f"Unsupported semantic package implementation: {implementation}")
+
+
+def _build_resolver_config(*, provider: LLMProvider, package_config: SemanticPackageConfig) -> dict[str, object] | None:
+    if not package_config.resolver_enabled:
+        return None
+    from semantic.llm_agent_memory import resolve_prompt_variant_for_role
+    prompt_variant = resolve_prompt_variant_for_role(
+        "query_ambiguity_resolution",
+        prompt_variants=package_config.prompt_variants,
+        prompt_variant=package_config.prompt_variant,
+        default="qar_v1_compact_contract",
+    )
+    return {
+        "resolver_enabled": package_config.resolver_enabled,
+        "resolver_timeout_ms": package_config.resolver_timeout_ms,
+        "prompt_variant": prompt_variant,
+        "provider": provider,
+    }
 
 
 def build_retrieval_provider(storage: StorageProvider) -> RetrievalProvider:

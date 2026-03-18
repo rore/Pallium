@@ -31,10 +31,12 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         *,
         prompt_variant: str,
         consolidation_config: ConsolidationPolicy | None = None,
+        resolver_config: dict[str, object] | None = None,
     ) -> None:
         self._provider = provider
         self._delegate = LLMAgentMemoryPlugin(provider=provider, prompt_variant=prompt_variant)
         self._consolidation_config = consolidation_config
+        self._resolver_config = resolver_config
 
     @property
     def prompt_variant(self) -> str:
@@ -116,6 +118,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             runtime_context=runtime_context,
             include_trace=include_trace,
             debug_candidate_loader=debug_candidate_loader,
+            resolver_config=self._resolver_config,
         )
 
     def supports_thread_aggregation(self, source_item: SourceItem) -> bool:

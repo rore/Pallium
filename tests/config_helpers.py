@@ -28,6 +28,7 @@ def build_llm_test_config(
     prompt_variant: str | None = None,
     llm_agent_prompt_variant: str | None = None,
     agent_conversation_prompt_variant: str | None = None,
+    agent_conversation_prompt_variants: dict[str, str] | None = None,
     base_url: str = "http://fake-provider.local",
 ) -> AppConfig:
     llm_prompt = prompt_variant or llm_agent_prompt_variant or DEFAULT_LLM_PROMPT_VARIANT
@@ -60,6 +61,7 @@ def build_llm_test_config(
                 llm_provider=provider_name,
                 model=model,
                 prompt_variant=agent_conversation_prompt,
+                prompt_variants=agent_conversation_prompt_variants,
                 consolidation=DEFAULT_CONSOLIDATION_POLICY,
             ),
         },
