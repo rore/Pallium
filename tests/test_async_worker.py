@@ -487,7 +487,6 @@ def test_thread_processing_lease_is_single_winner_and_expired_lease_is_reclaimab
     storage.commit_processed_source_item(
         source_item_id=source_item.id,
         result=ProcessResult(annotations=[], memory_objects=[], relations=[], index_entries=[]),
-        supersession_pairs=[],
         thread_rebuild_scope=scope,
     )
 
@@ -594,3 +593,67 @@ def test_two_workers_same_thread_leave_single_active_thread_memory_after_deferre
     assert len(active_checkpoints) == 1
     assert set(active_summaries[0].payload['source_item_ids']) == {first_ingest.source_item_id, second_ingest.source_item_id}
     assert set(active_checkpoints[0].payload['source_item_ids']) == {first_ingest.source_item_id, second_ingest.source_item_id}
+
+
+def test_thread_rebuild_loop_exits_after_max_iterations(test_db_url: str) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+    retrieval = LexicalRetrievalProvider(storage)
+
+    class AlwaysPendingPlugin(ThreadAggregationSemanticPlugin):
+        name = 'always_pending'
+
+        @property
+        def thread_summary_schema_id(self) -> str:
+            return 'always_pending.thread_summary'
+
+        @property
+        def requires_visibility_context(self) -> bool:
+            return True
+
+        def process_item(self, source_item):
+            return ProcessResult(annotations=[], memory_objects=[], relations=[], index_entries=[])
+
+        def supports_thread_aggregation(self, source_item) -> bool:
+            return True
+
+        def build_thread_summary(self, aggregate, conclusions):
+            return None, {}
+
+    plugin = AlwaysPendingPlugin()
+    service = PalliumService(
+        storage=storage,
+        retrieval=retrieval,
+        semantic_plugins={'always_pending': plugin},
+        default_use_case='always_pending',
+    )
+
+    source_item = build_source_item(
+        source_type='chat_message',
+        source_id='iteration-limit-msg-1',
+        content_type='text/plain',
+        content='Test iteration limit.',
+        metadata=None,
+        container_ref='chat:iteration-limit',
+        thread_ref='chat:iteration-limit:thread-1',
+        visibility_context=VisibilityContext(kind='public'),
+        use_case='always_pending',
+    )
+    storage.create_source_item(source_item)
+    service.drain_processing_queue(worker_id='iteration-test')
+
+    # Patch complete_thread_processing_scope to always report pending
+    iteration_count = [0]
+    original_complete = storage.complete_thread_processing_scope
+
+    def always_pending_complete(**kwargs):
+        iteration_count[0] += 1
+        original_complete(**kwargs)
+        return True
+
+    storage.complete_thread_processing_scope = always_pending_complete
+
+    lease = storage.claim_next_thread_processing_scope(worker_id='iteration-test', lease_seconds=300)
+    if lease is not None:
+        service._process_thread_rebuild_lease(lease, worker_id='iteration-test', lease_seconds=300)
+
+    assert iteration_count[0] <= service._MAX_THREAD_REBUILD_ITERATIONS

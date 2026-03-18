@@ -7,6 +7,8 @@ from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
+
 from capabilities.consolidation import ConsolidationCapability, ConsolidationRunGroupResult, ConsolidationRunResult
 from capabilities.thread_aggregation import build_thread_aggregate
 from core.contracts import IngestResult, ItemProcessingResult, PackageQueryOutcome, ProcessResult, QueryResult, build_source_item, resolve_query_filters
@@ -216,7 +218,13 @@ class PalliumService:
             processing_status=processing_status,
             processing_error=processing_error,
         )
-        self._storage.create_source_item(source_item)
+        try:
+            self._storage.create_source_item(source_item)
+        except IntegrityError:
+            existing = self._storage.find_source_item(source_type=source_type, source_id=source_id)
+            if existing is not None:
+                return self._build_ingest_result(existing)
+            raise
         self._storage.create_index_entry(
             build_index_entry(
                 target_kind="source_item",
@@ -446,19 +454,12 @@ class PalliumService:
                     plugin=plugin,
                     source_item=source_item,
                 )
-            supersession_pairs = self._resolve_supersession_pairs(direct_result)
-            memory_provenance = _build_memory_provenance(
-                direct_result,
-                default_source_item_id=source_item.id,
-                supersession_pairs=supersession_pairs,
-            )
             metadata_updates = _with_observability_metadata(
                 direct_result.source_item_metadata_updates,
                 source_item.id,
                 {
                     "annotation_count": len(direct_result.annotations),
                     "memory_object_types": [memory_object.type for memory_object in direct_result.memory_objects],
-                    "produced_memory_provenance": memory_provenance,
                     "thread_rebuild_requested": thread_rebuild_scope is not None,
                     "thread_rebuild_completed": False,
                     "failure_category": None,
@@ -473,11 +474,19 @@ class PalliumService:
                 thread_rebuild_requested=direct_result.thread_rebuild_requested,
                 supersession_hints=direct_result.supersession_hints,
             )
-            self._storage.commit_processed_source_item(
+            supersession_pairs = self._storage.commit_processed_source_item(
                 source_item_id=source_item.id,
                 result=direct_result,
-                supersession_pairs=supersession_pairs,
                 thread_rebuild_scope=thread_rebuild_scope,
+            )
+            memory_provenance = _build_memory_provenance(
+                direct_result,
+                default_source_item_id=source_item.id,
+                supersession_pairs=supersession_pairs,
+            )
+            self._storage.update_source_item_metadata(
+                source_item.id,
+                {OBSERVABILITY_METADATA_KEY: {"produced_memory_provenance": memory_provenance}},
             )
             self._emit_processing_outcome(
                 source_item=source_item,
@@ -643,6 +652,7 @@ class PalliumService:
             filters=effective_filters,
             visibility_context=visibility_context if plugin.requires_visibility_context else None,
             include_trace=include_trace,
+            require_visibility=plugin.requires_visibility_context,
         )
         if retrieval_result.trace is not None:
             retrieval_result = replace(
@@ -665,6 +675,7 @@ class PalliumService:
                 debug_candidate_loader=self._make_debug_candidate_loader(
                     filters=effective_filters,
                     visibility_context=visibility_context if plugin.requires_visibility_context else None,
+                    require_visibility=plugin.requires_visibility_context,
                 ),
             )
             if not isinstance(outcome, PackageQueryOutcome):
@@ -690,45 +701,17 @@ class PalliumService:
             injectable_blocks=[],
         )
 
-    def _resolve_supersession_pairs(self, result: ProcessResult) -> list[tuple[str, str]]:
-        if not result.supersession_hints:
-            return []
-        replacements = {memory_object.id: memory_object for memory_object in result.memory_objects}
-        pairs: list[tuple[str, str]] = []
-        seen: set[tuple[str, str]] = set()
-        for hint in result.supersession_hints:
-            replacement = replacements.get(hint.replacement_memory_id)
-            if replacement is None:
-                continue
-            if not hint.container_ref or not hint.thread_ref or not hint.canonical_key:
-                continue
-            thread_items = self._storage.list_source_items_for_thread(hint.container_ref, hint.thread_ref)
-            for thread_item in thread_items:
-                if not visibility_context_matches_exact(thread_item.visibility_context, hint.visibility_context):
-                    continue
-                for candidate in self._storage.list_memory_objects_for_source_item(thread_item.id):
-                    if candidate.id == replacement.id:
-                        continue
-                    if candidate.lifecycle != "active" or candidate.type != hint.memory_type:
-                        continue
-                    if not visibility_context_matches_exact(candidate.visibility_context, hint.visibility_context):
-                        continue
-                    candidate_key = str(candidate.payload.get("canonical_key") or "").strip()
-                    if candidate_key != hint.canonical_key:
-                        continue
-                    pair = (candidate.id, replacement.id)
-                    if pair in seen:
-                        continue
-                    seen.add(pair)
-                    pairs.append(pair)
-        return pairs
-
     def _make_debug_candidate_loader(
         self,
         *,
         filters: QueryFilters | None,
         visibility_context: VisibilityContext | None,
+        require_visibility: bool = False,
     ):
+        if require_visibility and visibility_context is None:
+            def load_candidates(*, memory_types: list[str] | None = None) -> list[QueryResultItem]:
+                return []
+            return load_candidates
         visible_contexts = expand_visibility_context(visibility_context) if visibility_context is not None else None
 
         def load_candidates(*, memory_types: list[str] | None = None) -> list[QueryResultItem]:
@@ -911,6 +894,8 @@ class PalliumService:
             visibility_context=visibility_context,
         )
 
+    _MAX_THREAD_REBUILD_ITERATIONS = 5
+
     def _process_thread_rebuild_lease(
         self,
         lease: ThreadProcessingLease,
@@ -919,7 +904,7 @@ class PalliumService:
         lease_seconds: int,
     ) -> None:
         current_lease = lease
-        while True:
+        for _iteration in range(self._MAX_THREAD_REBUILD_ITERATIONS):
             plugin = self._semantic_plugins[current_lease.use_case]
             thread_items: list[SourceItem] = []
             thread_result: ProcessResult | None = None
@@ -949,10 +934,6 @@ class PalliumService:
                         index_entries=thread_result.index_entries,
                         source_item_metadata_updates=metadata_updates,
                     )
-                    self._storage.commit_process_result(
-                        result=thread_result,
-                        supersession_pairs=supersession_pairs,
-                    )
                 self._emit_thread_rebuild_outcome(
                     lease=current_lease,
                     thread_items=thread_items,
@@ -971,11 +952,20 @@ class PalliumService:
                 )
                 return
 
-            has_pending = self._storage.complete_thread_processing_scope(
-                scope_key=current_lease.scope_key,
-                worker_id=worker_id,
-                claimed_at=current_lease.processing_claimed_at,
-            )
+            if thread_result is not None:
+                has_pending = self._storage.commit_process_result_and_complete_scope(
+                    result=thread_result,
+                    supersession_pairs=supersession_pairs,
+                    scope_key=current_lease.scope_key,
+                    worker_id=worker_id,
+                    claimed_at=current_lease.processing_claimed_at,
+                )
+            else:
+                has_pending = self._storage.complete_thread_processing_scope(
+                    scope_key=current_lease.scope_key,
+                    worker_id=worker_id,
+                    claimed_at=current_lease.processing_claimed_at,
+                )
             if not has_pending:
                 return
             next_lease = self._storage.claim_thread_processing_scope(
@@ -986,6 +976,11 @@ class PalliumService:
             if next_lease is None:
                 return
             current_lease = next_lease
+        self._observability.emit(
+            "thread_rebuild_iteration_limit",
+            scope_key=current_lease.scope_key,
+            thread_ref=current_lease.thread_ref,
+        )
 
     def _maybe_rebuild_thread_summary(
         self,

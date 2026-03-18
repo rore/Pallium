@@ -23,5 +23,6 @@ class RetrievalProvider(ABC):
         *,
         visibility_context: VisibilityContext | None = None,
         include_trace: bool = False,
+        require_visibility: bool = False,
     ) -> RetrievalQueryResult:
         raise NotImplementedError

@@ -175,6 +175,12 @@ class SQLiteSchemaMixin:
         "source_scan_cursor_created_at": "ALTER TABLE maintenance_state ADD COLUMN source_scan_cursor_created_at DATETIME",
         "source_scan_cursor_id": "ALTER TABLE maintenance_state ADD COLUMN source_scan_cursor_id VARCHAR",
     }
+    _UNIQUE_INDEX_MIGRATIONS = {
+        "uq_source_items_source_type_source_id": (
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_source_items_source_type_source_id "
+            "ON source_items(source_type, source_id)"
+        ),
+    }
 
     def _initialize_schema(self) -> None:
         with self._schema_initialization_lock():
@@ -183,6 +189,7 @@ class SQLiteSchemaMixin:
             self._ensure_memory_object_columns()
             self._ensure_index_entry_columns()
             self._ensure_maintenance_state_columns()
+            self._ensure_unique_indexes()
             self._backfill_legacy_memory_freshness()
 
     @contextmanager
@@ -260,3 +267,32 @@ class SQLiteSchemaMixin:
             for column_name, migration_sql in self._MAINTENANCE_STATE_MIGRATIONS.items():
                 if column_name not in existing_columns:
                     connection.execute(text(migration_sql))
+
+    def _ensure_unique_indexes(self) -> None:
+        with self._engine.begin() as connection:
+            existing_indexes = {
+                row[1]
+                for row in connection.execute(text("PRAGMA index_list(source_items)"))
+            }
+            for index_name, create_sql in self._UNIQUE_INDEX_MIGRATIONS.items():
+                if index_name in existing_indexes:
+                    continue
+                duplicates = connection.execute(
+                    text(
+                        "SELECT source_type, source_id, COUNT(*) AS cnt "
+                        "FROM source_items "
+                        "GROUP BY source_type, source_id "
+                        "HAVING cnt > 1"
+                    )
+                ).fetchall()
+                if duplicates:
+                    detail = "; ".join(
+                        f"({row[0]}, {row[1]}): {row[2]} rows"
+                        for row in duplicates[:10]
+                    )
+                    raise RuntimeError(
+                        f"Cannot create unique index {index_name}: "
+                        f"duplicate (source_type, source_id) rows exist. "
+                        f"Resolve duplicates before restarting. Duplicates: {detail}"
+                    )
+                connection.execute(text(create_sql))

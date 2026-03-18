@@ -5,7 +5,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from core.contracts import ProcessResult
+from core.contracts import ProcessResult, SupersessionHint
+from core.visibility import visibility_context_matches_exact
 from core.models import new_id, utc_now
 from core.observability import OBSERVABILITY_METADATA_KEY
 from core.retention import RETENTION_MAINTENANCE_KEY
@@ -132,13 +133,13 @@ class SQLiteQueueMixin:
         *,
         source_item_id: str,
         result: ProcessResult,
-        supersession_pairs: list[tuple[str, str]],
         thread_rebuild_scope: ThreadProcessingScope | None = None,
         completed_at: datetime | None = None,
-    ) -> None:
+    ) -> list[tuple[str, str]]:
         finished_at = completed_at or utc_now()
         with self._session_factory.begin() as session:
             self._persist_process_result_in_session(session, result)
+            supersession_pairs = self._resolve_supersession_pairs_in_session(session, result)
             self._apply_supersession_pairs_in_session(session, supersession_pairs)
             self._apply_source_item_metadata_updates_in_session(session, result.source_item_metadata_updates)
             self._refresh_memory_freshness_for_ids_in_session(session, [memory.id for memory in result.memory_objects])
@@ -164,18 +165,59 @@ class SQLiteQueueMixin:
             record.processing_claimed_at = None
             record.processing_lease_expires_at = None
             record.processing_next_attempt_at = None
+        return supersession_pairs
 
     def commit_process_result(
         self,
         *,
         result: ProcessResult,
-        supersession_pairs: list[tuple[str, str]],
-    ) -> None:
+        supersession_pairs: list[tuple[str, str]] | None = None,
+    ) -> list[tuple[str, str]]:
         with self._session_factory.begin() as session:
             self._persist_process_result_in_session(session, result)
-            self._apply_supersession_pairs_in_session(session, supersession_pairs)
+            resolved_pairs = self._resolve_supersession_pairs_in_session(session, result)
+            all_pairs = resolved_pairs + (supersession_pairs or [])
+            self._apply_supersession_pairs_in_session(session, all_pairs)
             self._apply_source_item_metadata_updates_in_session(session, result.source_item_metadata_updates)
             self._refresh_memory_freshness_for_ids_in_session(session, [memory.id for memory in result.memory_objects])
+        return all_pairs
+
+    def commit_process_result_and_complete_scope(
+        self,
+        *,
+        result: ProcessResult,
+        supersession_pairs: list[tuple[str, str]] | None = None,
+        scope_key: str,
+        worker_id: str,
+        claimed_at: datetime,
+        completed_at: datetime | None = None,
+    ) -> bool:
+        finished_at = completed_at or utc_now()
+        normalized_claimed_at = self._normalize_datetime(claimed_at) or claimed_at
+        with self._session_factory.begin() as session:
+            self._persist_process_result_in_session(session, result)
+            resolved_pairs = self._resolve_supersession_pairs_in_session(session, result)
+            all_pairs = resolved_pairs + (supersession_pairs or [])
+            self._apply_supersession_pairs_in_session(session, all_pairs)
+            self._apply_source_item_metadata_updates_in_session(session, result.source_item_metadata_updates)
+            self._refresh_memory_freshness_for_ids_in_session(session, [memory.id for memory in result.memory_objects])
+
+            record = session.get(ThreadProcessingLeaseRecord, scope_key)
+            if record is None:
+                raise KeyError(scope_key)
+            record_claimed_at = self._normalize_datetime(record.processing_claimed_at)
+            if record.processing_claimed_by != worker_id or record_claimed_at != normalized_claimed_at:
+                return record.requested_at is not None
+            requested_at = self._normalize_datetime(record.requested_at)
+            pending_after = requested_at is not None and requested_at > normalized_claimed_at
+            if not pending_after:
+                record.requested_at = None
+            record.processing_completed_at = finished_at
+            record.processing_claimed_by = None
+            record.processing_claimed_at = None
+            record.processing_lease_expires_at = None
+            record.updated_at = finished_at
+            return pending_after
 
     def claim_thread_processing_scope(
         self,
@@ -488,6 +530,64 @@ class SQLiteQueueMixin:
                 )
             )
 
+    def _resolve_supersession_pairs_in_session(
+        self,
+        session: Session,
+        result: ProcessResult,
+    ) -> list[tuple[str, str]]:
+        if not result.supersession_hints:
+            return []
+        replacements = {memory_object.id: memory_object for memory_object in result.memory_objects}
+        pairs: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for hint in result.supersession_hints:
+            replacement = replacements.get(hint.replacement_memory_id)
+            if replacement is None:
+                continue
+            if not hint.container_ref or not hint.thread_ref or not hint.canonical_key:
+                continue
+            thread_item_records = session.scalars(
+                select(SourceItemRecord).where(
+                    SourceItemRecord.container_ref == hint.container_ref,
+                    SourceItemRecord.thread_ref == hint.thread_ref,
+                )
+            ).all()
+            for item_record in thread_item_records:
+                item_visibility = self._build_visibility_context(item_record.visibility_kind, item_record.visibility_id)
+                if not visibility_context_matches_exact(item_visibility, hint.visibility_context):
+                    continue
+                relation_records = session.scalars(
+                    select(RelationRecord).where(
+                        RelationRecord.relation_type == "supported_by",
+                        RelationRecord.to_kind == "source_item",
+                        RelationRecord.to_id == item_record.id,
+                        RelationRecord.from_kind == "memory_object",
+                    )
+                ).all()
+                memory_object_ids = [r.from_id for r in relation_records]
+                if not memory_object_ids:
+                    continue
+                candidate_records = session.scalars(
+                    select(MemoryObjectRecord).where(MemoryObjectRecord.id.in_(memory_object_ids))
+                ).all()
+                for candidate_record in candidate_records:
+                    candidate = self._to_memory_object(candidate_record)
+                    if candidate.id == replacement.id:
+                        continue
+                    if candidate.lifecycle != "active" or candidate.type != hint.memory_type:
+                        continue
+                    if not visibility_context_matches_exact(candidate.visibility_context, hint.visibility_context):
+                        continue
+                    candidate_key = str(candidate.payload.get("canonical_key") or "").strip()
+                    if candidate_key != hint.canonical_key:
+                        continue
+                    pair = (candidate.id, replacement.id)
+                    if pair in seen:
+                        continue
+                    seen.add(pair)
+                    pairs.append(pair)
+        return pairs
+
     def _apply_source_item_metadata_updates_in_session(
         self,
         session: Session,
@@ -508,6 +608,10 @@ class SQLiteQueueMixin:
                 else:
                     existing_metadata[key] = value
             record.metadata_json = self._dumps(existing_metadata)
+
+    def update_source_item_metadata(self, source_item_id: str, metadata_patch: dict[str, object]) -> None:
+        with self._session_factory.begin() as session:
+            self._apply_source_item_metadata_updates_in_session(session, {source_item_id: metadata_patch})
 
     def _upsert_thread_processing_scope_in_session(
         self,

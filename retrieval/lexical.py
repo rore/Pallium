@@ -99,8 +99,25 @@ class LexicalRetrievalProvider(RetrievalProvider):
         *,
         visibility_context: VisibilityContext | None = None,
         include_trace: bool = False,
+        require_visibility: bool = False,
     ) -> RetrievalQueryResult:
         tokens = sorted(set(_tokenize(text)))
+        if require_visibility and visibility_context is None:
+            trace = None
+            if include_trace:
+                trace = QueryTrace(
+                    query_text=text,
+                    query_tokens=tuple(tokens),
+                    limit=limit,
+                    filters=filters,
+                    stages=tuple(),
+                    visibility=QueryVisibilityTrace(
+                        query_visibility_context=None,
+                        expanded_visibility_contexts=tuple(),
+                        fail_closed_reason="retrieval_visibility_context_required",
+                    ),
+                )
+            return RetrievalQueryResult(results=[], trace=trace)
         visible_contexts = expand_visibility_context(visibility_context) if visibility_context is not None else None
         if not tokens:
             trace = None

@@ -237,6 +237,39 @@ def test_public_query_injectable_blocks_respect_visibility(monkeypatch, test_db_
                 assert evidence["visibility_context"] == _public()
 
 
+def test_visibility_context_is_visible_passes_through_when_visible_contexts_is_none() -> None:
+    from core.visibility import VisibilityContext, visibility_context_is_visible
+
+    # When visible_contexts is None (no filtering), everything passes — this is the non-scoped plugin path.
+    # The fail-closed guard lives at the retrieval provider level (require_visibility=True).
+    assert visibility_context_is_visible(VisibilityContext(kind="public"), visible_contexts=None) is True
+    assert visibility_context_is_visible(VisibilityContext(kind="limited", id="user-1"), visible_contexts=None) is True
+
+
+def test_lexical_retrieval_with_require_visibility_and_none_context_returns_empty(monkeypatch, test_db_url: str) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest(client, source_id="public-retrieval-none", content="Decision: use item event time for reservation ordering to avoid duplicate holds.", visibility_context=_public())
+        _ingest(client, source_id="limited-retrieval-none", content="Decision: use item event time for reservation ordering to avoid duplicate holds.", visibility_context=_limited("channel-retrieval"))
+
+        retrieval = client.app.state.pallium_service._retrieval
+        result = retrieval.query(
+            text="reservation ordering duplicate holds",
+            limit=10,
+            visibility_context=None,
+            require_visibility=True,
+        )
+        assert result.results == []
+
+        # Without require_visibility, None means "no filtering" (non-scoped plugin path)
+        unscoped_result = retrieval.query(
+            text="reservation ordering duplicate holds",
+            limit=10,
+            visibility_context=None,
+            require_visibility=False,
+        )
+        assert len(unscoped_result.results) > 0
+
+
 def test_debug_sharp_candidate_diagnostics_do_not_leak_hidden_candidates(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
         _ingest(client, source_id="public-sharp", content="Decision: use item event time for reservation ordering to avoid duplicate holds.", visibility_context=_public())

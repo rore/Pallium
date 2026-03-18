@@ -201,10 +201,13 @@ class StorageProvider(ABC):
         *,
         source_item_id: str,
         result: ProcessResult,
-        supersession_pairs: list[tuple[str, str]],
         thread_rebuild_scope: ThreadProcessingScope | None = None,
         completed_at: datetime | None = None,
-    ) -> None:
+    ) -> list[tuple[str, str]]:
+        """Commit a processed source item result, resolving supersession hints atomically.
+
+        Returns the resolved supersession pairs (for observability).
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -212,8 +215,33 @@ class StorageProvider(ABC):
         self,
         *,
         result: ProcessResult,
-        supersession_pairs: list[tuple[str, str]],
-    ) -> None:
+        supersession_pairs: list[tuple[str, str]] | None = None,
+    ) -> list[tuple[str, str]]:
+        """Commit a process result, resolving supersession hints atomically.
+
+        If supersession_pairs is provided, those are applied directly in addition to
+        any pairs resolved from result.supersession_hints.
+
+        Returns the resolved supersession pairs (for observability).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def commit_process_result_and_complete_scope(
+        self,
+        *,
+        result: ProcessResult,
+        supersession_pairs: list[tuple[str, str]] | None = None,
+        scope_key: str,
+        worker_id: str,
+        claimed_at: datetime,
+        completed_at: datetime | None = None,
+    ) -> bool:
+        """Atomically commit a process result and complete the thread processing scope.
+
+        Returns True if there are pending items after completion (new requests arrived
+        during processing), False otherwise.
+        """
         raise NotImplementedError
 
     @abstractmethod

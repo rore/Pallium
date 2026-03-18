@@ -343,6 +343,62 @@ def test_sqlite_storage_provider_serializes_schema_initialization(tmp_path: Path
     SQLiteStorageProvider(database_url)
 
 
+def test_duplicate_source_type_source_id_raises_integrity_error(test_db_url: str) -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    storage = SQLiteStorageProvider(test_db_url)
+    item_a = SourceItem(
+        source_type="chat_thread",
+        source_id="dup-1",
+        content_type="text/plain",
+        content="First item.",
+        visibility_context=VisibilityContext(kind="public"),
+    )
+    storage.create_source_item(item_a)
+
+    item_b = SourceItem(
+        source_type="chat_thread",
+        source_id="dup-1",
+        content_type="text/plain",
+        content="Duplicate item.",
+        visibility_context=VisibilityContext(kind="public"),
+    )
+    with pytest.raises(IntegrityError):
+        storage.create_source_item(item_b)
+
+
+def test_unique_index_migration_fails_on_existing_duplicates(tmp_path: Path) -> None:
+    from sqlalchemy import create_engine, text as sql_text
+
+    database_url = f"sqlite:///{tmp_path / 'dup-preflight.db'}"
+    engine = create_engine(database_url)
+    with engine.begin() as conn:
+        conn.execute(sql_text(
+            "CREATE TABLE source_items ("
+            "id VARCHAR PRIMARY KEY, source_type VARCHAR NOT NULL, source_id VARCHAR NOT NULL, "
+            "content_type VARCHAR NOT NULL, content TEXT NOT NULL, metadata_json TEXT, "
+            "occurred_at DATETIME, actor_ref VARCHAR, role VARCHAR, container_ref VARCHAR, "
+            "thread_ref VARCHAR, session_ref VARCHAR, source_ref VARCHAR, artifact_kind VARCHAR, "
+            "visibility_kind VARCHAR, visibility_id VARCHAR, use_case VARCHAR, "
+            "processing_status VARCHAR DEFAULT 'pending', processing_attempts INTEGER DEFAULT 0, "
+            "processing_claimed_by VARCHAR, processing_claimed_at DATETIME, "
+            "processing_lease_expires_at DATETIME, processing_completed_at DATETIME, "
+            "processing_error TEXT, processing_next_attempt_at DATETIME, created_at DATETIME NOT NULL)"
+        ))
+        conn.execute(sql_text(
+            "INSERT INTO source_items (id, source_type, source_id, content_type, content, created_at) "
+            "VALUES ('id-1', 'chat', 'dup', 'text/plain', 'first', datetime('now'))"
+        ))
+        conn.execute(sql_text(
+            "INSERT INTO source_items (id, source_type, source_id, content_type, content, created_at) "
+            "VALUES ('id-2', 'chat', 'dup', 'text/plain', 'second', datetime('now'))"
+        ))
+    engine.dispose()
+
+    with pytest.raises(RuntimeError, match="duplicate.*source_type.*source_id"):
+        SQLiteStorageProvider(database_url)
+
+
 
 
 
