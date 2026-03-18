@@ -144,6 +144,78 @@ Examples:
 - "We need to decide whether to change ordering." -> null.
 - "Task complete. No message needed. Nothing new to report." -> candidate_type null, is_low_value_meta true.
 - "Constraint: do not open a browser. Next step: compare the local repos." -> candidate_type null, constraint_text and next_step_text populated.""",
+    "strict_typed_memory_v6_compact_work_state": """You extract reusable typed memory and explicit work-state signals from one technical source item. Return exactly one JSON object and no extra prose.
+
+Typed memory stays conservative:
+- decision only for an explicit concrete choice already made.
+- investigation_outcome only for an explicit established finding, root cause, conclusion, diagnostic outcome, or analytical verdict.
+- otherwise candidate_type = null.
+- a non-null type requires an exact quoted proof phrase in the matching evidence field.
+- fill only the decision fields for decision and only the investigation fields for investigation_outcome.
+
+Work-state signals may come from natural operational prose, not only labeled markers. Populate optional signals only when the source explicitly states them: is_low_value_meta, constraint_text, next_step_text, blocker_text, progress_text, key_finding_text, subject_hints, constraint_candidates.
+
+Signal rules:
+- next_step_text: a concrete future action or restart step the source already states.
+- blocker_text: the active impediment, failed attempt, or stop condition the source already states.
+- progress_text: substantive completed or partial work that improves later resumption.
+- key_finding_text: a durable operational takeaway or resolved sub-finding, but not a typed finding unless the source gives explicit proof.
+- use the exact source words when that is the cleanest way to capture the signal.
+
+Never infer anchors or normalized constraints. subject_hints may use only workstream|component|surface. constraint_candidates may use only use_surface|use_source|perform_step with prohibit|prefer|require. Return [] when anchors or constraints are not safely explicit.
+
+If is_low_value_meta is true, all optional text fields must be null and list fields should be []. Prefer null or [] over weak paraphrases.""",
+    "strict_typed_memory_v6_compact_work_state_negatives": """You extract reusable typed memory and explicit work-state signals from one technical source item. Return exactly one JSON object and no extra prose.
+
+Typed memory stays conservative:
+- decision only for an explicit concrete choice already made.
+- investigation_outcome only for an explicit established finding, root cause, conclusion, diagnostic outcome, or analytical verdict.
+- otherwise candidate_type = null.
+- a non-null type requires an exact quoted proof phrase in the matching evidence field.
+- fill only the decision fields for decision and only the investigation fields for investigation_outcome.
+
+Work-state signals may come from natural operational prose, not only labeled markers. Populate optional signals only when the source explicitly states them: is_low_value_meta, constraint_text, next_step_text, blocker_text, progress_text, key_finding_text, subject_hints, constraint_candidates.
+
+Signal rules:
+- next_step_text: a concrete future action or restart step the source already states.
+- blocker_text: the active impediment, failed attempt, or stop condition the source already states.
+- progress_text: substantive completed or partial work that improves later resumption.
+- key_finding_text: a durable operational takeaway or resolved sub-finding that helps later recall, but not a typed finding unless the source gives explicit proof.
+- use the exact source words when that is the cleanest way to capture the signal.
+
+Negative rules:
+- clarifying questions are not durable signals.
+- brainstorming, option lists, and hedged recommendations are not durable signals.
+- monitor/watch language without a stable current state is not a blocker or key finding.
+- generic advice without committed state is not progress, blocker, next step, or key finding.
+- if the turn mainly asks for more context or lists possibilities, prefer null or [] for every optional field.
+
+Never infer anchors or normalized constraints. subject_hints may use only workstream|component|surface. constraint_candidates may use only use_surface|use_source|perform_step with prohibit|prefer|require. Return [] when anchors or constraints are not safely explicit.
+
+If is_low_value_meta is true, all optional text fields must be null and list fields should be []. Prefer null or [] over weak paraphrases.""",
+    "strict_typed_memory_v6_work_state_examples": """You extract reusable typed memory and explicit work-state signals from one technical source item. Return exactly one JSON object and no extra prose.
+
+Only create typed memory when the source gives explicit proof.
+- decision: an explicit concrete choice already made.
+- investigation_outcome: an explicit established finding, root cause, conclusion, diagnostic outcome, or analytical verdict.
+- otherwise candidate_type = null.
+- a non-null type requires an exact quoted proof phrase in the matching evidence field.
+- fill only the decision fields for decision and only the investigation fields for investigation_outcome.
+
+Optional signals may come from natural operational prose. Populate is_low_value_meta, constraint_text, next_step_text, blocker_text, progress_text, key_finding_text, subject_hints, and constraint_candidates only when the source explicitly states them.
+- next_step_text: a concrete future action or restart step.
+- blocker_text: the active impediment or failed attempt.
+- progress_text: substantive completed or partial work.
+- key_finding_text: a durable operational takeaway that helps later recall.
+
+Negative rules:
+- clarifying questions, brainstorming, hedged recommendations, monitor/watch notes, and generic advice without committed state should keep optional signals null or [].
+- if is_low_value_meta is true, all optional text fields must be null and list fields should be [].
+
+Examples:
+- "The token refresh worked and the sync got through batch 417, but the retry window is exhausted now. Wait 15 minutes and resume from batch 418." -> candidate_type null, progress_text about reaching batch 417, blocker_text about the retry window, next_step_text about waiting 15 minutes and resuming from batch 418.
+- "I can lower concurrency or bump memory, but I need to confirm which worker you mean first." -> candidate_type null, all optional signals null.
+- "The admin toggle wiring is ready, but branch kiosk fallback coverage is still missing before review can pass." -> candidate_type null, progress_text about the admin toggle wiring, blocker_text about the missing branch kiosk fallback coverage.""",
 }
 
 SCHEMA_DESCRIPTION = json.dumps(

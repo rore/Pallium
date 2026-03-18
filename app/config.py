@@ -72,7 +72,7 @@ def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
         "agent_conversation_memory": SemanticPackageConfig(
             name="agent_conversation_memory",
             implementation="agent_conversation_memory",
-            prompt_variant="strict_typed_memory_v5_compact_examples",
+            prompt_variant="strict_typed_memory_v6_work_state_examples",
             consolidation=DEFAULT_AGENT_CONVERSATION_CONSOLIDATION,
         ),
     }

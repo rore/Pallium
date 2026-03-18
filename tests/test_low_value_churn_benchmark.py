@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.config import AppConfig
+from tests.config_helpers import build_llm_test_config
 from evals.low_value_churn_benchmark import run_low_value_churn_benchmark
 from tests.stub_providers import TieredMemorySemanticProvider
 
@@ -15,13 +15,10 @@ def _read_jsonl(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
 
 
-def _benchmark_config() -> AppConfig:
-    return AppConfig(
+def _benchmark_config():
+    return build_llm_test_config(
         default_use_case='agent_conversation_memory',
-        llm_provider='openai_compatible',
-        llm_model='fake-answer-model',
-        llm_base_url='http://fake-provider.local',
-        llm_prompt_variant='strict_typed_memory_v4_evidence_guarded',
+        model='fake-answer-model',
     )
 
 

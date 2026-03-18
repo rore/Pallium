@@ -79,7 +79,8 @@ def _build_plugin_for_package(*, config: AppConfig, package_config: SemanticPack
             provider_name=package_config.llm_provider,
             model=package_config.model,
         )
-        prompt_variant = package_config.prompt_variant or "strict_typed_memory_v4_evidence_guarded"
+        default_prompt_variant = "strict_typed_memory_v5_compact_examples" if implementation == "llm_agent_memory" else "strict_typed_memory_v6_work_state_examples"
+        prompt_variant = package_config.prompt_variant or default_prompt_variant
         if implementation == "llm_agent_memory":
             return LLMAgentMemoryPlugin(provider=provider, prompt_variant=prompt_variant)
         return AgentConversationMemoryPlugin(

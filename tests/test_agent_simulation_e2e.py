@@ -328,3 +328,47 @@ def test_chat_mode_keeps_task_checkpoint_for_messy_resumed_work_prompt(monkeypat
     assert "batch 418" in rendered_blocks
     assert "expired token" not in rendered_blocks
     assert model.calls[0]["injectable_blocks"] == query_response["injectable_blocks"]
+
+def test_chat_mode_uses_task_checkpoint_for_natural_language_resumed_work_history(monkeypatch, test_db_url: str) -> None:
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: PublicCorpusSemanticProvider())
+    client = TestClient(create_app(build_llm_test_config(default_use_case="agent_conversation_memory", sqlite_url=test_db_url)))
+
+    _seed_history(
+        client,
+        [
+            {
+                "source_type": "assistant_artifact",
+                "source_id": "sync-natural-history-1",
+                "content_type": "text/plain",
+                "content": "The token refresh worked and the sync got through batch 417, but the retry window is exhausted now. Wait 15 minutes and resume from batch 418.",
+                "artifact_kind": "assistant_output",
+                "role": "assistant",
+                "container_ref": "chat:sync-natural",
+                "thread_ref": "chat:sync-natural:history",
+                "session_ref": "session:sync-natural:history",
+                "visibility_context": dict(_PUBLIC),
+            },
+        ],
+    )
+
+    harness, model = _build_harness(
+        client,
+        container_ref="chat:sync-natural",
+        thread_ref="chat:sync-natural:fresh",
+        session_ref="session:sync-natural:fresh",
+    )
+
+    harness.process_chat_message("I'm back on the sync. What's the current blocker and where do I pick it up?")
+
+    query_response = harness.session.events[0]["query_debug"]["response"]
+    routing = query_response["trace"]["routing"]
+    rendered_blocks = " ".join(block["text"].lower() for block in query_response["injectable_blocks"])
+
+    assert query_response["should_inject"] is True
+    assert query_response["decision_reason"] == "carry_forward_available"
+    assert routing["query_intent"] == "work_resumption"
+    assert routing["selected_layer"] == "task_checkpoint"
+    assert any(block["memory_type"] == "task_checkpoint" for block in query_response["injectable_blocks"])
+    assert "retry window" in rendered_blocks
+    assert "batch 418" in rendered_blocks
+    assert model.calls[0]["injectable_blocks"] == query_response["injectable_blocks"]

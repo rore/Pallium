@@ -4,7 +4,9 @@ from app.config import AppConfig, LLMProviderConfig, SemanticPackageConfig
 from capabilities.consolidation import ConsolidationPolicy, DEFAULT_CONSOLIDATION_STRATEGIES
 
 
-DEFAULT_PROMPT_VARIANT = "strict_typed_memory_v5_compact_examples"
+DEFAULT_LLM_PROMPT_VARIANT = "strict_typed_memory_v5_compact_examples"
+DEFAULT_AGENT_CONVERSATION_PROMPT_VARIANT = "strict_typed_memory_v6_work_state_examples"
+DEFAULT_PROMPT_VARIANT = DEFAULT_LLM_PROMPT_VARIANT
 DEFAULT_CONSOLIDATION_POLICY = ConsolidationPolicy(
     enabled_strategies=DEFAULT_CONSOLIDATION_STRATEGIES,
     default_strategy="thread_summary_anchored",
@@ -23,9 +25,14 @@ def build_llm_test_config(
     provider_name: str = "openai",
     provider_kind: str = "openai_compatible",
     model: str = "fake-model",
-    prompt_variant: str = DEFAULT_PROMPT_VARIANT,
+    prompt_variant: str | None = None,
+    llm_agent_prompt_variant: str | None = None,
+    agent_conversation_prompt_variant: str | None = None,
     base_url: str = "http://fake-provider.local",
 ) -> AppConfig:
+    llm_prompt = prompt_variant or llm_agent_prompt_variant or DEFAULT_LLM_PROMPT_VARIANT
+    agent_conversation_prompt = prompt_variant or agent_conversation_prompt_variant or DEFAULT_AGENT_CONVERSATION_PROMPT_VARIANT
+
     return AppConfig(
         storage_backend="sqlite",
         sqlite_url=sqlite_url,
@@ -45,14 +52,14 @@ def build_llm_test_config(
                 implementation="llm_agent_memory",
                 llm_provider=provider_name,
                 model=model,
-                prompt_variant=prompt_variant,
+                prompt_variant=llm_prompt,
             ),
             "agent_conversation_memory": SemanticPackageConfig(
                 name="agent_conversation_memory",
                 implementation="agent_conversation_memory",
                 llm_provider=provider_name,
                 model=model,
-                prompt_variant=prompt_variant,
+                prompt_variant=agent_conversation_prompt,
                 consolidation=DEFAULT_CONSOLIDATION_POLICY,
             ),
         },

@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 
-from app.config import AppConfig
+from tests.config_helpers import build_llm_test_config
 from evals.work_resumption_benchmark import run_work_resumption_benchmark
 from providers.llm.base import LLMJsonResponse
 from tests.stub_providers import TieredMemorySemanticProvider
@@ -17,13 +17,11 @@ def _read_jsonl(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def _benchmark_config() -> AppConfig:
-    return AppConfig(
+def _benchmark_config(prompt_variant: str = "strict_typed_memory_v6_work_state_examples"):
+    return build_llm_test_config(
         default_use_case="agent_conversation_memory",
-        llm_provider="openai_compatible",
-        llm_model="fake-answer-model",
-        llm_base_url="http://fake-provider.local",
-        llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
+        model="fake-answer-model",
+        agent_conversation_prompt_variant=prompt_variant,
     )
 
 
@@ -257,9 +255,10 @@ def test_work_resumption_benchmark_outputs_summary_results_and_report(monkeypatc
     assert summary["injection_contract_successes"] >= 9
     assert summary["thin_agent_boundary_successes"] >= 9
     assert summary["privacy_guard_successes"] == 3
-    assert summary["dominant_tuning_bottleneck"] == "packaging"
-    assert summary["failure_family_counts"]["injectability_packaging_failure"] >= 3
-    assert summary["failure_family_counts"]["thin_agent_boundary_failure"] >= 3
+    assert summary["dominant_tuning_bottleneck"] == "retrieval_recall"
+    assert summary["failure_family_counts"]["retrieval_recall_failure"] >= 1
+    assert summary["failure_family_counts"]["injectability_packaging_failure"] >= 1
+    assert summary["failure_family_counts"]["thin_agent_boundary_failure"] >= 1
     assert summary["failure_family_counts"]["routing_layer_choice_failure"] == 0
     assert summary["benchmark"]["suite_id"] == "work_resumption"
     assert summary["benchmark"]["dataset_tier"] == "confidence"
@@ -303,7 +302,8 @@ def test_work_resumption_benchmark_captures_successes_and_attributed_packaging_f
     assert review["top_layer"] == "task_checkpoint"
     assert review["query_family"] == "resumed_session_continuation"
     assert review["labels"]["scenario_family"] == "review_continuity"
-    assert review["failure_families"] == []
+    assert review["failure_families"] == ["retrieval_recall_failure"]
+    assert review["expected_memory_types_found"] is False
 
     stale = results["prefer-fresh-blocker-over-stale-checkpoint"]
     assert stale["top_layer"] == "task_checkpoint"
@@ -330,14 +330,45 @@ def test_work_resumption_benchmark_captures_successes_and_attributed_packaging_f
 
     limited_guard = results["limited-query-can-use-same-limited-rollout-state"]
     assert limited_guard["winner"] == "memory_backed"
-    assert "injectability_packaging_failure" in limited_guard["failure_families"]
-    assert "thin_agent_boundary_failure" in limited_guard["failure_families"]
+    assert limited_guard["failure_families"] == ["retrieval_recall_failure"]
+    assert limited_guard["expected_memory_types_found"] is False
 
     user_guard = results["user-private-query-stays-isolated-from-limited-channel"]
     assert user_guard["top_layer"] == "task_checkpoint"
     assert user_guard["winner"] == "memory_backed"
-    assert user_guard["failure_families"] == []
+    assert user_guard["failure_families"] == ["retrieval_recall_failure"]
+    assert user_guard["expected_memory_types_found"] is False
 
+
+
+def test_work_resumption_benchmark_v5_and_v6_control_runs_match_on_current_retrieval_recall_gap(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: TieredMemorySemanticProvider())
+
+    summaries: dict[str, dict[str, object]] = {}
+    review_results: dict[str, dict[str, object]] = {}
+    for prompt_variant in ("strict_typed_memory_v5_compact_examples", "strict_typed_memory_v6_work_state_examples"):
+        run_dir = run_work_resumption_benchmark(
+            scenario_file=SCENARIOS,
+            output_root=tmp_path / prompt_variant,
+            config=_benchmark_config(prompt_variant),
+            run_name=f"work-resumption-control-{prompt_variant}",
+            answer_provider=StubWorkResumptionAnswerProvider(),
+        )
+        summaries[prompt_variant] = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+        review_results[prompt_variant] = {item["scenario_id"]: item for item in _read_jsonl(run_dir / "results.jsonl")}["resume-review-follow-up-after-feedback"]
+
+    v5_summary = summaries["strict_typed_memory_v5_compact_examples"]
+    v6_summary = summaries["strict_typed_memory_v6_work_state_examples"]
+    assert v5_summary["dominant_tuning_bottleneck"] == "retrieval_recall"
+    assert v6_summary["dominant_tuning_bottleneck"] == "retrieval_recall"
+    assert v5_summary["failure_family_counts"]["retrieval_recall_failure"] == v6_summary["failure_family_counts"]["retrieval_recall_failure"]
+
+    v5_review = review_results["strict_typed_memory_v5_compact_examples"]
+    v6_review = review_results["strict_typed_memory_v6_work_state_examples"]
+    assert v5_review["top_layer"] == "task_checkpoint"
+    assert v6_review["top_layer"] == "task_checkpoint"
+    assert v5_review["failure_families"] == ["retrieval_recall_failure"]
+    assert v6_review["failure_families"] == ["retrieval_recall_failure"]
 
 
 def test_work_resumption_benchmark_keeps_no_value_continuation_guards(monkeypatch, tmp_path: Path) -> None:

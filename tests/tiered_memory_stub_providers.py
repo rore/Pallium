@@ -294,6 +294,57 @@ def _build_item_extraction_payload(user_prompt: str) -> dict[str, object]:
             'rationale_text': None,
         }
 
+    if 'got through batch 417' in lower and 'resume from batch 418' in lower:
+        return {
+            'summary': 'Natural-language resumed-work state recorded in the conversation.',
+            'candidate_type': None,
+            'decision_text': None,
+            'decision_evidence_text': None,
+            'investigation_text': None,
+            'investigation_evidence_text': None,
+            'rationale_text': None,
+            'is_low_value_meta': False,
+            'constraint_text': None,
+            'next_step_text': 'Wait 15 minutes and resume from batch 418.',
+            'blocker_text': 'The retry window is exhausted now.',
+            'progress_text': 'The token refresh worked and the sync got through batch 417.',
+            'key_finding_text': None,
+        }
+
+    if 'admin toggle wiring is ready' in lower and 'fallback coverage is still missing' in lower:
+        return {
+            'summary': 'Natural-language review state recorded in the conversation.',
+            'candidate_type': None,
+            'decision_text': None,
+            'decision_evidence_text': None,
+            'investigation_text': None,
+            'investigation_evidence_text': None,
+            'rationale_text': None,
+            'is_low_value_meta': False,
+            'constraint_text': None,
+            'next_step_text': None,
+            'blocker_text': 'Branch kiosk fallback coverage is still missing before review can pass.',
+            'progress_text': 'The admin toggle wiring is ready.',
+            'key_finding_text': None,
+        }
+
+    if 'lower concurrency or bump memory' in lower and 'confirm which worker' in lower:
+        return {
+            'summary': 'Tentative guidance without durable work state.',
+            'candidate_type': None,
+            'decision_text': None,
+            'decision_evidence_text': None,
+            'investigation_text': None,
+            'investigation_evidence_text': None,
+            'rationale_text': None,
+            'is_low_value_meta': False,
+            'constraint_text': None,
+            'next_step_text': None,
+            'blocker_text': None,
+            'progress_text': None,
+            'key_finding_text': None,
+        }
+
     return {
         'summary': 'Conversation summary.',
         'candidate_type': None,

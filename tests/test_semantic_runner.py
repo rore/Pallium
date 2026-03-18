@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Any
 from pathlib import Path
 
 from app.config import AppConfig
 from evals.semantic_runner import run_semantic_eval
 from providers.llm.base import LLMJsonResponse
-from semantic.llm_agent_memory import LLMAgentMemoryPlugin, describe_prompt_variants
+from semantic.llm_agent_memory import LLMAgentMemoryPlugin, PROMPT_VARIANTS, describe_prompt_variants
 from semantic.prompt_roles import get_prompt_role_contract
 
 
@@ -326,3 +327,116 @@ def test_run_semantic_eval_records_errors(tmp_path: Path) -> None:
     assert len(results) == 1
     assert results[0]["status"] == "error"
     assert results[0]["error"]["type"] == "RuntimeError"
+
+def _extract_source_id(user_prompt: str) -> str:
+    for line in user_prompt.splitlines():
+        if line.startswith("Source id:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+class WorkStateVariantAwareStubLLMProvider:
+    _VARIANT_BY_PROMPT = {prompt: name for name, prompt in PROMPT_VARIANTS.items()}
+
+    def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+        variant = self._VARIANT_BY_PROMPT.get(system_prompt)
+        source_id = _extract_source_id(user_prompt)
+        parsed_json: dict[str, Any] = {
+            "summary": "Semantic summary",
+            "candidate_type": None,
+            "decision_text": None,
+            "decision_evidence_text": None,
+            "investigation_text": None,
+            "investigation_evidence_text": None,
+            "rationale_text": None,
+            "is_low_value_meta": False,
+            "constraint_text": None,
+            "next_step_text": None,
+            "blocker_text": None,
+            "progress_text": None,
+            "key_finding_text": None,
+            "subject_hints": [],
+            "constraint_candidates": [],
+        }
+        if source_id == "signal-work-state-1":
+            if variant in {"strict_typed_memory_v6_compact_work_state_negatives", "strict_typed_memory_v6_work_state_examples"}:
+                parsed_json.update(
+                    {
+                        "summary": "Natural-language resumed-work state.",
+                        "progress_text": "The token refresh worked and the sync got through batch 417.",
+                        "blocker_text": "The retry window is exhausted now.",
+                        "next_step_text": "Wait 15 minutes and resume from batch 418.",
+                    }
+                )
+            elif variant == "strict_typed_memory_v6_compact_work_state":
+                parsed_json.update(
+                    {
+                        "summary": "Partial work-state extraction.",
+                        "blocker_text": "The retry window is exhausted now.",
+                        "next_step_text": "Wait 15 minutes and resume from batch 418.",
+                    }
+                )
+            else:
+                parsed_json.update(
+                    {
+                        "summary": "Baseline work-state extraction misses progress.",
+                        "blocker_text": "The retry window is exhausted now.",
+                        "next_step_text": "Wait 15 minutes and resume from batch 418.",
+                    }
+                )
+        elif source_id == "signal-work-state-2":
+            if variant == "strict_typed_memory_v6_compact_work_state":
+                parsed_json.update(
+                    {
+                        "summary": "Weak work-state overreach.",
+                        "next_step_text": "Confirm which worker you mean first.",
+                    }
+                )
+            else:
+                parsed_json["summary"] = "Tentative guidance without durable state."
+        return LLMJsonResponse(raw_text=json.dumps(parsed_json), parsed_json=parsed_json)
+
+
+def test_run_semantic_eval_compares_work_state_prompt_candidates(tmp_path: Path) -> None:
+    input_file = tmp_path / "items.jsonl"
+    output_dir = tmp_path / "output"
+    _write_input_file(
+        input_file,
+        _signal_record(
+            "signal-work-state-1",
+            "The token refresh worked and the sync got through batch 417, but the retry window is exhausted now. Wait 15 minutes and resume from batch 418.",
+            {"progress_text": True, "blocker_text": True, "next_step_text": True, "key_finding_text": False, "is_low_value_meta": False},
+        ),
+        _signal_record(
+            "signal-work-state-2",
+            "I can lower concurrency or bump memory, but I need to confirm which worker you mean first.",
+            {"progress_text": False, "blocker_text": False, "next_step_text": False, "key_finding_text": False, "is_low_value_meta": False},
+        ),
+    )
+
+    plugin = LLMAgentMemoryPlugin(provider=WorkStateVariantAwareStubLLMProvider())
+    variants = [
+        DEFAULT_VARIANT,
+        "strict_typed_memory_v6_compact_work_state",
+        "strict_typed_memory_v6_compact_work_state_negatives",
+        "strict_typed_memory_v6_work_state_examples",
+    ]
+    run_dir = run_semantic_eval(
+        input_file=input_file,
+        output_root=output_dir,
+        plugin=plugin,
+        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant=DEFAULT_VARIANT),
+        run_name="work-state-variant-run",
+        prompt_variants=variants,
+    )
+
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+
+    assert summary["prompt_variants"] == variants
+    assert summary["per_variant"][DEFAULT_VARIANT]["signal_metrics"]["progress_text"]["correct"] == 1
+    assert summary["per_variant"][DEFAULT_VARIANT]["signal_metrics"]["next_step_text"]["correct"] == 2
+    assert summary["per_variant"]["strict_typed_memory_v6_compact_work_state"]["signal_metrics"]["progress_text"]["correct"] == 1
+    assert summary["per_variant"]["strict_typed_memory_v6_compact_work_state_negatives"]["signal_metrics"]["progress_text"]["correct"] == 2
+    assert summary["per_variant"]["strict_typed_memory_v6_compact_work_state_negatives"]["signal_metrics"]["blocker_text"]["correct"] == 2
+    assert summary["per_variant"]["strict_typed_memory_v6_compact_work_state_negatives"]["signal_metrics"]["next_step_text"]["correct"] == 2
+    assert summary["per_variant"]["strict_typed_memory_v6_work_state_examples"]["signal_metrics"]["progress_text"]["correct"] == 2

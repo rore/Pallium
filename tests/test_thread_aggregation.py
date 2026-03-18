@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.config import AppConfig
+from tests.config_helpers import build_llm_test_config
 from app.main import create_app
 from evals.agent_conversation_runner import run_agent_conversation_scenarios
 from providers.llm.base import LLMJsonResponse
@@ -119,9 +120,9 @@ class ThreadAwareStubProvider:
                 "rationale_text": None,
                 "is_low_value_meta": "task complete" in lowered_prompt and "nothing new to report" in lowered_prompt,
                 "constraint_text": "No browser auth, no Jira or Slack auth; use the local repos only and ask the user directly for anything behind those services." if "no browser auth" in lowered_prompt and "local repos only" in lowered_prompt else None,
-                "next_step_text": "Compare ledger-query vs transaction-transformer locally, then explain which repo changed more." if "compare ledger-query vs transaction-transformer locally first" in lowered_prompt else None,
-                "blocker_text": "Browser and SSO-backed services are unavailable in this environment." if "no browser auth" in lowered_prompt and "jira or slack auth" in lowered_prompt else None,
-                "progress_text": "The latest ledger changes were already summarized across the local repos." if "expanded transaction coverage" in lowered_prompt and "adx plumbing" in lowered_prompt else None,
+                "next_step_text": "Compare ledger-query vs transaction-transformer locally, then explain which repo changed more." if "compare ledger-query vs transaction-transformer locally first" in lowered_prompt else ("Wait 15 minutes and resume from batch 418." if "resume from batch 418" in lowered_prompt and "got through batch 417" in lowered_prompt else None),
+                "blocker_text": "Browser and SSO-backed services are unavailable in this environment." if "no browser auth" in lowered_prompt and "jira or slack auth" in lowered_prompt else ("The retry window is exhausted now." if "retry window is exhausted" in lowered_prompt and "batch 418" in lowered_prompt else ("Branch kiosk fallback coverage is still missing before review can pass." if "admin toggle wiring is ready" in lowered_prompt and "fallback coverage is still missing" in lowered_prompt else None)),
+                "progress_text": "The latest ledger changes were already summarized across the local repos." if "expanded transaction coverage" in lowered_prompt and "adx plumbing" in lowered_prompt else ("The token refresh worked and the sync got through batch 417." if "resume from batch 418" in lowered_prompt and "got through batch 417" in lowered_prompt else ("The admin toggle wiring is ready." if "admin toggle wiring is ready" in lowered_prompt and "fallback coverage is still missing" in lowered_prompt else None)),
                 "key_finding_text": None,
             }
         return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
@@ -185,15 +186,11 @@ def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
     }
 
 
-def _thread_test_config(test_db_url: str) -> AppConfig:
-    return AppConfig(
-        storage_backend="sqlite",
-        sqlite_url=test_db_url,
+def _thread_test_config(test_db_url: str):
+    return build_llm_test_config(
         default_use_case="agent_conversation_memory",
-        llm_provider="openai_compatible",
-        llm_model="fake-model",
-        llm_base_url="http://fake-provider.local",
-        llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
+        sqlite_url=test_db_url,
+        model="fake-model",
     )
 
 
@@ -353,7 +350,7 @@ def test_agent_conversation_runner_surfaces_thread_summary(monkeypatch, tmp_path
     run_dir = run_agent_conversation_scenarios(
         scenario_file=_write_public_visibility_scenario(tmp_path / "agent_conversation_visibility_scenarios.json", Path("evals/agent_conversation/scenarios.json")),
         output_root=tmp_path / "output",
-        config=AppConfig(storage_backend="sqlite", default_use_case="agent_conversation_memory", llm_provider="openai_compatible", llm_model="fake-model", llm_base_url="http://fake-provider.local", llm_prompt_variant="strict_typed_memory_v4_evidence_guarded"),
+        config=build_llm_test_config(default_use_case="agent_conversation_memory", sqlite_url="sqlite:///./test.db", model="fake-model"),
         run_name="agent-conversation-thread-summary",
     )
     results = [json.loads(line) for line in (run_dir / "results.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -511,3 +508,41 @@ def test_substantive_item_still_requests_thread_rebuild(monkeypatch, test_db_url
     assert processing.thread_rebuild_completed is True
     assert any(memory.type == "thread_summary" for memory in memory_objects)
 
+
+def test_natural_language_assistant_output_creates_task_checkpoint_from_metadata_signals(monkeypatch, test_db_url: str) -> None:
+    client = _create_thread_client(monkeypatch, test_db_url)
+    for payload in (
+        {"source_type": "chat_message", "source_id": "thread-msg-natural-1", "content_type": "text/plain", "content": "I need to pick this sync retry back up.", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-001", "session_ref": "agent-session-agg-natural-001", "occurred_at": "2026-03-11T10:00:00Z"},
+        {"source_type": "assistant_artifact", "source_id": "thread-natural-artifact-1", "content_type": "text/plain", "content": "The token refresh worked and the sync got through batch 417, but the retry window is exhausted now. Wait 15 minutes and resume from batch 418.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-001", "session_ref": "agent-session-agg-natural-001", "occurred_at": "2026-03-11T10:03:00Z"},
+    ):
+        client.post("/items", json=payload)
+
+    query_response = client.post("/query", json={"text": "what is the current blocker and where do i resume the sync?", "limit": 8, "container_ref": "chat:library-help"})
+    memory_hits = [item for item in query_response.json()["results"] if item["result_kind"] == "memory_hit"]
+    task_checkpoint = next(item for item in memory_hits if item["type"] == "task_checkpoint")
+    selected_work_artifacts = task_checkpoint["payload"]["selected_work_artifacts"]
+
+    assert any(item["signal_type"] == "progress_update" and item["signal_origin"] == "llm" and "batch 417" in item["text"].lower() for item in selected_work_artifacts)
+    assert any(item["signal_type"] == "blocker" and item["signal_origin"] == "llm" and "retry window" in item["text"].lower() for item in selected_work_artifacts)
+    assert any(item["signal_type"] == "next_step" and item["signal_origin"] == "llm" and "batch 418" in item["text"].lower() for item in selected_work_artifacts)
+
+
+def test_key_finding_only_signal_does_not_create_task_checkpoint(monkeypatch, test_db_url: str) -> None:
+    client = _create_thread_client(monkeypatch, test_db_url)
+    for payload in (
+        {"source_type": "chat_message", "source_id": "thread-msg-natural-2", "content_type": "text/plain", "content": "What should we remember from this grocery planning thread?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-002", "session_ref": "agent-session-agg-natural-002", "occurred_at": "2026-03-11T12:00:00Z"},
+        {"source_type": "assistant_artifact", "source_id": "thread-natural-artifact-2", "content_type": "text/plain", "content": "The biggest lesson is that unordered grocery lists cause backtracking through the store.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-002", "session_ref": "agent-session-agg-natural-002", "occurred_at": "2026-03-11T12:01:00Z"},
+    ):
+        client.post("/items", json=payload)
+
+    storage = client.app.state.pallium_service._storage
+    thread_items = storage.list_source_items_for_thread("chat:library-help", "chat:library-help:thread-agg-natural-002")
+    active_memory = [
+        memory
+        for item in thread_items
+        for memory in storage.list_memory_objects_for_source_item(item.id)
+        if memory.lifecycle == "active"
+    ]
+
+    assert any(memory.type == "thread_summary" for memory in active_memory)
+    assert all(memory.type != "task_checkpoint" for memory in active_memory)

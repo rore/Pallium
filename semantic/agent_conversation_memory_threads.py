@@ -1077,15 +1077,19 @@ def _build_selected_work_artifacts(source_item: SourceItem) -> list[dict[str, st
     if semantic_signals.get("is_low_value_meta") is True:
         return []
     artifacts = _collect_metadata_signal_artifacts(source_item, semantic_signals)
-    if artifacts:
-        return artifacts
     if _is_low_value_meta_artifact(source_item):
-        return []
+        return artifacts
     signal_type = _classify_work_signal(source_item)
     if not signal_type:
-        return []
-    return [_build_work_artifact(source_item, signal_type=signal_type, text=text, signal_origin="fallback")]
-
+        return artifacts
+    fallback_artifact = _build_work_artifact(source_item, signal_type=signal_type, text=text, signal_origin="fallback")
+    if any(
+        item.get("signal_type") == fallback_artifact["signal_type"] and item.get("text") == fallback_artifact["text"]
+        for item in artifacts
+    ):
+        return artifacts
+    artifacts.append(fallback_artifact)
+    return artifacts
 def _collect_metadata_signal_artifacts(source_item: SourceItem, semantic_signals: dict[str, object]) -> list[dict[str, str]]:
     artifacts: list[dict[str, str]] = []
     for field_name, signal_type in (
