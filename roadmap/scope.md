@@ -51,10 +51,10 @@ Current focus:
 - the typed write-time envelope and direct Pallium-native replay safety rail are now shipped:
   - retrieval can narrow by generic memory kind before final selection
   - direct deterministic replay covers polluted recall, adjacent-topic isolation, constraint contradictions, and pending-to-processed convergence
-- the next stabilization phase is now:
+- the query-policy stabilization slice is now shipped:
   - the first-class constraint/policy lane is now shipped with typed compatibility checks
   - the shipped subject/workstream anchor filter now separates adjacent topics before final ranking
-  - define a bounded query-policy contract and selective semantic ambiguity resolution only for unresolved cases
+  - a bounded query-policy contract now keeps the hot path deterministic and only allows selective semantic ambiguity resolution for unresolved cases
 - the shared semantic prompt-role governance layer is now shipped for contract ownership and normalized provenance across semantic prompt roles
 - the first live `write_enrichment` runtime is now shipped on top of that contract:
   - higher-level memory can carry bounded retrieval enrichment without changing the query hot path
@@ -66,7 +66,7 @@ Current focus:
 - treat live miss capture as valuable but later: once the architecture is more stable, captured misses can become durable replay assets instead of mostly rediscovering known heuristic weaknesses
 - treat external benchmark packs as useful pressure on the core memory engine, but not as the next best investment for product stability
 - treat vector retrieval and hybrid fusion as important follow-on retrieval work, but not as the next stabilization bottleneck:
-  - vector retrieval should not be the immediate next feature while bounded query policy and selective ambiguity resolution are still missing
+  - vector retrieval should not be the immediate next feature now that the bounded query-policy slice is shipped; live miss capture and replay promotion should come first
   - once those deterministic narrowing layers land, vector retrieval becomes the expected semantic retrieval substrate for durable memory
   - it should stay bounded by scope, kind, and subject/workstream filters rather than acting as an unconstrained semantic fallback
   - it should not become the main mechanism for constraint/policy lookup or short-term local state
@@ -86,7 +86,7 @@ Planned future query pipeline:
 - second and third, in parallel:
   - build on the shipped first-class constraint and policy lane so hard prohibitions and preferences stay enforced semantically across later routing and lifecycle work
   - the shipped subject/workstream anchor filter already removes adjacent-topic contamination before final selection
-- fourth, define the bounded query-policy contract and selective semantic ambiguity resolution for the minority of cases that remain unresolved after deterministic narrowing
+- the bounded query-policy contract and selective semantic ambiguity-resolution slice are now shipped; keep subsequent retrieval and feedback work bounded by that contract
 - keep extending the shipped Pallium-native replay safety rail across all of the above so new structure is backed by deterministic tests, convergence checks, and replay fixtures
 - keep Pallium-native scenario and replay expansion active across all of the above so new structure is backed by deterministic tests, convergence checks, and replay fixtures
 - use the shipped shared semantic prompt-role contract layer as the governance owner for later extraction, reconciliation, enrichment, and selective query-ambiguity work
@@ -94,14 +94,14 @@ Planned future query pipeline:
 - query-time prompt use should remain selective and bounded even after that
   prompt-role formalization; it does not justify an always-on query-time model
   router
-- then add the live miss-capture and replay-promotion loop so real traffic becomes bounded miss bundles and permanent regressions quickly
+- the next feature should now be the live miss-capture and replay-promotion loop so real traffic becomes bounded miss bundles and permanent regressions quickly
 - after that, move vector retrieval up as the bounded semantic candidate-generation layer for durable memory, then add hybrid fusion so lexical precision and paraphrase recall operate over the same narrowed candidate space
 - the targeted external memory pressure pack is now shipped as a non-gating confidence lane for stale-memory handling, update correctness, long noisy recall, and incremental drift; future retrieval-substrate work should use it as pressure, not as the product acceptance gate
 - only after those layers are clearer should explicit shared-memory derivation and cross-container bounded memory move up
 
 Parallel workstreams for the next phase:
-- Stream A (`stabilization-foundation`): build on the shipped write-time envelope with bounded query policy and selective ambiguity resolution
-  - this is the architecture foundation and should now own the bounded query-policy contract, ambiguity-resolution classifier prompts, extraction schema inheritance, versioning rules, and model-role split on top of the landed metadata contract
+- Stream A (`stabilization-foundation`): the bounded query-policy and selective ambiguity-resolution foundation is now shipped
+  - follow-on work in this stream should stay limited to hardening the landed policy contract and keeping later retrieval work bounded by it rather than reopening broad router design
 - Stream B (`stabilization-safety`): extend the shipped Pallium-native scenario and replay rail
   - this is the safety rail and should keep turning real misses into generic deterministic regressions
   - it should keep protecting deterministic hot-path behavior, abstention behavior, low-confidence fallback, and selective semantic escalation boundaries as later features land

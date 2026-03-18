@@ -113,7 +113,7 @@ Prompt provenance fields currently tracked:
 - `provider_kind`
 - `model`
 
-The shared prompt-role governance layer now owns the canonical role/schema contract for semantic prompt-backed work. The live `write_extraction` and `write_enrichment` runtime paths now both run on that shared contract and normalized provenance, while `write_reconciliation` and `query_ambiguity_resolution` remain contract-only roles for later feature work.
+The shared prompt-role governance layer now owns the canonical role/schema contract for semantic prompt-backed work. The live `write_extraction`, `write_enrichment`, and selective query-time `query_ambiguity_resolution` runtime paths now run on that shared contract and normalized provenance, while `write_reconciliation` remains a contract-only later role.
 
 ## Provider Resilience
 
@@ -209,6 +209,8 @@ The package reuses the current typed-memory extraction path rather than introduc
 It now also uses the shared thread aggregation capability to build one active `thread_summary` memory object per `container_ref + thread_ref`. Each thread summary is evidence-backed, lifecycle-managed through supersession, and can carry forward active `decision` and `investigation_outcome` conclusions from that conversation thread.
 
 The package now also owns the query-routing policy that reranks retrieved candidates across `pattern_memory`, `continuity_memory`, sharp lower-level conclusions, and source evidence using both question shape and retrieved candidate evidence shape. The generic core only carries optional mechanical `runtime_context` into that package hook and returns the package-owned outcome; memory-kind preference, injectability, and sharper investigative routing stay inside `agent_conversation_memory`.
+
+That package-owned query path now also has an explicit bounded query-policy layer ahead of final intent restriction and ranking. The default hot path stays deterministic: low-value queries can fail closed early, anchor-prefiltered evidence drives coarse policy-family selection, and package-owned ranking and packaging remain deterministic after policy narrowing. A selective `query_ambiguity_resolution` prompt role may run only for the small bounded ambiguity pairs that survive deterministic narrowing, and it may choose only among precomputed policy options with deterministic fallback.
 
 The public `/query` contract now reflects that package-owned decision point. Callers can send optional runtime context such as `turn_kind` and `session_has_sufficient_local_context`, and Pallium returns explicit `should_inject`, `decision_reason`, and `injectable_blocks` alongside the generic ranked `results`. `/query/debug` keeps the richer trace and now also exposes package-owned injection decisions plus sharp-candidate diagnostics so routing, packaging, and cap drops are explainable.
 

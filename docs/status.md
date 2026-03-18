@@ -28,6 +28,8 @@ Current shipped surface:
   current conversation package
 - a query path that can return derived memory, source evidence, or both
   depending on the question
+- a bounded package-owned query-policy layer with selective semantic ambiguity
+  resolution instead of an always-on query-time router
 - thread-level orientation and resumed-work checkpoints in the current product
   focus
 - background processing for ingest and same-thread memory rebuilds
@@ -50,8 +52,8 @@ The main open questions are:
 
 - when broader carry-forward memory should win over lower-level evidence
 - how well resumed-work packaging holds up on messier real-world traffic
-- the current boundary between broad recall, precise fact lookup, and work
-  resumption
+- how stable the new bounded query-policy and selective ambiguity-resolution
+  slice stays on messier real traffic
 - whether lexical retrieval is enough, or whether vector or hybrid retrieval is
   the next real bottleneck
 
@@ -73,10 +75,11 @@ The main open questions are:
 
 The next likely additions are:
 
+- live miss capture and replay promotion on top of the current debug and
+  benchmark surfaces
 - vector retrieval behind the current retrieval boundary
 - hybrid lexical and vector fusion
 - explicit shared-memory derivation
-- cross-container bounded memory
 
 ## Where To Go Deeper
 

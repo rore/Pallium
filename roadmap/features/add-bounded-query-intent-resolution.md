@@ -1,10 +1,10 @@
 ---
 id: add-bounded-query-intent-resolution
 title: Bounded query policy contract and selective ambiguity resolution
-status: queued
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 lane: stabilization-foundation
 ---
 

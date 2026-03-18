@@ -1,10 +1,9 @@
 # Next
-- add-bounded-query-intent-resolution
+- add-live-integration-improvement-loop-and-replay-pipeline
 
 # Later
 - add-vector-retrieval-provider
 - add-hybrid-retrieval-fusion
-- add-live-integration-improvement-loop-and-replay-pipeline
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
 
@@ -18,6 +17,7 @@
 - idea-optional-reranker-support
 
 # Done
+- add-bounded-query-intent-resolution
 - add-write-time-contextual-enrichment-and-background-consolidation
 - add-targeted-external-memory-benchmark-pressure-pack
 - add-subject-workstream-anchor-filtering

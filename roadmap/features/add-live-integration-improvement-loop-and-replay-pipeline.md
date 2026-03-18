@@ -4,7 +4,7 @@ title: Live miss capture and replay promotion loop
 status: queued
 priority: high
 commitment: committed
-milestone: Later
+milestone: Next
 lane: integration-feedback
 ---
 

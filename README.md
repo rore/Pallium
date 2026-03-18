@@ -79,7 +79,8 @@ Current implementation surface:
 - `POST /items`, `GET /items/{source_item_id}/processing`, `POST /query`,
   `POST /query/debug`, and `GET /debug/queue/health`
 - lexical retrieval plus package-level query policy for the current
-  conversation package
+  conversation package, including a deterministic hot path and selective
+  semantic ambiguity resolution for bounded unresolved cases
 - a supported terminal harness at `python -m app.agent_simulation` for
   inspectable thin-agent memory loops against the real HTTP contract
 

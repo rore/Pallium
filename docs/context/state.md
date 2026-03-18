@@ -1,8 +1,8 @@
-﻿# State
+# State
 
 ## Last Updated
 
-2026-03-15
+2026-03-18
 
 ## Repo Snapshot
 
@@ -54,6 +54,7 @@
 - named text-view metadata now exists on `IndexEntry`
 - current lexical trace records matched tokens and selected text views across `SourceItem` and `MemoryObject` retrieval
 - `agent_conversation_memory` now applies candidate-aware internal routed retrieval policy across higher-level memory, lower-level memory, and source evidence, with explicit safer fallback when higher-level support is weak or missing
+- `agent_conversation_memory` now also applies a bounded staged query-policy layer above routing, keeping ordinary queries on a deterministic hot path and using selective `query_ambiguity_resolution` only for bounded unresolved ambiguity with debug-trace visibility
 - resumed-work packaging now applies package-owned usefulness and freshness scoring so sharp `task_checkpoint` state can beat muddier summaries, thin or stale checkpoints can be demoted, and adjacent blocker/next-step evidence stays inspectable on the debug path
 - `agent_conversation_memory` is now scope-aware and fail-closed: query visibility is required, missing-visibility ingest stays non-promotable and non-retrievable in normal scoped queries, and public/private memory stays separated through exact-match-only derivation
 - a bounded offline public-corpus eval path now exists for WildChat reviewed-manifest selection plus a complementary WildBench reviewed task slice, with local helper workflows for both
@@ -175,12 +176,9 @@
 
 ## Next Hardening Direction
 
+- the next hardening feature should be the live miss-capture and replay-promotion loop so real integration traffic becomes bounded, reviewable replay assets quickly
 - the first bounded public real-interaction evaluation path now includes a local full-corpus WildChat workflow under `evals.public_corpus_wildchat_local` plus reviewed manifest selection
-- the next hardening question is whether running that path on real local WildChat data shows the true bottleneck is:
-  - paraphrase and concept recall
-  - routed layer choice
-  - result packaging and evidence presentation
-- vector retrieval should follow only if the public-corpus eval shows lexical recall is the next real limitation
+- vector retrieval should now follow the live-improvement loop, with hybrid fusion immediately after it, so semantic retrieval pressure is informed by captured real misses instead of replacing current stabilization feedback
 
 ## LLM Resilience Notes
 
