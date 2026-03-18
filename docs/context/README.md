@@ -31,6 +31,10 @@ For broader docs ownership, see ../README.md.
   Durable notes about important implementation problems, debugging traps, and
   the solutions or operating rules that should not be rediscovered.
 
+- prompt-improvement.md
+  The repo workflow for adding prompt variants, running bakeoffs, and choosing
+  new defaults for live semantic prompt roles.
+
 ## Conventions
 
 - Keep these files short and high-signal.

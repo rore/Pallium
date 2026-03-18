@@ -113,7 +113,7 @@ Prompt provenance fields currently tracked:
 - `provider_kind`
 - `model`
 
-The shared prompt-role governance layer now owns the canonical role/schema contract for semantic prompt-backed work. In the first shipped slice, only the live `write_extraction` runtime path is migrated onto that shared contract; thread and consolidation prompts remain on their local runtime pattern until the later enrichment work consumes the shared contract directly.
+The shared prompt-role governance layer now owns the canonical role/schema contract for semantic prompt-backed work. The live `write_extraction` and `write_enrichment` runtime paths now both run on that shared contract and normalized provenance, while `write_reconciliation` and `query_ambiguity_resolution` remain contract-only roles for later feature work.
 
 ## Provider Resilience
 
@@ -283,11 +283,12 @@ Current chosen path:
 
 - provider: OpenAI-compatible
 - model: `gpt-5-mini`
-- prompt variant: `strict_typed_memory_v4_evidence_guarded`
+- extraction prompt variant: `strict_typed_memory_v5_compact_examples`
+- enrichment prompt variant: `search_context_v2_compact`
 - prompt schema: `typed_memory_extraction`
-- prompt schema version: `v5`
+- prompt schema version: `v7`
 
-The item-level prompt now carries field-specific internal-signal rules and examples so a single extraction call can also emit low-value-meta, constraint, blocker, progress, next-step, and key-finding state. Prompt changes should be validated both with stub tests and with the opt-in real-provider smoke suite at `tests/test_semantic_llm_live.py`.
+The item-level prompt now carries field-specific internal-signal rules and examples so a single extraction call can also emit low-value-meta, constraint, blocker, progress, next-step, and key-finding state. Higher-level memory objects can also carry write-time `retrieval_enrichment` produced by the separate `write_enrichment` role. Prompt changes should be validated both with stub tests and with comparative eval runners before defaults change; see [prompt-improvement.md](prompt-improvement.md).
 
 ## Tiered Memory
 

@@ -367,6 +367,11 @@ def route_query_results(
             candidate.update(kind_prefilter_states.get(result_id, {}))
             candidate.update(anchor_prefilter_states.get(result_id, {}))
         if scored_candidates:
+            _apply_current_query_source_suppression(
+                scored_candidates,
+                query_text=text,
+                query_filters=query_filters,
+            )
             _apply_same_kind_freshness_shaping(scored_candidates, intent=intent)
             _apply_fresh_thread_structured_recall_preference(
                 scored_candidates,
@@ -452,6 +457,7 @@ def route_query_results(
             final_candidates=final_candidates,
             injectable_blocks=injection_blocks,
             decision_reason=str(injection_summary["decision_reason"]),
+            query_text=text,
             debug_candidate_loader=debug_candidate_loader if include_trace else None,
         )
         final_results = [candidate["item"] for candidate in final_candidates]
@@ -705,6 +711,7 @@ def _infer_query_intent(
     query_shape_tags = _query_shape_tags(text, query_tokens)
     candidate_signals = _summarize_query_family_candidates(
         retrieved_candidates=retrieved_candidates,
+        query_text=text,
         query_tokens=query_tokens,
         query_filters=query_filters,
     )
@@ -870,6 +877,7 @@ def _query_family_query_shape_score(
 def _summarize_query_family_candidates(
     *,
     retrieved_candidates: list[QueryResultItem],
+    query_text: str,
     query_tokens: tuple[str, ...],
     query_filters: QueryFilters | None,
 ) -> dict[str, object]:
@@ -889,6 +897,8 @@ def _summarize_query_family_candidates(
         same_container = _candidate_matches_container(item, query_filters)
         work_signal_types = _work_resumption_signal_types(item)
         work_usefulness, work_reasons = _work_resumption_usefulness_score(item, work_signal_types)
+        if _source_hit_matches_current_query_text(item, query_text=query_text, query_filters=query_filters):
+            continue
         has_rationale = _candidate_has_rationale(item)
         has_explicit_evidence = _candidate_has_explicit_evidence(item)
         stats = layer_support.setdefault(
@@ -1465,6 +1475,45 @@ def _apply_fresh_thread_structured_recall_preference(
                 OrderedDict.fromkeys([*candidate["packaging_reasons"], "fresh_thread_structured_memory_preferred"] )
             )
 
+def _source_hit_matches_current_query_text(
+    item: QueryResultItem,
+    *,
+    query_text: str,
+    query_filters: QueryFilters | None,
+) -> bool:
+    if item.result_kind != "source_hit":
+        return False
+    excerpt = normalize_for_index(str(item.excerpt or ""))
+    normalized_query = normalize_for_index(query_text)
+    if not excerpt or not normalized_query or excerpt != normalized_query:
+        return False
+    if item.role not in {None, "user"} and (item.source_type or "") not in {"chat_message", "message"}:
+        return False
+    if query_filters is not None and query_filters.thread_ref and not _candidate_matches_thread(item, query_filters):
+        return False
+    return True
+
+
+def _apply_current_query_source_suppression(
+    scored_candidates: list[dict[str, object]],
+    *,
+    query_text: str,
+    query_filters: QueryFilters | None,
+) -> None:
+    for candidate in scored_candidates:
+        item = candidate["item"]
+        assert isinstance(item, QueryResultItem)
+        if not _source_hit_matches_current_query_text(item, query_text=query_text, query_filters=query_filters):
+            continue
+        penalty = 260
+        candidate["base_routing_score"] = int(candidate["base_routing_score"]) - penalty
+        candidate["support_score"] = 0
+        candidate["support_grade"] = _routing_support_grade(0)
+        candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*candidate["packaging_reasons"], "current_query_source_echo"]))
+        candidate["suppression_reason_code"] = "current_query_source_echo"
+        candidate["suppression_reason"] = "The active user query was excluded from recall evidence so routing does not self-echo the current turn."
+
+
 def _apply_recall_source_noise_suppression(
     scored_candidates: list[dict[str, object]],
     *,
@@ -1479,6 +1528,8 @@ def _apply_recall_source_noise_suppression(
         item = candidate["item"]
         assert isinstance(item, QueryResultItem)
         if item.result_kind != "source_hit":
+            continue
+        if candidate.get("suppression_reason_code") == "current_query_source_echo":
             continue
         suppression = _source_noise_suppression_reason(
             item,
@@ -2215,6 +2266,7 @@ def _build_injectable_blocks(
         if _candidate_is_injection_eligible(
             candidate,
             intent=intent,
+            query_text=query_text,
             allow_discussion_fallback=False,
             allow_source_companion=False,
         )
@@ -2225,6 +2277,7 @@ def _build_injectable_blocks(
         if _candidate_is_injection_eligible(
             candidate,
             intent=intent,
+            query_text=query_text,
             allow_discussion_fallback=not primary_non_discussion_eligible,
             allow_source_companion=False,
         )
@@ -2250,6 +2303,7 @@ def _build_injectable_blocks(
             if _candidate_is_injection_eligible(
                 candidate,
                 intent=intent,
+                query_text=query_text,
                 allow_discussion_fallback=False,
                 allow_source_companion=True,
             )
@@ -2272,6 +2326,7 @@ def _build_injectable_blocks(
             if _candidate_is_injection_eligible(
                 candidate,
                 intent=intent,
+                query_text=query_text,
                 allow_discussion_fallback=False,
                 allow_source_companion=True,
             )
@@ -2330,7 +2385,7 @@ def _evaluate_same_thread_local_context(
                 continue
             rejected_candidates.append({"result_id": result_id, "reason_code": reason_code})
             continue
-        if _candidate_could_supply_external_carry_forward(candidate, intent=intent):
+        if _candidate_could_supply_external_carry_forward(candidate, intent=intent, query_text=query_text):
             external_carry_forward_result_ids.append(result_id)
 
     if qualifying_result_ids:
@@ -2352,7 +2407,7 @@ def _evaluate_same_thread_local_context(
         "rejected_candidates": rejected_candidates[:6],
     }
 
-def _candidate_could_supply_external_carry_forward(candidate: dict[str, object], *, intent: str) -> bool:
+def _candidate_could_supply_external_carry_forward(candidate: dict[str, object], *, intent: str, query_text: str) -> bool:
     if _candidate_is_low_value(candidate):
         return False
     item = candidate["item"]
@@ -2361,12 +2416,14 @@ def _candidate_could_supply_external_carry_forward(candidate: dict[str, object],
         return _candidate_is_injection_eligible(
             candidate,
             intent=intent,
+            query_text=query_text,
             allow_discussion_fallback=False,
             allow_source_companion=False,
         )
     return _candidate_is_injection_eligible(
         candidate,
         intent=intent,
+        query_text=query_text,
         allow_discussion_fallback=True,
         allow_source_companion=False,
     )
@@ -2440,6 +2497,7 @@ def _candidate_is_injection_eligible(
     candidate: dict[str, object],
     *,
     intent: str,
+    query_text: str,
     allow_discussion_fallback: bool,
     allow_source_companion: bool,
 ) -> bool:
@@ -2447,7 +2505,11 @@ def _candidate_is_injection_eligible(
     assert isinstance(item, QueryResultItem)
     if _candidate_is_low_value(candidate):
         return False
+    if candidate.get("suppression_reason_code"):
+        return False
     if item.result_kind == "source_hit":
+        if normalize_for_index(str(item.excerpt or "")) == normalize_for_index(query_text):
+            return False
         if _source_candidate_is_primary_injection_eligible(intent):
             return True
         return allow_source_companion and _source_candidate_is_companion_injection_eligible(intent)
@@ -2614,6 +2676,7 @@ def _build_sharp_candidate_diagnostics(
     final_candidates: list[dict[str, object]],
     injectable_blocks: list[InjectableBlock],
     decision_reason: str,
+    query_text: str,
     debug_candidate_loader=None,
 ) -> list[dict[str, object]]:
     selected_injection_ids = {block.result_id for block in injectable_blocks}
@@ -2655,6 +2718,7 @@ def _build_sharp_candidate_diagnostics(
             "injection_eligible": _candidate_is_injection_eligible(
                 candidate,
                 intent="investigative_conclusion",
+                query_text=query_text,
                 allow_discussion_fallback=False,
                 allow_source_companion=False,
             ),
@@ -3323,6 +3387,14 @@ def _select_routing_focus(
             applied = True
             reason_code = "weak_higher_level_support"
             reason = "Higher-level memory was retrieved, but its candidate support was weak, so routing chose a safer layer."
+        elif (
+            intent == "work_resumption"
+            and primary_layer == "task_checkpoint"
+            and best_fallback_layer == "source_evidence"
+            and primary_grade in {"supported", "strong"}
+        ):
+            reason_code = "supported_checkpoint_preserved"
+            reason = "Supported task-checkpoint packaging stayed selected because resumed-work carry-forward needs explicit blocker and next-step state."
         elif fallback_support >= primary_support + ROUTING_FALLBACK_MARGIN:
             selected_layer = best_fallback_layer
             applied = True
