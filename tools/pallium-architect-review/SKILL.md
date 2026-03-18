@@ -149,6 +149,14 @@ Use this workflow whenever work is delegated to a subagent or coordinated across
 
 Ground the task in repo truth first and hand off:
 
+Include tool-environment constraints when they are known in advance:
+
+- if `apply_patch` or another expected edit tool is known to fail in the current environment, state that explicitly in the handoff
+- tell the worker which fallback edit path is allowed so it does not stop on a known tool failure
+- on this machine, treat `apply_patch` sandbox failures such as `CreateProcessWithLogonW failed: 1385` as an environment limitation rather than a code-level blocker
+
+Ground the task in repo truth first and hand off:
+
 - the active roadmap item or accepted work slice
 - accepted architectural decisions and constraints
 - explicit in-scope and out-of-scope boundaries
@@ -201,6 +209,15 @@ If review finds issues:
 - require the worker to address the findings and return updated verification
 - re-review the result
 - iterate until there are no material findings left
+
+### Edit Tool Fallbacks
+
+- prefer `apply_patch` for manual edits when it works
+- if `apply_patch` fails because of sandbox, tool-launch, or environment execution problems, the worker may switch to the smallest deterministic alternate file-edit path available
+- acceptable fallback examples are a scoped PowerShell write/update or another minimal local file-write path that preserves the intended diff shape
+- do not treat a broken edit tool as a reason to stop when the fallback path is already safe and local
+- when a fallback edit path is used, the worker must say so explicitly in its result and keep the edit narrowly scoped
+
 
 ### 6. Planning vs implementation review
 

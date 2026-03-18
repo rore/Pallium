@@ -18,4 +18,5 @@ Repo-level non-negotiables:
 - keep new tests, fixtures, replay assets, and benchmark cases anonymized and domain-generic by default
 - translate scenario-specific reproductions into generalized retrieval, routing, packaging, lifecycle, compatibility, or benchmark failure classes before defining the work
 - delegated work is not complete until it has been reviewed, findings have been addressed, and roadmap/docs have been aligned when the feature status changed
+- if `apply_patch` fails because of sandbox or environment limitations on this machine, delegated workers may use the smallest deterministic local file-write fallback and must report that fallback explicitly
 
