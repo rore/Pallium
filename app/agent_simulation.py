@@ -596,6 +596,9 @@ def run(args: list[str] | None = None) -> int:
     app = AgentSimulationApp(http_client=http_client, model=model, io=build_terminal_io())
     try:
         return app.run(mode=parsed.mode, replay_path=parsed.session_path)
+    except KeyboardInterrupt:
+        print("Interrupted.")
+        return 130
     except HarnessHttpError as exc:
         print(f"Harness HTTP error: {exc} :: {exc.body}")
         return 1
@@ -605,3 +608,4 @@ def run(args: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(run())
+

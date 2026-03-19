@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from app.agent_simulation import AgentSimulationApp, TerminalIO, build_parser
+from app.agent_simulation import AgentSimulationApp, TerminalIO, build_parser, run
 from app.agent_simulation_session import SessionStore
 
 
@@ -156,3 +156,32 @@ def test_blank_required_prompt_reports_error_and_keeps_repl_alive(tmp_path) -> N
 
     assert exit_code == 0
     assert any("Required input missing for prompt: query text:" in line for line in io.outputs)
+
+def test_run_returns_clean_exit_code_on_keyboard_interrupt(monkeypatch) -> None:
+    import app.agent_simulation as agent_simulation_module
+    import app.agent_simulation_terminal as terminal_module
+
+    class FakeHTTP:
+        def __init__(self, base_url: str) -> None:
+            self.base_url = base_url
+
+        def close(self) -> None:
+            return None
+
+    class FakeModelForRun:
+        def __init__(self, provider_override=None, model_override=None) -> None:
+            self.provider_override = provider_override
+            self.model_override = model_override
+
+        def resolution(self):
+            return FakeResolution()
+
+    def _interrupting_run(self, *, mode: str, replay_path: str | None = None) -> int:
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(agent_simulation_module, 'HarnessHttpClient', FakeHTTP)
+    monkeypatch.setattr(agent_simulation_module, 'ThinAgentModel', FakeModelForRun)
+    monkeypatch.setattr(terminal_module, 'build_terminal_io', lambda: TerminalIO())
+    monkeypatch.setattr(agent_simulation_module.AgentSimulationApp, 'run', _interrupting_run)
+
+    assert run(['chat-lite']) == 130
