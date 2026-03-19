@@ -367,6 +367,96 @@ def test_duplicate_source_type_source_id_raises_integrity_error(test_db_url: str
         storage.create_source_item(item_b)
 
 
+def test_get_index_entry(test_db_url: str) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+    index_entry = IndexEntry(
+        target_kind="memory_object",
+        target_id="mem-1",
+        index_type="lexical",
+        text_view="reservation ordering discussion",
+        text_view_name="memory_object.summary",
+        provider_name="builtin",
+        provider_version="v1",
+    )
+    storage.create_index_entry(index_entry)
+
+    loaded = storage.get_index_entry(index_entry.id)
+    assert loaded.id == index_entry.id
+    assert loaded.target_kind == "memory_object"
+    assert loaded.target_id == "mem-1"
+    assert loaded.index_type == "lexical"
+    assert loaded.text_view == "reservation ordering discussion"
+    assert loaded.text_view_name == "memory_object.summary"
+    assert loaded.provider_name == "builtin"
+    assert loaded.provider_version == "v1"
+
+
+def test_get_index_entry_not_found(test_db_url: str) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+    with pytest.raises(KeyError):
+        storage.get_index_entry("nonexistent-id")
+
+
+def test_list_index_entries_by_type(test_db_url: str) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+    lexical_entry_1 = IndexEntry(
+        target_kind="memory_object",
+        target_id="mem-1",
+        index_type="lexical",
+        text_view="first lexical entry",
+    )
+    lexical_entry_2 = IndexEntry(
+        target_kind="source_item",
+        target_id="src-1",
+        index_type="lexical",
+        text_view="second lexical entry",
+    )
+    vector_entry = IndexEntry(
+        target_kind="memory_object",
+        target_id="mem-2",
+        index_type="vector",
+        text_view="a vector entry",
+        provider_name="openai",
+        provider_version="v3",
+    )
+    storage.create_index_entry(lexical_entry_1)
+    storage.create_index_entry(lexical_entry_2)
+    storage.create_index_entry(vector_entry)
+
+    lexical_entries = storage.list_index_entries_by_type("lexical")
+    assert len(lexical_entries) == 2
+    assert {e.id for e in lexical_entries} == {lexical_entry_1.id, lexical_entry_2.id}
+
+    vector_entries = storage.list_index_entries_by_type("vector")
+    assert len(vector_entries) == 1
+    assert vector_entries[0].id == vector_entry.id
+    assert vector_entries[0].provider_name == "openai"
+
+    empty_entries = storage.list_index_entries_by_type("nonexistent")
+    assert empty_entries == []
+
+
+def test_count_index_entries_by_type(test_db_url: str) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+    for i in range(3):
+        storage.create_index_entry(IndexEntry(
+            target_kind="memory_object",
+            target_id=f"mem-{i}",
+            index_type="lexical",
+            text_view=f"lexical entry {i}",
+        ))
+    storage.create_index_entry(IndexEntry(
+        target_kind="memory_object",
+        target_id="mem-v1",
+        index_type="vector",
+        text_view="vector entry",
+    ))
+
+    assert storage.count_index_entries_by_type("lexical") == 3
+    assert storage.count_index_entries_by_type("vector") == 1
+    assert storage.count_index_entries_by_type("nonexistent") == 0
+
+
 def test_unique_index_migration_fails_on_existing_duplicates(tmp_path: Path) -> None:
     from sqlalchemy import create_engine, text as sql_text
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections import Counter
 from dataclasses import replace
@@ -12,14 +13,17 @@ from sqlalchemy.exc import IntegrityError
 from capabilities.consolidation import ConsolidationCapability, ConsolidationRunGroupResult, ConsolidationRunResult
 from capabilities.thread_aggregation import build_thread_aggregate
 from core.contracts import IngestResult, ItemProcessingResult, PackageQueryOutcome, ProcessResult, QueryResult, build_source_item, resolve_query_filters
-from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
+from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, VECTOR_INDEX_TYPE, build_index_entry
 from core.models import MemoryObject, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace, Relation, SourceItem, utc_now
 from core.observability import IntegrationDebugLogger, OBSERVABILITY_METADATA_KEY, serialize_visibility_context
 from core.visibility import QueryVisibilityTrace, VisibilityContext, expand_visibility_context, visibility_context_is_visible, visibility_context_matches_exact, visibility_context_label
+from providers.embedding.base import EmbeddingProvider
 from providers.llm.base import LLMProviderError
 from retrieval.base import RetrievalProvider
+from retrieval.vector import VectorRetrievalProvider
 from semantic.base import ConsolidationSemanticPlugin, SemanticPlugin, ThreadAggregationSemanticPlugin
 from storage.base import QueueHealthSnapshot, RetentionLeaseLostError, RetentionRunStats, StorageProvider, ThreadProcessingLease, ThreadProcessingScope
+from storage.vector_index import VectorIndex
 
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
@@ -157,6 +161,9 @@ class PalliumService:
         retention_enabled: bool = False,
         retention_lease_seconds: int = 300,
         retention_batch_size: int = 200,
+        embedding_provider: EmbeddingProvider | None = None,
+        vector_index: VectorIndex | None = None,
+        vector_retrieval: VectorRetrievalProvider | None = None,
     ) -> None:
         self._storage = storage
         self._retrieval = retrieval
@@ -167,6 +174,38 @@ class PalliumService:
         self._retention_enabled = retention_enabled
         self._retention_lease_seconds = retention_lease_seconds
         self._retention_batch_size = retention_batch_size
+        self._embedding_provider = embedding_provider
+        self._vector_index = vector_index
+        self._vector_retrieval = vector_retrieval
+        self._logger = logging.getLogger(__name__)
+
+    def _embed_vector_entries(self, result: ProcessResult) -> None:
+        """Embed vector index entries after SQLite commit.
+
+        Filters committed index entries for index_type="vector", embeds them
+        via the embedding provider, and adds them to the vector index.
+        If either embedding_provider or vector_index is None, this is a no-op.
+        If embedding fails, the error is logged and execution continues —
+        reconciliation catches gaps.
+        """
+        if self._embedding_provider is None or self._vector_index is None:
+            return
+        vector_entries = [e for e in result.index_entries if e.index_type == VECTOR_INDEX_TYPE]
+        if not vector_entries:
+            return
+        try:
+            texts = [entry.text_view for entry in vector_entries]
+            vectors = self._embedding_provider.embed(texts)
+            for entry, vector in zip(vector_entries, vectors):
+                self._vector_index.add(entry.id, vector)
+                self._storage.update_index_entry_provider(
+                    entry.id,
+                    provider_name=self._embedding_provider.model_name(),
+                    provider_version=f"dim={self._embedding_provider.dimensions()}",
+                )
+            self._vector_index.save()
+        except Exception:
+            self._logger.warning("Vector embedding failed after commit; reconciliation will catch gaps", exc_info=True)
 
     def ingest_item(
         self,
@@ -479,6 +518,7 @@ class PalliumService:
                 result=direct_result,
                 thread_rebuild_scope=thread_rebuild_scope,
             )
+            self._embed_vector_entries(direct_result)
             memory_provenance = _build_memory_provenance(
                 direct_result,
                 default_source_item_id=source_item.id,
@@ -683,6 +723,15 @@ class PalliumService:
             routed_trace = outcome.trace
             if routed_trace is not None:
                 routed_trace = replace(routed_trace, result_summary=_build_query_result_summary(outcome.results))
+            routed_trace = self._maybe_append_vector_trace(
+                trace=routed_trace,
+                include_trace=include_trace,
+                text=text,
+                retrieval_limit=retrieval_limit,
+                effective_filters=effective_filters,
+                visibility_context=visibility_context if plugin.requires_visibility_context else None,
+                require_visibility=plugin.requires_visibility_context,
+            )
             return QueryResult(
                 results=outcome.results,
                 trace=routed_trace,
@@ -693,12 +742,57 @@ class PalliumService:
         trace = retrieval_result.trace
         if trace is not None:
             trace = replace(trace, result_summary=_build_query_result_summary(retrieval_result.results))
+        trace = self._maybe_append_vector_trace(
+            trace=trace,
+            include_trace=include_trace,
+            text=text,
+            retrieval_limit=retrieval_limit,
+            effective_filters=effective_filters,
+            visibility_context=visibility_context if plugin.requires_visibility_context else None,
+            require_visibility=plugin.requires_visibility_context,
+        )
         return QueryResult(
             results=retrieval_result.results,
             trace=trace,
             should_inject=False,
             decision_reason="injection_policy_unavailable",
             injectable_blocks=[],
+        )
+
+    def _maybe_append_vector_trace(
+        self,
+        *,
+        trace: QueryTrace | None,
+        include_trace: bool,
+        text: str,
+        retrieval_limit: int,
+        effective_filters: QueryFilters | None,
+        visibility_context: VisibilityContext | None,
+        require_visibility: bool,
+    ) -> QueryTrace | None:
+        """Run vector retrieval and append its stage(s) to the trace (debug only).
+
+        Returns the trace unmodified when include_trace is False, vector
+        retrieval is not configured, or the vector provider returns no
+        stages.
+        """
+        if not include_trace or self._vector_retrieval is None:
+            return trace
+        vector_result = self._vector_retrieval.query(
+            text=text,
+            limit=retrieval_limit,
+            filters=effective_filters,
+            visibility_context=visibility_context,
+            include_trace=True,
+            require_visibility=require_visibility,
+        )
+        if vector_result.trace is None or not vector_result.trace.stages:
+            return trace
+        if trace is None:
+            return trace
+        return replace(
+            trace,
+            stages=trace.stages + vector_result.trace.stages,
         )
 
     def _make_debug_candidate_loader(
@@ -960,6 +1054,7 @@ class PalliumService:
                     worker_id=worker_id,
                     claimed_at=current_lease.processing_claimed_at,
                 )
+                self._embed_vector_entries(thread_result)
             else:
                 has_pending = self._storage.complete_thread_processing_scope(
                     scope_key=current_lease.scope_key,

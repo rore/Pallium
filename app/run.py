@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import logging
+import sys
 
 import uvicorn
 
@@ -9,10 +11,17 @@ from app.processor import run_processor
 from app.runtime_logging import build_uvicorn_log_config
 from app.supervisor import run_supervisor
 
+logger = logging.getLogger(__name__)
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run Pallium locally")
-    parser.add_argument("mode", nargs="?", choices=("all", "serve", "processor", "cleaner"), default="all")
+    parser.add_argument(
+        "mode",
+        nargs="?",
+        choices=("all", "serve", "processor", "cleaner", "rebuild-vector-index", "download-embedding-model"),
+        default="all",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--processors", type=int, default=1)
@@ -65,6 +74,10 @@ def run(args: list[str] | None = None) -> int:
         if parsed.once:
             cleaner_args.append("--once")
         return run_cleaner(cleaner_args)
+    if parsed.mode == "rebuild-vector-index":
+        return _run_rebuild_vector_index()
+    if parsed.mode == "download-embedding-model":
+        return _run_download_embedding_model()
     supervisor_args = [
         "--host",
         parsed.host,
@@ -78,6 +91,89 @@ def run(args: list[str] | None = None) -> int:
     if parsed.reload:
         supervisor_args.append("--reload")
     return run_supervisor(supervisor_args)
+
+
+def _run_rebuild_vector_index() -> int:
+    """Rebuild the vector index from scratch using all vector index entries in SQLite."""
+    from pathlib import Path
+
+    from app.config import AppConfig
+    from app.dependencies import build_embedding_provider, build_storage_provider
+
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+
+    config = AppConfig.from_env()
+    vector_config = config.vector_index
+
+    if not vector_config.enabled:
+        logger.error("Vector index is not enabled in configuration. Set [vector_index] enabled = true.")
+        return 1
+
+    if vector_config.embedding_provider is None:
+        logger.error("No embedding_provider configured under [vector_index].")
+        return 1
+
+    try:
+        embedding_provider = build_embedding_provider(config, provider_name=vector_config.embedding_provider)
+    except Exception as exc:
+        logger.error("Failed to build embedding provider: %s", exc)
+        return 1
+
+    storage = build_storage_provider(config)
+    entries = storage.list_index_entries_by_type("vector")
+    logger.info("Found %d vector index entries in SQLite.", len(entries))
+
+    from storage.vector_index import VectorIndex
+
+    index_path = Path(vector_config.index_path)
+    try:
+        vector_index = VectorIndex.create_empty(
+            index_path,
+            dimensions=embedding_provider.dimensions(),
+            model_name=embedding_provider.model_name(),
+        )
+    except ImportError:
+        logger.error("usearch not installed. pip install usearch")
+        return 1
+
+    if entries:
+        texts = [entry.text_view for entry in entries]
+        logger.info("Embedding %d entries...", len(texts))
+        vectors = embedding_provider.embed(texts)
+        for entry, vector in zip(entries, vectors):
+            vector_index.add(entry.id, vector)
+
+    vector_index.save()
+    logger.info("Vector index rebuilt successfully at %s with %d entries.", index_path, vector_index.entry_count())
+    return 0
+
+
+def _run_download_embedding_model() -> int:
+    """Download the embedding model (eagerly initializes the provider)."""
+    from app.config import AppConfig
+    from app.dependencies import build_embedding_provider
+
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+
+    config = AppConfig.from_env()
+    vector_config = config.vector_index
+
+    if vector_config.embedding_provider is None:
+        logger.error("No embedding_provider configured under [vector_index].")
+        return 1
+
+    try:
+        provider = build_embedding_provider(config, provider_name=vector_config.embedding_provider)
+    except Exception as exc:
+        logger.error("Failed to build embedding provider: %s", exc)
+        return 1
+
+    logger.info(
+        "Embedding model '%s' ready (dimensions=%d).",
+        provider.model_name(),
+        provider.dimensions(),
+    )
+    return 0
 
 
 if __name__ == "__main__":

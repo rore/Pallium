@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from core.contracts import ProcessResult
@@ -240,6 +240,37 @@ class SQLiteStorageProvider(
                 )
             ).all()
         return [self._to_index_entry(record) for record in records]
+
+    def get_index_entry(self, index_entry_id: str) -> IndexEntry:
+        with self._session_factory() as session:
+            record = session.get(IndexEntryRecord, index_entry_id)
+            if record is None:
+                raise KeyError(index_entry_id)
+            return self._to_index_entry(record)
+
+    def list_index_entries_by_type(self, index_type: str) -> list[IndexEntry]:
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(IndexEntryRecord).where(IndexEntryRecord.index_type == index_type)
+            ).all()
+        return [self._to_index_entry(record) for record in records]
+
+    def count_index_entries_by_type(self, index_type: str) -> int:
+        with self._session_factory() as session:
+            count = session.scalar(
+                select(func.count()).select_from(IndexEntryRecord).where(
+                    IndexEntryRecord.index_type == index_type
+                )
+            )
+        return count or 0
+
+    def update_index_entry_provider(self, index_entry_id: str, provider_name: str, provider_version: str) -> None:
+        with self._session_factory.begin() as session:
+            record = session.get(IndexEntryRecord, index_entry_id)
+            if record is None:
+                raise KeyError(index_entry_id)
+            record.provider_name = provider_name
+            record.provider_version = provider_version
 
     def get_evidence_for_memory_object(self, memory_object_id: str) -> list[EvidenceReference]:
         with self._session_factory() as session:

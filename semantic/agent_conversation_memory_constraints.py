@@ -1683,7 +1683,7 @@ def reconcile_process_result_against_active_constraints(
     }
     updated_index_entries = [
         rebuilt_index_entries.get(index_entry.target_id, index_entry)
-        if index_entry.target_kind == 'memory_object'
+        if index_entry.target_kind == 'memory_object' and index_entry.index_type == 'lexical'
         else index_entry
         for index_entry in result.index_entries
     ]

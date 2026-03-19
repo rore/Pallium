@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.config import AppConfig
 from tests.config_helpers import DEFAULT_PROMPT_VARIANT, build_llm_test_config
+from app.config import EmbeddingProviderConfig
 
 
 def test_app_config_loads_from_toml_and_env_overrides(monkeypatch, tmp_path: Path) -> None:
@@ -336,3 +337,96 @@ def test_resolver_enabled_env_override(monkeypatch, tmp_path: Path) -> None:
     package = config.package_config("agent_conversation_memory")
 
     assert package.resolver_enabled is False
+
+
+# ---------------------------------------------------------------------------
+# Embedding provider config parsing
+# ---------------------------------------------------------------------------
+
+def test_embedding_provider_config_from_toml(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        """
+        default_use_case = "demo_agent_memory"
+
+        [embedding_providers.local]
+        kind = "fastembed"
+        model = "BAAI/bge-small-en-v1.5"
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    config = AppConfig.from_env()
+
+    ep = config.embedding_provider_config("local")
+    assert ep.kind == "fastembed"
+    assert ep.model == "BAAI/bge-small-en-v1.5"
+    assert ep.dimensions is None
+
+
+def test_embedding_provider_config_with_dimensions(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        """
+        default_use_case = "demo_agent_memory"
+
+        [embedding_providers.local]
+        kind = "fastembed"
+        model = "BAAI/bge-small-en-v1.5"
+        dimensions = 384
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    config = AppConfig.from_env()
+
+    ep = config.embedding_provider_config("local")
+    assert ep.dimensions == 384
+
+
+def test_embedding_provider_config_multiple(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        """
+        default_use_case = "demo_agent_memory"
+
+        [embedding_providers.local]
+        kind = "fastembed"
+        model = "BAAI/bge-small-en-v1.5"
+
+        [embedding_providers.large]
+        kind = "fastembed"
+        model = "BAAI/bge-large-en-v1.5"
+        dimensions = 1024
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    config = AppConfig.from_env()
+
+    assert "local" in config.embedding_providers
+    assert "large" in config.embedding_providers
+    assert config.embedding_provider_config("large").model == "BAAI/bge-large-en-v1.5"
+    assert config.embedding_provider_config("large").dimensions == 1024
+
+
+def test_embedding_provider_config_unknown_name_raises() -> None:
+    config = AppConfig()
+    with __import__("pytest").raises(KeyError, match="Unknown embedding provider config"):
+        config.embedding_provider_config("nonexistent")
+
+
+def test_embedding_providers_default_empty() -> None:
+    config = AppConfig()
+    assert config.embedding_providers == {}
+
+
+def test_embedding_provider_config_direct_construction() -> None:
+    ep = EmbeddingProviderConfig(name="test", kind="fastembed", model="test-model")
+    assert ep.name == "test"
+    assert ep.kind == "fastembed"
+    assert ep.model == "test-model"
+    assert ep.dimensions is None

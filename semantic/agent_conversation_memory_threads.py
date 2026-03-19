@@ -9,11 +9,12 @@ from typing import Iterable
 from capabilities.consolidation import ConsolidationGroup
 from capabilities.thread_aggregation import ThreadAggregate
 from core.contracts import ProcessResult
-from core.indexing import build_index_entry
+from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
 from core.models import MemoryObject, QueryResultItem, Relation, SourceItem
 from providers.llm.base import LLMProvider
 from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY, normalize_for_index
 from semantic.agent_conversation_memory_constraints import CONSTRAINT_MARKERS, CONSTRAINT_TOOL_MARKERS, _merge_subject_anchors, _subject_anchors_from_memory_objects, _subject_anchors_from_source_items
+from semantic.agent_conversation_memory_embedding import VECTOR_EMBEDDING_PROVIDER_NAME, VECTOR_EMBEDDING_PROVIDER_VERSION, build_embedding_text
 from semantic.agent_conversation_memory_enrichment import apply_write_enrichment
 from semantic.agent_conversation_memory_memory import _build_memory_envelope, _memory_confidence_for_type, _memory_kind_for_type
 
@@ -335,6 +336,19 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
         index_entries = [thread_summary_index_entry]
         if thread_summary_enrichment_index_entry is not None:
             index_entries.append(thread_summary_enrichment_index_entry)
+        thread_summary_embedding_text = build_embedding_text(thread_summary_memory)
+        if thread_summary_embedding_text is not None:
+            index_entries.append(
+                build_index_entry(
+                    target_kind="memory_object",
+                    target_id=thread_summary_memory.id,
+                    index_type=VECTOR_INDEX_TYPE,
+                    text_view=thread_summary_embedding_text,
+                    text_view_name=f"{THREAD_SUMMARY_TEXT_VIEW}.embedding",
+                    provider_name=VECTOR_EMBEDDING_PROVIDER_NAME,
+                    provider_version=VECTOR_EMBEDDING_PROVIDER_VERSION,
+                )
+            )
 
         if _should_build_task_checkpoint(selected_work_artifacts):
             task_checkpoint_memory, task_checkpoint_index_entries = build_task_checkpoint_memory(
@@ -512,6 +526,19 @@ def build_task_checkpoint_memory(
         index_entries = [index_entry]
         if enrichment_index_entry is not None:
             index_entries.append(enrichment_index_entry)
+        task_checkpoint_embedding_text = build_embedding_text(memory_object)
+        if task_checkpoint_embedding_text is not None:
+            index_entries.append(
+                build_index_entry(
+                    target_kind="memory_object",
+                    target_id=memory_object.id,
+                    index_type=VECTOR_INDEX_TYPE,
+                    text_view=task_checkpoint_embedding_text,
+                    text_view_name=f"{TASK_CHECKPOINT_TEXT_VIEW}.embedding",
+                    provider_name=VECTOR_EMBEDDING_PROVIDER_NAME,
+                    provider_version=VECTOR_EMBEDDING_PROVIDER_VERSION,
+                )
+            )
         return memory_object, index_entries
 
 def build_consolidated_memory(*, provider: LLMProvider, prompt_variant: str, plugin_name: str, pattern_memory_schema_id: str, continuity_memory_schema_id: str, group: ConsolidationGroup) -> ProcessResult:
@@ -630,6 +657,19 @@ def build_pattern_memory(*, provider: LLMProvider, prompt_variant: str, plugin_n
         index_entries = [index_entry]
         if enrichment_index_entry is not None:
             index_entries.append(enrichment_index_entry)
+        pattern_embedding_text = build_embedding_text(memory_object)
+        if pattern_embedding_text is not None:
+            index_entries.append(
+                build_index_entry(
+                    target_kind="memory_object",
+                    target_id=memory_object.id,
+                    index_type=VECTOR_INDEX_TYPE,
+                    text_view=pattern_embedding_text,
+                    text_view_name=f"{PATTERN_MEMORY_TEXT_VIEW}.embedding",
+                    provider_name=VECTOR_EMBEDDING_PROVIDER_NAME,
+                    provider_version=VECTOR_EMBEDDING_PROVIDER_VERSION,
+                )
+            )
         return ProcessResult(
             annotations=[],
             memory_objects=[memory_object],
@@ -753,6 +793,19 @@ def build_continuity_memory(*, provider: LLMProvider, prompt_variant: str, plugi
         index_entries = [index_entry]
         if enrichment_index_entry is not None:
             index_entries.append(enrichment_index_entry)
+        continuity_embedding_text = build_embedding_text(memory_object)
+        if continuity_embedding_text is not None:
+            index_entries.append(
+                build_index_entry(
+                    target_kind="memory_object",
+                    target_id=memory_object.id,
+                    index_type=VECTOR_INDEX_TYPE,
+                    text_view=continuity_embedding_text,
+                    text_view_name=f"{CONTINUITY_MEMORY_TEXT_VIEW}.embedding",
+                    provider_name=VECTOR_EMBEDDING_PROVIDER_NAME,
+                    provider_version=VECTOR_EMBEDDING_PROVIDER_VERSION,
+                )
+            )
         return ProcessResult(
             annotations=[],
             memory_objects=[memory_object],

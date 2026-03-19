@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import logging
+from pathlib import Path
+
 from api.routes import create_router
-from app.config import AppConfig, SemanticPackageConfig
+from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
 from core.observability import IntegrationDebugLogger
 from core.service import PalliumService
+from providers.embedding.base import EmbeddingProvider
 from providers.llm.anthropic_claude import AnthropicClaudeLLMProvider
 from providers.llm.base import LLMProvider
 from providers.llm.openai_compatible import OpenAICompatibleLLMProvider
 from retrieval.base import RetrievalProvider
 from retrieval.lexical import LexicalRetrievalProvider
+from retrieval.vector import VectorRetrievalProvider
 from semantic.base import SemanticPlugin
 from semantic.agent_conversation_memory import AgentConversationMemoryPlugin
 from semantic.agent_conversation_memory_routing import RoutingOverrides
@@ -16,6 +21,9 @@ from semantic.demo_agent_memory import DemoAgentMemoryPlugin
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin
 from storage.base import StorageProvider
 from storage.sqlite import SQLiteStorageProvider
+from storage.vector_index import VectorIndex, VectorIndexConfig
+
+logger = logging.getLogger(__name__)
 
 
 def build_storage_provider(config: AppConfig) -> StorageProvider:
@@ -50,6 +58,22 @@ def build_llm_provider(config: AppConfig, *, provider_name: str, model: str) -> 
         )
 
     raise ValueError(f"Unsupported LLM provider kind: {provider_config.kind}")
+
+
+def build_embedding_provider(config: AppConfig, *, provider_name: str) -> EmbeddingProvider:
+    """Build an EmbeddingProvider from config. Dispatches on ``kind``."""
+    provider_config: EmbeddingProviderConfig = config.embedding_provider_config(provider_name)
+
+    provider_kind = provider_config.kind.lower()
+    if provider_kind == "fastembed":
+        from providers.embedding.fastembed_provider import FastEmbedProvider
+
+        return FastEmbedProvider(
+            model=provider_config.model,
+            dimensions=provider_config.dimensions,
+        )
+
+    raise ValueError(f"Unsupported embedding provider kind: {provider_config.kind}")
 
 
 def build_semantic_plugins(config: AppConfig, routing_overrides: RoutingOverrides | None = None) -> dict[str, SemanticPlugin]:
@@ -118,13 +142,73 @@ def build_retrieval_provider(storage: StorageProvider) -> RetrievalProvider:
     return LexicalRetrievalProvider(storage)
 
 
-def build_service(config: AppConfig | None = None, routing_overrides: RoutingOverrides | None = None) -> PalliumService:
+def build_service(
+    config: AppConfig | None = None,
+    routing_overrides: RoutingOverrides | None = None,
+) -> PalliumService:
     resolved_config = config or AppConfig.from_env()
     storage = build_storage_provider(resolved_config)
     plugins = build_semantic_plugins(resolved_config, routing_overrides=routing_overrides)
     if resolved_config.default_use_case not in plugins:
         raise ValueError(f"Unsupported default use case: {resolved_config.default_use_case}")
     retrieval = build_retrieval_provider(storage)
+
+    # Vector retrieval (optional, disabled by default)
+    vector_retrieval: VectorRetrievalProvider | None = None
+    vector_index: VectorIndex | None = None
+    embedding_provider: EmbeddingProvider | None = None
+    vector_config = resolved_config.vector_index
+
+    if vector_config.enabled:
+        # 1. Build embedding provider
+        if vector_config.embedding_provider is None:
+            logger.error("Vector index enabled but no embedding_provider configured. Vector disabled.")
+        else:
+            try:
+                embedding_provider = build_embedding_provider(
+                    resolved_config,
+                    provider_name=vector_config.embedding_provider,
+                )
+            except Exception as exc:
+                logger.error("Vector embedding provider failed to initialize: %s. Vector disabled.", exc)
+                embedding_provider = None
+
+        # 2. Load or create vector index
+        if embedding_provider is not None:
+            vector_index = _load_or_create_vector_index(vector_config, embedding_provider)
+
+        # 3. Model consistency check
+        if vector_index is not None and embedding_provider is not None:
+            if vector_index.entry_count() > 0:
+                if vector_index.model_name != embedding_provider.model_name():
+                    logger.error(
+                        "Vector index model mismatch: index=%s, provider=%s. "
+                        "Vector disabled. Run rebuild-vector-index.",
+                        vector_index.model_name,
+                        embedding_provider.model_name(),
+                    )
+                    vector_index = None
+                    embedding_provider = None
+
+        # 4. Build VectorRetrievalProvider
+        if vector_index is not None and embedding_provider is not None:
+            vector_retrieval = VectorRetrievalProvider(
+                storage=storage,
+                vector_index=vector_index,
+                embedding_provider=embedding_provider,
+                min_similarity=vector_config.min_similarity,
+            )
+            # 5. Reconciliation check (warning only)
+            sqlite_count = storage.count_index_entries_by_type("vector")
+            index_count = vector_index.entry_count()
+            if sqlite_count != index_count:
+                logger.warning(
+                    "Vector index count mismatch: SQLite=%d, index=%d. "
+                    "Consider running rebuild-vector-index.",
+                    sqlite_count,
+                    index_count,
+                )
+
     return PalliumService(
         storage=storage,
         retrieval=retrieval,
@@ -134,7 +218,36 @@ def build_service(config: AppConfig | None = None, routing_overrides: RoutingOve
         retention_enabled=resolved_config.retention.enabled,
         retention_lease_seconds=resolved_config.retention.lease_seconds,
         retention_batch_size=resolved_config.retention.batch_size,
+        embedding_provider=embedding_provider,
+        vector_index=vector_index,
+        vector_retrieval=vector_retrieval,
     )
+
+
+def _load_or_create_vector_index(
+    config: VectorIndexConfig,
+    embedding_provider: EmbeddingProvider,
+) -> VectorIndex | None:
+    """Load an existing vector index or create a new empty one.
+
+    Returns ``None`` if usearch is not installed or the index cannot be loaded.
+    """
+    index_path = Path(config.index_path)
+    try:
+        if index_path.exists() and Path(f"{index_path}.meta.json").exists():
+            return VectorIndex.load(index_path)
+        else:
+            return VectorIndex.create_empty(
+                index_path,
+                dimensions=embedding_provider.dimensions(),
+                model_name=embedding_provider.model_name(),
+            )
+    except ImportError:
+        logger.error("usearch not installed. Vector index disabled. pip install usearch")
+        return None
+    except Exception as exc:
+        logger.error("Failed to load vector index: %s. Vector disabled.", exc)
+        return None
 
 
 def build_router(service: PalliumService):

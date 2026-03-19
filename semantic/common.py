@@ -4,8 +4,9 @@ import re
 from dataclasses import dataclass, field
 
 from core.contracts import ProcessResult
-from core.indexing import build_index_entry
+from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
 from core.models import Annotation, MemoryObject, MemorySubjectAnchor, Relation, SourceItem
+from semantic.agent_conversation_memory_embedding import VECTOR_EMBEDDING_PROVIDER_NAME, VECTOR_EMBEDDING_PROVIDER_VERSION, build_embedding_text
 
 
 SEMANTIC_SIGNAL_METADATA_KEY = "pallium_semantic_signals"
@@ -472,6 +473,19 @@ def build_process_result(
                 text_view_name=_memory_text_view_name(memory_object.type),
             )
         )
+        embedding_text = build_embedding_text(memory_object)
+        if embedding_text is not None:
+            index_entries.append(
+                build_index_entry(
+                    target_kind="memory_object",
+                    target_id=memory_object.id,
+                    index_type=VECTOR_INDEX_TYPE,
+                    text_view=embedding_text,
+                    text_view_name=f"{_memory_text_view_name(memory_object.type)}.embedding",
+                    provider_name=VECTOR_EMBEDDING_PROVIDER_NAME,
+                    provider_version=VECTOR_EMBEDDING_PROVIDER_VERSION,
+                )
+            )
 
     thread_rebuild_requested = _should_request_thread_rebuild(source_item, extraction, memory_objects)
     metadata_updates: dict[str, dict[str, object]] = {}

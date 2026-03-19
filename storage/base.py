@@ -386,6 +386,26 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_index_entry(self, index_entry_id: str) -> IndexEntry:
+        """Get a single index entry by ID. Used by VectorRetrievalProvider to hydrate hits."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_index_entries_by_type(self, index_type: str) -> list[IndexEntry]:
+        """List all index entries of a given type (e.g., 'vector')."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def count_index_entries_by_type(self, index_type: str) -> int:
+        """Count index entries of a given type."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_index_entry_provider(self, index_entry_id: str, provider_name: str, provider_version: str) -> None:
+        """Update the provider metadata on an index entry (used after embedding)."""
+        raise NotImplementedError
+
+    @abstractmethod
     def search_index_entries(
         self,
         tokens: list[str],

@@ -9,6 +9,7 @@ from typing import Any
 
 from capabilities.consolidation import ConsolidationPolicy, DEFAULT_CONSOLIDATION_STRATEGIES
 from providers.llm.base import LLMRetryPolicy
+from storage.vector_index import VectorIndexConfig
 
 
 DEFAULT_ENV_FILE = ".env.local"
@@ -36,6 +37,14 @@ class LLMProviderConfig:
     api_key_env: str | None = None
     timeout_seconds: float = 30.0
     retry_policy: LLMRetryPolicy = field(default_factory=LLMRetryPolicy)
+
+
+@dataclass(frozen=True)
+class EmbeddingProviderConfig:
+    name: str
+    kind: str                     # "fastembed" (only kind in this slice)
+    model: str
+    dimensions: int | None = None
 
 
 @dataclass(frozen=True)
@@ -87,9 +96,11 @@ class AppConfig:
     sqlite_url: str = "sqlite:///./pallium.db"
     default_use_case: str = "demo_agent_memory"
     llm_providers: dict[str, LLMProviderConfig] = field(default_factory=dict)
+    embedding_providers: dict[str, EmbeddingProviderConfig] = field(default_factory=dict)
     semantic_packages: dict[str, SemanticPackageConfig] = field(default_factory=_default_semantic_packages)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
     retention: RetentionConfig = field(default_factory=RetentionConfig)
+    vector_index: VectorIndexConfig = field(default_factory=VectorIndexConfig)
 
     # Legacy compatibility inputs. New code should prefer llm_providers and semantic_packages.
     llm_provider: str | None = None
@@ -130,6 +141,7 @@ class AppConfig:
                 )
 
         object.__setattr__(self, "llm_providers", providers)
+        object.__setattr__(self, "embedding_providers", copy.deepcopy(self.embedding_providers))
         object.__setattr__(self, "semantic_packages", packages)
 
     @classmethod
@@ -189,7 +201,9 @@ class AppConfig:
                 ),
             ),
             llm_providers=_build_provider_configs(config_data, env_values),
+            embedding_providers=_build_embedding_provider_configs(config_data),
             semantic_packages=_build_package_configs(config_data, env_values),
+            vector_index=_build_vector_index_config(config_data, env_values),
             llm_provider=_resolve_legacy_value("PALLIUM_LLM_PROVIDER", env_values),
             llm_model=_resolve_legacy_value("PALLIUM_LLM_MODEL", env_values),
             llm_base_url=_resolve_legacy_value("PALLIUM_LLM_BASE_URL", env_values),
@@ -207,6 +221,11 @@ class AppConfig:
         if provider_name not in self.llm_providers:
             raise KeyError(f"Unknown LLM provider config: {provider_name}")
         return self.llm_providers[provider_name]
+
+    def embedding_provider_config(self, provider_name: str) -> EmbeddingProviderConfig:
+        if provider_name not in self.embedding_providers:
+            raise KeyError(f"Unknown embedding provider config: {provider_name}")
+        return self.embedding_providers[provider_name]
 
     def resolved_llm_settings_for(self, package_name: str) -> tuple[SemanticPackageConfig | None, LLMProviderConfig | None]:
         package = self.semantic_packages.get(package_name)
@@ -422,6 +441,56 @@ def _provider_from_raw(name: str, raw_value: dict[str, Any], env_values: dict[st
             max_backoff_ms=int(raw_value.get("max_backoff_ms", 3000)),
             jitter_ratio=float(raw_value.get("jitter_ratio", 0.2)),
             max_concurrency=int(raw_value.get("max_concurrency", 4)),
+        ),
+    )
+
+
+def _build_embedding_provider_configs(config_data: dict[str, Any]) -> dict[str, EmbeddingProviderConfig]:
+    providers: dict[str, EmbeddingProviderConfig] = {}
+    raw_providers = config_data.get("embedding_providers", {})
+    if isinstance(raw_providers, dict):
+        for name, raw_value in raw_providers.items():
+            if not isinstance(raw_value, dict):
+                continue
+            provider_name = str(name).strip().lower()
+            raw_dims = raw_value.get("dimensions")
+            dimensions = int(raw_dims) if raw_dims is not None else None
+            providers[provider_name] = EmbeddingProviderConfig(
+                name=provider_name,
+                kind=_as_string(raw_value.get("kind")),
+                model=_as_string(raw_value.get("model")),
+                dimensions=dimensions,
+            )
+    return providers
+
+
+def _build_vector_index_config(config_data: dict[str, Any], env_values: dict[str, str]) -> VectorIndexConfig:
+    defaults = VectorIndexConfig()
+    raw = config_data.get("vector_index", {})
+    if not isinstance(raw, dict):
+        raw = {}
+    return VectorIndexConfig(
+        enabled=_resolve_bool_value(
+            "PALLIUM_VECTOR_INDEX_ENABLED",
+            env_values,
+            raw.get("enabled"),
+            defaults.enabled,
+        ),
+        index_path=_resolve_global_value(
+            "PALLIUM_VECTOR_INDEX_PATH",
+            env_values,
+            _as_string(raw.get("index_path")) or defaults.index_path,
+        ) or defaults.index_path,
+        embedding_provider=_as_optional_string(
+            env_values.get("PALLIUM_VECTOR_INDEX_EMBEDDING_PROVIDER")
+            or raw.get("embedding_provider")
+            or defaults.embedding_provider
+        ),
+        min_similarity=float(
+            env_values.get(
+                "PALLIUM_VECTOR_INDEX_MIN_SIMILARITY",
+                raw.get("min_similarity", defaults.min_similarity),
+            )
         ),
     )
 
