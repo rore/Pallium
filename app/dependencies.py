@@ -10,6 +10,7 @@ from providers.llm.base import LLMProvider
 from providers.llm.openai_compatible import OpenAICompatibleLLMProvider
 from retrieval.base import RetrievalProvider
 from retrieval.lexical import LexicalRetrievalProvider
+from retrieval.vector import VectorRetrievalProvider
 from semantic.base import SemanticPlugin
 from semantic.agent_conversation_memory import AgentConversationMemoryPlugin
 from semantic.agent_conversation_memory_routing import RoutingOverrides
@@ -135,7 +136,12 @@ def build_retrieval_provider(storage: StorageProvider) -> RetrievalProvider:
     return LexicalRetrievalProvider(storage)
 
 
-def build_service(config: AppConfig | None = None, routing_overrides: RoutingOverrides | None = None) -> PalliumService:
+def build_service(
+    config: AppConfig | None = None,
+    routing_overrides: RoutingOverrides | None = None,
+    *,
+    vector_retrieval: VectorRetrievalProvider | None = None,
+) -> PalliumService:
     resolved_config = config or AppConfig.from_env()
     storage = build_storage_provider(resolved_config)
     plugins = build_semantic_plugins(resolved_config, routing_overrides=routing_overrides)
@@ -151,6 +157,7 @@ def build_service(config: AppConfig | None = None, routing_overrides: RoutingOve
         retention_enabled=resolved_config.retention.enabled,
         retention_lease_seconds=resolved_config.retention.lease_seconds,
         retention_batch_size=resolved_config.retention.batch_size,
+        vector_retrieval=vector_retrieval,
     )
 
 

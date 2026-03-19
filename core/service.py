@@ -20,6 +20,7 @@ from core.visibility import QueryVisibilityTrace, VisibilityContext, expand_visi
 from providers.embedding.base import EmbeddingProvider
 from providers.llm.base import LLMProviderError
 from retrieval.base import RetrievalProvider
+from retrieval.vector import VectorRetrievalProvider
 from semantic.base import ConsolidationSemanticPlugin, SemanticPlugin, ThreadAggregationSemanticPlugin
 from storage.base import QueueHealthSnapshot, RetentionLeaseLostError, RetentionRunStats, StorageProvider, ThreadProcessingLease, ThreadProcessingScope
 from storage.vector_index import VectorIndex
@@ -162,6 +163,7 @@ class PalliumService:
         retention_batch_size: int = 200,
         embedding_provider: EmbeddingProvider | None = None,
         vector_index: VectorIndex | None = None,
+        vector_retrieval: VectorRetrievalProvider | None = None,
     ) -> None:
         self._storage = storage
         self._retrieval = retrieval
@@ -174,6 +176,7 @@ class PalliumService:
         self._retention_batch_size = retention_batch_size
         self._embedding_provider = embedding_provider
         self._vector_index = vector_index
+        self._vector_retrieval = vector_retrieval
         self._logger = logging.getLogger(__name__)
 
     def _embed_vector_entries(self, result: ProcessResult) -> None:
@@ -715,6 +718,15 @@ class PalliumService:
             routed_trace = outcome.trace
             if routed_trace is not None:
                 routed_trace = replace(routed_trace, result_summary=_build_query_result_summary(outcome.results))
+            routed_trace = self._maybe_append_vector_trace(
+                trace=routed_trace,
+                include_trace=include_trace,
+                text=text,
+                retrieval_limit=retrieval_limit,
+                effective_filters=effective_filters,
+                visibility_context=visibility_context if plugin.requires_visibility_context else None,
+                require_visibility=plugin.requires_visibility_context,
+            )
             return QueryResult(
                 results=outcome.results,
                 trace=routed_trace,
@@ -725,12 +737,57 @@ class PalliumService:
         trace = retrieval_result.trace
         if trace is not None:
             trace = replace(trace, result_summary=_build_query_result_summary(retrieval_result.results))
+        trace = self._maybe_append_vector_trace(
+            trace=trace,
+            include_trace=include_trace,
+            text=text,
+            retrieval_limit=retrieval_limit,
+            effective_filters=effective_filters,
+            visibility_context=visibility_context if plugin.requires_visibility_context else None,
+            require_visibility=plugin.requires_visibility_context,
+        )
         return QueryResult(
             results=retrieval_result.results,
             trace=trace,
             should_inject=False,
             decision_reason="injection_policy_unavailable",
             injectable_blocks=[],
+        )
+
+    def _maybe_append_vector_trace(
+        self,
+        *,
+        trace: QueryTrace | None,
+        include_trace: bool,
+        text: str,
+        retrieval_limit: int,
+        effective_filters: QueryFilters | None,
+        visibility_context: VisibilityContext | None,
+        require_visibility: bool,
+    ) -> QueryTrace | None:
+        """Run vector retrieval and append its stage(s) to the trace (debug only).
+
+        Returns the trace unmodified when include_trace is False, vector
+        retrieval is not configured, or the vector provider returns no
+        stages.
+        """
+        if not include_trace or self._vector_retrieval is None:
+            return trace
+        vector_result = self._vector_retrieval.query(
+            text=text,
+            limit=retrieval_limit,
+            filters=effective_filters,
+            visibility_context=visibility_context,
+            include_trace=True,
+            require_visibility=require_visibility,
+        )
+        if vector_result.trace is None or not vector_result.trace.stages:
+            return trace
+        if trace is None:
+            return trace
+        return replace(
+            trace,
+            stages=trace.stages + vector_result.trace.stages,
         )
 
     def _make_debug_candidate_loader(
