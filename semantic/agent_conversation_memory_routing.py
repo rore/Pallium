@@ -323,7 +323,7 @@ ROUTING_QUERY_SHAPE_PHRASES = {
     "history_lookup": ("what do we know", "what is the latest", "what's the latest", "what had we concluded", "what had you concluded", "what constraint had i given", "remind me what we had latest", "remind me what we had latest about", "remind me what we had about", "what we had about"),
     "big_picture": ("big picture", "general lesson", "larger lesson", "main takeaway", "should we remember", "what should we remember"),
     "analysis_request": ("where did we land", "what ended up being true", "what settled", "how did that shake out"),
-    "constraint_recall": ("what constraint had i given", "what constraint did i give", "what had i told you not to use", "what did i tell you not to use", "anything i should avoid", "what should i not rely on", "what should i avoid", "anything to avoid", "anything i should not"),
+    "constraint_recall": ("what constraint had i given", "what constraint did i give", "what had i told you not to use", "what did i tell you not to use", "anything i should avoid", "what should i not rely on", "what should i avoid", "anything to avoid"),
     "resume_state": ("pick this back up", "pick that back up", "where did we leave off", "where were we", "what is the latest state", "what's the latest state"),
     "evidence_request": ("what backs that up", "what points to", "what points back to", "where did that come from"),
 }
@@ -3198,12 +3198,14 @@ def _source_excerpt_disclaims_exact_evidence(excerpt: str) -> bool:
 
 
 def _source_candidate_is_primary_injection_eligible(candidate: dict[str, object], intent: str, *, query_text: str) -> bool:
-    if intent in {"evidence_trace", "investigative_conclusion"}:
+    if intent == "evidence_trace":
         item = candidate["item"]
         assert isinstance(item, QueryResultItem)
         excerpt = str(item.excerpt or "")
         if _source_excerpt_disclaims_exact_evidence(excerpt):
             return False
+        return True
+    if intent == "investigative_conclusion":
         return True
     return intent == "precise_fact" and _source_candidate_has_quote_grade_support(candidate, query_text=query_text)
 
@@ -3245,7 +3247,10 @@ def _task_checkpoint_injection_text(payload: dict[str, object]) -> str:
         parts.append(summary)
     if next_step:
         parts.append(f"Next step: {next_step}")
-    if not blocker and not current_state and not next_step and summary:
+    # Always include summary when it carries task identity not already present.
+    # This matters for blocker-only checkpoints where current_state is absent:
+    # without summary the injected text is just "Blocker: ..." with no task context.
+    if summary and not current_state:
         parts.append(summary)
     return _join_unique_text_parts(parts)
 

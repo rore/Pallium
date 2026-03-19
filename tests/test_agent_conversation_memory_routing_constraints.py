@@ -2100,3 +2100,22 @@ def test_abstract_avoid_phrase_routes_as_constraint_recall() -> None:
     assert 'constraint_recall' in query_shape_tags, (
         f"'constraint_recall' shape tag missing for 'anything i should avoid'; got: {query_shape_tags}"
     )
+
+
+def test_generic_negated_question_does_not_trigger_constraint_recall() -> None:
+    # "Anything I should not miss before continuing?" is a planning/resumption
+    # question, not a constraint-recall query.  It must NOT carry the
+    # constraint_recall shape tag (the phrase "anything i should not" was
+    # removed because it matched too broadly).
+    from semantic.agent_conversation_memory_routing import _routing_query_tokens, _query_shape_tags
+    texts = [
+        "Anything I should not miss before continuing?",
+        "Anything I should not change yet?",
+        "Anything I should not forget to check?",
+    ]
+    for text in texts:
+        tokens = _routing_query_tokens(text)
+        tags = _query_shape_tags(text, tokens)
+        assert 'constraint_recall' not in tags, (
+            f"generic negated question {text!r} must not trigger constraint_recall; got tags: {tags}"
+        )
