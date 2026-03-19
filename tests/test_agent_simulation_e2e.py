@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from dataclasses import dataclass
 
 from fastapi.testclient import TestClient
@@ -478,3 +479,243 @@ def test_chat_mode_uses_pattern_memory_after_consolidation_for_broad_recall(monk
     assert "backtracking" in rendered_blocks
     assert "store section" in rendered_blocks
     assert model.calls[0]["injectable_blocks"] == query_response["injectable_blocks"]
+
+
+def test_greeting_exchange_does_not_inject_source_evidence(monkeypatch, test_db_url: str) -> None:
+    """Greetings and low-value pleasantry exchanges must not be injected as source_evidence
+    for unrelated follow-up queries in a new thread."""
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: PublicCorpusSemanticProvider())
+    client = TestClient(create_app(build_llm_test_config(default_use_case="agent_conversation_memory", sqlite_url=test_db_url)))
+
+    _seed_history(
+        client,
+        [
+            {
+                "source_type": "chat_message",
+                "source_id": "greeting-user-1",
+                "content_type": "text/plain",
+                "content": "hello again",
+                "artifact_kind": "message",
+                "role": "user",
+                "container_ref": "chat:greeting",
+                "thread_ref": "chat:greeting:thread1",
+                "session_ref": "session:greeting:1",
+                "visibility_context": dict(_PUBLIC),
+            },
+            {
+                "source_type": "assistant_artifact",
+                "source_id": "greeting-assistant-1",
+                "content_type": "text/plain",
+                "content": "Hello! Good to see you again.",
+                "artifact_kind": "assistant_output",
+                "role": "assistant",
+                "container_ref": "chat:greeting",
+                "thread_ref": "chat:greeting:thread1",
+                "session_ref": "session:greeting:1",
+                "visibility_context": dict(_PUBLIC),
+            },
+        ],
+    )
+
+    harness, model = _build_harness(
+        client,
+        container_ref="chat:greeting",
+        thread_ref="chat:greeting:thread2",
+        session_ref="session:greeting:2",
+        turn_kind="new_thread",
+        session_has_sufficient_local_context=False,
+    )
+
+    harness.process_chat_message("do you know what day it is?")
+
+    query_response = harness.session.events[0]["query_debug"]["response"]
+    injectable_blocks = query_response["injectable_blocks"]
+
+    # No greeting/pleasantry source hit must be injected.
+    source_blocks = [b for b in injectable_blocks if b.get("block_type") == "source"]
+    assert not source_blocks, (
+        f"Expected no source_evidence blocks from greeting exchange, got: {source_blocks}"
+    )
+    # If injection happens at all, the block must not contain the greeting text.
+    for block in injectable_blocks:
+        block_text = block.get("text", "").lower()
+        assert "hello again" not in block_text, (
+            f"Greeting text leaked into injection block: {block}"
+        )
+        assert "hello! good to see" not in block_text, (
+            f"Greeting text leaked into injection block: {block}"
+        )
+
+
+def test_same_thread_confirmation_does_not_inject_source_evidence(monkeypatch, test_db_url: str) -> None:
+    """A same-thread lightweight confirmation query ('we're talking about export, right?')
+    must not receive multiple raw source_evidence injection blocks.
+    With session_has_sufficient_local_context=True, same-thread suppression should fire."""
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: PublicCorpusSemanticProvider())
+    client = TestClient(create_app(build_llm_test_config(default_use_case="agent_conversation_memory", sqlite_url=test_db_url)))
+
+    _seed_history(
+        client,
+        [
+            {
+                "source_type": "assistant_artifact",
+                "source_id": "export-ctx-1",
+                "content_type": "text/plain",
+                "content": "Decision: raise the worker memory limit to 1Gi while keeping the request at 512Mi.",
+                "artifact_kind": "assistant_output",
+                "role": "assistant",
+                "container_ref": "chat:export-confirm",
+                "thread_ref": "chat:export-confirm:thread1",
+                "session_ref": "session:export-confirm:1",
+                "visibility_context": dict(_PUBLIC),
+            },
+        ],
+    )
+
+    harness, model = _build_harness(
+        client,
+        container_ref="chat:export-confirm",
+        thread_ref="chat:export-confirm:thread1",
+        session_ref="session:export-confirm:1",
+        turn_kind="same_thread",
+        session_has_sufficient_local_context=True,
+    )
+
+    harness.process_chat_message("we're talking about export, right?")
+
+    query_response = harness.session.events[0]["query_debug"]["response"]
+
+    # Same-thread context is sufficient — no injection should happen for a lightweight confirmation.
+    assert query_response["should_inject"] is False, (
+        f"Expected no injection for same-thread confirmation, got decision_reason={query_response.get('decision_reason')!r}, "
+        f"blocks={query_response['injectable_blocks']}"
+    )
+    # No raw source blocks should leak through.
+    source_blocks = [b for b in query_response["injectable_blocks"] if b.get("block_type") == "source"]
+    assert not source_blocks, (
+        f"Expected no raw source_evidence blocks for same-thread confirmation, got: {source_blocks}"
+    )
+
+
+@pytest.mark.xfail(
+    reason=(
+        "Formation gap: natural-language export statements without 'Decision:' prefix "
+        "produce candidate_type=None from LLM extraction, so no decision object is formed. "
+        "Stub confirms this: only source_hit is indexed, no structured memory. "
+        "Requires stub/LLM extraction to recognize natural operational-fact sentences. "
+        "Routing fix (Fix 4, precise_fact fresh-thread preference) is separately covered by "
+        "test_fresh_thread_recalls_export_cap_fact_prefixed_control."
+    ),
+    strict=True,
+)
+def test_fresh_thread_recalls_export_cap_fact_natural_language(monkeypatch, test_db_url: str) -> None:
+    """A natural-language export cap statement (no 'Decision:' prefix) followed by a fresh-thread
+    recall query must surface the cap figures.
+
+    This test uses the verbatim harness repro sentence. With the stub provider returning
+    candidate_type=None for natural sentences, this test is expected to reveal whether the
+    failure is in memory formation (stub returns no structured type → only source_hit available)
+    or in routing (structured memory retrieved but not ranked/injected).
+
+    If this test fails with should_inject=False or no 1Gi/512Mi in rendered_blocks,
+    the gap is at the formation layer — the natural sentence did not produce a decision object.
+    Run test_fresh_thread_recalls_export_cap_fact_prefixed_control to confirm routing works
+    once formation is correct.
+    """
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: PublicCorpusSemanticProvider())
+    client = TestClient(create_app(build_llm_test_config(default_use_case="agent_conversation_memory", sqlite_url=test_db_url)))
+
+    _seed_history(
+        client,
+        [
+            {
+                "source_type": "chat_message",
+                "source_id": "export-natural-user-1",
+                "content_type": "text/plain",
+                "content": "We said the export worker should go to 1Gi memory limit while keeping the request at 512Mi.",
+                "artifact_kind": "message",
+                "role": "user",
+                "container_ref": "chat:export-natural",
+                "thread_ref": "chat:export-natural:thread1",
+                "session_ref": "session:export-natural:1",
+                "visibility_context": dict(_PUBLIC),
+            },
+        ],
+    )
+
+    harness, model = _build_harness(
+        client,
+        container_ref="chat:export-natural",
+        thread_ref="chat:export-natural:thread2",
+        session_ref="session:export-natural:2",
+        turn_kind="new_thread",
+        session_has_sufficient_local_context=False,
+    )
+
+    harness.process_chat_message("Which cap were we bumping and what stayed the same?")
+
+    query_response = harness.session.events[0]["query_debug"]["response"]
+    rendered_blocks = " ".join(block["text"].lower() for block in query_response["injectable_blocks"])
+
+    assert query_response["should_inject"] is True, (
+        f"Expected injection for fresh-thread export recall, got decision_reason={query_response.get('decision_reason')!r}. "
+        f"If candidate_type=None from stub, this confirms the formation gap (no decision object formed for natural sentence)."
+    )
+    assert "1gi" in rendered_blocks, f"Expected '1gi' in injected blocks, got: {rendered_blocks!r}"
+    assert "512mi" in rendered_blocks, f"Expected '512mi' in injected blocks, got: {rendered_blocks!r}"
+
+
+def test_fresh_thread_recalls_export_cap_fact_prefixed_control(monkeypatch, test_db_url: str) -> None:
+    """Control test: a 'Decision:'-prefixed export cap statement must be recalled correctly
+    from a fresh thread using a 'which cap' query.
+
+    This covers the routing layer — the stub produces a decision object, and the routing
+    must prefer it over raw source_hits in fresh-thread precise_fact mode.
+    This test was already effectively covered by test_chat_mode_prefers_prior_decision_for_indirect_resource_recall
+    but that test uses a slightly different query. This variant uses the verbatim harness repro query.
+    """
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: PublicCorpusSemanticProvider())
+    client = TestClient(create_app(build_llm_test_config(default_use_case="agent_conversation_memory", sqlite_url=test_db_url)))
+
+    _seed_history(
+        client,
+        [
+            {
+                "source_type": "assistant_artifact",
+                "source_id": "export-prefixed-1",
+                "content_type": "text/plain",
+                "content": "Decision: raise the worker memory limit to 1Gi while keeping the request at 512Mi.",
+                "artifact_kind": "assistant_output",
+                "role": "assistant",
+                "container_ref": "chat:export-prefixed",
+                "thread_ref": "chat:export-prefixed:thread1",
+                "session_ref": "session:export-prefixed:1",
+                "visibility_context": dict(_PUBLIC),
+            },
+        ],
+    )
+
+    harness, model = _build_harness(
+        client,
+        container_ref="chat:export-prefixed",
+        thread_ref="chat:export-prefixed:thread2",
+        session_ref="session:export-prefixed:2",
+        turn_kind="new_thread",
+        session_has_sufficient_local_context=False,
+    )
+
+    harness.process_chat_message("Which cap were we bumping and what stayed the same?")
+
+    query_response = harness.session.events[0]["query_debug"]["response"]
+    routing = query_response["trace"]["routing"]
+    rendered_blocks = " ".join(block["text"].lower() for block in query_response["injectable_blocks"])
+
+    assert query_response["should_inject"] is True, (
+        f"Expected injection, got decision_reason={query_response.get('decision_reason')!r}"
+    )
+    assert routing["query_intent"] == "precise_fact"
+    assert routing["selected_layer"] == "decision", (
+        f"Expected decision layer for fresh-thread precise_fact, got {routing['selected_layer']!r}"
+    )
+    assert "1gi" in rendered_blocks
+    assert "512mi" in rendered_blocks

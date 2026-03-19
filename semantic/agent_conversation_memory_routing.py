@@ -875,6 +875,10 @@ def _infer_query_intent(
         selected_family = "broad_recall"
     elif text_hint_family == "broad_recall" and "history_lookup" in query_shape_tags and "evidence_request" not in query_shape_tags:
         selected_family = "broad_recall"
+    elif selected_family == "evidence_trace" and text_hint_family != "evidence_trace" and "evidence_request" not in query_shape_tags:
+        # evidence_trace must not win via candidate source-hit scores alone when the query text
+        # contains no evidence-request signals. Fall back to the text-based classification.
+        selected_family = text_hint_family
     runner_up_family = ranked_families[1] if len(ranked_families) > 1 else None
     return {
         "selected_family": selected_family,
@@ -1587,7 +1591,7 @@ def _apply_fresh_thread_structured_recall_preference(
     candidate_signals: dict[str, object],
     runtime_context: QueryRuntimeContext | None,
 ) -> None:
-    if intent not in {"broad_recall", "answer_continuity", "work_resumption"}:
+    if intent not in {"broad_recall", "answer_continuity", "work_resumption", "precise_fact"}:
         return
     if not _runtime_context_prefers_cross_thread_recall(runtime_context):
         return
