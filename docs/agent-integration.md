@@ -150,9 +150,11 @@ Use `POST /query/debug` when:
 - you need to see lexical matched tokens and text views
 
 For local exploratory work, the supported way to exercise this integration
-boundary is `python -m app.agent_simulation`. The harness stays on the real
-HTTP contract, exposes scope and runtime-context controls directly, and shows
-Pallium's decision path without adding a second memory policy in the client.
+boundary is `python -m app.agent_simulation`. Use `chat-lite` when you want a
+normal chat loop, or plain `chat` when you want operator-visible accept/edit/discard
+and artifact capture. The harness stays on the real HTTP contract, exposes scope
+and runtime-context controls directly, and shows Pallium's decision path without
+adding a second memory policy in the client.
 
 ## Query Input Contract
 
@@ -230,10 +232,13 @@ One practical runtime pattern:
 6. if a result looks wrong, inspect `POST /query/debug` before changing prompts
    or retrieval code
 
-The direct harness follows this same loop. In `chat` mode it ingests the user
-turn through `/items`, calls `/query/debug` before the assistant turn, and only
-passes `injectable_blocks` to the model when Pallium says to inject. Ranked
-results and debug trace stay operator-visible, not prompt-visible.
+The direct harness follows this same loop. In `chat-lite` mode it ingests the
+user turn through `/items`, calls `/query/debug` before the assistant turn, and
+auto-accepts the assistant reply after the model draft. In `chat` mode it keeps
+the same HTTP flow but adds operator prompts for accept/edit/discard and optional
+artifact capture. In both modes, only `injectable_blocks` are passed to the model
+when Pallium says to inject. Ranked results and debug trace stay operator-visible,
+not prompt-visible.
 
 ## How To Think About The Current Memory Jobs
 

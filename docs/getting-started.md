@@ -13,11 +13,10 @@ Goal for this walkthrough:
 A typical quick check now looks like this:
 
 - start Pallium locally
-- open the direct harness with `python -m app.agent_simulation`
+- open the direct harness with `python -m app.agent_simulation chat-lite` for a normal chat loop, or `python -m app.agent_simulation` for the operator/debug flow
 - ask a repeated-question or resumed-work prompt
-- inspect `should_inject`, `decision_reason`, injected blocks, top results, and routing/debug context
-- accept, edit, or discard the assistant draft
-- save the session and replay it later after a code change
+- in `chat-lite`, just chat and let the harness auto-accept replies; in `chat`, inspect `should_inject`, `decision_reason`, injected blocks, top results, and routing/debug context
+- save the session and replay it later after a code change when you need a reproducible debugging artifact
 
 ## Prerequisites
 
@@ -98,13 +97,26 @@ If you want the split mode instead, use:
 In another terminal:
 
 ```powershell
+.\.venv\Scripts\python.exe -m app.agent_simulation chat-lite
+```
+
+Use `chat-lite` when you want a normal conversation loop with real HTTP calls,
+auto-accepted assistant replies, and no artifact/operator prompts.
+
+If you want the operator/debug workflow instead, run:
+
+```powershell
 .\.venv\Scripts\python.exe -m app.agent_simulation
 ```
 
-This is the preferred exploratory workflow. `chat` mode is the default and runs
-an actual thin-agent loop against the live Pallium HTTP service.
+`chat` mode remains the default and runs the same thin-agent loop against the
+live Pallium HTTP service, but keeps the operator prompts for accept/edit/discard
+and optional artifact capture.
 
 Useful commands in the harness:
+
+- `/mode chat-lite` to switch into lightweight auto-accept chat
+- `/mode chat` to switch back to operator/debug chat
 
 - `/scope` to set or review container, thread, session, and visibility defaults
 - `/show scope` to print current defaults
@@ -117,7 +129,15 @@ Useful commands in the harness:
 - `/replay .local/harness-sessions/demo-run.json` to rerun a saved session
 - `/mode manual` to switch into direct `/items`, `/query`, and `/query/debug` control
 
-A normal `chat` turn does this in order:
+A `chat-lite` turn does this in order:
+
+1. ingests the user turn through `POST /items`
+2. calls `POST /query/debug` before the assistant turn
+3. calls the configured model with only Pallium-approved injected blocks when
+   `should_inject=true`
+4. auto-accepts the assistant reply and ingests it through `POST /items`
+
+A normal `chat` turn adds the operator/debug layer on top:
 
 1. ingests the user turn through `POST /items`
 2. calls `POST /query/debug` before the assistant turn
