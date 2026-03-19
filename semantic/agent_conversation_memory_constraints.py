@@ -1207,7 +1207,7 @@ def _apply_structured_constraint_compatibility(
 
     compatible_candidates = sorted(
         compatible_candidates,
-        key=lambda candidate: (int(candidate["routing_score"]) + int(candidate.get("packaging_adjustment") or 0), int(candidate["lexical_score"])),
+        key=lambda candidate: (int(candidate["routing_score"]) + int(candidate.get("packaging_adjustment") or 0), int(candidate["retrieval_score"])),
         reverse=True,
     )
 

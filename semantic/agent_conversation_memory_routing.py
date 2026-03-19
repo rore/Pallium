@@ -549,7 +549,7 @@ def route_query_results(
             )
         ranked_candidates = sorted(
             scored_candidates,
-            key=lambda candidate: (candidate["routing_score"], candidate["lexical_score"]),
+            key=lambda candidate: (candidate["routing_score"], candidate["retrieval_score"]),
             reverse=True,
         )
         for routing_rank, candidate in enumerate(ranked_candidates, start=1):
@@ -1492,7 +1492,7 @@ def _score_routed_candidate(
     support_threshold: dict[str, int] | None = None,
 ) -> dict[str, object]:
     layer = _result_layer(item)
-    lexical_score = int(item.score)
+    retrieval_score = int(item.score)
     overlap_tokens = _routing_overlap_tokens(item, query_tokens)
     content_overlap_tokens = [token for token in overlap_tokens if token not in ROUTING_META_QUERY_TOKENS]
     query_topic_tokens = _query_topic_tokens(query_tokens)
@@ -1508,7 +1508,7 @@ def _score_routed_candidate(
     _weights = layer_weights or ROUTING_LAYER_WEIGHTS
     base_routing_score = (
         _weights[intent][layer]
-        + (lexical_score * 10)
+        + (retrieval_score * 10)
         + _specificity_bonus(item, intent, query_text=query_text)
         + evidence_shape_score
         + _routing_overlap_adjustment(layer, intent, content_overlap_tokens)
@@ -1526,7 +1526,7 @@ def _score_routed_candidate(
         "item": item,
         "layer": layer,
         "lexical_rank": lexical_rank,
-        "lexical_score": lexical_score,
+        "retrieval_score": retrieval_score,
         "base_routing_score": base_routing_score,
         "routing_score": base_routing_score,
         "support_score": evidence_shape_score,
@@ -1561,7 +1561,7 @@ def _apply_same_kind_freshness_shaping(scored_candidates: list[dict[str, object]
                 candidate.get("freshness_timestamp_value") is not None,
                 candidate.get("freshness_timestamp_value") or datetime.min.replace(tzinfo=timezone.utc),
                 bool(candidate.get("same_thread")),
-                int(candidate.get("lexical_score", 0)),
+                int(candidate.get("retrieval_score", 0)),
             ),
             reverse=True,
         )
@@ -2815,7 +2815,7 @@ def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object
         "layer": candidate["layer"],
         "lexical_rank": candidate["lexical_rank"],
         "routing_rank": candidate["routing_rank"],
-        "lexical_score": candidate["lexical_score"],
+        "retrieval_score": candidate["retrieval_score"],
         "routing_score": candidate["routing_score"],
         "support_score": candidate["support_score"],
         "support_grade": candidate["support_grade"],
@@ -4067,7 +4067,7 @@ def _summarize_routing_layers(scored_candidates: list[dict[str, object]]) -> dic
             continue
         best_candidate = max(
             layer_candidates,
-            key=lambda candidate: (int(candidate["support_score"]), int(candidate["lexical_score"])),
+            key=lambda candidate: (int(candidate["support_score"]), int(candidate["retrieval_score"])),
         )
         summary[layer] = {
             "candidate_count": len(layer_candidates),
@@ -4077,7 +4077,7 @@ def _summarize_routing_layers(scored_candidates: list[dict[str, object]]) -> dic
             "strong_candidate_count": sum(1 for candidate in layer_candidates if candidate["support_grade"] == "strong"),
             "best_support_score": best_candidate["support_score"],
             "best_support_grade": best_candidate["support_grade"],
-            "best_lexical_score": best_candidate["lexical_score"],
+            "best_retrieval_score": best_candidate["retrieval_score"],
             "best_lexical_rank": best_candidate["lexical_rank"],
         }
     return summary
@@ -4126,7 +4126,7 @@ def _select_routing_focus(
                     structured_fallback,
                     key=lambda item: (
                         int(item[1].get("best_support_score", 0)),
-                        int(item[1].get("best_lexical_score", 0)),
+                        int(item[1].get("best_retrieval_score", 0)),
                     ),
                 )
             elif supported_lower_level is not None:
@@ -4136,7 +4136,7 @@ def _select_routing_focus(
                     fallback_candidates,
                     key=lambda item: (
                         int(item[1].get("best_support_score", 0)),
-                        int(item[1].get("best_lexical_score", 0)),
+                        int(item[1].get("best_retrieval_score", 0)),
                     ),
                 )
         else:
@@ -4144,7 +4144,7 @@ def _select_routing_focus(
                 fallback_candidates,
                 key=lambda item: (
                     int(item[1].get("best_support_score", 0)),
-                    int(item[1].get("best_lexical_score", 0)),
+                    int(item[1].get("best_retrieval_score", 0)),
                 ),
             )
     primary_count = int(primary_summary.get("candidate_count", 0))
