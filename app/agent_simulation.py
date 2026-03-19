@@ -17,6 +17,7 @@ from app.agent_simulation_session import (
     rewrite_payload_for_replay,
     rewrite_session_for_replay,
 )
+
 from providers.llm.base import LLMProviderError
 
 
@@ -31,12 +32,19 @@ CHAT_MODES = {"chat", "chat-lite"}
 class TerminalIO:
     input_func: Callable[[str], str] = input
     output_func: Callable[[str], None] = print
+    prompt_formatter: Callable[[str], str] | None = None
+    output_formatter: Callable[[str, str], str] | None = None
 
     def prompt(self, text: str) -> str:
-        return self.input_func(text)
+        rendered = self.prompt_formatter(text) if self.prompt_formatter is not None else text
+        return self.input_func(rendered)
 
     def write(self, text: str) -> None:
         self.output_func(text)
+
+    def write_role(self, role: str, text: str) -> None:
+        rendered = self.output_formatter(role, text) if self.output_formatter is not None else text
+        self.output_func(rendered)
 
 
 class AgentSimulationApp:
@@ -68,7 +76,7 @@ class AgentSimulationApp:
             if not replay_path:
                 replay_path = self._io.prompt("Replay session path: ").strip()
             if not replay_path:
-                self._io.write("Replay path required")
+                self._write_error("Replay path required")
                 return 1
             self._run_replay(replay_path)
             return 0
@@ -86,9 +94,9 @@ class AgentSimulationApp:
                 if self._mode in CHAT_MODES:
                     self.process_chat_message(line)
                 else:
-                    self._io.write("manual mode accepts slash commands only")
+                    self._write_system("manual mode accepts slash commands only")
             except ValueError as exc:
-                self._io.write(str(exc))
+                self._write_error(str(exc))
 
     def process_chat_message(self, message: str) -> None:
         user_request = self._build_item_payload(
@@ -101,8 +109,7 @@ class AgentSimulationApp:
         query_request = self._build_query_payload(message)
         query_response = self._http.query_debug(query_request)
         if self._mode != "chat-lite" or self._session.debug_enabled:
-            for line in render_debug_summary(query_response, verbose=self._session.debug_enabled):
-                self._io.write(line)
+            self._write_debug_lines(render_debug_summary(query_response, verbose=self._session.debug_enabled))
 
         event: dict[str, Any] = {
             "event_type": "chat_turn",
@@ -136,9 +143,11 @@ class AgentSimulationApp:
                 "response": response,
             }
         )
-        lines = render_debug_summary(response, verbose=self._session.debug_enabled) if debug else json.dumps(response, indent=2).splitlines()
-        for line in lines:
-            self._io.write(line)
+        if debug:
+            self._write_debug_lines(render_debug_summary(response, verbose=self._session.debug_enabled))
+        else:
+            for line in json.dumps(response, indent=2).splitlines():
+                self._write_system(line)
         return response
 
     def execute_manual_item(self) -> dict[str, Any]:
@@ -163,7 +172,7 @@ class AgentSimulationApp:
                 "response": response,
             }
         )
-        self._io.write(json.dumps(response, indent=2))
+        self._write_system(json.dumps(response, indent=2))
         return response
 
     def _handle_command(self, line: str) -> bool:
@@ -227,7 +236,7 @@ class AgentSimulationApp:
                 text = self._prompt_required("query text: ")
             self.execute_manual_query(text, debug=True)
             return True
-        self._io.write(f"Unknown command: {command}")
+        self._write_warning(f"Unknown command: {command}")
         return True
 
     def _draft_or_fallback(self, message: str, query_response: dict[str, Any]) -> dict[str, Any]:
@@ -246,14 +255,14 @@ class AgentSimulationApp:
             },
         }
         if self._mode == "chat-lite":
-            self._io.write(draft.answer)
+            self._write_agent(draft.answer)
             assistant = self._ingest_assistant(draft.answer, origin="model")
             result["assistant"] = assistant
             result["operator_action"] = "auto_accepted"
             return result
 
-        self._io.write("assistant draft:")
-        self._io.write(draft.answer)
+        self._write_system("assistant draft:")
+        self._write_agent(draft.answer)
         action = self._prompt_action()
         result["operator_action"] = action
         if action == "discarded":
@@ -278,11 +287,11 @@ class AgentSimulationApp:
             "operator_action": "manual_discarded",
         }
         if self._mode == "chat-lite":
-            self._io.write(f"Model unavailable: {reason}")
+            self._write_warning(f"Model unavailable: {reason}")
             result["operator_action"] = "auto_skipped"
             return result
 
-        self._io.write(f"Model unavailable; enter assistant reply manually or leave blank to discard. Reason: {reason}")
+        self._write_warning(f"Model unavailable; enter assistant reply manually or leave blank to discard. Reason: {reason}")
         manual_text = self._io.prompt("assistant> ").strip()
         if not manual_text:
             return result
@@ -318,7 +327,7 @@ class AgentSimulationApp:
     def _prompt_for_artifact(self) -> dict[str, Any] | None:
         kind = self._prompt_optional("artifact kind [tool_use_summary|todo_snapshot]: ").strip() or "tool_use_summary"
         if kind not in ARTIFACT_KINDS:
-            self._io.write(f"Unsupported artifact kind: {kind}")
+            self._write_warning(f"Unsupported artifact kind: {kind}")
             return None
         content = self._prompt_required_retry("artifact text: ")
         payload = self._build_item_payload(
@@ -328,7 +337,7 @@ class AgentSimulationApp:
             content=content,
         )
         response = self._http.create_item(payload)
-        self._io.write(f"artifact stored: {response.get('source_item_id')}")
+        self._write_system(f"artifact stored: {response.get('source_item_id')}")
         return {
             "kind": kind,
             "content": content,
@@ -390,7 +399,7 @@ class AgentSimulationApp:
 
     def _write_scope(self) -> None:
         for line in render_scope(self._scope_snapshot()):
-            self._io.write(line)
+            self._write_system(line)
 
     def _scope_snapshot(self) -> dict[str, Any]:
         return self._session.defaults.to_dict()
@@ -417,22 +426,22 @@ class AgentSimulationApp:
         if value is None:
             value = self._prompt_optional("turn kind [new_thread|same_thread|same_thread_continuation|resumed_session|new_session|clear]: ")
         if not value:
-            self._io.write(f"turn_kind: {self._session.defaults.runtime_context.get('turn_kind')}")
+            self._write_system(f"turn_kind: {self._session.defaults.runtime_context.get('turn_kind')}")
             return
         if value == "clear":
             self._session.defaults.runtime_context["turn_kind"] = None
         elif value in TURN_KINDS:
             self._session.defaults.runtime_context["turn_kind"] = value
         else:
-            self._io.write(f"Unsupported turn kind: {value}")
+            self._write_warning(f"Unsupported turn kind: {value}")
             return
-        self._io.write(f"turn_kind set to {self._session.defaults.runtime_context.get('turn_kind')}")
+        self._write_system(f"turn_kind set to {self._session.defaults.runtime_context.get('turn_kind')}")
 
     def _set_local_context(self, value: str | None) -> None:
         if value is None:
             value = self._prompt_optional("local context [true|false|clear]: ")
         if not value:
-            self._io.write(
+            self._write_system(
                 f"session_has_sufficient_local_context: {self._session.defaults.runtime_context.get('session_has_sufficient_local_context')}"
             )
             return
@@ -444,19 +453,19 @@ class AgentSimulationApp:
         elif lowered in {"false", "no", "n", "0"}:
             parsed = False
         else:
-            self._io.write(f"Unsupported local-context value: {value}")
+            self._write_warning(f"Unsupported local-context value: {value}")
             return
         self._session.defaults.runtime_context["session_has_sufficient_local_context"] = parsed
-        self._io.write(f"session_has_sufficient_local_context set to {parsed}")
+        self._write_system(f"session_has_sufficient_local_context set to {parsed}")
 
     def _set_debug(self, value: str | None) -> None:
         if value not in {"on", "off"}:
             value = self._prompt_optional("debug [on|off]: ") or value
         if value not in {"on", "off"}:
-            self._io.write(f"debug: {'on' if self._session.debug_enabled else 'off'}")
+            self._write_system(f"debug: {'on' if self._session.debug_enabled else 'off'}")
             return
         self._session.debug_enabled = value == "on"
-        self._io.write(f"debug set to {value}")
+        self._write_system(f"debug set to {value}")
 
     def _fork_scope(self, *, new_session: bool) -> None:
         self._session.defaults.thread_ref = self._ref_factory("thread")
@@ -467,22 +476,22 @@ class AgentSimulationApp:
 
     def _save_session(self, name: str | None) -> None:
         path = self._store.save(self._session, name=name)
-        self._io.write(f"session saved to {path}")
+        self._write_system(f"session saved to {path}")
 
     def _set_mode(self, mode: str | None) -> None:
         if mode not in {"chat", "chat-lite", "manual"}:
             mode = self._prompt_optional("mode [chat|chat-lite|manual]: ") or mode
         if mode not in {"chat", "chat-lite", "manual"}:
-            self._io.write(f"current mode: {self._mode}")
+            self._write_system(f"current mode: {self._mode}")
             return
         self._mode = mode
         self._session.set_mode(mode)
-        self._io.write(f"mode set to {mode}")
+        self._write_system(f"mode set to {mode}")
 
     def _run_replay(self, path: str) -> None:
         loaded = self._store.load(path)
         replay = rewrite_session_for_replay(loaded)
-        self._io.write(f"replaying {path}")
+        self._write_system(f"replaying {path}")
         for event in loaded.events:
             self._replay_event(event, replay.session_id)
 
@@ -493,9 +502,8 @@ class AgentSimulationApp:
             self._http.create_item(user_item)
             recorded_query = event["query_debug"]
             current_query = self._http.query_debug(rewrite_payload_for_replay(recorded_query["request"], replay_id))
-            self._io.write("replay diff:")
-            for line in render_replay_diff(recorded_query["response"], current_query):
-                self._io.write(line)
+            self._write_debug_lines(["replay diff:"])
+            self._write_debug_lines(render_replay_diff(recorded_query["response"], current_query))
             assistant = event.get("assistant")
             if assistant is not None:
                 self._http.create_item(rewrite_payload_for_replay(assistant["request"], replay_id))
@@ -505,13 +513,11 @@ class AgentSimulationApp:
             return
         if event_type == "manual_query_debug":
             current = self._http.query_debug(rewrite_payload_for_replay(event["request"], replay_id))
-            for line in render_replay_diff(event["response"], current):
-                self._io.write(line)
+            self._write_debug_lines(render_replay_diff(event["response"], current))
             return
         if event_type == "manual_query":
             current = self._http.query(rewrite_payload_for_replay(event["request"], replay_id))
-            for line in render_replay_diff(event["response"], current):
-                self._io.write(line)
+            self._write_debug_lines(render_replay_diff(event["response"], current))
             return
         if event_type in {"manual_item", "manual_artifact"}:
             request = event.get("request") or (event.get("artifact") or {}).get("request")
@@ -529,7 +535,7 @@ class AgentSimulationApp:
             value = self._io.prompt(text).strip()
             if value:
                 return value
-            self._io.write(f"Required input missing for prompt: {text}")
+            self._write_error(f"Required input missing for prompt: {text}")
 
     def _prompt_optional(self, text: str) -> str:
         return self._io.prompt(text).strip()
@@ -552,7 +558,23 @@ class AgentSimulationApp:
             "/query-debug <text>",
             "/quit",
         ):
-            self._io.write(line)
+            self._write_system(line)
+
+    def _write_agent(self, text: str) -> None:
+        self._io.write_role("agent", text)
+
+    def _write_system(self, text: str) -> None:
+        self._io.write_role("system", text)
+
+    def _write_warning(self, text: str) -> None:
+        self._io.write_role("warning", text)
+
+    def _write_error(self, text: str) -> None:
+        self._io.write_role("error", text)
+
+    def _write_debug_lines(self, lines: list[str]) -> None:
+        for line in lines:
+            self._io.write_role("debug", line)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -569,7 +591,9 @@ def run(args: list[str] | None = None) -> int:
     parsed = build_parser().parse_args(args)
     http_client = HarnessHttpClient(base_url=parsed.base_url)
     model = ThinAgentModel(provider_override=parsed.provider, model_override=parsed.model)
-    app = AgentSimulationApp(http_client=http_client, model=model)
+    from app.agent_simulation_terminal import build_terminal_io
+
+    app = AgentSimulationApp(http_client=http_client, model=model, io=build_terminal_io())
     try:
         return app.run(mode=parsed.mode, replay_path=parsed.session_path)
     except HarnessHttpError as exc:
@@ -581,9 +605,3 @@ def run(args: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(run())
-
-
-
-
-
-

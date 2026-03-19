@@ -154,7 +154,9 @@ boundary is `python -m app.agent_simulation`. Use `chat-lite` when you want a
 normal chat loop, or plain `chat` when you want operator-visible accept/edit/discard
 and artifact capture. The harness stays on the real HTTP contract, exposes scope
 and runtime-context controls directly, and shows Pallium's decision path without
-adding a second memory policy in the client.
+adding a second memory policy in the client. When `prompt_toolkit` is available,
+the harness also adds tab completion for slash commands and colorized prompts
+and role-prefixed output for agent/system/debug lines.
 
 ## Query Input Contract
 

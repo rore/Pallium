@@ -1,4 +1,4 @@
-﻿# Getting Started
+# Getting Started
 
 This is the fastest way to evaluate Pallium as a developer.
 
@@ -113,11 +113,18 @@ If you want the operator/debug workflow instead, run:
 live Pallium HTTP service, but keeps the operator prompts for accept/edit/discard
 and optional artifact capture.
 
+If `prompt_toolkit` is available in your environment, the harness also gives you:
+
+- tab completion for slash commands and common command arguments
+- colorized prompts and role-prefixed output for agent, debug, and system lines
+
+If advanced terminal support is unavailable, the harness falls back to plain
+prompt/input behavior automatically.
+
 Useful commands in the harness:
 
 - `/mode chat-lite` to switch into lightweight auto-accept chat
 - `/mode chat` to switch back to operator/debug chat
-
 - `/scope` to set or review container, thread, session, and visibility defaults
 - `/show scope` to print current defaults
 - `/turn` to set `runtime_context.turn_kind`
