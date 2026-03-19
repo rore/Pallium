@@ -248,6 +248,18 @@ class SQLiteStorageProvider(
                 raise KeyError(index_entry_id)
             return self._to_index_entry(record)
 
+    def find_index_entry(self, target_kind, target_id, index_type, text_view_name):
+        with self._session_factory() as session:
+            row = session.scalars(
+                select(IndexEntryRecord).where(
+                    IndexEntryRecord.target_kind == target_kind,
+                    IndexEntryRecord.target_id == target_id,
+                    IndexEntryRecord.index_type == index_type,
+                    IndexEntryRecord.text_view_name == text_view_name,
+                )
+            ).first()
+            return self._to_index_entry(row) if row else None
+
     def list_index_entries_by_type(self, index_type: str) -> list[IndexEntry]:
         with self._session_factory() as session:
             records = session.scalars(
