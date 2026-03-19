@@ -24,6 +24,7 @@ from evals.continuity_common import (
     query_family_from_intent,
     result_layer,
 )
+from semantic.agent_conversation_memory_routing import is_query_topic_signal_empty
 from evals.public_corpus_builder import (
     DEFAULT_REVIEW_MANIFEST,
     build_reviewed_episodes,
@@ -199,7 +200,9 @@ def _run_episode(
     expected_higher_level_memory_types = episode.get("expected_higher_level_memory_types", [])
     expected_memory_types_found = all(item in returned_memory_types for item in expected_memory_types)
     expected_higher_level_memory_types_found = all(item in higher_level_memory_types for item in expected_higher_level_memory_types)
-    expected_layer_found = (expected_primary_layer in available_layers) if expected_primary_layer else False
+    expected_layer_in_results = (expected_primary_layer in available_layers) if expected_primary_layer else False
+    raw_query_tokens = tuple(((memory_payload.get("trace") or {}).get("query_tokens")) or [])
+    query_topic_tokens_empty = is_query_topic_signal_empty(raw_query_tokens)
     top_layer_match = top_layer in acceptable_layers if acceptable_layers else True
     query_family_match = query_family == episode.get("expected_query_family") if episode.get("expected_query_family") else True
 
@@ -264,7 +267,7 @@ def _run_episode(
     failure_families = _classify_failure_families(
         should_memory_help=bool(episode.get("should_memory_help")),
         winner=winner,
-        expected_layer_found=expected_layer_found,
+        expected_layer_in_results=expected_layer_in_results,
         expected_memory_types_found=expected_memory_types_found,
         expected_higher_level_memory_types_found=expected_higher_level_memory_types_found,
         higher_level_expectation_present=bool(expected_higher_level_memory_types),
@@ -352,7 +355,8 @@ def _run_episode(
         "available_layers": available_layers,
         "returned_memory_types": returned_memory_types,
         "higher_level_memory_types": higher_level_memory_types,
-        "expected_layer_found": expected_layer_found,
+        "expected_layer_in_results": expected_layer_in_results,
+        "query_topic_tokens_empty": query_topic_tokens_empty,
         "expected_memory_types_found": expected_memory_types_found,
         "expected_higher_level_memory_types_found": expected_higher_level_memory_types_found,
         "top_layer_match": top_layer_match,
@@ -437,7 +441,7 @@ def _classify_failure_families(
     *,
     should_memory_help: bool,
     winner: str,
-    expected_layer_found: bool,
+    expected_layer_in_results: bool,
     expected_memory_types_found: bool,
     expected_higher_level_memory_types_found: bool,
     higher_level_expectation_present: bool,
@@ -481,7 +485,7 @@ def _classify_failure_families(
             failures.append("paraphrase_or_indirect_query_failure")
         return _ordered_failure_families(failures)
 
-    if not expected_layer_found and not expected_memory_types_found and (not higher_level_expectation_present or not expected_higher_level_memory_types_found):
+    if not expected_layer_in_results and not expected_memory_types_found and (not higher_level_expectation_present or not expected_higher_level_memory_types_found):
         failures.append("retrieval_recall_failure")
     if not intent_match or not query_family_match or not top_layer_match or forbidden_layers_hit:
         failures.append("routing_layer_choice_failure")
