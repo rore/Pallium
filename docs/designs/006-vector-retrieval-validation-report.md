@@ -195,3 +195,46 @@ Raw source text scored higher than curated memory text in 6 of 9 test pairs (by 
 This does not mean memory embedding is wrong — both are useful. The memory text is more compact and covers derived knowledge (summaries, conclusions). The raw source text covers the original detailed expression. Together they'd provide better recall than either alone.
 
 **Recommendation**: Keep `SourceItem` embedding on the roadmap as a valuable follow-on. The first slice is correctly scoped to memory-only, but the data shows source items would add meaningful recall, not just volume.
+
+---
+
+## Existing Harness Readiness for Vector Analysis
+
+Survey of all 18 evaluation harnesses. Three tiers of readiness:
+
+### Already captures vector trace (zero work)
+
+| Harness | How | What to extract |
+|---|---|---|
+| Live Exploratory Runner | Uses `/query/debug`, full trace captured | Extract vector stage from `trace.stages`, add `vector_stage_used`, `vector_similarity_best` to drift metrics |
+| Vector Retrieval Runner | Purpose-built, calls providers with `include_trace=True` | Already captures lexical vs vector recall. Needs real embeddings (fastembed) to prove quality |
+
+### Needs `/query/debug` switch (~30-60 lines each, high value)
+
+| Harness | Current | Extension | Value |
+|---|---|---|---|
+| **Work Resumption Benchmark** | `/query` only | Switch to `/query/debug`, capture retrieval stages, add `vector_hits_count` and `vector_rescue` flag | **High** -- core resumed-work use case; directly measures if vector saves task_checkpoint/decision recall |
+| **Memory Routing Benchmark** | `/query` only | Switch to `/query/debug`, add `lexical_candidate_count` vs `vector_candidate_count`, track "layer selected via vector fallback" | **High** -- measures if vector expands candidate set enough for correct layer selection |
+| **Public Corpus Benchmark** | `/query` only | Switch to `/query/debug`, add corpus-level `vector_improved_usefulness_rate` | **Highest production relevance** -- real conversation paraphrasing; measures vector benefit across diverse real queries |
+| **Low Value Churn Benchmark** | `/query` only | Add trace capture, verify vector doesn't increase `no_value_overreach` | **Important negative test** -- must confirm vector doesn't inject false positives |
+
+### Indirect or lower value
+
+| Harness | Notes |
+|---|---|
+| Recurring Question | Medium -- could measure paraphrase recall across thread variants |
+| External Memory Pressure | Medium -- vector stability under volume growth |
+| Developer Work Confidence | Aggregates from sub-harnesses; benefits automatically |
+| Agent Simulation | Can extract from saved session replays for comparative analysis |
+| Tiered Memory / Consolidation | Orthogonal (formation, not retrieval) |
+| Semantic / QAR / Enrichment | Not applicable (upstream of retrieval) |
+
+### Recommended extension order
+
+1. **Live Exploratory Runner** -- extract vector metrics from existing trace (zero-cost, immediate value)
+2. **Work Resumption Benchmark** -- switch to `/query/debug` (~30 lines, directly validates the recall gap this feature addresses)
+3. **Low Value Churn Benchmark** -- add vector negative test gate (~40 lines, prevents false-positive regression)
+4. **Memory Routing Benchmark** -- add vector candidate tracking (~40 lines, layer selection insight)
+5. **Public Corpus Benchmark** -- switch to `/query/debug` (~60 lines, highest production relevance but most work)
+
+These extensions should happen alongside or immediately after the fusion feature, when vector results actually enter the production query path. Before fusion, only the Live Exploratory Runner and Vector Retrieval Runner provide meaningful vector analysis (diagnostic trace only).
