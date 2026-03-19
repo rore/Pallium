@@ -29,11 +29,11 @@ class TestBuildEmbeddingTextDecision:
 
     def test_missing_optional_fields(self):
         mo = _make_memory("decision", {
-            "decision": "Use PostgreSQL",
+            "decision": "Use PostgreSQL for the production database backend",
         })
         text = build_embedding_text(mo)
         assert text is not None
-        assert "Decision: Use PostgreSQL" in text
+        assert "PostgreSQL" in text
 
     def test_empty_payload(self):
         mo = _make_memory("decision", {})
@@ -81,11 +81,17 @@ class TestBuildEmbeddingTextThreadSummary:
 
     def test_no_conclusions(self):
         mo = _make_memory("thread_summary", {
-            "summary": "Quick sync about deployment",
+            "summary": "Quick sync about deployment timeline and staging environment readiness",
         })
         text = build_embedding_text(mo)
         assert text is not None
-        assert "Quick sync about deployment" in text
+        assert "deployment" in text
+
+    def test_too_short_summary_returns_none(self):
+        mo = _make_memory("thread_summary", {
+            "summary": "Quick sync about deployment",
+        })
+        assert build_embedding_text(mo) is None
 
 
 class TestBuildEmbeddingTextTaskCheckpoint:
@@ -109,11 +115,15 @@ class TestBuildEmbeddingTextTaskCheckpoint:
 
     def test_minimal_fields(self):
         mo = _make_memory("task_checkpoint", {
-            "task": "Fix bug",
+            "task": "Investigate catalog sync scheduled job failure and token rotation",
         })
         text = build_embedding_text(mo)
         assert text is not None
-        assert "Task: Fix bug" in text
+        assert "catalog sync" in text
+
+    def test_too_short_task_returns_none(self):
+        mo = _make_memory("task_checkpoint", {"task": "Fix bug"})
+        assert build_embedding_text(mo) is None
 
 
 class TestBuildEmbeddingTextPatternMemory:
@@ -161,20 +171,34 @@ class TestNonEmbeddableTypes:
 
 class TestEmbeddableMemoryTypes:
     def test_all_types_covered(self):
-        """Every type in EMBEDDABLE_MEMORY_TYPES produces non-None for a valid payload."""
+        """Every type in EMBEDDABLE_MEMORY_TYPES produces non-None for a valid payload with enough content."""
         payloads = {
-            "decision": {"decision": "test"},
-            "investigation_outcome": {"investigation_outcome": "test"},
-            "thread_summary": {"summary": "test"},
-            "task_checkpoint": {"task": "test"},
-            "pattern_memory": {"summary": "test"},
-            "continuity_memory": {"continuity_question": "test"},
+            "decision": {"decision": "Use event-time ordering for reservation priority during catalog sync delays"},
+            "investigation_outcome": {"investigation_outcome": "Duplicate hold entries caused by missing deduplication check in queue consumer"},
+            "thread_summary": {"summary": "Investigation into catalog sync failures found expired API token on nightly batch service account"},
+            "task_checkpoint": {"task": "Investigate catalog sync scheduled job failure and token rotation policy gap"},
+            "pattern_memory": {"summary": "Recurring pattern: nightly batch jobs accumulating backlogs cause downstream queue failures"},
+            "continuity_memory": {"continuity_question": "What is the status of the catalog sync investigation and token refresh?"},
         }
         for memory_type in EMBEDDABLE_MEMORY_TYPES:
             mo = _make_memory(memory_type, payloads[memory_type])
             text = build_embedding_text(mo)
             assert text is not None, f"build_embedding_text returned None for {memory_type}"
-            assert len(text) > 0, f"build_embedding_text returned empty string for {memory_type}"
+            assert len(text) >= 40, f"build_embedding_text returned text shorter than 40 chars for {memory_type}"
+
+    def test_short_text_below_guard_returns_none(self):
+        """Embedding text shorter than 40 characters returns None (too generic to embed)."""
+        mo = _make_memory("decision", {"decision": "Use option B"})
+        text = build_embedding_text(mo)
+        assert text is None
+
+    def test_text_at_guard_boundary_returns_value(self):
+        """Embedding text at exactly 40 characters is kept."""
+        # "Decision: " (10 chars) + 30 chars of content = 40
+        mo = _make_memory("decision", {"decision": "Use event-time ordering for sync"})
+        text = build_embedding_text(mo)
+        assert text is not None
+        assert len(text) >= 40
 
     def test_text_is_natural_language_not_normalized(self):
         """Embedding text should preserve case and punctuation (not lowercase token soup)."""

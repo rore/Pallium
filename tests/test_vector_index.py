@@ -25,7 +25,7 @@ class FakeIndex:
         self._vectors: dict[int, list[float]] = {}
 
     def add(self, key: int, vector) -> None:
-        self._vectors[key] = list(vector)
+        self._vectors[key] = vector.tolist() if hasattr(vector, "tolist") else list(vector)
 
     def remove(self, key: int) -> None:
         self._vectors.pop(key, None)
@@ -55,8 +55,9 @@ class FakeIndex:
         )
 
     def save(self, path: str) -> None:
-        # Write a marker so load can detect the file
-        Path(path).write_text(json.dumps({"vectors": {str(k): v for k, v in self._vectors.items()}}), encoding="utf-8")
+        # Write a marker so load can detect the file; convert numpy arrays to lists for JSON
+        vecs = {str(k): (v.tolist() if hasattr(v, "tolist") else v) for k, v in self._vectors.items()}
+        Path(path).write_text(json.dumps({"vectors": vecs}), encoding="utf-8")
 
     def load(self, path: str) -> None:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -239,7 +240,7 @@ def test_vector_index_config_defaults():
     assert config.enabled is False
     assert config.index_path == "./pallium_vector.index"
     assert config.embedding_provider is None
-    assert config.min_similarity == 0.3
+    assert config.min_similarity == 0.55
 
 
 def test_vector_index_config_custom():

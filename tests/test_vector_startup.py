@@ -65,7 +65,7 @@ class TestVectorIndexConfig:
         assert config.vector_index.enabled is False
         assert config.vector_index.index_path == "./pallium_vector.index"
         assert config.vector_index.embedding_provider is None
-        assert config.vector_index.min_similarity == 0.3
+        assert config.vector_index.min_similarity == 0.55
 
     def test_vector_index_config_from_toml(self, monkeypatch, tmp_path: Path) -> None:
         config_file = tmp_path / "pallium.local.toml"

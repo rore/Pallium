@@ -4,13 +4,15 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+
 
 @dataclass(frozen=True)
 class VectorIndexConfig:
     enabled: bool = False
     index_path: str = "./pallium_vector.index"
     embedding_provider: str | None = None  # key into embedding_providers
-    min_similarity: float = 0.3
+    min_similarity: float = 0.55
 
 
 def _require_usearch():
@@ -56,7 +58,7 @@ class VectorIndex:
         self._next_key += 1
         self._id_to_key[entry_id] = key
         self._key_to_id[key] = entry_id
-        self._index.add(key, vector)
+        self._index.add(key, np.array(vector, dtype=np.float32))
 
     def remove(self, entry_id: str) -> None:
         """Remove a vector by entry_id. Raises KeyError if not found."""
@@ -74,7 +76,7 @@ class VectorIndex:
         if not self._id_to_key:
             return []
         effective_k = min(k, len(self._id_to_key))
-        results = self._index.search(query_vector, effective_k, exact=True)
+        results = self._index.search(np.array(query_vector, dtype=np.float32), effective_k, exact=True)
         hits: list[tuple[str, float]] = []
         for i in range(len(results.keys)):
             key = int(results.keys[i])

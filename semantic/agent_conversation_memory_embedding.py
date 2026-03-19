@@ -41,7 +41,7 @@ def build_embedding_text(memory_object: MemoryObject) -> str | None:
     if builder is None:
         return None
     text = builder(payload)
-    return text if text else None
+    return text if text and len(text) >= 40 else None
 
 
 def _build_decision_text(payload: dict) -> str:
