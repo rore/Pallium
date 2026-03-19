@@ -38,3 +38,5 @@ pallium.db.schema.lock
 tmp/
 
 .pallium-schema-init.lock
+
+.claude/worktrees/
