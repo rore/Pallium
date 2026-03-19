@@ -27,6 +27,7 @@ COMMAND_COMPLETIONS = (
 ARGUMENT_COMPLETIONS = {
     "/debug": ("on", "off"),
     "/fork": ("--new-session",),
+    "/help": ("advanced",),
     "/local-context": ("true", "false", "clear"),
     "/mode": ("chat", "chat-lite", "manual", "replay"),
     "/scope": ("show",),

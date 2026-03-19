@@ -33,6 +33,7 @@ def test_completion_candidates_suggest_scope_and_fork_arguments() -> None:
     assert completion_candidates("/scope ") == ["show"]
     assert completion_candidates("/show s") == ["scope"]
     assert completion_candidates("/fork --") == ["--new-session"]
+    assert completion_candidates("/help a") == ["advanced"]
 
 
 def test_completion_candidates_ignore_plain_chat_text() -> None:

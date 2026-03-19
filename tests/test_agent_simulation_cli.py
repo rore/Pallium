@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from app.agent_simulation import AgentSimulationApp, TerminalIO, build_parser, run
 from app.agent_simulation_session import SessionStore
@@ -62,13 +63,37 @@ class FakeModel:
         return FakeResolution()
 
 
-def _build_app(tmp_path, responses: list[str] | None = None) -> tuple[AgentSimulationApp, FakeIO]:
+@dataclass(frozen=True)
+class FakeDraft:
+    answer: str
+    model_request: dict[str, Any]
+    model_response: dict[str, Any]
+    resolution: FakeResolution
+
+
+class AcceptingModel:
+    def __init__(self, answer: str = "accepted reply") -> None:
+        self.answer = answer
+
+    def resolution(self):
+        return FakeResolution()
+
+    def draft_answer(self, *, user_message: str, injectable_blocks: list[dict], local_thread_context: list[dict]):
+        return FakeDraft(
+            answer=self.answer,
+            model_request={"user_message": user_message, "injectable_blocks": injectable_blocks, "local_thread_context": local_thread_context},
+            model_response={"parsed_json": {"answer": self.answer}},
+            resolution=FakeResolution(),
+        )
+
+
+def _build_app(tmp_path, responses: list[str] | None = None, *, model=None) -> tuple[AgentSimulationApp, FakeIO]:
     io = FakeIO(responses)
     app = AgentSimulationApp(
         http_client=FakeHTTPClient(),
         io=TerminalIO(input_func=io.prompt, output_func=io.write),
         session_store=SessionStore(tmp_path),
-        model=FakeModel(),
+        model=model or FakeModel(),
     )
     return app, io
 
@@ -201,3 +226,40 @@ def test_new_conversation_starts_new_thread_with_cross_thread_recall_defaults(tm
     assert defaults.runtime_context["turn_kind"] == "new_thread"
     assert defaults.runtime_context["session_has_sufficient_local_context"] is False
 
+
+
+def test_chat_lite_infers_same_thread_defaults_after_successful_turn(tmp_path) -> None:
+    app, _io = _build_app(tmp_path, model=AcceptingModel())
+    app._mode = "chat-lite"
+    app.session.set_mode("chat-lite")
+
+    app.process_chat_message("First turn")
+
+    assert app.session.defaults.runtime_context["turn_kind"] == "same_thread_continuation"
+    assert app.session.defaults.runtime_context["session_has_sufficient_local_context"] is True
+    assert app.session.defaults.runtime_context_overrides == {}
+
+
+def test_manual_runtime_context_overrides_survive_inferred_chat_defaults(tmp_path) -> None:
+    app, _io = _build_app(tmp_path, model=AcceptingModel())
+    app._mode = "chat-lite"
+    app.session.set_mode("chat-lite")
+
+    assert app._handle_command("/turn resumed_session") is True
+    assert app._handle_command("/local-context false") is True
+
+    app.process_chat_message("Resume this")
+
+    assert app.session.defaults.runtime_context["turn_kind"] == "resumed_session"
+    assert app.session.defaults.runtime_context["session_has_sufficient_local_context"] is False
+
+
+def test_help_defaults_to_basic_commands_and_supports_advanced_section(tmp_path) -> None:
+    app, io = _build_app(tmp_path)
+
+    assert app._handle_command("/help") is True
+    assert app._handle_command("/help advanced") is True
+
+    assert "/help advanced" in io.outputs
+    assert "/turn" in io.outputs
+    assert "/query-debug <text>" in io.outputs

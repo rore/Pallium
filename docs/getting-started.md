@@ -123,27 +123,32 @@ prompt/input behavior automatically.
 
 Useful commands in the harness:
 
+- `/new` or `/new-conversation` to start a new conversation in the same memory space and enable cross-thread recall by default
+- `/debug on` to show fuller trace detail
+- `/save demo-run` or `/export demo-run` to write a replayable JSON bundle under `.local/harness-sessions/`
+- `/replay .local/harness-sessions/demo-run.json` to rerun a saved session
 - `/mode chat-lite` to switch into lightweight auto-accept chat
 - `/mode chat` to switch back to operator/debug chat
+- `/help advanced` to show the full operator/debug command surface
+
+Advanced commands:
+
 - `/scope` to set or review container, thread, session, and visibility defaults
 - `/show scope` to print current defaults
 - `/turn` to set `runtime_context.turn_kind`
 - `/local-context` to set `runtime_context.session_has_sufficient_local_context`
-- `/new` or `/new-conversation` to start a new conversation in the same memory space and enable cross-thread recall by default
-- `/fork` to start a new thread while preserving container and visibility (advanced/debug control)
+- `/fork` to start a new thread while preserving container and visibility
 - `/fork --new-session` to rotate the session boundary too
-- `/debug on` to show fuller trace detail
-- `/save demo-run` or `/export demo-run` to write a replayable JSON bundle under `.local/harness-sessions/`
-- `/replay .local/harness-sessions/demo-run.json` to rerun a saved session
 - `/mode manual` to switch into direct `/items`, `/query`, and `/query/debug` control
 
 A `chat-lite` turn does this in order:
 
 1. ingests the user turn through `POST /items`
 2. calls `POST /query/debug` before the assistant turn
-3. calls the configured model with only Pallium-approved injected blocks when
-   `should_inject=true`
+3. calls the configured model with bounded current-thread local context plus Pallium-approved carry-forward kept in separate prompt sections
 4. auto-accepts the assistant reply and ingests it through `POST /items`
+
+That means same-thread follow-ups can behave like normal chat even when Pallium correctly injects nothing, while cross-thread carry-forward still comes only from Pallium.
 
 A normal `chat` turn adds the operator/debug layer on top:
 

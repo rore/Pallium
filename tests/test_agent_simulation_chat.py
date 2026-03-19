@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.agent_simulation import AgentSimulationApp, TerminalIO
-from app.agent_simulation_model import ModelUnavailableError
+from app.agent_simulation_model import ModelUnavailableError, build_user_prompt
 from app.agent_simulation_session import SessionStore
 
 
@@ -80,13 +80,13 @@ class CapturingModel:
     def resolution(self):
         return self._resolution
 
-    def draft_answer(self, *, user_message: str, injectable_blocks: list[dict]):
-        self.calls.append({"user_message": user_message, "injectable_blocks": injectable_blocks})
+    def draft_answer(self, *, user_message: str, injectable_blocks: list[dict], local_thread_context: list[dict]):
+        self.calls.append({"user_message": user_message, "injectable_blocks": injectable_blocks, "local_thread_context": local_thread_context})
         if self._error is not None:
             raise self._error
         return FakeDraft(
             answer=self._answer,
-            model_request={"user_prompt": user_message, "injectable_blocks": injectable_blocks},
+            model_request={"user_prompt": user_message, "injectable_blocks": injectable_blocks, "local_thread_context": local_thread_context},
             model_response={"parsed_json": {"answer": self._answer}},
             resolution=self._resolution,
         )
@@ -106,9 +106,10 @@ def _query_debug_payload(*, should_inject: bool, injectable_blocks: list[dict], 
     }
 
 
-def _build_app(tmp_path, responses: list[str], query_debug_response: dict, *, model: CapturingModel) -> tuple[AgentSimulationApp, FakeIO, FakeHTTPClient]:
+def _build_app(tmp_path, responses: list[str], query_debug_response: dict | list[dict], *, model: CapturingModel) -> tuple[AgentSimulationApp, FakeIO, FakeHTTPClient]:
     io = FakeIO(responses)
-    http_client = FakeHTTPClient([query_debug_response])
+    query_responses = query_debug_response if isinstance(query_debug_response, list) else [query_debug_response]
+    http_client = FakeHTTPClient(query_responses)
     app = AgentSimulationApp(
         http_client=http_client,
         io=TerminalIO(input_func=io.prompt, output_func=io.write),
@@ -126,7 +127,7 @@ def test_chat_accepts_model_draft_and_only_passes_injectable_blocks(tmp_path) ->
 
     app.process_chat_message("Why did we choose this?")
 
-    assert model.calls == [{"user_message": "Why did we choose this?", "injectable_blocks": blocks}]
+    assert model.calls == [{"user_message": "Why did we choose this?", "injectable_blocks": blocks, "local_thread_context": []}]
     assert len(http_client.created_items) == 2
     assert http_client.created_items[0]["artifact_kind"] == "message"
     assert http_client.created_items[1]["artifact_kind"] == "assistant_output"
@@ -144,7 +145,7 @@ def test_chat_does_not_forward_raw_results_when_injection_is_false(tmp_path) -> 
 
     app.process_chat_message("Answer from local context")
 
-    assert model.calls == [{"user_message": "Answer from local context", "injectable_blocks": []}]
+    assert model.calls == [{"user_message": "Answer from local context", "injectable_blocks": [], "local_thread_context": []}]
     event = app.session.events[0]
     assert event["model"]["request"]["injectable_blocks"] == []
     assert "candidate not for prompt" not in str(event["model"]["request"])
@@ -235,7 +236,7 @@ def test_chat_lite_auto_accepts_and_skips_operator_prompts(tmp_path) -> None:
 
     app.process_chat_message("Just answer")
 
-    assert model.calls == [{"user_message": "Just answer", "injectable_blocks": blocks}]
+    assert model.calls == [{"user_message": "Just answer", "injectable_blocks": blocks, "local_thread_context": []}]
     assert len(http_client.created_items) == 2
     event = app.session.events[0]
     assert event["mode"] == "chat-lite"
@@ -266,3 +267,65 @@ def test_chat_lite_model_failure_does_not_prompt_manual_entry(tmp_path) -> None:
     assert "assistant" not in event
     assert any("Model unavailable: provider failed" in line for line in io.outputs)
     assert all("assistant>" not in line for line in io.outputs)
+
+
+def test_build_user_prompt_keeps_local_context_separate_from_carry_forward() -> None:
+    prompt = build_user_prompt(
+        user_message="split them",
+        injectable_blocks=[{"title": "Decision", "text": "Use 32G files."}],
+        local_thread_context=[
+            {"role": "user", "text": "We're discussing export limits."},
+            {"role": "assistant", "text": "Confirmed - limit files to 32G."},
+        ],
+    )
+
+    assert "Current conversation context:" in prompt
+    assert "1. user: We're discussing export limits." in prompt
+    assert "Approved carry-forward:" in prompt
+    assert "1. Decision: Use 32G files." in prompt
+    assert prompt.index("Current conversation context:") < prompt.index("Approved carry-forward:") < prompt.index("User message:")
+
+
+def test_chat_lite_uses_same_thread_local_context_when_pallium_has_no_injection(tmp_path) -> None:
+    model = CapturingModel(answer="Confirmed - limit files to 32G.")
+    app, _io, _http_client = _build_app(
+        tmp_path,
+        [],
+        [
+            _query_debug_payload(should_inject=False, injectable_blocks=[], results=[]),
+            _query_debug_payload(should_inject=False, injectable_blocks=[], results=[]),
+        ],
+        model=model,
+    )
+    app._mode = "chat-lite"
+    app.session.set_mode("chat-lite")
+
+    app.process_chat_message("We're discussing export limits.")
+    app.process_chat_message("split them")
+
+    assert model.calls[0]["local_thread_context"] == []
+    assert model.calls[1]["injectable_blocks"] == []
+    assert model.calls[1]["local_thread_context"] == [
+        {"role": "user", "text": "We're discussing export limits."},
+        {"role": "assistant", "text": "Confirmed - limit files to 32G."},
+    ]
+    assert app.session.events[1]["local_context"]["message_count"] == 2
+    assert "We're discussing export limits." not in str(app.session.events[1]["local_context"])
+
+
+def test_discarded_turn_does_not_enter_local_thread_context(tmp_path) -> None:
+    model = CapturingModel(answer="Draft answer")
+    app, _io, _http_client = _build_app(
+        tmp_path,
+        ["d", "a", "n"],
+        [
+            _query_debug_payload(should_inject=False, injectable_blocks=[], results=[]),
+            _query_debug_payload(should_inject=False, injectable_blocks=[], results=[]),
+        ],
+        model=model,
+    )
+
+    app.process_chat_message("First turn")
+    app.process_chat_message("Follow-up turn")
+
+    assert model.calls[1]["local_thread_context"] == []

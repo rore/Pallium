@@ -79,8 +79,8 @@ class CapturingModel:
     def resolution(self):
         return self._resolution
 
-    def draft_answer(self, *, user_message: str, injectable_blocks: list[dict]):
-        self.calls.append({"user_message": user_message, "injectable_blocks": injectable_blocks})
+    def draft_answer(self, *, user_message: str, injectable_blocks: list[dict], local_thread_context: list[dict]):
+        self.calls.append({"user_message": user_message, "injectable_blocks": injectable_blocks, "local_thread_context": local_thread_context})
         return FakeDraft(
             answer="Final draft",
             model_request={"injectable_blocks": injectable_blocks},
@@ -719,3 +719,71 @@ def test_fresh_thread_recalls_export_cap_fact_prefixed_control(monkeypatch, test
     )
     assert "1gi" in rendered_blocks
     assert "512mi" in rendered_blocks
+
+
+def test_chat_mode_local_thread_context_does_not_leak_across_new_conversation(monkeypatch, test_db_url: str) -> None:
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: TieredMemorySemanticProvider())
+    client = TestClient(create_app(build_llm_test_config(default_use_case="agent_conversation_memory", sqlite_url=test_db_url)))
+
+    harness, model = _build_harness(
+        client,
+        container_ref="chat:local-context",
+        thread_ref="chat:local-context:thread1",
+        session_ref="session:local-context",
+        turn_kind="new_thread",
+        session_has_sufficient_local_context=False,
+    )
+    harness._mode = "chat-lite"
+    harness.session.set_mode("chat-lite")
+
+    harness.process_chat_message("We're discussing export limits.")
+    assert model.calls[0]["local_thread_context"] == []
+
+    assert harness._handle_command("/new") is True
+    harness.process_chat_message("split them")
+
+    assert model.calls[1]["local_thread_context"] == []
+    second_request = harness.session.events[1]["query_debug"]["request"]
+    assert second_request["runtime_context"] == {
+        "turn_kind": "new_thread",
+        "session_has_sufficient_local_context": False,
+    }
+
+
+def test_chat_mode_keeps_cross_thread_memory_separate_from_local_thread_context(monkeypatch, test_db_url: str) -> None:
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: TieredMemorySemanticProvider())
+    client = TestClient(create_app(build_llm_test_config(default_use_case="agent_conversation_memory", sqlite_url=test_db_url)))
+
+    _seed_history(
+        client,
+        [
+            {
+                "source_type": "assistant_artifact",
+                "source_id": "history-decision-separate-1",
+                "content_type": "text/plain",
+                "content": "Decision: use item event time for reservation ordering to avoid missed hold updates during sync delays.",
+                "artifact_kind": "assistant_output",
+                "role": "assistant",
+                "container_ref": "chat:local-vs-memory",
+                "thread_ref": "chat:local-vs-memory:history",
+                "session_ref": "session:local-vs-memory:history",
+                "visibility_context": dict(_PUBLIC),
+            },
+        ],
+    )
+
+    harness, model = _build_harness(
+        client,
+        container_ref="chat:local-vs-memory",
+        thread_ref="chat:local-vs-memory:fresh",
+        session_ref="session:local-vs-memory:fresh",
+        turn_kind="new_thread",
+        session_has_sufficient_local_context=False,
+    )
+    harness._mode = "chat-lite"
+    harness.session.set_mode("chat-lite")
+
+    harness.process_chat_message("Why did we choose item event time for reservation ordering?")
+
+    assert model.calls[0]["local_thread_context"] == []
+    assert model.calls[0]["injectable_blocks"]

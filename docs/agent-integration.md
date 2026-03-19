@@ -152,11 +152,11 @@ Use `POST /query/debug` when:
 For local exploratory work, the supported way to exercise this integration
 boundary is `python -m app.agent_simulation`. Use `chat-lite` when you want a
 normal chat loop, or plain `chat` when you want operator-visible accept/edit/discard
-and artifact capture. The harness stays on the real HTTP contract, exposes scope
-and runtime-context controls directly, and shows Pallium's decision path without
-adding a second memory policy in the client. When `prompt_toolkit` is available,
-the harness also adds tab completion for slash commands and colorized prompts
-and role-prefixed output for agent/system/debug lines.
+and artifact capture. The harness stays on the real HTTP contract, keeps same-thread
+local chat context in the app layer, keeps Pallium-approved carry-forward in a separate
+prompt section, and shows Pallium's decision path without adding a second memory policy
+in the client. When `prompt_toolkit` is available, the harness also adds slash-command
+completion and colorized prompts plus role-prefixed output for agent/system/debug lines.
 
 ## Query Input Contract
 
@@ -214,10 +214,12 @@ The downstream agent should not need to decide:
 
 - whether `task_checkpoint` beats `thread_summary`
 - whether a greeting summary should be suppressed
-- whether same-thread context is enough
 - how many weak candidates to drop locally
 
-Those are Pallium decisions.
+For the harness specifically, same-thread local transcript continuity is handled in the
+app layer as ordinary chat behavior, while cross-thread carry-forward remains a Pallium
+decision. That keeps the integration boundary honest: runtime-owned local chat context on one
+side, Pallium-owned memory judgment on the other.
 
 ## Suggested Runtime Loop
 

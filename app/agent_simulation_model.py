@@ -8,7 +8,12 @@ from app.dependencies import build_llm_provider
 from providers.llm.base import LLMProviderError
 
 
-THIN_AGENT_SYSTEM_PROMPT = """You are a thin downstream assistant using approved carry-forward context from Pallium.\nUse only the approved carry-forward blocks when they are present.\nDo not mention Pallium, retrieval traces, ranked candidates, or hidden system state.\nAnswer the user directly and briefly.\nReturn exactly one JSON object with a single string field named answer."""
+THIN_AGENT_SYSTEM_PROMPT = """You are a thin downstream assistant using current-thread chat context and approved carry-forward context from Pallium.
+Use current conversation context only as local same-thread context.
+Use approved carry-forward only when it is present.
+Do not mention Pallium, retrieval traces, ranked candidates, or hidden system state.
+Answer the user directly and briefly.
+Return exactly one JSON object with a single string field named answer."""
 ANSWER_SCHEMA_DESCRIPTION = '{"answer": "string"}'
 
 
@@ -104,13 +109,23 @@ class ThinAgentModel:
         )
         return self._resolution
 
-    def draft_answer(self, *, user_message: str, injectable_blocks: list[dict[str, Any]]) -> DraftResult:
+    def draft_answer(
+        self,
+        *,
+        user_message: str,
+        injectable_blocks: list[dict[str, Any]],
+        local_thread_context: list[dict[str, str]],
+    ) -> DraftResult:
         resolution = self.resolution()
         if not resolution.available or self._resolved_provider is None:
             raise ModelUnavailableError(resolution.failure_reason or "model unavailable")
         model_request = {
             "system_prompt": THIN_AGENT_SYSTEM_PROMPT,
-            "user_prompt": build_user_prompt(user_message=user_message, injectable_blocks=injectable_blocks),
+            "user_prompt": build_user_prompt(
+                user_message=user_message,
+                injectable_blocks=injectable_blocks,
+                local_thread_context=local_thread_context,
+            ),
             "schema_description": ANSWER_SCHEMA_DESCRIPTION,
         }
         try:
@@ -134,13 +149,27 @@ class ThinAgentModel:
         )
 
 
-def build_user_prompt(*, user_message: str, injectable_blocks: list[dict[str, Any]]) -> str:
-    lines = ["User message:", user_message.strip()]
+def build_user_prompt(
+    *,
+    user_message: str,
+    injectable_blocks: list[dict[str, Any]],
+    local_thread_context: list[dict[str, str]],
+) -> str:
+    lines: list[str] = []
+    if local_thread_context:
+        lines.append("Current conversation context:")
+        for index, message in enumerate(local_thread_context, start=1):
+            role = str(message.get("role") or "user").strip() or "user"
+            text = str(message.get("text") or "").strip()
+            if text:
+                lines.append(f"{index}. {role}: {text}")
+        lines.append("")
+    lines.append("Approved carry-forward:")
     if injectable_blocks:
-        lines.extend(["", "Approved carry-forward:"])
         for index, block in enumerate(injectable_blocks, start=1):
             title = block.get("title") or block.get("memory_type") or f"block-{index}"
             lines.append(f"{index}. {title}: {block.get('text', '').strip()}")
     else:
-        lines.extend(["", "Approved carry-forward:", "(none)"])
+        lines.append("(none)")
+    lines.extend(["", "User message:", user_message.strip()])
     return "\n".join(lines)

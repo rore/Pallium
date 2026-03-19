@@ -10,6 +10,9 @@ from uuid import uuid4
 
 SESSION_FORMAT_VERSION = 1
 DEFAULT_SESSION_DIR = Path(".local/harness-sessions")
+LOCAL_THREAD_CONTEXT_MAX_MESSAGES = 4
+LOCAL_THREAD_CONTEXT_MAX_CHARS = 1200
+RUNTIME_CONTEXT_OVERRIDE_KEYS = ("turn_kind", "session_has_sufficient_local_context")
 
 
 def utc_now() -> datetime:
@@ -27,6 +30,7 @@ class ScopeDefaults:
     session_ref: str | None
     visibility_context: dict[str, Any] | None
     runtime_context: dict[str, Any] = field(default_factory=dict)
+    runtime_context_overrides: dict[str, bool] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -36,13 +40,32 @@ class ScopeDefaults:
         runtime_context = payload.get("runtime_context")
         if not isinstance(runtime_context, dict):
             runtime_context = {}
+        runtime_context_overrides = payload.get("runtime_context_overrides")
+        if not isinstance(runtime_context_overrides, dict):
+            runtime_context_overrides = {}
+        normalized_overrides = {
+            key: bool(runtime_context_overrides.get(key))
+            for key in RUNTIME_CONTEXT_OVERRIDE_KEYS
+            if runtime_context_overrides.get(key) is not None
+        }
         return cls(
             container_ref=payload.get("container_ref"),
             thread_ref=payload.get("thread_ref"),
             session_ref=payload.get("session_ref"),
             visibility_context=payload.get("visibility_context"),
             runtime_context=runtime_context,
+            runtime_context_overrides=normalized_overrides,
         )
+
+    def set_runtime_context(self, key: str, value: Any, *, manual: bool) -> None:
+        self.runtime_context[key] = value
+        if manual:
+            self.runtime_context_overrides[key] = True
+        else:
+            self.runtime_context_overrides.pop(key, None)
+
+    def runtime_context_is_manual(self, key: str) -> bool:
+        return bool(self.runtime_context_overrides.get(key))
 
 
 @dataclass
@@ -111,6 +134,7 @@ def create_default_session(*, base_url: str, mode: str, model: dict[str, Any] | 
             "turn_kind": None,
             "session_has_sufficient_local_context": None,
         },
+        runtime_context_overrides={},
     )
     return HarnessSession(
         session_id=session_id,
@@ -148,6 +172,53 @@ class SessionStore:
         session = HarnessSession.from_dict(payload)
         session.session_path = str(resolved)
         return session
+
+
+def build_local_thread_context(
+    session: HarnessSession,
+    *,
+    thread_ref: str | None,
+    max_messages: int = LOCAL_THREAD_CONTEXT_MAX_MESSAGES,
+    max_chars: int = LOCAL_THREAD_CONTEXT_MAX_CHARS,
+) -> list[dict[str, str]]:
+    if not thread_ref or max_messages <= 0 or max_chars <= 0:
+        return []
+
+    messages: list[dict[str, str]] = []
+    for event in session.events:
+        if event.get("event_type") != "chat_turn":
+            continue
+        scope = event.get("scope") or {}
+        if scope.get("thread_ref") != thread_ref:
+            continue
+        assistant = event.get("assistant") or {}
+        assistant_text = str(assistant.get("content") or "").strip()
+        user_text = str(event.get("user_message") or "").strip()
+        if not user_text or not assistant_text:
+            continue
+        messages.append({"role": "user", "text": user_text})
+        messages.append({"role": "assistant", "text": assistant_text})
+
+    if not messages:
+        return []
+
+    selected: list[dict[str, str]] = []
+    total_chars = 0
+    for message in reversed(messages):
+        text = str(message.get("text") or "").strip()
+        if not text:
+            continue
+        if not selected and len(text) > max_chars:
+            text = text[-max_chars:].lstrip()
+        projected_chars = total_chars + len(text)
+        if selected and (len(selected) >= max_messages or projected_chars > max_chars):
+            break
+        selected.append({"role": str(message.get("role") or "user"), "text": text})
+        total_chars += len(text)
+        if len(selected) >= max_messages:
+            break
+    selected.reverse()
+    return selected
 
 
 def rewrite_session_for_replay(session: HarnessSession) -> HarnessSession:

@@ -12,6 +12,7 @@ from app.agent_simulation_render import render_debug_summary, render_replay_diff
 from app.agent_simulation_session import (
     HarnessSession,
     SessionStore,
+    build_local_thread_context,
     create_default_session,
     new_ref,
     rewrite_payload_for_replay,
@@ -99,6 +100,10 @@ class AgentSimulationApp:
                 self._write_error(str(exc))
 
     def process_chat_message(self, message: str) -> None:
+        local_thread_context = build_local_thread_context(
+            self._session,
+            thread_ref=self._session.defaults.thread_ref,
+        )
         user_request = self._build_item_payload(
             source_type="chat_message",
             artifact_kind="message",
@@ -119,13 +124,19 @@ class AgentSimulationApp:
             "user_item": {"request": user_request, "response": user_response},
             "query_debug": {"request": query_request, "response": query_response},
         }
+        if local_thread_context:
+            event["local_context"] = {
+                "message_count": len(local_thread_context),
+                "char_count": sum(len(str(item.get("text") or "")) for item in local_thread_context),
+            }
 
-        assistant_result = self._draft_or_fallback(message, query_response)
+        assistant_result = self._draft_or_fallback(message, query_response, local_thread_context)
         event["model"] = assistant_result["model"]
         event["operator_action"] = assistant_result["operator_action"]
         if assistant_result.get("assistant"):
             assistant = assistant_result["assistant"]
             event["assistant"] = assistant
+            self._apply_inferred_same_thread_defaults()
         if assistant_result.get("artifact"):
             event["artifact"] = assistant_result["artifact"]
 
@@ -182,7 +193,7 @@ class AgentSimulationApp:
         if command in {"/quit", "/exit"}:
             return False
         if command == "/help":
-            self._write_help()
+            self._write_help(args[0] if args else None)
             return True
         if command == "/scope":
             if args and args[0] == "show":
@@ -242,10 +253,19 @@ class AgentSimulationApp:
         self._write_warning(f"Unknown command: {command}")
         return True
 
-    def _draft_or_fallback(self, message: str, query_response: dict[str, Any]) -> dict[str, Any]:
+    def _draft_or_fallback(
+        self,
+        message: str,
+        query_response: dict[str, Any],
+        local_thread_context: list[dict[str, str]],
+    ) -> dict[str, Any]:
         injectable_blocks = query_response.get("injectable_blocks") if query_response.get("should_inject") else []
         try:
-            draft = self._model.draft_answer(user_message=message, injectable_blocks=injectable_blocks or [])
+            draft = self._model.draft_answer(
+                user_message=message,
+                injectable_blocks=injectable_blocks or [],
+                local_thread_context=local_thread_context,
+            )
         except (ModelUnavailableError, LLMProviderError) as exc:
             return self._manual_fallback(str(exc))
 
@@ -432,9 +452,9 @@ class AgentSimulationApp:
             self._write_system(f"turn_kind: {self._session.defaults.runtime_context.get('turn_kind')}")
             return
         if value == "clear":
-            self._session.defaults.runtime_context["turn_kind"] = None
+            self._session.defaults.set_runtime_context("turn_kind", None, manual=False)
         elif value in TURN_KINDS:
-            self._session.defaults.runtime_context["turn_kind"] = value
+            self._session.defaults.set_runtime_context("turn_kind", value, manual=True)
         else:
             self._write_warning(f"Unsupported turn kind: {value}")
             return
@@ -458,7 +478,7 @@ class AgentSimulationApp:
         else:
             self._write_warning(f"Unsupported local-context value: {value}")
             return
-        self._session.defaults.runtime_context["session_has_sufficient_local_context"] = parsed
+        self._session.defaults.set_runtime_context("session_has_sufficient_local_context", parsed, manual=(parsed is not None))
         self._write_system(f"session_has_sufficient_local_context set to {parsed}")
 
     def _set_debug(self, value: str | None) -> None:
@@ -474,14 +494,22 @@ class AgentSimulationApp:
         self._session.defaults.thread_ref = self._ref_factory("thread")
         if new_session:
             self._session.defaults.session_ref = self._ref_factory("session")
-        self._session.defaults.runtime_context["turn_kind"] = "new_thread"
+        self._session.defaults.set_runtime_context("turn_kind", "new_thread", manual=False)
+        self._session.defaults.set_runtime_context("session_has_sufficient_local_context", False, manual=False)
         self._write_scope()
 
     def _start_new_conversation(self) -> None:
         self._session.defaults.thread_ref = self._ref_factory("thread")
-        self._session.defaults.runtime_context["turn_kind"] = "new_thread"
-        self._session.defaults.runtime_context["session_has_sufficient_local_context"] = False
+        self._session.defaults.set_runtime_context("turn_kind", "new_thread", manual=False)
+        self._session.defaults.set_runtime_context("session_has_sufficient_local_context", False, manual=False)
         self._write_scope()
+
+    def _apply_inferred_same_thread_defaults(self) -> None:
+        defaults = self._session.defaults
+        if not defaults.runtime_context_is_manual("turn_kind"):
+            defaults.set_runtime_context("turn_kind", "same_thread_continuation", manual=False)
+        if not defaults.runtime_context_is_manual("session_has_sufficient_local_context"):
+            defaults.set_runtime_context("session_has_sufficient_local_context", True, manual=False)
 
     def _save_session(self, name: str | None) -> None:
         path = self._store.save(self._session, name=name)
@@ -549,26 +577,31 @@ class AgentSimulationApp:
     def _prompt_optional(self, text: str) -> str:
         return self._io.prompt(text).strip()
 
-    def _write_help(self) -> None:
-        for line in (
-            "/scope",
-            "/show scope",
-            "/turn",
-            "/local-context",
-            "/new-conversation",
-            "/new",
-            "/artifact",
-            "/fork [--new-session]",
+    def _write_help(self, section: str | None = None) -> None:
+        basic_lines = (
+            "/new or /new-conversation",
             "/debug on|off",
             "/save [name]",
             "/export [name]",
             "/replay [path]",
             "/mode chat|chat-lite|manual",
+            "/quit",
+            "/help advanced",
+        )
+        advanced_lines = (
+            "/scope",
+            "/show scope",
+            "/turn",
+            "/local-context",
+            "/artifact",
+            "/fork [--new-session]",
             "/items",
             "/query <text>",
             "/query-debug <text>",
-            "/quit",
-        ):
+        )
+        lowered = (section or "").strip().lower()
+        lines = advanced_lines if lowered == "advanced" else basic_lines
+        for line in lines:
             self._write_system(line)
 
     def _write_agent(self, text: str) -> None:
