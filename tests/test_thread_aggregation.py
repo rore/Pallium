@@ -591,3 +591,65 @@ def test_key_finding_only_signal_does_not_create_task_checkpoint(monkeypatch, te
 
     assert any(memory.type == "thread_summary" for memory in active_memory)
     assert all(memory.type != "task_checkpoint" for memory in active_memory)
+
+
+# ---------------------------------------------------------------------------
+# Fix D — formation: _normalize_task_checkpoint_current_state strips resolved
+# fragments when an active blocker is present
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_strips_resolved_fragment_when_active_blocker_present() -> None:
+    # current_state mentions a resolved issue alongside the active blocker.
+    # After normalization the resolved fragment should be gone.
+    current_state = "Token refresh is fixed. The catalog sync is blocked on rate-limiting."
+    derived_current_state = "The catalog sync is blocked on rate-limiting."
+    selected_work_artifacts = [
+        {"signal_type": "blocker", "text": "Blocked: catalog sync is blocked on rate-limiting."},
+    ]
+
+    normalized = _normalize_task_checkpoint_current_state(
+        current_state=current_state,
+        derived_current_state=derived_current_state,
+        selected_work_artifacts=selected_work_artifacts,
+    )
+
+    assert "is fixed" not in normalized.lower()
+    assert "rate-limiting" in normalized.lower() or "catalog sync" in normalized.lower()
+
+
+def test_normalize_preserves_all_fragments_when_no_active_blocker() -> None:
+    # Without an active blocker signal, no stripping should occur.
+    current_state = "Token refresh is fixed. The catalog sync is blocked on rate-limiting."
+    derived_current_state = "Token refresh is fixed."
+    selected_work_artifacts = [
+        {"signal_type": "progress_update", "text": "Partial progress: token refresh succeeded."},
+    ]
+
+    normalized = _normalize_task_checkpoint_current_state(
+        current_state=current_state,
+        derived_current_state=derived_current_state,
+        selected_work_artifacts=selected_work_artifacts,
+    )
+
+    # Both fragments should survive — there is no active blocker to drive stripping.
+    assert "is fixed" in normalized.lower() or current_state in normalized
+
+
+def test_normalize_does_not_strip_single_fragment_current_state() -> None:
+    # A single-sentence current_state should never be mutated even if it contains
+    # a resolution marker, because there is nothing else to fall back to.
+    current_state = "Token refresh is fixed."
+    derived_current_state = "Token refresh is fixed."
+    selected_work_artifacts = [
+        {"signal_type": "blocker", "text": "Blocked: still waiting on the catalog API."},
+    ]
+
+    normalized = _normalize_task_checkpoint_current_state(
+        current_state=current_state,
+        derived_current_state=derived_current_state,
+        selected_work_artifacts=selected_work_artifacts,
+    )
+
+    # Single fragment — return value must not be empty (the whole state is the only content).
+    assert normalized.strip() != ""

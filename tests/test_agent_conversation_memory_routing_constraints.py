@@ -1755,3 +1755,348 @@ def test_answer_continuity_same_container_alone_does_not_override_wrong_candidat
         f"expected same-thread candidate first but got {returned_ids[0]!r}; "
         "same-container-only affinity must not override thread affinity"
     )
+
+
+# ---------------------------------------------------------------------------
+# Fix B: negative-source suppression for evidence_trace (interim guardrail)
+# ---------------------------------------------------------------------------
+
+def test_evidence_trace_suppresses_source_that_disclaims_having_exact_evidence() -> None:
+    """evidence_trace must not inject source text that explicitly states the
+    exact evidence was not retained ("did not keep the exact line", etc.).
+
+    The source excerpt says "I did not keep the exact line."  Pallium should
+    return no_relevant_memory rather than injecting a source that explicitly
+    disclaims having what the user is asking for.
+    """
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-evidence-disclaimer',
+        session_ref='session:evidence-disclaimer',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='weak-evidence-1',
+                source_type='assistant_artifact',
+                source_id='assistant-output-weak',
+                excerpt=(
+                    'We probably saw it in the logs, but I did not keep the exact line. '
+                    'The general takeaway was that the retries looked like they were colliding.'
+                ),
+                score=6,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-evidence-disclaimer',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='I need the exact quote for the incident note, not the general takeaway.',
+            query_tokens=('exact', 'for', 'general', 'i', 'incident', 'need', 'not', 'note', 'quote', 'takeaway', 'the'),
+            limit=5,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='I need the exact quote for the incident note, not the general takeaway.',
+        requested_limit=5,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.should_inject is False, (
+        "source explicitly disclaims having the exact evidence; must not inject"
+    )
+    assert outcome.decision_reason == 'no_relevant_memory', (
+        f"expected no_relevant_memory but got {outcome.decision_reason!r}"
+    )
+
+
+def test_evidence_trace_injects_source_without_evidence_disclaimer() -> None:
+    """evidence_trace must still inject a source that does not disclaim
+    having the evidence — the negative-source guard should only fire on
+    explicit disclaimers, not on all source evidence.
+    """
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-evidence-present',
+        session_ref='session:evidence-present',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='strong-evidence-1',
+                source_type='assistant_artifact',
+                source_id='assistant-output-strong',
+                excerpt=(
+                    'The exact log output for the incident shows the catalog API '
+                    'returned 429 for every retry — not a transient blip, a sustained limit.'
+                ),
+                score=8,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-evidence-present',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='I need the exact quote for the incident note, not the general takeaway.',
+            query_tokens=('exact', 'for', 'general', 'i', 'incident', 'need', 'not', 'note', 'quote', 'takeaway', 'the'),
+            limit=5,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='I need the exact quote for the incident note, not the general takeaway.',
+        requested_limit=5,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.should_inject is True, (
+        "source does not disclaim having the evidence; injection must proceed"
+    )
+    assert len(outcome.results) == 1
+    assert outcome.results[0].source_item_id == 'strong-evidence-1'
+
+
+def test_evidence_trace_disclaimer_variants_all_suppress() -> None:
+    """Each recognized disclaimer phrase must individually trigger suppression."""
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    disclaimer_excerpts = [
+        "I did not keep the exact line from the log.",
+        "We didn't keep that output anywhere.",
+        "I don't have the exact wording from before.",
+        "The output was not preserved after the session.",
+        "That detail wasn't preserved in my notes.",
+    ]
+    for excerpt in disclaimer_excerpts:
+        query_filters = QueryFilters(
+            container_ref='chat:library-help',
+            thread_ref='chat:library-help:thread-disclaimer-variants',
+            session_ref='session:disclaimer-variants',
+        )
+        retrieval_result = RetrievalQueryResult(
+            results=[
+                QueryResultItem(
+                    result_kind='source_hit',
+                    source_item_id='weak-evidence-variant',
+                    source_type='assistant_artifact',
+                    source_id='assistant-output-variant',
+                    excerpt=excerpt,
+                    score=5,
+                    evidence=[],
+                    container_ref='chat:library-help',
+                    thread_ref='chat:library-help:thread-disclaimer-variants',
+                ),
+            ],
+            trace=QueryTrace(
+                query_text='I need the exact quote for the incident note, not the general takeaway.',
+                query_tokens=('exact', 'quote', 'incident', 'note'),
+                limit=5,
+                filters=query_filters,
+                stages=(),
+            ),
+        )
+        outcome = plugin.route_query_results(
+            text='I need the exact quote for the incident note, not the general takeaway.',
+            requested_limit=5,
+            retrieval_result=retrieval_result,
+            query_filters=query_filters,
+            runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        )
+        assert outcome.should_inject is False, (
+            f"disclaimer phrase in excerpt {excerpt[:60]!r} did not suppress injection"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fix D — packaging: _task_checkpoint_injection_text leads with active blocker
+# ---------------------------------------------------------------------------
+
+from semantic.agent_conversation_memory_routing import _task_checkpoint_injection_text
+
+
+def test_task_checkpoint_injection_text_leads_with_blocker_when_present() -> None:
+    # When an active blocker is present, it must appear before current_state.
+    payload = {
+        "summary": "Working on catalog sync.",
+        "current_state": "Partial sync completed through batch 417.",
+        "blocker_state": "Rate-limiting on the catalog API is blocking further progress.",
+        "next_step": "Wait for rate-limit window to reset.",
+    }
+    text = _task_checkpoint_injection_text(payload)
+    blocker_pos = text.lower().find("rate-limiting")
+    current_state_pos = text.lower().find("partial sync")
+    assert blocker_pos != -1, "blocker text must appear in injection text"
+    assert current_state_pos != -1, "current_state text must appear in injection text"
+    assert blocker_pos < current_state_pos, (
+        f"blocker must precede current_state in injection text; got:\n{text!r}"
+    )
+
+
+def test_task_checkpoint_injection_text_no_blocker_leads_with_current_state() -> None:
+    # When no blocker is present, current_state leads as before.
+    payload = {
+        "summary": "Working on catalog sync.",
+        "current_state": "Sync completed through batch 417.",
+        "blocker_state": "",
+        "next_step": "Proceed to batch 418.",
+    }
+    text = _task_checkpoint_injection_text(payload)
+    assert "Sync completed through batch 417" in text
+    # No blocker label should appear
+    assert "Blocker:" not in text
+
+
+def test_task_checkpoint_injection_text_blocker_only_no_current_state() -> None:
+    # When only a blocker is present (no current_state), the blocker is still emitted.
+    payload = {
+        "summary": "Debugging catalog sync failures.",
+        "current_state": "",
+        "blocker_state": "The catalog API returns 429 on every retry.",
+        "next_step": "",
+    }
+    text = _task_checkpoint_injection_text(payload)
+    assert "429" in text
+    assert "Blocker:" in text
+
+
+# ---------------------------------------------------------------------------
+# Fix C — abstract constraint-intent phrase/token expansion
+# "Anything I should avoid relying on here?" must route as constraint_recall
+# ---------------------------------------------------------------------------
+
+
+def test_abstract_avoidance_query_routes_as_constraint_recall() -> None:
+    # The query uses abstract meta-vocabulary ("avoid relying") with no domain-
+    # specific tool names.  After Fix C, the constraint_recall token set includes
+    # "avoid" and "relying", so this query must produce a constraint_recall shape
+    # tag and route to structured constraint memory.
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-abstract-constraint',
+        session_ref='session:abstract-constraint',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='summary-abstract-constraint',
+                type='thread_summary',
+                payload={
+                    'summary': (
+                        'Constraint: do not rely on the Jira API or the admin portal during this session. '
+                        'The operator has restricted both external service endpoints for this context.'
+                    ),
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=4,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-history-constraint',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='Anything I should avoid relying on here?',
+            query_tokens=('anything', 'i', 'should', 'avoid', 'relying', 'on', 'here'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='Anything I should avoid relying on here?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.should_inject is True, "abstract avoidance query must inject constraint memory"
+    assert outcome.trace is not None
+    routing = outcome.trace.routing
+    assert routing is not None
+    family_inference = routing.get('family_inference', {})
+    query_shape_tags = list(family_inference.get('query_shape_tags', []))
+    assert 'constraint_recall' in query_shape_tags, (
+        f"'constraint_recall' shape tag missing; got shape tags: {query_shape_tags}"
+    )
+
+
+def test_abstract_avoid_phrase_routes_as_constraint_recall() -> None:
+    # "Anything I should avoid" (phrase match) must also trigger constraint_recall.
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='summary-avoid-phrase',
+                type='thread_summary',
+                payload={
+                    'summary': (
+                        'Constraint: avoid using the operations portal for the inventory batch digest.'
+                    ),
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=3,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-avoid-phrase',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='Anything I should avoid here for this batch run?',
+            query_tokens=('anything', 'i', 'should', 'avoid', 'here', 'for', 'this', 'batch', 'run'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='Anything I should avoid here for this batch run?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    routing = outcome.trace.routing
+    family_inference = routing.get('family_inference', {})
+    query_shape_tags = list(family_inference.get('query_shape_tags', []))
+    assert 'constraint_recall' in query_shape_tags, (
+        f"'constraint_recall' shape tag missing for 'anything i should avoid'; got: {query_shape_tags}"
+    )

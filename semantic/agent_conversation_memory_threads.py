@@ -918,6 +918,26 @@ def _normalize_task_checkpoint_current_state(
                 cleaned_norm = normalize_for_index(cleaned_state)
             if any(normalize_for_index(text) in cleaned_norm for text in active_signals):
                 return cleaned_state
+    # When an active blocker is present and current_state is a multi-fragment mix,
+    # strip fragments that describe already-resolved items (e.g. "token refresh is fixed")
+    # so that the payload reflects active state only.
+    if latest_blocker and normalize_for_index(latest_blocker) in current_state_normalized:
+        fragments = [f.strip() for f in re.split(r"(?<=[.!?])\s+|\s*;\s*", current_state) if f.strip()]
+        if len(fragments) > 1:
+            blocker_norm = normalize_for_index(latest_blocker)
+            _RESOLUTION_MARKERS = (
+                "is fixed", "was fixed", "has been fixed",
+                "is resolved", "was resolved", "has been resolved",
+                "is completed", "was completed", "has been completed",
+                "is done", "was done", "no longer blocked", "no longer failing",
+            )
+            active_fragments = [
+                f for f in fragments
+                if blocker_norm in normalize_for_index(f)
+                or not any(marker in f.lower() for marker in _RESOLUTION_MARKERS)
+            ]
+            if active_fragments and len(active_fragments) < len(fragments):
+                return " ".join(active_fragments)
     if any(normalize_for_index(text) in current_state_normalized for text in active_signals):
         return current_state
     if active_signals and current_state_normalized != derived_state_normalized:
