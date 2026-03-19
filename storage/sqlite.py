@@ -264,6 +264,14 @@ class SQLiteStorageProvider(
             )
         return count or 0
 
+    def update_index_entry_provider(self, index_entry_id: str, provider_name: str, provider_version: str) -> None:
+        with self._session_factory.begin() as session:
+            record = session.get(IndexEntryRecord, index_entry_id)
+            if record is None:
+                raise KeyError(index_entry_id)
+            record.provider_name = provider_name
+            record.provider_version = provider_version
+
     def get_evidence_for_memory_object(self, memory_object_id: str) -> list[EvidenceReference]:
         with self._session_factory() as session:
             relations = session.scalars(

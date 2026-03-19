@@ -401,6 +401,11 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def update_index_entry_provider(self, index_entry_id: str, provider_name: str, provider_version: str) -> None:
+        """Update the provider metadata on an index entry (used after embedding)."""
+        raise NotImplementedError
+
+    @abstractmethod
     def search_index_entries(
         self,
         tokens: list[str],

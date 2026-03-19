@@ -198,6 +198,11 @@ class PalliumService:
             vectors = self._embedding_provider.embed(texts)
             for entry, vector in zip(vector_entries, vectors):
                 self._vector_index.add(entry.id, vector)
+                self._storage.update_index_entry_provider(
+                    entry.id,
+                    provider_name=self._embedding_provider.model_name(),
+                    provider_version=f"dim={self._embedding_provider.dimensions()}",
+                )
             self._vector_index.save()
         except Exception:
             self._logger.warning("Vector embedding failed after commit; reconciliation will catch gaps", exc_info=True)

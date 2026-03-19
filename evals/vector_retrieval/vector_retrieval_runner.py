@@ -1,8 +1,21 @@
-"""Vector retrieval benchmark runner.
+"""Vector retrieval mock-backed diagnostic harness.
 
-Deterministic stub harness that proves vector retrieval closes the lexical
-recall gap on abstract/paraphrase queries.  Uses pre-computed mock embeddings
-and a mock VectorIndex so it does NOT require fastembed or usearch.
+Deterministic stub harness that verifies provider plumbing and scenario
+structure for the vector retrieval recall gap.  Uses pre-computed mock
+embeddings and a mock VectorIndex — does NOT exercise the actual
+fastembed/usearch pipeline.
+
+This harness proves:
+- The retrieval provider correctly surfaces vector candidates
+- Scenarios capture the right abstract-paraphrase failure classes
+- Lexical retrieval produces zero results for zero-overlap queries
+
+It does NOT prove:
+- That real fastembed embeddings have sufficient quality to close the gap
+- That the usearch index produces correct ANN results on real vectors
+
+Live embedding quality testing requires a separate integration path with
+fastembed and usearch installed.
 
 Scenarios are loaded from ``evals/vector_retrieval/scenarios.json``.
 """
