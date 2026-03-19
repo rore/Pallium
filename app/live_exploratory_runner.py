@@ -16,6 +16,7 @@ from app.config import AppConfig
 from app.main import create_app
 from app.worker import run_worker
 from core.contracts import ItemProcessingResult
+from semantic.agent_conversation_memory_routing import RoutingOverrides
 
 TERMINAL_PROCESSING_STATUSES = {"completed", "failed", "skipped"}
 DEFAULT_STAGE_TIMEOUT_SECONDS = 180.0
@@ -536,7 +537,54 @@ def _default_scenarios() -> list[LiveScenario]:
 SCENARIOS = _default_scenarios()
 
 
-def run_scenario(output_dir: Path, scenario: LiveScenario) -> dict[str, Any]:
+def _build_shadow_diff(
+    primary_response: dict[str, Any],
+    shadow_response: dict[str, Any],
+    primary_eval: dict[str, Any],
+    shadow_eval: dict[str, Any],
+) -> dict[str, Any]:
+    p_inject = primary_eval.get("should_inject")
+    s_inject = shadow_eval.get("should_inject")
+    p_reason = primary_eval.get("decision_reason")
+    s_reason = shadow_eval.get("decision_reason")
+    p_layer = primary_eval.get("selected_layer")
+    s_layer = shadow_eval.get("selected_layer")
+    p_routing = (primary_response.get("trace") or {}).get("routing") or {}
+    s_routing = (shadow_response.get("trace") or {}).get("routing") or {}
+    p_fallback = bool((p_routing.get("fallback") or {}).get("applied", False))
+    s_fallback = bool((s_routing.get("fallback") or {}).get("applied", False))
+    p_pass = primary_eval.get("should_inject_match") and primary_eval.get("decision_reason_match") and primary_eval.get("selected_layer_match") and primary_eval.get("must_include_ok") and primary_eval.get("must_not_include_ok")
+    s_pass = shadow_eval.get("should_inject_match") and shadow_eval.get("decision_reason_match") and shadow_eval.get("selected_layer_match") and shadow_eval.get("must_include_ok") and shadow_eval.get("must_not_include_ok")
+    shadow_improves = bool(not p_pass and s_pass)
+    shadow_regresses = bool(p_pass and not s_pass)
+    shadow_neutral = not shadow_improves and not shadow_regresses
+    return {
+        "should_inject_primary": p_inject,
+        "should_inject_shadow": s_inject,
+        "should_inject_changed": p_inject != s_inject,
+        "decision_reason_primary": p_reason,
+        "decision_reason_shadow": s_reason,
+        "decision_reason_changed": p_reason != s_reason,
+        "selected_layer_primary": p_layer,
+        "selected_layer_shadow": s_layer,
+        "selected_layer_changed": p_layer != s_layer,
+        "fallback_applied_primary": p_fallback,
+        "fallback_applied_shadow": s_fallback,
+        "fallback_changed": p_fallback != s_fallback,
+        "primary_eval_pass": bool(p_pass),
+        "shadow_eval_pass": bool(s_pass),
+        "shadow_improves": shadow_improves,
+        "shadow_regresses": shadow_regresses,
+        "shadow_neutral": shadow_neutral,
+    }
+
+
+def run_scenario(
+    output_dir: Path,
+    scenario: LiveScenario,
+    *,
+    shadow_routing_overrides: RoutingOverrides | None = None,
+) -> dict[str, Any]:
     db_path = output_dir / f"{scenario.id}.sqlite3"
     config = build_explicit_live_config(db_path)
     client = TestClient(create_app(config))
@@ -595,6 +643,28 @@ def run_scenario(output_dir: Path, scenario: LiveScenario) -> dict[str, Any]:
             followup_eval = evaluate_followup(followup_response, scenario.followup_expectations)
             classification, initial_hits = classify_result(initial_answer, scenario.initial_required_terms, followup_eval)
 
+            ingested_items: list[dict[str, Any]] = []
+            for event in [first_event, second_event]:
+                user_req = (event.get("user_item") or {}).get("request")
+                if user_req:
+                    ingested_items.append(user_req)
+                assistant_req = (event.get("assistant") or {}).get("request")
+                if assistant_req:
+                    ingested_items.append(assistant_req)
+
+            shadow_comparison: dict[str, Any] | None = None
+            if shadow_routing_overrides is not None:
+                shadow_client = TestClient(create_app(config, routing_overrides=shadow_routing_overrides))
+                try:
+                    shadow_query_payload = second_event["query_debug"]["request"]
+                    shadow_raw = shadow_client.post("/query/debug", json=shadow_query_payload)
+                    shadow_raw.raise_for_status()
+                    shadow_response = shadow_raw.json()
+                    shadow_eval = evaluate_followup(shadow_response, scenario.followup_expectations)
+                    shadow_comparison = _build_shadow_diff(followup_response, shadow_response, followup_eval, shadow_eval)
+                finally:
+                    shadow_client.close()
+
             timings = {
                 "model_resolution_seconds": model.resolution_timings[0] if model.resolution_timings else None,
                 "initial_thin_agent_draft_seconds": model.draft_timings[0] if model.draft_timings else None,
@@ -630,6 +700,8 @@ def run_scenario(output_dir: Path, scenario: LiveScenario) -> dict[str, Any]:
                 "followup_query_response": followup_response,
                 "followup_evaluation": followup_eval,
                 "classification": classification,
+                "ingested_items": ingested_items,
+                "shadow_comparison": shadow_comparison,
                 "io_outputs": io.outputs,
             }
             _write_json(output_dir / f"{scenario.id}.json", result)
@@ -642,6 +714,7 @@ def run_scenarios(
     *,
     scenarios: list[LiveScenario] | None = None,
     output_root: Path | None = None,
+    shadow_routing_overrides: RoutingOverrides | None = None,
 ) -> tuple[Path, list[dict[str, Any]], list[dict[str, Any]]]:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output_dir = (output_root or Path("tmp")) / f"exploratory-live-harness-{timestamp}"
@@ -650,7 +723,7 @@ def run_scenarios(
     failures: list[dict[str, Any]] = []
     for scenario in scenarios or SCENARIOS:
         try:
-            results.append(run_scenario(output_dir, scenario))
+            results.append(run_scenario(output_dir, scenario, shadow_routing_overrides=shadow_routing_overrides))
         except StageTimeoutError as exc:
             failure = {
                 "scenario_id": scenario.id,
@@ -673,13 +746,105 @@ def run_scenarios(
     return output_dir, results, failures
 
 
+def _extract_drift_signals(result: dict[str, Any]) -> dict[str, Any]:
+    routing = (
+        (result.get("followup_query_response") or {})
+        .get("trace", {})
+        .get("routing", {})
+    )
+    has_trace = bool(routing)
+    eval_ = result.get("followup_evaluation") or {}
+    timings = result.get("timings") or {}
+    should_inject = eval_.get("should_inject")
+    selected_layer = eval_.get("selected_layer")
+    fallback_applied = bool((routing.get("fallback") or {}).get("applied", False))
+    sharp_candidates = routing.get("sharp_candidate_diagnostics") or []
+    sharp_miss_stages: list[str] = [
+        str(c.get("loss_stage", ""))
+        for c in sharp_candidates
+        if c.get("loss_stage") != "selected"
+    ]
+    has_sharp_miss = bool(sharp_miss_stages)
+    rebuild_seconds = timings.get("thread_rebuild_wait_seconds")
+    has_thread_rebuild = isinstance(rebuild_seconds, (int, float)) and rebuild_seconds > 0
+    return {
+        "has_trace": has_trace,
+        "should_inject": should_inject,
+        "selected_layer": selected_layer,
+        "fallback_applied": fallback_applied,
+        "has_sharp_miss": has_sharp_miss,
+        "sharp_miss_stages": sharp_miss_stages,
+        "has_thread_rebuild": has_thread_rebuild,
+    }
+
+
+def _aggregate_drift_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
+    scenarios_total = len(results)
+    scenarios_with_trace = 0
+    injection_count = 0
+    sharp_miss_count = 0
+    sharp_miss_by_stage: dict[str, int] = {"retrieval": 0, "routing": 0, "packaging": 0, "injection_cap": 0}
+    fallback_count = 0
+    rebuild_count = 0
+    injected_total = 0
+    generic_summary_win_count = 0
+
+    for result in results:
+        signals = _extract_drift_signals(result)
+        if signals["has_trace"]:
+            scenarios_with_trace += 1
+            if signals["should_inject"] is True:
+                injection_count += 1
+            if signals["has_sharp_miss"]:
+                sharp_miss_count += 1
+                for stage in signals["sharp_miss_stages"]:
+                    if stage in sharp_miss_by_stage:
+                        sharp_miss_by_stage[stage] += 1
+            if signals["fallback_applied"]:
+                fallback_count += 1
+        if signals["has_thread_rebuild"]:
+            rebuild_count += 1
+        if signals["should_inject"] is True:
+            injected_total += 1
+            layer = signals["selected_layer"]
+            if layer in {"thread_summary", "discussion_summary"}:
+                generic_summary_win_count += 1
+
+    def _rate(numerator: int, denominator: int) -> float | None:
+        return round(numerator / denominator, 4) if denominator > 0 else None
+
+    return {
+        "scenarios_with_trace": scenarios_with_trace,
+        "injection_rate": _rate(injection_count, scenarios_with_trace),
+        "sharp_miss_rate": _rate(sharp_miss_count, scenarios_with_trace),
+        "sharp_miss_by_loss_stage": sharp_miss_by_stage,
+        "fallback_rate": _rate(fallback_count, scenarios_with_trace),
+        "rebuild_rate": _rate(rebuild_count, scenarios_total) if scenarios_total > 0 else None,
+        "generic_summary_win_rate": _rate(generic_summary_win_count, injected_total),
+    }
+
+
 def build_summary(output_dir: Path, results: list[dict[str, Any]], failures: list[dict[str, Any]]) -> dict[str, Any]:
+    shadow_results = [r["shadow_comparison"] for r in results if r.get("shadow_comparison") is not None]
+    shadow_summary: dict[str, Any] | None = None
+    if shadow_results:
+        shadow_summary = {
+            "shadow_overrides_active": True,
+            "scenarios_with_shadow": len(shadow_results),
+            "shadow_improves_count": sum(1 for d in shadow_results if d["shadow_improves"]),
+            "shadow_regresses_count": sum(1 for d in shadow_results if d["shadow_regresses"]),
+            "shadow_neutral_count": sum(1 for d in shadow_results if d["shadow_neutral"]),
+            "injection_flip_count": sum(1 for d in shadow_results if d["should_inject_changed"]),
+            "layer_flip_count": sum(1 for d in shadow_results if d["selected_layer_changed"]),
+        }
     summary = {
         "run_id": output_dir.name,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "results_total": len(results),
         "error_total": len(failures),
         "classifications": {},
+        "drift_metrics": _aggregate_drift_metrics(results),
+        "shadow_summary": shadow_summary,
         "results": [
             {
                 "scenario_id": result["scenario_id"],

@@ -1,12 +1,29 @@
 ---
 id: add-live-integration-improvement-loop-and-replay-pipeline
 title: Live miss capture and replay promotion loop
-status: queued
+status: in-progress
 priority: high
 commitment: committed
 milestone: Next
 lane: integration-feedback
 ---
+
+## Scope Trim (applied before implementation)
+
+The following items from the original In Scope list are **deferred** to a future slice:
+
+- **Automatic suspicious-case detectors** — Pallium already produces `sharp_candidate_diagnostics`
+  and full routing trace at query time. Cases detectable post-hoc with a heuristic should become
+  hot-path routing fixes, not review-inbox entries. Building a detector layer on top of data that
+  the system already has at decision time adds process where code fixes are needed. Deferred until
+  the hot path is stable enough that residual misses are genuinely ambiguous.
+
+- **Bounded review-inbox export** — Follows from the above. Without confirmed suspicious-case
+  detectors there is no well-defined inbox to populate. Deferred with the detectors.
+
+What remains in this slice: drift metrics aggregation, shadow comparison via injectable routing
+overrides, and replay promotion workflow (scenario generation for the existing benchmark runner).
+Benchmark-tier `DatasetTier.REPLAY` accounting is deferred to a follow-on chunk.
 
 ## Summary
 
@@ -18,11 +35,9 @@ The goal is to make Pallium continuously improvable once real integration
 traffic exists and the core stabilization architecture is trustworthy enough to
 capture misses in a durable, reviewable form.
 
-- detect suspicious behavior automatically
-- capture the right bounded trace when a miss happens
-- route that miss into a review inbox
 - promote confirmed misses into replay fixtures owned by the benchmark program
 - support safe shadow comparison of candidate tuning changes on captured bundles
+- surface aggregate drift signals across runs
 
 This feature should make Pallium learn from real integration failures without
 moving semantic policy into the downstream agent and without duplicating the
@@ -48,10 +63,9 @@ Pallium already has parts of the foundation.
 
 What is still missing is the operational loop that connects those pieces.
 
-- automatic suspicious-case detection
-- triageable miss bundles
 - reviewable promotion into replay fixtures
 - shadow comparison on captured bundles before rollout
+- drift metrics to surface aggregate quality signals
 
 That loop is what turns live integration from ad hoc debugging into systematic
 product tuning.
@@ -65,62 +79,35 @@ captured misses do not mostly reflect known structural weaknesses.
 
 - reuse the benchmark program's existing failure taxonomy and replay-fixture
   vocabulary rather than inventing a second parallel one in production tooling
-- add automatic suspicious-case detectors over live/debug traces
-- suspicious-case detectors should cover at least:
-  - generic summary selected while sharper active memory exists in scope
-  - same-thread continuation with sufficient local context still injecting
-  - low-value items creating durable memory
-  - low-value-only items scheduling thread rebuilds
-  - fresher same-kind conclusions losing to older ones
-  - suspiciously high rebuild or supersession churn in a thread
-  - `should_inject=true` with weak or fallback-only blocks
-  - unexpectedly high semantic-escalation rate on queries that should stay on
-    the deterministic hot path
-- add a bounded review-inbox export for suspicious cases
-- review-inbox exports should capture at least:
-  - relevant source items
-  - relevant active memory objects
-  - query input and runtime context
-  - retrieval, routing, and injection trace
-  - final returned results and injected blocks
-- keep review-inbox export privacy-safe and bounded
-- privacy and scope rules for export should include:
-  - no raw giant transcript dumps
-  - no unrelated rows from outside the current scope
-  - support scrubbing and generalization into committed fixtures
-- add one replay-promotion tool or workflow that turns a captured miss bundle
-  into a benchmark-ready scenario skeleton
+- add one replay-promotion tool or workflow that turns a live runner scenario
+  result into a benchmark-ready scenario skeleton
 - replay-promotion skeletons should include at least:
-  - prior events
-  - current thread context
-  - runtime context
-  - expected injection decision
-  - expected decision reason
-  - expected winning memory kind or injected block
-  - forbidden outcomes
-  - failure-family label
+  - prior events (reconstructed from ingested item payloads)
+  - current query (text, limit, container_ref, visibility_context)
+  - expected injection decision (human-confirmed sentinel by default)
+  - expected memory types placeholder
 - add operational drift metrics that can be inspected over time
 - operational drift metrics should include at least:
-  - durable memories created per source item
-  - rebuilds per thread
-  - superseded summaries per thread
-  - low-value promotion rate
-  - injection rate by runtime turn kind
-  - average injected block count
-  - generic-summary wins vs sharp-memory wins
-  - failure-family counts over time
-  - semantic-escalation rate over time
+  - injection rate
+  - sharp miss rate and breakdown by loss stage
+  - fallback rate
+  - rebuild rate
+  - generic-summary win rate vs sharp-memory win rate
 - add one simple shadow-comparison path for candidate tuning changes so Pallium
   can compare current vs proposed memory decisions on captured bundles before a
   rollout
 - shadow-comparison diffs should include at least:
   - `should_inject`
   - `decision_reason`
-  - injected block ids or types
-  - whether semantic escalation occurred
+  - selected layer
+  - fallback applied flag
+- expose routing tuning constants as injectable overrides (`RoutingOverrides`)
+  so shadow passes can exercise different weights and margins without modifying
+  source code; override injection must stay within the semantic layer and the
+  harness — not the public API
 - keep the improvement loop package-owned where semantics are package-specific;
-  generic layers may provide bounded storage/export helpers and review-inbox
-  plumbing, but should not own `agent_conversation_memory` policy judgments
+  generic layers may provide bounded storage/export helpers, but should not own
+  `agent_conversation_memory` policy judgments
 
 ## Out of Scope
 
@@ -136,21 +123,15 @@ captured misses do not mostly reflect known structural weaknesses.
 
 ## Done When
 
-1. Pallium can automatically flag suspicious live cases instead of relying only
-   on humans reading logs.
-2. Suspicious cases can be exported as bounded, privacy-safe miss bundles with
-   the data needed to reproduce the issue.
-3. Engineers can promote a miss bundle into a replay scenario without manually
-   reconstructing the entire conversation from logs.
-4. The promotion flow targets the benchmark program's existing replay schema and
+1. Engineers can promote a live runner scenario result into a replay scenario
+   without manually reconstructing the conversation from logs.
+2. The promotion flow targets the benchmark program's existing replay schema and
    failure vocabulary instead of introducing a second fixture format.
-5. Changes to prompts, heuristics, routing, or packaging can be shadow-compared
-   on captured bundles before rollout.
-6. Drift metrics make it obvious when Pallium is over-promoting low-value
-   content, rebuilding too often, over-injecting memory, or over-using semantic
-   escalation.
-7. The improvement loop reinforces a thin-agent boundary by detecting when the
-   downstream agent would otherwise need to compensate semantically.
+3. Changes to routing weights and margins can be shadow-compared on captured
+   scenario results before rollout, staying entirely within the harness layer.
+4. Drift metrics make it obvious when Pallium is over-promoting low-value
+   content, rebuilding too often, over-injecting memory, or over-relying on
+   fallback paths.
 
 ## Notes
 
@@ -173,9 +154,13 @@ Implementation defaults:
 - prefer JSON bundle capture plus explicit promotion manifests over hidden
   SQLite state or manual notebook workflows
 - keep capture/export bounded and scope-aware by default
-- treat human review as the confirmation step after automatic suspicious-case
-  detection, not as the only detection mechanism
-- every confirmed live miss should be promotable into a permanent replay
-  regression owned by the benchmark program
+- every promoted scenario should be immediately runnable by the existing
+  benchmark runner via `--scenario-file`; `expected_value` requires human
+  confirmation before the scenario is treated as a regression gate
 - use current observability and debug surfaces as the data source rather than
   inventing a second tracing system first
+- `RoutingOverrides` injection must stay within the semantic layer and harness;
+  routing tuning knobs must not appear in the public API schema
+- `WORK_RESUMPTION_SHARP_CHECKPOINT_THRESHOLD` is defined but has no active
+  call site in routing; it is excluded from `RoutingOverrides` intentionally
+  until it is wired to a real scoring gate

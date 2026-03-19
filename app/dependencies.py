@@ -11,6 +11,7 @@ from retrieval.base import RetrievalProvider
 from retrieval.lexical import LexicalRetrievalProvider
 from semantic.base import SemanticPlugin
 from semantic.agent_conversation_memory import AgentConversationMemoryPlugin
+from semantic.agent_conversation_memory_routing import RoutingOverrides
 from semantic.demo_agent_memory import DemoAgentMemoryPlugin
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin
 from storage.base import StorageProvider
@@ -51,11 +52,11 @@ def build_llm_provider(config: AppConfig, *, provider_name: str, model: str) -> 
     raise ValueError(f"Unsupported LLM provider kind: {provider_config.kind}")
 
 
-def build_semantic_plugins(config: AppConfig) -> dict[str, SemanticPlugin]:
+def build_semantic_plugins(config: AppConfig, routing_overrides: RoutingOverrides | None = None) -> dict[str, SemanticPlugin]:
     plugins: dict[str, SemanticPlugin] = {}
 
     for package_name, package_config in config.semantic_packages.items():
-        plugin = _build_plugin_for_package(config=config, package_config=package_config)
+        plugin = _build_plugin_for_package(config=config, package_config=package_config, routing_overrides=routing_overrides)
         if plugin is not None:
             plugins[package_name] = plugin
 
@@ -66,7 +67,7 @@ def build_semantic_plugins(config: AppConfig) -> dict[str, SemanticPlugin]:
     return plugins
 
 
-def _build_plugin_for_package(*, config: AppConfig, package_config: SemanticPackageConfig) -> SemanticPlugin | None:
+def _build_plugin_for_package(*, config: AppConfig, package_config: SemanticPackageConfig, routing_overrides: RoutingOverrides | None = None) -> SemanticPlugin | None:
     implementation = package_config.implementation
     if implementation == "demo_agent_memory":
         return DemoAgentMemoryPlugin()
@@ -89,6 +90,7 @@ def _build_plugin_for_package(*, config: AppConfig, package_config: SemanticPack
             prompt_variant=prompt_variant,
             consolidation_config=package_config.consolidation,
             resolver_config=resolver_config,
+            routing_overrides=routing_overrides,
         )
 
     raise ValueError(f"Unsupported semantic package implementation: {implementation}")
@@ -116,10 +118,10 @@ def build_retrieval_provider(storage: StorageProvider) -> RetrievalProvider:
     return LexicalRetrievalProvider(storage)
 
 
-def build_service(config: AppConfig | None = None) -> PalliumService:
+def build_service(config: AppConfig | None = None, routing_overrides: RoutingOverrides | None = None) -> PalliumService:
     resolved_config = config or AppConfig.from_env()
     storage = build_storage_provider(resolved_config)
-    plugins = build_semantic_plugins(resolved_config)
+    plugins = build_semantic_plugins(resolved_config, routing_overrides=routing_overrides)
     if resolved_config.default_use_case not in plugins:
         raise ValueError(f"Unsupported default use case: {resolved_config.default_use_case}")
     retrieval = build_retrieval_provider(storage)

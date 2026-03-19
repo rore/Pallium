@@ -4,7 +4,7 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime, timezone
-from typing import Iterable
+from typing import Iterable, TypedDict
 
 from core.contracts import PackageQueryOutcome
 from core.models import InjectableBlock, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace
@@ -178,6 +178,22 @@ ROUTING_FOCUS_BOOST = 120
 
 ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY = 90
 
+
+class RoutingOverrides(TypedDict, total=False):
+    """Optional per-call overrides for routing constants.
+
+    Used by the live harness shadow comparison path to test candidate tuning
+    changes against captured scenarios before rollout. These knobs cover the
+    main scoring levers; structural policy constants (ROUTING_PREFERRED_LAYERS,
+    AMBIGUITY_MARGIN_*) are intentionally not overridable here.
+    """
+
+    layer_weights: dict[str, dict[str, int]]
+    focus_boost: int
+    fallback_margin: int
+    support_threshold: dict[str, int]
+    work_resumption_thin_checkpoint_penalty: int
+
 ANSWER_CONTINUITY_CUES = (
     "already answered",
     "answered before",
@@ -294,7 +310,7 @@ WORK_RESUMPTION_BLOCKER_CUES = (
 
 WORK_RESUMPTION_SIGNAL_TYPES = ("task", "progress_update", "key_finding", "blocker", "next_step", "evidence", "freshness")
 
-WORK_RESUMPTION_SHARP_CHECKPOINT_THRESHOLD = 44
+WORK_RESUMPTION_SHARP_CHECKPOINT_THRESHOLD = 44  # defined but not yet wired to a scoring gate; excluded from RoutingOverrides until a call site exists
 
 WORK_RESUMPTION_THIN_CHECKPOINT_PENALTY = 70
 
@@ -369,7 +385,14 @@ def route_query_results(
     include_trace: bool = False,
     debug_candidate_loader=None,
     resolver_config: dict[str, object] | None = None,
+    routing_overrides: RoutingOverrides | None = None,
 ) -> PackageQueryOutcome:
+        _ov = routing_overrides or {}
+        _layer_weights: dict[str, dict[str, int]] = _ov.get("layer_weights") or ROUTING_LAYER_WEIGHTS
+        _focus_boost: int = _ov.get("focus_boost", ROUTING_FOCUS_BOOST)  # type: ignore[assignment]
+        _fallback_margin: int = _ov.get("fallback_margin", ROUTING_FALLBACK_MARGIN)  # type: ignore[assignment]
+        _support_threshold: dict[str, int] = _ov.get("support_threshold") or ROUTING_SUPPORT_THRESHOLD
+        _thin_checkpoint_penalty: int = _ov.get("work_resumption_thin_checkpoint_penalty", WORK_RESUMPTION_THIN_CHECKPOINT_PENALTY)  # type: ignore[assignment]
         query_tokens = _routing_query_tokens(text)
         family_inference = _infer_query_intent(
             text=text,
@@ -449,6 +472,8 @@ def route_query_results(
                 query_tokens=query_tokens,
                 lexical_rank=index,
                 query_filters=query_filters,
+                layer_weights=_layer_weights,
+                support_threshold=_support_threshold,
             )
             for index, item in enumerate(kind_filtered_candidates, start=1)
         ]
@@ -488,12 +513,14 @@ def route_query_results(
             packaging_summary = _apply_work_resumption_packaging(
                 scored_candidates,
                 query_filters=query_filters,
+                thin_checkpoint_penalty=_thin_checkpoint_penalty,
             )
         layer_summary = _summarize_routing_layers(scored_candidates)
         routing_focus = _select_routing_focus(
             intent=intent,
             preferred_layers=preferred_layers,
             layer_summary=layer_summary,
+            fallback_margin=_fallback_margin,
         )
         for candidate in scored_candidates:
             candidate["routing_score"] = int(candidate["base_routing_score"]) + _routing_focus_adjustment(
@@ -501,6 +528,7 @@ def route_query_results(
                 selected_layer=str(routing_focus["selected_layer"]),
                 primary_layer=preferred_layers[0],
                 fallback_applied=bool(routing_focus["applied"]),
+                focus_boost=_focus_boost,
             )
             candidate["reason"] = _routing_reason(
                 intent=intent,
@@ -1447,6 +1475,8 @@ def _score_routed_candidate(
     query_tokens: tuple[str, ...],
     lexical_rank: int,
     query_filters: QueryFilters | None,
+    layer_weights: dict[str, dict[str, int]] | None = None,
+    support_threshold: dict[str, int] | None = None,
 ) -> dict[str, object]:
     layer = _result_layer(item)
     lexical_score = int(item.score)
@@ -1462,8 +1492,9 @@ def _score_routed_candidate(
         content_overlap_tokens=content_overlap_tokens,
         query_filters=query_filters,
     )
+    _weights = layer_weights or ROUTING_LAYER_WEIGHTS
     base_routing_score = (
-        ROUTING_LAYER_WEIGHTS[intent][layer]
+        _weights[intent][layer]
         + (lexical_score * 10)
         + _specificity_bonus(item, intent, query_text=query_text)
         + evidence_shape_score
@@ -1477,7 +1508,7 @@ def _score_routed_candidate(
             same_container=same_container,
         )
     )
-    support_grade = _routing_support_grade(evidence_shape_score)
+    support_grade = _routing_support_grade(evidence_shape_score, support_threshold=support_threshold)
     return {
         "item": item,
         "layer": layer,
@@ -3543,6 +3574,7 @@ def _apply_work_resumption_packaging(
     scored_candidates: list[dict[str, object]],
     *,
     query_filters: QueryFilters | None,
+    thin_checkpoint_penalty: int | None = None,
 ) -> dict[str, object]:
     relevant_candidates = [
         candidate
@@ -3566,7 +3598,7 @@ def _apply_work_resumption_packaging(
         assert isinstance(item, QueryResultItem)
         signal_types = _work_resumption_signal_types(item)
         candidate["work_signal_types"] = signal_types
-        usefulness_score, usefulness_reasons = _work_resumption_usefulness_score(item, signal_types)
+        usefulness_score, usefulness_reasons = _work_resumption_usefulness_score(item, signal_types, thin_checkpoint_penalty=thin_checkpoint_penalty)
         freshness_adjustment, freshness_reasons = _work_resumption_freshness_adjustment(candidate, freshest_timestamp)
         packaging_adjustment = usefulness_score + freshness_adjustment
         candidate["work_usefulness_score"] = usefulness_score
@@ -3649,7 +3681,7 @@ def _work_resumption_signal_types(item: QueryResultItem) -> tuple[str, ...]:
 def _classify_work_signal_text(artifact_kind: str | None, text: str) -> str:
     return _thread_classify_work_signal_text(artifact_kind, text)
 
-def _work_resumption_usefulness_score(item: QueryResultItem, signal_types: tuple[str, ...]) -> tuple[int, list[str]]:
+def _work_resumption_usefulness_score(item: QueryResultItem, signal_types: tuple[str, ...], *, thin_checkpoint_penalty: int | None = None) -> tuple[int, list[str]]:
     signal_set = set(signal_types)
     reasons: list[str] = []
     score = 0
@@ -3676,7 +3708,7 @@ def _work_resumption_usefulness_score(item: QueryResultItem, signal_types: tuple
             score += 10
             reasons.append("sharp_checkpoint")
         if _is_thin_task_checkpoint_payload(payload):
-            score -= WORK_RESUMPTION_THIN_CHECKPOINT_PENALTY
+            score -= (thin_checkpoint_penalty if thin_checkpoint_penalty is not None else WORK_RESUMPTION_THIN_CHECKPOINT_PENALTY)
             reasons.append("thin_checkpoint")
         return score, reasons
 
@@ -3986,10 +4018,11 @@ def _parse_iso_timestamp(value: object) -> datetime | None:
         return None
     return _normalize_timestamp(parsed)
 
-def _routing_support_grade(support_score: int) -> str:
-    if support_score >= ROUTING_SUPPORT_THRESHOLD["strong"]:
+def _routing_support_grade(support_score: int, *, support_threshold: dict[str, int] | None = None) -> str:
+    _threshold = support_threshold or ROUTING_SUPPORT_THRESHOLD
+    if support_score >= _threshold["strong"]:
         return "strong"
-    if support_score >= ROUTING_SUPPORT_THRESHOLD["supported"]:
+    if support_score >= _threshold["supported"]:
         return "supported"
     return "weak"
 
@@ -4041,7 +4074,9 @@ def _select_routing_focus(
     intent: str,
     preferred_layers: tuple[str, ...],
     layer_summary: dict[str, dict[str, object]],
+    fallback_margin: int | None = None,
 ) -> dict[str, object]:
+    _margin = fallback_margin if fallback_margin is not None else ROUTING_FALLBACK_MARGIN
     primary_layer = preferred_layers[0]
     primary_summary = layer_summary.get(primary_layer, {})
     selected_layer = primary_layer
@@ -4115,7 +4150,7 @@ def _select_routing_focus(
             intent in {"answer_continuity", "work_resumption"}
             and primary_grade == "weak"
             and fallback_grade == "strong"
-            and fallback_support >= primary_support + ROUTING_FALLBACK_MARGIN
+            and fallback_support >= primary_support + _margin
         ):
             selected_layer = best_fallback_layer
             applied = True
@@ -4134,7 +4169,7 @@ def _select_routing_focus(
         ):
             reason_code = "supported_checkpoint_preserved"
             reason = "Supported task-checkpoint packaging stayed selected because resumed-work carry-forward needs explicit blocker and next-step state."
-        elif fallback_support >= primary_support + ROUTING_FALLBACK_MARGIN:
+        elif fallback_support >= primary_support + _margin:
             selected_layer = best_fallback_layer
             applied = True
             reason_code = "safer_layer_stronger"
@@ -4166,8 +4201,10 @@ def _routing_focus_adjustment(
     selected_layer: str,
     primary_layer: str,
     fallback_applied: bool,
+    focus_boost: int | None = None,
 ) -> int:
-    adjustment = ROUTING_FOCUS_BOOST if layer == selected_layer else 0
+    _boost = focus_boost if focus_boost is not None else ROUTING_FOCUS_BOOST
+    adjustment = _boost if layer == selected_layer else 0
     if fallback_applied and primary_layer in ROUTING_HIGHER_LEVEL_TYPES and layer == primary_layer and layer != selected_layer:
         adjustment -= ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY
     return adjustment

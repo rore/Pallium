@@ -14,7 +14,7 @@ from semantic.agent_conversation_memory_constraints import (
     reconcile_process_result_against_active_constraints,
 )
 from semantic.agent_conversation_memory_memory import _append_typed_constraint_memory_objects, _apply_direct_memory_envelopes, build_supersession_hints
-from semantic.agent_conversation_memory_routing import route_query_results
+from semantic.agent_conversation_memory_routing import RoutingOverrides, route_query_results
 from semantic.agent_conversation_memory_threads import _supports_thread_aggregation, build_consolidated_memory, build_pattern_memory, build_thread_summary
 
 
@@ -32,11 +32,13 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         prompt_variant: str,
         consolidation_config: ConsolidationPolicy | None = None,
         resolver_config: dict[str, object] | None = None,
+        routing_overrides: RoutingOverrides | None = None,
     ) -> None:
         self._provider = provider
         self._delegate = LLMAgentMemoryPlugin(provider=provider, prompt_variant=prompt_variant)
         self._consolidation_config = consolidation_config
         self._resolver_config = resolver_config
+        self._routing_overrides = routing_overrides
 
     @property
     def prompt_variant(self) -> str:
@@ -119,6 +121,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             include_trace=include_trace,
             debug_candidate_loader=debug_candidate_loader,
             resolver_config=self._resolver_config,
+            routing_overrides=self._routing_overrides,
         )
 
     def supports_thread_aggregation(self, source_item: SourceItem) -> bool:
