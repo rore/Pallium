@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections import Counter
 from dataclasses import replace
@@ -12,14 +13,16 @@ from sqlalchemy.exc import IntegrityError
 from capabilities.consolidation import ConsolidationCapability, ConsolidationRunGroupResult, ConsolidationRunResult
 from capabilities.thread_aggregation import build_thread_aggregate
 from core.contracts import IngestResult, ItemProcessingResult, PackageQueryOutcome, ProcessResult, QueryResult, build_source_item, resolve_query_filters
-from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
+from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, VECTOR_INDEX_TYPE, build_index_entry
 from core.models import MemoryObject, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace, Relation, SourceItem, utc_now
 from core.observability import IntegrationDebugLogger, OBSERVABILITY_METADATA_KEY, serialize_visibility_context
 from core.visibility import QueryVisibilityTrace, VisibilityContext, expand_visibility_context, visibility_context_is_visible, visibility_context_matches_exact, visibility_context_label
+from providers.embedding.base import EmbeddingProvider
 from providers.llm.base import LLMProviderError
 from retrieval.base import RetrievalProvider
 from semantic.base import ConsolidationSemanticPlugin, SemanticPlugin, ThreadAggregationSemanticPlugin
 from storage.base import QueueHealthSnapshot, RetentionLeaseLostError, RetentionRunStats, StorageProvider, ThreadProcessingLease, ThreadProcessingScope
+from storage.vector_index import VectorIndex
 
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
@@ -157,6 +160,8 @@ class PalliumService:
         retention_enabled: bool = False,
         retention_lease_seconds: int = 300,
         retention_batch_size: int = 200,
+        embedding_provider: EmbeddingProvider | None = None,
+        vector_index: VectorIndex | None = None,
     ) -> None:
         self._storage = storage
         self._retrieval = retrieval
@@ -167,6 +172,32 @@ class PalliumService:
         self._retention_enabled = retention_enabled
         self._retention_lease_seconds = retention_lease_seconds
         self._retention_batch_size = retention_batch_size
+        self._embedding_provider = embedding_provider
+        self._vector_index = vector_index
+        self._logger = logging.getLogger(__name__)
+
+    def _embed_vector_entries(self, result: ProcessResult) -> None:
+        """Embed vector index entries after SQLite commit.
+
+        Filters committed index entries for index_type="vector", embeds them
+        via the embedding provider, and adds them to the vector index.
+        If either embedding_provider or vector_index is None, this is a no-op.
+        If embedding fails, the error is logged and execution continues —
+        reconciliation catches gaps.
+        """
+        if self._embedding_provider is None or self._vector_index is None:
+            return
+        vector_entries = [e for e in result.index_entries if e.index_type == VECTOR_INDEX_TYPE]
+        if not vector_entries:
+            return
+        try:
+            texts = [entry.text_view for entry in vector_entries]
+            vectors = self._embedding_provider.embed(texts)
+            for entry, vector in zip(vector_entries, vectors):
+                self._vector_index.add(entry.id, vector)
+            self._vector_index.save()
+        except Exception:
+            self._logger.warning("Vector embedding failed after commit; reconciliation will catch gaps", exc_info=True)
 
     def ingest_item(
         self,
@@ -479,6 +510,7 @@ class PalliumService:
                 result=direct_result,
                 thread_rebuild_scope=thread_rebuild_scope,
             )
+            self._embed_vector_entries(direct_result)
             memory_provenance = _build_memory_provenance(
                 direct_result,
                 default_source_item_id=source_item.id,
@@ -960,6 +992,7 @@ class PalliumService:
                     worker_id=worker_id,
                     claimed_at=current_lease.processing_claimed_at,
                 )
+                self._embed_vector_entries(thread_result)
             else:
                 has_pending = self._storage.complete_thread_processing_scope(
                     scope_key=current_lease.scope_key,

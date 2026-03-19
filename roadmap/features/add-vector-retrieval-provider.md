@@ -1,7 +1,7 @@
 ---
 id: add-vector-retrieval-provider
 title: Add bounded vector retrieval for durable memory lanes
-status: queued
+status: in-progress
 priority: high
 commitment: committed
 milestone: Later
@@ -14,9 +14,12 @@ Add a bounded vector retrieval provider and semantic indexing for selected
 durable-memory text views so retrieval can cover paraphrase and conceptual
 similarity, not only exact lexical overlap.
 
-The first slice should treat vector retrieval as the semantic candidate-
-generation layer for durable memory lanes, not as a broad replacement for
-lexical search, policy lookup, or short-term local state.
+The first slice treats vector retrieval as a diagnostic and benchmarkable
+semantic candidate-generation layer for the durable memory lane, not as a
+broad replacement for lexical search, policy lookup, or short-term local
+state. Vector results appear in `/query/debug` trace and benchmark harnesses
+only. The production `/query` path remains lexical-only until the follow-on
+`add-hybrid-retrieval-fusion` feature activates fused results.
 
 ## Why
 
@@ -37,22 +40,36 @@ Recent research and roadmap shaping now point to a clearer position:
 ## In Scope
 
 - add a vector retrieval provider boundary
-- support semantic indexing for selected `SourceItem` and `MemoryObject` text
-  views inside the durable memory lane
-- limit the first retrieval targets to durable memory kinds such as:
-  - `finding`
-  - `episode`
-  - `summary`
-  - optional later `next_step`
-- make vector retrieval run only after hard scope and typed-lane narrowing
+- support semantic indexing for selected `MemoryObject` text views inside the
+  durable memory lane
+- first-slice retrieval targets limited to durable memory kinds:
+  - `decision`
+  - `investigation_outcome`
+  - `thread_summary`
+  - `task_checkpoint`
+  - `pattern_memory`
+  - `continuity_memory`
+- vector retrieval runs within scope and visibility filtering; typed-lane
+  narrowing happens in the package-owned routing layer afterward (same as
+  lexical retrieval today)
 - prefer retrieval-oriented canonical text fields where available rather than
   embedding every possible raw text view by default
 - record embedding provider/model/version metadata
 - keep vector retrieval optional and additive to the existing lexical baseline
 - preserve compatibility with local-first deployment and replaceable providers
 - keep vector-only diagnostics available before fusion is added
-- add replay or benchmark proof that vector retrieval improves paraphrase or
+- add benchmark proof that vector retrieval improves paraphrase or
   cross-thread recall in the durable memory lane
+
+## Deferred to Later Slices
+
+- `SourceItem` as a vector retrieval target (high volume, deferred to a later
+  slice after benchmark proof on `MemoryObject`-only targets)
+- fusion policy, composite retrieval, routing score integration (belongs in
+  `add-hybrid-retrieval-fusion`)
+- API-based embedding providers (first slice is local-only via fastembed)
+- secondary enrichment vector entries
+- `constraint_memory` as a vector retrieval target
 
 ## Out of Scope
 
@@ -67,20 +84,25 @@ Recent research and roadmap shaping now point to a clearer position:
 
 ## Done When
 
-1. Pallium can build and query semantic indexes for selected text views.
-2. Both `SourceItem` and `MemoryObject` remain valid vector retrieval targets
-   within the bounded durable memory lane.
-3. Embedding provider/model/version metadata is stored alongside semantic index entries.
-4. The vector retrieval path can be exercised independently for diagnostics before fusion is added.
-5. Vector retrieval is clearly bounded by scope and typed-lane filtering rather
-   than operating as an unconstrained semantic fallback.
-6. Replay or benchmark coverage demonstrates improved paraphrase or cross-thread
-   recall in the durable memory lane.
+1. Pallium can build and query semantic indexes for selected `MemoryObject`
+   text views.
+2. Embedding provider/model/version metadata is stored alongside semantic
+   index entries.
+3. The vector retrieval path can be exercised independently for diagnostics
+   via `/query/debug` trace before fusion is added.
+4. Vector retrieval is clearly bounded by scope and visibility filtering
+   rather than operating as an unconstrained semantic fallback.
+5. Benchmark coverage demonstrates improved paraphrase or cross-thread recall
+   in the durable memory lane compared to lexical-only retrieval.
+6. `SourceItem` vector targets remain architecturally valid but are deferred
+   to a later slice.
 
 ## Notes
 
 This slice adds semantic retrieval capability, but it does not replace the
-current structured-plus-lexical foundation.
+current structured-plus-lexical foundation. Vector results are diagnostic-only
+in this feature; production query-path benefit lands with
+`add-hybrid-retrieval-fusion`.
 
 Recommended sequencing:
 

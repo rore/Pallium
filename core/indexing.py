@@ -5,6 +5,7 @@ from core.models import IndexEntry
 
 BUILTIN_INDEX_PROVIDER_NAME = "builtin"
 BUILTIN_INDEX_PROVIDER_VERSION = "v1"
+VECTOR_INDEX_TYPE = "vector"
 SOURCE_ITEM_CONTENT_TEXT_VIEW = "source_item.content"
 
 
