@@ -40,3 +40,4 @@ tmp/
 .pallium-schema-init.lock
 
 .claude/worktrees/
+.claude/settings.local.json
