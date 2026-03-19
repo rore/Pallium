@@ -1411,6 +1411,34 @@ def _query_family_label(intent: str, *, runtime_context: QueryRuntimeContext | N
         return "broad_recurring_recall"
     return intent
 
+def _continuity_compatibility_adjustment(
+    *,
+    intent: str,
+    layer: str,
+    topic_overlap_tokens: list[str],
+    same_thread: bool,
+    same_container: bool,
+) -> int:
+    """Scoring adjustment for answer_continuity + continuity_memory when topic signal is absent.
+
+    When a query carries no domain-token overlap with a continuity_memory candidate
+    (topic_overlap_tokens is empty), thread and container affinity become the only
+    available structural discriminators.  A candidate from the same thread is preferred;
+    one from a different thread and container is mildly penalised so that an unrelated
+    carry-forward does not silently win over a structurally compatible one.
+
+    This is intentionally moderate: cross-thread carry-forward is a legitimate use case
+    when both candidates have no affinity, so the adjustment must not act as a hard filter.
+    """
+    if intent != "answer_continuity" or layer != "continuity_memory" or topic_overlap_tokens:
+        return 0
+    if same_thread:
+        return 60
+    if same_container:
+        return 10
+    return -60
+
+
 def _score_routed_candidate(
     item: QueryResultItem,
     intent: str,
@@ -1426,6 +1454,8 @@ def _score_routed_candidate(
     content_overlap_tokens = [token for token in overlap_tokens if token not in ROUTING_META_QUERY_TOKENS]
     query_topic_tokens = _query_topic_tokens(query_tokens)
     topic_overlap_tokens = [token for token in content_overlap_tokens if token in query_topic_tokens]
+    same_thread = _candidate_matches_thread(item, query_filters)
+    same_container = _candidate_matches_container(item, query_filters)
     evidence_shape_score = _candidate_evidence_shape_score(
         item,
         layer=layer,
@@ -1439,6 +1469,13 @@ def _score_routed_candidate(
         + evidence_shape_score
         + _routing_overlap_adjustment(layer, intent, content_overlap_tokens)
         + _topic_alignment_adjustment(layer=layer, query_topic_tokens=query_topic_tokens, topic_overlap_tokens=topic_overlap_tokens)
+        + _continuity_compatibility_adjustment(
+            intent=intent,
+            layer=layer,
+            topic_overlap_tokens=topic_overlap_tokens,
+            same_thread=same_thread,
+            same_container=same_container,
+        )
     )
     support_grade = _routing_support_grade(evidence_shape_score)
     return {
@@ -1458,8 +1495,8 @@ def _score_routed_candidate(
         "content_overlap_tokens": content_overlap_tokens,
         "topic_overlap_tokens": topic_overlap_tokens,
         "evidence_count": len(item.evidence),
-        "same_thread": _candidate_matches_thread(item, query_filters),
-        "same_container": _candidate_matches_container(item, query_filters),
+        "same_thread": same_thread,
+        "same_container": same_container,
         "freshness_timestamp_value": _candidate_freshness_timestamp(item),
         "freshness_timestamp": None,
         "packaging_adjustment": 0,
@@ -1984,6 +2021,21 @@ def _query_topic_tokens(query_tokens: tuple[str, ...]) -> set[str]:
         for token in query_tokens
         if token not in ROUTING_META_QUERY_TOKENS and token not in ROUTING_TOPIC_LOW_SIGNAL_TOKENS
     }
+
+def is_query_topic_signal_empty(query_tokens: Iterable[str]) -> bool:
+    """Return True if none of the query tokens carry topic signal.
+
+    A token carries topic signal when it is neither a generic meta-query word
+    (ROUTING_META_QUERY_TOKENS) nor a structural low-signal routing word
+    (ROUTING_TOPIC_LOW_SIGNAL_TOKENS).  Used by benchmark runners to classify
+    whether a query was generic-topic-free, which matters for diagnosing
+    answer_continuity contamination failures.
+    """
+    return not any(
+        t for t in query_tokens
+        if t not in ROUTING_META_QUERY_TOKENS and t not in ROUTING_TOPIC_LOW_SIGNAL_TOKENS
+    )
+
 
 def _topic_alignment_adjustment(*, layer: str, query_topic_tokens: set[str], topic_overlap_tokens: list[str]) -> int:
     if not query_topic_tokens:
@@ -3714,6 +3766,31 @@ def _select_final_candidates(
         summary["mode"] = "compatible_work_resumption"
     else:
         summary["mode"] = "task_checkpoint_only"
+
+    # Fill any remaining slots with the next-best non-suppressed candidates.
+    # The signal-based source_evidence pass may not exhaust the requested limit
+    # (e.g. when few source_evidence items carry a matching signal type).  Lower-
+    # level memory (decision, investigation_outcome) is useful supporting context
+    # and should fill those slots rather than leaving them empty.
+    # Apply the same locality guard as the adjacent-evidence pass above so that
+    # only same-thread / same-container derived memory is included.
+    if len(selected_candidates) < requested_limit:
+        CHECKPOINT_FILL_ALLOWED_LAYERS = {"decision", "investigation_outcome", "lower_level_memory"}
+        for candidate in ranked_candidates[1:]:
+            if len(selected_candidates) >= requested_limit:
+                break
+            candidate_result_id = _routing_result_id(candidate["item"])
+            if candidate_result_id in used_result_ids:
+                continue
+            if candidate.get("suppression_reason_code"):
+                continue
+            if candidate["layer"] not in CHECKPOINT_FILL_ALLOWED_LAYERS:
+                continue
+            if not _candidate_locality_compatible_for_packaging(top_candidate["item"], candidate["item"], query_filters):
+                continue
+            selected_candidates.append(candidate)
+            used_result_ids.add(candidate_result_id)
+
     return selected_candidates, summary
 
 def _select_compatible_recall_candidates(
@@ -4015,6 +4092,7 @@ def _select_routing_focus(
             reason = "A safer layer had materially stronger candidate support than the higher-level preference."
     elif (
         primary_layer in {"source_evidence", "lower_level_memory"}
+        and intent != "evidence_trace"
         and best_fallback_layer is not None
         and best_fallback_summary is not None
         and primary_grade == "weak"

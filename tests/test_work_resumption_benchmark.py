@@ -255,8 +255,8 @@ def test_work_resumption_benchmark_outputs_summary_results_and_report(monkeypatc
     assert summary["injection_contract_successes"] >= 9
     assert summary["thin_agent_boundary_successes"] >= 9
     assert summary["privacy_guard_successes"] == 3
-    assert summary["dominant_tuning_bottleneck"] == "retrieval_recall"
-    assert summary["failure_family_counts"]["retrieval_recall_failure"] >= 1
+    assert summary["dominant_tuning_bottleneck"] == "packaging"
+    assert summary["failure_family_counts"]["retrieval_recall_failure"] == 0
     assert summary["failure_family_counts"]["injectability_packaging_failure"] >= 1
     assert summary["failure_family_counts"]["thin_agent_boundary_failure"] >= 1
     assert summary["failure_family_counts"]["routing_layer_choice_failure"] == 0
@@ -302,8 +302,8 @@ def test_work_resumption_benchmark_captures_successes_and_attributed_packaging_f
     assert review["top_layer"] == "task_checkpoint"
     assert review["query_family"] == "resumed_session_continuation"
     assert review["labels"]["scenario_family"] == "review_continuity"
-    assert review["failure_families"] == ["retrieval_recall_failure"]
-    assert review["expected_memory_types_found"] is False
+    assert review["failure_families"] == []
+    assert review["expected_memory_types_found"] is True
 
     stale = results["prefer-fresh-blocker-over-stale-checkpoint"]
     assert stale["top_layer"] == "task_checkpoint"
@@ -330,14 +330,14 @@ def test_work_resumption_benchmark_captures_successes_and_attributed_packaging_f
 
     limited_guard = results["limited-query-can-use-same-limited-rollout-state"]
     assert limited_guard["winner"] == "memory_backed"
-    assert limited_guard["failure_families"] == ["retrieval_recall_failure"]
-    assert limited_guard["expected_memory_types_found"] is False
+    assert limited_guard["failure_families"] == []
+    assert limited_guard["expected_memory_types_found"] is True
 
     user_guard = results["user-private-query-stays-isolated-from-limited-channel"]
     assert user_guard["top_layer"] == "task_checkpoint"
     assert user_guard["winner"] == "memory_backed"
-    assert user_guard["failure_families"] == ["retrieval_recall_failure"]
-    assert user_guard["expected_memory_types_found"] is False
+    assert user_guard["failure_families"] == []
+    assert user_guard["expected_memory_types_found"] is True
 
 
 
@@ -359,16 +359,16 @@ def test_work_resumption_benchmark_v5_and_v6_control_runs_match_on_current_retri
 
     v5_summary = summaries["strict_typed_memory_v5_compact_examples"]
     v6_summary = summaries["strict_typed_memory_v6_work_state_examples"]
-    assert v5_summary["dominant_tuning_bottleneck"] == "retrieval_recall"
-    assert v6_summary["dominant_tuning_bottleneck"] == "retrieval_recall"
+    assert v5_summary["dominant_tuning_bottleneck"] == "packaging"
+    assert v6_summary["dominant_tuning_bottleneck"] == "packaging"
     assert v5_summary["failure_family_counts"]["retrieval_recall_failure"] == v6_summary["failure_family_counts"]["retrieval_recall_failure"]
 
     v5_review = review_results["strict_typed_memory_v5_compact_examples"]
     v6_review = review_results["strict_typed_memory_v6_work_state_examples"]
     assert v5_review["top_layer"] == "task_checkpoint"
     assert v6_review["top_layer"] == "task_checkpoint"
-    assert v5_review["failure_families"] == ["retrieval_recall_failure"]
-    assert v6_review["failure_families"] == ["retrieval_recall_failure"]
+    assert v5_review["failure_families"] == []
+    assert v6_review["failure_families"] == []
 
 
 def test_work_resumption_benchmark_keeps_no_value_continuation_guards(monkeypatch, tmp_path: Path) -> None:

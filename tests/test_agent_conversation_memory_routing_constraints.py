@@ -1359,3 +1359,399 @@ def test_workstream_anchor_prefilter_excludes_same_surface_off_topic_constraint(
         and item['reason_code'] == 'anchor_conflict'
         for item in anchor_prefilter.get('excluded_candidates', [])
     )
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: evidence_trace preserves source_evidence under weak lexical support
+# ---------------------------------------------------------------------------
+
+def test_evidence_trace_preserves_source_evidence_under_weak_support() -> None:
+    """evidence_trace must not fall back to lower_level_memory when source_evidence
+    candidates exist but have weak query overlap.  The routing contract requires
+    that raw source preference is preserved unless source_evidence is absent."""
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-evidence-weak',
+        session_ref='session:evidence-weak',
+    )
+    # source_hit has low lexical score (weak overlap); decision has high lexical score
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='source-evidence-weak-1',
+                source_type='assistant_artifact',
+                source_id='evidence-weak-artifact',
+                excerpt='Partial progress: refreshed 87 catalog records before the batch token expired.',
+                occurred_at=datetime(2026, 3, 11, 10, 0, tzinfo=timezone.utc),
+                role='assistant',
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-evidence-weak',
+                artifact_kind='tool_use_summary',
+                score=3,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-evidence-weak-1',
+                        source_type='assistant_artifact',
+                        source_id='evidence-weak-artifact',
+                        occurred_at=datetime(2026, 3, 11, 10, 0, tzinfo=timezone.utc),
+                        role='assistant',
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-evidence-weak',
+                        artifact_kind='tool_use_summary',
+                    )
+                ],
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-evidence-weak-1',
+                type='decision',
+                payload={
+                    'summary': 'Decided to refresh the batch token and retry the catalog sync from batch 88.',
+                    'decision_text': 'Refresh the batch token and retry the catalog sync from batch 88.',
+                    'evidence': ['Batch token expired after refreshing 87 catalog records.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T10:05:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 5, tzinfo=timezone.utc),
+                score=10,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-evidence-weak',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='Show me the raw output from the catalog sync run',
+            query_tokens=('show', 'me', 'raw', 'output', 'catalog', 'sync', 'run'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='Show me the raw output from the catalog sync run',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    assert outcome.trace.routing['selected_layer'] == 'source_evidence', (
+        f"expected source_evidence but got {outcome.trace.routing['selected_layer']!r}; "
+        "evidence_trace must not fall back to lower_level_memory under weak support"
+    )
+
+
+def test_evidence_trace_allows_fallback_when_source_evidence_absent() -> None:
+    """When no source_evidence candidates are present, evidence_trace must still be
+    allowed to fall back to derived memory (lower_level_memory / decision)."""
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-evidence-absent',
+        session_ref='session:evidence-absent',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-evidence-absent-1',
+                type='decision',
+                payload={
+                    'summary': 'Decided to retry the catalog sync from batch 88 after refreshing the token.',
+                    'decision_text': 'Retry the catalog sync from batch 88 after refreshing the token.',
+                    'evidence': ['Token refreshed successfully.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T11:00:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 11, 0, tzinfo=timezone.utc),
+                score=12,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-evidence-absent',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='Show me the raw output from the catalog sync run',
+            query_tokens=('show', 'me', 'raw', 'output', 'catalog', 'sync', 'run'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='Show me the raw output from the catalog sync run',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    # No source_evidence in retrieval — fallback to lower_level_memory is valid
+    assert outcome.trace.routing['selected_layer'] != 'source_evidence', (
+        "source_evidence was absent from retrieval results; fallback should be permitted"
+    )
+    assert len(outcome.results) > 0, "at least one derived memory result expected when source_evidence is absent"
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: answer_continuity cross-thread contamination — thread affinity scoring
+# ---------------------------------------------------------------------------
+
+def test_answer_continuity_prefers_same_thread_continuity_when_no_topic_overlap() -> None:
+    """When an answer_continuity query has no topic signal and two continuity_memory
+    candidates are present, the one from the same thread must score higher.
+
+    The query uses "already answered" to trigger answer_continuity intent.  The
+    query tokens ('already','answered','this','before') do not appear in either
+    candidate's payload text, so topic_overlap_tokens is empty for both — the
+    continuity_compatibility_adjustment fires and thread affinity decides.
+    """
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    # query_filters.thread_ref matches thread-b (the second candidate)
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-b',
+        session_ref='session:continuity-thread-pref',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            # Slightly higher lexical score but wrong thread — gap = 5*10 = 50.
+            # Adjustment delta for correct-thread: +60 (same_thread) vs +10 (same_container) = net +50.
+            # Net effect: correct-thread wins by a small margin.
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='continuity-wrong-thread',
+                type='continuity_memory',
+                payload={
+                    'summary': 'Wallet reserve snapshot reconciled for WAL-102.',
+                    'answer_text': 'WAL-102 and WAL-208 are reconciled.',
+                    'evidence': ['Reserve snapshot done.'],
+                    'freshness_signal': '2026-03-11T12:35:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 12, 35, tzinfo=timezone.utc),
+                score=15,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-a',  # wrong thread
+            ),
+            # Lower lexical score but correct thread
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='continuity-correct-thread',
+                type='continuity_memory',
+                payload={
+                    'summary': 'Catalog sync token expired at batch 313.',
+                    'answer_text': 'Token expired at batch 313.',
+                    'evidence': ['Token expired.'],
+                    'freshness_signal': '2026-03-11T10:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=10,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-b',  # same thread as query
+            ),
+        ],
+        trace=QueryTrace(
+            # "already answered" cue triggers answer_continuity intent.
+            # Tokens ('already','answered','this','before') do not appear in
+            # either candidate payload, so topic_overlap_tokens will be empty.
+            query_text='You already answered this before.',
+            query_tokens=('already', 'answered', 'this', 'before'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='You already answered this before.',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    returned_ids = [result.memory_object_id for result in outcome.results if result.result_kind == 'memory_hit']
+    assert returned_ids, "expected at least one continuity_memory result"
+    assert returned_ids[0] == 'continuity-correct-thread', (
+        f"expected same-thread candidate first but got {returned_ids[0]!r}; "
+        "thread affinity must override higher lexical score when topic signal is absent"
+    )
+
+
+def test_answer_continuity_does_not_suppress_cross_thread_continuity_when_both_unanchored() -> None:
+    """When both continuity_memory candidates have no thread or container affinity,
+    neither should be suppressed — the higher lexical score must win and both must
+    be returned (no hard filter from the compatibility adjustment)."""
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-new',
+        session_ref='session:continuity-both-unanchored',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='continuity-unanchored-high',
+                type='continuity_memory',
+                payload={
+                    'summary': 'Catalog sync token expired at batch 313.',
+                    'answer_text': 'Token expired at batch 313.',
+                    'evidence': ['Token expired.'],
+                    'freshness_signal': '2026-03-11T10:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=16,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-x',  # neither thread matches
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='continuity-unanchored-low',
+                type='continuity_memory',
+                payload={
+                    'summary': 'Wallet reserve snapshot reconciled for WAL-102.',
+                    'answer_text': 'WAL-102 and WAL-208 are reconciled.',
+                    'evidence': ['Reserve snapshot done.'],
+                    'freshness_signal': '2026-03-11T12:35:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 12, 35, tzinfo=timezone.utc),
+                score=14,
+                evidence=[],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-y',  # neither thread matches
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='You already answered this before.',
+            query_tokens=('already', 'answered', 'this', 'before'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='You already answered this before.',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    memory_results = [r for r in outcome.results if r.result_kind == 'memory_hit']
+    returned_ids = [r.memory_object_id for r in memory_results]
+    # Both cross-thread candidates must survive — no hard suppression
+    assert 'continuity-unanchored-high' in returned_ids, (
+        "higher-scored cross-thread continuity candidate must not be suppressed"
+    )
+    assert 'continuity-unanchored-low' in returned_ids, (
+        "lower-scored cross-thread continuity candidate must not be suppressed when no affinity exists"
+    )
+    # Higher lexical score wins when both have equal (no) affinity
+    assert returned_ids[0] == 'continuity-unanchored-high', (
+        f"expected higher-lexical-score candidate first but got {returned_ids[0]!r}"
+    )
+
+
+def test_answer_continuity_same_container_alone_does_not_override_wrong_candidate() -> None:
+    """Container affinity alone must not promote a cross-thread candidate over a
+    same-thread candidate when both share the same container."""
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-c',
+        session_ref='session:continuity-container-only',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            # Higher lexical score, same container, wrong thread.
+            # Adjustment: same_container only → +10.  Same-thread candidate gets +60.
+            # Score gap = 4*10 = 40, adjustment gap = 50 → same-thread wins.
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='continuity-same-container-wrong-thread',
+                type='continuity_memory',
+                payload={
+                    'summary': 'Wallet reserve snapshot reconciled for WAL-102.',
+                    'answer_text': 'WAL-102 and WAL-208 are reconciled.',
+                    'evidence': ['Reserve snapshot done.'],
+                    'freshness_signal': '2026-03-11T12:35:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 12, 35, tzinfo=timezone.utc),
+                score=14,
+                evidence=[],
+                container_ref='chat:library-help',  # same container
+                thread_ref='chat:library-help:thread-a',  # wrong thread
+            ),
+            # Lower lexical score, same container, same thread
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='continuity-same-thread',
+                type='continuity_memory',
+                payload={
+                    'summary': 'Catalog sync token expired at batch 313.',
+                    'answer_text': 'Token expired at batch 313.',
+                    'evidence': ['Token expired.'],
+                    'freshness_signal': '2026-03-11T10:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=10,
+                evidence=[],
+                container_ref='chat:library-help',  # same container
+                thread_ref='chat:library-help:thread-c',  # same thread as query
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='You already answered this before.',
+            query_tokens=('already', 'answered', 'this', 'before'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='You already answered this before.',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    returned_ids = [r.memory_object_id for r in outcome.results if r.result_kind == 'memory_hit']
+    assert returned_ids, "expected at least one continuity_memory result"
+    assert returned_ids[0] == 'continuity-same-thread', (
+        f"expected same-thread candidate first but got {returned_ids[0]!r}; "
+        "same-container-only affinity must not override thread affinity"
+    )

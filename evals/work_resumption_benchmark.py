@@ -26,6 +26,7 @@ from evals.continuity_common import (
     query_family_from_intent,
     result_layer,
 )
+from semantic.agent_conversation_memory_routing import is_query_topic_signal_empty
 from providers.llm.base import LLMProvider
 
 
@@ -215,7 +216,11 @@ def _run_scenario(
     expected_memory_types_found = all(item in returned_memory_types for item in expected_memory_types)
     top_result = query_payload["results"][0] if query_payload["results"] else None
     top_layer = result_layer(top_result)
+    available_layers = sorted({result_layer(item) for item in query_payload["results"]})
     expected_primary_layer = scenario.get("expected_primary_layer")
+    expected_layer_in_results = (expected_primary_layer in available_layers) if expected_primary_layer else False
+    raw_query_tokens = tuple(((query_payload.get("trace") or {}).get("query_tokens")) or [])
+    query_topic_tokens_empty = is_query_topic_signal_empty(raw_query_tokens)
     acceptable_layers = list(scenario.get("acceptable_layers", []))
     top_layer_match = not acceptable_layers or top_layer in acceptable_layers
     primary_layer_match = expected_primary_layer is None or top_layer == expected_primary_layer
@@ -374,6 +379,8 @@ def _run_scenario(
         "thin_agent_boundary_success": thin_agent_boundary_success,
         "consolidation_strategy": consolidation_strategy,
         "consolidation_run": _serialize_consolidation_result(consolidation_result),
+        "expected_layer_in_results": expected_layer_in_results,
+        "query_topic_tokens_empty": query_topic_tokens_empty,
     }
 def _generate_continuation(
     *,
