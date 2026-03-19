@@ -239,6 +239,7 @@ class RetrievalTraceHit:
     matched_tokens: tuple[str, ...]
     provider_name: str | None = None
     provider_version: str | None = None
+    cosine_similarity: float | None = None
 
 
 @dataclass(frozen=True)
