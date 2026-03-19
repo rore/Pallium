@@ -204,6 +204,7 @@ class QueryResultItem:
     source_ref: str | None = None
     artifact_kind: str | None = None
     visibility_context: VisibilityContext | None = None
+    retrieval_source: str | None = None
 
     def __post_init__(self) -> None:
         if self.result_id is None:
@@ -253,6 +254,30 @@ class RetrievalStageTrace:
 
 
 @dataclass(frozen=True)
+class FusionTraceHit:
+    result_id: str
+    rrf_score: float
+    rrf_rank: int
+    fused_score: int
+    lexical_rank: int | None = None
+    vector_rank: int | None = None
+    retrieval_source: str = "lexical"
+
+
+@dataclass(frozen=True)
+class FusionStageTrace:
+    stage_name: str = "rrf_fusion"
+    k: int = 60
+    rrf_score_scale: int = 600
+    lexical_candidate_count: int = 0
+    vector_candidate_count: int = 0
+    fused_candidate_count: int = 0
+    both_sources_count: int = 0
+    selected_count: int = 0
+    hits: tuple[FusionTraceHit, ...] = ()
+
+
+@dataclass(frozen=True)
 class QueryTrace:
     query_text: str
     query_tokens: tuple[str, ...]
@@ -265,3 +290,4 @@ class QueryTrace:
     routing: dict[str, Any] | None = None
     visibility: QueryVisibilityTrace | None = None
     result_summary: dict[str, Any] | None = None
+    fusion_trace: FusionStageTrace | None = None
