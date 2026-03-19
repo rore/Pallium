@@ -1,0 +1,402 @@
+[
+  {
+    "scenario_id": "vector-abstract-paraphrase-task-checkpoint",
+    "scenario_family": "abstract_paraphrase_recall",
+    "description": "An abstract meta-language query with zero lexical overlap should find a task_checkpoint via vector similarity, while lexical retrieval misses entirely.",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "vr-thread-1-msg-1",
+        "content_type": "text/plain",
+        "content": "Can you check why the catalog sync scheduled job keeps failing?",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-vr-001",
+        "session_ref": "agent-session-vr-001",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://vr/thread-1-msg-1",
+        "occurred_at": "2026-03-12T08:00:00Z",
+        "metadata": {
+          "topic": "catalog_sync_failure"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "vr-thread-1-artifact-1",
+        "content_type": "text/plain",
+        "content": "The catalog sync investigation found that the scheduled job was failing because the API token used by the nightly batch process had expired. The token rotation policy was not applied to service accounts, so the sync stalled after the 90-day credential window closed.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-vr-001",
+        "session_ref": "agent-session-vr-001",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://vr/thread-1-artifact-1",
+        "occurred_at": "2026-03-12T08:01:00Z",
+        "metadata": {
+          "topic": "catalog_sync_failure"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "vr-thread-1-artifact-2",
+        "content_type": "text/plain",
+        "content": "Current status: refreshed the service account token and restarted the sync job. 412 of 580 records processed so far. Remaining batches should complete by tomorrow morning.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-vr-001",
+        "session_ref": "agent-session-vr-001",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://vr/thread-1-artifact-2",
+        "occurred_at": "2026-03-12T08:02:00Z",
+        "metadata": {
+          "topic": "catalog_sync_failure"
+        }
+      }
+    ],
+    "memory_objects": [
+      {
+        "memory_id": "mo-vr-001",
+        "type": "task_checkpoint",
+        "payload": {
+          "summary_text": "Catalog sync scheduled job was failing because the nightly batch API token expired after 90-day credential window. Token rotation policy was not applied to service accounts. Refreshed token and restarted sync; 412 of 580 records processed.",
+          "current_state": "in_progress",
+          "next_step_text": "Monitor remaining batch completion expected by tomorrow morning"
+        },
+        "text_views": [
+          "Catalog sync scheduled job was failing because the nightly batch API token expired after 90-day credential window. Token rotation policy was not applied to service accounts. Refreshed token and restarted sync; 412 of 580 records processed."
+        ]
+      }
+    ],
+    "current_query": {
+      "text": "Where did things end up with that?",
+      "limit": 4,
+      "container_ref": "chat:library-help",
+      "visibility_context": {"kind": "public"}
+    },
+    "expected_vector_recall": true,
+    "expected_lexical_recall": false,
+    "expected_memory_types": ["task_checkpoint"]
+  },
+  {
+    "scenario_id": "vector-abstract-paraphrase-investigation-outcome",
+    "scenario_family": "abstract_paraphrase_recall",
+    "description": "An abstract follow-up query should find an investigation_outcome via vector similarity when lexical tokens have zero overlap with the stored memory content.",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "vr-thread-2-msg-1",
+        "content_type": "text/plain",
+        "content": "We are seeing duplicate hold entries in the reservation queue after the delayed catalog sync runs. Can you investigate?",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-vr-002",
+        "session_ref": "agent-session-vr-002",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://vr/thread-2-msg-1",
+        "occurred_at": "2026-03-12T09:00:00Z",
+        "metadata": {
+          "topic": "duplicate_holds"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "vr-thread-2-artifact-1",
+        "content_type": "text/plain",
+        "content": "Investigation found that arrival-time ordering in the reservation queue reused stale hold state when the delayed catalog sync ran. The root cause is that the hold deduplication check uses item arrival time instead of canonical event time, so delayed items bypass the uniqueness window.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-vr-002",
+        "session_ref": "agent-session-vr-002",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://vr/thread-2-artifact-1",
+        "occurred_at": "2026-03-12T09:01:00Z",
+        "metadata": {
+          "topic": "duplicate_holds"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "vr-thread-2-artifact-2",
+        "content_type": "text/plain",
+        "content": "Recommendation: switch the deduplication check to use canonical event time from the source catalog record rather than the arrival timestamp of the sync batch.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-vr-002",
+        "session_ref": "agent-session-vr-002",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://vr/thread-2-artifact-2",
+        "occurred_at": "2026-03-12T09:02:00Z",
+        "metadata": {
+          "topic": "duplicate_holds"
+        }
+      }
+    ],
+    "memory_objects": [
+      {
+        "memory_id": "mo-vr-002",
+        "type": "investigation_outcome",
+        "payload": {
+          "summary_text": "Duplicate holds caused by arrival-time ordering reusing stale hold state during delayed catalog sync. Root cause: hold deduplication uses arrival time instead of canonical event time, so delayed items bypass the uniqueness window. Fix: switch deduplication to canonical event time.",
+          "decision_evidence_text": "Investigation found that arrival-time ordering in the reservation queue reused stale hold state when the delayed catalog sync ran."
+        },
+        "text_views": [
+          "Duplicate holds caused by arrival-time ordering reusing stale hold state during delayed catalog sync. Root cause: hold deduplication uses arrival time instead of canonical event time, so delayed items bypass the uniqueness window. Fix: switch deduplication to canonical event time."
+        ]
+      }
+    ],
+    "current_query": {
+      "text": "How did it turn out?",
+      "limit": 4,
+      "container_ref": "chat:library-help",
+      "visibility_context": {"kind": "public"}
+    },
+    "expected_vector_recall": true,
+    "expected_lexical_recall": false,
+    "expected_memory_types": ["investigation_outcome"]
+  },
+  {
+    "scenario_id": "vector-cross-thread-pattern-memory",
+    "scenario_family": "cross_thread_conceptual_recall",
+    "description": "A broad conceptual question using different vocabulary should find a pattern_memory derived from multiple threads via vector similarity, while lexical tokens have insufficient overlap.",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "vr-thread-3a-msg-1",
+        "content_type": "text/plain",
+        "content": "The hold queue is backing up during peak hours. What is happening?",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-vr-003a",
+        "session_ref": "agent-session-vr-003a",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://vr/thread-3a-msg-1",
+        "occurred_at": "2026-03-12T10:00:00Z",
+        "metadata": {
+          "topic": "hold_queue_performance"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "vr-thread-3a-artifact-1",
+        "content_type": "text/plain",
+        "content": "The hold queue bottleneck traces back to the catalog sync batch size. When the nightly sync delivers more than 200 records at once, the reservation validator falls behind and holds start queuing.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-vr-003a",
+        "session_ref": "agent-session-vr-003a",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://vr/thread-3a-artifact-1",
+        "occurred_at": "2026-03-12T10:01:00Z",
+        "metadata": {
+          "topic": "hold_queue_performance"
+        }
+      },
+      {
+        "source_type": "chat_message",
+        "source_id": "vr-thread-3b-msg-1",
+        "content_type": "text/plain",
+        "content": "The reservation notification emails are delayed again after last night's sync.",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-vr-003b",
+        "session_ref": "agent-session-vr-003b",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://vr/thread-3b-msg-1",
+        "occurred_at": "2026-03-13T08:00:00Z",
+        "metadata": {
+          "topic": "notification_delay"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "vr-thread-3b-artifact-1",
+        "content_type": "text/plain",
+        "content": "The notification delay is caused by the same catalog sync batch size issue. Large sync batches saturate the reservation validator, which blocks the downstream notification dispatcher until the backlog clears.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-vr-003b",
+        "session_ref": "agent-session-vr-003b",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://vr/thread-3b-artifact-1",
+        "occurred_at": "2026-03-13T08:01:00Z",
+        "metadata": {
+          "topic": "notification_delay"
+        }
+      }
+    ],
+    "memory_objects": [
+      {
+        "memory_id": "mo-vr-003",
+        "type": "pattern_memory",
+        "payload": {
+          "summary_text": "Recurring pattern: large catalog sync batches (200+ records) saturate the reservation validator, causing downstream hold queue backups and notification delays. Observed across hold queue performance and notification delay investigations. Reducing batch size or adding validator concurrency would address both symptoms."
+        },
+        "text_views": [
+          "Recurring pattern: large catalog sync batches (200+ records) saturate the reservation validator, causing downstream hold queue backups and notification delays. Observed across hold queue performance and notification delay investigations. Reducing batch size or adding validator concurrency would address both symptoms."
+        ]
+      }
+    ],
+    "current_query": {
+      "text": "Any takeaways worth noting?",
+      "limit": 4,
+      "container_ref": "chat:library-help",
+      "visibility_context": {"kind": "public"}
+    },
+    "expected_vector_recall": true,
+    "expected_lexical_recall": false,
+    "expected_memory_types": ["pattern_memory"]
+  },
+  {
+    "scenario_id": "vector-paraphrase-decision",
+    "scenario_family": "paraphrase_recall",
+    "description": "A paraphrased question about a prior decision should find the decision memory via vector similarity when the query uses entirely different vocabulary than the stored content.",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "vr-thread-4-msg-1",
+        "content_type": "text/plain",
+        "content": "We need to decide how to handle reservation ordering when catalog sync is delayed.",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-vr-004",
+        "session_ref": "agent-session-vr-004",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://vr/thread-4-msg-1",
+        "occurred_at": "2026-03-12T11:00:00Z",
+        "metadata": {
+          "topic": "reservation_ordering_decision"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "vr-thread-4-artifact-1",
+        "content_type": "text/plain",
+        "content": "After evaluating three options (arrival-time ordering, canonical event-time ordering, and hybrid priority ordering), the recommendation is to use canonical event-time ordering. This avoids the stale-hold problem entirely and matches how the upstream catalog system sequences records.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-vr-004",
+        "session_ref": "agent-session-vr-004",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://vr/thread-4-artifact-1",
+        "occurred_at": "2026-03-12T11:01:00Z",
+        "metadata": {
+          "topic": "reservation_ordering_decision"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "vr-thread-4-artifact-2",
+        "content_type": "text/plain",
+        "content": "Decision confirmed: adopt canonical event-time ordering for reservation queue processing. Migration plan: update the reservation validator to read event_time from the catalog record instead of arrival_time, then backfill existing holds.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-vr-004",
+        "session_ref": "agent-session-vr-004",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://vr/thread-4-artifact-2",
+        "occurred_at": "2026-03-12T11:02:00Z",
+        "metadata": {
+          "topic": "reservation_ordering_decision"
+        }
+      }
+    ],
+    "memory_objects": [
+      {
+        "memory_id": "mo-vr-004",
+        "type": "decision",
+        "payload": {
+          "summary_text": "Adopted canonical event-time ordering for reservation queue processing instead of arrival-time ordering. This avoids the stale-hold problem and matches upstream catalog sequencing. Migration: update reservation validator to read event_time from catalog record, then backfill existing holds.",
+          "decision_evidence_text": "After evaluating three options (arrival-time, canonical event-time, hybrid priority), canonical event-time was chosen because it avoids the stale-hold problem entirely."
+        },
+        "text_views": [
+          "Adopted canonical event-time ordering for reservation queue processing instead of arrival-time ordering. This avoids the stale-hold problem and matches upstream catalog sequencing. Migration: update reservation validator to read event_time from catalog record, then backfill existing holds."
+        ]
+      }
+    ],
+    "current_query": {
+      "text": "What approach did we settle on?",
+      "limit": 4,
+      "container_ref": "chat:library-help",
+      "visibility_context": {"kind": "public"}
+    },
+    "expected_vector_recall": true,
+    "expected_lexical_recall": false,
+    "expected_memory_types": ["decision"]
+  },
+  {
+    "scenario_id": "vector-abstract-significance-recall",
+    "scenario_family": "abstract_paraphrase_recall",
+    "description": "An abstract significance query (what actually mattered?) should find investigation_outcome via vector similarity when query tokens have no domain overlap with stored content.",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "vr-thread-5-msg-1",
+        "content_type": "text/plain",
+        "content": "The branch checkout terminal is intermittently failing to process returns. Please look into it.",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-vr-005",
+        "session_ref": "agent-session-vr-005",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://vr/thread-5-msg-1",
+        "occurred_at": "2026-03-14T08:00:00Z",
+        "metadata": {
+          "topic": "checkout_terminal_returns"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "vr-thread-5-artifact-1",
+        "content_type": "text/plain",
+        "content": "Investigation complete. The intermittent return failures trace to a race condition in the hold release pipeline. When two patrons return items within the same second, the hold release handler processes both against the same reservation snapshot, and the second release silently fails because the snapshot is already consumed.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-vr-005",
+        "session_ref": "agent-session-vr-005",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://vr/thread-5-artifact-1",
+        "occurred_at": "2026-03-14T08:01:00Z",
+        "metadata": {
+          "topic": "checkout_terminal_returns"
+        }
+      }
+    ],
+    "memory_objects": [
+      {
+        "memory_id": "mo-vr-005",
+        "type": "investigation_outcome",
+        "payload": {
+          "summary_text": "Intermittent return failures at the checkout terminal caused by a race condition in the hold release pipeline. When two patrons return items within the same second, the hold release handler processes both against the same reservation snapshot and the second release silently fails.",
+          "decision_evidence_text": "The intermittent return failures trace to a race condition in the hold release pipeline."
+        },
+        "text_views": [
+          "Intermittent return failures at the checkout terminal caused by a race condition in the hold release pipeline. When two patrons return items within the same second, the hold release handler processes both against the same reservation snapshot and the second release silently fails."
+        ]
+      }
+    ],
+    "current_query": {
+      "text": "What actually mattered there?",
+      "limit": 4,
+      "container_ref": "chat:library-help",
+      "visibility_context": {"kind": "public"}
+    },
+    "expected_vector_recall": true,
+    "expected_lexical_recall": false,
+    "expected_memory_types": ["investigation_outcome"]
+  }
+]
