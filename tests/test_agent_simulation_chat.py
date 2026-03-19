@@ -224,3 +224,45 @@ def test_model_failure_falls_back_to_manual_entry_and_records_reason(tmp_path) -
     assert event["assistant"]["content"] == "Manual assistant reply"
     assert event["model"]["origin"] == "manual_fallback"
     assert "provider failed" in event["model"]["failure_reason"]
+
+
+def test_chat_lite_auto_accepts_and_skips_operator_prompts(tmp_path) -> None:
+    blocks = [{"block_type": "memory", "memory_type": "decision", "title": "Decision", "text": "Use item event time."}]
+    model = CapturingModel(answer="Light reply")
+    app, io, http_client = _build_app(tmp_path, [], _query_debug_payload(should_inject=True, injectable_blocks=blocks, results=[]), model=model)
+    app._mode = "chat-lite"
+    app.session.set_mode("chat-lite")
+
+    app.process_chat_message("Just answer")
+
+    assert model.calls == [{"user_message": "Just answer", "injectable_blocks": blocks}]
+    assert len(http_client.created_items) == 2
+    event = app.session.events[0]
+    assert event["mode"] == "chat-lite"
+    assert event["operator_action"] == "auto_accepted"
+    assert event["assistant"]["content"] == "Light reply"
+    assert all("accept/edit/discard" not in line for line in io.outputs)
+    assert all("Add artifact now?" not in line for line in io.outputs)
+    assert all("should_inject:" not in line for line in io.outputs)
+    assert "Light reply" in io.outputs
+
+
+def test_chat_lite_model_failure_does_not_prompt_manual_entry(tmp_path) -> None:
+    model = CapturingModel(error=ModelUnavailableError("provider failed"))
+    app, io, http_client = _build_app(
+        tmp_path,
+        [],
+        _query_debug_payload(should_inject=True, injectable_blocks=[], results=[]),
+        model=model,
+    )
+    app._mode = "chat-lite"
+    app.session.set_mode("chat-lite")
+
+    app.process_chat_message("Need light fallback")
+
+    assert len(http_client.created_items) == 1
+    event = app.session.events[0]
+    assert event["operator_action"] == "auto_skipped"
+    assert "assistant" not in event
+    assert any("Model unavailable: provider failed" in line for line in io.outputs)
+    assert all("assistant>" not in line for line in io.outputs)

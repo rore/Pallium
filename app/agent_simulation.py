@@ -24,6 +24,7 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 TURN_KINDS = {"new_thread", "same_thread", "same_thread_continuation", "resumed_session", "new_session"}
 ARTIFACT_KINDS = {"tool_use_summary", "todo_snapshot"}
 PROMPT_ACTIONS = {"a": "accepted", "e": "edited", "d": "discarded"}
+CHAT_MODES = {"chat", "chat-lite"}
 
 
 @dataclass
@@ -82,7 +83,7 @@ class AgentSimulationApp:
                     if not self._handle_command(line):
                         return 0
                     continue
-                if self._mode == "chat":
+                if self._mode in CHAT_MODES:
                     self.process_chat_message(line)
                 else:
                     self._io.write("manual mode accepts slash commands only")
@@ -99,12 +100,13 @@ class AgentSimulationApp:
         user_response = self._http.create_item(user_request)
         query_request = self._build_query_payload(message)
         query_response = self._http.query_debug(query_request)
-        for line in render_debug_summary(query_response, verbose=self._session.debug_enabled):
-            self._io.write(line)
+        if self._mode != "chat-lite" or self._session.debug_enabled:
+            for line in render_debug_summary(query_response, verbose=self._session.debug_enabled):
+                self._io.write(line)
 
         event: dict[str, Any] = {
             "event_type": "chat_turn",
-            "mode": "chat",
+            "mode": self._mode,
             "scope": self._scope_snapshot(),
             "user_message": message,
             "user_item": {"request": user_request, "response": user_response},
@@ -235,9 +237,6 @@ class AgentSimulationApp:
         except (ModelUnavailableError, LLMProviderError) as exc:
             return self._manual_fallback(str(exc))
 
-        self._io.write("assistant draft:")
-        self._io.write(draft.answer)
-        action = self._prompt_action()
         result: dict[str, Any] = {
             "model": {
                 "origin": "model",
@@ -245,8 +244,18 @@ class AgentSimulationApp:
                 "request": draft.model_request,
                 "response": draft.model_response,
             },
-            "operator_action": action,
         }
+        if self._mode == "chat-lite":
+            self._io.write(draft.answer)
+            assistant = self._ingest_assistant(draft.answer, origin="model")
+            result["assistant"] = assistant
+            result["operator_action"] = "auto_accepted"
+            return result
+
+        self._io.write("assistant draft:")
+        self._io.write(draft.answer)
+        action = self._prompt_action()
+        result["operator_action"] = action
         if action == "discarded":
             return result
         answer_text = draft.answer
@@ -260,8 +269,6 @@ class AgentSimulationApp:
         return result
 
     def _manual_fallback(self, reason: str) -> dict[str, Any]:
-        self._io.write(f"Model unavailable; enter assistant reply manually or leave blank to discard. Reason: {reason}")
-        manual_text = self._io.prompt("assistant> ").strip()
         result: dict[str, Any] = {
             "model": {
                 "origin": "manual_fallback",
@@ -270,6 +277,13 @@ class AgentSimulationApp:
             },
             "operator_action": "manual_discarded",
         }
+        if self._mode == "chat-lite":
+            self._io.write(f"Model unavailable: {reason}")
+            result["operator_action"] = "auto_skipped"
+            return result
+
+        self._io.write(f"Model unavailable; enter assistant reply manually or leave blank to discard. Reason: {reason}")
+        manual_text = self._io.prompt("assistant> ").strip()
         if not manual_text:
             return result
         assistant = self._ingest_assistant(manual_text, origin="manual_fallback")
@@ -456,9 +470,9 @@ class AgentSimulationApp:
         self._io.write(f"session saved to {path}")
 
     def _set_mode(self, mode: str | None) -> None:
-        if mode not in {"chat", "manual"}:
-            mode = self._prompt_optional("mode [chat|manual]: ") or mode
-        if mode not in {"chat", "manual"}:
+        if mode not in {"chat", "chat-lite", "manual"}:
+            mode = self._prompt_optional("mode [chat|chat-lite|manual]: ") or mode
+        if mode not in {"chat", "chat-lite", "manual"}:
             self._io.write(f"current mode: {self._mode}")
             return
         self._mode = mode
@@ -532,7 +546,7 @@ class AgentSimulationApp:
             "/save [name]",
             "/export [name]",
             "/replay [path]",
-            "/mode chat|manual",
+            "/mode chat|chat-lite|manual",
             "/items",
             "/query <text>",
             "/query-debug <text>",
@@ -543,7 +557,7 @@ class AgentSimulationApp:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the Pallium direct thin-agent simulation harness")
-    parser.add_argument("mode", nargs="?", choices=("chat", "manual", "replay"), default="chat")
+    parser.add_argument("mode", nargs="?", choices=("chat", "chat-lite", "manual", "replay"), default="chat")
     parser.add_argument("session_path", nargs="?")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--provider", default=None)

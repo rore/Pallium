@@ -82,6 +82,12 @@ def test_build_parser_defaults_to_chat_and_local_base_url() -> None:
     assert parsed.model is None
 
 
+def test_build_parser_accepts_chat_lite_mode() -> None:
+    parsed = build_parser().parse_args(["chat-lite"])
+
+    assert parsed.mode == "chat-lite"
+
+
 def test_new_session_defaults_start_with_neutral_runtime_context(tmp_path) -> None:
     app, _io = _build_app(tmp_path)
 
@@ -95,6 +101,7 @@ def test_scope_turn_local_context_and_mode_commands_update_session_defaults(tmp_
     assert app._handle_command("/scope") is True
     assert app._handle_command("/turn resumed_session") is True
     assert app._handle_command("/local-context true") is True
+    assert app._handle_command("/mode chat-lite") is True
     assert app._handle_command("/mode manual") is True
 
     defaults = app.session.defaults
