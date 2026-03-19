@@ -76,5 +76,7 @@ def test_build_terminal_io_returns_styled_terminal_when_prompt_toolkit_available
 
     assert isinstance(io, TerminalIO)
     assert io.output_formatter is not None
+    assert fake_session.kwargs["complete_while_typing"] is True
     assert io.prompt("chat> ") == "typed"
     assert fake_session.prompts
+

@@ -140,7 +140,7 @@ def build_terminal_io():
     if not PROMPT_TOOLKIT_AVAILABLE or PromptSessionType is None or ANSI is None:
         return TerminalIO()
 
-    session = PromptSessionType(completer=AgentSimulationCompleter(), complete_while_typing=False)
+    session = PromptSessionType(completer=AgentSimulationCompleter(), complete_while_typing=True)
 
     def _prompt(text: str) -> str:
         return session.prompt(ANSI(format_prompt_text(text)))
@@ -150,3 +150,4 @@ def build_terminal_io():
         output_func=print,
         output_formatter=format_output_text,
     )
+
