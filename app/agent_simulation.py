@@ -202,6 +202,9 @@ class AgentSimulationApp:
         if command == "/debug":
             self._set_debug(args[0] if args else None)
             return True
+        if command == "/new-conversation":
+            self._start_new_conversation()
+            return True
         if command == "/fork":
             self._fork_scope(new_session="--new-session" in args)
             return True
@@ -474,6 +477,12 @@ class AgentSimulationApp:
         self._session.defaults.runtime_context["turn_kind"] = "new_thread"
         self._write_scope()
 
+    def _start_new_conversation(self) -> None:
+        self._session.defaults.thread_ref = self._ref_factory("thread")
+        self._session.defaults.runtime_context["turn_kind"] = "new_thread"
+        self._session.defaults.runtime_context["session_has_sufficient_local_context"] = False
+        self._write_scope()
+
     def _save_session(self, name: str | None) -> None:
         path = self._store.save(self._session, name=name)
         self._write_system(f"session saved to {path}")
@@ -546,6 +555,7 @@ class AgentSimulationApp:
             "/show scope",
             "/turn",
             "/local-context",
+            "/new-conversation",
             "/artifact",
             "/fork [--new-session]",
             "/debug on|off",
@@ -608,4 +618,6 @@ def run(args: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(run())
+
+
 

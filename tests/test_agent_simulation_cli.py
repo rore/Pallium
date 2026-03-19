@@ -185,3 +185,18 @@ def test_run_returns_clean_exit_code_on_keyboard_interrupt(monkeypatch) -> None:
     monkeypatch.setattr(agent_simulation_module.AgentSimulationApp, 'run', _interrupting_run)
 
     assert run(['chat-lite']) == 130
+
+def test_new_conversation_starts_new_thread_with_cross_thread_recall_defaults(tmp_path) -> None:
+    app, _io = _build_app(tmp_path)
+    original_container = app.session.defaults.container_ref
+    original_session = app.session.defaults.session_ref
+    original_thread = app.session.defaults.thread_ref
+
+    assert app._handle_command("/new-conversation") is True
+
+    defaults = app.session.defaults
+    assert defaults.container_ref == original_container
+    assert defaults.session_ref == original_session
+    assert defaults.thread_ref != original_thread
+    assert defaults.runtime_context["turn_kind"] == "new_thread"
+    assert defaults.runtime_context["session_has_sufficient_local_context"] is False

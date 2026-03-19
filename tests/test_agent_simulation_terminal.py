@@ -13,10 +13,12 @@ from app.agent_simulation_terminal import (
 
 def test_completion_candidates_suggest_slash_commands() -> None:
     candidates = completion_candidates("/mo")
+    new_candidates = completion_candidates("/new")
 
     assert "/mode" in candidates
     assert "/query" not in candidates
     assert "/mode" in COMMAND_COMPLETIONS
+    assert "/new-conversation" in new_candidates
 
 
 def test_completion_candidates_suggest_turn_arguments() -> None:
@@ -79,4 +81,5 @@ def test_build_terminal_io_returns_styled_terminal_when_prompt_toolkit_available
     assert fake_session.kwargs["complete_while_typing"] is True
     assert io.prompt("chat> ") == "typed"
     assert fake_session.prompts
+
 
