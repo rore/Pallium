@@ -29,20 +29,19 @@ def build_embedding_text(memory_object: MemoryObject) -> str | None:
     if memory_type not in EMBEDDABLE_MEMORY_TYPES:
         return None
 
-    if memory_type == "decision":
-        return _build_decision_text(payload)
-    if memory_type == "investigation_outcome":
-        return _build_investigation_outcome_text(payload)
-    if memory_type == "thread_summary":
-        return _build_thread_summary_text(payload)
-    if memory_type == "task_checkpoint":
-        return _build_task_checkpoint_text(payload)
-    if memory_type == "pattern_memory":
-        return _build_pattern_memory_text(payload)
-    if memory_type == "continuity_memory":
-        return _build_continuity_memory_text(payload)
-
-    return None
+    builders = {
+        "decision": _build_decision_text,
+        "investigation_outcome": _build_investigation_outcome_text,
+        "thread_summary": _build_thread_summary_text,
+        "task_checkpoint": _build_task_checkpoint_text,
+        "pattern_memory": _build_pattern_memory_text,
+        "continuity_memory": _build_continuity_memory_text,
+    }
+    builder = builders.get(memory_type)
+    if builder is None:
+        return None
+    text = builder(payload)
+    return text if text else None
 
 
 def _build_decision_text(payload: dict) -> str:

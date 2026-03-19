@@ -38,8 +38,7 @@ class TestBuildEmbeddingTextDecision:
     def test_empty_payload(self):
         mo = _make_memory("decision", {})
         text = build_embedding_text(mo)
-        assert text is not None
-        assert text == ""
+        assert text is None
 
 
 class TestBuildEmbeddingTextInvestigationOutcome:
