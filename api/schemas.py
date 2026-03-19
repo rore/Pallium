@@ -141,6 +141,7 @@ class QueryResultResponse(BaseModel):
     source_ref: str | None = None
     artifact_kind: ArtifactKind | None = None
     visibility_context: VisibilityContextModel | None = None
+    retrieval_source: str | None = None
 
 
 class InjectableBlockResponse(BaseModel):
@@ -201,6 +202,28 @@ class QueryTraceVisibilityResponse(BaseModel):
     fail_closed_reason: str | None = None
 
 
+class FusionTraceHitResponse(BaseModel):
+    result_id: str
+    rrf_score: float
+    rrf_rank: int
+    fused_score: int
+    lexical_rank: int | None = None
+    vector_rank: int | None = None
+    retrieval_source: str
+
+
+class FusionStageTraceResponse(BaseModel):
+    stage_name: str
+    k: int
+    rrf_score_scale: int
+    lexical_candidate_count: int
+    vector_candidate_count: int
+    fused_candidate_count: int
+    both_sources_count: int
+    selected_count: int
+    hits: list[FusionTraceHitResponse]
+
+
 class QueryTraceResponse(BaseModel):
     query_text: str
     query_tokens: list[str]
@@ -213,6 +236,7 @@ class QueryTraceResponse(BaseModel):
     routing: dict[str, Any] | None = None
     visibility: QueryTraceVisibilityResponse | None = None
     result_summary: dict[str, Any] | None = None
+    fusion_trace: FusionStageTraceResponse | None = None
 
 
 class QueryDebugResponse(QueryResponse):

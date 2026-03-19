@@ -11,6 +11,7 @@ import pytest
 from app.config import AppConfig
 from app.dependencies import build_service, _load_or_create_vector_index
 from providers.embedding.base import EmbeddingProvider
+from retrieval.composite import CompositeRetrievalProvider
 from storage.vector_index import VectorIndexConfig
 
 try:
@@ -138,7 +139,7 @@ class TestBuildServiceVectorDisabled:
         config = _minimal_config()
         service = build_service(config)
 
-        assert service._vector_retrieval is None
+        assert not isinstance(service._retrieval, CompositeRetrievalProvider)
         assert service._vector_index is None
         assert service._embedding_provider is None
 
@@ -148,7 +149,7 @@ class TestBuildServiceVectorDisabled:
         )
         service = build_service(config)
 
-        assert service._vector_retrieval is None
+        assert not isinstance(service._retrieval, CompositeRetrievalProvider)
         assert service._vector_index is None
         assert service._embedding_provider is None
 
@@ -197,7 +198,7 @@ class TestBuildServiceVectorEnabled:
 
         assert service._embedding_provider is stub_provider
         assert service._vector_index is mock_index
-        assert service._vector_retrieval is not None
+        assert isinstance(service._retrieval, CompositeRetrievalProvider)
 
     def test_vector_enabled_no_embedding_provider_name_disables(self, caplog) -> None:
         """Vector enabled but no embedding_provider configured => vector disabled with error log."""
@@ -208,7 +209,7 @@ class TestBuildServiceVectorEnabled:
         with caplog.at_level(logging.ERROR):
             service = build_service(config)
 
-        assert service._vector_retrieval is None
+        assert not isinstance(service._retrieval, CompositeRetrievalProvider)
         assert service._vector_index is None
         assert service._embedding_provider is None
         assert "no embedding_provider configured" in caplog.text.lower()
@@ -241,7 +242,7 @@ class TestGracefulDegradation:
         with caplog.at_level(logging.ERROR):
             service = build_service(config)
 
-        assert service._vector_retrieval is None
+        assert not isinstance(service._retrieval, CompositeRetrievalProvider)
         assert service._vector_index is None
         assert service._embedding_provider is None
         assert "vector disabled" in caplog.text.lower() or "vector embedding provider failed" in caplog.text.lower()
@@ -318,7 +319,7 @@ class TestModelMismatch:
         with caplog.at_level(logging.ERROR):
             service = build_service(config)
 
-        assert service._vector_retrieval is None
+        assert not isinstance(service._retrieval, CompositeRetrievalProvider)
         assert service._vector_index is None
         assert service._embedding_provider is None
         assert "model mismatch" in caplog.text.lower()
@@ -361,7 +362,7 @@ class TestModelMismatch:
 
         service = build_service(config)
 
-        assert service._vector_retrieval is not None
+        assert isinstance(service._retrieval, CompositeRetrievalProvider)
         assert service._vector_index is mock_index
         assert service._embedding_provider is stub_provider
 
@@ -403,7 +404,7 @@ class TestModelMismatch:
         service = build_service(config)
 
         # Model mismatch ignored because index is empty
-        assert service._vector_retrieval is not None
+        assert isinstance(service._retrieval, CompositeRetrievalProvider)
         assert service._vector_index is mock_index
 
 
@@ -460,7 +461,7 @@ class TestCountMismatch:
             service = build_service(config)
 
         # Vector still active despite mismatch
-        assert service._vector_retrieval is not None
+        assert isinstance(service._retrieval, CompositeRetrievalProvider)
         assert "mismatch" in caplog.text.lower()
         assert "rebuild-vector-index" in caplog.text.lower()
 

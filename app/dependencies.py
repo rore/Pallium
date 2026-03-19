@@ -209,6 +209,14 @@ def build_service(
                     index_count,
                 )
 
+    # Wrap lexical + vector into composite retrieval if vector is available
+    if vector_retrieval is not None:
+        from retrieval.composite import CompositeRetrievalProvider
+        retrieval = CompositeRetrievalProvider(
+            lexical=retrieval,
+            vector=vector_retrieval,
+        )
+
     return PalliumService(
         storage=storage,
         retrieval=retrieval,
@@ -220,7 +228,6 @@ def build_service(
         retention_batch_size=resolved_config.retention.batch_size,
         embedding_provider=embedding_provider,
         vector_index=vector_index,
-        vector_retrieval=vector_retrieval,
     )
 
 
