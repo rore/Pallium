@@ -485,3 +485,108 @@ def test_work_resumption_anchor_prefilter_excludes_adjacent_workstream_checkpoin
     assert anchor_prefilter['selected_query_anchor'] == {'kind': 'workstream', 'value': 'inventory batch digest'}
     assert anchor_prefilter['fallback_mode'] == 'aligned_only'
     assert anchor_prefilter['excluded_by_anchor_count'] == 1
+
+
+# ---------------------------------------------------------------------------
+# Fix 1b — stale checkpoint from an older cross-thread session is penalized
+# when a fresher checkpoint from a later session is present
+# ---------------------------------------------------------------------------
+
+
+def test_work_resumption_stale_checkpoint_penalized_when_fresher_cross_thread_checkpoint_exists() -> None:
+    # Two task_checkpoints from different threads in the same container.
+    # The stale checkpoint is 60 minutes older than the fresh one.
+    # With WORK_RESUMPTION_FRESHNESS_MARGIN_SECONDS = 2700 (45 min), the 60-minute
+    # gap exceeds the margin and the stale checkpoint must receive the stale penalty.
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-stale-thread-006a',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'Catalog sync retry was blocked by auth failure.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'Blocked at batch 312 due to 401 auth failure.',
+                    'blocker_state': 'Catalog API returned 401 because the service token expired.',
+                    'next_step': 'Refresh the catalog service token and rerun from batch 313.',
+                    'latest_occurred_at': '2026-03-11T13:02:00Z',
+                },
+                score=12,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-old-thread-6a',
+                        source_type='assistant_artifact',
+                        source_id='artifact-old-thread-6a',
+                        occurred_at=datetime(2026, 3, 11, 13, 2, tzinfo=timezone.utc),
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-wr-006a',
+                        artifact_kind='tool_use_summary',
+                    )
+                ],
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-fresh-thread-006b',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'Catalog sync retry is now blocked by rate-limiting after 417 batches.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'Progress up to batch 417; then blocked by 429 rate limit.',
+                    'blocker_state': 'Catalog API returned 429 after batch 417 because the retry window was exhausted.',
+                    'next_step': 'Wait 15 minutes, resume from batch 418, and keep the refreshed token.',
+                    'latest_occurred_at': '2026-03-11T14:01:00Z',
+                },
+                score=12,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='source-fresh-thread-6b',
+                        source_type='assistant_artifact',
+                        source_id='artifact-fresh-thread-6b',
+                        occurred_at=datetime(2026, 3, 11, 14, 1, tzinfo=timezone.utc),
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-wr-006b',
+                        artifact_kind='tool_use_summary',
+                    )
+                ],
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What blocker remains on the catalog sync retry now and what should we do next?',
+            query_tokens=('blocker', 'catalog', 'sync', 'retry', 'next'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What blocker remains on the catalog sync retry now and what should we do next?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='resumed_session', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.should_inject is True
+    result_ids = [r.memory_object_id for r in outcome.results if r.result_kind == 'memory_hit']
+    assert 'checkpoint-fresh-thread-006b' in result_ids, (
+        f"fresh checkpoint missing from results: {result_ids}"
+    )
+    # Fresh checkpoint must rank first
+    assert result_ids[0] == 'checkpoint-fresh-thread-006b', (
+        f"fresh checkpoint must be top-ranked; got order: {result_ids}"
+    )
+    # Stale checkpoint payload must not appear in injected text
+    injected_text = ' '.join(
+        block.text for block in (outcome.injectable_blocks or [])
+    ).lower()
+    assert '401' not in injected_text or 'batch 418' in injected_text, (
+        "stale 401 blocker must not dominate injection when fresh 429 state exists"
+    )

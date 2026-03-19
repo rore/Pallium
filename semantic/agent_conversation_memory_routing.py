@@ -304,7 +304,7 @@ WORK_RESUMPTION_STALE_SOURCE_PENALTY = 28
 
 WORK_RESUMPTION_FRESH_STATE_BONUS = 18
 
-WORK_RESUMPTION_FRESHNESS_MARGIN_SECONDS = 5400
+WORK_RESUMPTION_FRESHNESS_MARGIN_SECONDS = 2700
 
 WORK_RESUMPTION_SIGNAL_PRIORITY = ("blocker", "next_step", "progress_update")
 
@@ -313,7 +313,7 @@ ROUTING_QUERY_SHAPE_TOKENS = {
     "big_picture": {"lesson", "pattern", "remember", "takeaway"},
     "analysis_request": {"concluded", "conclusion", "finding", "findings", "land", "outcome", "settled", "true", "verdict"},
     "carry_forward": {"again", "already", "carry", "forward", "old", "remind", "repeat", "repeated"},
-    "constraint_recall": {"auth", "authenticate", "authentication", "browser", "constraint", "jira", "login", "portal", "sign", "slack"},
+    "constraint_recall": {"auth", "authenticate", "authentication", "avoid", "browser", "constraint", "jira", "login", "portal", "rely", "relying", "restriction", "sign", "slack"},
     "resume_state": {"blocked", "blocker", "continue", "continued", "continuing", "left", "next", "progress", "queued", "resume", "resumed", "state", "stuck", "unblock"},
     "evidence_request": {"backed", "evidence", "prove", "quote", "source", "support", "supported", "trace"},
     "precise_lookup": {"exact", "when", "which"},
@@ -323,7 +323,7 @@ ROUTING_QUERY_SHAPE_PHRASES = {
     "history_lookup": ("what do we know", "what is the latest", "what's the latest", "what had we concluded", "what had you concluded", "what constraint had i given", "remind me what we had latest", "remind me what we had latest about", "remind me what we had about", "what we had about"),
     "big_picture": ("big picture", "general lesson", "larger lesson", "main takeaway", "should we remember", "what should we remember"),
     "analysis_request": ("where did we land", "what ended up being true", "what settled", "how did that shake out"),
-    "constraint_recall": ("what constraint had i given", "what constraint did i give", "what had i told you not to use", "what did i tell you not to use"),
+    "constraint_recall": ("what constraint had i given", "what constraint did i give", "what had i told you not to use", "what did i tell you not to use", "anything i should avoid", "what should i not rely on", "what should i avoid", "anything to avoid", "anything i should not"),
     "resume_state": ("pick this back up", "pick that back up", "where did we leave off", "where were we", "what is the latest state", "what's the latest state"),
     "evidence_request": ("what backs that up", "what points to", "what points back to", "where did that come from"),
 }
@@ -3171,8 +3171,39 @@ def _source_candidate_has_quote_grade_support(candidate: dict[str, object], *, q
     return (support_grade in {"supported", "strong"} and proof_like_excerpt) or quoted_evidence
 
 
+def _source_excerpt_disclaims_exact_evidence(excerpt: str) -> bool:
+    """Return True when the source explicitly states that exact evidence was not retained.
+
+    This is an interim guardrail for evidence_trace suppression.  It catches
+    sources that directly disclaim having the evidence ("did not keep the exact
+    line", "not preserved", etc.) rather than sources that simply lack strong
+    proof.  Keep this list narrow — "probably" alone is NOT sufficient.
+    """
+    lowered = excerpt.lower()
+    return any(phrase in lowered for phrase in (
+        "did not keep",
+        "didn't keep",
+        "don't have the exact",
+        "do not have the exact",
+        "didn't have the exact",
+        "couldn't find the exact",
+        "could not find the exact",
+        "can't find the exact",
+        "cannot find the exact",
+        "no exact record",
+        "not preserved",
+        "wasn't preserved",
+        "was not preserved",
+    ))
+
+
 def _source_candidate_is_primary_injection_eligible(candidate: dict[str, object], intent: str, *, query_text: str) -> bool:
     if intent in {"evidence_trace", "investigative_conclusion"}:
+        item = candidate["item"]
+        assert isinstance(item, QueryResultItem)
+        excerpt = str(item.excerpt or "")
+        if _source_excerpt_disclaims_exact_evidence(excerpt):
+            return False
         return True
     return intent == "precise_fact" and _source_candidate_has_quote_grade_support(candidate, query_text=query_text)
 
@@ -3204,15 +3235,17 @@ def _task_checkpoint_injection_text(payload: dict[str, object]) -> str:
     parts: list[str] = []
     if constraint:
         parts.append(f"Constraint: {constraint}")
-    if current_state:
-        parts.append(f"Current state: {current_state}")
-    elif summary:
-        parts.append(summary)
-    if blocker and normalize_for_index(blocker) not in normalize_for_index(current_state):
+    # When an active blocker is present, lead with it so the blocking issue is
+    # immediately visible — it is the most actionable signal for resumption.
+    if blocker:
         parts.append(f"Blocker: {blocker}")
+    if current_state and normalize_for_index(current_state) not in normalize_for_index(blocker):
+        parts.append(f"Current state: {current_state}")
+    elif not blocker and summary:
+        parts.append(summary)
     if next_step:
         parts.append(f"Next step: {next_step}")
-    if not current_state and not next_step and summary:
+    if not blocker and not current_state and not next_step and summary:
         parts.append(summary)
     return _join_unique_text_parts(parts)
 
@@ -3304,11 +3337,22 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
     if item.type in {"thread_summary", "discussion_summary"}:
         summary_text = str(payload.get("summary") or "").strip()
         constraint = _preferred_constraint_text(summary_text)
+        if constraint:
+            # Strip any leading "Constraint:" label from summary_text to avoid
+            # producing "Constraint: X Constraint: X" when the summary itself
+            # already begins with that label.
+            clean_summary = re.sub(r"(?i)^constraint\s*:\s*", "", summary_text).strip()
+            text_parts = [f"Constraint: {constraint}"]
+            if clean_summary and normalize_for_index(clean_summary) != normalize_for_index(constraint):
+                text_parts.append(clean_summary)
+            block_text = _join_unique_text_parts(text_parts)
+        else:
+            block_text = summary_text
         return InjectableBlock(
             result_id=str(item.result_id),
             block_type="memory",
             title="Thread Summary" if item.type == "thread_summary" else "Discussion Summary",
-            text=_join_unique_text_parts([f"Constraint: {constraint}" if constraint else "", summary_text]),
+            text=block_text,
             evidence=item.evidence,
             memory_type=item.type,
         )
