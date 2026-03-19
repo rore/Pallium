@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from api.routes import create_router
-from app.config import AppConfig, SemanticPackageConfig
+from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
 from core.observability import IntegrationDebugLogger
 from core.service import PalliumService
+from providers.embedding.base import EmbeddingProvider
 from providers.llm.anthropic_claude import AnthropicClaudeLLMProvider
 from providers.llm.base import LLMProvider
 from providers.llm.openai_compatible import OpenAICompatibleLLMProvider
@@ -50,6 +51,22 @@ def build_llm_provider(config: AppConfig, *, provider_name: str, model: str) -> 
         )
 
     raise ValueError(f"Unsupported LLM provider kind: {provider_config.kind}")
+
+
+def build_embedding_provider(config: AppConfig, *, provider_name: str) -> EmbeddingProvider:
+    """Build an EmbeddingProvider from config. Dispatches on ``kind``."""
+    provider_config: EmbeddingProviderConfig = config.embedding_provider_config(provider_name)
+
+    provider_kind = provider_config.kind.lower()
+    if provider_kind == "fastembed":
+        from providers.embedding.fastembed_provider import FastEmbedProvider
+
+        return FastEmbedProvider(
+            model=provider_config.model,
+            dimensions=provider_config.dimensions,
+        )
+
+    raise ValueError(f"Unsupported embedding provider kind: {provider_config.kind}")
 
 
 def build_semantic_plugins(config: AppConfig, routing_overrides: RoutingOverrides | None = None) -> dict[str, SemanticPlugin]:
