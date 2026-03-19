@@ -1,4 +1,4 @@
-[retention]
+﻿[retention]
 enabled = false
 run_interval_seconds = 300
 lease_seconds = 300
@@ -9,6 +9,9 @@ default_use_case = "agent_conversation_memory"
 [storage]
 backend = "sqlite"
 sqlite_url = "sqlite:///./pallium.db"
+
+[observability]
+integration_debug = false
 
 [llm_providers.openai]
 kind = "openai_compatible"
@@ -28,13 +31,18 @@ implementation = "demo_agent_memory"
 implementation = "llm_agent_memory"
 llm_provider = "openai"
 model = "gpt-5-mini"
-prompt_variant = "strict_typed_memory_v4_evidence_guarded"
+prompt_variant = "strict_typed_memory_v5_compact_examples"
 
 [semantic_packages.agent_conversation_memory]
 implementation = "agent_conversation_memory"
 llm_provider = "openai"
 model = "gpt-5-mini"
-prompt_variant = "strict_typed_memory_v4_evidence_guarded"
+prompt_variant = "strict_typed_memory_v6_work_state_examples"
+resolver_enabled = true
+resolver_timeout_ms = 800
+
+[semantic_packages.agent_conversation_memory.prompt_variants]
+query_ambiguity_resolution = "qar_v1_compact_contract"
 
 [semantic_packages.agent_conversation_memory.consolidation]
 enabled_strategies = ["thread_local_carry_forward", "container_topic_window", "thread_summary_anchored"]

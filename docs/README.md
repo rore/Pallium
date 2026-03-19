@@ -1,4 +1,4 @@
-# Docs Map
+﻿# Docs Map
 
 Pallium's docs are split by job so the README does not have to do everything.
 
@@ -9,14 +9,15 @@ For a developer evaluating the project for the first time:
 1. `README.md`
 2. `docs/problem-and-approach.md`
 3. `docs/getting-started.md`
-4. `docs/agent-integration.md`
-5. `docs/http-api.md`
-6. `docs/privacy-and-visibility.md`
-7. `docs/memory-model.md`
-8. `docs/validation.md`
-9. `docs/status.md`
-10. `docs/overview.md`
-11. `docs/context/architecture.md`
+4. `docs/configuration.md`
+5. `docs/agent-integration.md`
+6. `docs/http-api.md`
+7. `docs/privacy-and-visibility.md`
+8. `docs/memory-model.md`
+9. `docs/validation.md`
+10. `docs/status.md`
+11. `docs/overview.md`
+12. `docs/context/architecture.md`
 
 ## Documentation Roles
 
@@ -35,6 +36,8 @@ For a developer evaluating the project for the first time:
 - reference
   - `docs/http-api.md`
   - endpoint shapes, request fields, response fields, and operational endpoints
+  - `docs/configuration.md`
+  - config sources, precedence, provider blocks, package blocks, and runtime overrides
 
 - explanations
   - `docs/problem-and-approach.md`

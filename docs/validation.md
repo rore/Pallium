@@ -1,4 +1,4 @@
-# Validation
+﻿# Validation
 
 This page summarizes the validation surface for Pallium.
 
@@ -33,11 +33,12 @@ Benchmark assets are also classified into three dataset tiers:
 - `iteration`: fast, local tuning slices used during development
 - `confidence`: reviewed assets that make up the current repo-local confidence
   gate
-- `replay`: support for replay-driven benchmark assets, reported explicitly even
-  before the live miss-capture pipeline exists
+- `replay`: replay-style assets promoted from real or exploratory misses into
+  durable regression inputs
 
-Replay is first-class in the reporting model now, even though replay coverage is
-still sparse and the live promotion pipeline is a later feature.
+Replay is now first-class in both the reporting model and the local tooling,
+although replay coverage is still much smaller than the authored confidence
+packs.
 
 ## Current Benchmark Mapping
 
@@ -77,6 +78,9 @@ The same report also separates:
 - operational drift from correctness failures
 - dominant tuning bottlenecks from dominant failing benchmark lanes
 
+Read the hard-gate fields first. Scenario totals and realism counts are not a
+replacement for `hard_gate_passed` or `confidence_gate_passed`.
+
 ## Operational Metrics Surfaced Today
 
 Current reporting surfaces operational signals only where the repo already has
@@ -88,16 +92,35 @@ defensible data:
 - wrong-memory selection failure rate
 - low-value promotion failure rate
 - thread rebuild churn failure rate
+- live exploratory drift metrics such as:
+  - injection rate
+  - sharp miss rate
+  - fallback rate
+  - rebuild rate
+  - generic-summary win rate
 
 The repo does not yet treat latency, provider cost, or broad flakiness as
 formal benchmark metrics by default.
+
+## Live Improvement Support
+
+Pallium now also has a bounded live-improvement loop for local exploratory work.
+
+Current shipped pieces:
+
+- drift metrics emitted by the live exploratory runner
+- shadow comparison for routing override experiments
+- replay promotion tooling that converts captured exploratory runs into replay
+  scenario skeletons
+
+This does not replace the benchmark program. It helps turn real misses into
+reviewable, rerunnable assets faster.
 
 ## What Remains Uncertain
 
 The main remaining uncertainties are:
 
-- how broad replay coverage should become once live miss-capture promotion
-  exists
+- how broad replay coverage should become as more live misses are promoted
 - how far resumed-work packaging generalizes across broader downstream traffic
 - where realism pressure should trigger new authored scenarios versus better
   deterministic checks
@@ -110,11 +133,13 @@ The validation surface is part of how Pallium is developed:
 
 - acceptance stays anchored to the thin-agent memory contract and trace
 - realism pressure can inform tuning without redefining the product target
-- replay has a reserved place in the architecture before the pipeline is built
+- replay now has both a reserved place in the model and an initial promotion
+  workflow in tooling
 - operational drift is visible instead of being buried under correctness totals
 
 ## Read Next
 
 - current maturity: [status.md](status.md)
+- configuration reference: [configuration.md](configuration.md)
 - product problem and value: [problem-and-approach.md](problem-and-approach.md)
 - quick local tryout: [getting-started.md](getting-started.md)

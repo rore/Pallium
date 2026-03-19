@@ -1,4 +1,4 @@
-# Getting Started
+﻿# Getting Started
 
 This is the fastest way to evaluate Pallium as a developer.
 
@@ -41,13 +41,41 @@ Copy-Item .env.example .env.local
 
 Set `PALLIUM_OPENAI_API_KEY` in `.env.local`.
 
+If you want to understand the full runtime config surface before editing the
+files, read [configuration.md](configuration.md).
+
 Optional verification:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-## 2. Start Pallium
+## 2. Choose The Initial Runtime Shape
+
+The example config already starts in live `agent_conversation_memory` mode.
+
+Two common starting points are:
+
+- demo mode
+  - set `default_use_case = "demo_agent_memory"`
+  - useful when you want to inspect the service shape without a live provider
+- live conversation-memory mode
+  - keep `default_use_case = "agent_conversation_memory"`
+  - configure an OpenAI-compatible provider in `pallium.local.toml`
+  - keep the secret in `.env.local`
+
+Current shipped config supports:
+
+- named provider blocks
+- semantic package blocks
+- package prompt defaults
+- role-specific prompt overrides
+- resolver toggles and timeout
+- observability and retention settings
+
+See [configuration.md](configuration.md) for the exact TOML and env syntax.
+
+## 3. Start Pallium
 
 ```powershell
 .\.venv\Scripts\python.exe -m app.run --host 127.0.0.1 --port 8000 --processors 1
@@ -65,7 +93,7 @@ If you want the split mode instead, use:
 .\.venv\Scripts\python.exe -m app.run cleaner
 ```
 
-## 3. Run The Direct Harness
+## 4. Run The Direct Harness
 
 In another terminal:
 
@@ -100,7 +128,7 @@ A normal `chat` turn does this in order:
 6. ingests accepted assistant turns through `POST /items`
 7. optionally records one explicit artifact after the turn
 
-## 4. Use The Lower-Level Sample Flow When Needed
+## 5. Use The Lower-Level Sample Flow When Needed
 
 If you want a small scripted example that shows raw ingest and query requests
 without the interactive harness, run:
@@ -113,7 +141,7 @@ That script is still useful as a lower-level example of the HTTP flow. The
 supported exploratory workflow is now the harness at
 `python -m app.agent_simulation`.
 
-## 5. What You Should See
+## 6. What You Should See
 
 You should see:
 
@@ -131,10 +159,11 @@ system:
 - only approved carry-forward gets injected into the thin-agent draft
 - the debug path explains what retrieval did
 
-## 6. Manual Next Step
+## 7. Manual Next Step
 
 Once the harness flow makes sense, open the docs that match your next question:
 
+- if you want the runtime knobs and file layout, read [configuration.md](configuration.md)
 - if you want the request and response shapes, read [http-api.md](http-api.md)
 - if you want to wire Pallium into a runtime, read [agent-integration.md](agent-integration.md)
 - if you want the scope rules, read [privacy-and-visibility.md](privacy-and-visibility.md)

@@ -1,4 +1,4 @@
-# Status
+﻿# Status
 
 This page is the external-facing status view for Pallium.
 
@@ -32,6 +32,8 @@ Current shipped surface:
   resolution instead of an always-on query-time router
 - thread-level orientation and resumed-work checkpoints in the current product
   focus
+- initial live-improvement tooling for drift metrics, shadow comparison, and
+  replay promotion from exploratory runs
 - background processing for ingest and same-thread memory rebuilds
 
 ## What Is Validated Today
@@ -45,6 +47,7 @@ The current product focus is covered by:
 - integration-readiness scenarios for the current package
 - public-corpus evaluation workflows for reviewed WildChat and WildBench slices
 - privacy-aware retrieval behavior with debug trace visibility exclusions
+- local live-improvement support for replay promotion and routing shadow checks
 
 ## What Is Still Experimental
 
@@ -52,8 +55,10 @@ The main open questions are:
 
 - when broader carry-forward memory should win over lower-level evidence
 - how well resumed-work packaging holds up on messier real-world traffic
-- how stable the new bounded query-policy and selective ambiguity-resolution
-  slice stays on messier real traffic
+- how stable the bounded query-policy and selective ambiguity-resolution slice
+  stays on messier real traffic
+- how far the shipped live-improvement loop should grow before it becomes a
+  stronger replay/confidence input
 - whether lexical retrieval is enough, or whether vector or hybrid retrieval is
   the next real bottleneck
 
@@ -75,8 +80,7 @@ The main open questions are:
 
 The next likely additions are:
 
-- live miss capture and replay promotion on top of the current debug and
-  benchmark surfaces
+- hardening and extension of the shipped live improvement loop
 - vector retrieval behind the current retrieval boundary
 - hybrid lexical and vector fusion
 - explicit shared-memory derivation
@@ -85,6 +89,7 @@ The next likely additions are:
 
 - product problem and approach: [problem-and-approach.md](problem-and-approach.md)
 - 10-minute local walkthrough: [getting-started.md](getting-started.md)
+- configuration reference: [configuration.md](configuration.md)
 - runtime integration: [agent-integration.md](agent-integration.md)
 - HTTP API reference: [http-api.md](http-api.md)
 - privacy model: [privacy-and-visibility.md](privacy-and-visibility.md)

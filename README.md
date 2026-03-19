@@ -1,4 +1,4 @@
-![Pallium Banner](assets/logo/pallium_header.png)
+﻿![Pallium Banner](assets/logo/pallium_header.png)
 
 # Pallium
 
@@ -70,7 +70,11 @@ Current behavior:
   both
 - repeated-question recall and resumed-work continuity
 - fail-closed scoped visibility for public and private memory
-- a debug path for retrieval and visibility behavior
+- a debug path for retrieval, routing, and visibility behavior
+- a shipped bounded query-policy layer with selective semantic ambiguity
+  resolution for only a small set of unresolved cases
+- an initial live improvement loop with drift metrics, shadow routing
+  comparison, and replay-promotion tooling
 
 Current implementation surface:
 
@@ -81,6 +85,8 @@ Current implementation surface:
 - lexical retrieval plus package-level query policy for the current
   conversation package, including a deterministic hot path and selective
   semantic ambiguity resolution for bounded unresolved cases
+- structured TOML and env-based runtime configuration for providers, semantic
+  packages, prompt roles, observability, and retention
 - a supported terminal harness at `python -m app.agent_simulation` for
   inspectable thin-agent memory loops against the real HTTP contract
 
@@ -95,6 +101,8 @@ The repository includes validation for the current product focus:
 - integration-readiness scenarios
 - reviewed public-corpus slices from WildChat and WildBench
 - scoped-visibility checks and debug trace coverage
+- live-improvement support for drift metrics, replay promotion, and shadow
+  comparison on captured local scenarios
 
 See [docs/validation.md](docs/validation.md) for the validation summary.
 
@@ -145,6 +153,7 @@ If you want to try Pallium quickly:
 - save the session and replay it after a code change
 
 Follow [docs/getting-started.md](docs/getting-started.md).
+If you want the actual config surface first, read [docs/configuration.md](docs/configuration.md).
 
 ## What Pallium Is Not
 
@@ -173,6 +182,7 @@ Choose the next doc by job:
 
 - problem and value: [docs/problem-and-approach.md](docs/problem-and-approach.md)
 - 10-minute tryout: [docs/getting-started.md](docs/getting-started.md)
+- configuration: [docs/configuration.md](docs/configuration.md)
 - integration guide: [docs/agent-integration.md](docs/agent-integration.md)
 - HTTP API reference: [docs/http-api.md](docs/http-api.md)
 - privacy and scoped recall: [docs/privacy-and-visibility.md](docs/privacy-and-visibility.md)
