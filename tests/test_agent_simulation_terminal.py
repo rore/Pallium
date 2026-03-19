@@ -18,6 +18,7 @@ def test_completion_candidates_suggest_slash_commands() -> None:
     assert "/mode" in candidates
     assert "/query" not in candidates
     assert "/mode" in COMMAND_COMPLETIONS
+    assert "/new" in new_candidates
     assert "/new-conversation" in new_candidates
 
 
@@ -81,5 +82,7 @@ def test_build_terminal_io_returns_styled_terminal_when_prompt_toolkit_available
     assert fake_session.kwargs["complete_while_typing"] is True
     assert io.prompt("chat> ") == "typed"
     assert fake_session.prompts
+
+
 
 

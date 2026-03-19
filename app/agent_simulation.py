@@ -202,7 +202,7 @@ class AgentSimulationApp:
         if command == "/debug":
             self._set_debug(args[0] if args else None)
             return True
-        if command == "/new-conversation":
+        if command in {"/new-conversation", "/new"}:
             self._start_new_conversation()
             return True
         if command == "/fork":
@@ -556,6 +556,7 @@ class AgentSimulationApp:
             "/turn",
             "/local-context",
             "/new-conversation",
+            "/new",
             "/artifact",
             "/fork [--new-session]",
             "/debug on|off",
@@ -618,6 +619,9 @@ def run(args: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(run())
+
+
+
 
 
 

@@ -192,7 +192,7 @@ def test_new_conversation_starts_new_thread_with_cross_thread_recall_defaults(tm
     original_session = app.session.defaults.session_ref
     original_thread = app.session.defaults.thread_ref
 
-    assert app._handle_command("/new-conversation") is True
+    assert app._handle_command("/new") is True
 
     defaults = app.session.defaults
     assert defaults.container_ref == original_container
@@ -200,3 +200,4 @@ def test_new_conversation_starts_new_thread_with_cross_thread_recall_defaults(tm
     assert defaults.thread_ref != original_thread
     assert defaults.runtime_context["turn_kind"] == "new_thread"
     assert defaults.runtime_context["session_has_sufficient_local_context"] is False
+

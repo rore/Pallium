@@ -129,7 +129,7 @@ Useful commands in the harness:
 - `/show scope` to print current defaults
 - `/turn` to set `runtime_context.turn_kind`
 - `/local-context` to set `runtime_context.session_has_sufficient_local_context`
-- `/new-conversation` to start a new conversation in the same memory space and enable cross-thread recall by default
+- `/new` or `/new-conversation` to start a new conversation in the same memory space and enable cross-thread recall by default
 - `/fork` to start a new thread while preserving container and visibility (advanced/debug control)
 - `/fork --new-session` to rotate the session boundary too
 - `/debug on` to show fuller trace detail
@@ -208,5 +208,6 @@ In one short run, you verified that the current repo already ships:
 - compact retrieval over memory plus evidence
 - resumed-work continuity support in today's product focus
 - a debuggable retrieval path with replayable local sessions
+
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import shlex
 
 COMMAND_COMPLETIONS = (
+    "/new",
     "/new-conversation",
     "/artifact",
     "/debug",
@@ -151,6 +152,8 @@ def build_terminal_io():
         output_func=print,
         output_formatter=format_output_text,
     )
+
+
 
 
 
