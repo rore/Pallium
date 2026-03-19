@@ -9,6 +9,7 @@ from typing import Any
 
 from capabilities.consolidation import ConsolidationPolicy, DEFAULT_CONSOLIDATION_STRATEGIES
 from providers.llm.base import LLMRetryPolicy
+from storage.vector_index import VectorIndexConfig
 
 
 DEFAULT_ENV_FILE = ".env.local"
@@ -99,6 +100,7 @@ class AppConfig:
     semantic_packages: dict[str, SemanticPackageConfig] = field(default_factory=_default_semantic_packages)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
     retention: RetentionConfig = field(default_factory=RetentionConfig)
+    vector_index: VectorIndexConfig = field(default_factory=VectorIndexConfig)
 
     # Legacy compatibility inputs. New code should prefer llm_providers and semantic_packages.
     llm_provider: str | None = None
@@ -201,6 +203,7 @@ class AppConfig:
             llm_providers=_build_provider_configs(config_data, env_values),
             embedding_providers=_build_embedding_provider_configs(config_data),
             semantic_packages=_build_package_configs(config_data, env_values),
+            vector_index=_build_vector_index_config(config_data, env_values),
             llm_provider=_resolve_legacy_value("PALLIUM_LLM_PROVIDER", env_values),
             llm_model=_resolve_legacy_value("PALLIUM_LLM_MODEL", env_values),
             llm_base_url=_resolve_legacy_value("PALLIUM_LLM_BASE_URL", env_values),
@@ -459,6 +462,37 @@ def _build_embedding_provider_configs(config_data: dict[str, Any]) -> dict[str, 
                 dimensions=dimensions,
             )
     return providers
+
+
+def _build_vector_index_config(config_data: dict[str, Any], env_values: dict[str, str]) -> VectorIndexConfig:
+    defaults = VectorIndexConfig()
+    raw = config_data.get("vector_index", {})
+    if not isinstance(raw, dict):
+        raw = {}
+    return VectorIndexConfig(
+        enabled=_resolve_bool_value(
+            "PALLIUM_VECTOR_INDEX_ENABLED",
+            env_values,
+            raw.get("enabled"),
+            defaults.enabled,
+        ),
+        index_path=_resolve_global_value(
+            "PALLIUM_VECTOR_INDEX_PATH",
+            env_values,
+            _as_string(raw.get("index_path")) or defaults.index_path,
+        ) or defaults.index_path,
+        embedding_provider=_as_optional_string(
+            env_values.get("PALLIUM_VECTOR_INDEX_EMBEDDING_PROVIDER")
+            or raw.get("embedding_provider")
+            or defaults.embedding_provider
+        ),
+        min_similarity=float(
+            env_values.get(
+                "PALLIUM_VECTOR_INDEX_MIN_SIMILARITY",
+                raw.get("min_similarity", defaults.min_similarity),
+            )
+        ),
+    )
 
 
 def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, str]) -> dict[str, SemanticPackageConfig]:

@@ -135,3 +135,13 @@ class VectorIndex:
     def entry_count(self) -> int:
         """Return the number of entries currently in the index."""
         return len(self._id_to_key)
+
+    @property
+    def model_name(self) -> str:
+        """Return the model name this index was built with."""
+        return self._model_name
+
+    @property
+    def dimensions(self) -> int:
+        """Return the dimensionality of the vectors in this index."""
+        return self._dimensions
