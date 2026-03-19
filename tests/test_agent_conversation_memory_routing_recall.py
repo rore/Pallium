@@ -761,3 +761,129 @@ def test_component_anchor_prefilter_stays_local_to_component_in_v1() -> None:
     assert anchor_prefilter['excluded_by_anchor_count'] == 0
     assert 'decision-reservation-duplicate-holds' in returned_ids
     assert 'decision-reservation-notices' in returned_ids
+
+
+def test_discussion_topic_query_classifies_as_broad_recall() -> None:
+    # "What were we discussing?" starts with "what " — without the BROAD_RECALL_CUES addition
+    # it would fall to the generic startswith("what ") check and return precise_fact.
+    # Verify it is now classified as broad_recall.
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help')
+    retrieval_result = RetrievalQueryResult(
+        results=[],
+        trace=QueryTrace(
+            query_text='what were we discussing?',
+            query_tokens=('what', 'were', 'we', 'discussing'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='what were we discussing?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    assert outcome.trace.routing['query_intent'] == 'broad_recall', (
+        f"Expected broad_recall but got {outcome.trace.routing['query_intent']!r} — "
+        "BROAD_RECALL_CUES may be missing discussion/topic phrases"
+    )
+
+
+def test_discussion_summary_candidate_selected_via_broad_recall_routing() -> None:
+    # A discussion_summary candidate seeded with known content should be selected
+    # when the query is a history/topic question routed through broad_recall.
+    # This tests routing + injection decision in isolation, bypassing extraction.
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='summary-file-size-limit',
+                type='discussion_summary',
+                payload={'summary': 'We discussed setting the file size limit to 32G for the ingest pipeline.'},
+                score=14,
+                evidence=[],
+                container_ref='chat:library-help',
+                envelope=_memory_envelope('summary', confidence='medium'),
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='what were we discussing?',
+            query_tokens=('what', 'were', 'we', 'discussing'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='what were we discussing?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    routing = outcome.trace.routing
+    assert routing['query_intent'] == 'broad_recall', (
+        f"Expected broad_recall intent, got {routing['query_intent']!r}"
+    )
+    selected_ids = [r.memory_object_id for r in outcome.results if r.result_kind == 'memory_hit']
+    assert 'summary-file-size-limit' in selected_ids, (
+        f"discussion_summary candidate was not selected. Routing trace: {routing}"
+    )
+
+
+def test_precise_fact_routing_not_regressed_by_discussion_cues() -> None:
+    # "Which cap were we bumping?" starts with "which" — must remain precise_fact.
+    # Regression guard: the discussion/topic phrase additions must not bleed into
+    # precise factual queries.
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help')
+    retrieval_result = RetrievalQueryResult(
+        results=[],
+        trace=QueryTrace(
+            query_text='which cap were we bumping?',
+            query_tokens=('which', 'cap', 'were', 'we', 'bumping'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='which cap were we bumping?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    assert outcome.trace.routing['query_intent'] == 'precise_fact', (
+        f"Expected precise_fact but got {outcome.trace.routing['query_intent']!r} — "
+        "discussion phrase additions may have caused precise-fact regression"
+    )
