@@ -345,7 +345,7 @@ ROUTING_QUERY_SHAPE_TOKENS = {
 }
 
 ROUTING_QUERY_SHAPE_PHRASES = {
-    "history_lookup": ("what do we know", "what is the latest", "what's the latest", "what had we concluded", "what had you concluded", "what constraint had i given", "remind me what we had latest", "remind me what we had latest about", "remind me what we had about", "what we had about", "what were we discussing", "what did we talk about", "what have we been discussing", "what had we been discussing", "what were we working on", "what had we been working on", "last time", "last session"),
+    "history_lookup": ("what do we know", "what is the latest", "what's the latest", "what had we concluded", "what had you concluded", "what constraint had i given", "remind me what we had latest", "remind me what we had latest about", "remind me what we had about", "what we had about", "what were we discussing", "what did we talk about", "what have we been discussing", "what had we been discussing", "what were we working on", "what had we been working on"),
     "big_picture": ("big picture", "general lesson", "larger lesson", "main takeaway", "should we remember", "what should we remember"),
     "analysis_request": ("where did we land", "what ended up being true", "what settled", "how did that shake out"),
     "constraint_recall": ("what constraint had i given", "what constraint did i give", "what had i told you not to use", "what did i tell you not to use", "anything i should avoid", "what should i not rely on", "what should i avoid", "anything to avoid"),

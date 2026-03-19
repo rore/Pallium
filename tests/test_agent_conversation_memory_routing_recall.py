@@ -887,3 +887,42 @@ def test_precise_fact_routing_not_regressed_by_discussion_cues() -> None:
         f"Expected precise_fact but got {outcome.trace.routing['query_intent']!r} — "
         "discussion phrase additions may have caused precise-fact regression"
     )
+
+
+def test_exact_fact_with_last_session_not_misrouted_to_broad_recall() -> None:
+    # "last session" as a bare phrase must NOT override exact-fact classification.
+    # Regression for the case where bare temporal fragments in history_lookup phrases
+    # caused substring matching to push "what error did we hit last session?" to broad_recall.
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help')
+    for query_text, query_tokens in [
+        ('what error did we hit last session?', ('what', 'error', 'did', 'we', 'hit', 'last', 'session')),
+        ('what was the token last session?', ('what', 'was', 'the', 'token', 'last', 'session')),
+    ]:
+        retrieval_result = RetrievalQueryResult(
+            results=[],
+            trace=QueryTrace(
+                query_text=query_text,
+                query_tokens=query_tokens,
+                limit=6,
+                filters=query_filters,
+                stages=(),
+            ),
+        )
+        outcome = plugin.route_query_results(
+            text=query_text,
+            requested_limit=6,
+            retrieval_result=retrieval_result,
+            query_filters=query_filters,
+            runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+            include_trace=True,
+        )
+        assert outcome.trace is not None
+        assert outcome.trace.routing is not None
+        assert outcome.trace.routing['query_intent'] == 'precise_fact', (
+            f"Query {query_text!r} expected precise_fact but got "
+            f"{outcome.trace.routing['query_intent']!r} — bare temporal fragment may be misrouting"
+        )
