@@ -169,7 +169,7 @@ def build_service(
                     resolved_config,
                     provider_name=vector_config.embedding_provider,
                 )
-            except (ImportError, ValueError, Exception) as exc:
+            except Exception as exc:
                 logger.error("Vector embedding provider failed to initialize: %s. Vector disabled.", exc)
                 embedding_provider = None
 
