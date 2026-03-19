@@ -118,8 +118,8 @@ def _build_harness(
     harness.session.defaults.thread_ref = thread_ref
     harness.session.defaults.session_ref = session_ref
     harness.session.defaults.visibility_context = dict(_PUBLIC)
-    harness.session.defaults.runtime_context["turn_kind"] = turn_kind
-    harness.session.defaults.runtime_context["session_has_sufficient_local_context"] = session_has_sufficient_local_context
+    harness.session.defaults.set_runtime_context("turn_kind", turn_kind, manual=True)
+    harness.session.defaults.set_runtime_context("session_has_sufficient_local_context", session_has_sufficient_local_context, manual=True)
     return harness, model
 
 
@@ -744,10 +744,7 @@ def test_chat_mode_local_thread_context_does_not_leak_across_new_conversation(mo
 
     assert model.calls[1]["local_thread_context"] == []
     second_request = harness.session.events[1]["query_debug"]["request"]
-    assert second_request["runtime_context"] == {
-        "turn_kind": "new_thread",
-        "session_has_sufficient_local_context": False,
-    }
+    assert "runtime_context" not in second_request
 
 
 def test_chat_mode_keeps_cross_thread_memory_separate_from_local_thread_context(monkeypatch, test_db_url: str) -> None:

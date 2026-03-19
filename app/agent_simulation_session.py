@@ -67,6 +67,14 @@ class ScopeDefaults:
     def runtime_context_is_manual(self, key: str) -> bool:
         return bool(self.runtime_context_overrides.get(key))
 
+    def runtime_context_payload(self) -> dict[str, Any] | None:
+        payload: dict[str, Any] = {}
+        for key in RUNTIME_CONTEXT_OVERRIDE_KEYS:
+            if not self.runtime_context_is_manual(key):
+                continue
+            payload[key] = self.runtime_context.get(key)
+        return payload or None
+
 
 @dataclass
 class HarnessSession:

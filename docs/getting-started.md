@@ -135,8 +135,8 @@ Advanced commands:
 
 - `/scope` to set or review container, thread, session, and visibility defaults
 - `/show scope` to print current defaults
-- `/turn` to set `runtime_context.turn_kind`
-- `/local-context` to set `runtime_context.session_has_sufficient_local_context`
+- `/turn` to set an explicit `runtime_context.turn_kind` override
+- `/local-context` to set an explicit `runtime_context.session_has_sufficient_local_context` override
 - `/fork` to start a new thread while preserving container and visibility
 - `/fork --new-session` to rotate the session boundary too
 - `/mode manual` to switch into direct `/items`, `/query`, and `/query/debug` control
@@ -148,7 +148,7 @@ A `chat-lite` turn does this in order:
 3. calls the configured model with bounded current-thread local context plus Pallium-approved carry-forward kept in separate prompt sections
 4. auto-accepts the assistant reply and ingests it through `POST /items`
 
-That means same-thread follow-ups can behave like normal chat even when Pallium correctly injects nothing, while cross-thread carry-forward still comes only from Pallium.
+That means same-thread follow-ups can behave like normal chat even when Pallium correctly injects nothing, while cross-thread carry-forward still comes only from Pallium. Normal chat does not need to send `runtime_context`; those controls are advanced overrides for debugging and special simulation cases.
 
 A normal `chat` turn adds the operator/debug layer on top:
 

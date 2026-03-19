@@ -278,8 +278,8 @@ def set_scope(harness: AgentSimulationApp, scope: dict[str, Any]) -> None:
     harness.session.defaults.thread_ref = scope["thread_ref"]
     harness.session.defaults.session_ref = scope["session_ref"]
     harness.session.defaults.visibility_context = {"kind": "public", "id": None}
-    harness.session.defaults.runtime_context["turn_kind"] = scope["turn_kind"]
-    harness.session.defaults.runtime_context["session_has_sufficient_local_context"] = scope["session_has_sufficient_local_context"]
+    harness.session.defaults.set_runtime_context("turn_kind", scope["turn_kind"], manual=True)
+    harness.session.defaults.set_runtime_context("session_has_sufficient_local_context", scope["session_has_sufficient_local_context"], manual=True)
 
 
 def evaluate_followup(query_response: dict[str, Any], expectations: dict[str, Any]) -> dict[str, Any]:

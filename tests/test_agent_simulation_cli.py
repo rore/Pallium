@@ -254,6 +254,34 @@ def test_manual_runtime_context_overrides_survive_inferred_chat_defaults(tmp_pat
     assert app.session.defaults.runtime_context["session_has_sufficient_local_context"] is False
 
 
+def test_normal_chat_omits_runtime_context_without_manual_overrides(tmp_path) -> None:
+    app, _io = _build_app(tmp_path, model=AcceptingModel())
+    app._mode = "chat-lite"
+    app.session.set_mode("chat-lite")
+
+    app.process_chat_message("First turn")
+
+    request = app.session.events[0]["query_debug"]["request"]
+    assert "runtime_context" not in request
+
+
+def test_manual_runtime_context_override_is_sent_in_query_payload(tmp_path) -> None:
+    app, _io = _build_app(tmp_path, model=AcceptingModel())
+    app._mode = "chat-lite"
+    app.session.set_mode("chat-lite")
+
+    assert app._handle_command("/turn resumed_session") is True
+    assert app._handle_command("/local-context false") is True
+
+    app.process_chat_message("Resume this")
+
+    request = app.session.events[0]["query_debug"]["request"]
+    assert request["runtime_context"] == {
+        "turn_kind": "resumed_session",
+        "session_has_sufficient_local_context": False,
+    }
+
+
 def test_help_defaults_to_basic_commands_and_supports_advanced_section(tmp_path) -> None:
     app, io = _build_app(tmp_path)
 

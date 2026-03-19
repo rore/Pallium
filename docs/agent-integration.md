@@ -168,12 +168,15 @@ The runtime should send:
   - `thread_ref`
   - `session_ref`
   - `visibility_context`
-- a small amount of explicit runtime context when available, for example:
-  - `turn_kind = new_thread | same_thread_continuation | resumed_session | new_session`
-  - whether the active session already has sufficient local context
 
-That runtime context is mechanical, not semantic. The runtime should describe
-its world, not guess what memory kind should win.
+Optional advanced hints:
+- `runtime_context` when the runtime genuinely knows a special state, for example:
+  - `turn_kind = resumed_session`
+  - an explicit override that local context is or is not sufficient
+
+Normal agents should not need to send `runtime_context` for ordinary chat flow.
+The structural refs are the primary contract; `runtime_context` is an optional
+mechanical override channel, not a semantic instruction channel.
 
 ## Query Result Contract
 

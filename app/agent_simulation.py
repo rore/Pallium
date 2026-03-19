@@ -406,15 +406,7 @@ class AgentSimulationApp:
         return {key: value for key, value in payload.items() if value is not None}
 
     def _runtime_context_payload(self) -> dict[str, Any] | None:
-        runtime = self._session.defaults.runtime_context
-        turn_kind = runtime.get("turn_kind")
-        local_context = runtime.get("session_has_sufficient_local_context")
-        if turn_kind is None and local_context is None:
-            return None
-        return {
-            "turn_kind": turn_kind,
-            "session_has_sufficient_local_context": local_context,
-        }
+        return self._session.defaults.runtime_context_payload()
 
     def _prompt_action(self) -> str:
         raw = self._io.prompt("accept/edit/discard [a/e/d]: ").strip().lower()
