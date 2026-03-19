@@ -91,19 +91,36 @@ Write-time cost: one embed per memory object (~90ms) is noise next to the 1-5 se
 
 ### 1. Threshold setting
 
-The 0.3 default is fine as a floor (no realistic query scores below 0.45). But thresholding is not the discriminator — **ranking is**. The correct memory consistently ranks #1 for any query with light domain anchoring. The threshold's job is only to reject completely unrelated results, not to disambiguate.
+**REVISED AFTER NEGATIVE TESTING.** At threshold 0.3, ALL unrelated memories in a 15-memory container score above threshold for every query. The threshold does nothing. Meaningful noise filtering only starts at 0.55.
 
-**Recommendation**: Keep min_similarity at 0.3. Do not raise it. Discrimination comes from ranking, not filtering.
+| Threshold | Avg unrelated FP per query (out of 11) | Assessment |
+|---|---|---|
+| 0.30 | 11.0 (all!) | Useless |
+| 0.50 | 10.1 | Still too noisy |
+| 0.55 | 4.9 | Getting usable |
+| 0.60 | 1.3 | Clean |
+
+The target memory still ranks #1 in 5/7 queries regardless of threshold. So recall is not affected by raising the threshold. The question is how much noise accompanies the correct result.
+
+Good news: low-value/generic memories ("Got it, I'll look into that") consistently score lower than real domain memories (max 0.62 vs target 0.69+). So the threshold won't wrongly promote garbage.
+
+**Recommendation**: Raise default `min_similarity` to **0.55**. This cuts average false positives from 11 to 5 per query while preserving recall. Consider 0.60 for stricter deployments. The threshold should be treated as a noise filter, not a relevance discriminator — ranking handles relevance.
 
 ### 2. Embedding text composition
 
-Shorter, domain-dense text embeds as well or better than structured multi-field text. The `build_embedding_text()` output should:
-- Include the core domain-specific text (decision text, investigation finding, summary)
-- Include key domain nouns and technical terms
-- Skip structural labels ("Task:", "Current state:", "Next step:") if they dilute domain density
-- Keep total length moderate (50-150 words is the sweet spot for 384-dim models)
+**REVISED AFTER SYSTEMATIC COMPARISON.** The earlier hand-crafted tests suggested shorter text embeds better. Systematic testing across all memory types with margin-over-distractor scoring shows mixed results:
 
-**Recommendation**: Simplify `build_embedding_text()` to produce shorter, domain-denser text. A one-sentence summary with key domain terms may outperform a structured multi-field composition.
+| Memory type | Current multi-field margin | Simplified single-field margin | Winner |
+|---|---|---|---|
+| task_checkpoint | +0.216 | +0.218 | Tied |
+| investigation_outcome | +0.045 | +0.041 | Tied |
+| decision | +0.118 | +0.070 | Current |
+| thread_summary | +0.184 | +0.215 | Simplified |
+| continuity_memory | +0.173 | +0.198 | Simplified |
+
+The data does not clearly support changing `build_embedding_text()`. Some types embed better with more fields (decision), some with fewer (thread_summary). The current implementation works correctly — 6/6 rank-1 accuracy on actual output.
+
+**Recommendation**: Keep the current `build_embedding_text()` implementation. The structural labels ("Task:", "Decision:") do not hurt enough to justify the change. Revisit only if real-stack benchmarks with fusion show embedding text as the bottleneck.
 
 ### 3. Minimum content guard
 
@@ -139,6 +156,32 @@ fastembed cannot be installed on Python 3.14 due to `py-rust-stemmers` dependenc
 
 ---
 
+## Negative-Case Validation (Added After Review)
+
+### Finding 11: Threshold 0.3 provides zero noise filtering
+
+In a realistic 15-memory container (1 target, 3 related, 11 unrelated), ALL 11 unrelated memories score above 0.3 for every query tested. The threshold is useless at that level. This was the most important gap in the original validation, which was recall-focused.
+
+Low-value/generic memories ("Got it, I'll look into that") consistently score lower than real domain memories (max 0.62 vs target 0.69+). The threshold won't wrongly promote garbage over real content, but it will let a lot of noise through to the routing layer.
+
+### Finding 12: Current `build_embedding_text()` is not demonstrably worse than simplified alternatives
+
+Systematic margin-over-distractor comparison shows type-dependent results. The current multi-field format wins for decisions (+0.118 vs +0.070), loses slightly for thread summaries (+0.184 vs +0.215) and continuity memory (+0.173 vs +0.198), and ties for checkpoints and investigations. The data does not support a rewrite.
+
+### Finding 13: Length guard at 40 characters correctly separates useful from useless
+
+| Category | Length | Embed quality | 40-char threshold |
+|---|---|---|---|
+| Full checkpoint | 200 chars | 0.72 | KEEP |
+| Short but useful decision | 44 chars | 0.72 | KEEP |
+| Vague summary | 39 chars | 0.61 | DROP |
+| Acknowledgment | 28 chars | 0.46 | DROP |
+| Greeting | 32 chars | 0.50 | DROP |
+
+The 40-char boundary correctly keeps marginal-but-useful texts (short decisions score 0.72) and drops vague/generic ones (summaries without domain content score 0.61 or below).
+
+---
+
 ## Conclusion
 
 Vector retrieval works for its intended purpose: bridging the lexical recall gap when users paraphrase or use domain vocabulary different from the stored memory text. It does NOT solve pure meta-language queries with zero domain content — that requires routing improvements.
@@ -155,24 +198,11 @@ BGE models recommend prefixing queries with "Represent this sentence for searchi
 
 **Recommendation**: Do not use instruction prefixes. The marginal benefit does not justify a special query-time text transformation.
 
-### Finding 8: Raw source text and short summaries often embed better than multi-field curated text
+### Finding 8: Embedding text format matters less than initially measured
 
-Comparing four text variants (multi-field concatenation, summary-only, key-sentence, raw source):
+Early hand-crafted tests suggested shorter text always embeds better. Systematic testing with margin-over-distractor scoring (Test 3, negative validation) shows the effect is type-dependent: decisions embed better with the current multi-field format, while thread summaries and continuity memories slightly prefer shorter text. The difference is modest in all cases (0.02-0.05 margin).
 
-| Query level | Best performer (6 of 9 cases) |
-|---|---|
-| light-anchor | raw-source or summary-only |
-| moderate | raw-source or summary-only |
-
-The structured multi-field format ("Task: X. Current state: Y. Blocker: Z.") dilutes domain signal by spending embedding dimensions on structural tokens. Shorter, content-dense text consistently scores higher.
-
-**Recommendation for `build_embedding_text()`**: Use the single most content-rich text field per memory type, not a concatenation of all payload fields:
-- `task_checkpoint`: summary text (not task + current_state + blocker + next_step)
-- `investigation_outcome`: investigation text + rationale
-- `decision`: summary or decision text + rationale
-- `thread_summary`: summary text
-- `pattern_memory`: summary text
-- `continuity_memory`: question + answer (these are naturally dense)
+**Recommendation for `build_embedding_text()`**: Keep the current implementation. The structural labels do not hurt enough to justify a rewrite. If a future type-specific issue is found, optimize that type only.
 
 ### Finding 9: Query-time context expansion dramatically improves pure-abstract recall
 
