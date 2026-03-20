@@ -28,6 +28,9 @@ Current shipped surface:
   current conversation package
 - a query path that can return derived memory, source evidence, or both
   depending on the question
+- composite retrieval with lexical, vector, and hybrid RRF fusion behind a
+  `vector_index.enabled` config flag (default disabled for backward
+  compatibility)
 - a bounded package-owned query-policy layer with selective semantic ambiguity
   resolution instead of an always-on query-time router
 - thread-level orientation and resumed-work checkpoints in the current product
@@ -59,8 +62,8 @@ The main open questions are:
   stays on messier real traffic
 - how far the shipped live-improvement loop should grow before it becomes a
   stronger replay/confidence input
-- whether lexical retrieval is enough, or whether vector or hybrid retrieval is
-  the next real bottleneck
+- whether lexical retrieval alone is enough for all query shapes, or whether
+  hybrid retrieval exposes new routing or ranking gaps now that it is shipped
 
 ## Best Fit Today
 
@@ -81,8 +84,6 @@ The main open questions are:
 The next likely additions are:
 
 - hardening and extension of the shipped live improvement loop
-- vector retrieval behind the current retrieval boundary
-- hybrid lexical and vector fusion
 - explicit shared-memory derivation
 
 ## Where To Go Deeper

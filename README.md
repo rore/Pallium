@@ -82,9 +82,10 @@ Current implementation surface:
 - SQLite-backed storage
 - `POST /items`, `GET /items/{source_item_id}/processing`, `POST /query`,
   `POST /query/debug`, and `GET /debug/queue/health`
-- lexical retrieval plus package-level query policy for the current
-  conversation package, including a deterministic hot path and selective
-  semantic ambiguity resolution for bounded unresolved cases
+- lexical retrieval, vector retrieval, and hybrid RRF fusion behind a
+  composite retrieval provider, plus package-level query policy for the
+  current conversation package, including a deterministic hot path and
+  selective semantic ambiguity resolution for bounded unresolved cases
 - structured TOML and env-based runtime configuration for providers, semantic
   packages, prompt roles, observability, and retention
 - a supported terminal harness at `python -m app.agent_simulation` for
@@ -170,8 +171,6 @@ Pallium is not:
 
 The current repo does not yet ship:
 
-- vector retrieval behind the retrieval boundary
-- hybrid lexical plus vector fusion
 - explicit shared-memory derivation
 - cross-container bounded memory
 - broad ambient workspace ingestion

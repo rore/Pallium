@@ -84,7 +84,8 @@ Current retrieval flow is:
 
 1. apply structured filters
 2. enforce visibility before ranking for scope-aware packages
-3. run lexical retrieval over source and memory text views
+3. run retrieval over source and memory text views — lexical by default, with
+   optional vector and hybrid RRF fusion via `vector_index.enabled`
 4. rerank inside `agent_conversation_memory` based on the query shape
 5. return compact `memory_hit` and `source_hit` cards
 
@@ -103,8 +104,6 @@ is enforced before ranking.
 
 The current concepts and model do not imply that Pallium already supports:
 
-- vector retrieval
-- hybrid fusion
 - explicit shared-memory publication
 - broad ambient workspace ingestion
 - full workflow-state orchestration
