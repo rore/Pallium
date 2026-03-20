@@ -1,10 +1,10 @@
 ---
 id: add-vector-retrieval-provider
 title: Add bounded vector retrieval for durable memory lanes
-status: in-progress
+status: done
 priority: high
 commitment: committed
-milestone: Later
+milestone: Done
 lane: retrieval-semantic-substrate
 ---
 

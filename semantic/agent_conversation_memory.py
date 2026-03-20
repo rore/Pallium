@@ -86,6 +86,10 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             supersession_hints=build_supersession_hints(source_item, direct_result),
         )
 
+    def source_item_embedding_text(self, source_item: SourceItem) -> str | None:
+        from semantic.agent_conversation_memory_embedding import source_item_embedding_text
+        return source_item_embedding_text(source_item)
+
     def reconcile_process_result(
         self,
         result: ProcessResult,

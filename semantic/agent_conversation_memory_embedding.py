@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.models import MemoryObject
+from core.models import MemoryObject, SourceItem
 
 
 EMBEDDABLE_MEMORY_TYPES = {
@@ -134,3 +134,12 @@ def _build_continuity_memory_text(payload: dict) -> str:
     if summary:
         parts.append(summary)
     return " ".join(parts) if parts else ""
+
+
+def source_item_embedding_text(source_item: SourceItem) -> str | None:
+    """agent_conversation_memory policy: embed user messages and assistant outputs >= 40 chars."""
+    if source_item.artifact_kind not in ("message", "assistant_output"):
+        return None
+    if len(source_item.content) < 40:
+        return None
+    return source_item.content

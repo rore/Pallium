@@ -73,6 +73,15 @@ def build_embedding_provider(config: AppConfig, *, provider_name: str) -> Embedd
             dimensions=provider_config.dimensions,
         )
 
+    if provider_kind == "onnx":
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        return OnnxEmbeddingProvider(
+            model=provider_config.model,
+            dimensions=provider_config.dimensions,
+            cache_dir=provider_config.cache_dir,
+        )
+
     raise ValueError(f"Unsupported embedding provider kind: {provider_config.kind}")
 
 
@@ -209,6 +218,14 @@ def build_service(
                     index_count,
                 )
 
+    # Wrap lexical + vector into composite retrieval if vector is available
+    if vector_retrieval is not None:
+        from retrieval.composite import CompositeRetrievalProvider
+        retrieval = CompositeRetrievalProvider(
+            lexical=retrieval,
+            vector=vector_retrieval,
+        )
+
     return PalliumService(
         storage=storage,
         retrieval=retrieval,
@@ -220,7 +237,6 @@ def build_service(
         retention_batch_size=resolved_config.retention.batch_size,
         embedding_provider=embedding_provider,
         vector_index=vector_index,
-        vector_retrieval=vector_retrieval,
     )
 
 

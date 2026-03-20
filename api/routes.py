@@ -11,7 +11,7 @@ from api.schemas import (
     QueryResponse,
     QueueHealthResponse,
 )
-from core.models import InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
+from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
 from core.service import PalliumService
 from core.visibility import QueryVisibilityTrace, VisibilityContext, VisibilityExclusion
 
@@ -79,6 +79,7 @@ def _serialize_result(item: QueryResultItem) -> dict[str, object]:
         "source_ref": item.source_ref,
         "artifact_kind": item.artifact_kind,
         "visibility_context": _serialize_visibility_context(item.visibility_context),
+        "retrieval_source": item.retrieval_source,
     }
 
 
@@ -153,6 +154,32 @@ def _serialize_query_filters(filters) -> dict[str, object] | None:
     }
 
 
+def _serialize_fusion_trace_hit(hit: FusionTraceHit) -> dict[str, object]:
+    return {
+        "result_id": hit.result_id,
+        "rrf_score": hit.rrf_score,
+        "rrf_rank": hit.rrf_rank,
+        "fused_score": hit.fused_score,
+        "lexical_rank": hit.lexical_rank,
+        "vector_rank": hit.vector_rank,
+        "retrieval_source": hit.retrieval_source,
+    }
+
+
+def _serialize_fusion_trace(fusion_trace: FusionStageTrace) -> dict[str, object]:
+    return {
+        "stage_name": fusion_trace.stage_name,
+        "k": fusion_trace.k,
+        "rrf_score_scale": fusion_trace.rrf_score_scale,
+        "lexical_candidate_count": fusion_trace.lexical_candidate_count,
+        "vector_candidate_count": fusion_trace.vector_candidate_count,
+        "fused_candidate_count": fusion_trace.fused_candidate_count,
+        "both_sources_count": fusion_trace.both_sources_count,
+        "selected_count": fusion_trace.selected_count,
+        "hits": [_serialize_fusion_trace_hit(hit) for hit in fusion_trace.hits],
+    }
+
+
 def _serialize_trace(trace: QueryTrace) -> dict[str, object]:
     return {
         "query_text": trace.query_text,
@@ -166,6 +193,7 @@ def _serialize_trace(trace: QueryTrace) -> dict[str, object]:
         "routing": trace.routing,
         "visibility": _serialize_visibility_trace(trace.visibility) if trace.visibility is not None else None,
         "result_summary": trace.result_summary,
+        "fusion_trace": _serialize_fusion_trace(trace.fusion_trace) if trace.fusion_trace is not None else None,
     }
 
 

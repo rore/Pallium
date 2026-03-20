@@ -391,6 +391,13 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def find_index_entry(
+        self, target_kind: str, target_id: str, index_type: str, text_view_name: str
+    ) -> IndexEntry | None:
+        """Find an existing index entry by target+type+view. Returns None if not found."""
+        raise NotImplementedError
+
+    @abstractmethod
     def list_index_entries_by_type(self, index_type: str) -> list[IndexEntry]:
         """List all index entries of a given type (e.g., 'vector')."""
         raise NotImplementedError

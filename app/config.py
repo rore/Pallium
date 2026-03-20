@@ -42,9 +42,10 @@ class LLMProviderConfig:
 @dataclass(frozen=True)
 class EmbeddingProviderConfig:
     name: str
-    kind: str                     # "fastembed" (only kind in this slice)
+    kind: str                     # "fastembed" | "onnx"
     model: str
     dimensions: int | None = None
+    cache_dir: str | None = None  # model cache directory (default: HuggingFace global cache)
 
 
 @dataclass(frozen=True)
@@ -460,6 +461,7 @@ def _build_embedding_provider_configs(config_data: dict[str, Any]) -> dict[str, 
                 kind=_as_string(raw_value.get("kind")),
                 model=_as_string(raw_value.get("model")),
                 dimensions=dimensions,
+                cache_dir=_as_string(raw_value.get("cache_dir")) if raw_value.get("cache_dir") else None,
             )
     return providers
 
