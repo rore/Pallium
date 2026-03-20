@@ -1,8 +1,8 @@
-﻿# State
+# State
 
 ## Last Updated
 
-2026-03-19
+2026-03-20
 
 ## Repo Snapshot
 
@@ -48,6 +48,13 @@
   - shadow routing comparison via injectable routing overrides
   - replay-promotion tooling from exploratory captures into replay scenario skeletons
 - committed examples and tests use a neutral library reservation and catalog sync sample domain
+- hybrid retrieval is now the shipped production retrieval path:
+  - `CompositeRetrievalProvider` fuses lexical and vector results via Reciprocal Rank Fusion (RRF, k=60, scale=600)
+  - `OnnxEmbeddingProvider` provides embedding support with Python 3.14 compatibility (fastembed provider also available)
+  - all 6 promoted memory types are embedded at background processing time, not at ingest
+  - `SourceItem` embedding is plugin-owned via a package method on the semantic plugin boundary
+  - production `/query` path activates hybrid retrieval by default
+  - retrieval trace continues to show per-result origin (lexical, vector, or fused)
 
 ## Verification Notes
 
@@ -62,7 +69,7 @@
   - live exploratory drift and replay-promotion tooling
 - the developer-work confidence harness should be read by hard-gate fields first, not by aggregate scenario-success counts alone
 - replay is now a real tooling surface, but replay coverage is still materially smaller than the authored confidence packs
-- lexical retrieval remains the shipped retrieval substrate; vector and hybrid retrieval are still follow-on work
+- test suite: 621 passed, 5 skipped
 
 ## Configuration Note
 
@@ -87,9 +94,7 @@
 
 - the next hardening work should build on the shipped live-improvement loop rather than still describing it as future work
 - likely next architectural pressure remains:
-  - vector retrieval behind the current retrieval boundary
-  - hybrid lexical plus vector fusion
-  - later explicit shared-memory derivation
+  - explicit shared-memory derivation
 - follow-on work around the live improvement loop should stay bounded to:
   - replay promotion quality
   - shadow tuning workflow

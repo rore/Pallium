@@ -31,6 +31,8 @@ Implemented abstractions:
 - retrieval provider boundary
 - semantic plugin boundary
 - LLM provider boundary with shared retry, backoff, and call metadata
+- embedding provider boundary (`EmbeddingProvider` ABC with fastembed and ONNX Runtime implementations)
+- vector index adapter (usearch)
 
 Implemented storage and retrieval behavior:
 
@@ -38,43 +40,47 @@ Implemented storage and retrieval behavior:
 - synchronous raw source ingest plus queue state on `source_items` for async semantic processing
 - compact per-item debug state embedded in `SourceItem.metadata` for integration explainability
 - lexical retrieval over indexed text views
+- vector retrieval over embedded text views via usearch index
+- hybrid retrieval via `CompositeRetrievalProvider` fusing lexical and vector results with Reciprocal Rank Fusion (RRF, k=60, scale=600)
 - named text-view metadata on `IndexEntry`
 - indexing for both `SourceItem` and `MemoryObject`
 - mixed retrieval over memory hits and compact source hits
 - compact source-hit cards with explicit event refs instead of raw full content
 - lifecycle-aware retrieval that excludes superseded memory by default
-- optional lexical retrieval trace on the debug query path, including matched tokens, candidate-flow counts, selected text views, routed exclusion reasons, and result-origin summaries
+- optional retrieval trace on the debug query path, including matched tokens, candidate-flow counts, selected text views, routed exclusion reasons, result-origin summaries, and per-result retrieval origin (lexical, vector, or fused)
 - package-owned candidate-aware routed reranking on top of retrieval results for `agent_conversation_memory`, with explicit safer-layer fallback exposed through the existing debug trace path
 - evidence resolution from memory objects back to source items
 - generic `visibility_context` plumbing on `SourceItem`, `MemoryObject`, and query requests, with fail-closed retrieval enforcement for scope-aware packages before ranking and visibility exclusion trace on the debug path
 - explicit local integration-debug logging for processing outcomes, failures, memory provenance, and thread rebuild results, gated behind config rather than always-on logging
 
-## Target Retrieval Architecture
+## Hybrid Retrieval Architecture
 
-The current executable slice is structured-plus-lexical retrieval. The target retrieval architecture is hybrid retrieval.
+The production retrieval path is hybrid retrieval, fusing lexical and vector results.
 
-Target query flow:
+Production query flow:
 
 1. structured narrowing
 2. lexical retrieval over named text views
-3. vector retrieval over selected text views
-4. explicit fusion
+3. vector retrieval over embedded text views
+4. Reciprocal Rank Fusion (RRF, k=60, scale=600)
 5. optional reranking
 6. compact, evidence-backed result packaging
 
-Design implications:
+Design properties:
 
 - lexical retrieval remains mandatory because technical memory includes exact names, IDs, acronyms, and rare terms
 - vector retrieval is additive, not a replacement for lexical retrieval
-- fusion should be explicit rather than implicit score blending
-- retrieval should stay debuggable so Pallium can explain whether a hit came from lexical retrieval, vector retrieval, or fusion
+- fusion is explicit via RRF rather than implicit score blending
+- retrieval stays debuggable: Pallium can explain whether a hit came from lexical retrieval, vector retrieval, or fusion
 - both `SourceItem` and `MemoryObject` remain first-class retrieval targets
-- later vector and fusion slices should extend the current trace and text-view model rather than redesigning `IndexEntry`
+- the trace and text-view model extend to vector hits without redesigning `IndexEntry`
 
-Current intended fusion baseline:
+Embedding write path:
 
-- Reciprocal Rank Fusion (RRF) first
-- weighted blending only later if labeled evaluation justifies it
+- embedding happens at background processing time, not at ingest
+- `SourceItem` embedding is plugin-owned: the semantic plugin boundary exposes a package method that controls which text views are embedded for source items
+- all 6 promoted memory types are embedded
+- `OnnxEmbeddingProvider` provides Python 3.14 compatibility; fastembed provider also available
 
 ## Implemented Semantic Behavior
 
@@ -230,6 +236,7 @@ One meaningful ingest can create:
 - rebuilt thread-level memory such as `thread_summary` or `task_checkpoint`
 - explicit evidence relations
 - lexical index entries
+- vector embeddings for promoted memory and plugin-selected source items
 
 That is acceptable for the current selected-artifact, local-first product
 assumptions, but it creates predictable future operational pressure in ingest
@@ -348,6 +355,6 @@ Current main unresolved risk:
 Current expected follow-up hardening:
 
 - richer consolidation trace and merge rationale
-- richer per-result retrieval provenance so later vector and fusion retrieval can plug into the same routed trace path
+- richer per-result retrieval provenance so later retrieval improvements can plug into the same routed trace path
 
 
