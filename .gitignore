@@ -42,3 +42,4 @@ tmp/
 .claude/worktrees/
 .claude/settings.local.json
 .worktrees/
+pallium_vector.index*
