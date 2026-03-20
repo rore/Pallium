@@ -1,9 +1,8 @@
 # Next
+- add-hybrid-retrieval-fusion
 - add-live-integration-improvement-loop-and-replay-pipeline
 
 # Later
-- add-vector-retrieval-provider
-- add-hybrid-retrieval-fusion
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
 

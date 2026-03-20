@@ -4,9 +4,6 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
-
-
 @dataclass(frozen=True)
 class VectorIndexConfig:
     enabled: bool = False
@@ -52,6 +49,8 @@ class VectorIndex:
 
     def add(self, entry_id: str, vector: list[float]) -> None:
         """Add or replace a vector for the given entry_id."""
+        import numpy as np
+
         if entry_id in self._id_to_key:
             self.remove(entry_id)
         key = self._next_key
@@ -75,6 +74,8 @@ class VectorIndex:
         """
         if not self._id_to_key:
             return []
+        import numpy as np
+
         effective_k = min(k, len(self._id_to_key))
         results = self._index.search(np.array(query_vector, dtype=np.float32), effective_k, exact=True)
         hits: list[tuple[str, float]] = []

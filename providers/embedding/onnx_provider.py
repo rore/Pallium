@@ -3,8 +3,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import numpy as np
-
 from providers.embedding.base import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
@@ -95,6 +93,8 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
+
+        import numpy as np
 
         encodings = self._tokenizer.encode_batch(texts)
         max_len = max(len(e.ids) for e in encodings)
