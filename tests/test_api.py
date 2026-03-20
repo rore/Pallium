@@ -8,6 +8,7 @@ from app.config import AppConfig
 from app.main import create_app
 from core.models import MemoryObject
 from core.visibility import VisibilityContext
+from evals.continuity_common import compare_query_contract_payloads
 from providers.llm.base import LLMJsonResponse, LLMProviderError
 from tests.stub_providers import TieredMemorySemanticProvider
 from tests.agent_conversation_replay_helpers import (
@@ -1636,6 +1637,80 @@ def test_query_debug_short_noun_isolation_replay_routes_correctly(monkeypatch, t
     assert "reserve snapshot" in reserve_text
     assert "batch digest" not in reserve_text
     assert "control-panel sign-in" not in reserve_text
+
+
+def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(monkeypatch, test_db_url: str) -> None:
+    client = _agent_conversation_client(monkeypatch, test_db_url)
+    scenario = _seed_short_noun_isolation_history(client)
+    container_ref = scenario["container_ref"]
+    visibility_context = scenario["visibility_context"]
+
+    query_payloads = (
+        {
+            "text": "good afternnon sir",
+            "limit": 12,
+            "container_ref": container_ref,
+            "thread_ref": "chat:workspace:local-memory:diag-good-afternnon-fresh",
+            "session_ref": "agent-session:diag-good-afternnon-fresh",
+            "visibility_context": visibility_context,
+            "runtime_context": {
+                "turn_kind": "new_thread",
+                "session_has_sufficient_local_context": False,
+            },
+        },
+        {
+            "text": "remind me what we had about the batch digests lately",
+            "limit": 12,
+            "container_ref": container_ref,
+            "thread_ref": scenario["threads"]["same_thread_x"],
+            "session_ref": scenario["sessions"]["same_thread_x"],
+            "visibility_context": visibility_context,
+            "runtime_context": {
+                "turn_kind": "same_thread_continuation",
+                "session_has_sufficient_local_context": True,
+            },
+        },
+        {
+            "text": "no, remember that we cannot use control-panel sign-in here so there is no point trying to connect that way",
+            "limit": 12,
+            "container_ref": container_ref,
+            "thread_ref": scenario["threads"]["same_thread_x"],
+            "session_ref": scenario["sessions"]["same_thread_x"],
+            "visibility_context": visibility_context,
+            "runtime_context": {
+                "turn_kind": "same_thread_continuation",
+                "session_has_sufficient_local_context": True,
+            },
+        },
+        {
+            "text": "what is the latest we have in reserve snapshot?",
+            "limit": 12,
+            "container_ref": container_ref,
+            "thread_ref": scenario["threads"]["same_thread_y"],
+            "session_ref": scenario["sessions"]["same_thread_y"],
+            "visibility_context": visibility_context,
+            "runtime_context": {
+                "turn_kind": "same_thread_continuation",
+                "session_has_sufficient_local_context": True,
+            },
+        },
+    )
+
+    for payload in query_payloads:
+        query_response = client.post("/query", json=payload)
+        debug_response = client.post("/query/debug", json=payload)
+
+        assert query_response.status_code == 200
+        assert debug_response.status_code == 200
+
+        query_json = query_response.json()
+        debug_json = debug_response.json()
+        comparison = compare_query_contract_payloads(query_json, debug_json)
+
+        assert comparison["consistent"] is True, (
+            f"Contract drift for prompt {payload['text']!r}: "
+            f"{comparison['mismatch_fields']}"
+        )
 
 
 
