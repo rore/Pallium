@@ -73,6 +73,15 @@ def build_embedding_provider(config: AppConfig, *, provider_name: str) -> Embedd
             dimensions=provider_config.dimensions,
         )
 
+    if provider_kind == "onnx":
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        return OnnxEmbeddingProvider(
+            model=provider_config.model,
+            dimensions=provider_config.dimensions,
+            cache_dir=provider_config.cache_dir,
+        )
+
     raise ValueError(f"Unsupported embedding provider kind: {provider_config.kind}")
 
 

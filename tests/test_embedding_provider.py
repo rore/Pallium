@@ -42,6 +42,52 @@ def _make_mock_fastembed_module(*, dimensions: int = 384):
     return mock_module
 
 
+def _make_mock_onnx_modules(*, dimensions: int = 384):
+    """Create mock onnxruntime, tokenizers, and huggingface_hub modules."""
+    import numpy as np
+
+    # Mock onnxruntime
+    mock_ort = types.ModuleType("onnxruntime")
+
+    class MockInferenceSession:
+        def __init__(self, model_path, providers=None):
+            self._dims = dimensions
+
+        def run(self, output_names, inputs):
+            batch_size = inputs["input_ids"].shape[0]
+            # Return [batch, seq_len=1, dims] to simulate CLS pooling
+            return [np.random.randn(batch_size, 1, self._dims).astype(np.float32)]
+
+    mock_ort.InferenceSession = MockInferenceSession  # type: ignore[attr-defined]
+
+    # Mock tokenizers
+    mock_tokenizers = types.ModuleType("tokenizers")
+
+    class MockEncoding:
+        def __init__(self, length: int = 5):
+            self.ids = list(range(length))
+
+    class MockTokenizer:
+        @classmethod
+        def from_file(cls, path):
+            return cls()
+
+        def encode_batch(self, texts):
+            return [MockEncoding() for _ in texts]
+
+    mock_tokenizers.Tokenizer = MockTokenizer  # type: ignore[attr-defined]
+
+    # Mock huggingface_hub
+    mock_hf = types.ModuleType("huggingface_hub")
+
+    def mock_download(repo_id=None, filename=None, **kwargs):
+        return f"/fake/{repo_id}/{filename}"
+
+    mock_hf.hf_hub_download = mock_download  # type: ignore[attr-defined]
+
+    return mock_ort, mock_tokenizers, mock_hf
+
+
 def _build_embedding_test_config(
     *,
     provider_name: str = "local",
@@ -202,3 +248,95 @@ class TestBuildEmbeddingProvider:
         provider = build_embedding_provider(config, provider_name="local")
         # Explicit dimensions should override the probe
         assert provider.dimensions() == 512
+
+    def test_builds_onnx_provider(self, monkeypatch):
+        mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules(dimensions=384)
+        monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", mock_tokenizers)
+        monkeypatch.setitem(sys.modules, "huggingface_hub", mock_hf)
+
+        from app.dependencies import build_embedding_provider
+
+        config = _build_embedding_test_config(kind="onnx", model="BAAI/bge-small-en-v1.5")
+        provider = build_embedding_provider(config, provider_name="local")
+
+        assert provider.model_name() == "BAAI/bge-small-en-v1.5"
+        assert provider.dimensions() == 384
+
+
+# ---------------------------------------------------------------------------
+# ONNX provider — import guard
+# ---------------------------------------------------------------------------
+
+class TestOnnxImportGuard:
+    def test_import_error_when_onnxruntime_missing(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "onnxruntime", None)
+
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        with pytest.raises(ImportError, match="onnxruntime is required"):
+            OnnxEmbeddingProvider(model="BAAI/bge-small-en-v1.5")
+
+    def test_import_error_when_tokenizers_missing(self, monkeypatch):
+        # onnxruntime available but tokenizers missing
+        mock_ort = types.ModuleType("onnxruntime")
+        monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", None)
+
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        with pytest.raises(ImportError, match="tokenizers is required"):
+            OnnxEmbeddingProvider(model="BAAI/bge-small-en-v1.5")
+
+
+# ---------------------------------------------------------------------------
+# ONNX provider — core behavior (mocked)
+# ---------------------------------------------------------------------------
+
+class TestOnnxEmbeddingProvider:
+    def test_embed_returns_correct_dimensions(self, monkeypatch):
+        mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules(dimensions=384)
+        monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", mock_tokenizers)
+        monkeypatch.setitem(sys.modules, "huggingface_hub", mock_hf)
+
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        provider = OnnxEmbeddingProvider(model="test-model")
+        vecs = provider.embed(["hello world", "test"])
+        assert len(vecs) == 2
+        assert len(vecs[0]) == 384
+
+    def test_embed_empty_list(self, monkeypatch):
+        mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules()
+        monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", mock_tokenizers)
+        monkeypatch.setitem(sys.modules, "huggingface_hub", mock_hf)
+
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        provider = OnnxEmbeddingProvider(model="test-model")
+        assert provider.embed([]) == []
+
+    def test_model_name(self, monkeypatch):
+        mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules()
+        monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", mock_tokenizers)
+        monkeypatch.setitem(sys.modules, "huggingface_hub", mock_hf)
+
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        provider = OnnxEmbeddingProvider(model="my-custom-model")
+        assert provider.model_name() == "my-custom-model"
+
+    def test_returns_plain_floats(self, monkeypatch):
+        mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules(dimensions=3)
+        monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", mock_tokenizers)
+        monkeypatch.setitem(sys.modules, "huggingface_hub", mock_hf)
+
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        provider = OnnxEmbeddingProvider(model="test-model")
+        vecs = provider.embed(["test"])
+        assert all(isinstance(v, float) for v in vecs[0])
