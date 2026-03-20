@@ -169,6 +169,36 @@ Why:
 - better explains why evidence links, lifecycle, consolidation, and routed retrieval matter
 - keeps the public claim narrow while still describing the real architectural direction
 
+### 2026-03-20 - RRF as fusion baseline
+
+Reciprocal Rank Fusion with k=60 and score scale=600. Chosen because it avoids
+raw score blending between incompatible score scales (lexical token count vs
+cosine similarity). Validated with real BGE-small embeddings.
+
+### 2026-03-20 - Plugin-owned SourceItem embedding
+
+SourceItem vector embedding is decided by the semantic plugin, not hard-coded in
+core. Decoupled from semantic processing success (persisted before processing,
+survives extraction failures). Policy: messages + assistant outputs >= 40 chars.
+
+### 2026-03-20 - Local-first embedding via ONNX
+
+OnnxEmbeddingProvider wraps onnxruntime + tokenizers directly, bypassing
+fastembed's dependency chain for Python 3.14 compatibility. Same model, same
+output.
+
+### 2026-03-20 - Minimum similarity threshold 0.55
+
+Validated that 0.3 provides zero noise filtering. 0.55 cuts false positives from
+11 to 5 per query with zero recall loss. Provider-specific (BGE-small), not
+architecture-level.
+
+### 2026-03-20 - Minimum embedding content guard 40 chars
+
+Texts shorter than 40 characters are too generic for meaningful vector
+discrimination. Applied as a length check in build_embedding_text() and
+source_item_embedding_text().
+
 ## Open
 
 ### Ingestion policy

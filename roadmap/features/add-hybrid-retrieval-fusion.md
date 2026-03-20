@@ -1,10 +1,10 @@
 ---
 id: add-hybrid-retrieval-fusion
 title: Add hybrid retrieval with RRF fusion
-status: in-progress
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 lane: retrieval-semantic-substrate
 ---
 

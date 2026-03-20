@@ -63,8 +63,9 @@ Recent research and roadmap shaping now point to a clearer position:
 
 ## Deferred to Later Slices
 
-- `SourceItem` as a vector retrieval target (high volume, deferred to a later
-  slice after benchmark proof on `MemoryObject`-only targets)
+- `SourceItem` as a vector retrieval target — implemented as plugin-owned
+  embedding in `add-hybrid-retrieval-fusion` (messages + assistant outputs
+  >= 40 chars, persisted before semantic processing)
 - fusion policy, composite retrieval, routing score integration (belongs in
   `add-hybrid-retrieval-fusion`)
 - API-based embedding providers (first slice is local-only via fastembed)
