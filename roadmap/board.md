@@ -16,6 +16,7 @@
 - idea-optional-reranker-support
 
 # Done
+- add-vector-retrieval-provider
 - add-bounded-query-intent-resolution
 - add-write-time-contextual-enrichment-and-background-consolidation
 - add-targeted-external-memory-benchmark-pressure-pack
