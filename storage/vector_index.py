@@ -6,9 +6,9 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class VectorIndexConfig:
-    enabled: bool = False
+    enabled: bool = True
     index_path: str = "./pallium_vector.index"
-    embedding_provider: str | None = None  # key into embedding_providers
+    embedding_provider: str = "onnx"  # key into embedding_providers
     min_similarity: float = 0.55
 
 

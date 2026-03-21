@@ -5,7 +5,7 @@ import re
 from sqlalchemy import select
 
 from core.models import EvidenceReference, QueryFilters, SourceItem
-from core.visibility import VisibilityContext, VisibilityExclusion, visibility_context_is_visible
+from core.visibility import VisibilityExclusion, is_visible
 from storage.base import IndexSearchHit, IndexSearchResult
 from storage.sqlite_schema import IndexEntryRecord
 
@@ -20,7 +20,7 @@ class SQLiteSearchMixin:
         limit: int,
         filters: QueryFilters | None = None,
         *,
-        visibility_contexts: tuple[VisibilityContext, ...] | None = None,
+        query_container_ref: str | None = None,
         include_visibility_trace: bool = False,
     ) -> IndexSearchResult:
         with self._session_factory() as session:
@@ -41,13 +41,13 @@ class SQLiteSearchMixin:
             if score == 0:
                 continue
             total_hits_before_visibility += 1
-            visibility_context = self._target_visibility_context(record.target_kind, record.target_id)
-            if not visibility_context_is_visible(visibility_context, visibility_contexts):
-                if include_visibility_trace and visibility_contexts is not None:
+            candidate_visibility, candidate_container_ref = self._target_visibility(record.target_kind, record.target_id)
+            if not is_visible(candidate_visibility, candidate_container_ref, query_container_ref):
+                if include_visibility_trace and query_container_ref is not None:
                     reason = (
-                        "candidate_visibility_context_missing"
-                        if visibility_context is None
-                        else "query_visibility_context_excludes_candidate"
+                        "candidate_visibility_missing"
+                        if candidate_visibility is None
+                        else "query_container_excludes_candidate"
                     )
                     exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue
@@ -91,12 +91,14 @@ class SQLiteSearchMixin:
             return any(self._evidence_matches_filters(item, filters) for item in evidence)
         return True
 
-    def _target_visibility_context(self, target_kind: str, target_id: str) -> VisibilityContext | None:
+    def _target_visibility(self, target_kind: str, target_id: str) -> tuple[str | None, str | None]:
         if target_kind == "source_item":
-            return self.get_source_item(target_id).visibility_context
+            item = self.get_source_item(target_id)
+            return item.container_visibility, item.container_ref
         if target_kind == "memory_object":
-            return self.get_memory_object(target_id).visibility_context
-        return None
+            obj = self.get_memory_object(target_id)
+            return obj.container_visibility, None
+        return None, None
 
     def _source_item_matches_filters(self, source_item: SourceItem, filters: QueryFilters) -> bool:
         if filters.source_type is not None and source_item.source_type != filters.source_type:
@@ -108,8 +110,6 @@ class SQLiteSearchMixin:
         if filters.container_ref is not None and source_item.container_ref != filters.container_ref:
             return False
         if filters.thread_ref is not None and source_item.thread_ref != filters.thread_ref:
-            return False
-        if filters.session_ref is not None and source_item.session_ref != filters.session_ref:
             return False
         return True
 
@@ -123,7 +123,5 @@ class SQLiteSearchMixin:
         if filters.container_ref is not None and evidence.container_ref != filters.container_ref:
             return False
         if filters.thread_ref is not None and evidence.thread_ref != filters.thread_ref:
-            return False
-        if filters.session_ref is not None and evidence.session_ref != filters.session_ref:
             return False
         return True

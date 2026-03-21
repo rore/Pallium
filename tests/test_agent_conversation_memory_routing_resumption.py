@@ -229,7 +229,6 @@ def test_work_resumption_excludes_conflicting_checkpoint_but_keeps_compatible_st
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-resume-conflict',
-        session_ref='session:resume-conflict',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -334,7 +333,6 @@ def test_work_resumption_with_only_self_conflicting_checkpoint_fails_closed() ->
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-resume-only-bad-checkpoint',
-        session_ref='session:resume-only-bad-checkpoint',
     )
     retrieval_result = RetrievalQueryResult(
         results=[

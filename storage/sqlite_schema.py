@@ -34,11 +34,10 @@ class SourceItemRecord(Base):
     role = Column(String, nullable=True)
     container_ref = Column(String, nullable=True)
     thread_ref = Column(String, nullable=True)
-    session_ref = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
     artifact_kind = Column(String, nullable=True)
-    visibility_kind = Column(String, nullable=True)
-    visibility_id = Column(String, nullable=True)
+    container_visibility = Column(String, nullable=True, default="private")
+    agent_ref = Column(String, nullable=True)
     use_case = Column(String, nullable=True)
     processing_status = Column(String, nullable=False, default="pending")
     processing_attempts = Column(Integer, nullable=False, default=0)
@@ -73,8 +72,7 @@ class MemoryObjectRecord(Base):
     payload_json = Column(Text, nullable=False)
     envelope_json = Column(Text, nullable=True)
     lifecycle = Column(String, nullable=False, default="active")
-    visibility_kind = Column(String, nullable=True)
-    visibility_id = Column(String, nullable=True)
+    container_visibility = Column(String, nullable=True, default="private")
     freshness_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
 
@@ -110,8 +108,7 @@ class ThreadProcessingLeaseRecord(Base):
     use_case = Column(String, nullable=False)
     container_ref = Column(String, nullable=False)
     thread_ref = Column(String, nullable=False)
-    visibility_kind = Column(String, nullable=True)
-    visibility_id = Column(String, nullable=True)
+    container_visibility = Column(String, nullable=True, default="private")
     requested_at = Column(DateTime(timezone=True), nullable=True)
     processing_claimed_by = Column(String, nullable=True)
     processing_claimed_at = Column(DateTime(timezone=True), nullable=True)
@@ -144,11 +141,10 @@ class SQLiteSchemaMixin:
         "role": "ALTER TABLE source_items ADD COLUMN role VARCHAR",
         "container_ref": "ALTER TABLE source_items ADD COLUMN container_ref VARCHAR",
         "thread_ref": "ALTER TABLE source_items ADD COLUMN thread_ref VARCHAR",
-        "session_ref": "ALTER TABLE source_items ADD COLUMN session_ref VARCHAR",
         "source_ref": "ALTER TABLE source_items ADD COLUMN source_ref VARCHAR",
         "artifact_kind": "ALTER TABLE source_items ADD COLUMN artifact_kind VARCHAR",
-        "visibility_kind": "ALTER TABLE source_items ADD COLUMN visibility_kind VARCHAR",
-        "visibility_id": "ALTER TABLE source_items ADD COLUMN visibility_id VARCHAR",
+        "container_visibility": "ALTER TABLE source_items ADD COLUMN container_visibility VARCHAR DEFAULT 'private'",
+        "agent_ref": "ALTER TABLE source_items ADD COLUMN agent_ref VARCHAR",
         "use_case": "ALTER TABLE source_items ADD COLUMN use_case VARCHAR",
         "processing_status": "ALTER TABLE source_items ADD COLUMN processing_status VARCHAR DEFAULT 'pending'",
         "processing_attempts": "ALTER TABLE source_items ADD COLUMN processing_attempts INTEGER DEFAULT 0",
@@ -161,8 +157,7 @@ class SQLiteSchemaMixin:
     }
     _MEMORY_OBJECT_MIGRATIONS = {
         "lifecycle": "ALTER TABLE memory_objects ADD COLUMN lifecycle VARCHAR DEFAULT 'active'",
-        "visibility_kind": "ALTER TABLE memory_objects ADD COLUMN visibility_kind VARCHAR",
-        "visibility_id": "ALTER TABLE memory_objects ADD COLUMN visibility_id VARCHAR",
+        "container_visibility": "ALTER TABLE memory_objects ADD COLUMN container_visibility VARCHAR DEFAULT 'private'",
         "freshness_at": "ALTER TABLE memory_objects ADD COLUMN freshness_at DATETIME",
         "envelope_json": "ALTER TABLE memory_objects ADD COLUMN envelope_json TEXT",
     }

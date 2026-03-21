@@ -15,7 +15,6 @@ from core.models import (
     Relation,
     SourceItem,
 )
-from core.visibility import VisibilityContext
 
 
 @dataclass(frozen=True)
@@ -25,7 +24,7 @@ class SupersessionHint:
     canonical_key: str
     container_ref: str | None
     thread_ref: str | None
-    visibility_context: VisibilityContext | None
+    container_visibility: str = "private"
 
 
 @dataclass(frozen=True)
@@ -140,13 +139,13 @@ def build_source_item(
     metadata: dict | None,
     occurred_at: datetime | None = None,
     actor_ref: str | None = None,
+    agent_ref: str | None = None,
     role: str | None = None,
     container_ref: str | None = None,
     thread_ref: str | None = None,
-    session_ref: str | None = None,
     source_ref: str | None = None,
     artifact_kind: str | None = None,
-    visibility_context: VisibilityContext | None = None,
+    container_visibility: str = "private",
     use_case: str | None = None,
     processing_status: str = "pending",
     processing_attempts: int = 0,
@@ -165,13 +164,13 @@ def build_source_item(
         metadata=metadata,
         occurred_at=occurred_at,
         actor_ref=actor_ref,
+        agent_ref=agent_ref,
         role=role,
         container_ref=container_ref,
         thread_ref=thread_ref,
-        session_ref=session_ref,
         source_ref=source_ref,
         artifact_kind=artifact_kind,
-        visibility_context=visibility_context,
+        container_visibility=container_visibility,
         use_case=use_case,
         processing_status=processing_status,
         processing_attempts=processing_attempts,
@@ -190,7 +189,6 @@ def build_query_filters(
     artifact_kind: str | None = None,
     container_ref: str | None = None,
     thread_ref: str | None = None,
-    session_ref: str | None = None,
 ) -> QueryFilters | None:
     filters = QueryFilters(
         source_type=source_type,
@@ -198,7 +196,6 @@ def build_query_filters(
         artifact_kind=artifact_kind,
         container_ref=container_ref,
         thread_ref=thread_ref,
-        session_ref=session_ref,
     )
     if not any(value is not None for value in filters.__dict__.values()):
         return None
@@ -226,7 +223,6 @@ def resolve_query_filters(
     artifact_kind: str | None = None,
     container_ref: str | None = None,
     thread_ref: str | None = None,
-    session_ref: str | None = None,
     runtime_context: QueryRuntimeContext | None = None,
 ) -> QueryFilterResolution:
     requested_filters = build_query_filters(
@@ -235,7 +231,6 @@ def resolve_query_filters(
         artifact_kind=artifact_kind,
         container_ref=container_ref,
         thread_ref=thread_ref,
-        session_ref=session_ref,
     )
     if requested_filters is None or runtime_context is None:
         return QueryFilterResolution(
@@ -250,10 +245,8 @@ def resolve_query_filters(
     session_has_sufficient_local_context = runtime_context.session_has_sufficient_local_context
 
     if turn_kind in {"same_thread", "same_thread_continuation"}:
-        if requested_filters.container_ref is not None and (
-            requested_filters.thread_ref is not None or requested_filters.session_ref is not None
-        ):
-            effective_filters = replace(effective_filters, thread_ref=None, session_ref=None)
+        if requested_filters.container_ref is not None and requested_filters.thread_ref is not None:
+            effective_filters = replace(effective_filters, thread_ref=None)
             filter_scope_relaxed = True
             filter_scope_reason = "same_thread_scope_relaxed_for_local_context_relevance_check"
         effective_filters = build_query_filters(
@@ -262,7 +255,6 @@ def resolve_query_filters(
             artifact_kind=effective_filters.artifact_kind,
             container_ref=effective_filters.container_ref,
             thread_ref=effective_filters.thread_ref,
-            session_ref=effective_filters.session_ref,
         )
         return QueryFilterResolution(
             requested_filters=requested_filters,
@@ -277,14 +269,10 @@ def resolve_query_filters(
         filter_scope_reason = "resumed_session_thread_scope_relaxed"
 
     if turn_kind in {"new_thread", "new_session"} and session_has_sufficient_local_context is False:
-        if effective_filters.thread_ref is not None or effective_filters.session_ref is not None:
-            effective_filters = replace(effective_filters, thread_ref=None, session_ref=None)
+        if effective_filters.thread_ref is not None:
+            effective_filters = replace(effective_filters, thread_ref=None)
             filter_scope_relaxed = True
             filter_scope_reason = "fresh_thread_scope_relaxed_for_cross_thread_recall"
-    elif turn_kind == "resumed_session" and session_has_sufficient_local_context is not True and effective_filters.session_ref is not None:
-        effective_filters = replace(effective_filters, session_ref=None)
-        filter_scope_relaxed = True
-        filter_scope_reason = "resumed_session_scope_relaxed_for_cross_thread_recall"
 
     effective_filters = build_query_filters(
         source_type=effective_filters.source_type,
@@ -292,7 +280,6 @@ def resolve_query_filters(
         artifact_kind=effective_filters.artifact_kind,
         container_ref=effective_filters.container_ref,
         thread_ref=effective_filters.thread_ref,
-        session_ref=effective_filters.session_ref,
     )
     return QueryFilterResolution(
         requested_filters=requested_filters,

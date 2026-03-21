@@ -276,8 +276,7 @@ def build_explicit_live_config(db_path: Path) -> AppConfig:
 def set_scope(harness: AgentSimulationApp, scope: dict[str, Any]) -> None:
     harness.session.defaults.container_ref = scope["container_ref"]
     harness.session.defaults.thread_ref = scope["thread_ref"]
-    harness.session.defaults.session_ref = scope["session_ref"]
-    harness.session.defaults.visibility_context = {"kind": "public", "id": None}
+    harness.session.defaults.container_visibility = "public"
     harness.session.defaults.set_runtime_context("turn_kind", scope["turn_kind"], manual=True)
     harness.session.defaults.set_runtime_context("session_has_sufficient_local_context", scope["session_has_sufficient_local_context"], manual=True)
 
@@ -423,15 +422,13 @@ def _default_scenarios() -> list[LiveScenario]:
             initial_scope={
                 "container_ref": "chat:live:export",
                 "thread_ref": "chat:live:export:history",
-                "session_ref": "session:live:export:history",
-                "turn_kind": "same_thread_continuation",
+                                "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
             },
             followup_scope={
                 "container_ref": "chat:live:export",
                 "thread_ref": "chat:live:export:current",
-                "session_ref": "session:live:export:current",
-                "turn_kind": "new_thread",
+                                "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
             },
             initial_message="I checked the pod events: the export worker keeps getting OOMKilled during CSV generation because it hits the 512Mi memory limit. Give me a short, natural carry-forward answer with the concrete change you would make.",
@@ -451,14 +448,14 @@ def _default_scenarios() -> list[LiveScenario]:
             initial_scope={
                 "container_ref": "chat:live:sync",
                 "thread_ref": "chat:live:sync:history",
-                "session_ref": "session:live:sync:history",
+
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
             },
             followup_scope={
                 "container_ref": "chat:live:sync",
                 "thread_ref": "chat:live:sync:current",
-                "session_ref": "session:live:sync:current",
+
                 "turn_kind": "resumed_session",
                 "session_has_sufficient_local_context": False,
             },
@@ -480,14 +477,14 @@ def _default_scenarios() -> list[LiveScenario]:
             initial_scope={
                 "container_ref": "chat:live:review",
                 "thread_ref": "chat:live:review:history",
-                "session_ref": "session:live:review:history",
+
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
             },
             followup_scope={
                 "container_ref": "chat:live:review",
                 "thread_ref": "chat:live:review:current",
-                "session_ref": "session:live:review:current",
+
                 "turn_kind": "resumed_session",
                 "session_has_sufficient_local_context": False,
             },
@@ -509,14 +506,14 @@ def _default_scenarios() -> list[LiveScenario]:
             initial_scope={
                 "container_ref": "chat:live:evidence",
                 "thread_ref": "chat:live:evidence:history",
-                "session_ref": "session:live:evidence:history",
+
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
             },
             followup_scope={
                 "container_ref": "chat:live:evidence",
                 "thread_ref": "chat:live:evidence:current",
-                "session_ref": "session:live:evidence:current",
+
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
             },

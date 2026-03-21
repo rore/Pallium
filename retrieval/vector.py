@@ -15,9 +15,7 @@ from core.models import (
 )
 from core.visibility import (
     QueryVisibilityTrace,
-    VisibilityContext,
-    expand_visibility_context,
-    visibility_context_is_visible,
+    is_visible,
 )
 from providers.embedding.base import EmbeddingProvider
 from retrieval.base import RetrievalProvider, RetrievalQueryResult
@@ -47,13 +45,13 @@ def _build_evidence(source_item: SourceItem) -> EvidenceReference:
         source_id=source_item.source_id,
         occurred_at=occurred_at,
         actor_ref=source_item.actor_ref,
+        agent_ref=source_item.agent_ref,
         role=source_item.role,
         container_ref=source_item.container_ref,
         thread_ref=source_item.thread_ref,
-        session_ref=source_item.session_ref,
         source_ref=source_item.source_ref,
         artifact_kind=source_item.artifact_kind,
-        visibility_context=source_item.visibility_context,
+        container_visibility=source_item.container_visibility,
     )
 
 
@@ -90,8 +88,6 @@ def _source_item_matches_filters(source_item: SourceItem, filters: QueryFilters)
         return False
     if filters.thread_ref is not None and source_item.thread_ref != filters.thread_ref:
         return False
-    if filters.session_ref is not None and source_item.session_ref != filters.session_ref:
-        return False
     return True
 
 
@@ -106,21 +102,22 @@ def _evidence_matches_filters(evidence: EvidenceReference, filters: QueryFilters
         return False
     if filters.thread_ref is not None and evidence.thread_ref != filters.thread_ref:
         return False
-    if filters.session_ref is not None and evidence.session_ref != filters.session_ref:
-        return False
     return True
 
 
-def _target_visibility_context(
+def _target_visibility_and_container(
     storage: StorageProvider,
     target_kind: str,
     target_id: str,
-) -> VisibilityContext | None:
+) -> tuple[str | None, str | None]:
+    """Return (container_visibility, container_ref) for a target."""
     if target_kind == "source_item":
-        return storage.get_source_item(target_id).visibility_context
+        item = storage.get_source_item(target_id)
+        return item.container_visibility, item.container_ref
     if target_kind == "memory_object":
-        return storage.get_memory_object(target_id).visibility_context
-    return None
+        mo = storage.get_memory_object(target_id)
+        return mo.container_visibility, None
+    return None, None
 
 
 class VectorRetrievalProvider(RetrievalProvider):
@@ -142,12 +139,13 @@ class VectorRetrievalProvider(RetrievalProvider):
         limit: int,
         filters: QueryFilters | None = None,
         *,
-        visibility_context: VisibilityContext | None = None,
+        container_visibility: str | None = None,
+        query_container_ref: str | None = None,
         include_trace: bool = False,
         require_visibility: bool = False,
     ) -> RetrievalQueryResult:
-        # Fail closed if visibility is required but not provided
-        if require_visibility and visibility_context is None:
+        # Fail closed if visibility is required but no container ref for non-public queries
+        if require_visibility and query_container_ref is None and container_visibility != "public":
             trace = None
             if include_trace:
                 trace = QueryTrace(
@@ -157,18 +155,12 @@ class VectorRetrievalProvider(RetrievalProvider):
                     filters=filters,
                     stages=tuple(),
                     visibility=QueryVisibilityTrace(
-                        query_visibility_context=None,
-                        expanded_visibility_contexts=tuple(),
+                        query_container_visibility=container_visibility,
+                        query_container_ref=query_container_ref,
                         fail_closed_reason="retrieval_visibility_context_required",
                     ),
                 )
             return RetrievalQueryResult(results=[], trace=trace)
-
-        visible_contexts = (
-            expand_visibility_context(visibility_context)
-            if visibility_context is not None
-            else None
-        )
 
         # 1. Embed query text
         query_vectors = self._embedding_provider.embed([text])
@@ -238,11 +230,11 @@ class VectorRetrievalProvider(RetrievalProvider):
 
             hits_before_visibility += 1
 
-            # Apply visibility
-            candidate_vis = _target_visibility_context(
+            # Apply visibility using new is_visible()
+            candidate_visibility, candidate_container_ref = _target_visibility_and_container(
                 self._storage, index_entry.target_kind, index_entry.target_id
             )
-            if not visibility_context_is_visible(candidate_vis, visible_contexts):
+            if not is_visible(candidate_visibility, candidate_container_ref, query_container_ref):
                 continue
 
             hits_after_visibility += 1
@@ -266,7 +258,7 @@ class VectorRetrievalProvider(RetrievalProvider):
                         envelope=memory_object.envelope,
                         score=score,
                         evidence=evidence,
-                        visibility_context=memory_object.visibility_context,
+                        container_visibility=memory_object.container_visibility,
                     )
                 )
             elif index_entry.target_kind == "source_item":
@@ -280,15 +272,15 @@ class VectorRetrievalProvider(RetrievalProvider):
                         excerpt=_build_excerpt(source_item.content),
                         occurred_at=source_item.occurred_at,
                         actor_ref=source_item.actor_ref,
+                        agent_ref=source_item.agent_ref,
                         role=source_item.role,
                         container_ref=source_item.container_ref,
                         thread_ref=source_item.thread_ref,
-                        session_ref=source_item.session_ref,
                         source_ref=source_item.source_ref,
                         artifact_kind=source_item.artifact_kind,
                         score=score,
                         evidence=[_build_evidence(source_item)],
-                        visibility_context=source_item.visibility_context,
+                        container_visibility=source_item.container_visibility,
                     )
                 )
             else:
@@ -320,10 +312,10 @@ class VectorRetrievalProvider(RetrievalProvider):
                 ),
                 visibility=(
                     QueryVisibilityTrace(
-                        query_visibility_context=visibility_context,
-                        expanded_visibility_contexts=visible_contexts or tuple(),
+                        query_container_visibility=container_visibility,
+                        query_container_ref=query_container_ref,
                     )
-                    if visibility_context is not None
+                    if container_visibility is not None or query_container_ref is not None
                     else None
                 ),
             )

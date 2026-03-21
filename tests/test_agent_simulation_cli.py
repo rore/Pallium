@@ -121,7 +121,7 @@ def test_new_session_defaults_start_with_neutral_runtime_context(tmp_path) -> No
 
 
 def test_scope_turn_local_context_and_mode_commands_update_session_defaults(tmp_path) -> None:
-    app, _io = _build_app(tmp_path, ["container-1", "thread-1", "session-1", "limited", "scope-1"])
+    app, _io = _build_app(tmp_path, ["container-1", "thread-1", "limited", "scope-1"])
 
     assert app._handle_command("/scope") is True
     assert app._handle_command("/turn resumed_session") is True
@@ -132,8 +132,7 @@ def test_scope_turn_local_context_and_mode_commands_update_session_defaults(tmp_
     defaults = app.session.defaults
     assert defaults.container_ref == "container-1"
     assert defaults.thread_ref == "thread-1"
-    assert defaults.session_ref == "session-1"
-    assert defaults.visibility_context == {"kind": "limited", "id": "scope-1"}
+    assert defaults.container_visibility == {"kind": "limited", "id": "scope-1"}
     assert defaults.runtime_context["turn_kind"] == "resumed_session"
     assert defaults.runtime_context["session_has_sufficient_local_context"] is True
     assert app.session.mode == "manual"
@@ -142,19 +141,16 @@ def test_scope_turn_local_context_and_mode_commands_update_session_defaults(tmp_
 def test_fork_preserves_session_by_default_and_can_rotate_with_flag(tmp_path) -> None:
     app, _io = _build_app(tmp_path)
     original_container = app.session.defaults.container_ref
-    original_session = app.session.defaults.session_ref
     original_thread = app.session.defaults.thread_ref
 
     assert app._handle_command("/fork") is True
     assert app.session.defaults.container_ref == original_container
-    assert app.session.defaults.session_ref == original_session
     assert app.session.defaults.thread_ref != original_thread
 
     forked_thread = app.session.defaults.thread_ref
     assert app._handle_command("/fork --new-session") is True
     assert app.session.defaults.container_ref == original_container
     assert app.session.defaults.thread_ref != forked_thread
-    assert app.session.defaults.session_ref != original_session
 
 
 def test_save_and_export_write_replay_friendly_session_bundle(tmp_path) -> None:
@@ -214,14 +210,12 @@ def test_run_returns_clean_exit_code_on_keyboard_interrupt(monkeypatch) -> None:
 def test_new_conversation_starts_new_thread_with_cross_thread_recall_defaults(tmp_path) -> None:
     app, _io = _build_app(tmp_path)
     original_container = app.session.defaults.container_ref
-    original_session = app.session.defaults.session_ref
     original_thread = app.session.defaults.thread_ref
 
     assert app._handle_command("/new") is True
 
     defaults = app.session.defaults
     assert defaults.container_ref == original_container
-    assert defaults.session_ref == original_session
     assert defaults.thread_ref != original_thread
     assert defaults.runtime_context["turn_kind"] == "new_thread"
     assert defaults.runtime_context["session_has_sufficient_local_context"] is False

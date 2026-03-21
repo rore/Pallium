@@ -23,24 +23,31 @@ Use this endpoint to store one source item.
 
 Required fields:
 
-- `source_type`
-- `source_id`
-- `content_type`
-- `content`
+- `source_type` — name of the upstream system (e.g. `"chat_message"`,
+  `"ticket_update"`)
+- `source_id` — stable unique ID from the upstream system, used for
+  idempotency
+- `content_type` — format of the content (use `"text/plain"` unless you have
+  a specific reason not to)
+- `content` — the text to store and reason over
 
-Useful optional fields:
+Recommended fields for `agent_conversation_memory`:
 
-- `use_case`
-- `occurred_at`
-- `actor_ref`
-- `role`
-- `container_ref`
-- `thread_ref`
-- `session_ref`
-- `source_ref`
-- `artifact_kind`
-- `metadata`
-- `visibility_context`
+- `container_ref` — which container this item belongs to (e.g. a channel ID
+  or room ID). Used for scoping, thread grouping, and visibility enforcement
+- `container_visibility` — who can see this item: `"public"`, `"limited"`, or
+  `"private"`. Default: `"private"`. See [Common Shapes](#container_visibility)
+- `thread_ref` — which conversation thread within the container
+- `role` — who produced this: `"user"` or `"assistant"`
+- `artifact_kind` — optional hint about the evidence shape (see below)
+
+Additional context fields:
+
+- `actor_ref` — who said it (the human user, e.g. a user ID)
+- `agent_ref` — which agent instance produced it (e.g. an agent deployment ID)
+- `source_ref` — a link or pointer back to the original source
+- `occurred_at` — when the upstream event happened (ISO 8601)
+- `metadata` — arbitrary key-value pairs for your own use
 
 Minimal example:
 
@@ -49,16 +56,23 @@ Minimal example:
   "source_type": "chat_message",
   "source_id": "msg-001",
   "content_type": "text/plain",
-  "content": "Decision: use item event time for reservation ordering.",
-  "use_case": "agent_conversation_memory",
+  "content": "We decided to use event timestamps for ordering."
+}
+```
+
+Recommended example for `agent_conversation_memory`:
+
+```json
+{
+  "source_type": "chat_message",
+  "source_id": "msg-001",
+  "content_type": "text/plain",
+  "content": "We decided to use event timestamps for ordering.",
   "artifact_kind": "assistant_output",
   "role": "assistant",
-  "container_ref": "room:ops",
-  "thread_ref": "thread-42",
-  "visibility_context": {
-    "kind": "limited",
-    "id": "room:ops"
-  }
+  "container_ref": "channel:C04ABC123",
+  "container_visibility": "limited",
+  "thread_ref": "thread:1700000001"
 }
 ```
 
@@ -76,13 +90,14 @@ Response fields:
 Notes:
 
 - keep `source_id` stable if you want upstream idempotency
-- for the current conversation package, always send `visibility_context`
-- `artifact_kind` is currently validated against:
-  - `message`
-  - `assistant_output`
-  - `tool_use_summary`
-  - `todo_snapshot`
-  - `notification`
+- for the current conversation package, always send `container_ref`
+- `artifact_kind` helps Pallium route faster but is not required. Accepted
+  values:
+  - `message` — a user question or statement
+  - `assistant_output` — a final assistant answer or decision
+  - `tool_use_summary` — a compact summary of a tool run
+  - `todo_snapshot` — an explicit next-step or progress note
+  - `notification` — an external notification or alert
 
 ## GET /items/{source_item_id}/processing
 
@@ -106,35 +121,39 @@ Use this endpoint when the runtime needs continuity context before answering.
 
 Required fields:
 
-- `text`
+- `text` — the current user question or prompt
 
-Optional filters and context:
+Recommended fields:
 
-- `limit`
-- `source_type`
-- `role`
-- `artifact_kind`
-- `container_ref`
-- `thread_ref`
-- `session_ref`
-- `visibility_context`
-- `runtime_context`
+- `container_ref` — scope the query to this container
+- `container_visibility` — visibility boundary for the query
+- `thread_ref` — current thread within the container
+
+Additional filters:
+
+- `limit` — max results (default: 5, range: 1–50)
+- `source_type` — filter by upstream system
+- `role` — filter by `"user"` or `"assistant"`
+- `artifact_kind` — filter by evidence shape
+- `runtime_context` — optional runtime hints (see
+  [Common Shapes](#runtime_context))
 
 Minimal example:
 
 ```json
 {
-  "text": "Why did we choose item event time?",
-  "thread_ref": "thread-42",
-  "container_ref": "room:ops",
-  "visibility_context": {
-    "kind": "limited",
-    "id": "room:ops"
-  },
-  "runtime_context": {
-    "turn_kind": "same_thread_continuation",
-    "session_has_sufficient_local_context": false
-  }
+  "text": "Why did we choose event timestamps?"
+}
+```
+
+Recommended example:
+
+```json
+{
+  "text": "Why did we choose event timestamps?",
+  "container_ref": "channel:C04ABC123",
+  "container_visibility": "limited",
+  "thread_ref": "thread:1700000001"
 }
 ```
 
@@ -142,7 +161,7 @@ Current request rules:
 
 - `limit` defaults to `5`
 - `limit` must be between `1` and `50`
-- for the current scoped package, missing `visibility_context` causes
+- for the current scoped package, missing `container_ref` causes
   fail-closed behavior rather than a broad fallback
 
 Response fields:
@@ -161,7 +180,7 @@ Result kinds:
   - compact evidence card from a stored source item
 
 Each result can include refs such as `container_ref`, `thread_ref`,
-`session_ref`, `source_ref`, and `visibility_context`. Each `memory_hit` also
+`source_ref`, and `container_visibility`. Each `memory_hit` also
 includes supporting evidence refs.
 
 ## POST /query/debug
@@ -207,22 +226,15 @@ or benchmark setup checks.
 
 ## Common Shapes
 
-### visibility_context
+### container_visibility
 
-Current shape:
+A simple string field:
 
-```json
-{
-  "kind": "public" | "limited" | "user",
-  "id": null | "..."
-}
-```
+- `"public"` — visible to queries from any container
+- `"limited"` — visible only within the same `container_ref` (group context)
+- `"private"` — visible only within the same `container_ref` (personal context)
 
-Rules:
-
-- `public` requires `id = null`
-- `limited` requires a non-empty `id`
-- `user` requires a non-empty `id`
+Default: `"private"`.
 
 ### runtime_context
 
@@ -240,7 +252,8 @@ which memory type should win.
 
 ## Practical Notes
 
-- `use_case` is how the caller selects a semantic package during ingest
+- the semantic package is selected by the server-side `default_use_case`
+  configuration; callers do not normally need to send `use_case`
 - `agent_conversation_memory` is the main package described by the current docs
 - keep source content compact and explicit; the current semantic layer is
   text-oriented

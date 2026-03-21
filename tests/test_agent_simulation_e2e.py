@@ -89,7 +89,7 @@ class CapturingModel:
         )
 
 
-_PUBLIC = {"kind": "public", "id": None}
+_PUBLIC = "public"
 
 
 def _seed_history(client: TestClient, payloads: list[dict[str, object]]) -> None:
@@ -103,7 +103,6 @@ def _build_harness(
     *,
     container_ref: str,
     thread_ref: str,
-    session_ref: str,
     turn_kind: str = "new_thread",
     session_has_sufficient_local_context: bool = False,
 ) -> tuple[AgentSimulationApp, CapturingModel]:
@@ -116,8 +115,7 @@ def _build_harness(
     )
     harness.session.defaults.container_ref = container_ref
     harness.session.defaults.thread_ref = thread_ref
-    harness.session.defaults.session_ref = session_ref
-    harness.session.defaults.visibility_context = dict(_PUBLIC)
+    harness.session.defaults.container_visibility = "public"
     harness.session.defaults.set_runtime_context("turn_kind", turn_kind, manual=True)
     harness.session.defaults.set_runtime_context("session_has_sufficient_local_context", session_has_sufficient_local_context, manual=True)
     return harness, model
@@ -139,8 +137,7 @@ def test_chat_mode_uses_real_items_and_query_debug_contract(monkeypatch, test_db
                 "role": "assistant",
                 "container_ref": "chat:ops",
                 "thread_ref": "chat:ops:history",
-                "session_ref": "session:history",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -151,8 +148,7 @@ def test_chat_mode_uses_real_items_and_query_debug_contract(monkeypatch, test_db
                 "role": "assistant",
                 "container_ref": "chat:ops",
                 "thread_ref": "chat:ops:history",
-                "session_ref": "session:history",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
         ],
     )
@@ -161,7 +157,6 @@ def test_chat_mode_uses_real_items_and_query_debug_contract(monkeypatch, test_db
         client,
         container_ref="chat:ops",
         thread_ref="chat:ops:fresh",
-        session_ref="session:fresh",
     )
 
     harness.process_chat_message("Why did we choose item event time for reservation ordering?")
@@ -197,7 +192,6 @@ def test_chat_mode_does_not_inject_the_current_user_turn_when_no_prior_memory_ex
         client,
         container_ref="chat:empty",
         thread_ref="chat:empty:thread",
-        session_ref="session:empty",
     )
 
     harness.process_chat_message("Anything important I should carry forward from earlier?")
@@ -228,8 +222,7 @@ def test_chat_mode_prefers_prior_decision_for_indirect_resource_recall(monkeypat
                 "role": "assistant",
                 "container_ref": "chat:capacity",
                 "thread_ref": "chat:capacity:history",
-                "session_ref": "session:capacity:history",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -240,8 +233,7 @@ def test_chat_mode_prefers_prior_decision_for_indirect_resource_recall(monkeypat
                 "role": "assistant",
                 "container_ref": "chat:capacity",
                 "thread_ref": "chat:capacity:history",
-                "session_ref": "session:capacity:history",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
         ],
     )
@@ -250,7 +242,6 @@ def test_chat_mode_prefers_prior_decision_for_indirect_resource_recall(monkeypat
         client,
         container_ref="chat:capacity",
         thread_ref="chat:capacity:fresh",
-        session_ref="session:capacity:fresh",
     )
 
     harness.process_chat_message("Which cap were we bumping for that export worker, and what stayed the same?")
@@ -288,8 +279,7 @@ def test_chat_mode_keeps_task_checkpoint_for_messy_resumed_work_prompt(monkeypat
                 "role": "assistant",
                 "container_ref": "chat:sync",
                 "thread_ref": "chat:sync:history",
-                "session_ref": "session:sync:history",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -300,8 +290,7 @@ def test_chat_mode_keeps_task_checkpoint_for_messy_resumed_work_prompt(monkeypat
                 "role": "assistant",
                 "container_ref": "chat:sync",
                 "thread_ref": "chat:sync:history",
-                "session_ref": "session:sync:history",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
         ],
     )
@@ -310,7 +299,6 @@ def test_chat_mode_keeps_task_checkpoint_for_messy_resumed_work_prompt(monkeypat
         client,
         container_ref="chat:sync",
         thread_ref="chat:sync:fresh",
-        session_ref="session:sync:fresh",
     )
 
     harness.process_chat_message("What's still blocking the sync, and where do I resume from now?")
@@ -346,8 +334,7 @@ def test_chat_mode_uses_task_checkpoint_for_natural_language_resumed_work_histor
                 "role": "assistant",
                 "container_ref": "chat:sync-natural",
                 "thread_ref": "chat:sync-natural:history",
-                "session_ref": "session:sync-natural:history",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
         ],
     )
@@ -356,7 +343,6 @@ def test_chat_mode_uses_task_checkpoint_for_natural_language_resumed_work_histor
         client,
         container_ref="chat:sync-natural",
         thread_ref="chat:sync-natural:fresh",
-        session_ref="session:sync-natural:fresh",
     )
 
     harness.process_chat_message("I'm back on the sync. What's the current blocker and where do I pick it up?")
@@ -390,8 +376,7 @@ def test_chat_mode_uses_pattern_memory_after_consolidation_for_broad_recall(monk
                 "role": "user",
                 "container_ref": "chat:grocery-pattern",
                 "thread_ref": "chat:grocery-pattern:one",
-                "session_ref": "session:grocery-pattern:one",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -402,8 +387,7 @@ def test_chat_mode_uses_pattern_memory_after_consolidation_for_broad_recall(monk
                 "role": "assistant",
                 "container_ref": "chat:grocery-pattern",
                 "thread_ref": "chat:grocery-pattern:one",
-                "session_ref": "session:grocery-pattern:one",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -414,8 +398,7 @@ def test_chat_mode_uses_pattern_memory_after_consolidation_for_broad_recall(monk
                 "role": "assistant",
                 "container_ref": "chat:grocery-pattern",
                 "thread_ref": "chat:grocery-pattern:one",
-                "session_ref": "session:grocery-pattern:one",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
             {
                 "source_type": "chat_message",
@@ -426,8 +409,7 @@ def test_chat_mode_uses_pattern_memory_after_consolidation_for_broad_recall(monk
                 "role": "user",
                 "container_ref": "chat:grocery-pattern",
                 "thread_ref": "chat:grocery-pattern:two",
-                "session_ref": "session:grocery-pattern:two",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -438,8 +420,7 @@ def test_chat_mode_uses_pattern_memory_after_consolidation_for_broad_recall(monk
                 "role": "assistant",
                 "container_ref": "chat:grocery-pattern",
                 "thread_ref": "chat:grocery-pattern:two",
-                "session_ref": "session:grocery-pattern:two",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -450,8 +431,7 @@ def test_chat_mode_uses_pattern_memory_after_consolidation_for_broad_recall(monk
                 "role": "assistant",
                 "container_ref": "chat:grocery-pattern",
                 "thread_ref": "chat:grocery-pattern:two",
-                "session_ref": "session:grocery-pattern:two",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
         ],
     )
@@ -464,7 +444,6 @@ def test_chat_mode_uses_pattern_memory_after_consolidation_for_broad_recall(monk
         client,
         container_ref="chat:grocery-pattern",
         thread_ref="chat:grocery-pattern:fresh",
-        session_ref="session:grocery-pattern:fresh",
     )
 
     harness.process_chat_message("Give me the big picture across those conversations, not one specific tactic.")
@@ -499,8 +478,7 @@ def test_greeting_exchange_does_not_inject_source_evidence(monkeypatch, test_db_
                 "role": "user",
                 "container_ref": "chat:greeting",
                 "thread_ref": "chat:greeting:thread1",
-                "session_ref": "session:greeting:1",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -511,8 +489,7 @@ def test_greeting_exchange_does_not_inject_source_evidence(monkeypatch, test_db_
                 "role": "assistant",
                 "container_ref": "chat:greeting",
                 "thread_ref": "chat:greeting:thread1",
-                "session_ref": "session:greeting:1",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
         ],
     )
@@ -521,7 +498,6 @@ def test_greeting_exchange_does_not_inject_source_evidence(monkeypatch, test_db_
         client,
         container_ref="chat:greeting",
         thread_ref="chat:greeting:thread2",
-        session_ref="session:greeting:2",
         turn_kind="new_thread",
         session_has_sufficient_local_context=False,
     )
@@ -566,8 +542,7 @@ def test_same_thread_confirmation_does_not_inject_source_evidence(monkeypatch, t
                 "role": "assistant",
                 "container_ref": "chat:export-confirm",
                 "thread_ref": "chat:export-confirm:thread1",
-                "session_ref": "session:export-confirm:1",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
         ],
     )
@@ -576,7 +551,6 @@ def test_same_thread_confirmation_does_not_inject_source_evidence(monkeypatch, t
         client,
         container_ref="chat:export-confirm",
         thread_ref="chat:export-confirm:thread1",
-        session_ref="session:export-confirm:1",
         turn_kind="same_thread",
         session_has_sufficient_local_context=True,
     )
@@ -637,8 +611,7 @@ def test_fresh_thread_recalls_export_cap_fact_natural_language(monkeypatch, test
                 "role": "user",
                 "container_ref": "chat:export-natural",
                 "thread_ref": "chat:export-natural:thread1",
-                "session_ref": "session:export-natural:1",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
         ],
     )
@@ -647,7 +620,6 @@ def test_fresh_thread_recalls_export_cap_fact_natural_language(monkeypatch, test
         client,
         container_ref="chat:export-natural",
         thread_ref="chat:export-natural:thread2",
-        session_ref="session:export-natural:2",
         turn_kind="new_thread",
         session_has_sufficient_local_context=False,
     )
@@ -689,8 +661,7 @@ def test_fresh_thread_recalls_export_cap_fact_prefixed_control(monkeypatch, test
                 "role": "assistant",
                 "container_ref": "chat:export-prefixed",
                 "thread_ref": "chat:export-prefixed:thread1",
-                "session_ref": "session:export-prefixed:1",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
         ],
     )
@@ -699,7 +670,6 @@ def test_fresh_thread_recalls_export_cap_fact_prefixed_control(monkeypatch, test
         client,
         container_ref="chat:export-prefixed",
         thread_ref="chat:export-prefixed:thread2",
-        session_ref="session:export-prefixed:2",
         turn_kind="new_thread",
         session_has_sufficient_local_context=False,
     )
@@ -729,7 +699,6 @@ def test_chat_mode_local_thread_context_does_not_leak_across_new_conversation(mo
         client,
         container_ref="chat:local-context",
         thread_ref="chat:local-context:thread1",
-        session_ref="session:local-context",
         turn_kind="new_thread",
         session_has_sufficient_local_context=False,
     )
@@ -763,8 +732,7 @@ def test_chat_mode_keeps_cross_thread_memory_separate_from_local_thread_context(
                 "role": "assistant",
                 "container_ref": "chat:local-vs-memory",
                 "thread_ref": "chat:local-vs-memory:history",
-                "session_ref": "session:local-vs-memory:history",
-                "visibility_context": dict(_PUBLIC),
+                "container_visibility": "public",
             },
         ],
     )
@@ -773,7 +741,6 @@ def test_chat_mode_keeps_cross_thread_memory_separate_from_local_thread_context(
         client,
         container_ref="chat:local-vs-memory",
         thread_ref="chat:local-vs-memory:fresh",
-        session_ref="session:local-vs-memory:fresh",
         turn_kind="new_thread",
         session_has_sufficient_local_context=False,
     )

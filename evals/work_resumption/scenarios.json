@@ -13,7 +13,6 @@
         "role": "user",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-001",
-        "session_ref": "agent-session-wr-001",
         "actor_ref": "user:branch-librarian",
         "source_ref": "memory://wr/thread-1-msg-1",
         "occurred_at": "2026-03-11T08:00:00Z",
@@ -30,7 +29,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-001",
-        "session_ref": "agent-session-wr-001",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-1-artifact-1",
         "occurred_at": "2026-03-11T08:01:00Z",
@@ -47,7 +45,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-001",
-        "session_ref": "agent-session-wr-001",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-1-artifact-2",
         "occurred_at": "2026-03-11T08:02:00Z",
@@ -130,7 +127,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-002",
-        "session_ref": "agent-session-wr-002",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-2-artifact-1",
         "occurred_at": "2026-03-11T09:00:00Z",
@@ -147,7 +143,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-002",
-        "session_ref": "agent-session-wr-002",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-2-artifact-2",
         "occurred_at": "2026-03-11T09:01:00Z",
@@ -164,7 +159,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-002",
-        "session_ref": "agent-session-wr-002",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-2-artifact-3",
         "occurred_at": "2026-03-11T09:02:00Z",
@@ -259,7 +253,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-003",
-        "session_ref": "agent-session-wr-003",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-3-artifact-1",
         "occurred_at": "2026-03-11T10:00:00Z",
@@ -276,7 +269,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-003",
-        "session_ref": "agent-session-wr-003",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-3-artifact-2",
         "occurred_at": "2026-03-11T10:01:00Z",
@@ -293,7 +285,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-003",
-        "session_ref": "agent-session-wr-003",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-3-artifact-3",
         "occurred_at": "2026-03-11T10:02:00Z",
@@ -387,7 +378,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-004",
-        "session_ref": "agent-session-wr-004",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-4-artifact-1",
         "occurred_at": "2026-03-11T11:00:00Z",
@@ -404,7 +394,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-004",
-        "session_ref": "agent-session-wr-004",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-4-artifact-2",
         "occurred_at": "2026-03-11T11:01:00Z",
@@ -421,7 +410,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-004",
-        "session_ref": "agent-session-wr-004",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-4-artifact-3",
         "occurred_at": "2026-03-11T11:02:00Z",
@@ -514,7 +502,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-005",
-        "session_ref": "agent-session-wr-005",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-5-artifact-1",
         "occurred_at": "2026-03-11T12:00:00Z",
@@ -531,7 +518,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-005",
-        "session_ref": "agent-session-wr-005",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-5-artifact-2",
         "occurred_at": "2026-03-11T12:01:00Z",
@@ -548,7 +534,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-005",
-        "session_ref": "agent-session-wr-005",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-5-artifact-3",
         "occurred_at": "2026-03-11T12:02:00Z",
@@ -644,7 +629,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-006a",
-        "session_ref": "agent-session-wr-006a",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-6-artifact-1",
         "occurred_at": "2026-03-11T13:00:00Z",
@@ -661,7 +645,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-006a",
-        "session_ref": "agent-session-wr-006a",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-6-artifact-2",
         "occurred_at": "2026-03-11T13:01:00Z",
@@ -678,7 +661,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-006a",
-        "session_ref": "agent-session-wr-006a",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-6-artifact-3",
         "occurred_at": "2026-03-11T13:02:00Z",
@@ -695,7 +677,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-006b",
-        "session_ref": "agent-session-wr-006b",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-6-artifact-4",
         "occurred_at": "2026-03-11T14:00:00Z",
@@ -712,7 +693,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-006b",
-        "session_ref": "agent-session-wr-006b",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-6-artifact-5",
         "occurred_at": "2026-03-11T14:01:00Z",
@@ -729,7 +709,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-006b",
-        "session_ref": "agent-session-wr-006b",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-6-artifact-6",
         "occurred_at": "2026-03-11T14:02:00Z",
@@ -827,7 +806,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-007a",
-        "session_ref": "agent-session-wr-007a",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-7-artifact-1",
         "occurred_at": "2026-03-11T15:00:00Z",
@@ -844,7 +822,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-007a",
-        "session_ref": "agent-session-wr-007a",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-7-artifact-2",
         "occurred_at": "2026-03-11T15:01:00Z",
@@ -861,7 +838,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-007a",
-        "session_ref": "agent-session-wr-007a",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-7-artifact-3",
         "occurred_at": "2026-03-11T15:02:00Z",
@@ -878,7 +854,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-007b",
-        "session_ref": "agent-session-wr-007b",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-7-artifact-4",
         "occurred_at": "2026-03-11T15:30:00Z",
@@ -895,7 +870,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-007b",
-        "session_ref": "agent-session-wr-007b",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-7-artifact-5",
         "occurred_at": "2026-03-11T15:31:00Z",
@@ -912,7 +886,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-007b",
-        "session_ref": "agent-session-wr-007b",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-7-artifact-6",
         "occurred_at": "2026-03-11T15:32:00Z",
@@ -1006,7 +979,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-008",
-        "session_ref": "agent-session-wr-008",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-8-artifact-1",
         "occurred_at": "2026-03-11T16:00:00Z",
@@ -1023,7 +995,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-008",
-        "session_ref": "agent-session-wr-008",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-8-artifact-2",
         "occurred_at": "2026-03-11T16:01:00Z",
@@ -1098,7 +1069,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-009",
-        "session_ref": "agent-session-wr-009",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-9-artifact-1",
         "occurred_at": "2026-03-11T17:00:00Z",
@@ -1115,7 +1085,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-009",
-        "session_ref": "agent-session-wr-009",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-9-artifact-2",
         "occurred_at": "2026-03-11T17:01:00Z",
@@ -1132,7 +1101,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-009",
-        "session_ref": "agent-session-wr-009",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-9-artifact-3",
         "occurred_at": "2026-03-11T17:02:00Z",
@@ -1202,7 +1170,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-010",
-        "session_ref": "agent-session-wr-010",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-10-artifact-1",
         "occurred_at": "2026-03-11T18:00:00Z",
@@ -1219,7 +1186,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-010",
-        "session_ref": "agent-session-wr-010",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-10-artifact-2",
         "occurred_at": "2026-03-11T18:01:00Z",
@@ -1236,7 +1202,6 @@
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-wr-010",
-        "session_ref": "agent-session-wr-010",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-10-artifact-3",
         "occurred_at": "2026-03-11T18:02:00Z",
@@ -1309,14 +1274,10 @@
         "role": "assistant",
         "container_ref": "chat:rollout",
         "thread_ref": "chat:rollout:thread-wr-011-public",
-        "session_ref": "agent-session-wr-011-public",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-11-artifact-1",
         "occurred_at": "2026-03-11T19:00:00Z",
-        "visibility_context": {
-          "kind": "public",
-          "id": null
-        },
+        "container_visibility": "public",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1330,14 +1291,10 @@
         "role": "assistant",
         "container_ref": "chat:rollout",
         "thread_ref": "chat:rollout:thread-wr-011-limited",
-        "session_ref": "agent-session-wr-011-limited",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-11-artifact-2",
         "occurred_at": "2026-03-11T19:01:00Z",
-        "visibility_context": {
-          "kind": "limited",
-          "id": "rollout-alpha"
-        },
+        "container_visibility": "limited",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1351,14 +1308,10 @@
         "role": "assistant",
         "container_ref": "chat:rollout",
         "thread_ref": "chat:rollout:thread-wr-011-limited",
-        "session_ref": "agent-session-wr-011-limited",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-11-artifact-3",
         "occurred_at": "2026-03-11T19:02:00Z",
-        "visibility_context": {
-          "kind": "limited",
-          "id": "rollout-alpha"
-        },
+        "container_visibility": "limited",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1375,10 +1328,7 @@
       "text": "What public conclusion did we already make about the LIB-241 rollout?",
       "limit": 6,
       "container_ref": "chat:rollout",
-      "visibility_context": {
-        "kind": "public",
-        "id": null
-      }
+      "container_visibility": "public"
     },
     "target_question": "What public conclusion did we already make about the LIB-241 rollout?",
     "should_memory_help": true,
@@ -1446,14 +1396,10 @@
         "role": "assistant",
         "container_ref": "chat:rollout",
         "thread_ref": "chat:rollout:thread-wr-012-public",
-        "session_ref": "agent-session-wr-012-public",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-12-artifact-1",
         "occurred_at": "2026-03-11T20:00:00Z",
-        "visibility_context": {
-          "kind": "public",
-          "id": null
-        },
+        "container_visibility": "public",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1467,14 +1413,10 @@
         "role": "assistant",
         "container_ref": "chat:rollout",
         "thread_ref": "chat:rollout:thread-wr-012-alpha",
-        "session_ref": "agent-session-wr-012-alpha",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-12-artifact-2",
         "occurred_at": "2026-03-11T20:01:00Z",
-        "visibility_context": {
-          "kind": "limited",
-          "id": "rollout-alpha"
-        },
+        "container_visibility": "limited",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1488,14 +1430,10 @@
         "role": "assistant",
         "container_ref": "chat:rollout",
         "thread_ref": "chat:rollout:thread-wr-012-alpha",
-        "session_ref": "agent-session-wr-012-alpha",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-12-artifact-3",
         "occurred_at": "2026-03-11T20:02:00Z",
-        "visibility_context": {
-          "kind": "limited",
-          "id": "rollout-alpha"
-        },
+        "container_visibility": "limited",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1509,14 +1447,10 @@
         "role": "assistant",
         "container_ref": "chat:rollout",
         "thread_ref": "chat:rollout:thread-wr-012-beta",
-        "session_ref": "agent-session-wr-012-beta",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-12-artifact-4",
         "occurred_at": "2026-03-11T20:03:00Z",
-        "visibility_context": {
-          "kind": "limited",
-          "id": "rollout-beta"
-        },
+        "container_visibility": "limited",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1533,10 +1467,7 @@
       "text": "In rollout channel alpha, what blocker remains on LIB-241 and what should we do next?",
       "limit": 6,
       "container_ref": "chat:rollout",
-      "visibility_context": {
-        "kind": "limited",
-        "id": "rollout-alpha"
-      }
+      "container_visibility": "limited"
     },
     "target_question": "In rollout channel alpha, what blocker remains on LIB-241 and what should we do next?",
     "should_memory_help": true,
@@ -1610,14 +1541,10 @@
         "role": "assistant",
         "container_ref": "chat:rollout",
         "thread_ref": "chat:rollout:thread-wr-013-public",
-        "session_ref": "agent-session-wr-013-public",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-13-artifact-1",
         "occurred_at": "2026-03-11T21:00:00Z",
-        "visibility_context": {
-          "kind": "public",
-          "id": null
-        },
+        "container_visibility": "public",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1631,14 +1558,10 @@
         "role": "assistant",
         "container_ref": "chat:rollout",
         "thread_ref": "chat:rollout:thread-wr-013-user",
-        "session_ref": "agent-session-wr-013-user",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-13-artifact-2",
         "occurred_at": "2026-03-11T21:01:00Z",
-        "visibility_context": {
-          "kind": "user",
-          "id": "user-42"
-        },
+        "container_visibility": "private",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1652,14 +1575,10 @@
         "role": "assistant",
         "container_ref": "chat:rollout",
         "thread_ref": "chat:rollout:thread-wr-013-user",
-        "session_ref": "agent-session-wr-013-user",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-13-artifact-3",
         "occurred_at": "2026-03-11T21:02:00Z",
-        "visibility_context": {
-          "kind": "user",
-          "id": "user-42"
-        },
+        "container_visibility": "private",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1673,14 +1592,10 @@
         "role": "assistant",
         "container_ref": "chat:rollout",
         "thread_ref": "chat:rollout:thread-wr-013-limited",
-        "session_ref": "agent-session-wr-013-limited",
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-13-artifact-4",
         "occurred_at": "2026-03-11T21:03:00Z",
-        "visibility_context": {
-          "kind": "limited",
-          "id": "rollout-alpha"
-        },
+        "container_visibility": "limited",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1697,10 +1612,7 @@
       "text": "For my private rollout follow-up, what blocker remains and what should I do next?",
       "limit": 6,
       "container_ref": "chat:rollout",
-      "visibility_context": {
-        "kind": "user",
-        "id": "user-42"
-      }
+      "container_visibility": "private"
     },
     "target_question": "For my private rollout follow-up, what blocker remains and what should I do next?",
     "should_memory_help": true,

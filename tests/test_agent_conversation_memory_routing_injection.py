@@ -336,7 +336,6 @@ def test_same_thread_trivial_local_context_allows_cross_thread_carry_forward() -
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-trivial-same-thread',
-        session_ref='session:trivial-same-thread',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -457,7 +456,6 @@ def test_same_thread_runtime_context_suppresses_when_no_external_carry_forward_e
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-rewrite-same-thread',
-        session_ref='session:rewrite-same-thread',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -512,7 +510,6 @@ def test_same_thread_answer_bearing_source_counts_as_local_context_even_with_ext
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-answer-bearing-same-thread',
-        session_ref='session:answer-bearing-same-thread',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -586,7 +583,6 @@ def test_same_thread_user_status_update_does_not_block_broad_recall_carry_forwar
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-user-status-same-thread',
-        session_ref='session:user-status-same-thread',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -661,7 +657,6 @@ def test_same_thread_user_fact_source_counts_as_local_context_even_with_external
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-user-fact-same-thread',
-        session_ref='session:user-fact-same-thread',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -736,7 +731,6 @@ def test_fresh_thread_broad_recall_prefers_structured_memory_over_noisy_source_e
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-fresh-recall',
-        session_ref='session:fresh-recall',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -875,7 +869,6 @@ def test_query_only_current_thread_summary_is_excluded_from_recall_packaging() -
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-current-query-only',
-        session_ref='session:current-query-only',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -947,7 +940,6 @@ def test_fresh_thread_evidence_trace_still_allows_source_evidence() -> None:
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-fresh-evidence',
-        session_ref='session:fresh-evidence',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -1028,7 +1020,6 @@ def test_precise_fact_quote_grade_recall_allows_supported_source_evidence() -> N
     query_filters = QueryFilters(
         container_ref='chat:realistic:overlap',
         thread_ref='chat:realistic:overlap:current',
-        session_ref='session:realistic:overlap:current',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -1108,7 +1099,6 @@ def test_precise_fact_quote_grade_recall_keeps_weak_source_evidence_non_injectab
     query_filters = QueryFilters(
         container_ref='chat:realistic:overlap',
         thread_ref='chat:realistic:overlap:current',
-        session_ref='session:realistic:overlap:current',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -1186,7 +1176,6 @@ def test_fresh_thread_greeting_noise_fails_closed_without_memory_injection() -> 
     query_filters = QueryFilters(
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:diag-good-morning-fresh',
-        session_ref='agent-session:diag-good-morning-fresh',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -1266,7 +1255,6 @@ def test_same_thread_batch_reminder_after_trivial_greetings_uses_carry_forward_m
     query_filters = QueryFilters(
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:thread-d',
-        session_ref='agent-session:batch-d',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -1372,7 +1360,6 @@ def test_fresh_thread_batch_reminder_prefers_structured_carry_forward_over_sourc
     query_filters = QueryFilters(
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:diag-batch-reminder-fresh',
-        session_ref='agent-session:diag-batch-reminder-fresh',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -1447,7 +1434,6 @@ def test_typo_variant_greeting_fails_closed_without_memory_injection() -> None:
     query_filters = QueryFilters(
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:diag-good-afternnon-fresh',
-        session_ref='agent-session:diag-good-afternnon-fresh',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -1526,7 +1512,6 @@ def test_same_thread_batch_reminder_lately_prefers_structured_carry_forward_over
     query_filters = QueryFilters(
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:thread-x',
-        session_ref='agent-session:thread-x',
     )
     retrieval_result = RetrievalQueryResult(
         results=[

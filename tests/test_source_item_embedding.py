@@ -8,7 +8,6 @@ from core.contracts import ProcessResult
 from core.indexing import VECTOR_INDEX_TYPE
 from core.models import IndexEntry, SourceItem
 from core.service import PalliumService
-from core.visibility import VisibilityContext
 from providers.embedding.base import EmbeddingProvider
 from retrieval.lexical import LexicalRetrievalProvider
 from semantic.agent_conversation_memory_embedding import source_item_embedding_text

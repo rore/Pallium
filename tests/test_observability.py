@@ -7,7 +7,6 @@ from app.main import create_app
 from core.contracts import build_source_item
 from core.observability import IntegrationDebugLogger
 from core.service import PalliumService
-from core.visibility import VisibilityContext
 from providers.llm.base import LLMJsonResponse, LLMProviderError
 from retrieval.lexical import LexicalRetrievalProvider
 from semantic.demo_agent_memory import DemoAgentMemoryPlugin
@@ -66,7 +65,7 @@ def test_thread_rebuild_completion_is_reported_in_processing_status(test_db_url:
         role="assistant",
         container_ref="chat:library-help",
         thread_ref="chat:library-help:thread-observability",
-        visibility_context=VisibilityContext(kind="public", id=None),
+        container_visibility="public",
     )
     plugin.allow_first_build_finish.set()
     service.drain_processing_queue(worker_id="thread-observability")

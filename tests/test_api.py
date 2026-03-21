@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 from app.config import AppConfig
 from app.main import create_app
 from core.models import MemoryObject
-from core.visibility import VisibilityContext
 from evals.continuity_common import compare_query_contract_payloads
 from providers.llm.base import LLMJsonResponse, LLMProviderError
 from tests.stub_providers import TieredMemorySemanticProvider
@@ -66,7 +65,6 @@ def test_post_items_is_idempotent_and_returns_current_processing_snapshot(client
         "artifact_kind": "assistant_output",
         "role": "assistant",
         "thread_ref": "thread-1",
-        "session_ref": "session-1",
     }
 
     first_response = client.post("/items", json=request)
@@ -306,10 +304,9 @@ def test_worker_failure_is_reported_via_processing_endpoint(monkeypatch, test_db
 
 
 
-def _ingest_cross_thread_catalog_history(client: TestClient) -> tuple[str, str, str]:
+def _ingest_cross_thread_catalog_history(client: TestClient) -> tuple[str, str]:
     container_ref = "chat:team:operations"
     old_thread_ref = "chat:team:operations:thread-history"
-    old_session_ref = "session:operations-history"
     for payload in (
         {
             "source_type": "chat_message",
@@ -320,7 +317,6 @@ def _ingest_cross_thread_catalog_history(client: TestClient) -> tuple[str, str, 
             "role": "user",
             "container_ref": container_ref,
             "thread_ref": old_thread_ref,
-            "session_ref": old_session_ref,
             "occurred_at": "2026-03-11T09:58:00Z",
         },
         {
@@ -332,7 +328,6 @@ def _ingest_cross_thread_catalog_history(client: TestClient) -> tuple[str, str, 
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": old_thread_ref,
-            "session_ref": old_session_ref,
             "occurred_at": "2026-03-11T10:00:00Z",
         },
         {
@@ -344,7 +339,6 @@ def _ingest_cross_thread_catalog_history(client: TestClient) -> tuple[str, str, 
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": old_thread_ref,
-            "session_ref": old_session_ref,
             "occurred_at": "2026-03-11T10:01:00Z",
         },
         {
@@ -356,7 +350,6 @@ def _ingest_cross_thread_catalog_history(client: TestClient) -> tuple[str, str, 
             "role": "user",
             "container_ref": container_ref,
             "thread_ref": old_thread_ref,
-            "session_ref": old_session_ref,
             "occurred_at": "2026-03-11T10:01:30Z",
         },
         {
@@ -368,7 +361,6 @@ def _ingest_cross_thread_catalog_history(client: TestClient) -> tuple[str, str, 
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": old_thread_ref,
-            "session_ref": old_session_ref,
             "occurred_at": "2026-03-11T10:02:00Z",
         },
     ):
@@ -385,12 +377,11 @@ def _ingest_cross_thread_catalog_history(client: TestClient) -> tuple[str, str, 
     ]
     assert any(memory.type == "thread_summary" for memory in active_memory)
     assert any(memory.type == "task_checkpoint" for memory in active_memory)
-    return container_ref, old_thread_ref, old_session_ref
+    return container_ref, old_thread_ref
 
-def _ingest_conflicting_cross_thread_catalog_history(client: TestClient) -> tuple[str, str, str]:
-    container_ref, old_thread_ref, old_session_ref = _ingest_cross_thread_catalog_history(client)
+def _ingest_conflicting_cross_thread_catalog_history(client: TestClient) -> tuple[str, str]:
+    container_ref, old_thread_ref = _ingest_cross_thread_catalog_history(client)
     conflict_thread_ref = "chat:team:operations:thread-conflicting-history"
-    conflict_session_ref = "session:operations-conflicting-history"
     for payload in (
         {
             "source_type": "chat_message",
@@ -401,7 +392,6 @@ def _ingest_conflicting_cross_thread_catalog_history(client: TestClient) -> tupl
             "role": "user",
             "container_ref": container_ref,
             "thread_ref": conflict_thread_ref,
-            "session_ref": conflict_session_ref,
             "occurred_at": "2026-03-11T11:00:00Z",
         },
         {
@@ -413,7 +403,6 @@ def _ingest_conflicting_cross_thread_catalog_history(client: TestClient) -> tupl
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": conflict_thread_ref,
-            "session_ref": conflict_session_ref,
             "occurred_at": "2026-03-11T11:01:00Z",
         },
         {
@@ -425,20 +414,18 @@ def _ingest_conflicting_cross_thread_catalog_history(client: TestClient) -> tupl
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": conflict_thread_ref,
-            "session_ref": conflict_session_ref,
             "occurred_at": "2026-03-11T11:02:00Z",
         },
     ):
         response = client.post("/items", json=payload)
         assert response.status_code == 200
-    return container_ref, old_thread_ref, old_session_ref
+    return container_ref, old_thread_ref
 
 
 
-def _ingest_compatible_cross_thread_catalog_follow_up(client: TestClient) -> tuple[str, str, str]:
-    container_ref, old_thread_ref, old_session_ref = _ingest_cross_thread_catalog_history(client)
+def _ingest_compatible_cross_thread_catalog_follow_up(client: TestClient) -> tuple[str, str]:
+    container_ref, old_thread_ref = _ingest_cross_thread_catalog_history(client)
     follow_up_thread_ref = "chat:team:operations:thread-compatible-history"
-    follow_up_session_ref = "session:operations-compatible-history"
     for payload in (
         {
             "source_type": "chat_message",
@@ -449,7 +436,6 @@ def _ingest_compatible_cross_thread_catalog_follow_up(client: TestClient) -> tup
             "role": "user",
             "container_ref": container_ref,
             "thread_ref": follow_up_thread_ref,
-            "session_ref": follow_up_session_ref,
             "occurred_at": "2026-03-11T11:10:00Z",
         },
         {
@@ -461,7 +447,6 @@ def _ingest_compatible_cross_thread_catalog_follow_up(client: TestClient) -> tup
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": follow_up_thread_ref,
-            "session_ref": follow_up_session_ref,
             "occurred_at": "2026-03-11T11:11:00Z",
         },
         {
@@ -473,19 +458,17 @@ def _ingest_compatible_cross_thread_catalog_follow_up(client: TestClient) -> tup
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": follow_up_thread_ref,
-            "session_ref": follow_up_session_ref,
             "occurred_at": "2026-03-11T11:12:00Z",
         },
     ):
         response = client.post("/items", json=payload)
         assert response.status_code == 200
-    return container_ref, old_thread_ref, old_session_ref
+    return container_ref, old_thread_ref
 
 
 def _ingest_newer_constraint_cross_thread_catalog_history(client: TestClient) -> tuple[str, str]:
-    container_ref, _old_thread_ref, _old_session_ref = _ingest_cross_thread_catalog_history(client)
+    container_ref, _old_thread_ref = _ingest_cross_thread_catalog_history(client)
     newer_constraint_thread_ref = "chat:team:operations:thread-newer-constraint-history"
-    newer_constraint_session_ref = "session:operations-newer-constraint-history"
     for payload in (
         {
             "source_type": "chat_message",
@@ -496,7 +479,6 @@ def _ingest_newer_constraint_cross_thread_catalog_history(client: TestClient) ->
             "role": "user",
             "container_ref": container_ref,
             "thread_ref": newer_constraint_thread_ref,
-            "session_ref": newer_constraint_session_ref,
             "occurred_at": "2026-03-11T11:20:00Z",
         },
         {
@@ -508,7 +490,6 @@ def _ingest_newer_constraint_cross_thread_catalog_history(client: TestClient) ->
             "role": "user",
             "container_ref": container_ref,
             "thread_ref": newer_constraint_thread_ref,
-            "session_ref": newer_constraint_session_ref,
             "occurred_at": "2026-03-11T11:21:00Z",
         },
         {
@@ -520,7 +501,6 @@ def _ingest_newer_constraint_cross_thread_catalog_history(client: TestClient) ->
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": newer_constraint_thread_ref,
-            "session_ref": newer_constraint_session_ref,
             "occurred_at": "2026-03-11T11:22:00Z",
         },
         {
@@ -532,7 +512,6 @@ def _ingest_newer_constraint_cross_thread_catalog_history(client: TestClient) ->
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": newer_constraint_thread_ref,
-            "session_ref": newer_constraint_session_ref,
             "occurred_at": "2026-03-11T11:23:00Z",
         },
     ):
@@ -564,7 +543,6 @@ def test_query_returns_injection_contract_with_runtime_context(monkeypatch, test
             "role": "assistant",
             "container_ref": "chat:api",
             "thread_ref": "chat:api:thread-1",
-            "session_ref": "session:api-1",
         },
     )
 
@@ -603,7 +581,6 @@ def test_query_same_thread_context_sufficient_suppresses_injection(monkeypatch, 
             "role": "assistant",
             "container_ref": "chat:api",
             "thread_ref": "chat:api:thread-2",
-            "session_ref": "session:api-2",
         },
     )
 
@@ -614,7 +591,6 @@ def test_query_same_thread_context_sufficient_suppresses_injection(monkeypatch, 
             "limit": 5,
             "container_ref": "chat:api",
             "thread_ref": "chat:api:thread-2",
-            "session_ref": "session:api-2",
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
@@ -631,7 +607,6 @@ def test_query_same_thread_context_sufficient_suppresses_injection(monkeypatch, 
     assert payload["trace"]["filter_scope_relaxed"] is True
     assert payload["trace"]["filter_scope_reason"] == "same_thread_scope_relaxed_for_local_context_relevance_check"
     assert payload["trace"]["filters"]["thread_ref"] is None
-    assert payload["trace"]["filters"]["session_ref"] is None
     assert payload["trace"]["routing"]["injection_decision"]["same_thread_context_evaluation"]["qualifying_result_ids"]
 
 
@@ -640,9 +615,8 @@ def test_query_same_thread_context_sufficient_suppresses_injection(monkeypatch, 
 
 def test_query_same_thread_trivial_local_context_allows_cross_thread_recall(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
-    container_ref, _old_thread_ref, _old_session_ref = _ingest_cross_thread_catalog_history(client)
+    container_ref, _old_thread_ref = _ingest_cross_thread_catalog_history(client)
     current_thread_ref = "chat:team:operations:thread-trivial-same-thread"
-    current_session_ref = "session:operations-trivial-same-thread"
 
     for payload in (
         {
@@ -654,7 +628,6 @@ def test_query_same_thread_trivial_local_context_allows_cross_thread_recall(monk
             "role": "user",
             "container_ref": container_ref,
             "thread_ref": current_thread_ref,
-            "session_ref": current_session_ref,
             "occurred_at": "2026-03-11T12:20:00Z",
         },
         {
@@ -666,7 +639,6 @@ def test_query_same_thread_trivial_local_context_allows_cross_thread_recall(monk
             "role": "user",
             "container_ref": container_ref,
             "thread_ref": current_thread_ref,
-            "session_ref": current_session_ref,
             "occurred_at": "2026-03-11T12:21:00Z",
         },
         {
@@ -678,7 +650,6 @@ def test_query_same_thread_trivial_local_context_allows_cross_thread_recall(monk
             "role": "user",
             "container_ref": container_ref,
             "thread_ref": current_thread_ref,
-            "session_ref": current_session_ref,
             "occurred_at": "2026-03-11T12:22:00Z",
         },
     ):
@@ -692,7 +663,6 @@ def test_query_same_thread_trivial_local_context_allows_cross_thread_recall(monk
             "limit": 6,
             "container_ref": container_ref,
             "thread_ref": current_thread_ref,
-            "session_ref": current_session_ref,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
@@ -712,9 +682,7 @@ def test_query_same_thread_trivial_local_context_allows_cross_thread_recall(monk
     assert trace["filter_scope_relaxed"] is True
     assert trace["filter_scope_reason"] == "same_thread_scope_relaxed_for_local_context_relevance_check"
     assert trace["requested_filters"]["thread_ref"] == current_thread_ref
-    assert trace["requested_filters"]["session_ref"] == current_session_ref
     assert trace["filters"]["thread_ref"] is None
-    assert trace["filters"]["session_ref"] is None
     assert injection["same_thread_context_evaluation"]["reason_code"] == "insufficient_same_thread_local_state"
     assert injection["same_thread_context_evaluation"]["external_carry_forward_result_ids"]
     assert routing["selected_layer"] != "source_evidence"
@@ -728,9 +696,8 @@ def test_query_same_thread_trivial_local_context_allows_cross_thread_recall(monk
 
 def test_query_new_thread_cross_thread_recall_relaxes_thread_session_filters(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
-    container_ref, _old_thread_ref, _old_session_ref = _ingest_cross_thread_catalog_history(client)
+    container_ref, _old_thread_ref = _ingest_cross_thread_catalog_history(client)
     fresh_thread_ref = "chat:team:operations:thread-fresh"
-    fresh_session_ref = "session:operations-fresh"
 
     response = client.post(
         "/query/debug",
@@ -739,7 +706,6 @@ def test_query_new_thread_cross_thread_recall_relaxes_thread_session_filters(mon
             "limit": 6,
             "container_ref": container_ref,
             "thread_ref": fresh_thread_ref,
-            "session_ref": fresh_session_ref,
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
@@ -757,10 +723,8 @@ def test_query_new_thread_cross_thread_recall_relaxes_thread_session_filters(mon
     assert any("batch 313" in block["text"].lower() or "service token expired" in block["text"].lower() for block in payload["injectable_blocks"])
     assert any("admin portal" in block["text"].lower() or "local browser" in block["text"].lower() for block in payload["injectable_blocks"])
     assert trace["requested_filters"]["thread_ref"] == fresh_thread_ref
-    assert trace["requested_filters"]["session_ref"] == fresh_session_ref
     assert trace["filters"]["container_ref"] == container_ref
     assert trace["filters"]["thread_ref"] is None
-    assert trace["filters"]["session_ref"] is None
     assert trace["filter_scope_relaxed"] is True
     assert trace["filter_scope_reason"] == "fresh_thread_scope_relaxed_for_cross_thread_recall"
     assert trace["routing"]["selected_layer"] != "source_evidence"
@@ -769,7 +733,7 @@ def test_query_new_thread_cross_thread_recall_relaxes_thread_session_filters(mon
 
 def test_query_new_thread_constraint_recall_uses_structured_memory(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
-    container_ref, _old_thread_ref, _old_session_ref = _ingest_cross_thread_catalog_history(client)
+    container_ref, _old_thread_ref = _ingest_cross_thread_catalog_history(client)
 
     response = client.post(
         "/query/debug",
@@ -778,7 +742,6 @@ def test_query_new_thread_constraint_recall_uses_structured_memory(monkeypatch, 
             "limit": 6,
             "container_ref": container_ref,
             "thread_ref": "chat:team:operations:thread-fresh-constraint",
-            "session_ref": "session:operations-fresh-constraint",
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
@@ -797,9 +760,8 @@ def test_query_new_thread_constraint_recall_uses_structured_memory(monkeypatch, 
 
 def test_query_debug_replay_keeps_structured_recall_after_new_thread_contamination(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
-    container_ref, _old_thread_ref, _old_session_ref = _ingest_cross_thread_catalog_history(client)
+    container_ref, _old_thread_ref = _ingest_cross_thread_catalog_history(client)
     fresh_thread_ref = "chat:team:operations:thread-fresh-contaminated"
-    fresh_session_ref = "session:operations-fresh-contaminated"
 
     initial_response = client.post(
         "/query/debug",
@@ -808,7 +770,6 @@ def test_query_debug_replay_keeps_structured_recall_after_new_thread_contaminati
             "limit": 6,
             "container_ref": container_ref,
             "thread_ref": fresh_thread_ref,
-            "session_ref": fresh_session_ref,
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
@@ -829,7 +790,6 @@ def test_query_debug_replay_keeps_structured_recall_after_new_thread_contaminati
             "role": "user",
             "container_ref": container_ref,
             "thread_ref": "chat:team:operations:thread-old-duplicate",
-            "session_ref": "session:operations-old-duplicate",
             "occurred_at": "2026-03-11T10:03:30Z",
         },
     )
@@ -844,7 +804,6 @@ def test_query_debug_replay_keeps_structured_recall_after_new_thread_contaminati
             "role": "user",
             "container_ref": container_ref,
             "thread_ref": fresh_thread_ref,
-            "session_ref": fresh_session_ref,
             "occurred_at": "2026-03-11T10:04:00Z",
         },
     )
@@ -859,7 +818,6 @@ def test_query_debug_replay_keeps_structured_recall_after_new_thread_contaminati
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": fresh_thread_ref,
-            "session_ref": fresh_session_ref,
             "occurred_at": "2026-03-11T10:04:10Z",
         },
     )
@@ -874,7 +832,6 @@ def test_query_debug_replay_keeps_structured_recall_after_new_thread_contaminati
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": fresh_thread_ref,
-            "session_ref": fresh_session_ref,
             "occurred_at": "2026-03-11T10:04:20Z",
         },
     )
@@ -890,7 +847,6 @@ def test_query_debug_replay_keeps_structured_recall_after_new_thread_contaminati
             "limit": 6,
             "container_ref": container_ref,
             "thread_ref": fresh_thread_ref,
-            "session_ref": fresh_session_ref,
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
@@ -922,7 +878,7 @@ def test_query_debug_replay_keeps_structured_recall_after_new_thread_contaminati
 
 def test_query_debug_broad_recall_excludes_conflicting_structured_checkpoint(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
-    container_ref, _old_thread_ref, _old_session_ref = _ingest_conflicting_cross_thread_catalog_history(client)
+    container_ref, _old_thread_ref = _ingest_conflicting_cross_thread_catalog_history(client)
 
     response = client.post(
         "/query/debug",
@@ -931,7 +887,6 @@ def test_query_debug_broad_recall_excludes_conflicting_structured_checkpoint(mon
             "limit": 6,
             "container_ref": container_ref,
             "thread_ref": "chat:team:operations:thread-fresh-conflict",
-            "session_ref": "session:operations-fresh-conflict",
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
@@ -959,7 +914,7 @@ def test_query_debug_broad_recall_excludes_conflicting_structured_checkpoint(mon
 
 def test_query_debug_constraint_recall_excludes_conflicting_structured_checkpoint(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
-    container_ref, _old_thread_ref, _old_session_ref = _ingest_conflicting_cross_thread_catalog_history(client)
+    container_ref, _old_thread_ref = _ingest_conflicting_cross_thread_catalog_history(client)
 
     response = client.post(
         "/query/debug",
@@ -968,7 +923,6 @@ def test_query_debug_constraint_recall_excludes_conflicting_structured_checkpoin
             "limit": 6,
             "container_ref": container_ref,
             "thread_ref": "chat:team:operations:thread-fresh-conflict-constraint",
-            "session_ref": "session:operations-fresh-conflict-constraint",
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
@@ -991,9 +945,8 @@ def test_query_debug_constraint_recall_excludes_conflicting_structured_checkpoin
 
 def test_processing_reconciles_conflicting_new_checkpoint_against_active_constraint(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
-    container_ref, _old_thread_ref, _old_session_ref = _ingest_cross_thread_catalog_history(client)
+    container_ref, _old_thread_ref = _ingest_cross_thread_catalog_history(client)
     fresh_thread_ref = "chat:team:operations:thread-fresh-generated-conflict"
-    fresh_session_ref = "session:operations-fresh-generated-conflict"
 
     response = client.post(
         "/items",
@@ -1006,7 +959,6 @@ def test_processing_reconciles_conflicting_new_checkpoint_against_active_constra
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": fresh_thread_ref,
-            "session_ref": fresh_session_ref,
             "occurred_at": "2026-03-11T12:00:00Z",
         },
     )
@@ -1033,7 +985,6 @@ def test_processing_reconciles_conflicting_new_checkpoint_against_active_constra
             "limit": 6,
             "container_ref": container_ref,
             "thread_ref": "chat:team:operations:thread-fresh-after-reconcile",
-            "session_ref": "session:operations-fresh-after-reconcile",
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
@@ -1049,7 +1000,7 @@ def test_processing_reconciles_conflicting_new_checkpoint_against_active_constra
 
 def test_query_debug_keeps_compatible_newer_status_beside_constraint(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
-    container_ref, _old_thread_ref, _old_session_ref = _ingest_compatible_cross_thread_catalog_follow_up(client)
+    container_ref, _old_thread_ref = _ingest_compatible_cross_thread_catalog_follow_up(client)
 
     response = client.post(
         "/query/debug",
@@ -1058,7 +1009,6 @@ def test_query_debug_keeps_compatible_newer_status_beside_constraint(monkeypatch
             "limit": 6,
             "container_ref": container_ref,
             "thread_ref": "chat:team:operations:thread-fresh-compatible",
-            "session_ref": "session:operations-fresh-compatible",
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
@@ -1078,7 +1028,6 @@ def test_query_debug_keeps_compatible_newer_status_beside_constraint(monkeypatch
 def _seed_active_constraint_profiles(client: TestClient) -> tuple[str, str]:
     storage = client.app.state.pallium_service._storage
     container_ref = "chat:team:operations"
-    visibility = VisibilityContext(kind="public", id=None)
     older_constraint = MemoryObject(
         type="task_checkpoint",
         schema_id="agent_conversation_memory.task_checkpoint",
@@ -1092,9 +1041,8 @@ def _seed_active_constraint_profiles(client: TestClient) -> tuple[str, str]:
             "evidence": ["Constraint: do not sign in to the admin portal or open a local browser."],
             "container_ref": container_ref,
             "thread_ref": "chat:team:operations:thread-older-constraint",
-            "session_ref": "session:older-constraint",
         },
-        visibility_context=visibility,
+        container_visibility="public",
         freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
     )
     newer_constraint = MemoryObject(
@@ -1110,9 +1058,8 @@ def _seed_active_constraint_profiles(client: TestClient) -> tuple[str, str]:
             "evidence": ["Constraint: do not authenticate to the admin portal; use only local export snapshots."],
             "container_ref": container_ref,
             "thread_ref": "chat:team:operations:thread-newer-constraint",
-            "session_ref": "session:newer-constraint",
         },
-        visibility_context=visibility,
+        container_visibility="public",
         freshness_at=datetime(2026, 3, 11, 11, 30, tzinfo=timezone.utc),
     )
     storage.create_memory_object(older_constraint)
@@ -1125,7 +1072,6 @@ def test_processing_reconciliation_prefers_fresher_active_constraint(monkeypatch
     client = _agent_conversation_client(monkeypatch, test_db_url)
     container_ref, newer_constraint_checkpoint_id = _seed_active_constraint_profiles(client)
     fresh_thread_ref = "chat:team:operations:thread-fresh-newer-constraint"
-    fresh_session_ref = "session:operations-fresh-newer-constraint"
 
     response = client.post(
         "/items",
@@ -1138,7 +1084,6 @@ def test_processing_reconciliation_prefers_fresher_active_constraint(monkeypatch
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": fresh_thread_ref,
-            "session_ref": fresh_session_ref,
             "occurred_at": "2026-03-11T12:10:00Z",
         },
     )
@@ -1165,7 +1110,7 @@ def test_processing_reconciliation_prefers_fresher_active_constraint(monkeypatch
 
 def test_query_debug_work_resumption_excludes_conflicting_structured_checkpoint(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
-    container_ref, _old_thread_ref, _old_session_ref = _ingest_conflicting_cross_thread_catalog_history(client)
+    container_ref, _old_thread_ref = _ingest_conflicting_cross_thread_catalog_history(client)
 
     response = client.post(
         "/query/debug",
@@ -1174,7 +1119,6 @@ def test_query_debug_work_resumption_excludes_conflicting_structured_checkpoint(
             "limit": 6,
             "container_ref": container_ref,
             "thread_ref": "chat:team:operations:thread-fresh-work-resumption-conflict",
-            "session_ref": "session:operations-fresh-work-resumption-conflict",
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
@@ -1243,7 +1187,6 @@ def test_query_broad_recall_does_not_inject_raw_source_blocks_by_default(monkeyp
             "role": "assistant",
             "container_ref": "chat:api",
             "thread_ref": "chat:api:thread-broad-recall",
-            "session_ref": "session:api-broad-recall",
         },
     )
 
@@ -1284,7 +1227,6 @@ def test_query_debug_exposes_injection_decision_and_sharp_candidate_diagnostics(
             "role": "assistant",
             "container_ref": "chat:api",
             "thread_ref": "chat:api:thread-debug",
-            "session_ref": "session:api-debug",
         },
     )
 
@@ -1314,7 +1256,7 @@ def test_query_debug_batch_digest_pollution_replay_uses_structured_carry_forward
     client = _agent_conversation_client(monkeypatch, test_db_url)
     scenario = _seed_batch_digest_polluted_history(client)
     container_ref = scenario["container_ref"]
-    visibility_context = scenario["visibility_context"]
+    container_visibility = scenario["container_visibility"]
     preferred_batch_memory_ids = set(scenario["thread_memory_ids"]["constraint"]["all"])
     allowed_batch_memory_ids = preferred_batch_memory_ids | set(scenario["thread_memory_ids"]["auth_retry_old"]["all"])
     conflicting_memory_ids = set(scenario["thread_memory_ids"]["auth_retry_new"]["all"])
@@ -1326,8 +1268,7 @@ def test_query_debug_batch_digest_pollution_replay_uses_structured_carry_forward
             "limit": 12,
             "container_ref": container_ref,
             "thread_ref": "chat:workspace:local-memory:diag-good-morning-fresh",
-            "session_ref": "agent-session:diag-good-morning-fresh",
-            "visibility_context": visibility_context,
+            "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
@@ -1345,9 +1286,8 @@ def test_query_debug_batch_digest_pollution_replay_uses_structured_carry_forward
             "text": "can you remind me what we had latest about batch digests?",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread"],
-            "session_ref": scenario["sessions"]["same_thread"],
-            "visibility_context": visibility_context,
+            "thread_ref": scenario["threads"]["same_thread"]["sessions"]["same_thread"],
+            "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
@@ -1379,8 +1319,7 @@ def test_query_debug_batch_digest_pollution_replay_uses_structured_carry_forward
             "limit": 12,
             "container_ref": container_ref,
             "thread_ref": "chat:workspace:local-memory:diag-batch-reminder-fresh",
-            "session_ref": "agent-session:diag-batch-reminder-fresh",
-            "visibility_context": visibility_context,
+            "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
@@ -1409,8 +1348,7 @@ def test_query_debug_batch_digest_pollution_replay_uses_structured_carry_forward
             "limit": 12,
             "container_ref": container_ref,
             "thread_ref": "chat:workspace:local-memory:diag-constraint-fresh",
-            "session_ref": "agent-session:diag-constraint-fresh",
-            "visibility_context": visibility_context,
+            "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
@@ -1437,9 +1375,8 @@ def test_processing_reconciles_new_batch_digest_structured_memory_against_active
     client = _agent_conversation_client(monkeypatch, test_db_url)
     scenario = _seed_batch_digest_polluted_history(client)
     container_ref = scenario["container_ref"]
-    visibility_context = scenario["visibility_context"]
+    container_visibility = scenario["container_visibility"]
     conflict_thread_ref = "chat:workspace:local-memory:thread-batch-generated-conflict"
-    conflict_session_ref = "agent-session:batch-generated-conflict"
 
     conflict_payloads = (
         {
@@ -1451,9 +1388,8 @@ def test_processing_reconciles_new_batch_digest_structured_memory_against_active
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": conflict_thread_ref,
-            "session_ref": conflict_session_ref,
             "occurred_at": "2026-03-11T13:05:00Z",
-            "visibility_context": visibility_context,
+            "container_visibility": container_visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -1464,9 +1400,8 @@ def test_processing_reconciles_new_batch_digest_structured_memory_against_active
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": conflict_thread_ref,
-            "session_ref": conflict_session_ref,
             "occurred_at": "2026-03-11T13:06:00Z",
-            "visibility_context": visibility_context,
+            "container_visibility": container_visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -1477,9 +1412,8 @@ def test_processing_reconciles_new_batch_digest_structured_memory_against_active
             "role": "assistant",
             "container_ref": container_ref,
             "thread_ref": conflict_thread_ref,
-            "session_ref": conflict_session_ref,
             "occurred_at": "2026-03-11T13:07:00Z",
-            "visibility_context": visibility_context,
+            "container_visibility": container_visibility,
         },
     )
     for payload in conflict_payloads:
@@ -1520,7 +1454,7 @@ def test_query_debug_short_noun_isolation_replay_routes_correctly(monkeypatch, t
     client = _agent_conversation_client(monkeypatch, test_db_url)
     scenario = _seed_short_noun_isolation_history(client)
     container_ref = scenario["container_ref"]
-    visibility_context = scenario["visibility_context"]
+    container_visibility = scenario["container_visibility"]
     allowed_batch_memory_ids = set(scenario["thread_memory_ids"]["constraint"]["all"]) | set(scenario["thread_memory_ids"]["auth_retry_old"]["all"])
     reserve_memory_ids = set(scenario["thread_memory_ids"]["reserve"]["all"])
     conflicting_batch_memory_ids = set(scenario["thread_memory_ids"]["auth_retry_new"]["all"])
@@ -1532,8 +1466,7 @@ def test_query_debug_short_noun_isolation_replay_routes_correctly(monkeypatch, t
             "limit": 12,
             "container_ref": container_ref,
             "thread_ref": "chat:workspace:local-memory:diag-good-afternnon-fresh",
-            "session_ref": "agent-session:diag-good-afternnon-fresh",
-            "visibility_context": visibility_context,
+            "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
@@ -1552,9 +1485,8 @@ def test_query_debug_short_noun_isolation_replay_routes_correctly(monkeypatch, t
             "text": "remind me what we had about the batch digests lately",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_x"],
-            "session_ref": scenario["sessions"]["same_thread_x"],
-            "visibility_context": visibility_context,
+            "thread_ref": scenario["threads"]["same_thread_x"]["sessions"]["same_thread_x"],
+            "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
@@ -1584,9 +1516,8 @@ def test_query_debug_short_noun_isolation_replay_routes_correctly(monkeypatch, t
             "text": "no, remember that we cannot use control-panel sign-in here so there is no point trying to connect that way",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_x"],
-            "session_ref": scenario["sessions"]["same_thread_x"],
-            "visibility_context": visibility_context,
+            "thread_ref": scenario["threads"]["same_thread_x"]["sessions"]["same_thread_x"],
+            "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
@@ -1614,9 +1545,8 @@ def test_query_debug_short_noun_isolation_replay_routes_correctly(monkeypatch, t
             "text": "what is the latest we have in reserve snapshot?",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_y"],
-            "session_ref": scenario["sessions"]["same_thread_y"],
-            "visibility_context": visibility_context,
+            "thread_ref": scenario["threads"]["same_thread_y"]["sessions"]["same_thread_y"],
+            "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
@@ -1643,7 +1573,7 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
     client = _agent_conversation_client(monkeypatch, test_db_url)
     scenario = _seed_short_noun_isolation_history(client)
     container_ref = scenario["container_ref"]
-    visibility_context = scenario["visibility_context"]
+    container_visibility = scenario["container_visibility"]
 
     query_payloads = (
         {
@@ -1651,8 +1581,7 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
             "limit": 12,
             "container_ref": container_ref,
             "thread_ref": "chat:workspace:local-memory:diag-good-afternnon-fresh",
-            "session_ref": "agent-session:diag-good-afternnon-fresh",
-            "visibility_context": visibility_context,
+            "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
@@ -1662,9 +1591,8 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
             "text": "remind me what we had about the batch digests lately",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_x"],
-            "session_ref": scenario["sessions"]["same_thread_x"],
-            "visibility_context": visibility_context,
+            "thread_ref": scenario["threads"]["same_thread_x"]["sessions"]["same_thread_x"],
+            "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
@@ -1674,9 +1602,8 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
             "text": "no, remember that we cannot use control-panel sign-in here so there is no point trying to connect that way",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_x"],
-            "session_ref": scenario["sessions"]["same_thread_x"],
-            "visibility_context": visibility_context,
+            "thread_ref": scenario["threads"]["same_thread_x"]["sessions"]["same_thread_x"],
+            "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
@@ -1686,9 +1613,8 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
             "text": "what is the latest we have in reserve snapshot?",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_y"],
-            "session_ref": scenario["sessions"]["same_thread_y"],
-            "visibility_context": visibility_context,
+            "thread_ref": scenario["threads"]["same_thread_y"]["sessions"]["same_thread_y"],
+            "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,

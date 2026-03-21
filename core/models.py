@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
-from core.visibility import QueryVisibilityTrace, VisibilityContext
+from core.visibility import QueryVisibilityTrace
 
 
 def utc_now() -> datetime:
@@ -38,13 +38,13 @@ class SourceItem:
     metadata: dict[str, Any] | None = None
     occurred_at: datetime | None = None
     actor_ref: str | None = None
+    agent_ref: str | None = None
     role: str | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
-    session_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: str | None = None
-    visibility_context: VisibilityContext | None = None
+    container_visibility: str = "private"
     use_case: str | None = None
     processing_status: str = "pending"
     processing_attempts: int = 0
@@ -85,7 +85,6 @@ class MemorySubjectAnchor:
 class MemoryEnvelopeScope:
     container_ref: str | None = None
     thread_ref: str | None = None
-    session_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -116,7 +115,7 @@ class MemoryObject:
     schema_version: str
     payload: dict[str, Any]
     lifecycle: str = "active"
-    visibility_context: VisibilityContext | None = None
+    container_visibility: str = "private"
     freshness_at: datetime | None = None
     envelope: MemoryEnvelope | None = None
     id: str = field(default_factory=new_id)
@@ -152,13 +151,13 @@ class EvidenceReference:
     source_id: str
     occurred_at: datetime | None = None
     actor_ref: str | None = None
+    agent_ref: str | None = None
     role: str | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
-    session_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: str | None = None
-    visibility_context: VisibilityContext | None = None
+    container_visibility: str = "private"
 
 
 @dataclass(frozen=True)
@@ -168,7 +167,6 @@ class QueryFilters:
     artifact_kind: str | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
-    session_ref: str | None = None
 
 
 TurnKind = Literal["new_thread", "same_thread", "same_thread_continuation", "resumed_session", "new_session"]
@@ -197,13 +195,13 @@ class QueryResultItem:
     excerpt: str | None = None
     occurred_at: datetime | None = None
     actor_ref: str | None = None
+    agent_ref: str | None = None
     role: str | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
-    session_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: str | None = None
-    visibility_context: VisibilityContext | None = None
+    container_visibility: str = "private"
     retrieval_source: str | None = None
 
     def __post_init__(self) -> None:

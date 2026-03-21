@@ -61,11 +61,11 @@ def _minimal_config(**overrides) -> AppConfig:
 
 class TestVectorIndexConfig:
 
-    def test_default_config_vector_disabled(self) -> None:
+    def test_default_config_vector_enabled(self) -> None:
         config = AppConfig()
-        assert config.vector_index.enabled is False
+        assert config.vector_index.enabled is True
         assert config.vector_index.index_path == "./pallium_vector.index"
-        assert config.vector_index.embedding_provider is None
+        assert config.vector_index.embedding_provider == "onnx"
         assert config.vector_index.min_similarity == 0.55
 
     def test_vector_index_config_from_toml(self, monkeypatch, tmp_path: Path) -> None:
@@ -124,8 +124,8 @@ class TestVectorIndexConfig:
         monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
         config = AppConfig.from_env()
 
-        assert config.vector_index.enabled is False
-        assert config.vector_index.embedding_provider is None
+        assert config.vector_index.enabled is True
+        assert config.vector_index.embedding_provider == "onnx"
 
 
 # ---------------------------------------------------------------------------
@@ -134,16 +134,18 @@ class TestVectorIndexConfig:
 
 class TestBuildServiceVectorDisabled:
 
-    def test_vector_disabled_by_default_lexical_only(self) -> None:
-        """When vector is disabled (default), build_service produces lexical-only service."""
-        config = _minimal_config()
+    def test_vector_disabled_explicit_false_lexical_only(self) -> None:
+        """When vector is explicitly disabled, build_service produces lexical-only service."""
+        config = _minimal_config(
+            vector_index=VectorIndexConfig(enabled=False),
+        )
         service = build_service(config)
 
         assert not isinstance(service._retrieval, CompositeRetrievalProvider)
         assert service._vector_index is None
         assert service._embedding_provider is None
 
-    def test_vector_disabled_explicit_false(self) -> None:
+    def test_vector_disabled_explicit_false_with_provider(self) -> None:
         config = _minimal_config(
             vector_index=VectorIndexConfig(enabled=False, embedding_provider="local"),
         )
@@ -203,7 +205,7 @@ class TestBuildServiceVectorEnabled:
     def test_vector_enabled_no_embedding_provider_name_disables(self, caplog) -> None:
         """Vector enabled but no embedding_provider configured => vector disabled with error log."""
         config = _minimal_config(
-            vector_index=VectorIndexConfig(enabled=True, embedding_provider=None),
+            vector_index=VectorIndexConfig(enabled=True, embedding_provider=""),
         )
 
         with caplog.at_level(logging.ERROR):
@@ -577,7 +579,7 @@ class TestCLICommands:
             AppConfig,
             "from_env",
             staticmethod(lambda: _minimal_config(
-                vector_index=VectorIndexConfig(enabled=True, embedding_provider=None),
+                vector_index=VectorIndexConfig(enabled=True, embedding_provider=""),
             )),
         )
 

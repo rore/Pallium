@@ -13,7 +13,6 @@ def test_end_to_end_simulation_flow(client) -> None:
             "role": "user",
             "container_ref": "slack:C123",
             "thread_ref": "slack:C123:1730000000.000100",
-            "session_ref": "agent-session-1",
             "actor_ref": "slack:U123",
             "source_ref": "https://example.test/slack/thread-001-msg-1",
         },
@@ -27,7 +26,6 @@ def test_end_to_end_simulation_flow(client) -> None:
             "role": "assistant",
             "container_ref": "slack:C123",
             "thread_ref": "slack:C123:1730000000.000100",
-            "session_ref": "agent-session-1",
             "actor_ref": "agent:assistant",
             "source_ref": "https://example.test/slack/artifact-001",
         },
@@ -41,7 +39,6 @@ def test_end_to_end_simulation_flow(client) -> None:
             "role": "assistant",
             "container_ref": "slack:C123",
             "thread_ref": "slack:C123:1730000000.000100",
-            "session_ref": "agent-session-1",
             "actor_ref": "agent:assistant",
             "source_ref": "https://example.test/slack/artifact-002",
         },
@@ -56,7 +53,7 @@ def test_end_to_end_simulation_flow(client) -> None:
 
     decision_query = client.post(
         "/query",
-        json={"text": "why did we choose item item event time reservation ordering?", "limit": 6, "thread_ref": "slack:C123:1730000000.000100", "session_ref": "agent-session-1"},
+        json={"text": "why did we choose item item event time reservation ordering?", "limit": 6, "thread_ref": "slack:C123:1730000000.000100"},
     )
     decision_payload = decision_query.json()
     assert any(item.get("type") == "decision" for item in decision_payload["results"] if item["result_kind"] == "memory_hit")
@@ -64,7 +61,7 @@ def test_end_to_end_simulation_flow(client) -> None:
 
     investigation_query = client.post(
         "/query",
-        json={"text": "what did the investigation find about missed hold updates?", "limit": 6, "thread_ref": "slack:C123:1730000000.000100", "session_ref": "agent-session-1"},
+        json={"text": "what did the investigation find about missed hold updates?", "limit": 6, "thread_ref": "slack:C123:1730000000.000100"},
     )
     investigation_payload = investigation_query.json()
     assert any(item.get("type") == "investigation_outcome" for item in investigation_payload["results"] if item["result_kind"] == "memory_hit")

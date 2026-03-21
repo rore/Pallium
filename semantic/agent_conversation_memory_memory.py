@@ -62,7 +62,6 @@ def _build_memory_envelope(
     kind: MemoryEnvelopeKind,
     container_ref: str | None,
     thread_ref: str | None,
-    session_ref: str | None,
     confidence: MemoryEnvelopeConfidence,
     producer_kind: str,
     producer_schema_id: str,
@@ -78,7 +77,6 @@ def _build_memory_envelope(
         scope=MemoryEnvelopeScope(
             container_ref=container_ref,
             thread_ref=thread_ref,
-            session_ref=session_ref,
         ),
         subjects=list(subjects),
         confidence=confidence,
@@ -141,7 +139,6 @@ def _append_typed_constraint_memory_objects(
             "precise_coverage_key": canonical_key,
             "container_ref": source_item.container_ref,
             "thread_ref": source_item.thread_ref,
-            "session_ref": source_item.session_ref,
             "semantic_provenance": dict(semantic_provenance),
         }
         memory_object = MemoryObject(
@@ -149,13 +146,12 @@ def _append_typed_constraint_memory_objects(
             schema_id=CONSTRAINT_MEMORY_SCHEMA_ID,
             schema_version=CONSTRAINT_MEMORY_SCHEMA_VERSION,
             payload=payload,
-            visibility_context=source_item.visibility_context,
+            container_visibility=source_item.container_visibility,
             freshness_at=source_item.occurred_at,
             envelope=_build_memory_envelope(
                 kind="constraint",
                 container_ref=source_item.container_ref,
                 thread_ref=source_item.thread_ref,
-                session_ref=source_item.session_ref,
                 confidence=_constraint_confidence_from_candidate(candidate),
                 producer_kind="item_extraction",
                 producer_schema_id=producer_schema_id,
@@ -230,7 +226,6 @@ def _apply_direct_memory_envelopes(
                     kind=_memory_kind_for_type(memory_object.type),
                     container_ref=source_item.container_ref,
                     thread_ref=source_item.thread_ref,
-                    session_ref=source_item.session_ref,
                     confidence=_memory_confidence_for_type(memory_object.type, extraction=extraction),
                     producer_kind="item_extraction",
                     producer_schema_id=producer_schema_id,
@@ -265,7 +260,7 @@ def build_supersession_hints(source_item: SourceItem, result: ProcessResult) -> 
                 canonical_key=canonical_key,
                 container_ref=source_item.container_ref,
                 thread_ref=source_item.thread_ref,
-                visibility_context=source_item.visibility_context,
+                container_visibility=source_item.container_visibility,
             )
         )
     return hints

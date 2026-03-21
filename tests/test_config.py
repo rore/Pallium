@@ -419,9 +419,12 @@ def test_embedding_provider_config_unknown_name_raises() -> None:
         config.embedding_provider_config("nonexistent")
 
 
-def test_embedding_providers_default_empty() -> None:
+def test_embedding_providers_default_auto_created() -> None:
     config = AppConfig()
-    assert config.embedding_providers == {}
+    assert "onnx" in config.embedding_providers
+    default_ep = config.embedding_providers["onnx"]
+    assert default_ep.kind == "onnx"
+    assert default_ep.model == "BAAI/bge-small-en-v1.5"
 
 
 def test_embedding_provider_config_direct_construction() -> None:

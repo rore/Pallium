@@ -55,7 +55,6 @@ def test_apply_write_enrichment_adds_retrieval_context_and_provenance() -> None:
             'summary': 'Catalog sync retry remains blocked after partial progress.',
             'container_ref': 'chat:library-help',
             'thread_ref': 'chat:library-help:thread-1',
-            'session_ref': 'session:1',
         },
     )
     provider = StubEnrichmentProvider(

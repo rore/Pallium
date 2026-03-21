@@ -35,7 +35,6 @@ from core.models import (
     Relation,
     SourceItem,
 )
-from core.visibility import VisibilityContext
 from providers.embedding.base import EmbeddingProvider
 from retrieval.base import RetrievalQueryResult
 from retrieval.lexical import LexicalRetrievalProvider
@@ -158,10 +157,16 @@ def _parse_occurred_at(raw: str | None) -> datetime | None:
     return datetime.fromisoformat(raw.replace("Z", "+00:00"))
 
 
-def _parse_visibility_context(raw: dict[str, Any] | None) -> VisibilityContext | None:
+def _parse_container_visibility(raw: dict[str, Any] | str | None) -> str:
     if raw is None:
-        return None
-    return VisibilityContext(kind=raw["kind"], id=raw.get("id"))
+        return "public"
+    if isinstance(raw, str):
+        return raw
+    # Legacy dict format: {"kind": "public", "id": None}
+    kind = raw.get("kind", "public")
+    if kind == "user":
+        return "private"
+    return kind
 
 
 # ---------------------------------------------------------------------------
@@ -179,8 +184,8 @@ def _setup_storage_for_scenario(
     """
     source_item_ids: list[str] = []
     for event in scenario["prior_events"]:
-        vis_ctx = _parse_visibility_context(
-            event.get("visibility_context")
+        container_vis = _parse_container_visibility(
+            event.get("container_visibility") or event.get("visibility_context")
         )
         si = SourceItem(
             source_type=event["source_type"],
@@ -193,10 +198,9 @@ def _setup_storage_for_scenario(
             role=event.get("role"),
             container_ref=event.get("container_ref"),
             thread_ref=event.get("thread_ref"),
-            session_ref=event.get("session_ref"),
             source_ref=event.get("source_ref"),
             artifact_kind=event.get("artifact_kind"),
-            visibility_context=vis_ctx,
+            container_visibility=container_vis,
         )
         storage.create_source_item(si)
         source_item_ids.append(si.id)
@@ -209,7 +213,7 @@ def _setup_storage_for_scenario(
             schema_id="vector_retrieval_benchmark",
             schema_version="1",
             payload=mo_spec["payload"],
-            visibility_context=VisibilityContext(kind="public"),
+            container_visibility="public",
         )
         storage.create_memory_object(mo)
         memory_object_ids.append(mo.id)
@@ -345,8 +349,7 @@ def run_scenario(
     query = scenario["current_query"]
     query_text = query["text"]
     query_limit = query.get("limit", 4)
-    vis_raw = query.get("visibility_context")
-    vis_ctx = _parse_visibility_context(vis_raw)
+    container_vis = _parse_container_visibility(query.get("container_visibility") or query.get("visibility_context"))
     container_ref = query.get("container_ref")
     filters = QueryFilters(container_ref=container_ref) if container_ref else None
 
@@ -354,14 +357,14 @@ def run_scenario(
         query_text,
         query_limit,
         filters=filters,
-        visibility_context=vis_ctx,
+        container_visibility=container_vis,
         include_trace=True,
     )
     vector_result = vector_provider.query(
         query_text,
         query_limit,
         filters=filters,
-        visibility_context=vis_ctx,
+        container_visibility=container_vis,
         include_trace=True,
     )
 

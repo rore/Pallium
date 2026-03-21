@@ -555,8 +555,7 @@ def test_process_item_emits_same_thread_supersession_hint_for_sharp_conclusion()
             role='assistant',
             container_ref='chat:library-help',
             thread_ref='chat:library-help:thread-supersession',
-            session_ref='session:supersession',
-            visibility_context=VisibilityContext(kind='public', id=None),
+            container_visibility="public",
         )
     )
 

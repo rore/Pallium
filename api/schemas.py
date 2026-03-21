@@ -7,24 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 ArtifactKind = Literal["message", "assistant_output", "tool_use_summary", "todo_snapshot", "notification"]
-VisibilityKind = Literal["public", "limited", "user"]
 ProcessingStatus = Literal["pending", "processing", "completed", "skipped", "failed"]
 TurnKind = Literal["new_thread", "same_thread", "same_thread_continuation", "resumed_session", "new_session"]
-
-
-class VisibilityContextModel(BaseModel):
-    kind: VisibilityKind
-    id: str | None = None
-
-    @model_validator(mode="after")
-    def validate_shape(self) -> "VisibilityContextModel":
-        if self.kind == "public":
-            if self.id is not None:
-                raise ValueError("public visibility_context must use id=null")
-            return self
-        if not self.id:
-            raise ValueError(f"{self.kind} visibility_context requires a non-empty id")
-        return self
 
 
 class RuntimeContextModel(BaseModel):
@@ -41,13 +25,13 @@ class ItemCreateRequest(BaseModel):
     use_case: str | None = None
     occurred_at: datetime | None = None
     actor_ref: str | None = None
+    agent_ref: str | None = None
     role: str | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
-    session_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: ArtifactKind | None = None
-    visibility_context: VisibilityContextModel | None = None
+    container_visibility: str = "private"
 
 
 class ItemCreateResponse(BaseModel):
@@ -100,8 +84,7 @@ class QueryRequest(BaseModel):
     artifact_kind: ArtifactKind | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
-    session_ref: str | None = None
-    visibility_context: VisibilityContextModel | None = None
+    container_visibility: str | None = None
     runtime_context: RuntimeContextModel | None = None
 
 
@@ -111,13 +94,13 @@ class EvidenceResponse(BaseModel):
     source_id: str
     occurred_at: datetime | None = None
     actor_ref: str | None = None
+    agent_ref: str | None = None
     role: str | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
-    session_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: ArtifactKind | None = None
-    visibility_context: VisibilityContextModel | None = None
+    container_visibility: str = "private"
 
 
 class QueryResultResponse(BaseModel):
@@ -134,13 +117,13 @@ class QueryResultResponse(BaseModel):
     excerpt: str | None = None
     occurred_at: datetime | None = None
     actor_ref: str | None = None
+    agent_ref: str | None = None
     role: str | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
-    session_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: ArtifactKind | None = None
-    visibility_context: VisibilityContextModel | None = None
+    container_visibility: str = "private"
     retrieval_source: str | None = None
 
 
@@ -166,7 +149,6 @@ class QueryTraceFiltersResponse(BaseModel):
     artifact_kind: ArtifactKind | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
-    session_ref: str | None = None
 
 
 class RetrievalTraceHitResponse(BaseModel):
@@ -196,8 +178,8 @@ class QueryTraceVisibilityExclusionResponse(BaseModel):
 
 
 class QueryTraceVisibilityResponse(BaseModel):
-    query_visibility_context: VisibilityContextModel | None = None
-    expanded_visibility_contexts: list[VisibilityContextModel] = Field(default_factory=list)
+    query_container_visibility: str | None = None
+    query_container_ref: str | None = None
     excluded_candidates: list[QueryTraceVisibilityExclusionResponse] = Field(default_factory=list)
     fail_closed_reason: str | None = None
 
@@ -261,7 +243,7 @@ class LeasedThreadScopeResponse(BaseModel):
     use_case: str
     container_ref: str
     thread_ref: str
-    visibility_context: VisibilityContextModel | None = None
+    container_visibility: str = "private"
     processing_claimed_by: str | None = None
     processing_claimed_at: datetime | None = None
     processing_lease_expires_at: datetime | None = None

@@ -50,7 +50,6 @@ class SQLiteStorageProvider(
             return self._to_source_item(record)
 
     def create_source_item(self, source_item: SourceItem) -> None:
-        visibility_kind, visibility_id = self._split_visibility_context(source_item.visibility_context)
         record = SourceItemRecord(
             id=source_item.id,
             source_type=source_item.source_type,
@@ -60,14 +59,13 @@ class SQLiteStorageProvider(
             metadata_json=self._dumps(source_item.metadata),
             occurred_at=source_item.occurred_at,
             actor_ref=source_item.actor_ref,
+            agent_ref=source_item.agent_ref,
             role=source_item.role,
             container_ref=source_item.container_ref,
             thread_ref=source_item.thread_ref,
-            session_ref=source_item.session_ref,
             source_ref=source_item.source_ref,
             artifact_kind=source_item.artifact_kind,
-            visibility_kind=visibility_kind,
-            visibility_id=visibility_id,
+            container_visibility=source_item.container_visibility,
             use_case=source_item.use_case,
             processing_status=source_item.processing_status,
             processing_attempts=source_item.processing_attempts,
@@ -129,7 +127,6 @@ class SQLiteStorageProvider(
         return [self._to_annotation(record) for record in records]
 
     def create_memory_object(self, memory_object: MemoryObject) -> None:
-        visibility_kind, visibility_id = self._split_visibility_context(memory_object.visibility_context)
         record = MemoryObjectRecord(
             id=memory_object.id,
             type=memory_object.type,
@@ -138,8 +135,7 @@ class SQLiteStorageProvider(
             payload_json=self._dumps(memory_object.payload) or "{}",
             envelope_json=self._dump_memory_envelope(memory_object.envelope),
             lifecycle=memory_object.lifecycle,
-            visibility_kind=visibility_kind,
-            visibility_id=visibility_id,
+            container_visibility=memory_object.container_visibility,
             freshness_at=self._normalize_datetime(memory_object.freshness_at) or memory_object.created_at,
             created_at=memory_object.created_at,
         )

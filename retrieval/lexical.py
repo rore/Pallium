@@ -12,7 +12,7 @@ from core.models import (
     RetrievalTraceHit,
     SourceItem,
 )
-from core.visibility import QueryVisibilityTrace, VisibilityContext, expand_visibility_context
+from core.visibility import QueryVisibilityTrace, VisibilityExclusion, is_visible, visibility_label
 from retrieval.base import RetrievalProvider, RetrievalQueryResult
 from storage.base import IndexSearchHit, StorageProvider
 
@@ -63,13 +63,13 @@ def _build_evidence(source_item: SourceItem) -> EvidenceReference:
         source_id=source_item.source_id,
         occurred_at=occurred_at,
         actor_ref=source_item.actor_ref,
+        agent_ref=source_item.agent_ref,
         role=source_item.role,
         container_ref=source_item.container_ref,
         thread_ref=source_item.thread_ref,
-        session_ref=source_item.session_ref,
         source_ref=source_item.source_ref,
         artifact_kind=source_item.artifact_kind,
-        visibility_context=source_item.visibility_context,
+        container_visibility=source_item.container_visibility,
     )
 
 
@@ -97,12 +97,13 @@ class LexicalRetrievalProvider(RetrievalProvider):
         limit: int,
         filters: QueryFilters | None = None,
         *,
-        visibility_context: VisibilityContext | None = None,
+        container_visibility: str | None = None,
+        query_container_ref: str | None = None,
         include_trace: bool = False,
         require_visibility: bool = False,
     ) -> RetrievalQueryResult:
         tokens = sorted(set(_tokenize(text)))
-        if require_visibility and visibility_context is None:
+        if require_visibility and query_container_ref is None and container_visibility != "public":
             trace = None
             if include_trace:
                 trace = QueryTrace(
@@ -112,13 +113,12 @@ class LexicalRetrievalProvider(RetrievalProvider):
                     filters=filters,
                     stages=tuple(),
                     visibility=QueryVisibilityTrace(
-                        query_visibility_context=None,
-                        expanded_visibility_contexts=tuple(),
+                        query_container_visibility=container_visibility,
+                        query_container_ref=query_container_ref,
                         fail_closed_reason="retrieval_visibility_context_required",
                     ),
                 )
             return RetrievalQueryResult(results=[], trace=trace)
-        visible_contexts = expand_visibility_context(visibility_context) if visibility_context is not None else None
         if not tokens:
             trace = None
             if include_trace:
@@ -130,10 +130,10 @@ class LexicalRetrievalProvider(RetrievalProvider):
                     stages=tuple(),
                     visibility=(
                         QueryVisibilityTrace(
-                            query_visibility_context=visibility_context,
-                            expanded_visibility_contexts=visible_contexts or tuple(),
+                            query_container_visibility=container_visibility,
+                            query_container_ref=query_container_ref,
                         )
-                        if visibility_context is not None
+                        if container_visibility is not None or query_container_ref is not None
                         else None
                     ),
                 )
@@ -143,7 +143,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
             tokens=tokens,
             limit=limit * 4,
             filters=filters,
-            visibility_contexts=visible_contexts,
+            query_container_ref=query_container_ref,
             include_visibility_trace=include_trace,
         )
         hits = search_result.hits
@@ -169,7 +169,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
                         envelope=memory_object.envelope,
                         score=hit.score,
                         evidence=evidence,
-                        visibility_context=memory_object.visibility_context,
+                        container_visibility=memory_object.container_visibility,
                     )
                 )
             elif hit.target_kind == "source_item":
@@ -183,15 +183,15 @@ class LexicalRetrievalProvider(RetrievalProvider):
                         excerpt=_build_excerpt(source_item.content),
                         occurred_at=source_item.occurred_at,
                         actor_ref=source_item.actor_ref,
+                        agent_ref=source_item.agent_ref,
                         role=source_item.role,
                         container_ref=source_item.container_ref,
                         thread_ref=source_item.thread_ref,
-                        session_ref=source_item.session_ref,
                         source_ref=source_item.source_ref,
                         artifact_kind=source_item.artifact_kind,
                         score=hit.score,
                         evidence=[_build_evidence(source_item)],
-                        visibility_context=source_item.visibility_context,
+                        container_visibility=source_item.container_visibility,
                     )
                 )
             else:
@@ -222,11 +222,11 @@ class LexicalRetrievalProvider(RetrievalProvider):
                 ),
                 visibility=(
                     QueryVisibilityTrace(
-                        query_visibility_context=visibility_context,
-                        expanded_visibility_contexts=visible_contexts or tuple(),
+                        query_container_visibility=container_visibility,
+                        query_container_ref=query_container_ref,
                         excluded_candidates=search_result.visibility_exclusions,
                     )
-                    if visibility_context is not None or search_result.visibility_exclusions
+                    if container_visibility is not None or query_container_ref is not None or search_result.visibility_exclusions
                     else None
                 ),
             )

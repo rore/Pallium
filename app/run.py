@@ -109,7 +109,7 @@ def _run_rebuild_vector_index() -> int:
         logger.error("Vector index is not enabled in configuration. Set [vector_index] enabled = true.")
         return 1
 
-    if vector_config.embedding_provider is None:
+    if not vector_config.embedding_provider:
         logger.error("No embedding_provider configured under [vector_index].")
         return 1
 
@@ -158,7 +158,7 @@ def _run_download_embedding_model() -> int:
     config = AppConfig.from_env()
     vector_config = config.vector_index
 
-    if vector_config.embedding_provider is None:
+    if not vector_config.embedding_provider:
         logger.error("No embedding_provider configured under [vector_index].")
         return 1
 

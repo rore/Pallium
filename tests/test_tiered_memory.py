@@ -24,9 +24,9 @@ def _build_client(monkeypatch, sqlite_url: str) -> TestClient:
 
     def post_with_public_visibility(url: str, *args, **kwargs):
         payload = kwargs.get('json')
-        if isinstance(payload, dict) and url in {'/items', '/query', '/query/debug'} and 'visibility_context' not in payload:
+        if isinstance(payload, dict) and url in {'/items', '/query', '/query/debug'} and 'container_visibility' not in payload:
             payload = dict(payload)
-            payload['visibility_context'] = {'kind': 'public', 'id': None}
+            payload['container_visibility'] = {'kind': 'public', 'id': None}
             kwargs['json'] = payload
         response = original_post(url, *args, **kwargs)
         if url == '/items' and response.status_code == 200:
@@ -112,10 +112,10 @@ def test_rebuilding_same_group_supersedes_older_continuity_memory(monkeypatch, t
 def test_task_checkpoint_preserves_work_state_and_evidence(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
         for payload in (
-            {'source_type': 'chat_message', 'source_id': 'task-checkpoint-msg-1', 'content_type': 'text/plain', 'content': 'The catalog sync retry is queued again.', 'artifact_kind': 'message', 'role': 'user', 'container_ref': 'chat:library-help', 'thread_ref': 'chat:library-help:thread-task-checkpoint-001', 'session_ref': 'agent-session-task-checkpoint-001'},
-            {'source_type': 'assistant_artifact', 'source_id': 'task-checkpoint-artifact-1', 'content_type': 'text/plain', 'content': 'Partial progress: refreshed 312 reservation records before the catalog sync tool failed.', 'artifact_kind': 'tool_use_summary', 'role': 'assistant', 'container_ref': 'chat:library-help', 'thread_ref': 'chat:library-help:thread-task-checkpoint-001', 'session_ref': 'agent-session-task-checkpoint-001'},
-            {'source_type': 'assistant_artifact', 'source_id': 'task-checkpoint-artifact-2', 'content_type': 'text/plain', 'content': 'Blocked: catalog API returned 401 because the service token expired.', 'artifact_kind': 'tool_use_summary', 'role': 'assistant', 'container_ref': 'chat:library-help', 'thread_ref': 'chat:library-help:thread-task-checkpoint-001', 'session_ref': 'agent-session-task-checkpoint-001'},
-            {'source_type': 'assistant_artifact', 'source_id': 'task-checkpoint-artifact-3', 'content_type': 'text/plain', 'content': 'Next step: refresh the catalog service token and rerun the sync from batch 313.', 'artifact_kind': 'todo_snapshot', 'role': 'assistant', 'container_ref': 'chat:library-help', 'thread_ref': 'chat:library-help:thread-task-checkpoint-001', 'session_ref': 'agent-session-task-checkpoint-001'},
+            {'source_type': 'chat_message', 'source_id': 'task-checkpoint-msg-1', 'content_type': 'text/plain', 'content': 'The catalog sync retry is queued again.', 'artifact_kind': 'message', 'role': 'user', 'container_ref': 'chat:library-help', 'thread_ref': 'chat:library-help:thread-task-checkpoint-001'},
+            {'source_type': 'assistant_artifact', 'source_id': 'task-checkpoint-artifact-1', 'content_type': 'text/plain', 'content': 'Partial progress: refreshed 312 reservation records before the catalog sync tool failed.', 'artifact_kind': 'tool_use_summary', 'role': 'assistant', 'container_ref': 'chat:library-help', 'thread_ref': 'chat:library-help:thread-task-checkpoint-001'},
+            {'source_type': 'assistant_artifact', 'source_id': 'task-checkpoint-artifact-2', 'content_type': 'text/plain', 'content': 'Blocked: catalog API returned 401 because the service token expired.', 'artifact_kind': 'tool_use_summary', 'role': 'assistant', 'container_ref': 'chat:library-help', 'thread_ref': 'chat:library-help:thread-task-checkpoint-001'},
+            {'source_type': 'assistant_artifact', 'source_id': 'task-checkpoint-artifact-3', 'content_type': 'text/plain', 'content': 'Next step: refresh the catalog service token and rerun the sync from batch 313.', 'artifact_kind': 'todo_snapshot', 'role': 'assistant', 'container_ref': 'chat:library-help', 'thread_ref': 'chat:library-help:thread-task-checkpoint-001'},
         ):
             response = client.post('/items', json=payload)
             assert response.status_code == 200

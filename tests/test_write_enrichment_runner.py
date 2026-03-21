@@ -48,7 +48,7 @@ def _scenario(
     return {
         'scenario_id': scenario_id,
         'memory_type': memory_type,
-        'payload': {'summary': summary, 'container_ref': 'workspace:ops', 'thread_ref': f'thread:{scenario_id}', 'session_ref': 'session:1'},
+        'payload': {'summary': summary, 'container_ref': 'workspace:ops', 'thread_ref': f'thread:{scenario_id}'},
         'support_lines': support_lines,
         'expected_action': expected_action,
         'required_terms': required_terms,

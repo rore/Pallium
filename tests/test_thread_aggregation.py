@@ -214,9 +214,9 @@ def _create_thread_client(monkeypatch, test_db_url: str) -> TestClient:
 
     def post_with_public_visibility(url: str, *args, **kwargs):
         payload = kwargs.get("json")
-        if isinstance(payload, dict) and url in {"/items", "/query", "/query/debug"} and "visibility_context" not in payload:
+        if isinstance(payload, dict) and url in {"/items", "/query", "/query/debug"} and "container_visibility" not in payload:
             payload = dict(payload)
-            payload["visibility_context"] = {"kind": "public", "id": None}
+            payload["container_visibility"] = {"kind": "public", "id": None}
             kwargs["json"] = payload
         response = original_post(url, *args, **kwargs)
         if url == "/items" and response.status_code == 200:
@@ -231,18 +231,18 @@ def _write_public_visibility_scenario(target_path: Path, source_path: Path) -> P
     scenarios = json.loads(source_path.read_text(encoding="utf-8"))
     for scenario in scenarios:
         for event in scenario.get("prior_events", []):
-            event.setdefault("visibility_context", {"kind": "public", "id": None})
+            event.setdefault("container_visibility", "public")
         current_query = scenario.get("current_query")
         if isinstance(current_query, dict):
-            current_query.setdefault("visibility_context", {"kind": "public", "id": None})
+            current_query.setdefault("container_visibility", "public")
     target_path.write_text(json.dumps(scenarios), encoding="utf-8")
     return target_path
 
 
 def test_thread_summary_is_created_and_superseded(monkeypatch, test_db_url: str) -> None:
     client = _create_thread_client(monkeypatch, test_db_url)
-    client.post("/items", json={"source_type": "chat_message", "source_id": "thread-msg-1", "content_type": "text/plain", "content": "Why are some library holds disappearing after catalog sync delays?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001", "session_ref": "agent-session-agg-001"})
-    client.post("/items", json={"source_type": "assistant_artifact", "source_id": "thread-artifact-1", "content_type": "text/plain", "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001", "session_ref": "agent-session-agg-001"})
+    client.post("/items", json={"source_type": "chat_message", "source_id": "thread-msg-1", "content_type": "text/plain", "content": "Why are some library holds disappearing after catalog sync delays?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"})
+    client.post("/items", json={"source_type": "assistant_artifact", "source_id": "thread-artifact-1", "content_type": "text/plain", "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"})
 
     storage = client.app.state.pallium_service._storage
     thread_items = storage.list_source_items_for_thread("chat:library-help", "chat:library-help:thread-agg-001")
@@ -255,9 +255,9 @@ def test_thread_summary_is_created_and_superseded(monkeypatch, test_db_url: str)
 def test_thread_summary_and_task_checkpoint_preserve_selected_work_artifacts(monkeypatch, test_db_url: str) -> None:
     client = _create_thread_client(monkeypatch, test_db_url)
     for payload in (
-        {"source_type": "chat_message", "source_id": "thread-msg-work-1", "content_type": "text/plain", "content": "What state were we in on ticket LIB-241 before the interruption?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-001", "session_ref": "agent-session-agg-work-001", "occurred_at": "2026-03-11T11:00:00Z"},
-        {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-1", "content_type": "text/plain", "content": "Partial progress: ticket LIB-241 has the schema change and backfill done.", "artifact_kind": "tool_use_summary", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-001", "session_ref": "agent-session-agg-work-001", "occurred_at": "2026-03-11T11:01:00Z"},
-        {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-2", "content_type": "text/plain", "content": "Next step: wire the admin toggle and add retry-path coverage before enabling the flag.", "artifact_kind": "todo_snapshot", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-001", "session_ref": "agent-session-agg-work-001", "occurred_at": "2026-03-11T11:02:00Z"},
+        {"source_type": "chat_message", "source_id": "thread-msg-work-1", "content_type": "text/plain", "content": "What state were we in on ticket LIB-241 before the interruption?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-001", "occurred_at": "2026-03-11T11:00:00Z"},
+        {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-1", "content_type": "text/plain", "content": "Partial progress: ticket LIB-241 has the schema change and backfill done.", "artifact_kind": "tool_use_summary", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-001", "occurred_at": "2026-03-11T11:01:00Z"},
+        {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-2", "content_type": "text/plain", "content": "Next step: wire the admin toggle and add retry-path coverage before enabling the flag.", "artifact_kind": "todo_snapshot", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-001", "occurred_at": "2026-03-11T11:02:00Z"},
     ):
         client.post("/items", json=payload)
 
@@ -282,11 +282,11 @@ def test_thread_summary_and_task_checkpoint_preserve_selected_work_artifacts(mon
 def test_task_checkpoint_is_created_and_superseded(monkeypatch, test_db_url: str) -> None:
     client = _create_thread_client(monkeypatch, test_db_url)
     for payload in (
-        {"source_type": "chat_message", "source_id": "thread-msg-work-3", "content_type": "text/plain", "content": "The catalog sync retry is queued again.", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-003", "session_ref": "agent-session-agg-work-003", "occurred_at": "2026-03-11T09:59:00Z"},
-        {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-5", "content_type": "text/plain", "content": "Partial progress: refreshed 312 reservation records before the catalog sync tool failed.", "artifact_kind": "tool_use_summary", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-003", "session_ref": "agent-session-agg-work-003", "occurred_at": "2026-03-11T10:00:00Z"},
-        {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-6", "content_type": "text/plain", "content": "Blocked: catalog API returned 401 because the service token expired.", "artifact_kind": "tool_use_summary", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-003", "session_ref": "agent-session-agg-work-003", "occurred_at": "2026-03-11T10:01:00Z"},
-        {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-7", "content_type": "text/plain", "content": "Next step: refresh the catalog service token and rerun the sync from batch 313.", "artifact_kind": "todo_snapshot", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-003", "session_ref": "agent-session-agg-work-003", "occurred_at": "2026-03-11T10:02:00Z"},
-        {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-8", "content_type": "text/plain", "content": "Next step: refresh the catalog service token, rerun the sync from batch 313, and capture verbose auth logging.", "artifact_kind": "todo_snapshot", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-003", "session_ref": "agent-session-agg-work-003", "occurred_at": "2026-03-11T10:03:00Z"},
+        {"source_type": "chat_message", "source_id": "thread-msg-work-3", "content_type": "text/plain", "content": "The catalog sync retry is queued again.", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-003", "occurred_at": "2026-03-11T09:59:00Z"},
+        {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-5", "content_type": "text/plain", "content": "Partial progress: refreshed 312 reservation records before the catalog sync tool failed.", "artifact_kind": "tool_use_summary", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-003", "occurred_at": "2026-03-11T10:00:00Z"},
+        {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-6", "content_type": "text/plain", "content": "Blocked: catalog API returned 401 because the service token expired.", "artifact_kind": "tool_use_summary", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-003", "occurred_at": "2026-03-11T10:01:00Z"},
+        {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-7", "content_type": "text/plain", "content": "Next step: refresh the catalog service token and rerun the sync from batch 313.", "artifact_kind": "todo_snapshot", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-003", "occurred_at": "2026-03-11T10:02:00Z"},
+        {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-8", "content_type": "text/plain", "content": "Next step: refresh the catalog service token, rerun the sync from batch 313, and capture verbose auth logging.", "artifact_kind": "todo_snapshot", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-003", "occurred_at": "2026-03-11T10:03:00Z"},
     ):
         client.post("/items", json=payload)
 
@@ -302,15 +302,14 @@ def test_task_checkpoint_is_created_and_superseded(monkeypatch, test_db_url: str
 def test_downstream_agent_style_thread_promotes_verdict_and_uses_summary_fallback(monkeypatch, test_db_url: str) -> None:
     client = _create_thread_client(monkeypatch, test_db_url)
     thread_ref = "slack:thread:CLOCAL001:1773572419.417473"
-    session_ref = "downstream-agent:3b1c949210be"
     payloads = (
-        {"source_type": "chat_message", "source_id": "downstream-agent-ledger-msg-1", "content_type": "text/plain", "content": "summarize the latest changes in ledgers", "artifact_kind": "message", "role": "user", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
-        {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-1", "content_type": "text/plain", "content": "Here's what's been happening across the ledger services: transaction-transformer expanded transaction coverage while ledger-query focused on export and ADX plumbing.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
-        {"source_type": "chat_message", "source_id": "downstream-agent-ledger-msg-2", "content_type": "text/plain", "content": "Assume you are blocked from opening browsers or using Jira/Slack auth. What is your best next-step plan using only the local repos?", "artifact_kind": "message", "role": "user", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
-        {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-2", "content_type": "text/plain", "content": "Understood. No browser auth, no Jira or Slack auth. I'll work with the local repos only and ask you directly if I need anything from those services.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
-        {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-3", "content_type": "text/plain", "content": "I can compare ledger-query vs transaction-transformer locally first, then explain which repo changed more from the cloned repos.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
-        {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-4", "content_type": "text/plain", "content": "Here's the verdict: transaction-transformer had the most significant recent ledger changes by a wide margin. It touched more tickets, files, and core transaction flows than ledger-query.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
-        {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-5", "content_type": "text/plain", "content": "Task complete. No Slack message needed. Nothing new to report.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref, "session_ref": session_ref},
+        {"source_type": "chat_message", "source_id": "downstream-agent-ledger-msg-1", "content_type": "text/plain", "content": "summarize the latest changes in ledgers", "artifact_kind": "message", "role": "user", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref},
+        {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-1", "content_type": "text/plain", "content": "Here's what's been happening across the ledger services: transaction-transformer expanded transaction coverage while ledger-query focused on export and ADX plumbing.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref},
+        {"source_type": "chat_message", "source_id": "downstream-agent-ledger-msg-2", "content_type": "text/plain", "content": "Assume you are blocked from opening browsers or using Jira/Slack auth. What is your best next-step plan using only the local repos?", "artifact_kind": "message", "role": "user", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref},
+        {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-2", "content_type": "text/plain", "content": "Understood. No browser auth, no Jira or Slack auth. I'll work with the local repos only and ask you directly if I need anything from those services.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref},
+        {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-3", "content_type": "text/plain", "content": "I can compare ledger-query vs transaction-transformer locally first, then explain which repo changed more from the cloned repos.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref},
+        {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-4", "content_type": "text/plain", "content": "Here's the verdict: transaction-transformer had the most significant recent ledger changes by a wide margin. It touched more tickets, files, and core transaction flows than ledger-query.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref},
+        {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-5", "content_type": "text/plain", "content": "Task complete. No Slack message needed. Nothing new to report.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref},
     )
     for payload in payloads:
         client.post("/items", json=payload)
@@ -345,9 +344,9 @@ def test_downstream_agent_style_thread_promotes_verdict_and_uses_summary_fallbac
 def test_thread_summary_carries_forward_typed_conclusions(monkeypatch, test_db_url: str) -> None:
     client = _create_thread_client(monkeypatch, test_db_url)
     for payload in (
-        {"source_type": "chat_message", "source_id": "thread-msg-2", "content_type": "text/plain", "content": "Why are some library holds disappearing after catalog sync delays?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-002", "session_ref": "agent-session-agg-002"},
-        {"source_type": "assistant_artifact", "source_id": "thread-artifact-2", "content_type": "text/plain", "content": "Investigation found that arrival-time ordering skipped hold updates during catalog sync delays.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-002", "session_ref": "agent-session-agg-002"},
-        {"source_type": "assistant_artifact", "source_id": "thread-artifact-3", "content_type": "text/plain", "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-002", "session_ref": "agent-session-agg-002"},
+        {"source_type": "chat_message", "source_id": "thread-msg-2", "content_type": "text/plain", "content": "Why are some library holds disappearing after catalog sync delays?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-002"},
+        {"source_type": "assistant_artifact", "source_id": "thread-artifact-2", "content_type": "text/plain", "content": "Investigation found that arrival-time ordering skipped hold updates during catalog sync delays.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-002"},
+        {"source_type": "assistant_artifact", "source_id": "thread-artifact-3", "content_type": "text/plain", "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-002"},
     ):
         client.post("/items", json=payload)
 
@@ -385,7 +384,6 @@ def test_low_value_meta_item_keeps_raw_source_and_summary_annotation_without_dur
             "role": "assistant",
             "container_ref": "slack:CLOCAL001",
             "thread_ref": "slack:CLOCAL001:thread-meta",
-            "session_ref": "session:thread-meta",
         },
     )
 
@@ -417,7 +415,6 @@ def test_unsupported_typed_decision_candidate_does_not_create_durable_typed_memo
             "role": "assistant",
             "container_ref": "chat:library-help",
             "thread_ref": "chat:library-help:thread-weak-decision",
-            "session_ref": "session:thread-weak-decision",
         },
     )
 
@@ -447,7 +444,6 @@ def test_unsupported_typed_investigation_candidate_does_not_create_durable_typed
             "role": "assistant",
             "container_ref": "chat:library-help",
             "thread_ref": "chat:library-help:thread-weak-investigation",
-            "session_ref": "session:thread-weak-investigation",
         },
     )
 
@@ -477,7 +473,6 @@ def test_supported_typed_memory_still_requests_thread_rebuild(monkeypatch, test_
             "role": "assistant",
             "container_ref": "chat:library-help",
             "thread_ref": "chat:library-help:thread-supported-decision",
-            "session_ref": "session:thread-supported-decision",
         },
     )
 
@@ -507,7 +502,6 @@ def test_substantive_item_still_requests_thread_rebuild(monkeypatch, test_db_url
             "role": "user",
             "container_ref": "chat:library-help",
             "thread_ref": "chat:library-help:thread-substantive",
-            "session_ref": "session:thread-substantive",
         },
     )
 
@@ -525,8 +519,8 @@ def test_substantive_item_still_requests_thread_rebuild(monkeypatch, test_db_url
 def test_natural_language_assistant_output_creates_task_checkpoint_from_metadata_signals(monkeypatch, test_db_url: str) -> None:
     client = _create_thread_client(monkeypatch, test_db_url)
     for payload in (
-        {"source_type": "chat_message", "source_id": "thread-msg-natural-1", "content_type": "text/plain", "content": "I need to pick this sync retry back up.", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-001", "session_ref": "agent-session-agg-natural-001", "occurred_at": "2026-03-11T10:00:00Z"},
-        {"source_type": "assistant_artifact", "source_id": "thread-natural-artifact-1", "content_type": "text/plain", "content": "The token refresh worked and the sync got through batch 417, but the retry window is exhausted now. Wait 15 minutes and resume from batch 418.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-001", "session_ref": "agent-session-agg-natural-001", "occurred_at": "2026-03-11T10:03:00Z"},
+        {"source_type": "chat_message", "source_id": "thread-msg-natural-1", "content_type": "text/plain", "content": "I need to pick this sync retry back up.", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-001", "occurred_at": "2026-03-11T10:00:00Z"},
+        {"source_type": "assistant_artifact", "source_id": "thread-natural-artifact-1", "content_type": "text/plain", "content": "The token refresh worked and the sync got through batch 417, but the retry window is exhausted now. Wait 15 minutes and resume from batch 418.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-001", "occurred_at": "2026-03-11T10:03:00Z"},
     ):
         client.post("/items", json=payload)
 
@@ -543,8 +537,8 @@ def test_natural_language_assistant_output_creates_task_checkpoint_from_metadata
 def test_task_checkpoint_current_state_prefers_active_blocker_over_resolved_key_finding(monkeypatch, test_db_url: str) -> None:
     client = _create_thread_client(monkeypatch, test_db_url)
     for payload in (
-        {"source_type": "chat_message", "source_id": "thread-msg-natural-3", "content_type": "text/plain", "content": "I need to leave myself a clean sync handoff.", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-003", "session_ref": "agent-session-agg-natural-003", "occurred_at": "2026-03-11T13:00:00Z"},
-        {"source_type": "assistant_artifact", "source_id": "thread-natural-artifact-3", "content_type": "text/plain", "content": "Token refresh succeeded. Sync completed through batch 417, but the retry window is exhausted now. Resume at batch 418 after the retry window clears.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-003", "session_ref": "agent-session-agg-natural-003", "occurred_at": "2026-03-11T13:02:00Z"},
+        {"source_type": "chat_message", "source_id": "thread-msg-natural-3", "content_type": "text/plain", "content": "I need to leave myself a clean sync handoff.", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-003", "occurred_at": "2026-03-11T13:00:00Z"},
+        {"source_type": "assistant_artifact", "source_id": "thread-natural-artifact-3", "content_type": "text/plain", "content": "Token refresh succeeded. Sync completed through batch 417, but the retry window is exhausted now. Resume at batch 418 after the retry window clears.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-003", "occurred_at": "2026-03-11T13:02:00Z"},
     ):
         client.post("/items", json=payload)
 
@@ -576,8 +570,8 @@ def test_normalize_task_checkpoint_current_state_preserves_richer_active_state_w
 def test_key_finding_only_signal_does_not_create_task_checkpoint(monkeypatch, test_db_url: str) -> None:
     client = _create_thread_client(monkeypatch, test_db_url)
     for payload in (
-        {"source_type": "chat_message", "source_id": "thread-msg-natural-2", "content_type": "text/plain", "content": "What should we remember from this grocery planning thread?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-002", "session_ref": "agent-session-agg-natural-002", "occurred_at": "2026-03-11T12:00:00Z"},
-        {"source_type": "assistant_artifact", "source_id": "thread-natural-artifact-2", "content_type": "text/plain", "content": "The biggest lesson is that unordered grocery lists cause backtracking through the store.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-002", "session_ref": "agent-session-agg-natural-002", "occurred_at": "2026-03-11T12:01:00Z"},
+        {"source_type": "chat_message", "source_id": "thread-msg-natural-2", "content_type": "text/plain", "content": "What should we remember from this grocery planning thread?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-002", "occurred_at": "2026-03-11T12:00:00Z"},
+        {"source_type": "assistant_artifact", "source_id": "thread-natural-artifact-2", "content_type": "text/plain", "content": "The biggest lesson is that unordered grocery lists cause backtracking through the store.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-002", "occurred_at": "2026-03-11T12:01:00Z"},
     ):
         client.post("/items", json=payload)
 

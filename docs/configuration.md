@@ -4,9 +4,9 @@ This page explains Pallium's local configuration surface today.
 
 Use it when you need to:
 
-- choose between `demo_agent_memory` and `agent_conversation_memory`
 - wire a live LLM provider
-- override prompt variants or role-specific prompt behavior
+- enable hybrid retrieval (embedding + vector)
+- override prompt variants or model roles
 - enable debug observability
 - tune retention behavior
 
@@ -68,32 +68,35 @@ default_use_case = "agent_conversation_memory"
 backend = "sqlite"
 sqlite_url = "sqlite:///./pallium.db"
 
-[llm_providers.openai]
-kind = "openai_compatible"
-base_url = "https://api.openai.com/v1"
-api_key_env = "PALLIUM_OPENAI_API_KEY"
+[llm_providers.anthropic]
+kind = "anthropic_claude"
+api_key_env = "ANTHROPIC_API_KEY"
 
 [semantic_packages.agent_conversation_memory]
-implementation = "agent_conversation_memory"
-llm_provider = "openai"
-model = "gpt-5-mini"
-prompt_variant = "strict_typed_memory_v6_work_state_examples"
+llm_provider = "anthropic"
+model = "claude-sonnet-4-6"
+```
 
+And in `.env.local`:
+
+```dotenv
+ANTHROPIC_API_KEY=your-key
+```
+
+That is enough to run the full semantic path. Prompt variants, model roles,
+embedding, and vector retrieval all have working code defaults. Override them
+only when you have a reason.
+
+To enable hybrid retrieval (recommended), add:
+
+```toml
 [embedding_providers.onnx]
 kind = "onnx"
 model = "BAAI/bge-small-en-v1.5"
 
 [vector_index]
 enabled = true
-index_path = "./pallium_vector.index"
 embedding_provider = "onnx"
-min_similarity = 0.55
-```
-
-And in `.env.local`:
-
-```dotenv
-PALLIUM_OPENAI_API_KEY=your-key
 ```
 
 ## TOML Structure
@@ -347,21 +350,35 @@ Supported fields today:
 
 The vector index enables hybrid retrieval (lexical + vector via RRF).
 
-Example:
+Vector retrieval is **enabled by default** with a default ONNX embedding
+provider (`BAAI/bge-small-en-v1.5`). On first run, the model weights are
+downloaded automatically (~130 MB).
+
+To override:
 
 ```toml
 [vector_index]
-enabled = true
-index_path = "./pallium_vector.index"
-embedding_provider = "onnx"
-min_similarity = 0.55
+index_path = "./custom_vector.index"
+embedding_provider = "custom"
+min_similarity = 0.4
+
+[embedding_providers.custom]
+kind = "fastembed"
+model = "some-other-model"
+```
+
+To disable vector retrieval:
+
+```toml
+[vector_index]
+enabled = false
 ```
 
 Supported fields today:
 
-- `enabled` — `true` or `false` (default: `false`)
-- `index_path` — file path for the usearch index
-- `embedding_provider` — references an `[embedding_providers.<name>]` block
+- `enabled` — `true` or `false` (default: `true`)
+- `index_path` — file path for the usearch index (default: `./pallium_vector.index`)
+- `embedding_provider` — references an `[embedding_providers.<name>]` block (default: `"onnx"`)
 - `min_similarity` — minimum cosine similarity threshold (default: `0.55`)
 
 Env overrides:
@@ -375,19 +392,20 @@ PALLIUM_VECTOR_INDEX_MIN_SIMILARITY=0.55
 
 ## Current Defaults
 
-Code defaults today are:
+The following defaults apply when fields are omitted:
 
 - `default_use_case = "demo_agent_memory"`
-- `llm_agent_memory.prompt_variant = "strict_typed_memory_v5_compact_examples"`
-- `agent_conversation_memory.prompt_variant = "strict_typed_memory_v6_work_state_examples"`
-- `agent_conversation_memory.resolver_enabled = true`
-- `agent_conversation_memory.resolver_timeout_ms = 800`
+- `agent_conversation_memory.prompt_variant` defaults to
+  `"strict_typed_memory_v6_work_state_examples"`
+- `agent_conversation_memory.resolver_enabled` defaults to `true`
+- `agent_conversation_memory.resolver_timeout_ms` defaults to `800`
+- `model_roles` defaults to empty — all roles use the package `model`
+- `vector_index.enabled` defaults to `false`
+- `vector_index.index_path` defaults to `"./pallium_vector.index"`
+- `vector_index.min_similarity` defaults to `0.55`
 
-The resolver prompt default is role-owned and currently resolves to:
-
-- `qar_v1_compact_contract`
-
-unless a role-specific override is configured.
+You only need to set `llm_provider` and `model` on a semantic package for the
+live LLM path to activate. Everything else has a working default.
 
 ## Legacy Compatibility
 
