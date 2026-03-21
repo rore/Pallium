@@ -100,6 +100,12 @@
 ## Next Hardening Direction
 
 - the next hardening work should build on the shipped live-improvement loop rather than still describing it as future work
+- roadmap ideas board was cleaned up (2026-03-21):
+  - `idea-optional-embedding-provider-support` retired — realized by vector+fusion features
+  - `idea-evidence-backed-agent-memory` retired — realized by the full agent_conversation_memory product slice
+  - `idea-optional-llm-assisted-routing` retired — realized by query_ambiguity_resolution (bounded LLM tiebreaker)
+  - `add-live-integration-improvement-loop-and-replay-pipeline` moved to Done — drift metrics, shadow comparison, and replay promotion all shipped
+  - remaining ideas: lifecycle signals, scale hardening, multi-package processing, reranker support
 - likely next architectural pressure remains:
   - explicit shared-memory derivation
 - follow-on work around the live improvement loop should stay bounded to:

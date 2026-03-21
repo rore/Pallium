@@ -1,10 +1,11 @@
 ---
 id: idea-optional-llm-assisted-routing
 title: Optional LLM-assisted routing
-status: queued
+status: done
 priority: medium
 commitment: uncommitted
 milestone: Idea
+resolved_by: add-bounded-query-intent-resolution (query_ambiguity_resolution)
 ---
 
 ## Summary

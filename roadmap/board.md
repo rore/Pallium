@@ -3,20 +3,17 @@
 
 # Later
 - add-language-agnostic-query-signals-and-typed-constraint-state
-- add-live-integration-improvement-loop-and-replay-pipeline
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
 
 # Ideas
-- idea-evidence-backed-agent-memory
 - idea-generic-memory-lifecycle-signals
 - idea-operational-scale-hardening
 - idea-multi-package-source-item-processing
-- idea-optional-embedding-provider-support
-- idea-optional-llm-assisted-routing
 - idea-optional-reranker-support
 
 # Done
+- add-live-integration-improvement-loop-and-replay-pipeline
 - add-hybrid-retrieval-fusion
 - add-vector-retrieval-provider
 - add-bounded-query-intent-resolution

@@ -1,10 +1,11 @@
 ---
 id: idea-optional-embedding-provider-support
 title: Optional embedding provider support
-status: queued
+status: done
 priority: low
 commitment: uncommitted
 milestone: Idea
+resolved_by: add-vector-retrieval-provider, add-hybrid-retrieval-fusion
 ---
 
 ## Summary
