@@ -39,6 +39,25 @@ FAILURE_TYPES = [
     "ABSTENTION_FAILURE",
 ]
 
+# Severity weights: wrong memory is actively harmful (agent acts on bad info),
+# missing memory is suboptimal but safe (agent lacks context but isn't misled).
+# For Pallium as a sidecar: injecting wrong memory > injecting stale memory >
+# injecting nothing > not injecting when it should.
+SEVERITY_WEIGHTS = {
+    "WRONG_MEMORY": 3.0,       # Actively harmful — agent acts on bad info
+    "STALE_MEMORY": 2.5,       # Harmful — agent acts on outdated info
+    "CONTRADICTION": 2.5,      # Harmful — conflicting info injected
+    "ABSTENTION_FAILURE": 1.5, # Over-injection is bad (1.5), false abstention is mild (0.5)
+    "EXTRACTION_FAILURE": 1.0, # Write-path issue — memory never formed
+    "MISSING_MEMORY": 0.5,     # Safe failure — agent lacks context but isn't misled
+}
+
+# Subcause-level severity overrides
+SUBCAUSE_SEVERITY = {
+    "over_injection": 2.0,     # Injecting when shouldn't = harmful
+    "false_abstention": 0.5,   # Not injecting when should = mild
+}
+
 
 @dataclass
 class ScenarioAnalysis:
@@ -564,6 +583,34 @@ def format_report(analysis: DirectoryAnalysis) -> str:
         lines.append(f"  precision@5: n/a")
     lines.append("")
 
+    # Safety-adjusted score (wrong memory penalized more than missing)
+    total_severity = 0.0
+    max_severity = analysis.total * max(SEVERITY_WEIGHTS.values())
+    wrong_memory_rate = 0.0
+    harmful_count = 0
+    for s in analysis.scenarios:
+        if not s.passed and s.failure_type:
+            subcause_weight = SUBCAUSE_SEVERITY.get(s.failure_subcause)
+            type_weight = SEVERITY_WEIGHTS.get(s.failure_type, 1.0)
+            weight = subcause_weight if subcause_weight is not None else type_weight
+            total_severity += weight
+            if s.failure_type in ("WRONG_MEMORY", "STALE_MEMORY", "CONTRADICTION"):
+                harmful_count += 1
+
+    if analysis.total > 0:
+        safety_score = 1.0 - (total_severity / max_severity)
+        wrong_memory_rate = harmful_count / analysis.total
+    else:
+        safety_score = 1.0
+        wrong_memory_rate = 0.0
+
+    lines.append("Safety metrics:")
+    lines.append(f"  safety_score: {safety_score:.2f}  (1.0 = perfect, penalizes wrong > missing)")
+    lines.append(f"  wrong_memory_rate: {wrong_memory_rate:.2f}  (fraction with harmful injection)")
+    lines.append(f"  harmful_failures: {harmful_count}/{analysis.total}")
+    lines.append(f"  safe_failures: {analysis.failed_count - harmful_count}/{analysis.total}  (missing/extraction = safe)")
+    lines.append("")
+
     # Intent classification
     if analysis.intent_total > 0:
         pct_intent = analysis.intent_correct / analysis.intent_total * 100
@@ -654,6 +701,28 @@ def format_comparison(analyses: list[DirectoryAnalysis]) -> str:
             row += f"{pct:>{col_width - 1}.0f}%"
         else:
             row += f"{'n/a':>{col_width}s}"
+    lines.append(row)
+
+    # Safety score
+    row = f"{'Safety score':30s}"
+    for a in analyses:
+        total_sev = 0.0
+        for s in a.scenarios:
+            if not s.passed and s.failure_type:
+                sw = SUBCAUSE_SEVERITY.get(s.failure_subcause)
+                tw = SEVERITY_WEIGHTS.get(s.failure_type, 1.0)
+                total_sev += sw if sw is not None else tw
+        max_sev = a.total * max(SEVERITY_WEIGHTS.values()) if a.total > 0 else 1.0
+        score = 1.0 - (total_sev / max_sev) if a.total > 0 else 1.0
+        row += f"{score:>{col_width}.2f}"
+    lines.append(row)
+
+    # Wrong memory rate (harmful injection rate)
+    row = f"{'Wrong memory rate':30s}"
+    for a in analyses:
+        harmful = sum(1 for s in a.scenarios if not s.passed and s.failure_type in ("WRONG_MEMORY", "STALE_MEMORY", "CONTRADICTION"))
+        rate = harmful / a.total if a.total > 0 else 0.0
+        row += f"{rate:>{col_width}.2f}"
     lines.append(row)
 
     # Failure type counts
