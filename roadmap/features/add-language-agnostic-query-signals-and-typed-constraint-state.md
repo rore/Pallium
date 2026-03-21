@@ -1,10 +1,10 @@
 ---
 id: add-language-agnostic-query-signals-and-typed-constraint-state
 title: Language-agnostic query signals and typed constraint state
-status: queued
+status: in-progress
 priority: high
 commitment: committed
-milestone: Later
+milestone: Next
 lane: stabilization-foundation
 ---
 

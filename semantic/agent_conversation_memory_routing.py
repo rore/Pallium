@@ -466,6 +466,7 @@ def route_query_results(
     include_trace: bool = False,
     debug_candidate_loader=None,
     resolver_config: dict[str, object] | None = None,
+    signal_classifier_config: dict[str, object] | None = None,
     routing_overrides: RoutingOverrides | None = None,
 ) -> PackageQueryOutcome:
         _ov = routing_overrides or {}
@@ -491,7 +492,7 @@ def route_query_results(
             candidate_evidence=candidate_evidence,
             anchor_prefiltered_candidates=anchor_prefiltered_candidates,
             runtime_context=runtime_context,
-            signal_classifier_config=None,  # Tier 2 wired in Phase 5
+            signal_classifier_config=signal_classifier_config,
         )
         # Step 3a: Noise short-circuit (from envelope)
         if signal_envelope.low_value:
@@ -622,11 +623,17 @@ def route_query_results(
                 recall_mode = _select_recall_mode(candidate_evidence)
                 _mode_weights = RECALL_MODE_WEIGHTS.get(recall_mode, ROUTING_LAYER_WEIGHTS["broad_recall"])
                 _layer_weights = {intent_name: _mode_weights for intent_name in ROUTING_LAYER_WEIGHTS}
+                # Map recall mode to compatible intent for downstream scoring/shaping.
+                # Note: this means modes influence some downstream gates (envelope filtering,
+                # injection eligibility) through the mapped intent. This is a known trade-off
+                # until downstream code is refactored to branch on mode directly.
+                # The mode selector is conservative (only fires for dominant single-type
+                # candidate sets), so the risk of wrong gate activation is bounded.
                 _mode_intent_map = {
                     "default": "broad_recall",
                     "continuity_preference": "answer_continuity",
-                    "sharp_fact_preference": "precise_fact",
-                    "investigation_preference": "investigative_conclusion",
+                    "sharp_fact_preference": "broad_recall",
+                    "investigation_preference": "broad_recall",
                 }
                 intent = _mode_intent_map.get(recall_mode, "broad_recall")
                 policy_ctx = PolicySelectedContext(
@@ -730,12 +737,16 @@ def route_query_results(
         )
         for routing_rank, candidate in enumerate(ranked_candidates, start=1):
             candidate["routing_rank"] = routing_rank
+        # Derive envelope-based shape tags for downstream selection (not English-derived)
+        _envelope_selection_tags: list[str] = []
+        if signal_envelope.constraint_lookup:
+            _envelope_selection_tags.append("constraint_recall")
         final_candidates, packaging_summary = _select_final_candidates(
             intent=intent,
             ranked_candidates=ranked_candidates,
             requested_limit=requested_limit,
             query_filters=query_filters,
-            query_shape_tags=list(family_inference["query_shape_tags"]),
+            query_shape_tags=_envelope_selection_tags,
             runtime_context=runtime_context,
             packaging_summary=packaging_summary,
             local_constraint_profile=_build_local_query_constraint_profile(text, runtime_context, ranked_candidates),
