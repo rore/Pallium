@@ -2638,7 +2638,12 @@ def _compute_typed_candidate_evidence(
 
 
 def _select_recall_mode(candidate_evidence: dict[str, object]) -> str:
-    """Select recall-mode preference from candidate evidence. Weight/shaping only."""
+    """Select recall-mode preference from candidate evidence. Weight/shaping only.
+
+    Conservative: only switch from default when the dominant layer type is
+    unambiguously the sole substantial signal. Mixed candidate sets always
+    get default mode, which is safe broad-recall behavior.
+    """
     dominant = candidate_evidence.get("dominant_memory_layer")
     per_layer = candidate_evidence.get("per_layer_support", {})
 
@@ -2646,15 +2651,35 @@ def _select_recall_mode(candidate_evidence: dict[str, object]) -> str:
         info = per_layer.get(layer, {})
         return int(info.get("best_support_score", 0)) if isinstance(info, dict) else 0
 
-    if dominant == "investigation_outcome" and _layer_support("investigation_outcome") >= POLICY_SUPPORT_THRESHOLD:
+    def _has_competing_layers(target_layers: set[str]) -> bool:
+        """True if any memory layer outside target_layers has meaningful support."""
+        for layer, info in per_layer.items():
+            if layer in target_layers or layer == "source_evidence":
+                continue
+            if isinstance(info, dict) and int(info.get("best_support_score", 0)) >= POLICY_SUPPORT_THRESHOLD:
+                return True
+        return False
+
+    # investigation_preference: dominant investigation_outcome, no competing recall layers
+    if (
+        dominant == "investigation_outcome"
+        and _layer_support("investigation_outcome") >= POLICY_SUPPORT_THRESHOLD
+        and not _has_competing_layers({"investigation_outcome", "decision"})
+    ):
         return "investigation_preference"
 
+    # sharp_fact_preference: dominant decision/investigation, no competing recall layers
     if dominant in {"decision", "investigation_outcome"}:
         combined = _layer_support("decision") + _layer_support("investigation_outcome")
-        if combined >= POLICY_SUPPORT_THRESHOLD:
+        if combined >= POLICY_SUPPORT_THRESHOLD and not _has_competing_layers({"decision", "investigation_outcome"}):
             return "sharp_fact_preference"
 
-    if dominant == "continuity_memory" and int(candidate_evidence.get("same_thread_hit_count", 0)) > 0:
+    # continuity_preference: dominant continuity_memory + same-thread, no competing layers
+    if (
+        dominant == "continuity_memory"
+        and int(candidate_evidence.get("same_thread_hit_count", 0)) > 0
+        and not _has_competing_layers({"continuity_memory"})
+    ):
         return "continuity_preference"
 
     return "default"
