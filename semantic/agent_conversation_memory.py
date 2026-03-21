@@ -33,12 +33,20 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         consolidation_config: ConsolidationPolicy | None = None,
         resolver_config: dict[str, object] | None = None,
         routing_overrides: RoutingOverrides | None = None,
+        providers_by_role: dict[str, LLMProvider] | None = None,
     ) -> None:
         self._provider = provider
-        self._delegate = LLMAgentMemoryPlugin(provider=provider, prompt_variant=prompt_variant)
+        self._providers_by_role = providers_by_role or {}
+        write_extraction_provider = self._provider_for_role("write_extraction")
+        self._delegate = LLMAgentMemoryPlugin(provider=write_extraction_provider, prompt_variant=prompt_variant)
         self._consolidation_config = consolidation_config
         self._resolver_config = resolver_config
         self._routing_overrides = routing_overrides
+
+    def _provider_for_role(self, role: str) -> LLMProvider:
+        if self._providers_by_role and role in self._providers_by_role:
+            return self._providers_by_role[role]
+        return self._provider
 
     @property
     def prompt_variant(self) -> str:
@@ -140,7 +148,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
 
     def build_thread_summary(self, aggregate: ThreadAggregate, conclusions: list[MemoryObject]) -> ProcessResult:
         return build_thread_summary(
-            provider=self._provider,
+            provider=self._provider_for_role("thread_aggregation"),
             prompt_variant=self.prompt_variant,
             plugin_name=self.name,
             thread_summary_schema_id=self.thread_summary_schema_id,
@@ -151,7 +159,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
 
     def build_consolidated_memory(self, group: ConsolidationGroup) -> ProcessResult:
         return build_consolidated_memory(
-            provider=self._provider,
+            provider=self._provider_for_role("consolidation"),
             prompt_variant=self.prompt_variant,
             plugin_name=self.name,
             pattern_memory_schema_id=self.pattern_memory_schema_id,
@@ -161,7 +169,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
 
     def build_pattern_memory(self, group: ConsolidationGroup) -> ProcessResult:
         return build_pattern_memory(
-            provider=self._provider,
+            provider=self._provider_for_role("consolidation"),
             prompt_variant=self.prompt_variant,
             plugin_name=self.name,
             pattern_memory_schema_id=self.pattern_memory_schema_id,

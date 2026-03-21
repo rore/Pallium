@@ -30,7 +30,7 @@ Implemented abstractions:
 - storage provider boundary
 - retrieval provider boundary
 - semantic plugin boundary
-- LLM provider boundary with shared retry, backoff, and call metadata
+- LLM provider boundary with shared retry, backoff, call metadata, and configurable auth style
 - embedding provider boundary (`EmbeddingProvider` ABC with fastembed and ONNX Runtime implementations)
 - vector index adapter (usearch)
 

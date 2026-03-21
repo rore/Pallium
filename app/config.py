@@ -37,6 +37,7 @@ class LLMProviderConfig:
     api_key_env: str | None = None
     timeout_seconds: float = 30.0
     retry_policy: LLMRetryPolicy = field(default_factory=LLMRetryPolicy)
+    auth_style: str = "native"  # "native" (provider default) or "bearer" (Authorization: Bearer)
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,7 @@ class SemanticPackageConfig:
     model: str | None = None
     prompt_variant: str | None = None
     prompt_variants: dict[str, str] | None = None
+    model_roles: dict[str, str] | None = None
     consolidation: ConsolidationPolicy | None = None
     resolver_enabled: bool = True
     resolver_timeout_ms: int = 800
@@ -136,6 +138,7 @@ class AppConfig:
                     model=self.llm_model or current.model,
                     prompt_variant=self.llm_prompt_variant or current.prompt_variant,
                     prompt_variants=current.prompt_variants,
+                    model_roles=current.model_roles,
                     consolidation=current.consolidation,
                     resolver_enabled=current.resolver_enabled,
                     resolver_timeout_ms=current.resolver_timeout_ms,
@@ -397,6 +400,7 @@ def _build_provider_configs(config_data: dict[str, Any], env_values: dict[str, s
             "api_key_env": current.api_key_env,
             "timeout_seconds": current.timeout_seconds,
             "retry_policy": current.retry_policy,
+            "auth_style": current.auth_style,
         }
         if field_name == "kind":
             updated["kind"] = env_value
@@ -409,6 +413,8 @@ def _build_provider_configs(config_data: dict[str, Any], env_values: dict[str, s
             updated["api_key"] = env_values.get(env_value, updated["api_key"])
         elif field_name == "timeout_seconds":
             updated["timeout_seconds"] = float(env_value)
+        elif field_name == "auth_style":
+            updated["auth_style"] = env_value
         elif field_name == "max_attempts":
             updated["retry_policy"] = _update_retry_policy(updated["retry_policy"], max_attempts=int(env_value))
         elif field_name == "base_backoff_ms":
@@ -443,6 +449,7 @@ def _provider_from_raw(name: str, raw_value: dict[str, Any], env_values: dict[st
             jitter_ratio=float(raw_value.get("jitter_ratio", 0.2)),
             max_concurrency=int(raw_value.get("max_concurrency", 4)),
         ),
+        auth_style=_as_string(raw_value.get("auth_style", "native")) or "native",
     )
 
 
@@ -508,6 +515,7 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
             current = packages.get(package_name, SemanticPackageConfig(name=package_name, implementation=package_name))
             consolidation = _build_consolidation_policy(raw_value.get("consolidation"), current.consolidation)
             prompt_variants = _build_prompt_variants(raw_value.get("prompt_variants"), current.prompt_variants)
+            model_roles = _build_model_roles(raw_value.get("model_roles"), current.model_roles)
             packages[package_name] = SemanticPackageConfig(
                 name=package_name,
                 implementation=_as_string(raw_value.get("implementation", current.implementation)),
@@ -515,6 +523,7 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
                 model=_as_optional_string(raw_value.get("model", current.model)),
                 prompt_variant=_as_optional_string(raw_value.get("prompt_variant", current.prompt_variant)),
                 prompt_variants=prompt_variants,
+                model_roles=model_roles,
                 consolidation=consolidation,
                 resolver_enabled=_parse_bool(raw_value.get("resolver_enabled"), current.resolver_enabled),
                 resolver_timeout_ms=int(raw_value.get("resolver_timeout_ms", current.resolver_timeout_ms)),
@@ -522,6 +531,7 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
 
     prefix = "PALLIUM_PACKAGE__"
     prompt_variants_prefix = "PROMPT_VARIANTS__"
+    model_roles_prefix = "MODEL_ROLES__"
     for env_key, env_value in env_values.items():
         if not env_key.startswith(prefix):
             continue
@@ -546,6 +556,29 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
                 "model": current.model,
                 "prompt_variant": current.prompt_variant,
                 "prompt_variants": existing,
+                "model_roles": current.model_roles,
+                "consolidation": current.consolidation,
+                "resolver_enabled": current.resolver_enabled,
+                "resolver_timeout_ms": current.resolver_timeout_ms,
+            }
+            packages[package_name] = SemanticPackageConfig(**updated)
+            continue
+
+        if field_name.startswith(model_roles_prefix.lower()):
+            role = field_name[len(model_roles_prefix):].strip().lower()
+            if not role:
+                continue
+            current = packages.get(package_name, SemanticPackageConfig(name=package_name, implementation=package_name))
+            existing = dict(current.model_roles) if current.model_roles else {}
+            existing[role] = env_value
+            updated = {
+                "name": current.name,
+                "implementation": current.implementation,
+                "llm_provider": current.llm_provider,
+                "model": current.model,
+                "prompt_variant": current.prompt_variant,
+                "prompt_variants": current.prompt_variants,
+                "model_roles": existing,
                 "consolidation": current.consolidation,
                 "resolver_enabled": current.resolver_enabled,
                 "resolver_timeout_ms": current.resolver_timeout_ms,
@@ -561,6 +594,7 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
             "model": current.model,
             "prompt_variant": current.prompt_variant,
             "prompt_variants": current.prompt_variants,
+            "model_roles": current.model_roles,
             "consolidation": current.consolidation,
             "resolver_enabled": current.resolver_enabled,
             "resolver_timeout_ms": current.resolver_timeout_ms,
@@ -605,6 +639,20 @@ def _build_consolidation_policy(raw_value: Any, current: ConsolidationPolicy | N
 
 
 def _build_prompt_variants(raw_value: Any, current: dict[str, str] | None) -> dict[str, str] | None:
+    if raw_value is None:
+        return current
+    if not isinstance(raw_value, dict):
+        return current
+    merged = dict(current) if current else {}
+    for key, val in raw_value.items():
+        normalized_key = str(key).strip().lower()
+        normalized_val = str(val).strip()
+        if normalized_key and normalized_val:
+            merged[normalized_key] = normalized_val
+    return merged or None
+
+
+def _build_model_roles(raw_value: Any, current: dict[str, str] | None) -> dict[str, str] | None:
     if raw_value is None:
         return current
     if not isinstance(raw_value, dict):

@@ -15,18 +15,16 @@ from providers.llm.base import LLMJsonResponse
 
 class ThreadAwareStubProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
-        if "retrieval_context" in schema_description and "ENRICH or NO_OP" in schema_description:
-            payload = _build_write_enrichment_payload(user_prompt)
-        elif "key_findings" in schema_description and "freshness_signal" in schema_description:
+        if "key_findings" in schema_description and "freshness_signal" in schema_description:
             payload = _build_task_checkpoint_payload(user_prompt)
         elif "Thread items:" in user_prompt:
             lower = user_prompt.lower()
             if "transaction-transformer had the most significant recent ledger changes" in lower and "local repos only" in lower:
                 payload = {"summary": "unresolved"}
             elif "schema change and backfill done" in lower and "admin toggle" in lower:
-                payload = {"summary": "Ticket LIB-241 has the schema and backfill done, and the next step is wiring the admin toggle plus retry-path coverage."}
+                payload = {"summary": "Ticket LIB-241 has the schema and backfill done, and the next step is wiring the admin toggle plus retry-path coverage.", "retrieval_context": "Flag-gated LIB-241 reservation ordering rollout with remaining admin-toggle and retry-path coverage work."}
             elif "service token expired" in lower and "batch 313" in lower:
-                payload = {"summary": "The sync retry hit a 401 because the service token expired after 312 reservation records, so the next step is refreshing the token and resuming from batch 313."}
+                payload = {"summary": "The sync retry hit a 401 because the service token expired after 312 reservation records, so the next step is refreshing the token and resuming from batch 313.", "retrieval_context": "Catalog sync retry resume state anchored on the batch 313 restart after service-token expiry."}
             else:
                 payload = {"summary": "Reservation ordering thread summary with prior findings and decision."}
         elif "Here's the verdict: transaction-transformer had the most significant recent ledger changes" in user_prompt:
@@ -163,6 +161,7 @@ def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
             "next_step": "Wire the admin toggle and add retry-path coverage before enabling the flag.",
             "evidence": ["Partial progress: ticket LIB-241 has the schema change and backfill done.", "Next step: wire the admin toggle and add retry-path coverage before enabling the flag."],
             "freshness_signal": "Latest explicit update at 2026-03-11T11:02:00Z.",
+            "retrieval_context": "Flag-gated LIB-241 task state with remaining admin-toggle and retry-path coverage work.",
         }
     if "service token expired" in lower and "batch 313" in lower:
         return {
@@ -174,6 +173,7 @@ def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
             "next_step": "Refresh the catalog service token and rerun the sync from batch 313.",
             "evidence": ["Partial progress: refreshed 312 reservation records before the catalog sync tool failed.", "Blocked: catalog API returned 401 because the service token expired.", "Next step: refresh the catalog service token and rerun the sync from batch 313."],
             "freshness_signal": "Latest explicit update at 2026-03-11T10:02:00Z.",
+            "retrieval_context": "Catalog sync retry resume state anchored on the batch 313 restart after service-token expiry.",
         }
     if "retry window is exhausted" in lower and "batch 418" in lower:
         return {
@@ -185,6 +185,7 @@ def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
             "next_step": "Wait 15 minutes and resume from batch 418.",
             "evidence": ["Partial progress: the token refresh worked and the sync completed through batch 417.", "Blocked: the retry window is exhausted now.", "Next step: wait 15 minutes and resume from batch 418."],
             "freshness_signal": "Latest explicit update at 2026-03-11T13:02:00Z.",
+            "retrieval_context": None,
         }
     return {
         "summary": "Resume the previously recorded work from this thread.",

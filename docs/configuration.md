@@ -169,6 +169,7 @@ Supported fields today:
 - `api_key`
 - `api_key_env`
 - `timeout_seconds`
+- `auth_style` — `"native"` (default) or `"bearer"` (for proxy endpoints)
 - retry policy:
   - `max_attempts`
   - `base_backoff_ms`
@@ -182,6 +183,7 @@ Provider-scoped env overrides use:
 PALLIUM_PROVIDER__OPENAI__KIND=openai_compatible
 PALLIUM_PROVIDER__OPENAI__BASE_URL=https://api.openai.com/v1
 PALLIUM_PROVIDER__OPENAI__TIMEOUT_SECONDS=30
+PALLIUM_PROVIDER__OPENAI__AUTH_STYLE=bearer
 ```
 
 ## Semantic Packages
@@ -210,6 +212,7 @@ Supported package fields today:
 - `resolver_timeout_ms`
 - `consolidation`
 - `prompt_variants`
+- `model_roles`
 
 Package-scoped env overrides use:
 
@@ -218,6 +221,7 @@ PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__MODEL=gpt-5-mini
 PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__PROMPT_VARIANT=strict_typed_memory_v6_work_state_examples
 PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__RESOLVER_ENABLED=true
 PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__RESOLVER_TIMEOUT_MS=800
+PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__MODEL_ROLES__WRITE_EXTRACTION=anthropic--claude-sonnet-latest
 ```
 
 ## Prompt Variants
@@ -256,6 +260,45 @@ Use `prompt_variant` when you want the package default.
 Use `prompt_variants` when only one prompt-backed role should diverge, for example:
 
 - `query_ambiguity_resolution`
+
+## Model Roles
+
+There are two model controls:
+
+- `model`
+  - package-wide default model
+- `model_roles`
+  - role-specific model overrides
+
+Resolution order is:
+
+1. `model_roles[role]`
+2. package `model`
+
+Available roles:
+
+- `write_extraction` — per-item memory extraction
+- `thread_aggregation` — thread summary + task checkpoint
+- `consolidation` — pattern and continuity memory
+- `query_ambiguity_resolution` — resolver on query hot path
+
+Example:
+
+```toml
+[semantic_packages.agent_conversation_memory]
+model = "anthropic--claude-sonnet-latest"
+
+[semantic_packages.agent_conversation_memory.model_roles]
+thread_aggregation = "anthropic--claude-haiku-latest"
+consolidation = "anthropic--claude-haiku-latest"
+query_ambiguity_resolution = "anthropic--claude-haiku-latest"
+```
+
+Equivalent env override:
+
+```dotenv
+PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__MODEL_ROLES__WRITE_EXTRACTION=anthropic--claude-sonnet-latest
+```
 
 ## Current Defaults
 
@@ -356,6 +399,23 @@ For `llm_agent_memory` and `agent_conversation_memory`, both must be present:
 - `model`
 
 If either is missing, the plugin is not built as a live LLM-backed package.
+
+## Common Recipes
+
+### Use Anthropic via HAI LLM Proxy
+
+```toml
+[llm_providers.hai_anthropic]
+kind = "anthropic_claude"
+base_url = "http://localhost:6655/anthropic/v1"
+api_key_env = "HAI_API_KEY"
+auth_style = "bearer"
+
+[semantic_packages.agent_conversation_memory]
+implementation = "agent_conversation_memory"
+llm_provider = "hai_anthropic"
+model = "anthropic--claude-sonnet-latest"
+```
 
 ## Read Next
 

@@ -7,9 +7,7 @@ from providers.llm.base import LLMJsonResponse
 
 class TieredMemorySemanticProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
-        if 'retrieval_context' in schema_description and 'ENRICH or NO_OP' in schema_description:
-            payload = _build_write_enrichment_payload(user_prompt)
-        elif 'freshness_signal' in schema_description:
+        if 'freshness_signal' in schema_description:
             payload = _build_task_checkpoint_payload(user_prompt)
         elif 'carry_forward_answer' in schema_description:
             payload = _build_continuity_payload(user_prompt)
@@ -382,15 +380,18 @@ def _build_thread_summary_payload(user_prompt: str) -> dict[str, str]:
         }
     if 'schema change and backfill done' in lower and 'admin toggle' in lower:
         return {
-            'summary': 'The thread kept the reservation ordering fix behind the use_item_event_time flag, finished the schema and backfill work, and still needs the admin toggle plus retry-path coverage.'
+            'summary': 'The thread kept the reservation ordering fix behind the use_item_event_time flag, finished the schema and backfill work, and still needs the admin toggle plus retry-path coverage.',
+            'retrieval_context': 'Flag-gated LIB-241 reservation ordering rollout with remaining admin-toggle and retry-path coverage work.',
         }
     if 'service token expired' in lower and 'batch 313' in lower and 'admin portal' in lower and 'local browser' in lower:
         return {
-            'summary': 'The catalog sync retry refreshed 312 reservation records before a 401 from the expired service token, and the operator constraint is to avoid admin portal sign-in or opening a local browser while resuming from batch 313.'
+            'summary': 'The catalog sync retry refreshed 312 reservation records before a 401 from the expired service token, and the operator constraint is to avoid admin portal sign-in or opening a local browser while resuming from batch 313.',
+            'retrieval_context': 'Catalog sync retry resume state anchored on the batch 313 restart after service-token failure.',
         }
     if 'service token expired' in lower and 'batch 313' in lower:
         return {
-            'summary': 'The thread refreshed 312 reservation records before a 401 caused by an expired catalog service token, and the next step is to refresh the token and resume from batch 313.'
+            'summary': 'The thread refreshed 312 reservation records before a 401 caused by an expired catalog service token, and the next step is to refresh the token and resume from batch 313.',
+            'retrieval_context': 'Catalog sync retry resume state anchored on the batch 313 restart after service-token failure.',
         }
     if 'reservation cache is warm' in lower and 'compare cache invalidation' in lower:
         return {
@@ -556,20 +557,24 @@ def _build_pattern_payload(user_prompt: str) -> dict[str, str]:
         return {
             'summary': 'A mixed pattern mentions reservation ordering during sync delays and overdue-notice batching.',
             'pattern_label': 'mixed_pattern',
+            'retrieval_context': 'Cross-thread reservation ordering lesson about duplicate holds after catalog sync delays.',
         }
     if has_reservation:
         return {
             'summary': 'Catalog sync delays previously caused duplicate holds because arrival-time ordering applied stale hold updates; item event time ordering was adopted to prevent duplicate holds.',
             'pattern_label': 'reservation_ordering_pattern',
+            'retrieval_context': 'Cross-thread reservation ordering lesson about duplicate holds after catalog sync delays.',
         }
     if has_notification:
         return {
             'summary': 'Overdue notices are sent in 30-minute batches to avoid staff inbox spam.',
             'pattern_label': 'notification_batching_pattern',
+            'retrieval_context': 'Carry-forward answer for overdue notice batching and staff inbox spam questions.',
         }
     return {
         'summary': 'A bounded pattern was recorded from prior conversation memory.',
         'pattern_label': 'generic_pattern',
+        'retrieval_context': None,
     }
 
 
@@ -672,6 +677,7 @@ def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
                 'Next step: refresh the catalog service token and rerun the sync from batch 313.',
             ],
             'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00+00:00.',
+            'retrieval_context': 'Catalog sync retry resume state anchored on the batch 313 restart after service-token failure.',
         }
     if 'service token expired' in lower and 'batch 313' in lower:
         return {
@@ -690,6 +696,7 @@ def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
                 'Next step: refresh the catalog service token and rerun the sync from batch 313.',
             ],
             'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00+00:00.',
+            'retrieval_context': 'Catalog sync retry resume state anchored on the batch 313 restart after service-token failure.',
         }
     if 'schema change and backfill done' in lower and 'admin toggle' in lower:
         return {
@@ -708,6 +715,7 @@ def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:
                 'Next step: wire the admin toggle and add retry-path coverage before enabling the flag.',
             ],
             'freshness_signal': 'Latest explicit update at 2026-03-11T11:02:00+00:00.',
+            'retrieval_context': 'Flag-gated LIB-241 task state with remaining admin-toggle and retry-path coverage work.',
         }
     if 'arrival-time ordering' in lower and 'item event time' in lower:
         return {
@@ -745,17 +753,20 @@ def _build_continuity_payload(user_prompt: str) -> dict[str, str]:
             'summary': 'The prior thread already answered why overdue notices are batched.',
             'continuity_question': 'Have we already answered why overdue notices are batched?',
             'carry_forward_answer': 'Yes. We previously decided to send overdue notices in 30-minute batches to avoid staff inbox spam.',
+            'retrieval_context': 'Carry-forward answer for overdue notice batching and staff inbox spam questions.',
         }
     if any(term in lower for term in ('duplicate holds', 'arrival-time ordering', 'item event time')):
         return {
             'summary': 'The prior thread already answered the reservation-ordering follow-up.',
             'continuity_question': 'What did we previously conclude about duplicate holds after catalog sync delays?',
             'carry_forward_answer': 'We concluded that arrival-time ordering applied stale hold updates during catalog sync delays, so item event time ordering should carry forward to prevent duplicate holds.',
+            'retrieval_context': 'Carry-forward answer for a repeated question from the same conversation thread.',
         }
     return {
         'summary': 'A prior thread already answered a repeated question.',
         'continuity_question': 'What prior answer should carry forward from this conversation thread?',
         'carry_forward_answer': 'A prior answer was already recorded in this conversation thread.',
+        'retrieval_context': 'Carry-forward answer for a repeated question from the same conversation thread.',
     }
 
 

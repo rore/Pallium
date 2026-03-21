@@ -79,6 +79,8 @@
   - named semantic package blocks
   - package prompt defaults
   - role-specific prompt overrides
+  - role-specific model overrides (`model_roles`)
+  - provider auth style (`auth_style` for proxy-compatible headers)
   - resolver toggles and timeout
   - observability and retention
 - the reference for the shipped config surface is now `docs/configuration.md`
@@ -108,3 +110,4 @@
 - `Retry-After` is honored when present
 - invalid successful responses remain fail-fast and are not retried
 - live eval and benchmark paths use the same provider resilience path as normal semantic extraction
+- thread rebuild and consolidation use combined LLM calls (1 call per operation instead of 2-4)

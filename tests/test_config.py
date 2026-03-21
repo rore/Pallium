@@ -430,3 +430,126 @@ def test_embedding_provider_config_direct_construction() -> None:
     assert ep.kind == "fastembed"
     assert ep.model == "test-model"
     assert ep.dimensions is None
+
+
+# ---------------------------------------------------------------------------
+# Auth style config parsing
+# ---------------------------------------------------------------------------
+
+def test_auth_style_from_toml(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        """
+        default_use_case = "demo_agent_memory"
+
+        [llm_providers.hai_anthropic]
+        kind = "anthropic_claude"
+        base_url = "http://localhost:6655/anthropic/v1"
+        api_key = "test-key"
+        auth_style = "bearer"
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    config = AppConfig.from_env()
+
+    provider = config.provider_config("hai_anthropic")
+    assert provider.auth_style == "bearer"
+
+
+def test_auth_style_defaults_to_native() -> None:
+    from app.config import LLMProviderConfig
+
+    provider = LLMProviderConfig(name="test", kind="anthropic_claude", base_url="http://example.test")
+    assert provider.auth_style == "native"
+
+
+def test_auth_style_env_override(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        """
+        default_use_case = "demo_agent_memory"
+
+        [llm_providers.anthropic]
+        kind = "anthropic_claude"
+        base_url = "http://localhost:6655/anthropic/v1"
+        api_key = "test-key"
+        auth_style = "native"
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("PALLIUM_PROVIDER__ANTHROPIC__AUTH_STYLE", "bearer")
+    config = AppConfig.from_env()
+
+    provider = config.provider_config("anthropic")
+    assert provider.auth_style == "bearer"
+
+
+# ---------------------------------------------------------------------------
+# Model roles config parsing
+# ---------------------------------------------------------------------------
+
+def test_model_roles_from_toml(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        """
+        default_use_case = "agent_conversation_memory"
+
+        [semantic_packages.agent_conversation_memory]
+        implementation = "agent_conversation_memory"
+
+        [semantic_packages.agent_conversation_memory.model_roles]
+        write_extraction = "claude-sonnet"
+        thread_aggregation = "claude-haiku"
+        consolidation = "claude-haiku"
+        query_ambiguity_resolution = "claude-haiku"
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    config = AppConfig.from_env()
+    package = config.package_config("agent_conversation_memory")
+
+    assert package.model_roles == {
+        "write_extraction": "claude-sonnet",
+        "thread_aggregation": "claude-haiku",
+        "consolidation": "claude-haiku",
+        "query_ambiguity_resolution": "claude-haiku",
+    }
+
+
+def test_model_roles_defaults_to_none() -> None:
+    from app.config import SemanticPackageConfig
+
+    package = SemanticPackageConfig(name="test", implementation="test")
+    assert package.model_roles is None
+
+
+def test_model_roles_env_override(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        """
+        default_use_case = "agent_conversation_memory"
+
+        [semantic_packages.agent_conversation_memory]
+        implementation = "agent_conversation_memory"
+
+        [semantic_packages.agent_conversation_memory.model_roles]
+        write_extraction = "claude-sonnet"
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv(
+        "PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__MODEL_ROLES__WRITE_EXTRACTION",
+        "gpt-5-mini",
+    )
+    config = AppConfig.from_env()
+    package = config.package_config("agent_conversation_memory")
+
+    assert package.model_roles["write_extraction"] == "gpt-5-mini"

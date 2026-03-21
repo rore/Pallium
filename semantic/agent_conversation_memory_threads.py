@@ -15,14 +15,15 @@ from providers.llm.base import LLMProvider
 from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY, normalize_for_index
 from semantic.agent_conversation_memory_constraints import CONSTRAINT_MARKERS, CONSTRAINT_TOOL_MARKERS, _merge_subject_anchors, _subject_anchors_from_memory_objects, _subject_anchors_from_source_items
 from semantic.agent_conversation_memory_embedding import VECTOR_EMBEDDING_PROVIDER_NAME, VECTOR_EMBEDDING_PROVIDER_VERSION, build_embedding_text
-from semantic.agent_conversation_memory_enrichment import apply_write_enrichment
+from semantic.agent_conversation_memory_enrichment import ENRICHABLE_MEMORY_TYPES, WRITE_ENRICHMENT_PROMPT_ROLE, WRITE_ENRICHMENT_TEXT_VIEW
 from semantic.agent_conversation_memory_memory import _build_memory_envelope, _memory_confidence_for_type, _memory_kind_for_type
+from semantic.prompt_provenance import build_prompt_provenance
 
 THREAD_SUMMARY_PROMPT_SCHEMA_ID = "thread_summary_extraction"
 
-THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v2"
+THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v3"
 
-THREAD_SUMMARY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string"}, indent=2)
+THREAD_SUMMARY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "retrieval_context": "string or null"}, indent=2)
 
 THREAD_SUMMARY_SYSTEM_PROMPT = (
     "Summarize one agent-mediated conversation thread for future recall. "
@@ -31,7 +32,9 @@ THREAD_SUMMARY_SYSTEM_PROMPT = (
     "Selected work artifacts may describe explicit partial progress, blockers, next steps, constraints, or durable findings; include them only when they are explicitly stated. "
     "Do not infer causes, recommendations, next steps, risks, or unresolved conclusions that are not stated. "
     "Only say the thread is unresolved when the supplied content truly lacks any resolved conclusion, durable constraint, progress state, blocker, or supported next step. "
-    "Keep the summary concise: at most two sentences and roughly 60 words."
+    "Keep the summary concise: at most two sentences and roughly 60 words. "
+    "For retrieval_context: write one short search-friendly context line (12-30 words) that helps this record match later queries, "
+    "or null when the summary already has enough search cues. Do not restate the summary."
 )
 
 PRIMARY_THREAD_ARTIFACTS = {
@@ -117,9 +120,9 @@ UNRESOLVED_SUMMARY_MARKERS = (
 
 PATTERN_MEMORY_PROMPT_SCHEMA_ID = "pattern_memory_extraction"
 
-PATTERN_MEMORY_PROMPT_SCHEMA_VERSION = "v1"
+PATTERN_MEMORY_PROMPT_SCHEMA_VERSION = "v2"
 
-PATTERN_MEMORY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "pattern_label": "string"}, indent=2)
+PATTERN_MEMORY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "pattern_label": "string", "retrieval_context": "string or null"}, indent=2)
 
 PATTERN_MEMORY_SYSTEM_PROMPT = (
     "Summarize a bounded set of lower-level conversation memory into one compact higher-level memory object. "
@@ -127,7 +130,9 @@ PATTERN_MEMORY_SYSTEM_PROMPT = (
     "Use only explicit facts from the supplied lower-level memory and carried conclusions. "
     "Do not invent recurrence, severity, causality, recommendations, or next steps. "
     "Do not claim anything broader than the supplied support. "
-    "Keep the summary concise: at most two sentences and roughly 70 words."
+    "Keep the summary concise: at most two sentences and roughly 70 words. "
+    "For retrieval_context: write one short search-friendly context line (12-30 words) that helps this record match later queries, "
+    "or null when the summary already has enough search cues. Do not restate the summary."
 )
 
 PATTERN_MEMORY_MAX_TEXT_CHARS = 3500
@@ -136,13 +141,14 @@ PATTERN_MEMORY_TEXT_VIEW = "memory_object.pattern_memory_context"
 
 CONTINUITY_MEMORY_PROMPT_SCHEMA_ID = "continuity_memory_extraction"
 
-CONTINUITY_MEMORY_PROMPT_SCHEMA_VERSION = "v1"
+CONTINUITY_MEMORY_PROMPT_SCHEMA_VERSION = "v2"
 
 CONTINUITY_MEMORY_SCHEMA_DESCRIPTION = json.dumps(
     {
         "summary": "string",
         "continuity_question": "string",
         "carry_forward_answer": "string",
+        "retrieval_context": "string or null",
     },
     indent=2,
 )
@@ -153,7 +159,9 @@ CONTINUITY_MEMORY_SYSTEM_PROMPT = (
     "Use only explicit facts from the supplied memory and carried conclusions. "
     "Frame the output for repeated-answer continuity: what was already answered, and what concise answer should carry forward. "
     "Do not invent recurrence beyond the supplied thread, and do not add recommendations, risks, or new conclusions. "
-    "Keep the summary concise: at most two sentences and roughly 70 words."
+    "Keep the summary concise: at most two sentences and roughly 70 words. "
+    "For retrieval_context: write one short search-friendly context line (12-30 words) that helps this record match later queries, "
+    "or null when the summary already has enough search cues. Do not restate the summary."
 )
 
 CONTINUITY_MEMORY_MAX_TEXT_CHARS = 3000
@@ -162,7 +170,7 @@ CONTINUITY_MEMORY_TEXT_VIEW = "memory_object.continuity_memory_context"
 
 TASK_CHECKPOINT_PROMPT_SCHEMA_ID = "task_checkpoint_extraction"
 
-TASK_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v1"
+TASK_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v2"
 
 TASK_CHECKPOINT_SCHEMA_DESCRIPTION = json.dumps(
     {
@@ -174,6 +182,7 @@ TASK_CHECKPOINT_SCHEMA_DESCRIPTION = json.dumps(
         "next_step": "string",
         "evidence": ["string"],
         "freshness_signal": "string",
+        "retrieval_context": "string or null",
     },
     indent=2,
 )
@@ -184,7 +193,9 @@ TASK_CHECKPOINT_SYSTEM_PROMPT = (
     "Use only explicit facts from the supplied memory, carried conclusions, and selected work artifacts. "
     "Capture the task, the current state, key findings, blocker or failed-attempt state when present, the next supported step when present, and a concise freshness signal. "
     "Do not turn this into a workflow graph, transcript replay, or speculative recommendation. "
-    "Keep the summary concise: at most two sentences and roughly 80 words."
+    "Keep the summary concise: at most two sentences and roughly 80 words. "
+    "For retrieval_context: write one short search-friendly context line (12-30 words) that helps this record match later queries, "
+    "or null when the summary already has enough search cues. Do not restate the summary."
 )
 
 TASK_CHECKPOINT_MAX_TEXT_CHARS = 3200
@@ -321,16 +332,12 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
             text_view=normalize_for_index(index_source),
             text_view_name=THREAD_SUMMARY_TEXT_VIEW,
         )
-        thread_summary_memory, thread_summary_enrichment_index_entry = apply_write_enrichment(
-            provider=provider,
-            prompt_variant=prompt_variant,
-            plugin_name=plugin_name,
+        thread_summary_memory, thread_summary_enrichment_index_entry = _apply_inline_enrichment(
             memory_object=thread_summary_memory,
-            support_lines=[
-                f"Summary: {summary}",
-                *[f"Conclusion: {item['text']}" for item in conclusion_payload if item.get("text")],
-                *[f"Work artifact: {item['text']}" for item in selected_work_artifacts if item.get("text")],
-            ],
+            retrieval_context=str(response.parsed_json.get("retrieval_context") or "").strip() or None,
+            plugin_name=plugin_name,
+            prompt_variant=prompt_variant,
+            llm_metadata=response.metadata,
         )
         memory_objects = [thread_summary_memory]
         index_entries = [thread_summary_index_entry]
@@ -508,20 +515,12 @@ def build_task_checkpoint_memory(
             text_view=normalize_for_index(index_source),
             text_view_name=TASK_CHECKPOINT_TEXT_VIEW,
         )
-        memory_object, enrichment_index_entry = apply_write_enrichment(
-            provider=provider,
-            prompt_variant=prompt_variant,
-            plugin_name=plugin_name,
+        memory_object, enrichment_index_entry = _apply_inline_enrichment(
             memory_object=memory_object,
-            support_lines=[
-                f"Summary: {parsed_summary}",
-                f"Task: {task}",
-                f"Current state: {current_state}",
-                f"Blocker state: {blocker_state}",
-                f"Next step: {next_step}",
-                *[f"Key finding: {item}" for item in key_findings],
-                *[f"Evidence: {item}" for item in evidence],
-            ],
+            retrieval_context=str(response.parsed_json.get("retrieval_context") or "").strip() or None,
+            plugin_name=plugin_name,
+            prompt_variant=prompt_variant,
+            llm_metadata=response.metadata,
         )
         index_entries = [index_entry]
         if enrichment_index_entry is not None:
@@ -643,16 +642,12 @@ def build_pattern_memory(*, provider: LLMProvider, prompt_variant: str, plugin_n
             text_view=normalize_for_index(index_source),
             text_view_name=PATTERN_MEMORY_TEXT_VIEW,
         )
-        memory_object, enrichment_index_entry = apply_write_enrichment(
-            provider=provider,
-            prompt_variant=prompt_variant,
-            plugin_name=plugin_name,
+        memory_object, enrichment_index_entry = _apply_inline_enrichment(
             memory_object=memory_object,
-            support_lines=[
-                f"Summary: {parsed_summary.strip()}",
-                f"Pattern label: {pattern_label.strip()}",
-                *[f"Conclusion: {conclusion['text']}" for conclusion in conclusion_payload if conclusion.get("text")],
-            ],
+            retrieval_context=str(response.parsed_json.get("retrieval_context") or "").strip() or None,
+            plugin_name=plugin_name,
+            prompt_variant=prompt_variant,
+            llm_metadata=response.metadata,
         )
         index_entries = [index_entry]
         if enrichment_index_entry is not None:
@@ -778,17 +773,12 @@ def build_continuity_memory(*, provider: LLMProvider, prompt_variant: str, plugi
             text_view=normalize_for_index(index_source),
             text_view_name=CONTINUITY_MEMORY_TEXT_VIEW,
         )
-        memory_object, enrichment_index_entry = apply_write_enrichment(
-            provider=provider,
-            prompt_variant=prompt_variant,
-            plugin_name=plugin_name,
+        memory_object, enrichment_index_entry = _apply_inline_enrichment(
             memory_object=memory_object,
-            support_lines=[
-                f"Summary: {parsed_summary.strip()}",
-                f"Continuity question: {continuity_question.strip()}",
-                f"Carry-forward answer: {carry_forward_answer.strip()}",
-                *[f"Conclusion: {conclusion['text']}" for conclusion in conclusion_payload if conclusion.get("text")],
-            ],
+            retrieval_context=str(response.parsed_json.get("retrieval_context") or "").strip() or None,
+            plugin_name=plugin_name,
+            prompt_variant=prompt_variant,
+            llm_metadata=response.metadata,
         )
         index_entries = [index_entry]
         if enrichment_index_entry is not None:
@@ -812,6 +802,41 @@ def build_continuity_memory(*, provider: LLMProvider, prompt_variant: str, plugi
             relations=[],
             index_entries=index_entries,
         )
+
+def _apply_inline_enrichment(
+    *,
+    memory_object: MemoryObject,
+    retrieval_context: str | None,
+    plugin_name: str,
+    prompt_variant: str,
+    llm_metadata=None,
+) -> tuple[MemoryObject, object | None]:
+    if memory_object.type not in ENRICHABLE_MEMORY_TYPES:
+        return memory_object, None
+    if not retrieval_context:
+        return memory_object, None
+    provenance = build_prompt_provenance(
+        semantic_plugin=plugin_name,
+        contract=WRITE_ENRICHMENT_PROMPT_ROLE,
+        prompt_variant=prompt_variant,
+        model_role="write_enrichment",
+        llm_metadata=llm_metadata,
+        extra={"delivery": "inline", "memory_type": memory_object.type},
+    )
+    updated_payload = dict(memory_object.payload)
+    updated_payload["retrieval_enrichment"] = {
+        "retrieval_context": retrieval_context,
+        "semantic_provenance": provenance,
+    }
+    enriched_memory = replace(memory_object, payload=updated_payload)
+    enrichment_index_entry = build_index_entry(
+        target_kind="memory_object",
+        target_id=enriched_memory.id,
+        index_type="lexical",
+        text_view=normalize_for_index(retrieval_context),
+        text_view_name=WRITE_ENRICHMENT_TEXT_VIEW,
+    )
+    return enriched_memory, enrichment_index_entry
 
 def _collect_conclusions(group: ConsolidationGroup) -> list[dict[str, str]]:
     ordered: OrderedDict[tuple[str, str], dict[str, str]] = OrderedDict()

@@ -291,3 +291,71 @@ def _build_provider(provider_kind: str, *, client: httpx.Client, retry_policy: L
         retry_policy=policy,
         client=client,
     )
+
+
+def test_anthropic_native_auth_sends_xapikey_header() -> None:
+    captured_headers: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_headers.update(dict(request.headers))
+        return _claude_success_response()
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = AnthropicClaudeLLMProvider(
+        model="claude-test",
+        base_url="https://example.test/v1",
+        api_key="my-secret-key",
+        timeout_seconds=5,
+        client=client,
+        auth_style="native",
+    )
+
+    provider.generate_json(system_prompt="system", user_prompt="user", schema_description="schema")
+
+    assert captured_headers.get("x-api-key") == "my-secret-key"
+    assert "authorization" not in captured_headers
+
+
+def test_anthropic_bearer_auth_sends_authorization_header() -> None:
+    captured_headers: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_headers.update(dict(request.headers))
+        return _claude_success_response()
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = AnthropicClaudeLLMProvider(
+        model="claude-test",
+        base_url="https://example.test/v1",
+        api_key="my-secret-key",
+        timeout_seconds=5,
+        client=client,
+        auth_style="bearer",
+    )
+
+    provider.generate_json(system_prompt="system", user_prompt="user", schema_description="schema")
+
+    assert captured_headers.get("authorization") == "Bearer my-secret-key"
+    assert "x-api-key" not in captured_headers
+
+
+def test_anthropic_default_auth_style_is_native() -> None:
+    captured_headers: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_headers.update(dict(request.headers))
+        return _claude_success_response()
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = AnthropicClaudeLLMProvider(
+        model="claude-test",
+        base_url="https://example.test/v1",
+        api_key="my-key",
+        timeout_seconds=5,
+        client=client,
+    )
+
+    provider.generate_json(system_prompt="system", user_prompt="user", schema_description="schema")
+
+    assert captured_headers.get("x-api-key") == "my-key"
+    assert "authorization" not in captured_headers

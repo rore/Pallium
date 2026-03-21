@@ -55,6 +55,7 @@ def build_llm_provider(config: AppConfig, *, provider_name: str, model: str) -> 
             api_key=provider_config.api_key,
             timeout_seconds=provider_config.timeout_seconds,
             retry_policy=provider_config.retry_policy,
+            auth_style=provider_config.auth_style,
         )
 
     raise ValueError(f"Unsupported LLM provider kind: {provider_config.kind}")
@@ -113,20 +114,43 @@ def _build_plugin_for_package(*, config: AppConfig, package_config: SemanticPack
             provider_name=package_config.llm_provider,
             model=package_config.model,
         )
+        providers_by_role = _resolve_providers_by_role(config, package_config, provider)
         default_prompt_variant = "strict_typed_memory_v5_compact_examples" if implementation == "llm_agent_memory" else "strict_typed_memory_v6_work_state_examples"
         prompt_variant = package_config.prompt_variant or default_prompt_variant
         if implementation == "llm_agent_memory":
-            return LLMAgentMemoryPlugin(provider=provider, prompt_variant=prompt_variant)
-        resolver_config = _build_resolver_config(provider=provider, package_config=package_config)
+            return LLMAgentMemoryPlugin(provider=providers_by_role.get("write_extraction", provider), prompt_variant=prompt_variant)
+        resolver_provider = providers_by_role.get("query_ambiguity_resolution", provider)
+        resolver_config = _build_resolver_config(provider=resolver_provider, package_config=package_config)
         return AgentConversationMemoryPlugin(
             provider=provider,
             prompt_variant=prompt_variant,
             consolidation_config=package_config.consolidation,
             resolver_config=resolver_config,
             routing_overrides=routing_overrides,
+            providers_by_role=providers_by_role or None,
         )
 
     raise ValueError(f"Unsupported semantic package implementation: {implementation}")
+
+
+def _resolve_providers_by_role(
+    config: AppConfig,
+    package_config: SemanticPackageConfig,
+    default_provider: LLMProvider,
+) -> dict[str, LLMProvider]:
+    if not package_config.model_roles:
+        return {}
+    by_role: dict[str, LLMProvider] = {}
+    provider_cache: dict[str, LLMProvider] = {}
+    if package_config.model:
+        provider_cache[package_config.model] = default_provider
+    for role, role_model in package_config.model_roles.items():
+        if role_model not in provider_cache:
+            provider_cache[role_model] = build_llm_provider(
+                config, provider_name=package_config.llm_provider, model=role_model,
+            )
+        by_role[role] = provider_cache[role_model]
+    return by_role
 
 
 def _build_resolver_config(*, provider: LLMProvider, package_config: SemanticPackageConfig) -> dict[str, object] | None:

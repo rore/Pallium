@@ -199,6 +199,26 @@ Texts shorter than 40 characters are too generic for meaningful vector
 discrimination. Applied as a length check in build_embedding_text() and
 source_item_embedding_text().
 
+### 2026-03-21 - Bearer auth style for proxy-compatible providers
+
+LLM provider config supports `auth_style` ("native" or "bearer") to switch
+between `x-api-key` (direct Anthropic) and `Authorization: Bearer` (proxy
+endpoints). Default is "native" for backward compatibility.
+
+### 2026-03-21 - Per-role model configuration
+
+Semantic packages support `model_roles` mapping (role -> model name) alongside
+the package-wide `model` default. Mirrors the existing `prompt_variants`
+pattern. Enables cost/quality optimization per LLM call type (e.g., Sonnet for
+extraction, Haiku for summaries and resolver).
+
+### 2026-03-21 - Combined LLM calls for thread and consolidation
+
+Thread rebuild and consolidation each use a single combined LLM call instead of
+separate extraction + enrichment calls. Reduces thread rebuild from 4 calls to
+1 and consolidation from 2 to 1. Motivated by proxy rate limits and general
+efficiency. Enrichment context is folded into the parent prompt schema.
+
 ## Open
 
 ### Ingestion policy

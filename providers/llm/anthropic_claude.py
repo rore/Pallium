@@ -21,6 +21,7 @@ class AnthropicClaudeLLMProvider(ResilientLLMProvider):
         timeout_seconds: float,
         retry_policy: LLMRetryPolicy | None = None,
         client: httpx.Client | None = None,
+        auth_style: str = "native",
     ) -> None:
         super().__init__(
             provider_name=provider_name,
@@ -30,6 +31,7 @@ class AnthropicClaudeLLMProvider(ResilientLLMProvider):
         )
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
+        self._auth_style = auth_style
         self._client = client or httpx.Client(timeout=timeout_seconds)
 
     def _perform_request(
@@ -56,7 +58,10 @@ class AnthropicClaudeLLMProvider(ResilientLLMProvider):
             "anthropic-version": ANTHROPIC_VERSION,
         }
         if self._api_key:
-            headers["x-api-key"] = self._api_key
+            if self._auth_style == "bearer":
+                headers["Authorization"] = f"Bearer {self._api_key}"
+            else:
+                headers["x-api-key"] = self._api_key
         return self._client.post(f"{self._base_url}/messages", json=payload, headers=headers)
 
     def _extract_text(self, body: dict[str, Any]) -> str:
