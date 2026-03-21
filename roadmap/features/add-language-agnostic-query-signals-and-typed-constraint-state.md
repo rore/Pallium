@@ -120,9 +120,9 @@ Implementation defaults:
   call sites
 - isolate current English lexical logic behind a single legacy fallback helper
   so the new signal path remains reviewable and measurable
-- if semantic help is needed, use the existing bounded
-  `query_ambiguity_resolution` contract selectively rather than creating a new
-  always-on router
+- if semantic help is needed, use a new bounded `query_signal_classification`
+  contract with its own prompt role, not the existing pairwise
+  `query_ambiguity_resolution` resolver
 - treat this feature as read-time control-plane cleanup, not as a promise of
   full multilingual understanding across the whole write path
 
