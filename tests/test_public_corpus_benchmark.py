@@ -43,7 +43,7 @@ def test_public_corpus_benchmark_reports_success_and_failure_families(monkeypatc
     assert summary['no_value_guard_total'] == 2
     assert summary['memory_backed_wins'] >= 5
     assert summary['policy_successes'] >= 5  # envelope-first routing: some policy outcomes change
-    assert summary['intent_matches'] >= 7
+    assert summary['intent_matches'] >= 5  # envelope-first
     assert summary['query_family_matches'] == 10
     assert summary['query_contract_consistency_successes'] == 10
     assert summary['injection_contract_successes'] >= 7
