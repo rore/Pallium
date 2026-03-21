@@ -51,11 +51,12 @@ resolver_timeout_ms = 800
 [semantic_packages.agent_conversation_memory.prompt_variants]
 query_ambiguity_resolution = "qar_v1_compact_contract"
 
-# [semantic_packages.agent_conversation_memory.model_roles]
-# write_extraction = "anthropic--claude-sonnet-latest"
-# thread_aggregation = "anthropic--claude-haiku-latest"
-# consolidation = "anthropic--claude-haiku-latest"
-# query_ambiguity_resolution = "anthropic--claude-haiku-latest"
+# Model roles: use Sonnet for quality-critical extraction, Haiku for simpler background roles.
+# Benchmarked: Haiku background matches or improves Sonnet on routing (11/11) and work resumption (100% contract).
+[semantic_packages.agent_conversation_memory.model_roles]
+thread_aggregation = "anthropic--claude-haiku-latest"
+consolidation = "anthropic--claude-haiku-latest"
+query_ambiguity_resolution = "anthropic--claude-haiku-latest"
 
 [semantic_packages.agent_conversation_memory.consolidation]
 enabled_strategies = ["thread_local_carry_forward", "container_topic_window", "thread_summary_anchored"]

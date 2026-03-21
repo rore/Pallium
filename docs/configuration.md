@@ -290,10 +290,19 @@ Resolution order is:
 
 Available roles:
 
-- `write_extraction` — per-item memory extraction
-- `thread_aggregation` — thread summary + task checkpoint
-- `consolidation` — pattern and continuity memory
-- `query_ambiguity_resolution` — resolver on query hot path
+- `write_extraction` — per-item memory extraction (quality-critical, use strongest model)
+- `thread_aggregation` — thread summary + task checkpoint (simpler schemas, code has fallback defaults)
+- `consolidation` — pattern and continuity memory (simplest schemas)
+- `query_ambiguity_resolution` — resolver on query hot path (speed-critical, simple A/B decision)
+
+Benchmarked recommendation (Claude via HAI):
+
+| Role | Model | Rationale |
+|---|---|---|
+| `write_extraction` | Sonnet (default) | 14-field schema, strict evidence rules, quality-sensitive |
+| `thread_aggregation` | Haiku | Simpler schema, code has fallback defaults. Benchmarked: 11/11 routing, 100% work resumption contract |
+| `consolidation` | Haiku | Simplest schemas. Same benchmark results as thread_aggregation |
+| `query_ambiguity_resolution` | Haiku | Hot path (800ms timeout), simple A/B decision |
 
 Example:
 
