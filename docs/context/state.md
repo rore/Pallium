@@ -17,7 +17,7 @@
 - first implementation language: Python
 - architecture direction: single local-first service with clear module boundaries
 - first concrete product package: `agent_conversation_memory`
-- current LLM provider: Anthropic Claude via HAI proxy
+- current LLM provider: Anthropic Claude (Sonnet + Haiku via per-role model config)
   - Sonnet: write_extraction (quality-critical, 14-field schema)
   - Haiku: thread_aggregation, consolidation, query_ambiguity_resolution (simpler schemas, benchmarked equal or better)
 - current extraction prompt: `strict_typed_memory_v4_evidence_guarded` (production), with `v7_claude_structured` available as a 57%-cheaper alternative at equal accuracy

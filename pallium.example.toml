@@ -24,12 +24,12 @@ max_backoff_ms = 3000
 jitter_ratio = 0.2
 max_concurrency = 4
 
-# [llm_providers.hai_anthropic]
+# [llm_providers.anthropic]
 # kind = "anthropic_claude"
-# base_url = "http://localhost:6655/anthropic/v1"
-# api_key_env = "HAI_API_KEY"
-# auth_style = "bearer"
+# base_url = "https://api.anthropic.com/v1"
+# api_key_env = "ANTHROPIC_API_KEY"
 # timeout_seconds = 30
+# auth_style = "native"  # use "bearer" for proxy endpoints
 
 [semantic_packages.demo_agent_memory]
 implementation = "demo_agent_memory"
@@ -54,9 +54,9 @@ query_ambiguity_resolution = "qar_v1_compact_contract"
 # Model roles: use Sonnet for quality-critical extraction, Haiku for simpler background roles.
 # Benchmarked: Haiku background matches or improves Sonnet on routing (11/11) and work resumption (100% contract).
 [semantic_packages.agent_conversation_memory.model_roles]
-thread_aggregation = "anthropic--claude-haiku-latest"
-consolidation = "anthropic--claude-haiku-latest"
-query_ambiguity_resolution = "anthropic--claude-haiku-latest"
+thread_aggregation = "claude-haiku-4-5"
+consolidation = "claude-haiku-4-5"
+query_ambiguity_resolution = "claude-haiku-4-5"
 
 [semantic_packages.agent_conversation_memory.consolidation]
 enabled_strategies = ["thread_local_carry_forward", "container_topic_window", "thread_summary_anchored"]
