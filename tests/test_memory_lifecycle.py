@@ -26,7 +26,6 @@ def test_superseded_memory_is_hidden_but_evidence_remains(test_db_url: str) -> N
         artifact_kind="assistant_output",
         role="assistant",
         thread_ref="thread-1",
-        session_ref="session-1",
     )
     service.drain_processing_queue(worker_id="memory-lifecycle")
     old_processing = service.get_item_processing(old_result.source_item_id)
@@ -41,7 +40,6 @@ def test_superseded_memory_is_hidden_but_evidence_remains(test_db_url: str) -> N
         artifact_kind="assistant_output",
         role="assistant",
         thread_ref="thread-1",
-        session_ref="session-1",
     )
 
     service.drain_processing_queue(worker_id="memory-lifecycle")
@@ -51,7 +49,7 @@ def test_superseded_memory_is_hidden_but_evidence_remains(test_db_url: str) -> N
     new_memory_id = new_processing.memory_object_ids[0]
     service.supersede_memory_object(old_memory_id, new_memory_id)
 
-    query_result = service.query("reservation ordering reservation ordering", limit=10, thread_ref="thread-1", session_ref="session-1")
+    query_result = service.query("reservation ordering reservation ordering", limit=10, thread_ref="thread-1")
     memory_hits = [item for item in query_result.results if item.result_kind == "memory_hit"]
     source_hits = [item for item in query_result.results if item.result_kind == "source_hit"]
 

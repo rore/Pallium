@@ -15,10 +15,9 @@ def _evidence(*, source_item_id: str = 'source-1', source_id: str = 'artifact-1'
         'role': 'assistant',
         'container_ref': 'chat:library-help',
         'thread_ref': 'chat:library-help:thread-1',
-        'session_ref': 'session-1',
         'source_ref': None,
         'artifact_kind': 'assistant_output',
-        'visibility_context': {'kind': 'public', 'id': None},
+        "container_visibility": "public",
     }
 
 

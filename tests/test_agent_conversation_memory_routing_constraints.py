@@ -44,9 +44,8 @@ def test_process_item_emits_typed_constraint_memory_and_supersession_hint() -> N
             role='assistant',
             container_ref='chat:library-help',
             thread_ref='chat:library-help:thread-constraint',
-            session_ref='session:constraint',
             occurred_at=datetime(2026, 3, 11, 12, 10, tzinfo=timezone.utc),
-            visibility_context=VisibilityContext(kind='public', id=None),
+            container_visibility="public",
         )
     )
 
@@ -71,7 +70,6 @@ def test_fresh_thread_constraint_recall_prefers_structured_memory_over_raw_sourc
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-fresh-constraint',
-        session_ref='session:fresh-constraint',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -165,7 +163,6 @@ def test_fresh_thread_recall_suppresses_duplicate_queries_and_meta_source_noise(
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-fresh-contaminated',
-        session_ref='session:fresh-contaminated',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -337,7 +334,6 @@ def test_fresh_thread_recall_excludes_conflicting_structured_checkpoint() -> Non
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-fresh-conflict',
-        session_ref='session:fresh-conflict',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -418,7 +414,6 @@ def test_fresh_thread_constraint_recall_prefers_constraint_anchor_over_conflicti
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-fresh-constraint-conflict',
-        session_ref='session:fresh-constraint-conflict',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -496,7 +491,6 @@ def test_broad_recall_with_only_self_conflicting_checkpoint_fails_closed() -> No
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-recall-only-bad-checkpoint',
-        session_ref='session:recall-only-bad-checkpoint',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -578,7 +572,6 @@ def test_constraint_recall_prefers_explicit_no_login_constraint_over_auth_retry_
     query_filters = QueryFilters(
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:diag-constraint-fresh',
-        session_ref='agent-session:diag-constraint-fresh',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -641,7 +634,6 @@ def test_constraint_recall_prefers_typed_constraint_memory_and_excludes_conflict
     query_filters = QueryFilters(
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:diag-typed-constraint',
-        session_ref='agent-session:diag-typed-constraint',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -714,7 +706,6 @@ def test_multi_token_wallet_recall_excludes_unrelated_batch_checkpoint() -> None
     query_filters = QueryFilters(
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:thread-y',
-        session_ref='agent-session:thread-y',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -822,7 +813,6 @@ def test_same_thread_local_constraint_correction_prefers_constraint_memory_and_e
     query_filters = QueryFilters(
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:thread-x',
-        session_ref='agent-session:thread-x',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -899,7 +889,6 @@ def test_same_thread_local_typed_constraint_shares_domain_with_durable_constrain
     query_filters = QueryFilters(
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:thread-x',
-        session_ref='agent-session:thread-x',
     )
     inventory_scope = MemorySubjectAnchor(kind='workstream', value='inventory batch digest')
     retrieval_result = RetrievalQueryResult(
@@ -976,7 +965,6 @@ def test_same_thread_local_typed_constraint_abstains_when_scope_is_ambiguous() -
     query_filters = QueryFilters(
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:thread-x',
-        session_ref='agent-session:thread-x',
     )
     inventory_scope = MemorySubjectAnchor(kind='workstream', value='inventory batch digest')
     wallet_scope = MemorySubjectAnchor(kind='workstream', value='wallet reserve snapshot')
@@ -1149,7 +1137,6 @@ def test_same_thread_wallet_recall_prefers_wallet_memory_over_adjacent_batch_aut
     query_filters = QueryFilters(
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:thread-y',
-        session_ref='agent-session:thread-y',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -1376,7 +1363,6 @@ def test_evidence_trace_preserves_source_evidence_under_weak_support() -> None:
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-evidence-weak',
-        session_ref='session:evidence-weak',
     )
     # source_hit has low lexical score (weak overlap); decision has high lexical score
     retrieval_result = RetrievalQueryResult(
@@ -1459,7 +1445,6 @@ def test_evidence_trace_allows_fallback_when_source_evidence_absent() -> None:
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-evidence-absent',
-        session_ref='session:evidence-absent',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -1528,7 +1513,6 @@ def test_answer_continuity_prefers_same_thread_continuity_when_no_topic_overlap(
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-b',
-        session_ref='session:continuity-thread-pref',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -1610,7 +1594,6 @@ def test_answer_continuity_does_not_suppress_cross_thread_continuity_when_both_u
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-new',
-        session_ref='session:continuity-both-unanchored',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -1690,7 +1673,6 @@ def test_answer_continuity_same_container_alone_does_not_override_wrong_candidat
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-c',
-        session_ref='session:continuity-container-only',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -1776,7 +1758,6 @@ def test_evidence_trace_suppresses_source_that_disclaims_having_exact_evidence()
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-evidence-disclaimer',
-        session_ref='session:evidence-disclaimer',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -1833,7 +1814,6 @@ def test_evidence_trace_injects_source_without_evidence_disclaimer() -> None:
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-evidence-present',
-        session_ref='session:evidence-present',
     )
     retrieval_result = RetrievalQueryResult(
         results=[
@@ -1894,7 +1874,6 @@ def test_evidence_trace_disclaimer_variants_all_suppress() -> None:
         query_filters = QueryFilters(
             container_ref='chat:library-help',
             thread_ref='chat:library-help:thread-disclaimer-variants',
-            session_ref='session:disclaimer-variants',
         )
         retrieval_result = RetrievalQueryResult(
             results=[
@@ -2000,7 +1979,6 @@ def test_abstract_avoidance_query_routes_as_constraint_recall() -> None:
     query_filters = QueryFilters(
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-abstract-constraint',
-        session_ref='session:abstract-constraint',
     )
     retrieval_result = RetrievalQueryResult(
         results=[

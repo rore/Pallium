@@ -6,7 +6,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from core.contracts import ProcessResult, SupersessionHint
-from core.visibility import visibility_context_matches_exact
+from core.visibility import visibility_matches_exact
 from core.models import new_id, utc_now
 from core.observability import OBSERVABILITY_METADATA_KEY
 from core.retention import RETENTION_MAINTENANCE_KEY
@@ -407,7 +407,7 @@ class SQLiteQueueMixin:
                 use_case=record.use_case,
                 container_ref=record.container_ref,
                 thread_ref=record.thread_ref,
-                visibility_context=self._build_visibility_context(record.visibility_kind, record.visibility_id),
+                container_visibility=record.container_visibility or "private",
                 processing_claimed_by=record.processing_claimed_by,
                 processing_claimed_at=self._normalize_datetime(record.processing_claimed_at),
                 processing_lease_expires_at=self._normalize_datetime(record.processing_lease_expires_at),
@@ -467,7 +467,6 @@ class SQLiteQueueMixin:
                 )
             )
         for memory_object in result.memory_objects:
-            visibility_kind, visibility_id = self._split_visibility_context(memory_object.visibility_context)
             session.add(
                 MemoryObjectRecord(
                     id=memory_object.id,
@@ -477,8 +476,7 @@ class SQLiteQueueMixin:
                     payload_json=self._dumps(memory_object.payload) or "{}",
                     envelope_json=self._dump_memory_envelope(memory_object.envelope),
                     lifecycle=memory_object.lifecycle,
-                    visibility_kind=visibility_kind,
-                    visibility_id=visibility_id,
+                    container_visibility=memory_object.container_visibility,
                     freshness_at=self._normalize_datetime(memory_object.freshness_at) or memory_object.created_at,
                     created_at=memory_object.created_at,
                 )
@@ -553,8 +551,7 @@ class SQLiteQueueMixin:
                 )
             ).all()
             for item_record in thread_item_records:
-                item_visibility = self._build_visibility_context(item_record.visibility_kind, item_record.visibility_id)
-                if not visibility_context_matches_exact(item_visibility, hint.visibility_context):
+                if not visibility_matches_exact(item_record.container_visibility, hint.container_visibility):
                     continue
                 relation_records = session.scalars(
                     select(RelationRecord).where(
@@ -576,7 +573,7 @@ class SQLiteQueueMixin:
                         continue
                     if candidate.lifecycle != "active" or candidate.type != hint.memory_type:
                         continue
-                    if not visibility_context_matches_exact(candidate.visibility_context, hint.visibility_context):
+                    if not visibility_matches_exact(candidate.container_visibility, hint.container_visibility):
                         continue
                     candidate_key = str(candidate.payload.get("canonical_key") or "").strip()
                     if candidate_key != hint.canonical_key:
@@ -622,15 +619,13 @@ class SQLiteQueueMixin:
     ) -> None:
         record = session.get(ThreadProcessingLeaseRecord, scope.scope_key)
         if record is None:
-            visibility_kind, visibility_id = self._split_visibility_context(scope.visibility_context)
             session.add(
                 ThreadProcessingLeaseRecord(
                     scope_key=scope.scope_key,
                     use_case=scope.use_case,
                     container_ref=scope.container_ref,
                     thread_ref=scope.thread_ref,
-                    visibility_kind=visibility_kind,
-                    visibility_id=visibility_id,
+                    container_visibility=scope.container_visibility,
                     requested_at=requested_at,
                     processing_claimed_by=None,
                     processing_claimed_at=None,
@@ -671,7 +666,7 @@ class SQLiteQueueMixin:
             return "retry_backoff_active"
         if record.use_case not in known_use_cases:
             return "unknown_use_case"
-        if record.use_case in scoped_use_cases and not record.visibility_kind:
+        if record.use_case in scoped_use_cases and not record.container_visibility:
             return "missing_visibility_for_scoped_use_case"
         return None
 

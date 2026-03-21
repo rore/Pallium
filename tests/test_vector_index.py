@@ -237,9 +237,9 @@ def test_vector_index_config_defaults():
     from storage.vector_index import VectorIndexConfig
 
     config = VectorIndexConfig()
-    assert config.enabled is False
+    assert config.enabled is True
     assert config.index_path == "./pallium_vector.index"
-    assert config.embedding_provider is None
+    assert config.embedding_provider == "onnx"
     assert config.min_similarity == 0.55
 
 

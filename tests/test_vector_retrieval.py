@@ -12,7 +12,6 @@ from core.models import (
     QueryFilters,
     SourceItem,
 )
-from core.visibility import VisibilityContext
 from providers.embedding.base import EmbeddingProvider
 from retrieval.vector import VectorRetrievalProvider, VECTOR_STAGE_NAME
 from storage.base import StorageProvider
@@ -23,16 +22,16 @@ from storage.vector_index import VectorIndex
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _public() -> VisibilityContext:
-    return VisibilityContext(kind="public")
+def _public() -> str:
+    return "public"
 
 
-def _limited(value: str) -> VisibilityContext:
-    return VisibilityContext(kind="limited", id=value)
+def _limited(value: str) -> str:
+    return "limited"
 
 
-def _user(value: str) -> VisibilityContext:
-    return VisibilityContext(kind="user", id=value)
+def _user(value: str) -> str:
+    return "private"
 
 
 def _make_index_entry(
@@ -58,7 +57,7 @@ def _make_index_entry(
 def _make_memory_object(
     mo_id: str = "mo-1",
     mo_type: str = "decision",
-    visibility: VisibilityContext | None = None,
+    visibility: str | None = None,
     lifecycle: str = "active",
 ) -> MemoryObject:
     return MemoryObject(
@@ -68,7 +67,7 @@ def _make_memory_object(
         schema_version="1",
         payload={"summary_text": "test decision content"},
         lifecycle=lifecycle,
-        visibility_context=visibility or _public(),
+        container_visibility="public" or _public(),
     )
 
 
@@ -77,7 +76,7 @@ def _make_source_item(
     source_type: str = "assistant_artifact",
     source_id: str = "src-1",
     content: str = "source content here",
-    visibility: VisibilityContext | None = None,
+    visibility: str | None = None,
     container_ref: str | None = "chat:test",
     thread_ref: str | None = "chat:test:thread-1",
     role: str | None = "assistant",
@@ -88,7 +87,7 @@ def _make_source_item(
         source_id=source_id,
         content_type="text/plain",
         content=content,
-        visibility_context=visibility or _public(),
+        container_visibility="public" or _public(),
         container_ref=container_ref,
         thread_ref=thread_ref,
         role=role,
@@ -99,14 +98,14 @@ def _make_evidence(
     source_item_id: str = "si-1",
     source_type: str = "assistant_artifact",
     source_id: str = "src-1",
-    visibility: VisibilityContext | None = None,
+    visibility: str | None = None,
     container_ref: str | None = "chat:test",
 ) -> EvidenceReference:
     return EvidenceReference(
         source_item_id=source_item_id,
         source_type=source_type,
         source_id=source_id,
-        visibility_context=visibility or _public(),
+        container_visibility="public" or _public(),
         container_ref=container_ref,
     )
 
@@ -184,7 +183,7 @@ class TestVectorRetrievalBasic:
         assert item.type == "decision"
         assert item.score == 850  # int(0.85 * 1000)
         assert item.evidence == evidence
-        assert item.visibility_context == _public()
+        assert item.container_visibility == "public"
 
     def test_returns_source_hit(self) -> None:
         index_entry = _make_index_entry(entry_id="idx-2", target_kind="source_item", target_id="si-1")
@@ -346,7 +345,7 @@ class TestVisibilityFiltering:
         embedding = FakeEmbeddingProvider()
 
         provider = VectorRetrievalProvider(storage, vector_index, embedding)
-        result = provider.query("test", limit=10, visibility_context=_public())
+        result = provider.query("test", limit=10, container_visibility="public")
 
         assert len(result.results) == 1
         assert result.results[0].memory_object_id == "mo-pub"
@@ -373,7 +372,7 @@ class TestVisibilityFiltering:
         embedding = FakeEmbeddingProvider()
 
         provider = VectorRetrievalProvider(storage, vector_index, embedding)
-        result = provider.query("test", limit=10, visibility_context=_limited("channel-a"))
+        result = provider.query("test", limit=10, container_visibility="limited")
 
         returned_ids = {r.memory_object_id for r in result.results}
         assert returned_ids == {"mo-pub", "mo-lim-a"}
@@ -394,7 +393,7 @@ class TestVisibilityFiltering:
         embedding = FakeEmbeddingProvider()
 
         provider = VectorRetrievalProvider(storage, vector_index, embedding)
-        result = provider.query("test", limit=10, visibility_context=None)
+        result = provider.query("test", limit=10, container_visibility=None)
 
         assert len(result.results) == 2
 
@@ -408,7 +407,7 @@ class TestRequireVisibilityFailClosed:
         embedding = FakeEmbeddingProvider()
 
         provider = VectorRetrievalProvider(storage, vector_index, embedding)
-        result = provider.query("test", limit=5, require_visibility=True, visibility_context=None)
+        result = provider.query("test", limit=5, require_visibility=True, container_visibility=None)
 
         assert result.results == []
         # Should not have called search at all
@@ -421,7 +420,7 @@ class TestRequireVisibilityFailClosed:
 
         provider = VectorRetrievalProvider(storage, vector_index, embedding)
         result = provider.query(
-            "test", limit=5, require_visibility=True, visibility_context=None, include_trace=True
+            "test", limit=5, require_visibility=True, container_visibility=None, include_trace=True
         )
 
         assert result.results == []
@@ -443,7 +442,7 @@ class TestRequireVisibilityFailClosed:
 
         provider = VectorRetrievalProvider(storage, vector_index, embedding)
         result = provider.query(
-            "test", limit=5, require_visibility=True, visibility_context=_public()
+            "test", limit=5, require_visibility=True, container_visibility="public"
         )
 
         assert len(result.results) == 1
@@ -629,10 +628,10 @@ class TestTraceOutput:
         embedding = FakeEmbeddingProvider()
 
         provider = VectorRetrievalProvider(storage, vector_index, embedding)
-        result = provider.query("test", limit=5, include_trace=True, visibility_context=_public())
+        result = provider.query("test", limit=5, include_trace=True, container_visibility="public")
 
         assert result.trace.visibility is not None
-        assert result.trace.visibility.query_visibility_context == _public()
+        assert result.trace.visibility.query_container_visibility == "public"
 
 
 class TestFilterMatching:

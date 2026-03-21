@@ -17,7 +17,6 @@ from core.models import (
     SourceItem,
     utc_now,
 )
-from core.visibility import VisibilityContext
 from storage.base import RetentionLease, ThreadProcessingLease
 from storage.sqlite_schema import (
     AnnotationRecord,
@@ -50,13 +49,13 @@ class SQLiteCodecMixin:
             metadata=SQLiteCodecMixin._loads(record.metadata_json),
             occurred_at=SQLiteCodecMixin._normalize_datetime(record.occurred_at),
             actor_ref=record.actor_ref,
+            agent_ref=record.agent_ref,
             role=record.role,
             container_ref=record.container_ref,
             thread_ref=record.thread_ref,
-            session_ref=record.session_ref,
             source_ref=record.source_ref,
             artifact_kind=record.artifact_kind,
-            visibility_context=SQLiteCodecMixin._build_visibility_context(record.visibility_kind, record.visibility_id),
+            container_visibility=record.container_visibility or "private",
             use_case=record.use_case,
             processing_status=record.processing_status or "pending",
             processing_attempts=record.processing_attempts or 0,
@@ -91,7 +90,7 @@ class SQLiteCodecMixin:
             payload=SQLiteCodecMixin._loads(record.payload_json),
             lifecycle=record.lifecycle or "active",
             envelope=SQLiteCodecMixin._load_memory_envelope(record.envelope_json),
-            visibility_context=SQLiteCodecMixin._build_visibility_context(record.visibility_kind, record.visibility_id),
+            container_visibility=record.container_visibility or "private",
             freshness_at=SQLiteCodecMixin._normalize_datetime(record.freshness_at),
             created_at=SQLiteCodecMixin._normalize_datetime(record.created_at) or utc_now(),
         )
@@ -128,13 +127,13 @@ class SQLiteCodecMixin:
             source_id=record.source_id,
             occurred_at=SQLiteCodecMixin._normalize_datetime(record.occurred_at),
             actor_ref=record.actor_ref,
+            agent_ref=record.agent_ref,
             role=record.role,
             container_ref=record.container_ref,
             thread_ref=record.thread_ref,
-            session_ref=record.session_ref,
             source_ref=record.source_ref,
             artifact_kind=record.artifact_kind,
-            visibility_context=SQLiteCodecMixin._build_visibility_context(record.visibility_kind, record.visibility_id),
+            container_visibility=record.container_visibility or "private",
         )
 
     @staticmethod
@@ -149,7 +148,7 @@ class SQLiteCodecMixin:
             use_case=record.use_case,
             container_ref=record.container_ref,
             thread_ref=record.thread_ref,
-            visibility_context=SQLiteCodecMixin._build_visibility_context(record.visibility_kind, record.visibility_id),
+            container_visibility=record.container_visibility or "private",
             requested_at=requested_at,
             processing_claimed_by=record.processing_claimed_by,
             processing_claimed_at=claimed_at,
@@ -176,18 +175,6 @@ class SQLiteCodecMixin:
         if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
-
-    @staticmethod
-    def _split_visibility_context(visibility_context: VisibilityContext | None) -> tuple[str | None, str | None]:
-        if visibility_context is None:
-            return None, None
-        return visibility_context.kind, visibility_context.id
-
-    @staticmethod
-    def _build_visibility_context(kind: str | None, visibility_id: str | None) -> VisibilityContext | None:
-        if not kind:
-            return None
-        return VisibilityContext(kind=kind, id=visibility_id)
 
     @staticmethod
     def _dump_memory_envelope(envelope: MemoryEnvelope | None) -> str | None:
@@ -252,10 +239,6 @@ class SQLiteCodecMixin:
             scope_payload,
             "thread_ref",
         )
-        session_ref, session_ref_valid = SQLiteCodecMixin._load_optional_envelope_string(
-            scope_payload,
-            "session_ref",
-        )
         prompt_variant, prompt_variant_valid = SQLiteCodecMixin._load_optional_envelope_string(
             derivation_payload,
             "prompt_variant",
@@ -272,7 +255,6 @@ class SQLiteCodecMixin:
             (
                 container_ref_valid,
                 thread_ref_valid,
-                session_ref_valid,
                 prompt_variant_valid,
                 model_role_valid,
                 kind_basis_valid,
@@ -286,7 +268,6 @@ class SQLiteCodecMixin:
             scope=MemoryEnvelopeScope(
                 container_ref=container_ref,
                 thread_ref=thread_ref,
-                session_ref=session_ref,
             ),
             derivation=MemoryEnvelopeDerivation(
                 producer_kind=producer_kind,

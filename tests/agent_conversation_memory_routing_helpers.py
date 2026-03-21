@@ -19,7 +19,6 @@ from core.models import (
     QueryTrace,
     SourceItem,
 )
-from core.visibility import VisibilityContext
 from providers.llm.base import LLMJsonResponse
 from retrieval.base import RetrievalQueryResult
 from semantic.agent_conversation_memory import (
@@ -49,9 +48,9 @@ def _build_client(monkeypatch, sqlite_url: str) -> TestClient:
 
     def post_with_public_visibility(url: str, *args, **kwargs):
         payload = kwargs.get('json')
-        if isinstance(payload, dict) and url in {'/items', '/query', '/query/debug'} and 'visibility_context' not in payload:
+        if isinstance(payload, dict) and url in {'/items', '/query', '/query/debug'} and 'container_visibility' not in payload:
             payload = dict(payload)
-            payload['visibility_context'] = {'kind': 'public', 'id': None}
+            payload['container_visibility'] = 'public'
             kwargs['json'] = payload
         return original_post(url, *args, **kwargs)
 
@@ -118,7 +117,6 @@ def _ingest_resumption_work(client: TestClient, *, thread_ref: str) -> None:
             'role': 'user',
             'container_ref': 'chat:library-help',
             'thread_ref': thread_ref,
-            'session_ref': 'agent-session-routing-work-001',
             'occurred_at': '2026-03-11T09:59:00Z',
         },
         {
@@ -130,7 +128,6 @@ def _ingest_resumption_work(client: TestClient, *, thread_ref: str) -> None:
             'role': 'assistant',
             'container_ref': 'chat:library-help',
             'thread_ref': thread_ref,
-            'session_ref': 'agent-session-routing-work-001',
             'occurred_at': '2026-03-11T10:00:00Z',
         },
         {
@@ -142,7 +139,6 @@ def _ingest_resumption_work(client: TestClient, *, thread_ref: str) -> None:
             'role': 'assistant',
             'container_ref': 'chat:library-help',
             'thread_ref': thread_ref,
-            'session_ref': 'agent-session-routing-work-001',
             'occurred_at': '2026-03-11T10:01:00Z',
         },
         {
@@ -154,7 +150,6 @@ def _ingest_resumption_work(client: TestClient, *, thread_ref: str) -> None:
             'role': 'assistant',
             'container_ref': 'chat:library-help',
             'thread_ref': thread_ref,
-            'session_ref': 'agent-session-routing-work-001',
             'occurred_at': '2026-03-11T10:02:00Z',
         },
     ):
@@ -267,7 +262,6 @@ def _inventory_batch_typed_constraint_result(*, memory_object_id: str = 'constra
             'precise_coverage_key': 'workstream:inventory batch digest|surface:operations portal|use_surface',
             'container_ref': 'slack:channel:CLOCAL001',
             'thread_ref': 'slack:thread:CLOCAL001:thread-typed-constraint',
-            'session_ref': 'agent-session:typed-constraint',
             'semantic_provenance': {
                 'semantic_plugin': 'llm_agent_memory',
                 'prompt_variant': 'strict_typed_memory_v4_evidence_guarded',

@@ -123,6 +123,15 @@ class AppConfig:
         packages.update(copy.deepcopy(self.semantic_packages))
         providers = copy.deepcopy(self.llm_providers)
 
+        # Auto-create default ONNX embedding provider when none is configured
+        embedding = copy.deepcopy(self.embedding_providers)
+        if not embedding:
+            embedding["onnx"] = EmbeddingProviderConfig(
+                name="onnx",
+                kind="onnx",
+                model="BAAI/bge-small-en-v1.5",
+            )
+
         if self.llm_provider and self.llm_base_url:
             existing_legacy = providers.get(LEGACY_PROVIDER_KEY)
             timeout_seconds = self.llm_timeout_seconds if self.llm_timeout_seconds is not None else (existing_legacy.timeout_seconds if existing_legacy else 30.0)
@@ -150,7 +159,7 @@ class AppConfig:
                 )
 
         object.__setattr__(self, "llm_providers", providers)
-        object.__setattr__(self, "embedding_providers", copy.deepcopy(self.embedding_providers))
+        object.__setattr__(self, "embedding_providers", embedding)
         object.__setattr__(self, "semantic_packages", packages)
 
     @classmethod
@@ -535,8 +544,7 @@ def _build_vector_index_config(config_data: dict[str, Any], env_values: dict[str
         embedding_provider=_as_optional_string(
             env_values.get("PALLIUM_VECTOR_INDEX_EMBEDDING_PROVIDER")
             or raw.get("embedding_provider")
-            or defaults.embedding_provider
-        ),
+        ) or defaults.embedding_provider,
         min_similarity=float(
             env_values.get(
                 "PALLIUM_VECTOR_INDEX_MIN_SIMILARITY",

@@ -9,7 +9,6 @@ from core.models import (
     QueryResultItem,
     QueryTrace,
 )
-from core.visibility import VisibilityContext
 from retrieval.base import RetrievalProvider, RetrievalQueryResult
 from retrieval.vector import VectorRetrievalProvider
 
@@ -34,7 +33,8 @@ class CompositeRetrievalProvider(RetrievalProvider):
         limit: int,
         filters: QueryFilters | None = None,
         *,
-        visibility_context: VisibilityContext | None = None,
+        container_visibility: str | None = None,
+        query_container_ref: str | None = None,
         include_trace: bool = False,
         require_visibility: bool = False,
     ) -> RetrievalQueryResult:
@@ -42,7 +42,8 @@ class CompositeRetrievalProvider(RetrievalProvider):
             text,
             limit,
             filters,
-            visibility_context=visibility_context,
+            container_visibility=container_visibility,
+            query_container_ref=query_container_ref,
             include_trace=include_trace,
             require_visibility=require_visibility,
         )
@@ -52,7 +53,8 @@ class CompositeRetrievalProvider(RetrievalProvider):
             text,
             limit,
             filters,
-            visibility_context=visibility_context,
+            container_visibility=container_visibility,
+            query_container_ref=query_container_ref,
             include_trace=include_trace,
             require_visibility=require_visibility,
         )

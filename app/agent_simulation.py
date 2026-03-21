@@ -386,8 +386,7 @@ class AgentSimulationApp:
             "role": role,
             "container_ref": self._session.defaults.container_ref,
             "thread_ref": self._session.defaults.thread_ref,
-            "session_ref": self._session.defaults.session_ref,
-            "visibility_context": self._session.defaults.visibility_context,
+            "container_visibility": self._session.defaults.container_visibility,
         }
         return {key: value for key, value in payload.items() if value is not None}
 
@@ -397,8 +396,7 @@ class AgentSimulationApp:
             "limit": 5,
             "container_ref": self._session.defaults.container_ref,
             "thread_ref": self._session.defaults.thread_ref,
-            "session_ref": self._session.defaults.session_ref,
-            "visibility_context": self._session.defaults.visibility_context,
+            "container_visibility": self._session.defaults.container_visibility,
         }
         runtime_context = self._runtime_context_payload()
         if runtime_context is not None:
@@ -423,18 +421,11 @@ class AgentSimulationApp:
         defaults = self._session.defaults
         container_ref = self._prompt_optional(f"container_ref [{defaults.container_ref}]: ") or defaults.container_ref
         thread_ref = self._prompt_optional(f"thread_ref [{defaults.thread_ref}]: ") or defaults.thread_ref
-        session_ref = self._prompt_optional(f"session_ref [{defaults.session_ref}]: ") or defaults.session_ref
-        current_visibility = defaults.visibility_context or {"kind": "public", "id": None}
-        visibility_kind = self._prompt_optional(f"visibility kind [{current_visibility.get('kind')}]: ") or current_visibility.get("kind")
-        visibility_id = current_visibility.get("id")
-        if visibility_kind == "public":
-            visibility_id = None
-        else:
-            visibility_id = self._prompt_optional(f"visibility id [{visibility_id}]: ") or visibility_id
+        current_visibility = defaults.container_visibility or "public"
+        visibility_kind = self._prompt_optional(f"container_visibility [{current_visibility}]: ") or current_visibility
         defaults.container_ref = container_ref
         defaults.thread_ref = thread_ref
-        defaults.session_ref = session_ref
-        defaults.visibility_context = {"kind": visibility_kind, "id": visibility_id}
+        defaults.container_visibility = visibility_kind
         self._write_scope()
 
     def _set_turn_kind(self, value: str | None) -> None:
@@ -484,8 +475,6 @@ class AgentSimulationApp:
 
     def _fork_scope(self, *, new_session: bool) -> None:
         self._session.defaults.thread_ref = self._ref_factory("thread")
-        if new_session:
-            self._session.defaults.session_ref = self._ref_factory("session")
         self._session.defaults.set_runtime_context("turn_kind", "new_thread", manual=False)
         self._session.defaults.set_runtime_context("session_has_sufficient_local_context", False, manual=False)
         self._write_scope()

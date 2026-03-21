@@ -27,8 +27,7 @@ def new_ref(prefix: str) -> str:
 class ScopeDefaults:
     container_ref: str | None
     thread_ref: str | None
-    session_ref: str | None
-    visibility_context: dict[str, Any] | None
+    container_visibility: str
     runtime_context: dict[str, Any] = field(default_factory=dict)
     runtime_context_overrides: dict[str, bool] = field(default_factory=dict)
 
@@ -51,8 +50,7 @@ class ScopeDefaults:
         return cls(
             container_ref=payload.get("container_ref"),
             thread_ref=payload.get("thread_ref"),
-            session_ref=payload.get("session_ref"),
-            visibility_context=payload.get("visibility_context"),
+            container_visibility=payload.get("container_visibility", "private"),
             runtime_context=runtime_context,
             runtime_context_overrides=normalized_overrides,
         )
@@ -136,8 +134,7 @@ def create_default_session(*, base_url: str, mode: str, model: dict[str, Any] | 
     defaults = ScopeDefaults(
         container_ref=f"simulation:{session_id}",
         thread_ref=new_ref("thread"),
-        session_ref=new_ref("session"),
-        visibility_context={"kind": "public", "id": None},
+        container_visibility="public",
         runtime_context={
             "turn_kind": None,
             "session_has_sufficient_local_context": None,
@@ -238,7 +235,6 @@ def rewrite_session_for_replay(session: HarnessSession) -> HarnessSession:
     cloned.session_path = None
     defaults = cloned.defaults
     defaults.thread_ref = _prefixed_ref(defaults.thread_ref, replay_id)
-    defaults.session_ref = _prefixed_ref(defaults.session_ref, replay_id)
     return cloned
 
 
@@ -248,8 +244,6 @@ def rewrite_payload_for_replay(payload: dict[str, Any], replay_id: str) -> dict[
         rewritten["source_id"] = _prefixed_ref(rewritten["source_id"], replay_id)
     if "thread_ref" in rewritten:
         rewritten["thread_ref"] = _prefixed_ref(rewritten.get("thread_ref"), replay_id)
-    if "session_ref" in rewritten:
-        rewritten["session_ref"] = _prefixed_ref(rewritten.get("session_ref"), replay_id)
     return rewritten
 
 

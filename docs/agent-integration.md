@@ -36,7 +36,7 @@ engine.
 
 A realistic current-package loop looks like this:
 
-1. a user asks why reservation ordering keeps missing hold updates
+1. a user asks why a background job keeps missing status updates
 2. the assistant investigates and answers with a concrete decision
 3. the runtime stores the user message, the assistant output, and a compact tool
    summary or next-step artifact
@@ -72,20 +72,23 @@ or obvious duplicate suppression. Semantic filtering belongs in Pallium.
 
 ## What To Ingest Today
 
-Current high-value artifact shapes:
+The runtime sends events. Pallium decides what is worth remembering.
+
+If your runtime can provide `artifact_kind` and `role` cheaply (e.g. the
+runtime already knows it is forwarding a user message vs. an assistant reply),
+include them — they help Pallium route faster. But these are hints, not
+classification requirements. The semantic layer extracts meaning from content.
+
+Common shapes that work well today:
 
 - user question or requirement
-  - `artifact_kind="message"`
-  - `role="user"`
+  - `artifact_kind="message"`, `role="user"`
 - final assistant answer or decision
-  - `artifact_kind="assistant_output"`
-  - `role="assistant"`
+  - `artifact_kind="assistant_output"`, `role="assistant"`
 - explicit tool-derived finding or blocker summary
-  - `artifact_kind="tool_use_summary"`
-  - `role="assistant"`
+  - `artifact_kind="tool_use_summary"`, `role="assistant"`
 - explicit next-step snapshot
-  - `artifact_kind="todo_snapshot"`
-  - `role="assistant"`
+  - `artifact_kind="todo_snapshot"`, `role="assistant"`
 
 The content should be the compact text you want Pallium to reason over. The
 current semantic layer is text-oriented; keep the text explicit and bounded.
@@ -101,16 +104,16 @@ current semantic layer is text-oriented; keep the text explicit and bounded.
   - `content`
 - useful routing and evidence refs:
   - `container_ref`
+  - `container_visibility`
   - `thread_ref`
-  - `session_ref`
   - `actor_ref`
+  - `agent_ref`
   - `source_ref`
   - `artifact_kind`
   - `role`
-- package selection:
-  - `use_case`
-- privacy boundary:
-  - `visibility_context`
+
+The semantic package is selected by server-side configuration
+(`default_use_case`). Callers do not normally need to send `use_case`.
 
 Practical guidance:
 
@@ -118,7 +121,7 @@ Practical guidance:
 - use `content_type="text/plain"` unless you are deliberately handling another
   text-compatible format
 - keep `source_ref` if you want to point users or tooling back to the origin
-- always send `visibility_context` for `agent_conversation_memory`
+- always send `container_ref` for `agent_conversation_memory`
 
 Repeated ingest for the same item should be idempotent when the source identity
 is stable.
@@ -165,9 +168,8 @@ The runtime should send:
 - current user text
 - refs and visibility:
   - `container_ref`
+  - `container_visibility`
   - `thread_ref`
-  - `session_ref`
-  - `visibility_context`
 
 Optional advanced hints:
 - `runtime_context` when the runtime genuinely knows a special state, for example:
@@ -265,7 +267,7 @@ but the integration loop does not require you to think in those terms first.
 - send only agent-mediated, high-value events
 - keep stable source identifiers
 - preserve upstream refs so evidence remains actionable
-- send `visibility_context` on every ingest and query
+- send `container_ref` on every ingest and query
 - query before prompt-building when continuity matters
 - keep local seam rules mechanical rather than semantic
 - use the debug endpoint before changing heuristics blindly

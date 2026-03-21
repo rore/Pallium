@@ -237,7 +237,6 @@ def _normalize_injectable_block_for_contract(block: dict[str, Any]) -> dict[str,
 
 
 def _normalize_evidence_reference_for_contract(item: dict[str, Any]) -> dict[str, Any]:
-    visibility_context = item.get("visibility_context") if isinstance(item, dict) else None
     return {
         "source_item_id": _normalize_contract_scalar(item.get("source_item_id") if isinstance(item, dict) else None),
         "source_type": _normalize_contract_scalar(item.get("source_type") if isinstance(item, dict) else None),
@@ -247,19 +246,9 @@ def _normalize_evidence_reference_for_contract(item: dict[str, Any]) -> dict[str
         "role": _normalize_contract_scalar(item.get("role") if isinstance(item, dict) else None),
         "container_ref": _normalize_contract_scalar(item.get("container_ref") if isinstance(item, dict) else None),
         "thread_ref": _normalize_contract_scalar(item.get("thread_ref") if isinstance(item, dict) else None),
-        "session_ref": _normalize_contract_scalar(item.get("session_ref") if isinstance(item, dict) else None),
         "source_ref": _normalize_contract_scalar(item.get("source_ref") if isinstance(item, dict) else None),
         "artifact_kind": _normalize_contract_scalar(item.get("artifact_kind") if isinstance(item, dict) else None),
-        "visibility_context": _normalize_visibility_context_for_contract(visibility_context),
-    }
-
-
-def _normalize_visibility_context_for_contract(value: Any) -> dict[str, Any] | None:
-    if not isinstance(value, dict):
-        return None
-    return {
-        "kind": _normalize_contract_scalar(value.get("kind")),
-        "id": _normalize_contract_scalar(value.get("id")),
+        "container_visibility": _normalize_contract_scalar(item.get("container_visibility") if isinstance(item, dict) else None),
     }
 
 

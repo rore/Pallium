@@ -434,7 +434,7 @@ def _episode_query_wording_label(episode: dict[str, Any]) -> str:
 
 def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
     updated = dict(payload)
-    updated.setdefault("visibility_context", {"kind": "public", "id": None})
+    updated.setdefault("container_visibility", "public")
     return updated
 
 

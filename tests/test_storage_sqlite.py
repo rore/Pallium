@@ -18,7 +18,6 @@ from core.models import (
     Relation,
     SourceItem,
 )
-from core.visibility import VisibilityContext
 from storage.sqlite import SQLiteStorageProvider
 
 
@@ -34,10 +33,9 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         role="user",
         container_ref="slack:C123",
         thread_ref="thread-a",
-        session_ref="session-a",
         actor_ref="slack:U123",
         source_ref="https://example.test/thread-1",
-        visibility_context=VisibilityContext(kind="limited", id="channel-a"),
+        container_visibility="limited",
     )
     storage.create_source_item(source_item)
 
@@ -55,7 +53,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         schema_id="demo.investigation_outcome",
         schema_version="v1",
         payload={"investigation_outcome": "arrival-time ordering missed hold updates during sync delays"},
-        visibility_context=VisibilityContext(kind="limited", id="channel-a"),
+        container_visibility="limited",
         envelope=MemoryEnvelope(
             schema_id="core.memory_envelope",
             schema_version="v1",
@@ -63,7 +61,6 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
             scope=MemoryEnvelopeScope(
                 container_ref="slack:C123",
                 thread_ref="thread-a",
-                session_ref="session-a",
             ),
             subjects=[MemorySubjectAnchor(kind="component", value="reservation ordering")],
             confidence="high",
@@ -84,7 +81,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         schema_id="demo.discussion_summary",
         schema_version="v1",
         payload={"summary": "We discussed reservation ordering."},
-        visibility_context=VisibilityContext(kind="limited", id="channel-a"),
+        container_visibility="limited",
     )
     storage.create_memory_object(legacy_memory_object)
 
@@ -122,9 +119,8 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     loaded_source = storage.get_source_item(source_item.id)
     assert loaded_source.id == source_item.id
     assert loaded_source.thread_ref == "thread-a"
-    assert loaded_source.session_ref == "session-a"
     assert loaded_source.artifact_kind == "message"
-    assert loaded_source.visibility_context == VisibilityContext(kind="limited", id="channel-a")
+    assert loaded_source.container_visibility == "limited"
     assert storage.get_annotation(annotation.id).id == annotation.id
     loaded_memory = storage.get_memory_object(memory_object.id)
     assert loaded_memory.lifecycle == "active"
@@ -146,7 +142,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     limited_hits = storage.search_index_entries(
         ["missed", "delays"],
         limit=5,
-        visibility_contexts=(VisibilityContext(kind="public", id=None), VisibilityContext(kind="limited", id="channel-a")),
+        query_container_ref="slack:C123",
         include_visibility_trace=True,
     )
     assert limited_hits.hits
@@ -155,12 +151,12 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     public_hits = storage.search_index_entries(
         ["missed", "delays"],
         limit=5,
-        visibility_contexts=(VisibilityContext(kind="public", id=None),),
+        query_container_ref="other:container",
         include_visibility_trace=True,
     )
     assert public_hits.hits == []
     assert public_hits.visibility_exclusions
-    assert public_hits.visibility_exclusions[0].reason == "query_visibility_context_excludes_candidate"
+    assert public_hits.visibility_exclusions[0].reason == "query_container_visibility_excludes_candidate"
 
     storage.update_memory_object_lifecycle(memory_object.id, "superseded")
     assert storage.get_memory_object(memory_object.id).lifecycle == "superseded"
@@ -186,7 +182,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     assert evidence[0].source_item_id == source_item.id
     assert evidence[0].thread_ref == "thread-a"
     assert evidence[0].source_ref == "https://example.test/thread-1"
-    assert evidence[0].visibility_context == VisibilityContext(kind="limited", id="channel-a")
+    assert evidence[0].container_visibility == "limited"
 
 
 @pytest.mark.parametrize(
@@ -352,7 +348,7 @@ def test_duplicate_source_type_source_id_raises_integrity_error(test_db_url: str
         source_id="dup-1",
         content_type="text/plain",
         content="First item.",
-        visibility_context=VisibilityContext(kind="public"),
+        container_visibility="public",
     )
     storage.create_source_item(item_a)
 
@@ -361,7 +357,7 @@ def test_duplicate_source_type_source_id_raises_integrity_error(test_db_url: str
         source_id="dup-1",
         content_type="text/plain",
         content="Duplicate item.",
-        visibility_context=VisibilityContext(kind="public"),
+        container_visibility="public",
     )
     with pytest.raises(IntegrityError):
         storage.create_source_item(item_b)
@@ -468,7 +464,7 @@ def test_unique_index_migration_fails_on_existing_duplicates(tmp_path: Path) -> 
             "id VARCHAR PRIMARY KEY, source_type VARCHAR NOT NULL, source_id VARCHAR NOT NULL, "
             "content_type VARCHAR NOT NULL, content TEXT NOT NULL, metadata_json TEXT, "
             "occurred_at DATETIME, actor_ref VARCHAR, role VARCHAR, container_ref VARCHAR, "
-            "thread_ref VARCHAR, session_ref VARCHAR, source_ref VARCHAR, artifact_kind VARCHAR, "
+            "thread_ref VARCHAR, source_ref VARCHAR, artifact_kind VARCHAR, "
             "visibility_kind VARCHAR, visibility_id VARCHAR, use_case VARCHAR, "
             "processing_status VARCHAR DEFAULT 'pending', processing_attempts INTEGER DEFAULT 0, "
             "processing_claimed_by VARCHAR, processing_claimed_at DATETIME, "

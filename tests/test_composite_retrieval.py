@@ -13,7 +13,6 @@ from core.models import (
     RetrievalStageTrace,
     RetrievalTraceHit,
 )
-from core.visibility import VisibilityContext
 from retrieval.base import RetrievalProvider, RetrievalQueryResult
 from retrieval.composite import CompositeRetrievalProvider, RRF_K, RRF_SCORE_SCALE
 
@@ -76,7 +75,8 @@ class StubRetrievalProvider(RetrievalProvider):
         limit: int,
         filters: QueryFilters | None = None,
         *,
-        visibility_context: VisibilityContext | None = None,
+        container_visibility: str | None = None,
+        query_container_ref: str | None = None,
         include_trace: bool = False,
         require_visibility: bool = False,
     ) -> RetrievalQueryResult:
@@ -117,24 +117,24 @@ class TestVectorNonePassthrough:
         captured = {}
 
         class CapturingProvider(RetrievalProvider):
-            def query(self, text, limit, filters=None, *, visibility_context=None, include_trace=False, require_visibility=False):
+            def query(self, text, limit, filters=None, *, container_visibility=None, query_container_ref=None, include_trace=False, require_visibility=False):
                 captured["text"] = text
                 captured["limit"] = limit
                 captured["filters"] = filters
-                captured["visibility_context"] = visibility_context
+                captured["container_visibility"] = container_visibility
                 captured["include_trace"] = include_trace
                 captured["require_visibility"] = require_visibility
                 return RetrievalQueryResult(results=[], trace=None)
 
-        vis = VisibilityContext(kind="public")
+        vis = "public"
         filt = QueryFilters(container_ref="c1")
         composite = CompositeRetrievalProvider(lexical=CapturingProvider(), vector=None)
-        composite.query("hello", 5, filt, visibility_context=vis, include_trace=True, require_visibility=True)
+        composite.query("hello", 5, filt, container_visibility=vis, include_trace=True, require_visibility=True)
 
         assert captured["text"] == "hello"
         assert captured["limit"] == 5
         assert captured["filters"] == filt
-        assert captured["visibility_context"] == vis
+        assert captured["container_visibility"] == vis
         assert captured["include_trace"] is True
         assert captured["require_visibility"] is True
 

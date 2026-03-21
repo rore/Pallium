@@ -241,7 +241,7 @@ def build_service(
         raise ValueError(f"Unsupported default use case: {resolved_config.default_use_case}")
     retrieval = build_retrieval_provider(storage)
 
-    # Vector retrieval (optional, disabled by default)
+    # Vector retrieval (enabled by default)
     vector_retrieval: VectorRetrievalProvider | None = None
     vector_index: VectorIndex | None = None
     embedding_provider: EmbeddingProvider | None = None
@@ -249,7 +249,7 @@ def build_service(
 
     if vector_config.enabled:
         # 1. Build embedding provider
-        if vector_config.embedding_provider is None:
+        if not vector_config.embedding_provider:
             logger.error("Vector index enabled but no embedding_provider configured. Vector disabled.")
         else:
             try:

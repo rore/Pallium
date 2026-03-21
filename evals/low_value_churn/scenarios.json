@@ -11,8 +11,7 @@
         "artifact_kind": "assistant_output",
         "role": "assistant",
         "container_ref": "chat:library-help",
-        "thread_ref": "chat:library-help:thread-lv-001",
-        "session_ref": "agent-session-lv-001"
+        "thread_ref": "chat:library-help:thread-lv-001"
       }
     ],
     "low_value_source_item_ids": [
@@ -33,8 +32,7 @@
         "artifact_kind": "assistant_output",
         "role": "assistant",
         "container_ref": "chat:library-help",
-        "thread_ref": "chat:library-help:thread-lv-002",
-        "session_ref": "agent-session-lv-002"
+        "thread_ref": "chat:library-help:thread-lv-002"
       },
       {
         "source_type": "assistant_artifact",
@@ -44,8 +42,7 @@
         "artifact_kind": "assistant_output",
         "role": "assistant",
         "container_ref": "chat:library-help",
-        "thread_ref": "chat:library-help:thread-lv-002",
-        "session_ref": "agent-session-lv-002"
+        "thread_ref": "chat:library-help:thread-lv-002"
       }
     ],
     "low_value_source_item_ids": [
@@ -67,8 +64,7 @@
         "artifact_kind": "assistant_output",
         "role": "assistant",
         "container_ref": "chat:library-help",
-        "thread_ref": "chat:library-help:thread-lv-003",
-        "session_ref": "agent-session-lv-003"
+        "thread_ref": "chat:library-help:thread-lv-003"
       },
       {
         "source_type": "assistant_artifact",
@@ -78,8 +74,7 @@
         "artifact_kind": "assistant_output",
         "role": "assistant",
         "container_ref": "chat:library-help",
-        "thread_ref": "chat:library-help:thread-lv-003",
-        "session_ref": "agent-session-lv-003"
+        "thread_ref": "chat:library-help:thread-lv-003"
       },
       {
         "source_type": "assistant_artifact",
@@ -89,8 +84,7 @@
         "artifact_kind": "assistant_output",
         "role": "assistant",
         "container_ref": "chat:library-help",
-        "thread_ref": "chat:library-help:thread-lv-003",
-        "session_ref": "agent-session-lv-003"
+        "thread_ref": "chat:library-help:thread-lv-003"
       }
     ],
     "low_value_source_item_ids": [

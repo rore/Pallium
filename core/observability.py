@@ -4,19 +4,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from core.visibility import VisibilityContext
-
 
 OBSERVABILITY_METADATA_KEY = "observability_debug"
-
-
-def serialize_visibility_context(visibility_context: VisibilityContext | None) -> dict[str, object] | None:
-    if visibility_context is None:
-        return None
-    return {
-        "kind": visibility_context.kind,
-        "id": visibility_context.id,
-    }
 
 
 class IntegrationDebugLogger:
@@ -37,8 +26,6 @@ class IntegrationDebugLogger:
 def _json_default(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
-    if isinstance(value, VisibilityContext):
-        return serialize_visibility_context(value)
     if isinstance(value, tuple):
         return list(value)
     if isinstance(value, set):

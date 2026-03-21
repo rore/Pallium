@@ -106,13 +106,13 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         *,
         storage,
         container_ref: str | None,
-        visibility_context,
+        container_visibility: str,
     ) -> ProcessResult:
         return reconcile_process_result_against_active_constraints(
             result,
             storage=storage,
             container_ref=container_ref,
-            visibility_context=visibility_context,
+            container_visibility=container_visibility,
         )
 
     def route_query_results(
@@ -142,12 +142,10 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
     def supports_thread_aggregation(self, source_item: SourceItem) -> bool:
         if not source_item.thread_ref or not source_item.container_ref:
             return False
-        if source_item.visibility_context is None:
-            return False
         return _supports_thread_aggregation(source_item)
 
     def supports_consolidation(self, memory_object: MemoryObject) -> bool:
-        return memory_object.visibility_context is not None and memory_object.type in {'thread_summary', 'decision', 'investigation_outcome'}
+        return memory_object.type in {'thread_summary', 'decision', 'investigation_outcome'}
 
     def build_thread_summary(self, aggregate: ThreadAggregate, conclusions: list[MemoryObject]) -> ProcessResult:
         return build_thread_summary(

@@ -118,7 +118,6 @@ def build_write_enrichment_request(
             f"Record type: {memory_object.type}\n"
             f"Container ref: {memory_object.payload.get('container_ref') or 'null'}\n"
             f"Thread ref: {memory_object.payload.get('thread_ref') or 'null'}\n"
-            f"Session ref: {memory_object.payload.get('session_ref') or 'null'}\n"
             f"Canonical record context:\n{support_text or '- none'}"
         ),
         schema_description=WRITE_ENRICHMENT_SCHEMA_DESCRIPTION,

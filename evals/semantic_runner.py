@@ -200,7 +200,6 @@ def _build_tasks(*, records: list[dict[str, Any]], prompt_variants: list[str]) -
             role=payload.get("role"),
             container_ref=payload.get("container_ref"),
             thread_ref=payload.get("thread_ref"),
-            session_ref=payload.get("session_ref"),
             source_ref=payload.get("source_ref"),
             artifact_kind=payload.get("artifact_kind"),
         )

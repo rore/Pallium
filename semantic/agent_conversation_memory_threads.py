@@ -231,7 +231,6 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 "Use only explicit information from the provided content.\n\n"
                 f"Container ref: {aggregate.container_ref}\n"
                 f"Thread ref: {aggregate.thread_ref}\n"
-                f"Session ref: {aggregate.session_ref or 'null'}\n"
                 f"Latest occurred at: {aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else 'null'}\n"
                 f"Carried conclusions:\n{chr(10).join(conclusion_lines) if conclusion_lines else '- none'}\n\n"
                 f"Selected work artifacts:\n{_format_selected_work_artifacts(selected_work_artifacts)}\n\n"
@@ -272,14 +271,13 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
             payload={
                 "thread_ref": aggregate.thread_ref,
                 "container_ref": aggregate.container_ref,
-                "session_ref": aggregate.session_ref,
                 "summary": summary,
                 "conclusions": conclusion_payload,
                 "selected_work_artifacts": selected_work_artifacts,
                 "latest_occurred_at": aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else None,
                 "semantic_provenance": semantic_provenance,
             },
-            visibility_context=aggregate.visibility_context,
+            container_visibility=aggregate.container_visibility,
             freshness_at=aggregate.latest_occurred_at,
         )
         thread_summary_memory = replace(
@@ -288,7 +286,6 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 kind=_memory_kind_for_type(thread_summary_memory.type),
                 container_ref=aggregate.container_ref,
                 thread_ref=aggregate.thread_ref,
-                session_ref=aggregate.session_ref,
                 confidence=_memory_confidence_for_type(thread_summary_memory.type),
                 producer_kind="thread_aggregation",
                 producer_schema_id=THREAD_SUMMARY_PROMPT_SCHEMA_ID,
@@ -374,7 +371,6 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                     kind=_memory_kind_for_type(task_checkpoint_memory.type),
                     container_ref=aggregate.container_ref,
                     thread_ref=aggregate.thread_ref,
-                    session_ref=aggregate.session_ref,
                     confidence=_memory_confidence_for_type(task_checkpoint_memory.type),
                     producer_kind="thread_aggregation",
                     producer_schema_id=TASK_CHECKPOINT_PROMPT_SCHEMA_ID,
@@ -441,7 +437,6 @@ def build_task_checkpoint_memory(
                 "Use only explicit information from the provided summary, conclusions, and selected work artifacts.\n\n"
                 f"Container ref: {aggregate.container_ref}\n"
                 f"Thread ref: {aggregate.thread_ref}\n"
-                f"Session ref: {aggregate.session_ref or 'null'}\n"
                 f"Latest occurred at: {aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else 'null'}\n\n"
                 f"{checkpoint_material}"
             ),
@@ -483,7 +478,6 @@ def build_task_checkpoint_memory(
                 "latest_occurred_at": aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else None,
                 "container_ref": aggregate.container_ref,
                 "thread_ref": aggregate.thread_ref,
-                "session_ref": aggregate.session_ref,
                 "semantic_provenance": {
                     "semantic_plugin": plugin_name,
                     "prompt_variant": prompt_variant,
@@ -491,7 +485,7 @@ def build_task_checkpoint_memory(
                     "prompt_schema_version": TASK_CHECKPOINT_PROMPT_SCHEMA_VERSION,
                 },
             },
-            visibility_context=aggregate.visibility_context,
+            container_visibility=aggregate.container_visibility,
             freshness_at=aggregate.latest_occurred_at,
         )
         index_source = " ".join(
@@ -566,7 +560,6 @@ def build_pattern_memory(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 f"Strategy: {group.strategy_name}\n"
                 f"Container ref: {group.container_ref or 'null'}\n"
                 f"Thread ref: {group.thread_ref or 'null'}\n"
-                f"Session ref: {group.session_ref or 'null'}\n"
                 f"Latest occurred at: {group.latest_occurred_at.isoformat()}\n"
                 f"Carried conclusions:\n{_format_conclusions(conclusion_payload)}\n\n"
                 f"Lower-level memory:\n{group_material}"
@@ -605,12 +598,11 @@ def build_pattern_memory(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 "latest_occurred_at": group.latest_occurred_at.isoformat(),
                 "container_ref": group.container_ref,
                 "thread_ref": group.thread_ref,
-                "session_ref": group.session_ref,
                 "group_key": group.group_key,
                 "semantic_provenance": semantic_provenance,
                 "consolidation_provenance": consolidation_provenance,
             },
-            visibility_context=group.visibility_context,
+            container_visibility=group.container_visibility,
             freshness_at=group.latest_occurred_at,
         )
         memory_object = replace(
@@ -619,7 +611,6 @@ def build_pattern_memory(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 kind=_memory_kind_for_type(memory_object.type),
                 container_ref=group.container_ref,
                 thread_ref=group.thread_ref,
-                session_ref=group.session_ref,
                 confidence=_memory_confidence_for_type(memory_object.type),
                 producer_kind="consolidation",
                 producer_schema_id=PATTERN_MEMORY_PROMPT_SCHEMA_ID,
@@ -694,7 +685,6 @@ def build_continuity_memory(*, provider: LLMProvider, prompt_variant: str, plugi
                 f"Strategy: {group.strategy_name}\n"
                 f"Container ref: {group.container_ref or 'null'}\n"
                 f"Thread ref: {group.thread_ref or 'null'}\n"
-                f"Session ref: {group.session_ref or 'null'}\n"
                 f"Latest occurred at: {group.latest_occurred_at.isoformat()}\n"
                 f"Carried conclusions:\n{_format_conclusions(conclusion_payload)}\n\n"
                 f"Lower-level memory:\n{group_material}"
@@ -724,7 +714,6 @@ def build_continuity_memory(*, provider: LLMProvider, prompt_variant: str, plugi
                 "latest_occurred_at": group.latest_occurred_at.isoformat(),
                 "container_ref": group.container_ref,
                 "thread_ref": group.thread_ref,
-                "session_ref": group.session_ref,
                 "group_key": group.group_key,
                 "semantic_provenance": {
                     "semantic_plugin": plugin_name,
@@ -739,7 +728,7 @@ def build_continuity_memory(*, provider: LLMProvider, prompt_variant: str, plugi
                     "prompt_variant": prompt_variant,
                 },
             },
-            visibility_context=group.visibility_context,
+            container_visibility=group.container_visibility,
             freshness_at=group.latest_occurred_at,
         )
         memory_object = replace(
@@ -748,7 +737,6 @@ def build_continuity_memory(*, provider: LLMProvider, prompt_variant: str, plugi
                 kind=_memory_kind_for_type(memory_object.type),
                 container_ref=group.container_ref,
                 thread_ref=group.thread_ref,
-                session_ref=group.session_ref,
                 confidence=_memory_confidence_for_type(memory_object.type),
                 producer_kind="consolidation",
                 producer_schema_id=CONTINUITY_MEMORY_PROMPT_SCHEMA_ID,

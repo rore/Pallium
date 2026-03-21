@@ -18,7 +18,6 @@ from storage.base import ThreadProcessingScope
 from storage.sqlite import SQLiteStorageProvider
 from sqlalchemy.orm import Session
 from core.models import MemoryObject, Relation
-from core.visibility import VisibilityContext
 
 
 class AlwaysFailPlugin(SemanticPlugin):
@@ -51,7 +50,7 @@ class BlockingThreadAggregationPlugin(ThreadAggregationSemanticPlugin):
             schema_id='blocking_thread_lease.decision',
             schema_version='v1',
             payload={'decision': source_item.content, 'source_item_id': source_item.id},
-            visibility_context=source_item.visibility_context,
+            container_visibility=source_item.container_visibility,
         )
         return ProcessResult(
             annotations=[],
@@ -69,7 +68,7 @@ class BlockingThreadAggregationPlugin(ThreadAggregationSemanticPlugin):
         )
 
     def supports_thread_aggregation(self, source_item) -> bool:
-        return bool(source_item.container_ref and source_item.thread_ref and source_item.visibility_context is not None)
+        return bool(source_item.container_ref and source_item.thread_ref and source_item.container_visibility is not None)
 
     def build_thread_summary(self, aggregate, conclusions):
         with self._build_lock:
@@ -89,7 +88,7 @@ class BlockingThreadAggregationPlugin(ThreadAggregationSemanticPlugin):
                 'source_item_ids': list(aggregate.source_item_ids),
                 'summary': f'{len(aggregate.source_item_ids)} items in thread scope',
             },
-            visibility_context=aggregate.visibility_context,
+            container_visibility=aggregate.container_visibility,
         )
         task_checkpoint = MemoryObject(
             type='task_checkpoint',
@@ -108,7 +107,7 @@ class BlockingThreadAggregationPlugin(ThreadAggregationSemanticPlugin):
                 'evidence': list(aggregate.source_item_ids),
                 'freshness_signal': 'synthetic',
             },
-            visibility_context=aggregate.visibility_context,
+            container_visibility=aggregate.container_visibility,
         )
         relations = [
             Relation(
@@ -474,7 +473,7 @@ def test_thread_processing_lease_is_single_winner_and_expired_lease_is_reclaimab
         use_case='blocking_thread_lease',
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-same-scope',
-        visibility_context=VisibilityContext(kind='public', id=None),
+        container_visibility="public",
     )
     storage.create_source_item(source_item)
     scope = ThreadProcessingScope(
@@ -482,7 +481,7 @@ def test_thread_processing_lease_is_single_winner_and_expired_lease_is_reclaimab
         use_case='blocking_thread_lease',
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-same-scope',
-        visibility_context=VisibilityContext(kind='public', id=None),
+        container_visibility="public",
     )
     storage.commit_processed_source_item(
         source_item_id=source_item.id,
@@ -512,7 +511,7 @@ def test_two_workers_same_thread_leave_single_active_thread_memory_after_deferre
         plugins={'blocking_thread_lease': plugin},
         default_use_case='blocking_thread_lease',
     )
-    visibility = VisibilityContext(kind='public', id=None)
+    visibility = "public"
     first_ingest = service.ingest_item(
         source_type='assistant_artifact',
         source_id='same-thread-worker-1',
@@ -524,7 +523,7 @@ def test_two_workers_same_thread_leave_single_active_thread_memory_after_deferre
         role='assistant',
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-concurrency',
-        visibility_context=visibility,
+        container_visibility="public",
     )
     second_ingest = service.ingest_item(
         source_type='assistant_artifact',
@@ -537,7 +536,7 @@ def test_two_workers_same_thread_leave_single_active_thread_memory_after_deferre
         role='assistant',
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-concurrency',
-        visibility_context=visibility,
+        container_visibility="public",
     )
 
     storage = service._storage
@@ -635,7 +634,7 @@ def test_thread_rebuild_loop_exits_after_max_iterations(test_db_url: str) -> Non
         metadata=None,
         container_ref='chat:iteration-limit',
         thread_ref='chat:iteration-limit:thread-1',
-        visibility_context=VisibilityContext(kind='public'),
+        container_visibility="public",
         use_case='always_pending',
     )
     storage.create_source_item(source_item)

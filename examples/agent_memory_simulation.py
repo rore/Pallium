@@ -6,9 +6,8 @@ import urllib.request
 
 
 BASE_URL = "http://127.0.0.1:8000"
-VISIBILITY_CONTEXT = {"kind": "limited", "id": "library-help"}
+CONTAINER_VISIBILITY = "limited"
 THREAD_REF = "chat:library-help:1730000000.000100"
-SESSION_REF = "agent-session-1"
 
 SAMPLE_ITEMS = [
     {
@@ -21,10 +20,9 @@ SAMPLE_ITEMS = [
         "role": "user",
         "container_ref": "chat:library-help",
         "thread_ref": THREAD_REF,
-        "session_ref": SESSION_REF,
         "actor_ref": "chat:user-123",
         "source_ref": "https://example.test/chat/thread-001-msg-1",
-        "visibility_context": VISIBILITY_CONTEXT,
+        "container_visibility": CONTAINER_VISIBILITY,
     },
     {
         "source_type": "tool_summary",
@@ -36,10 +34,9 @@ SAMPLE_ITEMS = [
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": THREAD_REF,
-        "session_ref": SESSION_REF,
         "actor_ref": "agent:assistant",
         "source_ref": "https://example.test/chat/artifact-001",
-        "visibility_context": VISIBILITY_CONTEXT,
+        "container_visibility": CONTAINER_VISIBILITY,
     },
     {
         "source_type": "assistant_artifact",
@@ -51,10 +48,9 @@ SAMPLE_ITEMS = [
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": THREAD_REF,
-        "session_ref": SESSION_REF,
         "actor_ref": "agent:assistant",
         "source_ref": "https://example.test/chat/artifact-002",
-        "visibility_context": VISIBILITY_CONTEXT,
+        "container_visibility": CONTAINER_VISIBILITY,
     },
     {
         "source_type": "assistant_artifact",
@@ -66,10 +62,9 @@ SAMPLE_ITEMS = [
         "role": "assistant",
         "container_ref": "chat:library-help",
         "thread_ref": THREAD_REF,
-        "session_ref": SESSION_REF,
         "actor_ref": "agent:assistant",
         "source_ref": "https://example.test/chat/artifact-003",
-        "visibility_context": VISIBILITY_CONTEXT,
+        "container_visibility": CONTAINER_VISIBILITY,
     },
 ]
 
@@ -90,8 +85,7 @@ def _scoped_query_payload(text: str) -> dict:
         "text": text,
         "limit": 6,
         "thread_ref": THREAD_REF,
-        "session_ref": SESSION_REF,
-        "visibility_context": VISIBILITY_CONTEXT,
+        "container_visibility": CONTAINER_VISIBILITY,
     }
 
 

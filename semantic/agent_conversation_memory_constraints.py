@@ -1278,7 +1278,7 @@ def _list_active_constraint_state(
     storage,
     *,
     container_ref: str,
-    visibility_context,
+    container_visibility: str,
 ) -> dict[str, object]:
     typed_profiles: list[dict[str, object]] = []
     legacy_profiles: list[dict[str, object]] = []
@@ -1290,7 +1290,7 @@ def _list_active_constraint_state(
         payload_container_ref = str(payload.get("container_ref") or payload.get("scope_container_ref") or "")
         if payload_container_ref and payload_container_ref != container_ref:
             continue
-        if memory_object.visibility_context != visibility_context:
+        if memory_object.container_visibility != container_visibility:
             continue
         if memory_object.type == CONSTRAINT_MEMORY_TYPE:
             typed_profile = _typed_constraint_profile_from_payload(
@@ -1664,14 +1664,14 @@ def reconcile_process_result_against_active_constraints(
     *,
     storage,
     container_ref: str | None,
-    visibility_context,
+    container_visibility: str,
 ) -> ProcessResult:
-    if not container_ref or visibility_context is None or not result.memory_objects:
+    if not container_ref or not result.memory_objects:
         return result
     active_constraints = _list_active_constraint_state(
         storage,
         container_ref=container_ref,
-        visibility_context=visibility_context,
+        container_visibility=container_visibility,
     )
     if not active_constraints.get('has_any'):
         return result

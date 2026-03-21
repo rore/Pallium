@@ -91,12 +91,12 @@ decisions, visibility exclusions, and injection reasoning.
 
 ## Privacy Model
 
-Locality is not privacy. `container_ref` and `thread_ref` help correlate
-events, but `visibility_context` is the actual memory boundary.
+Locality is not privacy. `container_ref` identifies where an item belongs, and
+`container_visibility` controls who can see it across containers.
 
-- `public` — visible across the deployment
-- `limited` — visible within one bounded context (e.g. a private channel)
-- `user` — visible only to one user
+- `public` — visible to queries from any container
+- `limited` — visible only within the same container (e.g. a private channel)
+- `private` — visible only within the same container (e.g. a DM)
 
 Visibility is enforced before ranking. Derivation preserves scope by exact
 match — thread aggregation and consolidation never cross visibility

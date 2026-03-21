@@ -295,7 +295,7 @@ def _assemble_episode(
         "text": effective_query_text,
         "limit": int(spec.get("query_limit", manifest.get("default_query_limit", DEFAULT_QUERY_LIMIT))),
         "container_ref": target_conversation["container_ref"],
-        "visibility_context": {"kind": "public", "id": None},
+        "container_visibility": "public",
     }
     if spec["episode_type"] == "within_conversation_later_turn_recall":
         current_query["thread_ref"] = target_conversation["thread_ref"]
@@ -383,11 +383,10 @@ def _build_source_event(*, conversation: dict[str, Any], turn: dict[str, Any]) -
         "content_type": "text/plain",
         "content": turn["content"],
         "artifact_kind": artifact_kind,
-        "visibility_context": {"kind": "public", "id": None},
+        "container_visibility": "public",
         "role": role,
         "container_ref": conversation["container_ref"],
         "thread_ref": conversation["thread_ref"],
-        "session_ref": conversation["session_ref"],
         "actor_ref": f"public-corpus:{conversation['corpus_name']}:{role}",
         "source_ref": f"{conversation['corpus_name']}://{conversation['conversation_id']}/{turn['turn_index']}",
         "occurred_at": occurred_at.isoformat().replace("+00:00", "Z"),
@@ -445,7 +444,6 @@ def _normalize_wildchat_row(*, row: dict[str, Any], ordinal: int) -> dict[str, A
 
     container_ref = _build_wildchat_container_ref(user_key=user_key, conversation_id=conversation_id)
     thread_ref = f"public-corpus:wildchat:thread:{conversation_id}"
-    session_ref = f"public-corpus:wildchat:session:{conversation_id}"
 
     return {
         "corpus_name": WILDCHAT_CORPUS_NAME,
@@ -457,7 +455,6 @@ def _normalize_wildchat_row(*, row: dict[str, Any], ordinal: int) -> dict[str, A
         "turns": turns,
         "container_ref": container_ref,
         "thread_ref": thread_ref,
-        "session_ref": session_ref,
         "base_timestamp": base_timestamp,
         "sort_key": base_timestamp.isoformat(),
     }
@@ -495,7 +492,6 @@ def _normalize_wildbench_row(*, row: dict[str, Any], ordinal: int) -> dict[str, 
 
     container_ref = f"public-corpus:wildbench:session:{conversation_id}"
     thread_ref = f"public-corpus:wildbench:thread:{conversation_id}"
-    session_ref = f"public-corpus:wildbench:session:{conversation_id}"
 
     return {
         "corpus_name": WILDBENCH_CORPUS_NAME,
@@ -507,7 +503,6 @@ def _normalize_wildbench_row(*, row: dict[str, Any], ordinal: int) -> dict[str, 
         "turns": turns,
         "container_ref": container_ref,
         "thread_ref": thread_ref,
-        "session_ref": session_ref,
         "base_timestamp": base_timestamp,
         "sort_key": base_timestamp.isoformat(),
         "primary_tag": primary_tag,

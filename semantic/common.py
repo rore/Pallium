@@ -352,7 +352,7 @@ def build_process_result(
                     "source_id": source_item.source_id,
                     **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
                 },
-                visibility_context=source_item.visibility_context,
+                container_visibility=source_item.container_visibility,
             )
         )
         index_source = " ".join(
@@ -408,7 +408,7 @@ def build_process_result(
                     "source_id": source_item.source_id,
                     **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
                 },
-                visibility_context=source_item.visibility_context,
+                container_visibility=source_item.container_visibility,
             )
         )
         index_source = " ".join(
@@ -435,7 +435,7 @@ def build_process_result(
                     "source_id": source_item.source_id,
                     **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
                 },
-                visibility_context=source_item.visibility_context,
+                container_visibility=source_item.container_visibility,
             )
         )
         index_source = " ".join(

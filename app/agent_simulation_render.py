@@ -7,13 +7,11 @@ MAX_PREVIEW = 120
 
 
 def render_scope(defaults: dict[str, Any]) -> list[str]:
-    visibility = defaults.get("visibility_context") or {}
     runtime = defaults.get("runtime_context") or {}
     return [
         f"container_ref: {defaults.get('container_ref') or '-'}",
         f"thread_ref: {defaults.get('thread_ref') or '-'}",
-        f"session_ref: {defaults.get('session_ref') or '-'}",
-        f"visibility_context: {visibility.get('kind', '-')} / {visibility.get('id')}",
+        f"container_visibility: {defaults.get('container_visibility') or '-'}",
         f"turn_kind: {runtime.get('turn_kind') or '-'}",
         f"session_has_sufficient_local_context: {runtime.get('session_has_sufficient_local_context')}",
     ]

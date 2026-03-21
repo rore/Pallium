@@ -38,7 +38,6 @@ def test_load_wildchat_conversations_filters_to_safe_english_multi_turn_rows() -
     assert by_id['wc-review-003']['container_ref'] == by_id['wc-review-004']['container_ref']
     assert by_id['wc-review-004']['container_ref'] == by_id['wc-review-008']['container_ref']
     assert by_id['wc-review-008']['container_ref'] == by_id['wc-review-009']['container_ref']
-    assert by_id['wc-review-003']['session_ref'] != by_id['wc-review-004']['session_ref']
 
 
 

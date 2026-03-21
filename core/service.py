@@ -15,8 +15,8 @@ from capabilities.thread_aggregation import build_thread_aggregate
 from core.contracts import IngestResult, ItemProcessingResult, PackageQueryOutcome, ProcessResult, QueryResult, build_source_item, resolve_query_filters
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, VECTOR_INDEX_TYPE, build_index_entry
 from core.models import MemoryObject, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace, Relation, SourceItem, utc_now
-from core.observability import IntegrationDebugLogger, OBSERVABILITY_METADATA_KEY, serialize_visibility_context
-from core.visibility import QueryVisibilityTrace, VisibilityContext, expand_visibility_context, visibility_context_is_visible, visibility_context_matches_exact, visibility_context_label
+from core.observability import IntegrationDebugLogger, OBSERVABILITY_METADATA_KEY
+from core.visibility import QueryVisibilityTrace, is_visible, visibility_matches_exact, visibility_label
 from providers.embedding.base import EmbeddingProvider
 from providers.llm.base import LLMProviderError
 from retrieval.base import RetrievalProvider
@@ -215,13 +215,13 @@ class PalliumService:
         *,
         occurred_at=None,
         actor_ref: str | None = None,
+        agent_ref: str | None = None,
         role: str | None = None,
         container_ref: str | None = None,
         thread_ref: str | None = None,
-        session_ref: str | None = None,
         source_ref: str | None = None,
         artifact_kind: str | None = None,
-        visibility_context: VisibilityContext | None = None,
+        container_visibility: str = "private",
     ) -> IngestResult:
         existing_source_item = self._storage.find_source_item(source_type=source_type, source_id=source_id)
         if existing_source_item is not None:
@@ -231,7 +231,7 @@ class PalliumService:
         plugin = self._semantic_plugins[plugin_name]
         processing_status = "pending"
         processing_error = None
-        if plugin.requires_visibility_context and visibility_context is None:
+        if plugin.requires_visibility_context and container_ref is None:
             processing_status = "skipped"
             processing_error = "visibility_context_required"
 
@@ -243,13 +243,13 @@ class PalliumService:
             metadata=metadata,
             occurred_at=occurred_at,
             actor_ref=actor_ref,
+            agent_ref=agent_ref,
             role=role,
             container_ref=container_ref,
             thread_ref=thread_ref,
-            session_ref=session_ref,
             source_ref=source_ref,
             artifact_kind=artifact_kind,
-            visibility_context=visibility_context,
+            container_visibility=container_visibility,
             use_case=plugin_name,
             processing_status=processing_status,
             processing_error=processing_error,
@@ -460,7 +460,7 @@ class PalliumService:
             self._emit_processing_failure(source_item, worker_id=worker_label, failure_category=failure_category, error=error)
             return
 
-        if plugin.requires_visibility_context and source_item.visibility_context is None:
+        if plugin.requires_visibility_context and source_item.container_ref is None:
             failure_category = FAILURE_CATEGORY_MISSING_VISIBILITY
             error = "visibility_context_required"
             self._storage.fail_source_item_processing(
@@ -508,7 +508,7 @@ class PalliumService:
                     direct_result,
                     storage=self._storage,
                     container_ref=source_item.container_ref,
-                    visibility_context=source_item.visibility_context,
+                    container_visibility=source_item.container_visibility,
                 )
             thread_rebuild_scope = None
             if direct_result.thread_rebuild_requested:
@@ -670,8 +670,7 @@ class PalliumService:
         artifact_kind: str | None = None,
         container_ref: str | None = None,
         thread_ref: str | None = None,
-        session_ref: str | None = None,
-        visibility_context: VisibilityContext | None = None,
+        container_visibility: str | None = None,
         runtime_context: QueryRuntimeContext | None = None,
         include_trace: bool = False,
     ) -> QueryResult:
@@ -681,13 +680,12 @@ class PalliumService:
             artifact_kind=artifact_kind,
             container_ref=container_ref,
             thread_ref=thread_ref,
-            session_ref=session_ref,
             runtime_context=runtime_context,
         )
         requested_filters = filter_resolution.requested_filters
         effective_filters = filter_resolution.effective_filters
         plugin = self._semantic_plugins[self._default_use_case]
-        if plugin.requires_visibility_context and visibility_context is None:
+        if plugin.requires_visibility_context and container_ref is None:
             trace = None
             if include_trace:
                 trace = QueryTrace(
@@ -700,8 +698,8 @@ class PalliumService:
                     filter_scope_reason=filter_resolution.filter_scope_reason,
                     stages=tuple(),
                     visibility=QueryVisibilityTrace(
-                        query_visibility_context=None,
-                        expanded_visibility_contexts=tuple(),
+                        query_container_visibility=container_visibility,
+                        query_container_ref=container_ref,
                         fail_closed_reason="query_visibility_context_required",
                     ),
                 )
@@ -722,7 +720,8 @@ class PalliumService:
             text=text,
             limit=retrieval_limit,
             filters=effective_filters,
-            visibility_context=visibility_context if plugin.requires_visibility_context else None,
+            container_visibility=container_visibility if plugin.requires_visibility_context else None,
+            query_container_ref=container_ref if plugin.requires_visibility_context else None,
             include_trace=include_trace,
             require_visibility=plugin.requires_visibility_context,
         )
@@ -746,7 +745,8 @@ class PalliumService:
                 include_trace=include_trace,
                 debug_candidate_loader=self._make_debug_candidate_loader(
                     filters=effective_filters,
-                    visibility_context=visibility_context if plugin.requires_visibility_context else None,
+                    container_visibility=container_visibility if plugin.requires_visibility_context else None,
+                    query_container_ref=container_ref if plugin.requires_visibility_context else None,
                     require_visibility=plugin.requires_visibility_context,
                 ),
             )
@@ -777,19 +777,19 @@ class PalliumService:
         self,
         *,
         filters: QueryFilters | None,
-        visibility_context: VisibilityContext | None,
+        container_visibility: str | None,
+        query_container_ref: str | None,
         require_visibility: bool = False,
     ):
-        if require_visibility and visibility_context is None:
+        if require_visibility and query_container_ref is None:
             def load_candidates(*, memory_types: list[str] | None = None) -> list[QueryResultItem]:
                 return []
             return load_candidates
-        visible_contexts = expand_visibility_context(visibility_context) if visibility_context is not None else None
 
         def load_candidates(*, memory_types: list[str] | None = None) -> list[QueryResultItem]:
             results: list[QueryResultItem] = []
             for memory_object in self._storage.list_memory_objects(memory_types=memory_types, lifecycle="active"):
-                if not visibility_context_is_visible(memory_object.visibility_context, visible_contexts):
+                if require_visibility and not is_visible(memory_object.container_visibility, memory_object.payload.get("container_ref"), query_container_ref):
                     continue
                 evidence = self._storage.get_evidence_for_memory_object(memory_object.id)
                 if filters is not None and not any(self._evidence_matches_filters(item, filters) for item in evidence):
@@ -804,7 +804,7 @@ class PalliumService:
                         envelope=memory_object.envelope,
                         score=0,
                         evidence=evidence,
-                        visibility_context=memory_object.visibility_context,
+                        container_visibility=memory_object.container_visibility,
                     )
                 )
             return results
@@ -822,8 +822,6 @@ class PalliumService:
         if filters.container_ref is not None and evidence.container_ref != filters.container_ref:
             return False
         if filters.thread_ref is not None and evidence.thread_ref != filters.thread_ref:
-            return False
-        if filters.session_ref is not None and evidence.session_ref != filters.session_ref:
             return False
         return True
     def run_consolidation_pass(
@@ -946,14 +944,12 @@ class PalliumService:
             return None
         if not source_item.container_ref or not source_item.thread_ref:
             return None
-        visibility_context = source_item.visibility_context
         scope_key = json.dumps(
             {
                 "use_case": plugin_name,
                 "container_ref": source_item.container_ref,
                 "thread_ref": source_item.thread_ref,
-                "visibility_kind": visibility_context.kind if visibility_context is not None else None,
-                "visibility_id": visibility_context.id if visibility_context is not None else None,
+                "container_visibility": source_item.container_visibility,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -963,7 +959,7 @@ class PalliumService:
             use_case=plugin_name,
             container_ref=source_item.container_ref,
             thread_ref=source_item.thread_ref,
-            visibility_context=visibility_context,
+            container_visibility=source_item.container_visibility,
         )
 
     _MAX_THREAD_REBUILD_ITERATIONS = 5
@@ -1016,8 +1012,8 @@ class PalliumService:
                 self._observability.emit(
                     "thread_rebuild_outcome",
                     thread_ref=current_lease.thread_ref,
-                    visibility_scope=visibility_context_label(current_lease.visibility_context),
-                    visibility_context=serialize_visibility_context(current_lease.visibility_context),
+                    visibility_scope=visibility_label(current_lease.container_visibility),
+                    container_visibility=current_lease.container_visibility,
                     processing_status="failed",
                     failure_category=_classify_failure(exc, phase="thread_rebuild"),
                     error=self._truncate_processing_error(exc),
@@ -1073,7 +1069,7 @@ class PalliumService:
             thread_items = [
                 item
                 for item in thread_items
-                if visibility_context_matches_exact(item.visibility_context, thread_scope.visibility_context)
+                if visibility_matches_exact(item.container_visibility, thread_scope.container_visibility)
             ]
         if not thread_items:
             return None, {}, []
@@ -1088,7 +1084,7 @@ class PalliumService:
                 thread_result,
                 storage=self._storage,
                 container_ref=thread_scope.container_ref,
-                visibility_context=thread_scope.visibility_context,
+                container_visibility=thread_scope.container_visibility,
             )
         supersede_plan: dict[str, list[str]] = {}
         for memory_object in thread_result.memory_objects:
@@ -1172,7 +1168,7 @@ class PalliumService:
         ):
             if memory_object.schema_id != created_memory_object.schema_id:
                 continue
-            if not visibility_context_matches_exact(memory_object.visibility_context, created_memory_object.visibility_context):
+            if not visibility_matches_exact(memory_object.container_visibility, created_memory_object.container_visibility):
                 continue
             provenance = memory_object.payload.get("consolidation_provenance", {})
             if provenance.get("strategy_name") != group.strategy_name:
@@ -1250,8 +1246,8 @@ class PalliumService:
         self._observability.emit(
             "thread_rebuild_outcome",
             thread_ref=lease.thread_ref,
-            visibility_scope=visibility_context_label(lease.visibility_context),
-            visibility_context=serialize_visibility_context(lease.visibility_context),
+            visibility_scope=visibility_label(lease.container_visibility),
+            container_visibility=lease.container_visibility,
             input_item_count_considered=len(thread_items),
             created_or_updated_memory_kinds=created_memory_kinds,
             superseded_memory_ids=[superseded_id for superseded_id, _replacement_id in supersession_pairs],

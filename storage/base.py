@@ -6,7 +6,7 @@ from datetime import datetime
 
 from core.contracts import ProcessResult
 from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
-from core.visibility import VisibilityContext, VisibilityExclusion
+from core.visibility import VisibilityExclusion
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,7 @@ class ThreadProcessingScope:
     use_case: str
     container_ref: str
     thread_ref: str
-    visibility_context: VisibilityContext | None
+    container_visibility: str = "private"
 
 
 @dataclass(frozen=True)
@@ -45,11 +45,11 @@ class ThreadProcessingLease:
     use_case: str
     container_ref: str
     thread_ref: str
-    visibility_context: VisibilityContext | None
-    requested_at: datetime
-    processing_claimed_by: str
-    processing_claimed_at: datetime
-    processing_lease_expires_at: datetime
+    container_visibility: str = "private"
+    requested_at: datetime | None = None
+    processing_claimed_by: str | None = None
+    processing_claimed_at: datetime | None = None
+    processing_lease_expires_at: datetime | None = None
 
     def as_scope(self) -> ThreadProcessingScope:
         return ThreadProcessingScope(
@@ -57,7 +57,7 @@ class ThreadProcessingLease:
             use_case=self.use_case,
             container_ref=self.container_ref,
             thread_ref=self.thread_ref,
-            visibility_context=self.visibility_context,
+            container_visibility=self.container_visibility,
         )
 
 
@@ -94,10 +94,10 @@ class LeasedThreadScopeInfo:
     use_case: str
     container_ref: str
     thread_ref: str
-    visibility_context: VisibilityContext | None
-    processing_claimed_by: str | None
-    processing_claimed_at: datetime | None
-    processing_lease_expires_at: datetime | None
+    container_visibility: str = "private"
+    processing_claimed_by: str | None = None
+    processing_claimed_at: datetime | None = None
+    processing_lease_expires_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -419,7 +419,7 @@ class StorageProvider(ABC):
         limit: int,
         filters: QueryFilters | None = None,
         *,
-        visibility_contexts: tuple[VisibilityContext, ...] | None = None,
+        query_container_ref: str | None = None,
         include_visibility_trace: bool = False,
     ) -> IndexSearchResult:
         raise NotImplementedError
