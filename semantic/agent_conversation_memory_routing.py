@@ -2667,11 +2667,17 @@ def _select_recall_mode(candidate_evidence: dict[str, object]) -> str:
         return int(info.get("best_support_score", 0)) if isinstance(info, dict) else 0
 
     def _has_competing_layers(target_layers: set[str]) -> bool:
-        """True if any memory layer outside target_layers has meaningful support."""
+        """True if any memory layer outside target_layers has multiple candidates.
+
+        Uses candidate count rather than support score because
+        _policy_candidate_support_estimate() gives type-specific bonuses that
+        make decision/investigation inherently score higher than pattern/continuity,
+        which would suppress competing-layer detection for recall-oriented types.
+        """
         for layer, info in per_layer.items():
             if layer in target_layers or layer == "source_evidence":
                 continue
-            if isinstance(info, dict) and int(info.get("best_support_score", 0)) >= POLICY_SUPPORT_THRESHOLD:
+            if isinstance(info, dict) and int(info.get("count", 0)) >= 2:
                 return True
         return False
 
