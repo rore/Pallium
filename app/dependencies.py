@@ -56,6 +56,7 @@ def build_llm_provider(config: AppConfig, *, provider_name: str, model: str) -> 
             timeout_seconds=provider_config.timeout_seconds,
             retry_policy=provider_config.retry_policy,
             auth_style=provider_config.auth_style,
+            max_tokens=provider_config.max_tokens,
         )
 
     raise ValueError(f"Unsupported LLM provider kind: {provider_config.kind}")

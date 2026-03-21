@@ -38,6 +38,7 @@ class LLMProviderConfig:
     timeout_seconds: float = 30.0
     retry_policy: LLMRetryPolicy = field(default_factory=LLMRetryPolicy)
     auth_style: str = "native"  # "native" (provider default) or "bearer" (Authorization: Bearer)
+    max_tokens: int = 1024
 
 
 @dataclass(frozen=True)
@@ -450,6 +451,7 @@ def _provider_from_raw(name: str, raw_value: dict[str, Any], env_values: dict[st
             max_concurrency=int(raw_value.get("max_concurrency", 4)),
         ),
         auth_style=_as_string(raw_value.get("auth_style", "native")) or "native",
+        max_tokens=int(raw_value.get("max_tokens", 1024)),
     )
 
 

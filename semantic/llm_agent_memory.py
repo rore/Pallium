@@ -21,55 +21,6 @@ PROMPT_SCHEMA_ID = WRITE_EXTRACTION_PROMPT_ROLE.schema_id
 PROMPT_SCHEMA_VERSION = WRITE_EXTRACTION_PROMPT_ROLE.schema_version
 MODEL_ROLE = WRITE_EXTRACTION_PROMPT_ROLE.default_model_role
 PROMPT_VARIANTS: dict[str, str] = {
-    "baseline": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
-
-Use candidate_type as one of: decision, investigation_outcome, or null.""",
-    "strict_decision_v1": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
-
-Classify candidate_type as "decision" only when the source explicitly records a committed choice that has already been made.
-Classify candidate_type as "investigation_outcome" only when the source explicitly records an established finding, root cause, conclusion, or diagnostic outcome.
-Use null for hypotheses, preferences, proposals, observations, symptoms, risks, next steps, recommendations, or statements that something is needed.
-If the text discusses options without an explicit choice, candidate_type must be null.
-If the text reports symptoms without an explicit finding or conclusion, candidate_type must be null.
-When candidate_type is "decision", decision_text and decision_evidence_text must be populated and the investigation fields must be null.
-When candidate_type is "investigation_outcome", investigation_text and investigation_evidence_text must be populated and the decision fields must be null.
-If you cannot quote explicit evidence for the chosen candidate_type, candidate_type must be null.""",
-    "strict_decision_v2_source_aware": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
-
-Your task is conservative typed-memory extraction.
-A decision exists only when the source explicitly states that a concrete choice has already been made.
-An investigation_outcome exists only when the source explicitly states an established finding, root cause, conclusion, or diagnostic outcome.
-If those signals are absent, candidate_type should usually be null.
-
-Source-type guidance:
-- For `decision_note`, require explicit committed-choice wording rather than inferred intent.
-- For `investigation_summary`, `incident_note`, `tool_summary`, and `assistant_artifact`, allow investigation_outcome only when the finding is explicit and already established.
-- For `chat_message`, `meeting_summary`, `status_update`, and `notification`, default to null unless the text explicitly records a committed choice or an established finding.
-
-Do not convert findings into decisions.
-Do not convert recommendations, proposals, preferred options, symptoms, action items, or agreed needs into typed memory.
-When candidate_type is `decision`, decision_text must restate the chosen action only and decision_evidence_text must quote the phrase proving the choice was made.
-When candidate_type is `investigation_outcome`, investigation_text must restate the established finding only and investigation_evidence_text must quote the phrase proving the finding or conclusion.
-If no explicit proof phrase exists, candidate_type must be null.""",
-    "strict_decision_v3_checklist": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
-
-Before setting candidate_type, apply this checklist internally:
-1. Does the source explicitly record a committed choice or an established finding?
-2. Is the statement concrete rather than a proposal, preference, symptom, observation, or need?
-3. Can you quote the exact evidence phrase from the source?
-Only if all three answers are yes may candidate_type be non-null.
-
-Use candidate_type null for:
-- option comparisons
-- tentative language such as may, might, could, should, prefer, or seems
-- problem statements without a conclusion
-- recommendations or next steps
-- agreement that something is needed
-- summaries that imply a conclusion but do not explicitly record one
-
-When candidate_type is `decision`, fill only the decision fields.
-When candidate_type is `investigation_outcome`, fill only the investigation fields.
-If you are not certain the source contains explicit evidence, return candidate_type null.""",
     "strict_typed_memory_v4_evidence_guarded": """You extract reusable memory from technical communication. Return exactly one JSON object and no extra prose.
 
 Your task is conservative typed-memory extraction with evidence grounding.
@@ -108,23 +59,6 @@ Examples:
 - Input: "Catalog sync delay increased after the provider restart, and we should watch it closely tonight." -> candidate_type null; key_finding_text should usually be null because this is a status/monitoring note, not a durable conclusion.
 Set is_low_value_meta true only for clearly non-durable orchestration chatter such as no-op completion/status messages; otherwise false.
 If no explicit proof phrase exists, candidate_type must be null.""",
-    "strict_typed_memory_v5_compact_contract": """You extract reusable typed memory and explicit semantic signals from one technical source item. Return exactly one JSON object and no extra prose.
-
-Typed memory:
-- decision only for an explicit concrete choice already made.
-- investigation_outcome only for an explicit established finding, root cause, conclusion, diagnostic outcome, or analytical verdict.
-- otherwise candidate_type=null.
-- non-null candidate_type requires an exact quoted proof phrase in the matching evidence field.
-- never promote needs, proposals, preferences, recommendations, symptoms, risks, monitoring notes, or unresolved discussion into typed memory.
-- fill only decision_* fields for decision and only investigation_* fields for investigation_outcome.
-
-Optional signals:
-- populate is_low_value_meta, constraint_text, next_step_text, blocker_text, progress_text, key_finding_text, subject_hints, and constraint_candidates only when the source explicitly states them.
-- subject_hints may use only workstream|component|surface; otherwise return [].
-- constraint_candidates may use only use_surface|use_source|perform_step with prohibit|prefer|require; otherwise return [].
-- if is_low_value_meta is true, optional text fields must be null and list fields should be [].
-- next_step_text must be a future action. progress_text must be substantive resumption state. key_finding_text is only for durable conclusions or verdicts.
-- prefer null or [] over weak inference.""",
     "strict_typed_memory_v5_compact_examples": """You extract reusable typed memory and explicit semantic signals from one technical source item. Return exactly one JSON object and no extra prose.
 
 Only create typed memory when the source gives explicit proof.
@@ -144,6 +78,80 @@ Examples:
 - "We need to decide whether to change ordering." -> null.
 - "Task complete. No message needed. Nothing new to report." -> candidate_type null, is_low_value_meta true.
 - "Constraint: do not open a browser. Next step: compare the local repos." -> candidate_type null, constraint_text and next_step_text populated.""",
+    "strict_typed_memory_v7_claude_structured": """You extract reusable typed memory and work-state signals from one technical source item. Return exactly one JSON object and no extra prose.
+
+## Typed Memory Classification
+
+Only promote to typed memory when the source contains an explicit proof phrase:
+- decision: requires committed-choice language ("Decision:", "we decided", "we chose", "chosen approach", "we will use").
+- investigation_outcome: requires resolved-finding language ("Root cause:", "Investigation found", "Analysis found", "Findings:", "Outcome:", "We found that", "Verdict:", "Conclusion:", "Investigation concluded", "The conclusion is").
+- otherwise candidate_type = null.
+- A non-null type requires the exact proof phrase quoted in the matching evidence field.
+- Fill only decision fields for decision, only investigation fields for investigation_outcome.
+
+REJECT as null: needs, proposals, preferences, recommendations, symptoms, risks, monitoring notes, status updates, and unresolved discussion.
+
+## Work-State Signals
+
+Populate only when the source explicitly states them:
+- next_step_text: a concrete future action. Clarifying questions are NOT next steps.
+- blocker_text: active impediment or failed attempt.
+- progress_text: substantive completed or partial work for later resumption. Not boilerplate completion language.
+- key_finding_text: durable conclusion or verdict. Not monitoring chatter.
+- constraint_text: stated operational constraint.
+- is_low_value_meta: true only for non-durable orchestration chatter (no-op/completion messages). When true, all signal fields must be null/[].
+- subject_hints: explicit workstream|component|surface only. Return [] if not safely explicit.
+- constraint_candidates: only use_surface|use_source|perform_step with prohibit|prefer|require. Return [] if unsafe.
+
+Prefer null or [] over weak, speculative, or inferred values.
+
+## Examples
+- "Verdict: transaction-transformer had the most significant recent ledger changes." -> investigation_outcome, key_finding_text set.
+- "Task complete. No message needed." -> null, is_low_value_meta true, all signals null.
+- "I can lower concurrency or bump memory, but I need to confirm which worker first." -> null, all signals null (clarifying question, not actionable state).""",
+    "strict_typed_memory_v7_claude_minimal": """You extract typed memory and work-state signals from one technical source item. Return exactly one JSON object and no extra prose.
+
+Typed memory requires explicit proof phrases quoted in the evidence field:
+- decision: "Decision:", "we decided", "we chose", "chosen approach", "we will use".
+- investigation_outcome: "Root cause:", "Investigation found", "Analysis found", "We found that", "Verdict:", "Conclusion:", "Investigation concluded".
+- otherwise null.
+
+Fill only decision fields for decision, only investigation fields for investigation_outcome. Never promote needs, proposals, preferences, symptoms, or monitoring notes.
+
+Optional signals (only when explicitly stated): is_low_value_meta, constraint_text, next_step_text (concrete action, not clarifying question), blocker_text, progress_text (substantive work, not boilerplate), key_finding_text (durable conclusion only), subject_hints (workstream|component|surface, else []), constraint_candidates (use_surface|use_source|perform_step + prohibit|prefer|require, else []).
+
+If is_low_value_meta is true, all signals must be null/[]. Prefer null over weak inference.""",
+    "strict_typed_memory_v7_claude_clean": """You extract reusable knowledge and work-state signals from one technical source item. Return exactly one JSON object and no extra prose.
+
+## Knowledge Classification
+
+Only create a typed record when the source contains an explicit proof phrase:
+- decision: the source records a concrete choice already made, using language like "Decision:", "we decided", "we chose", "chosen approach", or "we will use".
+- investigation_outcome: the source records a resolved finding, root cause, or conclusion, using language like "Root cause:", "Investigation found", "Analysis found", "We found that", "Verdict:", "Conclusion:", or "Investigation concluded".
+- otherwise candidate_type = null.
+- A non-null type requires the exact proof phrase quoted in the matching evidence field.
+- Fill only decision fields for a decision, only investigation fields for a finding.
+
+Return null for: stated needs, open proposals, preferences, recommendations, symptoms, risks, monitoring notes, status updates, and unresolved discussion.
+
+## Work-State Signals
+
+Populate only when the source explicitly states them:
+- next_step_text: a concrete future action the author commits to. A question asking for clarification is NOT a next step.
+- blocker_text: an active impediment, failed attempt, or stop condition.
+- progress_text: substantive completed or partial work that helps someone resume later. Not boilerplate like "task complete."
+- key_finding_text: a durable conclusion or resolved sub-finding. Not a monitoring note or short-lived observation.
+- constraint_text: a stated operational constraint.
+- is_low_value_meta: true only for content with no durable information (e.g., "No message needed. Nothing new to report."). When true, all signal fields must be null/[].
+- subject_hints: list of topic tags with kind (workstream, component, or surface) and value. Return [] unless the source explicitly names one.
+- constraint_candidates: normalized constraint objects. Return [] unless all required fields can be filled safely.
+
+Prefer null or [] over guessed or weakly inferred values.
+
+## Examples
+- "Verdict: transaction-transformer had the most significant recent ledger changes." -> investigation_outcome with finding text and evidence.
+- "Task complete. No message needed." -> null, is_low_value_meta true.
+- "I can lower concurrency or bump memory, but I need to confirm which worker first." -> null, all signals null.""",
     "strict_typed_memory_v6_compact_work_state": """You extract reusable typed memory and explicit work-state signals from one technical source item. Return exactly one JSON object and no extra prose.
 
 Typed memory stays conservative:

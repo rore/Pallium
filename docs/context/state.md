@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-03-20
+2026-03-21
 
 ## Repo Snapshot
 
@@ -17,6 +17,8 @@
 - first implementation language: Python
 - architecture direction: single local-first service with clear module boundaries
 - first concrete product package: `agent_conversation_memory`
+- current LLM provider: Anthropic Claude via HAI proxy (Sonnet for extraction/aggregation/consolidation, Haiku for query resolver)
+- current extraction prompt: `strict_typed_memory_v4_evidence_guarded` (production), with `v7_claude_structured` available as a 57%-cheaper alternative at equal accuracy
 - normal local runtime goes through `python -m app.run ... --processors N`
 - debug queue health exists at `GET /debug/queue/health`
 - query/debug exposes retrieval trace plus package-owned routing and injection trace

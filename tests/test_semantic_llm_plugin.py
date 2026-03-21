@@ -568,10 +568,10 @@ def test_build_analysis_request_uses_requested_prompt_variant() -> None:
         role="user",
     )
 
-    request = build_analysis_request(source_item, prompt_variant="strict_decision_v1")
+    request = build_analysis_request(source_item, prompt_variant="strict_typed_memory_v7_claude_structured")
 
     assert request.prompt_role == WRITE_EXTRACTION_PROMPT_ROLE.role
-    assert request.prompt_variant == "strict_decision_v1"
+    assert request.prompt_variant == "strict_typed_memory_v7_claude_structured"
     assert request.prompt_schema_id == WRITE_EXTRACTION_PROMPT_ROLE.schema_id
     assert request.prompt_schema_version == WRITE_EXTRACTION_PROMPT_ROLE.schema_version
     assert request.model_role == WRITE_EXTRACTION_PROMPT_ROLE.default_model_role

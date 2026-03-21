@@ -217,3 +217,14 @@ Context reduction alone is not the same as better retrieval policy. Broad recurr
 
 Solution:
 Benchmark tiered memory in multiple modes: baseline, lower-level memory, and per-strategy higher-level memory. Score broad recurring questions separately from precise factual/evidence-heavy questions, and only count tiered memory as a win when it improves the intended question class without violating expected grouping shape.
+
+## 2026-03-21 - Claude Sonnet needs explicit evidence cue lists for typed-memory classification
+
+Problem:
+When switching from GPT-5-mini to Claude Sonnet, compact prompts (v5, v6) that omit explicit evidence cue phrases ("Decision:", "Root cause:", "Investigation found", etc.) suffer severe under-promotion — investigation_outcome FN rates of 4-5 out of 11. Zero false positives; the failure is purely conservative.
+
+Why:
+Claude follows "only promote when explicit proof exists" instructions more literally than GPT. Without the explicit cue list, Claude cannot determine what counts as "proof" and defaults to null. GPT inferred acceptable evidence phrases from context; Claude does not.
+
+Solution:
+Always include the explicit evidence cue lists (decision cues: "Decision:", "we decided", "we chose"; investigation cues: "Root cause:", "Investigation found", "Verdict:", etc.) in extraction prompts for Claude. The v7_claude_structured variant achieves v4's accuracy (36/37) at 57% fewer tokens (560 vs 1318) by combining cue lists with structured sections. Instruction density helps Claude more than minimalism.

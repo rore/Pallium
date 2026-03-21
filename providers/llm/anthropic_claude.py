@@ -22,6 +22,7 @@ class AnthropicClaudeLLMProvider(ResilientLLMProvider):
         retry_policy: LLMRetryPolicy | None = None,
         client: httpx.Client | None = None,
         auth_style: str = "native",
+        max_tokens: int = 512,
     ) -> None:
         super().__init__(
             provider_name=provider_name,
@@ -32,6 +33,7 @@ class AnthropicClaudeLLMProvider(ResilientLLMProvider):
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._auth_style = auth_style
+        self._max_tokens = max_tokens
         self._client = client or httpx.Client(timeout=timeout_seconds)
 
     def _perform_request(
@@ -50,7 +52,7 @@ class AnthropicClaudeLLMProvider(ResilientLLMProvider):
                     "content": f"{user_prompt}\n\nReturn exactly one JSON object matching this schema:\n{schema_description}",
                 }
             ],
-            "max_tokens": 512,
+            "max_tokens": self._max_tokens,
             "temperature": 0,
         }
         headers = {
