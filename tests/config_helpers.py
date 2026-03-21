@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.config import AppConfig, LLMProviderConfig, SemanticPackageConfig
 from capabilities.consolidation import ConsolidationPolicy, DEFAULT_CONSOLIDATION_STRATEGIES
+from storage.vector_index import VectorIndexConfig
 
 
 DEFAULT_LLM_PROMPT_VARIANT = "strict_typed_memory_v5_compact_examples"
@@ -65,4 +68,13 @@ def build_llm_test_config(
                 consolidation=DEFAULT_CONSOLIDATION_POLICY,
             ),
         },
+        vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(sqlite_url)),
     )
+
+
+def _vector_index_path_for_sqlite(sqlite_url: str) -> str:
+    prefix = "sqlite:///"
+    if not sqlite_url.startswith(prefix):
+        return VectorIndexConfig().index_path
+    db_path = Path(sqlite_url[len(prefix):])
+    return str(db_path.with_suffix(".vector.index"))

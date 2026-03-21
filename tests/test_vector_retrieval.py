@@ -67,7 +67,7 @@ def _make_memory_object(
         schema_version="1",
         payload={"summary_text": "test decision content"},
         lifecycle=lifecycle,
-        container_visibility="public" or _public(),
+        container_visibility=visibility or _public(),
     )
 
 
@@ -87,7 +87,7 @@ def _make_source_item(
         source_id=source_id,
         content_type="text/plain",
         content=content,
-        container_visibility="public" or _public(),
+        container_visibility=visibility or _public(),
         container_ref=container_ref,
         thread_ref=thread_ref,
         role=role,
@@ -105,7 +105,7 @@ def _make_evidence(
         source_item_id=source_item_id,
         source_type=source_type,
         source_id=source_id,
-        container_visibility="public" or _public(),
+        container_visibility=visibility or _public(),
         container_ref=container_ref,
     )
 

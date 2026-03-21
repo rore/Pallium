@@ -103,6 +103,24 @@ def test_create_empty_and_entry_count(mock_usearch, tmp_path: Path):
     assert idmap_path.exists()
 
 
+def test_load_empty_index_skips_native_load(mock_usearch, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from storage.vector_index import VectorIndex
+
+    index_path = tmp_path / "test.index"
+    VectorIndex.create_empty(index_path, dimensions=3, model_name="test-model")
+
+    def _unexpected_load(self, path: str) -> None:
+        raise AssertionError("empty vector index should not call native load")
+
+    monkeypatch.setattr(FakeIndex, "load", _unexpected_load)
+
+    loaded = VectorIndex.load(index_path)
+
+    assert loaded.entry_count() == 0
+    assert loaded.model_name == "test-model"
+    assert loaded.dimensions == 3
+
+
 def test_add_and_search(mock_usearch, tmp_path: Path):
     from storage.vector_index import VectorIndex
 

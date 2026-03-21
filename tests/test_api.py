@@ -1286,7 +1286,7 @@ def test_query_debug_batch_digest_pollution_replay_uses_structured_carry_forward
             "text": "can you remind me what we had latest about batch digests?",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread"]["sessions"]["same_thread"],
+            "thread_ref": scenario["threads"]["same_thread"],
             "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
@@ -1485,7 +1485,7 @@ def test_query_debug_short_noun_isolation_replay_routes_correctly(monkeypatch, t
             "text": "remind me what we had about the batch digests lately",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_x"]["sessions"]["same_thread_x"],
+            "thread_ref": scenario["threads"]["same_thread_x"],
             "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
@@ -1516,7 +1516,7 @@ def test_query_debug_short_noun_isolation_replay_routes_correctly(monkeypatch, t
             "text": "no, remember that we cannot use control-panel sign-in here so there is no point trying to connect that way",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_x"]["sessions"]["same_thread_x"],
+            "thread_ref": scenario["threads"]["same_thread_x"],
             "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
@@ -1545,7 +1545,7 @@ def test_query_debug_short_noun_isolation_replay_routes_correctly(monkeypatch, t
             "text": "what is the latest we have in reserve snapshot?",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_y"]["sessions"]["same_thread_y"],
+            "thread_ref": scenario["threads"]["same_thread_y"],
             "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
@@ -1591,7 +1591,7 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
             "text": "remind me what we had about the batch digests lately",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_x"]["sessions"]["same_thread_x"],
+            "thread_ref": scenario["threads"]["same_thread_x"],
             "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
@@ -1602,7 +1602,7 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
             "text": "no, remember that we cannot use control-panel sign-in here so there is no point trying to connect that way",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_x"]["sessions"]["same_thread_x"],
+            "thread_ref": scenario["threads"]["same_thread_x"],
             "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
@@ -1613,7 +1613,7 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
             "text": "what is the latest we have in reserve snapshot?",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_y"]["sessions"]["same_thread_y"],
+            "thread_ref": scenario["threads"]["same_thread_y"],
             "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",

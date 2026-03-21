@@ -75,7 +75,7 @@ def test_session_store_roundtrip_preserves_metadata_and_events(tmp_path) -> None
         defaults=ScopeDefaults(
             container_ref="container-1",
             thread_ref="thread-1",
-            container_visibility="limited",
+            container_visibility={"kind": "limited", "id": "scope-1"},
             runtime_context={"turn_kind": "new_thread", "session_has_sufficient_local_context": False},
             runtime_context_overrides={"turn_kind": True},
         ),

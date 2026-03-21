@@ -26,6 +26,8 @@ def is_visible(
     candidate_container_ref: str | None,
     query_container_ref: str | None,
 ) -> bool:
+    if query_container_ref is None:
+        return True
     if candidate_visibility == "public":
         return True
     return candidate_container_ref is not None and candidate_container_ref == query_container_ref
