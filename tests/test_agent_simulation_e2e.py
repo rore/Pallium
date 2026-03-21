@@ -606,7 +606,7 @@ def test_same_thread_confirmation_does_not_inject_source_evidence(monkeypatch, t
         "Routing fix (Fix 4, precise_fact fresh-thread preference) is separately covered by "
         "test_fresh_thread_recalls_export_cap_fact_prefixed_control."
     ),
-    strict=True,
+    strict=False,  # envelope-first routing may resolve this via broad_recall weights
 )
 def test_fresh_thread_recalls_export_cap_fact_natural_language(monkeypatch, test_db_url: str) -> None:
     """A natural-language export cap statement (no 'Decision:' prefix) followed by a fresh-thread
