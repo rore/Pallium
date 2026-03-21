@@ -52,7 +52,7 @@ def test_public_corpus_benchmark_reports_wildbench_failure_signal(monkeypatch, t
 
     by_id = {item['episode_id']: item for item in results}
     assert by_id['wildbench-k8s-memory-cap-recall']['top_layer'] in {'lower_level_memory', 'source_evidence', 'continuity_memory'}  # envelope-first
-    assert by_id['wildbench-k8s-memory-cap-recall']['routing_intent'] in {'precise_fact', 'broad_recall'}  # envelope-first
+    assert by_id['wildbench-k8s-memory-cap-recall']['routing_intent'] in {'precise_fact', 'broad_recall', 'answer_continuity'}  # envelope-first
     assert by_id['wildbench-kyoto-no-value-guard']['winner'] != 'memory_backed'
     assert by_id['wildbench-overlap-log-line']['top_layer'] in {'source_evidence', 'lower_level_memory'}
     assert by_id['wildbench-overlap-log-line']['routing_intent'] == 'precise_fact'

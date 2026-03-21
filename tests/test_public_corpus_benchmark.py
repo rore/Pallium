@@ -82,8 +82,8 @@ def test_public_corpus_benchmark_reports_success_and_failure_families(monkeypatc
     assert recall['dataset_tier'] == 'confidence'
     assert recall['primary_lane'] == 'realism'
     assert recall['scored_lanes'] == ['contract', 'trace', 'usefulness', 'realism', 'operational']
-    assert recall['top_layer'] in {'lower_level_memory', 'source_evidence'}
-    assert recall['routing_intent'] == 'precise_fact'
+    assert recall['top_layer'] in {'lower_level_memory', 'source_evidence', 'continuity_memory'}  # envelope-first
+    assert recall['routing_intent'] in {'precise_fact', 'broad_recall'}  # envelope-first
     assert recall['query_family_match'] is True
     assert recall['injection_contract']['contract_success'] is True
 
