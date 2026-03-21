@@ -161,23 +161,12 @@ The problem is: these signals are consulted AFTER intent selects the weights. In
 
 ---
 
-## Fix Direction: Three Horizons
+## Fix Direction
 
-### Horizon 1: Safety Patch (NOW — the approved plan)
+The next feature is `add-structural-query-lane-narrowing-before-intent-tiebreak` (see `roadmap/board.md`). It addresses the root cause directly: **demote intent from "switchboard" to "hint"** by using structural signals to narrow eligible lanes BEFORE intent/weight-based scoring runs.
 
-**Goal**: Reduce harmful wrong injections immediately without deepening commitment to phrase-based routing.
+### The architectural change
 
-Two mechanisms:
-1. **Intent confidence flag** — detect when intent was a guess (synthetic prefix cue only, no real cue match). When low-confidence: require `support_grade="strong"` for injection, or a healthy candidate margin. Otherwise abstain.
-2. **Candidate margin gate** — when top-1 barely beats top-2 from a different layer, abstain. Converts uncertain injections from WRONG_MEMORY (harmful) to MISSING_MEMORY (safe).
-
-**Expected outcome**: wrong_memory_rate drops from 0.55 to <0.20 on paraphrased queries. missing_memory_rate may increase (accepted — safe failure mode).
-
-### Horizon 2: Structural Lane Narrowing (NEXT FEATURE — on roadmap)
-
-**Goal**: Demote intent from "switchboard" to "hint" by using structural signals to narrow eligible lanes BEFORE intent/weight-based scoring runs.
-
-Proposed flow:
 ```
 BEFORE (current):
   RETRIEVAL → INTENT(phrases) → SCORING(intent-selected weights) → LAYER → INJECT
@@ -186,18 +175,45 @@ AFTER:
   RETRIEVAL → LANE ELIGIBILITY(structure) → SCORING(lane-aware weights) → INTENT(hint) → INJECT
 ```
 
-Lane eligibility uses existing structural signals:
-- If `turn_kind="new_thread"` + recent `task_checkpoint` exists → work_resumption lane eligible
-- If `decision` memory retrieved → factual recall lane eligible
-- If `pattern_memory` retrieved → broad recall lane eligible
-- If only `source_evidence` → evidence trace lane
-- If no strong candidates → abstain lane
+### Why this is the right fix
 
-If only ONE lane is eligible, intent doesn't matter — that lane wins. If multiple lanes are eligible, intent acts as a tiebreaker (hint), not as the primary selector.
+1. **Phrase expansion is a dead end.** Every time we fix 6 cue phrases, users find 6 more that fail. The external research confirms: no production system uses phrase-based intent as the control plane.
 
-### Horizon 3: Entity-Anchored Routing (LATER)
+2. **Confidence gating alone is insufficient.** It converts wrong→missing (good for safety) but doesn't improve correct routing. The system still can't tell which lane is right — it just abstains more.
 
-Add explicit entity/subject extraction at write time. Route queries by entity match first, then by memory type. This is the pattern Zep/Graphiti use — but requires significant write-path changes.
+3. **Structure narrows the problem.** If structural signals determine that only ONE lane is eligible, intent doesn't matter — that lane wins. If multiple lanes are eligible, intent acts as a tiebreaker (hint), not the primary selector.
+
+### Lane eligibility uses existing structural signals
+
+Pallium already has the signals — they're just consulted too late:
+
+- **Turn context**: `turn_kind="new_thread"` + recent `task_checkpoint` → work_resumption lane eligible
+- **Retrieved memory types**: if `decision` memory retrieved → factual recall lane eligible; if `pattern_memory` → broad recall lane eligible
+- **Same-thread suppression**: if `session_has_sufficient_local_context=True` → suppress most injection
+- **Evidence shape**: decisions have rich evidence (high evidence_shape_score), summaries are compact (lower score) — different lanes should have different support thresholds
+- **Constraint separation**: constraint_memory already has its own routing path — this pattern extends to other lanes
+
+### What the feature should include
+
+1. **Intent confidence detection** — when classification relied on prefix fallback (`"wh*"` synthetic cue) rather than a real cue match, flag it as low-confidence
+2. **Candidate margin gating** — when top-1 barely beats top-2 from a different layer, prefer abstention over uncertain injection
+3. **Lane eligibility check** — use retrieved memory types + context signals to determine which lanes are plausible BEFORE weighting
+4. **Instrumentation** — trace must show eligible lanes, excluded lanes, intent confidence, candidate margin, and suppression reasons
+
+### What the feature should NOT include
+
+- Broad cue list expansion (dead end — patches symptoms, entrenches the wrong architecture)
+- Support threshold tuning without structural narrowing (entrenches the wrong architecture)
+- Removal of intent entirely (intent still affects packaging — work resumption blocks are different from broad recall blocks)
+
+### Success criteria
+
+- wrong_memory_rate drops from 0.55 to <0.15 on paraphrased queries
+- wrong_memory_rate drops from current levels on LongMemEval scenarios
+- missing_memory_rate may increase (accepted — safe failure mode)
+- intent_matches on baseline (original clean) scenarios must hold at 100%
+- false_merge must remain 0
+- instrumentation shows lane narrowing decisions in trace
 
 ---
 
