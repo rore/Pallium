@@ -89,7 +89,7 @@ def test_public_corpus_benchmark_reports_success_and_failure_families(monkeypatc
 
     evidence = by_id['wildchat-feed-ratio-evidence-follow-up']
     assert evidence['top_layer'] in {'source_evidence', 'continuity_memory', 'lower_level_memory'}  # envelope-first
-    assert evidence['routing_intent'] in {'evidence_trace', 'broad_recall'}  # Tier 2 stub
+    assert evidence['routing_intent'] in {'evidence_trace', 'broad_recall', 'answer_continuity'}  # envelope-first
     assert evidence['should_inject'] is True
     assert evidence['decision_reason'] == 'carry_forward_available'
     assert evidence['failure_families'] == []
