@@ -573,8 +573,6 @@ def route_query_results(
             final_intent_used = False
         else:
             # Residual fallthrough — envelope-driven routing + recall mode from candidate evidence
-            recall_mode = _select_recall_mode(candidate_evidence)
-            # Map envelope to policy family for trace compatibility
             envelope_policy = _policy_family_from_signal_envelope(signal_envelope)
             if envelope_policy == "noise":
                 # Shouldn't reach here (caught above), but safety
@@ -601,23 +599,40 @@ def route_query_results(
                     injectable_blocks=[],
                     sharp_candidate_diagnostics=[],
                 )
-            # Use recall mode weights — wrap in intent key for _score_routed_candidate compatibility
-            _mode_weights = RECALL_MODE_WEIGHTS.get(recall_mode, ROUTING_LAYER_WEIGHTS["broad_recall"])
-            _layer_weights = {intent: _mode_weights for intent in ROUTING_LAYER_WEIGHTS}
-            # Map recall mode to a compatible intent for downstream scoring/shaping
-            # This keeps the existing scoring/shaping code working while we migrate
-            _mode_intent_map = {
-                "default": "broad_recall",
-                "continuity_preference": "answer_continuity",
-                "sharp_fact_preference": "precise_fact",
-                "investigation_preference": "investigative_conclusion",
-            }
-            intent = _mode_intent_map.get(recall_mode, "broad_recall")
-            policy_ctx = PolicySelectedContext(
-                query_policy_family=envelope_policy,
-                allowed_query_intents=frozenset({intent}),
-            )
-            final_intent_used = signal_envelope.legacy_english_fallback_used
+            # Hard routes from envelope that didn't go through lane narrowing bypass
+            if envelope_policy == "resume_work":
+                intent = "work_resumption"
+                recall_mode = "default"
+                policy_ctx = PolicySelectedContext(
+                    query_policy_family="resume_work",
+                    allowed_query_intents=frozenset({"work_resumption"}),
+                )
+                final_intent_used = signal_envelope.legacy_english_fallback_used
+            elif envelope_policy == "check_constraints":
+                intent = "broad_recall"
+                recall_mode = "default"
+                policy_ctx = PolicySelectedContext(
+                    query_policy_family="check_constraints",
+                    allowed_query_intents=QUERY_POLICY_FAMILY_ALLOWED_INTENTS.get("check_constraints", frozenset({"broad_recall"})),
+                )
+                final_intent_used = signal_envelope.legacy_english_fallback_used
+            else:
+                # Pure recall — use recall mode from candidate evidence
+                recall_mode = _select_recall_mode(candidate_evidence)
+                _mode_weights = RECALL_MODE_WEIGHTS.get(recall_mode, ROUTING_LAYER_WEIGHTS["broad_recall"])
+                _layer_weights = {intent_name: _mode_weights for intent_name in ROUTING_LAYER_WEIGHTS}
+                _mode_intent_map = {
+                    "default": "broad_recall",
+                    "continuity_preference": "answer_continuity",
+                    "sharp_fact_preference": "precise_fact",
+                    "investigation_preference": "investigative_conclusion",
+                }
+                intent = _mode_intent_map.get(recall_mode, "broad_recall")
+                policy_ctx = PolicySelectedContext(
+                    query_policy_family=envelope_policy,
+                    allowed_query_intents=frozenset({intent}),
+                )
+                final_intent_used = signal_envelope.legacy_english_fallback_used
         # Post-routing: run _infer_query_intent() for shaping compatibility
         family_inference = _infer_query_intent(
             text=text,
