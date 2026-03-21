@@ -1,10 +1,8 @@
 [
   {
+    "scenario_id": "longmemeval-gpt4-2655b836",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Temporal Ordering pressure: 'What was the first issue I had with my new car after its first service?'",
-    "pressure_family": "temporal_ordering",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "gpt4_2655b836",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -415,32 +413,27 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "gps",
       "not functioning"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-gpt4-2655b836",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "temporal_ordering",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "What was the first issue I had with my new car after its first service?"
   },
   {
+    "scenario_id": "longmemeval-gpt4-2487a7cb",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Temporal Ordering pressure: 'Which event did I attend first, the 'Effective Time Management' workshop or the '",
-    "pressure_family": "temporal_ordering",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "gpt4_2487a7cb",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -719,33 +712,28 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "data analysis",
       "python",
       "webinar"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-gpt4-2487a7cb",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "temporal_ordering",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "Which event did I attend first, the 'Effective Time Management' workshop or the 'Data Analysis using Python' webinar?"
   },
   {
+    "scenario_id": "longmemeval-gpt4-76048e76",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Temporal Ordering pressure: 'Which vehicle did I take care of first in February, the bike or the car?'",
-    "pressure_family": "temporal_ordering",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "gpt4_76048e76",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -1024,31 +1012,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "bike"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-gpt4-76048e76",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "temporal_ordering",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "Which vehicle did I take care of first in February, the bike or the car?"
   },
   {
+    "scenario_id": "longmemeval-gpt4-2312f94c",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Temporal Ordering pressure: 'Which device did I got first, the Samsung Galaxy S22 or the Dell XPS 13?'",
-    "pressure_family": "temporal_ordering",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "gpt4_2312f94c",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -1327,31 +1310,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "samsung galaxy s22"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-gpt4-2312f94c",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "temporal_ordering",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "Which device did I got first, the Samsung Galaxy S22 or the Dell XPS 13?"
   },
   {
+    "scenario_id": "longmemeval-gpt4-385a5000",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Temporal Ordering pressure: 'Which seeds were started first, the tomatoes or the marigolds?'",
-    "pressure_family": "temporal_ordering",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "gpt4_385a5000",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -1575,31 +1553,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "tomatoes"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-gpt4-385a5000",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "temporal_ordering",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "Which seeds were started first, the tomatoes or the marigolds?"
   },
   {
+    "scenario_id": "longmemeval-0bb5a684",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Temporal Ordering pressure: 'How many days before the team meeting I was preparing for did I attend the works'",
-    "pressure_family": "temporal_ordering",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "0bb5a684",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -1878,31 +1851,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "7 days"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-0bb5a684",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "temporal_ordering",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "How many days before the team meeting I was preparing for did I attend the workshop on 'Effective Communication in the Workplace'?"
   },
   {
+    "scenario_id": "longmemeval-2c63a862",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Temporal Ordering pressure: 'How many days did it take for me to find a house I loved after starting to work '",
-    "pressure_family": "temporal_ordering",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "2c63a862",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -2181,31 +2149,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "14 days"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-2c63a862",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "temporal_ordering",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "How many days did it take for me to find a house I loved after starting to work with Rachel?"
   },
   {
+    "scenario_id": "longmemeval-08f4fc43",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Temporal Ordering pressure: 'How many days had passed between the Sunday mass at St. Mary's Church and the As'",
-    "pressure_family": "temporal_ordering",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "08f4fc43",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -2462,31 +2425,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "30 days"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-08f4fc43",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "temporal_ordering",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "How many days had passed between the Sunday mass at St. Mary's Church and the Ash Wednesday service at the cathedral?"
   },
   {
+    "scenario_id": "longmemeval-gpt4-0b2f1d21",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Temporal Ordering pressure: 'Which event happened first, the purchase of the coffee maker or the malfunction '",
-    "pressure_family": "temporal_ordering",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "gpt4_0b2f1d21",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -2765,32 +2723,27 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "stand mixer",
       "malfunction"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-gpt4-0b2f1d21",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "temporal_ordering",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "Which event happened first, the purchase of the coffee maker or the malfunction of the stand mixer?"
   },
   {
+    "scenario_id": "longmemeval-gpt4-2d58bcd6",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Temporal Ordering pressure: 'Which book did I finish reading first, 'The Hate U Give' or 'The Nightingale'?'",
-    "pressure_family": "temporal_ordering",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "gpt4_2d58bcd6",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -3069,31 +3022,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "the hate u give"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-gpt4-2d58bcd6",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "temporal_ordering",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "Which book did I finish reading first, 'The Hate U Give' or 'The Nightingale'?"
   },
   {
+    "scenario_id": "longmemeval-gpt4-8c8961ae",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Temporal Ordering pressure: 'Which trip did I take first, the one to Europe with family or the solo trip to T'",
-    "pressure_family": "temporal_ordering",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "gpt4_8c8961ae",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -3372,32 +3320,27 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "solo trip",
       "thailand"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-gpt4-8c8961ae",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "temporal_ordering",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "Which trip did I take first, the one to Europe with family or the solo trip to Thailand?"
   },
   {
+    "scenario_id": "longmemeval-gpt4-70e84552-abs",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Abstention: the chat history does not contain information to answer 'Which task did I complete first, fixing the fence or purchasing three cows from '. Pallium should not inject misleading memory.",
-    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "gpt4_70e84552_abs",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -3676,26 +3619,24 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": false,
-    "expected_primary_layer": null,
-    "acceptable_layers": [],
-    "expected_memory_types": [],
-    "required_signals": [],
-    "forbidden_signals": [],
-    "expected_failure_target": "unsupported_memory_overreach",
-    "episode_id": "longmemeval-gpt4-70e84552-abs",
-    "expected_should_inject": false,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "current_thread_context": [],
+    "expected_value": false,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": null,
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [],
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "Which task did I complete first, fixing the fence or purchasing three cows from Peter?"
   },
   {
+    "scenario_id": "longmemeval-982b5123-abs",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Abstention: the chat history does not contain information to answer 'When did I book the Airbnb in Sacramento?'. Pallium should not inject misleading memory.",
-    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "982b5123_abs",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -3974,26 +3915,24 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": false,
-    "expected_primary_layer": null,
-    "acceptable_layers": [],
-    "expected_memory_types": [],
-    "required_signals": [],
-    "forbidden_signals": [],
-    "expected_failure_target": "unsupported_memory_overreach",
-    "episode_id": "longmemeval-982b5123-abs",
-    "expected_should_inject": false,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "current_thread_context": [],
+    "expected_value": false,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": null,
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [],
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "When did I book the Airbnb in Sacramento?"
   },
   {
+    "scenario_id": "longmemeval-gpt4-c27434e8-abs",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Abstention: the chat history does not contain information to answer 'Which project did I start first, the Ferrari model or the Porsche 991 Turbo S mo'. Pallium should not inject misleading memory.",
-    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "gpt4_c27434e8_abs",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -4250,26 +4189,24 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": false,
-    "expected_primary_layer": null,
-    "acceptable_layers": [],
-    "expected_memory_types": [],
-    "required_signals": [],
-    "forbidden_signals": [],
-    "expected_failure_target": "unsupported_memory_overreach",
-    "episode_id": "longmemeval-gpt4-c27434e8-abs",
-    "expected_should_inject": false,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "current_thread_context": [],
+    "expected_value": false,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": null,
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [],
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "Which project did I start first, the Ferrari model or the Porsche 991 Turbo S model?"
   },
   {
+    "scenario_id": "longmemeval-0a995998",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Cross Session Carry Forward pressure: 'How many items of clothing do I need to pick up or return from a store?'",
-    "pressure_family": "cross_session_carry_forward",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "0a995998",
-    "source_question_type": "multi-session",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -4658,31 +4595,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "3"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-0a995998",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "cross_session_carry_forward",
+    "source_question_type": "multi-session",
+    "target_question": "How many items of clothing do I need to pick up or return from a store?"
   },
   {
+    "scenario_id": "longmemeval-b5ef892d",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Cross Session Carry Forward pressure: 'How many days did I spend on camping trips in the United States this year?'",
-    "pressure_family": "cross_session_carry_forward",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "b5ef892d",
-    "source_question_type": "multi-session",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -5093,31 +5025,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "8 days"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-b5ef892d",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "cross_session_carry_forward",
+    "source_question_type": "multi-session",
+    "target_question": "How many days did I spend on camping trips in the United States this year?"
   },
   {
+    "scenario_id": "longmemeval-e831120c",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Cross Session Carry Forward pressure: 'How many weeks did it take me to watch all the Marvel Cinematic Universe movies '",
-    "pressure_family": "cross_session_carry_forward",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "e831120c",
-    "source_question_type": "multi-session",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -5396,31 +5323,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "3.5 weeks"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-e831120c",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "cross_session_carry_forward",
+    "source_question_type": "multi-session",
+    "target_question": "How many weeks did it take me to watch all the Marvel Cinematic Universe movies and the main Star Wars films?"
   },
   {
+    "scenario_id": "longmemeval-3a704032",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Cross Session Carry Forward pressure: 'How many plants did I acquire in the last month?'",
-    "pressure_family": "cross_session_carry_forward",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "3a704032",
-    "source_question_type": "multi-session",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -5831,31 +5753,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "3"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-3a704032",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "cross_session_carry_forward",
+    "source_question_type": "multi-session",
+    "target_question": "How many plants did I acquire in the last month?"
   },
   {
+    "scenario_id": "longmemeval-6d550036",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Cross Session Carry Forward pressure: 'How many projects have I led or am currently leading?'",
-    "pressure_family": "cross_session_carry_forward",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "6d550036",
-    "source_question_type": "multi-session",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -6354,31 +6271,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "2"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-6d550036",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "cross_session_carry_forward",
+    "source_question_type": "multi-session",
+    "target_question": "How many projects have I led or am currently leading?"
   },
   {
+    "scenario_id": "longmemeval-gpt4-59c863d7",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Cross Session Carry Forward pressure: 'How many model kits have I worked on or bought?'",
-    "pressure_family": "cross_session_carry_forward",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "gpt4_59c863d7",
-    "source_question_type": "multi-session",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -6899,32 +6811,27 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "five",
       "model kits"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-gpt4-59c863d7",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "cross_session_carry_forward",
+    "source_question_type": "multi-session",
+    "target_question": "How many model kits have I worked on or bought?"
   },
   {
+    "scenario_id": "longmemeval-gpt4-d84a3211",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Cross Session Carry Forward pressure: 'How much total money have I spent on bike-related expenses since the start of th'",
-    "pressure_family": "cross_session_carry_forward",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "gpt4_d84a3211",
-    "source_question_type": "multi-session",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -7445,31 +7352,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "185"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-gpt4-d84a3211",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "cross_session_carry_forward",
+    "source_question_type": "multi-session",
+    "target_question": "How much total money have I spent on bike-related expenses since the start of the year?"
   },
   {
+    "scenario_id": "longmemeval-gpt4-f2262a51",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Cross Session Carry Forward pressure: 'How many different doctors did I visit?'",
-    "pressure_family": "cross_session_carry_forward",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "gpt4_f2262a51",
-    "source_question_type": "multi-session",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -7880,32 +7782,27 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "three",
       "doctors"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-gpt4-f2262a51",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "cross_session_carry_forward",
+    "source_question_type": "multi-session",
+    "target_question": "How many different doctors did I visit?"
   },
   {
+    "scenario_id": "longmemeval-gpt4-a56e767c",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Cross Session Carry Forward pressure: 'How many movie festivals that I attended?'",
-    "pressure_family": "cross_session_carry_forward",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "gpt4_a56e767c",
-    "source_question_type": "multi-session",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -8316,32 +8213,27 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "four",
       "festivals"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-gpt4-a56e767c",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "cross_session_carry_forward",
+    "source_question_type": "multi-session",
+    "target_question": "How many movie festivals that I attended?"
   },
   {
+    "scenario_id": "longmemeval-88432d0a-abs",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Abstention: the chat history does not contain information to answer 'How many times did I bake egg tarts in the past two weeks?'. Pallium should not inject misleading memory.",
-    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "88432d0a_abs",
-    "source_question_type": "multi-session",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -8884,26 +8776,24 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": false,
-    "expected_primary_layer": null,
-    "acceptable_layers": [],
-    "expected_memory_types": [],
-    "required_signals": [],
-    "forbidden_signals": [],
-    "expected_failure_target": "unsupported_memory_overreach",
-    "episode_id": "longmemeval-88432d0a-abs",
-    "expected_should_inject": false,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "current_thread_context": [],
+    "expected_value": false,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": null,
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [],
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "source_question_type": "multi-session",
+    "target_question": "How many times did I bake egg tarts in the past two weeks?"
   },
   {
+    "scenario_id": "longmemeval-eeda8a6d-abs",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Abstention: the chat history does not contain information to answer 'How many fish are there in my 30-gallon tank?'. Pallium should not inject misleading memory.",
-    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "eeda8a6d_abs",
-    "source_question_type": "multi-session",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -9182,26 +9072,24 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": false,
-    "expected_primary_layer": null,
-    "acceptable_layers": [],
-    "expected_memory_types": [],
-    "required_signals": [],
-    "forbidden_signals": [],
-    "expected_failure_target": "unsupported_memory_overreach",
-    "episode_id": "longmemeval-eeda8a6d-abs",
-    "expected_should_inject": false,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "current_thread_context": [],
+    "expected_value": false,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": null,
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [],
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "source_question_type": "multi-session",
+    "target_question": "How many fish are there in my 30-gallon tank?"
   },
   {
+    "scenario_id": "longmemeval-60bf93ed-abs",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Abstention: the chat history does not contain information to answer 'How many days did it take for my iPad case to arrive after I bought it?'. Pallium should not inject misleading memory.",
-    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "60bf93ed_abs",
-    "source_question_type": "multi-session",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -9480,26 +9368,24 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": false,
-    "expected_primary_layer": null,
-    "acceptable_layers": [],
-    "expected_memory_types": [],
-    "required_signals": [],
-    "forbidden_signals": [],
-    "expected_failure_target": "unsupported_memory_overreach",
-    "episode_id": "longmemeval-60bf93ed-abs",
-    "expected_should_inject": false,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "current_thread_context": [],
+    "expected_value": false,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": null,
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [],
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "source_question_type": "multi-session",
+    "target_question": "How many days did it take for my iPad case to arrive after I bought it?"
   },
   {
+    "scenario_id": "longmemeval-6a1eabeb",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Update Vs Stale Memory pressure: 'What was my personal best time in the charity 5K run?'",
-    "pressure_family": "update_vs_stale_memory",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "6a1eabeb",
-    "source_question_type": "knowledge-update",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -9778,32 +9664,27 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "25",
       "50 seconds"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-6a1eabeb",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "update_vs_stale_memory",
+    "source_question_type": "knowledge-update",
+    "target_question": "What was my personal best time in the charity 5K run?"
   },
   {
+    "scenario_id": "longmemeval-830ce83f",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Update Vs Stale Memory pressure: 'Where did Rachel move to after her recent relocation?'",
-    "pressure_family": "update_vs_stale_memory",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "830ce83f",
-    "source_question_type": "knowledge-update",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -10082,31 +9963,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "suburbs"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-830ce83f",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "update_vs_stale_memory",
+    "source_question_type": "knowledge-update",
+    "target_question": "Where did Rachel move to after her recent relocation?"
   },
   {
+    "scenario_id": "longmemeval-852ce960",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Update Vs Stale Memory pressure: 'What was the amount I was pre-approved for when I got my mortgage from Wells Far'",
-    "pressure_family": "update_vs_stale_memory",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "852ce960",
-    "source_question_type": "knowledge-update",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -10385,31 +10261,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "400,000"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-852ce960",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "update_vs_stale_memory",
+    "source_question_type": "knowledge-update",
+    "target_question": "What was the amount I was pre-approved for when I got my mortgage from Wells Fargo?"
   },
   {
+    "scenario_id": "longmemeval-945e3d21",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Update Vs Stale Memory pressure: 'How often do I attend yoga classes to help with my anxiety?'",
-    "pressure_family": "update_vs_stale_memory",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "945e3d21",
-    "source_question_type": "knowledge-update",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -10688,32 +10559,27 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "three times",
       "week"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-945e3d21",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "update_vs_stale_memory",
+    "source_question_type": "knowledge-update",
+    "target_question": "How often do I attend yoga classes to help with my anxiety?"
   },
   {
+    "scenario_id": "longmemeval-d7c942c3",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Update Vs Stale Memory pressure: 'Is my mom using the same grocery list method as me?'",
-    "pressure_family": "update_vs_stale_memory",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "d7c942c3",
-    "source_question_type": "knowledge-update",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -10992,31 +10858,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "yes"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-d7c942c3",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "update_vs_stale_memory",
+    "source_question_type": "knowledge-update",
+    "target_question": "Is my mom using the same grocery list method as me?"
   },
   {
+    "scenario_id": "longmemeval-6aeb4375",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Update Vs Stale Memory pressure: 'How many Korean restaurants have I tried in my city?'",
-    "pressure_family": "update_vs_stale_memory",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "6aeb4375",
-    "source_question_type": "knowledge-update",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -11295,31 +11156,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "four"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-6aeb4375",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "update_vs_stale_memory",
+    "source_question_type": "knowledge-update",
+    "target_question": "How many Korean restaurants have I tried in my city?"
   },
   {
+    "scenario_id": "longmemeval-9ea5eabc",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Update Vs Stale Memory pressure: 'Where did I go on my most recent family trip?'",
-    "pressure_family": "update_vs_stale_memory",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "9ea5eabc",
-    "source_question_type": "knowledge-update",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -11598,31 +11454,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "paris"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-9ea5eabc",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "update_vs_stale_memory",
+    "source_question_type": "knowledge-update",
+    "target_question": "Where did I go on my most recent family trip?"
   },
   {
+    "scenario_id": "longmemeval-71315a70",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Update Vs Stale Memory pressure: 'How many hours have I spent on my abstract ocean sculpture?'",
-    "pressure_family": "update_vs_stale_memory",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "71315a70",
-    "source_question_type": "knowledge-update",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -11901,32 +11752,27 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "10",
       "12 hours"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-71315a70",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "update_vs_stale_memory",
+    "source_question_type": "knowledge-update",
+    "target_question": "How many hours have I spent on my abstract ocean sculpture?"
   },
   {
+    "scenario_id": "longmemeval-ce6d2d27",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Update Vs Stale Memory pressure: 'What day of the week do I take a cocktail-making class?'",
-    "pressure_family": "update_vs_stale_memory",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "ce6d2d27",
-    "source_question_type": "knowledge-update",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -12205,31 +12051,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "friday"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-ce6d2d27",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "update_vs_stale_memory",
+    "source_question_type": "knowledge-update",
+    "target_question": "What day of the week do I take a cocktail-making class?"
   },
   {
+    "scenario_id": "longmemeval-6aeb4375-abs",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Abstention: the chat history does not contain information to answer 'How many Italian restaurants have I tried in my city?'. Pallium should not inject misleading memory.",
-    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "6aeb4375_abs",
-    "source_question_type": "knowledge-update",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -12508,26 +12349,24 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": false,
-    "expected_primary_layer": null,
-    "acceptable_layers": [],
-    "expected_memory_types": [],
-    "required_signals": [],
-    "forbidden_signals": [],
-    "expected_failure_target": "unsupported_memory_overreach",
-    "episode_id": "longmemeval-6aeb4375-abs",
-    "expected_should_inject": false,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "current_thread_context": [],
+    "expected_value": false,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": null,
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [],
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "source_question_type": "knowledge-update",
+    "target_question": "How many Italian restaurants have I tried in my city?"
   },
   {
+    "scenario_id": "longmemeval-031748ae-abs",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Abstention: the chat history does not contain information to answer 'How many engineers do I lead when I just started my new role as Software Enginee'. Pallium should not inject misleading memory.",
-    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "031748ae_abs",
-    "source_question_type": "knowledge-update",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -12806,26 +12645,24 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": false,
-    "expected_primary_layer": null,
-    "acceptable_layers": [],
-    "expected_memory_types": [],
-    "required_signals": [],
-    "forbidden_signals": [],
-    "expected_failure_target": "unsupported_memory_overreach",
-    "episode_id": "longmemeval-031748ae-abs",
-    "expected_should_inject": false,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "current_thread_context": [],
+    "expected_value": false,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": null,
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [],
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "source_question_type": "knowledge-update",
+    "target_question": "How many engineers do I lead when I just started my new role as Software Engineer Manager?"
   },
   {
+    "scenario_id": "longmemeval-2698e78f-abs",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Abstention: the chat history does not contain information to answer 'How often do I see Dr. Johnson?'. Pallium should not inject misleading memory.",
-    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "2698e78f_abs",
-    "source_question_type": "knowledge-update",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -13104,26 +12941,24 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": false,
-    "expected_primary_layer": null,
-    "acceptable_layers": [],
-    "expected_memory_types": [],
-    "required_signals": [],
-    "forbidden_signals": [],
-    "expected_failure_target": "unsupported_memory_overreach",
-    "episode_id": "longmemeval-2698e78f-abs",
-    "expected_should_inject": false,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "current_thread_context": [],
+    "expected_value": false,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": null,
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [],
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "source_question_type": "knowledge-update",
+    "target_question": "How often do I see Dr. Johnson?"
   },
   {
+    "scenario_id": "longmemeval-7161e7e2",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Cross Session Carry Forward pressure: 'I'm checking our previous chat about the shift rotation sheet for GM social medi'",
-    "pressure_family": "cross_session_carry_forward",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "7161e7e2",
-    "source_question_type": "single-session-assistant",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -13292,34 +13127,29 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "admon",
       "8 am",
       "day shift",
       "sundays"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-7161e7e2",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "cross_session_carry_forward",
+    "source_question_type": "single-session-assistant",
+    "target_question": "I'm checking our previous chat about the shift rotation sheet for GM social media agents. Can you remind me what was the rotation for Admon on a Sunday?"
   },
   {
+    "scenario_id": "longmemeval-c4f10528",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Cross Session Carry Forward pressure: 'I'm planning to visit Bandung again and I was wondering if you could remind me o'",
-    "pressure_family": "cross_session_carry_forward",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "c4f10528",
-    "source_question_type": "single-session-assistant",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -13488,31 +13318,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "miss bee providore"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-c4f10528",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "cross_session_carry_forward",
+    "source_question_type": "single-session-assistant",
+    "target_question": "I'm planning to visit Bandung again and I was wondering if you could remind me of the name of that restaurant in Cihampelas Walk that serves a great Nasi Goreng?"
   },
   {
+    "scenario_id": "longmemeval-e9327a54",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Cross Session Carry Forward pressure: 'I'm planning to revisit Orlando. I was wondering if you could remind me of that '",
-    "pressure_family": "cross_session_carry_forward",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "e9327a54",
-    "source_question_type": "single-session-assistant",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -13681,32 +13506,27 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "sugar factory",
       "icon park"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-e9327a54",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "cross_session_carry_forward",
+    "source_question_type": "single-session-assistant",
+    "target_question": "I'm planning to revisit Orlando. I was wondering if you could remind me of that unique dessert shop with the giant milkshakes we talked about last time?"
   },
   {
+    "scenario_id": "longmemeval-4c36ccef",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Cross Session Carry Forward pressure: 'Can you remind me of the name of the romantic Italian restaurant in Rome you rec'",
-    "pressure_family": "cross_session_carry_forward",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "4c36ccef",
-    "source_question_type": "single-session-assistant",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -13809,31 +13629,26 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "roscioli"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-4c36ccef",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "cross_session_carry_forward",
+    "source_question_type": "single-session-assistant",
+    "target_question": "Can you remind me of the name of the romantic Italian restaurant in Rome you recommended for dinner?"
   },
   {
+    "scenario_id": "longmemeval-89527b6b",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Cross Session Carry Forward pressure: 'I'm going back to our previous conversation about the children's book on dinosau'",
-    "pressure_family": "cross_session_carry_forward",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "89527b6b",
-    "source_question_type": "single-session-assistant",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -13870,32 +13685,27 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "plesiosaur",
       "blue"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-89527b6b",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "cross_session_carry_forward",
+    "source_question_type": "single-session-assistant",
+    "target_question": "I'm going back to our previous conversation about the children's book on dinosaurs. Can you remind me what color was the scaly body of the Plesiosaur in the image?"
   },
   {
+    "scenario_id": "longmemeval-6ae235be",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Cross Session Carry Forward pressure: 'I remember you told me about the refining processes at CITGO's three refineries '",
-    "pressure_family": "cross_session_carry_forward",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "6ae235be",
-    "source_question_type": "single-session-assistant",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -13998,32 +13808,27 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": true,
-    "expected_primary_layer": "lower_level_memory",
-    "acceptable_layers": [
-      "lower_level_memory",
-      "source_evidence"
-    ],
-    "expected_memory_types": [],
-    "required_signals": [
+    "current_thread_context": [],
+    "expected_value": true,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [
       "atmospheric distillation",
       "catalytic cracking"
     ],
-    "forbidden_signals": [],
-    "expected_failure_target": null,
-    "episode_id": "longmemeval-6ae235be",
-    "expected_should_inject": true,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "cross_session_carry_forward",
+    "source_question_type": "single-session-assistant",
+    "target_question": "I remember you told me about the refining processes at CITGO's three refineries earlier. Can you remind me what kind of processes are used at the Lake Charles Refinery?"
   },
   {
+    "scenario_id": "longmemeval-gpt4-93159ced-abs",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Abstention: the chat history does not contain information to answer 'How long have I been working before I started my current job at Google?'. Pallium should not inject misleading memory.",
-    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "gpt4_93159ced_abs",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -14302,26 +14107,24 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": false,
-    "expected_primary_layer": null,
-    "acceptable_layers": [],
-    "expected_memory_types": [],
-    "required_signals": [],
-    "forbidden_signals": [],
-    "expected_failure_target": "unsupported_memory_overreach",
-    "episode_id": "longmemeval-gpt4-93159ced-abs",
-    "expected_should_inject": false,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "current_thread_context": [],
+    "expected_value": false,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": null,
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [],
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "How long have I been working before I started my current job at Google?"
   },
   {
+    "scenario_id": "longmemeval-c8090214-abs",
+    "scenario_kind": "longmemeval_pressure",
     "description": "Abstention: the chat history does not contain information to answer 'How many days before I bought my iPad did I attend the Holiday Market?'. Pallium should not inject misleading memory.",
-    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
-    "source_benchmark_family": "longmemeval",
-    "source_question_id": "c8090214_abs",
-    "source_question_type": "temporal-reasoning",
     "prior_events": [
       {
         "source_type": "chat_message",
@@ -14600,18 +14403,18 @@
         "session_has_sufficient_local_context": false
       }
     },
-    "should_memory_help": false,
-    "expected_primary_layer": null,
-    "acceptable_layers": [],
-    "expected_memory_types": [],
-    "required_signals": [],
-    "forbidden_signals": [],
-    "expected_failure_target": "unsupported_memory_overreach",
-    "episode_id": "longmemeval-c8090214-abs",
-    "expected_should_inject": false,
-    "expected_primary_block_types": [],
-    "expected_decision_reason": null,
-    "promotable": true,
-    "suggested_native_lane": "realism"
+    "current_thread_context": [],
+    "expected_value": false,
+    "expected_intent": "broad_recall",
+    "expected_top_layer": null,
+    "expected_top_memory_types": [],
+    "expected_higher_level_memory_types": [],
+    "expected_answer_signals": [],
+    "expected_failures_without_memory": [],
+    "forbidden_terms": [],
+    "consolidation_strategy": null,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "source_question_type": "temporal-reasoning",
+    "target_question": "How many days before I bought my iPad did I attend the Holiday Market?"
   }
 ]

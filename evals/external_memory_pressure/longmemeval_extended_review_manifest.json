@@ -1,0 +1,278 @@
+{
+  "longmemeval-gpt4-2655b836": {
+    "reviewed": true,
+    "pressure_family": "temporal_ordering",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question gpt4_2655b836"
+  },
+  "longmemeval-gpt4-2487a7cb": {
+    "reviewed": true,
+    "pressure_family": "temporal_ordering",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question gpt4_2487a7cb"
+  },
+  "longmemeval-gpt4-76048e76": {
+    "reviewed": true,
+    "pressure_family": "temporal_ordering",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question gpt4_76048e76"
+  },
+  "longmemeval-gpt4-2312f94c": {
+    "reviewed": true,
+    "pressure_family": "temporal_ordering",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question gpt4_2312f94c"
+  },
+  "longmemeval-gpt4-385a5000": {
+    "reviewed": true,
+    "pressure_family": "temporal_ordering",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question gpt4_385a5000"
+  },
+  "longmemeval-0bb5a684": {
+    "reviewed": true,
+    "pressure_family": "temporal_ordering",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question 0bb5a684"
+  },
+  "longmemeval-2c63a862": {
+    "reviewed": true,
+    "pressure_family": "temporal_ordering",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question 2c63a862"
+  },
+  "longmemeval-08f4fc43": {
+    "reviewed": true,
+    "pressure_family": "temporal_ordering",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question 08f4fc43"
+  },
+  "longmemeval-gpt4-0b2f1d21": {
+    "reviewed": true,
+    "pressure_family": "temporal_ordering",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question gpt4_0b2f1d21"
+  },
+  "longmemeval-gpt4-2d58bcd6": {
+    "reviewed": true,
+    "pressure_family": "temporal_ordering",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question gpt4_2d58bcd6"
+  },
+  "longmemeval-gpt4-8c8961ae": {
+    "reviewed": true,
+    "pressure_family": "temporal_ordering",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question gpt4_8c8961ae"
+  },
+  "longmemeval-gpt4-70e84552-abs": {
+    "reviewed": true,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "expected_should_inject": false,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question gpt4_70e84552_abs"
+  },
+  "longmemeval-982b5123-abs": {
+    "reviewed": true,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "expected_should_inject": false,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question 982b5123_abs"
+  },
+  "longmemeval-gpt4-c27434e8-abs": {
+    "reviewed": true,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "expected_should_inject": false,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question gpt4_c27434e8_abs"
+  },
+  "longmemeval-0a995998": {
+    "reviewed": true,
+    "pressure_family": "cross_session_carry_forward",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval multi-session question 0a995998"
+  },
+  "longmemeval-b5ef892d": {
+    "reviewed": true,
+    "pressure_family": "cross_session_carry_forward",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval multi-session question b5ef892d"
+  },
+  "longmemeval-e831120c": {
+    "reviewed": true,
+    "pressure_family": "cross_session_carry_forward",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval multi-session question e831120c"
+  },
+  "longmemeval-3a704032": {
+    "reviewed": true,
+    "pressure_family": "cross_session_carry_forward",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval multi-session question 3a704032"
+  },
+  "longmemeval-6d550036": {
+    "reviewed": true,
+    "pressure_family": "cross_session_carry_forward",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval multi-session question 6d550036"
+  },
+  "longmemeval-gpt4-59c863d7": {
+    "reviewed": true,
+    "pressure_family": "cross_session_carry_forward",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval multi-session question gpt4_59c863d7"
+  },
+  "longmemeval-gpt4-d84a3211": {
+    "reviewed": true,
+    "pressure_family": "cross_session_carry_forward",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval multi-session question gpt4_d84a3211"
+  },
+  "longmemeval-gpt4-f2262a51": {
+    "reviewed": true,
+    "pressure_family": "cross_session_carry_forward",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval multi-session question gpt4_f2262a51"
+  },
+  "longmemeval-gpt4-a56e767c": {
+    "reviewed": true,
+    "pressure_family": "cross_session_carry_forward",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval multi-session question gpt4_a56e767c"
+  },
+  "longmemeval-88432d0a-abs": {
+    "reviewed": true,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "expected_should_inject": false,
+    "notes": "Auto-generated from LongMemEval multi-session question 88432d0a_abs"
+  },
+  "longmemeval-eeda8a6d-abs": {
+    "reviewed": true,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "expected_should_inject": false,
+    "notes": "Auto-generated from LongMemEval multi-session question eeda8a6d_abs"
+  },
+  "longmemeval-60bf93ed-abs": {
+    "reviewed": true,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "expected_should_inject": false,
+    "notes": "Auto-generated from LongMemEval multi-session question 60bf93ed_abs"
+  },
+  "longmemeval-6a1eabeb": {
+    "reviewed": true,
+    "pressure_family": "update_vs_stale_memory",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval knowledge-update question 6a1eabeb"
+  },
+  "longmemeval-830ce83f": {
+    "reviewed": true,
+    "pressure_family": "update_vs_stale_memory",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval knowledge-update question 830ce83f"
+  },
+  "longmemeval-852ce960": {
+    "reviewed": true,
+    "pressure_family": "update_vs_stale_memory",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval knowledge-update question 852ce960"
+  },
+  "longmemeval-945e3d21": {
+    "reviewed": true,
+    "pressure_family": "update_vs_stale_memory",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval knowledge-update question 945e3d21"
+  },
+  "longmemeval-d7c942c3": {
+    "reviewed": true,
+    "pressure_family": "update_vs_stale_memory",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval knowledge-update question d7c942c3"
+  },
+  "longmemeval-6aeb4375": {
+    "reviewed": true,
+    "pressure_family": "update_vs_stale_memory",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval knowledge-update question 6aeb4375"
+  },
+  "longmemeval-9ea5eabc": {
+    "reviewed": true,
+    "pressure_family": "update_vs_stale_memory",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval knowledge-update question 9ea5eabc"
+  },
+  "longmemeval-71315a70": {
+    "reviewed": true,
+    "pressure_family": "update_vs_stale_memory",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval knowledge-update question 71315a70"
+  },
+  "longmemeval-ce6d2d27": {
+    "reviewed": true,
+    "pressure_family": "update_vs_stale_memory",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval knowledge-update question ce6d2d27"
+  },
+  "longmemeval-6aeb4375-abs": {
+    "reviewed": true,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "expected_should_inject": false,
+    "notes": "Auto-generated from LongMemEval knowledge-update question 6aeb4375_abs"
+  },
+  "longmemeval-031748ae-abs": {
+    "reviewed": true,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "expected_should_inject": false,
+    "notes": "Auto-generated from LongMemEval knowledge-update question 031748ae_abs"
+  },
+  "longmemeval-2698e78f-abs": {
+    "reviewed": true,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "expected_should_inject": false,
+    "notes": "Auto-generated from LongMemEval knowledge-update question 2698e78f_abs"
+  },
+  "longmemeval-7161e7e2": {
+    "reviewed": true,
+    "pressure_family": "cross_session_carry_forward",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval single-session-assistant question 7161e7e2"
+  },
+  "longmemeval-c4f10528": {
+    "reviewed": true,
+    "pressure_family": "cross_session_carry_forward",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval single-session-assistant question c4f10528"
+  },
+  "longmemeval-e9327a54": {
+    "reviewed": true,
+    "pressure_family": "cross_session_carry_forward",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval single-session-assistant question e9327a54"
+  },
+  "longmemeval-4c36ccef": {
+    "reviewed": true,
+    "pressure_family": "cross_session_carry_forward",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval single-session-assistant question 4c36ccef"
+  },
+  "longmemeval-89527b6b": {
+    "reviewed": true,
+    "pressure_family": "cross_session_carry_forward",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval single-session-assistant question 89527b6b"
+  },
+  "longmemeval-6ae235be": {
+    "reviewed": true,
+    "pressure_family": "cross_session_carry_forward",
+    "expected_should_inject": true,
+    "notes": "Auto-generated from LongMemEval single-session-assistant question 6ae235be"
+  },
+  "longmemeval-gpt4-93159ced-abs": {
+    "reviewed": true,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "expected_should_inject": false,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question gpt4_93159ced_abs"
+  },
+  "longmemeval-c8090214-abs": {
+    "reviewed": true,
+    "pressure_family": "unsupported_or_ambiguous_memory_abstention",
+    "expected_should_inject": false,
+    "notes": "Auto-generated from LongMemEval temporal-reasoning question c8090214_abs"
+  }
+}
