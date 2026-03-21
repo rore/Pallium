@@ -249,8 +249,6 @@ which memory type should win.
 
 ## Read Next
 
-- local walkthrough: [getting-started.md](getting-started.md)
-- runtime integration: [agent-integration.md](agent-integration.md)
+- integration flow: [agent-integration.md](agent-integration.md)
 - privacy rules: [privacy-and-visibility.md](privacy-and-visibility.md)
-- memory structure and lifecycle: [memory-model.md](memory-model.md)
 

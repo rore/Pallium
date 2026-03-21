@@ -35,6 +35,10 @@ For broader docs ownership, see ../README.md.
   The repo workflow for adding prompt variants, running bakeoffs, and choosing
   new defaults for live semantic prompt roles.
 
+- validation.md
+  Benchmark architecture, acceptance gates, dataset tiers, and operational
+  metrics.
+
 ## Conventions
 
 - Keep these files short and high-signal.

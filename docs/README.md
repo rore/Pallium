@@ -1,92 +1,38 @@
-﻿# Docs Map
+# Documentation
 
-Pallium's docs are split by job so the README does not have to do everything.
+## For Users
 
-## Recommended Reading Order
+Start here if you're evaluating or using Pallium.
 
-For a developer evaluating the project for the first time:
+| Doc | What it covers |
+|-----|---------------|
+| [Getting Started](getting-started.md) | Local setup to first query in ~10 minutes |
+| [How It Works](how-it-works.md) | Design rationale, memory model, retrieval architecture |
+| [HTTP API](http-api.md) | Endpoints, request/response shapes, examples |
+| [Configuration](configuration.md) | Providers, packages, prompt roles, tuning knobs |
+| [Agent Integration](agent-integration.md) | Wiring Pallium into an agent runtime |
+| [Privacy and Visibility](privacy-and-visibility.md) | Scoped memory boundaries and enforcement |
 
-1. `README.md`
-2. `docs/problem-and-approach.md`
-3. `docs/getting-started.md`
-4. `docs/configuration.md`
-5. `docs/agent-integration.md`
-6. `docs/http-api.md`
-7. `docs/privacy-and-visibility.md`
-8. `docs/memory-model.md`
-9. `docs/validation.md`
-10. `docs/status.md`
-11. `docs/overview.md`
-12. `docs/context/architecture.md`
+Recommended order for a first read: Getting Started → How It Works → HTTP API.
 
-## Documentation Roles
+## For Contributors
 
-- front door
-  - `README.md`
-  - what Pallium is, what it does today, and how to try it quickly
+Project internals, architecture decisions, and planning.
 
-- tutorial
-  - `docs/getting-started.md`
-  - one short local walkthrough from setup to first query
-
-- how-to
-  - `docs/agent-integration.md`
-  - how to fit Pallium into an agent runtime
-
-- reference
-  - `docs/http-api.md`
-  - endpoint shapes, request fields, response fields, and operational endpoints
-  - `docs/configuration.md`
-  - config sources, precedence, provider blocks, package blocks, and runtime overrides
-
-- explanations
-  - `docs/problem-and-approach.md`
-  - `docs/privacy-and-visibility.md`
-  - `docs/memory-model.md`
-  - `docs/validation.md`
-  - `docs/status.md`
-  - `docs/overview.md`
-
-- stable architecture context
-  - `docs/context/architecture.md`
-  - `docs/context/state.md`
+| Doc | What it covers |
+|-----|---------------|
+| [context/architecture.md](context/architecture.md) | Stable architecture truths |
+| [context/decisions.md](context/decisions.md) | Accepted design decisions |
+| [context/state.md](context/state.md) | Current repo state and handoff snapshot |
+| [context/validation.md](context/validation.md) | Benchmark architecture and acceptance gates |
+| [context/lessons.md](context/lessons.md) | Problem-solution pairs worth remembering |
+| [context/prompt-improvement.md](context/prompt-improvement.md) | Prompt variant workflow |
+| [context/vision.md](context/vision.md) | Project identity and principles |
+| [designs/](designs/) | Design threads, proposals, and analyses |
 
 ## Ownership
 
-- docs/
-  Developer-facing entry points and practical guides.
-  Use this layer for evaluator flow, practical onboarding, integration,
-  reference material, validation, memory model, and concepts.
-
-- roadmap/
-  Canonical planning workspace. Use it for queue, ordering, scope, milestones,
-  phases, and feature status.
-
-- docs/context/
-  Stable project truth. Use it for vision, accepted architecture, durable
-  decisions, and lightweight handoff state.
-
-- docs/designs/
-  Longer design threads. Use it for proposals, tradeoffs, analyses, examples,
-  and designs that are still evolving or too detailed for docs/context/.
-
-## Update Rules
-
-- If the question is "how should a developer evaluate or use this repo?",
-  update `docs/`.
-- If the question is "what are we doing next?", update `roadmap/`.
-- If the question is "what is Pallium and what have we accepted?", update
-  `docs/context/`.
-- If the question is "why this design and what were the alternatives?",
-  update `docs/designs/`.
-
-## Guardrails
-
-- Keep front-door docs outside-in, not ontology-first.
-- Keep public docs plain-language first and move deeper terms later.
-- Separate tutorial, how-to, explanation, and reference material when a page is
-  trying to do too many jobs.
-- Do not duplicate planning state in docs/context/.
-- Do not treat docs/designs/ as the canonical queue or status surface.
-- When a design becomes accepted direction, summarize the outcome in
-  docs/context/decisions.md and update the relevant context file.
+- `docs/` — user-facing guides and references
+- `docs/context/` — stable project truth for contributors
+- `docs/designs/` — longer design threads and tradeoff analyses
+- `roadmap/` — planning, queue, milestones, feature status

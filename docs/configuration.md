@@ -473,7 +473,7 @@ For `llm_agent_memory` and `agent_conversation_memory`, both must be present:
 
 If either is missing, the plugin is not built as a live LLM-backed package.
 
-## Common Recipes
+## Provider Recipes
 
 ### Use Anthropic Claude directly
 
@@ -530,4 +530,3 @@ model = "gpt-5-mini"
 - quick local setup: [getting-started.md](getting-started.md)
 - integration flow: [agent-integration.md](agent-integration.md)
 - API contract: [http-api.md](http-api.md)
-- architecture truth: [context/architecture.md](context/architecture.md)
