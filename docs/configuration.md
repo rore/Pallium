@@ -234,7 +234,7 @@ PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__MODEL=gpt-5-mini
 PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__PROMPT_VARIANT=strict_typed_memory_v6_work_state_examples
 PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__RESOLVER_ENABLED=true
 PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__RESOLVER_TIMEOUT_MS=800
-PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__MODEL_ROLES__WRITE_EXTRACTION=anthropic--claude-sonnet-latest
+PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__MODEL_ROLES__WRITE_EXTRACTION=claude-sonnet-4-6
 ```
 
 ## Prompt Variants
@@ -290,27 +290,38 @@ Resolution order is:
 
 Available roles:
 
-- `write_extraction` — per-item memory extraction
-- `thread_aggregation` — thread summary + task checkpoint
-- `consolidation` — pattern and continuity memory
-- `query_ambiguity_resolution` — resolver on query hot path
+- `write_extraction` — per-item memory extraction (quality-critical, use strongest model)
+- `thread_aggregation` — thread summary + task checkpoint (simpler schemas, code has fallback defaults)
+- `consolidation` — pattern and continuity memory (simplest schemas)
+- `query_ambiguity_resolution` — resolver on query hot path (speed-critical, simple A/B decision)
+
+Benchmarked recommendation (Anthropic Claude):
+
+| Role | Model class | Rationale |
+|---|---|---|
+| `write_extraction` | Sonnet (default) | 14-field schema with strict evidence rules. Quality-sensitive — needs the strongest model. |
+| `thread_aggregation` | Haiku | Simpler schema, code has fallback defaults. Benchmarked: 11/11 routing, 100% work resumption contract. |
+| `consolidation` | Haiku | Simplest schemas. Same benchmark results as thread_aggregation. |
+| `query_ambiguity_resolution` | Haiku | Hot path (800ms timeout), simple A/B decision. Speed matters more than depth. |
+
+When using OpenAI or other providers, the same principle applies: use the strongest model for `write_extraction` and a faster/cheaper model for the other three roles.
 
 Example:
 
 ```toml
 [semantic_packages.agent_conversation_memory]
-model = "anthropic--claude-sonnet-latest"
+model = "claude-sonnet-4-6"
 
 [semantic_packages.agent_conversation_memory.model_roles]
-thread_aggregation = "anthropic--claude-haiku-latest"
-consolidation = "anthropic--claude-haiku-latest"
-query_ambiguity_resolution = "anthropic--claude-haiku-latest"
+thread_aggregation = "claude-haiku-4-5"
+consolidation = "claude-haiku-4-5"
+query_ambiguity_resolution = "claude-haiku-4-5"
 ```
 
 Equivalent env override:
 
 ```dotenv
-PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__MODEL_ROLES__WRITE_EXTRACTION=anthropic--claude-sonnet-latest
+PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__MODEL_ROLES__WRITE_EXTRACTION=claude-sonnet-4-6
 ```
 
 ## Embedding Providers
@@ -462,21 +473,56 @@ For `llm_agent_memory` and `agent_conversation_memory`, both must be present:
 
 If either is missing, the plugin is not built as a live LLM-backed package.
 
-## Common Recipes
+## Provider Recipes
 
-### Use Anthropic via HAI LLM Proxy
+### Use Anthropic Claude directly
 
 ```toml
-[llm_providers.hai_anthropic]
+[llm_providers.anthropic]
+kind = "anthropic_claude"
+base_url = "https://api.anthropic.com/v1"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[semantic_packages.agent_conversation_memory]
+implementation = "agent_conversation_memory"
+llm_provider = "anthropic"
+model = "claude-sonnet-4-6"
+
+[semantic_packages.agent_conversation_memory.model_roles]
+thread_aggregation = "claude-haiku-4-5"
+consolidation = "claude-haiku-4-5"
+query_ambiguity_resolution = "claude-haiku-4-5"
+```
+
+### Use Anthropic via a proxy with Bearer auth
+
+Some proxy gateways require `Authorization: Bearer` instead of the native `x-api-key` header. Set `auth_style = "bearer"`:
+
+```toml
+[llm_providers.anthropic_proxy]
 kind = "anthropic_claude"
 base_url = "http://localhost:6655/anthropic/v1"
-api_key_env = "HAI_API_KEY"
+api_key_env = "PROXY_API_KEY"
 auth_style = "bearer"
 
 [semantic_packages.agent_conversation_memory]
 implementation = "agent_conversation_memory"
-llm_provider = "hai_anthropic"
-model = "anthropic--claude-sonnet-latest"
+llm_provider = "anthropic_proxy"
+model = "claude-sonnet-4-6"
+```
+
+### Use OpenAI
+
+```toml
+[llm_providers.openai]
+kind = "openai_compatible"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+
+[semantic_packages.agent_conversation_memory]
+implementation = "agent_conversation_memory"
+llm_provider = "openai"
+model = "gpt-5-mini"
 ```
 
 ## Read Next
@@ -484,4 +530,3 @@ model = "anthropic--claude-sonnet-latest"
 - quick local setup: [getting-started.md](getting-started.md)
 - integration flow: [agent-integration.md](agent-integration.md)
 - API contract: [http-api.md](http-api.md)
-- architecture truth: [context/architecture.md](context/architecture.md)

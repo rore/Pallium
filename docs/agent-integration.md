@@ -270,24 +270,14 @@ but the integration loop does not require you to think in those terms first.
 - keep local seam rules mechanical rather than semantic
 - use the debug endpoint before changing heuristics blindly
 
-## Current Limits
+## Boundaries
 
-Do not design your integration as if Pallium already supports:
+Pallium is the memory layer, not an authorization service or agent runtime.
+The downstream agent should be a thin client that provides runtime facts and
+accepts Pallium's memory decisions — not a second memory engine.
 
-- vector retrieval
-- hybrid fusion
+Pallium does not yet support:
+
 - cross-container shared memory
 - automatic ingestion from arbitrary upstream systems
 - authorization on behalf of your app
-
-Also do not design your integration as if the downstream agent should own the
-memory policy. The target boundary is a thin client that provides runtime facts
-and accepts Pallium's memory decisions.
-
-## Read Next
-
-- local exploratory workflow: [getting-started.md](getting-started.md)
-- API reference: [http-api.md](http-api.md)
-- privacy rules: [privacy-and-visibility.md](privacy-and-visibility.md)
-- memory structure and lifecycle: [memory-model.md](memory-model.md)
-- deeper concepts: [overview.md](overview.md)

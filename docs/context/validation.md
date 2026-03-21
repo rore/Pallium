@@ -136,10 +136,3 @@ The validation surface is part of how Pallium is developed:
 - replay now has both a reserved place in the model and an initial promotion
   workflow in tooling
 - operational drift is visible instead of being buried under correctness totals
-
-## Read Next
-
-- current maturity: [status.md](status.md)
-- configuration reference: [configuration.md](configuration.md)
-- product problem and value: [problem-and-approach.md](problem-and-approach.md)
-- quick local tryout: [getting-started.md](getting-started.md)

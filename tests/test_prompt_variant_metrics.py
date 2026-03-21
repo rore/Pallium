@@ -7,11 +7,13 @@ from semantic.llm_agent_memory import describe_prompt_variants
 def test_compact_write_extraction_variants_are_smaller_than_v4() -> None:
     metrics = describe_prompt_variants()
 
-    assert metrics['strict_typed_memory_v5_compact_contract']['estimated_tokens'] < metrics['strict_typed_memory_v4_evidence_guarded']['estimated_tokens']
     assert metrics['strict_typed_memory_v5_compact_examples']['estimated_tokens'] < metrics['strict_typed_memory_v4_evidence_guarded']['estimated_tokens']
     assert metrics['strict_typed_memory_v6_compact_work_state']['estimated_tokens'] < metrics['strict_typed_memory_v4_evidence_guarded']['estimated_tokens']
     assert metrics['strict_typed_memory_v6_compact_work_state_negatives']['estimated_tokens'] < metrics['strict_typed_memory_v4_evidence_guarded']['estimated_tokens']
     assert metrics['strict_typed_memory_v6_work_state_examples']['estimated_tokens'] < metrics['strict_typed_memory_v4_evidence_guarded']['estimated_tokens']
+    assert metrics['strict_typed_memory_v7_claude_structured']['estimated_tokens'] < metrics['strict_typed_memory_v4_evidence_guarded']['estimated_tokens']
+    assert metrics['strict_typed_memory_v7_claude_minimal']['estimated_tokens'] < metrics['strict_typed_memory_v4_evidence_guarded']['estimated_tokens']
+    assert metrics['strict_typed_memory_v7_claude_clean']['estimated_tokens'] < metrics['strict_typed_memory_v4_evidence_guarded']['estimated_tokens']
 
 
 def test_compact_write_enrichment_variants_are_smaller_than_baseline() -> None:

@@ -1,10 +1,11 @@
 ---
 id: idea-evidence-backed-agent-memory
 title: Evidence-backed agent memory
-status: queued
+status: done
 priority: medium
 commitment: uncommitted
 milestone: Idea
+resolved_by: agent_conversation_memory package and supporting features
 ---
 
 ## Summary

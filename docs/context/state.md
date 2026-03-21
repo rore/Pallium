@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-03-20
+2026-03-21
 
 ## Repo Snapshot
 
@@ -17,6 +17,10 @@
 - first implementation language: Python
 - architecture direction: single local-first service with clear module boundaries
 - first concrete product package: `agent_conversation_memory`
+- current LLM provider: Anthropic Claude (Sonnet + Haiku via per-role model config)
+  - Sonnet: write_extraction (quality-critical, 14-field schema)
+  - Haiku: thread_aggregation, consolidation, query_ambiguity_resolution (simpler schemas, benchmarked equal or better)
+- current extraction prompt: `strict_typed_memory_v7_claude_structured` (560 tokens, 55/55 on expanded fixture set, perfect signal extraction)
 - normal local runtime goes through `python -m app.run ... --processors N`
 - debug queue health exists at `GET /debug/queue/health`
 - query/debug exposes retrieval trace plus package-owned routing and injection trace
@@ -69,7 +73,8 @@
   - live exploratory drift and replay-promotion tooling
 - the developer-work confidence harness should be read by hard-gate fields first, not by aggregate scenario-success counts alone
 - replay is now a real tooling surface, but replay coverage is still materially smaller than the authored confidence packs
-- test suite: 621 passed, 5 skipped
+- test suite: 631 passed, 5 skipped
+- semantic extraction fixture set: 58 items (12 decisions, 14 investigations, 20 boundary-null, 13 signal cases)
 
 ## Configuration Note
 
@@ -95,6 +100,12 @@
 ## Next Hardening Direction
 
 - the next hardening work should build on the shipped live-improvement loop rather than still describing it as future work
+- roadmap ideas board was cleaned up (2026-03-21):
+  - `idea-optional-embedding-provider-support` retired — realized by vector+fusion features
+  - `idea-evidence-backed-agent-memory` retired — realized by the full agent_conversation_memory product slice
+  - `idea-optional-llm-assisted-routing` retired — realized by query_ambiguity_resolution (bounded LLM tiebreaker)
+  - `add-live-integration-improvement-loop-and-replay-pipeline` moved to Done — drift metrics, shadow comparison, and replay promotion all shipped
+  - remaining ideas: lifecycle signals, scale hardening, multi-package processing, reranker support
 - likely next architectural pressure remains:
   - explicit shared-memory derivation
 - follow-on work around the live improvement loop should stay bounded to:

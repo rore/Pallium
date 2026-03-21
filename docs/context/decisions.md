@@ -219,6 +219,15 @@ separate extraction + enrichment calls. Reduces thread rebuild from 4 calls to
 1 and consolidation from 2 to 1. Motivated by proxy rate limits and general
 efficiency. Enrichment context is folded into the parent prompt schema.
 
+### 2026-03-21 - Haiku for thread aggregation and consolidation roles
+
+Thread aggregation (summary + checkpoint) and consolidation (pattern + continuity
+memory) use Haiku instead of Sonnet. Benchmarked: identical routing accuracy
+(11/11), improved work resumption contract (100% vs 92.3%), no wrong memory.
+These roles have simpler schemas and code-level fallback defaults that compensate
+for weaker LLM output. Write extraction stays on Sonnet (quality-critical,
+14-field schema with strict evidence rules).
+
 ## Open
 
 ### Ingestion policy

@@ -249,18 +249,18 @@ def test_run_semantic_eval_can_compare_prompt_variants_and_signal_metrics(tmp_pa
         plugin=plugin,
         config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant=DEFAULT_VARIANT),
         run_name="variant-run",
-        prompt_variants=["baseline", "strict_decision_v1", DEFAULT_VARIANT],
+        prompt_variants=["strict_typed_memory_v7_claude_minimal", "strict_typed_memory_v7_claude_structured", DEFAULT_VARIANT],
         split_output=True,
     )
 
     summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
     results = _read_jsonl(run_dir / "results.jsonl")
 
-    assert summary["prompt_variants"] == ["baseline", "strict_decision_v1", DEFAULT_VARIANT]
+    assert summary["prompt_variants"] == ["strict_typed_memory_v7_claude_minimal", "strict_typed_memory_v7_claude_structured", DEFAULT_VARIANT]
     assert len(summary["split_outputs"]) == 12
     assert len(results) == 12
-    assert summary["per_variant"]["baseline"]["promoted_counts"]["decision"] == 1
-    assert summary["per_variant"]["baseline"]["promoted_counts"]["investigation_outcome"] == 1
+    assert summary["per_variant"]["strict_typed_memory_v7_claude_minimal"]["promoted_counts"]["decision"] == 1
+    assert summary["per_variant"]["strict_typed_memory_v7_claude_minimal"]["promoted_counts"]["investigation_outcome"] == 1
     assert summary["per_variant"][DEFAULT_VARIANT]["signal_cases_total"] == 3
     assert summary["per_variant"][DEFAULT_VARIANT]["signal_cases_correct"] == 3
     assert summary["per_variant"][DEFAULT_VARIANT]["signal_metrics"]["constraint_text"]["correct"] == 2
@@ -286,7 +286,7 @@ def test_run_semantic_eval_parallel_keeps_stable_result_order(tmp_path: Path) ->
         plugin=plugin,
         config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant=DEFAULT_VARIANT),
         run_name="parallel-order-run",
-        prompt_variants=["baseline", "strict_decision_v1"],
+        prompt_variants=["strict_typed_memory_v7_claude_minimal", "strict_typed_memory_v7_claude_structured"],
         max_concurrency=4,
     )
 
@@ -298,10 +298,10 @@ def test_run_semantic_eval_parallel_keeps_stable_result_order(tmp_path: Path) ->
         (row["input_index"], row["prompt_variant"], row["input_key"])
         for row in results
     ] == [
-        (1, "baseline", "001-decision-1"),
-        (1, "strict_decision_v1", "001-decision-1"),
-        (2, "baseline", "002-investigation-1"),
-        (2, "strict_decision_v1", "002-investigation-1"),
+        (1, "strict_typed_memory_v7_claude_minimal", "001-decision-1"),
+        (1, "strict_typed_memory_v7_claude_structured", "001-decision-1"),
+        (2, "strict_typed_memory_v7_claude_minimal", "002-investigation-1"),
+        (2, "strict_typed_memory_v7_claude_structured", "002-investigation-1"),
     ]
 
 
