@@ -23,6 +23,7 @@ from semantic.agent_conversation_memory_constraints import (
     _candidate_has_self_conflicting_guidance,
     _preferred_constraint_text,
     _text_contains_operational_guidance,
+    _typed_constraint_signal_from_candidates,
 )
 from semantic.agent_conversation_memory_threads import (
     QUERY_ONLY_SUMMARY_MARKERS,
@@ -2739,11 +2740,15 @@ def _derive_query_signal_envelope(
         dominant = str(candidate_evidence.get("dominant_memory_layer") or "")
         per_layer = candidate_evidence.get("per_layer_support", {})
 
-        # constraint_lookup
+        # constraint_lookup — prefer typed constraint profiles over English snippet extraction
         constraint_only_support = int(policy_evidence.get("constraint_memory_only_support", 0))
+        has_typed_constraint = _typed_constraint_signal_from_candidates(anchor_prefiltered_candidates)
         if constraint_only_support >= POLICY_SUPPORT_THRESHOLD:
             signals["constraint_lookup"] = True
             derivation.append("constraint_memory_with_support")
+        elif has_typed_constraint:
+            signals["constraint_lookup"] = True
+            derivation.append("typed_constraint_profile_present")
         elif dominant == CONSTRAINT_MEMORY_TYPE:
             signals["constraint_lookup"] = True
             derivation.append("constraint_dominant_layer")
@@ -2842,8 +2847,24 @@ def _maybe_classify_evidence_request(
     signal_classifier_config: dict[str, object] | None,
 ) -> bool:
     """Tier 2 evidence-request classifier. Returns True if evidence request detected."""
-    # Stub — will be implemented in Phase 5
-    return False
+    if signal_classifier_config is None:
+        return False
+    from semantic.agent_conversation_memory_signal_classifier import (
+        build_signal_classification_packet,
+        classify_evidence_request,
+    )
+    packet = build_signal_classification_packet(
+        query_text=text,
+        candidate_evidence=candidate_evidence,
+        runtime_context=runtime_context,
+    )
+    result = classify_evidence_request(
+        packet=packet,
+        provider=signal_classifier_config.get("provider"),
+        prompt_variant=str(signal_classifier_config.get("prompt_variant", "qsc_v1_evidence_request")),
+        timeout_ms=int(signal_classifier_config.get("timeout_ms", 600)),
+    )
+    return result.is_resolved and result.primary_signal == "evidence_request"
 
 
 def _legacy_english_query_signals(

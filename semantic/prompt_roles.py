@@ -76,6 +76,18 @@ PROMPT_ROLE_CONTRACTS: dict[PromptRole, PromptRoleContract] = {
         owner_feature="add-semantic-prompt-role-contracts-and-replay-governance",
         default_model_role="query_ambiguity_resolution",
     ),
+    "query_signal_classification": PromptRoleContract(
+        role="query_signal_classification",
+        schema_id="semantic.query_signal_classification",
+        schema_version="v1",
+        purpose="Classify query into bounded memory-routing signals when deterministic derivation is unresolved.",
+        supports_abstain=True,
+        abstain_outcome="fallback_to_legacy_english",
+        no_op_outcome="UNRESOLVED",
+        status="contract_only",
+        owner_feature="add-language-agnostic-query-signals-and-typed-constraint-state",
+        default_model_role="query_signal_classification",
+    ),
 }
 
 
