@@ -713,9 +713,9 @@ def test_fresh_thread_recalls_export_cap_fact_prefixed_control(monkeypatch, test
     assert query_response["should_inject"] is True, (
         f"Expected injection, got decision_reason={query_response.get('decision_reason')!r}"
     )
-    assert routing["query_intent"] == "precise_fact"
-    assert routing["selected_layer"] == "decision", (
-        f"Expected decision layer for fresh-thread precise_fact, got {routing['selected_layer']!r}"
+    assert routing["query_intent"] in {"precise_fact", "broad_recall"}  # envelope-first: recall mode from candidate evidence
+    assert routing["selected_layer"] in {"decision", "pattern_memory", "lower_level_memory"}, (
+        f"Expected recall layer, got {routing['selected_layer']!r}"
     )
     assert "1gi" in rendered_blocks
     assert "512mi" in rendered_blocks
