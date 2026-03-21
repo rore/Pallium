@@ -78,6 +78,16 @@ implementation = "agent_conversation_memory"
 llm_provider = "openai"
 model = "gpt-5-mini"
 prompt_variant = "strict_typed_memory_v6_work_state_examples"
+
+[embedding_providers.onnx]
+kind = "onnx"
+model = "BAAI/bge-small-en-v1.5"
+
+[vector_index]
+enabled = true
+index_path = "./pallium_vector.index"
+embedding_provider = "onnx"
+min_similarity = 0.55
 ```
 
 And in `.env.local`:
@@ -98,6 +108,9 @@ Current top-level sections:
 - `[semantic_packages.<name>]`
 - `[semantic_packages.<name>.consolidation]`
 - `[semantic_packages.<name>.prompt_variants]`
+- `[semantic_packages.<name>.model_roles]`
+- `[embedding_providers.<name>]`
+- `[vector_index]`
 
 ## Storage
 
@@ -298,6 +311,55 @@ Equivalent env override:
 
 ```dotenv
 PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__MODEL_ROLES__WRITE_EXTRACTION=anthropic--claude-sonnet-latest
+```
+
+## Embedding Providers
+
+Embedding providers live under `embedding_providers`.
+
+Example:
+
+```toml
+[embedding_providers.onnx]
+kind = "onnx"
+model = "BAAI/bge-small-en-v1.5"
+```
+
+Supported fields today:
+
+- `kind` — `"onnx"` (Python 3.14 compatible) or `"fastembed"` (Python 3.12/3.13)
+- `model` — HuggingFace model name
+- `dimensions` — optional override (auto-detected from model)
+- `cache_dir` — optional model cache directory (default: HuggingFace global cache)
+
+## Vector Index
+
+The vector index enables hybrid retrieval (lexical + vector via RRF).
+
+Example:
+
+```toml
+[vector_index]
+enabled = true
+index_path = "./pallium_vector.index"
+embedding_provider = "onnx"
+min_similarity = 0.55
+```
+
+Supported fields today:
+
+- `enabled` — `true` or `false` (default: `false`)
+- `index_path` — file path for the usearch index
+- `embedding_provider` — references an `[embedding_providers.<name>]` block
+- `min_similarity` — minimum cosine similarity threshold (default: `0.55`)
+
+Env overrides:
+
+```dotenv
+PALLIUM_VECTOR_INDEX_ENABLED=true
+PALLIUM_VECTOR_INDEX_PATH=./pallium_vector.index
+PALLIUM_VECTOR_INDEX_EMBEDDING_PROVIDER=onnx
+PALLIUM_VECTOR_INDEX_MIN_SIMILARITY=0.55
 ```
 
 ## Current Defaults

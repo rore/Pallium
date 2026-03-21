@@ -24,6 +24,13 @@ max_backoff_ms = 3000
 jitter_ratio = 0.2
 max_concurrency = 4
 
+# [llm_providers.hai_anthropic]
+# kind = "anthropic_claude"
+# base_url = "http://localhost:6655/anthropic/v1"
+# api_key_env = "HAI_API_KEY"
+# auth_style = "bearer"
+# timeout_seconds = 30
+
 [semantic_packages.demo_agent_memory]
 implementation = "demo_agent_memory"
 
@@ -44,6 +51,12 @@ resolver_timeout_ms = 800
 [semantic_packages.agent_conversation_memory.prompt_variants]
 query_ambiguity_resolution = "qar_v1_compact_contract"
 
+# [semantic_packages.agent_conversation_memory.model_roles]
+# write_extraction = "anthropic--claude-sonnet-latest"
+# thread_aggregation = "anthropic--claude-haiku-latest"
+# consolidation = "anthropic--claude-haiku-latest"
+# query_ambiguity_resolution = "anthropic--claude-haiku-latest"
+
 [semantic_packages.agent_conversation_memory.consolidation]
 enabled_strategies = ["thread_local_carry_forward", "container_topic_window", "thread_summary_anchored"]
 default_strategy = "thread_summary_anchored"
@@ -52,3 +65,13 @@ max_group_size = 4
 same_container_required = true
 time_window_hours = 168
 lexical_overlap_threshold = 2
+
+[embedding_providers.onnx]
+kind = "onnx"
+model = "BAAI/bge-small-en-v1.5"
+
+[vector_index]
+enabled = true
+index_path = "./pallium_vector.index"
+embedding_provider = "onnx"
+min_similarity = 0.55
