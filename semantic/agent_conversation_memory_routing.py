@@ -57,6 +57,27 @@ class PolicySelectedContext:
 PASSTHROUGH_POLICY = PolicySelectedContext(query_policy_family="passthrough", allowed_query_intents=None)
 
 
+@dataclass(frozen=True)
+class LaneEligibility:
+    lane: str
+    state: str
+    structural_signals: tuple[str, ...]
+    shape_signals: tuple[str, ...]
+    reason: str
+
+
+@dataclass(frozen=True)
+class LaneNarrowingResult:
+    eligible_lanes: tuple[LaneEligibility, ...]
+    selected_lane: str | None
+    selection_mode: str
+    lane_narrowing_used_intent: bool
+    intent_effect: str
+    abstain_reason: str | None
+    mapped_intent: str | None
+    mapped_policy_family: str | None
+
+
 ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory", "task_checkpoint", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE}
 
 ROUTING_LOWER_LEVEL_EXACT_TYPES = {"decision", "investigation_outcome"}
@@ -165,6 +186,19 @@ POLICY_WORK_STATE_USEFULNESS_THRESHOLD = 24
 POLICY_SUPPORT_THRESHOLD = ROUTING_SUPPORT_THRESHOLD["supported"]
 AMBIGUITY_MARGIN_LATEST_VS_RESUME = 12
 AMBIGUITY_MARGIN_CONSTRAINTS_VS_RECALL = 10
+
+# Lane narrowing constants
+LANE_INTENT_MAPPING: dict[str, str] = {
+    "constraint_policy": "broad_recall",
+    "work_resumption": "work_resumption",
+    "evidence_trace": "evidence_trace",
+}
+
+LANE_POLICY_FAMILY_MAPPING: dict[str, str] = {
+    "constraint_policy": "check_constraints",
+    "work_resumption": "resume_work",
+    "evidence_trace": "recall_fact",
+}
 
 ROUTING_TOPIC_LOW_SIGNAL_TOKENS = {
     "about", "already", "before", "carry", "constraint", "concluded", "did", "do", "earlier",
@@ -415,24 +449,11 @@ def route_query_results(
             retrieval_result.results,
             query_tokens=query_tokens,
         )
-        # Step 2: Policy classification from post-anchor-prefilter evidence
+        # Step 2: Policy evidence and query shape from post-anchor-prefilter evidence
         policy_evidence = _build_policy_evidence(anchor_prefiltered_candidates)
         query_shape_tags = list(family_inference["query_shape_tags"]) if isinstance(family_inference.get("query_shape_tags"), (list, tuple)) else []
-        policy_family = _classify_query_policy_family(
-            text,
-            query_shape_tags=query_shape_tags,
-            runtime_context=runtime_context,
-            initial_intent=str(family_inference["selected_family"]),
-        )
-        policy_ctx, policy_options = _build_ambiguity_options(
-            policy_family,
-            text=text,
-            policy_evidence=policy_evidence,
-            family_inference=family_inference,
-            runtime_context=runtime_context,
-            query_shape_tags=query_shape_tags,
-        )
-        if policy_ctx.query_policy_family == "noise":
+        # Step 2a: Noise short-circuit before lane narrowing
+        if _query_is_low_value_greeting_or_noise(text):
             empty_trace = None
             if include_trace and retrieval_result.trace is not None:
                 empty_trace = QueryTrace(
@@ -455,18 +476,101 @@ def route_query_results(
                 injectable_blocks=[],
                 sharp_candidate_diagnostics=[],
             )
-        # Step 3: Optional resolver for ambiguity pairs
-        if policy_options and len(policy_options) == 2:
-            policy_ctx = _maybe_invoke_resolver(
-                policy_ctx=policy_ctx,
-                policy_options=policy_options,
-                anchor_prefiltered_candidates=anchor_prefiltered_candidates,
-                query_text=text,
-                runtime_context=runtime_context,
-                resolver_config=resolver_config,
+        # Step 2b: Lane narrowing
+        lane_result = _determine_eligible_lanes(
+            text=text,
+            query_shape_tags=query_shape_tags,
+            policy_evidence=policy_evidence,
+            anchor_prefiltered_candidates=anchor_prefiltered_candidates,
+            family_inference=family_inference,
+            runtime_context=runtime_context,
+        )
+        if lane_result.selection_mode == "abstain":
+            abstain_trace = None
+            if include_trace and retrieval_result.trace is not None:
+                abstain_trace = QueryTrace(
+                    query_text=retrieval_result.trace.query_text,
+                    query_tokens=retrieval_result.trace.query_tokens,
+                    limit=requested_limit,
+                    filters=retrieval_result.trace.filters,
+                    stages=retrieval_result.trace.stages,
+                    visibility=retrieval_result.trace.visibility,
+                    requested_filters=retrieval_result.trace.requested_filters,
+                    filter_scope_relaxed=retrieval_result.trace.filter_scope_relaxed,
+                    filter_scope_reason=retrieval_result.trace.filter_scope_reason,
+                    routing={
+                        "policy_name": ROUTING_POLICY_NAME,
+                        "query_policy_family": "abstain",
+                        "query_intent": "abstain",
+                        "query_family": "abstain",
+                        "lane_narrowing": _build_lane_narrowing_trace(lane_result, final_intent_used=False),
+                    },
+                )
+            return PackageQueryOutcome(
+                results=[],
+                trace=abstain_trace,
+                should_inject=False,
+                decision_reason=lane_result.abstain_reason or "lane_ambiguity",
+                injectable_blocks=[],
+                sharp_candidate_diagnostics=[],
             )
-        # Step 4: Intent restriction from policy
-        intent = _apply_policy_intent_restriction(family_inference, policy_ctx)
+        if lane_result.selection_mode == "single_lane_bypass" and lane_result.mapped_intent:
+            intent = lane_result.mapped_intent
+            policy_ctx = PolicySelectedContext(
+                query_policy_family=lane_result.mapped_policy_family or "recall_fact",
+                allowed_query_intents=frozenset({intent}),
+            )
+            final_intent_used = False
+        else:
+            # residual_fallthrough — run existing policy classification, ambiguity, resolver, intent restriction
+            policy_family = _classify_query_policy_family(
+                text,
+                query_shape_tags=query_shape_tags,
+                runtime_context=runtime_context,
+                initial_intent=str(family_inference["selected_family"]),
+            )
+            policy_ctx, policy_options = _build_ambiguity_options(
+                policy_family,
+                text=text,
+                policy_evidence=policy_evidence,
+                family_inference=family_inference,
+                runtime_context=runtime_context,
+                query_shape_tags=query_shape_tags,
+            )
+            if policy_ctx.query_policy_family == "noise":
+                empty_trace = None
+                if include_trace and retrieval_result.trace is not None:
+                    empty_trace = QueryTrace(
+                        query_text=retrieval_result.trace.query_text,
+                        query_tokens=retrieval_result.trace.query_tokens,
+                        limit=requested_limit,
+                        filters=retrieval_result.trace.filters,
+                        stages=retrieval_result.trace.stages,
+                        visibility=retrieval_result.trace.visibility,
+                        requested_filters=retrieval_result.trace.requested_filters,
+                        filter_scope_relaxed=retrieval_result.trace.filter_scope_relaxed,
+                        filter_scope_reason=retrieval_result.trace.filter_scope_reason,
+                        routing={"policy_name": ROUTING_POLICY_NAME, "query_policy_family": "noise", "query_intent": "noise", "query_family": "noise"},
+                    )
+                return PackageQueryOutcome(
+                    results=[],
+                    trace=empty_trace,
+                    should_inject=False,
+                    decision_reason="low_value_query",
+                    injectable_blocks=[],
+                    sharp_candidate_diagnostics=[],
+                )
+            if policy_options and len(policy_options) == 2:
+                policy_ctx = _maybe_invoke_resolver(
+                    policy_ctx=policy_ctx,
+                    policy_options=policy_options,
+                    anchor_prefiltered_candidates=anchor_prefiltered_candidates,
+                    query_text=text,
+                    runtime_context=runtime_context,
+                    resolver_config=resolver_config,
+                )
+            intent = _apply_policy_intent_restriction(family_inference, policy_ctx)
+            final_intent_used = True
         preferred_layers = ROUTING_PREFERRED_LAYERS[intent]
         # Step 5: Kind prefilter AFTER policy intent restriction
         kind_filtered_candidates, kind_prefilter_summary, kind_prefilter_states = _kind_prefilter_candidates(
@@ -563,6 +667,7 @@ def route_query_results(
             runtime_context=runtime_context,
             packaging_summary=packaging_summary,
             local_constraint_profile=_build_local_query_constraint_profile(text, runtime_context, ranked_candidates),
+            selected_lane=lane_result.selected_lane,
         )
         injection_blocks, injection_summary = _build_injectable_blocks(
             final_candidates,
@@ -616,6 +721,8 @@ def route_query_results(
                     kind_prefilter_summary=kind_prefilter_summary,
                     anchor_prefilter_summary=anchor_prefilter_summary,
                     policy_ctx=policy_ctx,
+                    lane_result=lane_result,
+                    final_intent_used=final_intent_used,
                 ),
             )
 
@@ -2289,6 +2396,7 @@ def _build_policy_evidence(
     cross_thread_continuity_survives = False
     constraint_best_support = 0
     constraint_best_kind = ""
+    constraint_memory_only_support = 0
     structured_layers = {"thread_summary", "discussion_summary", "continuity_memory"}
 
     for item in candidates:
@@ -2313,6 +2421,7 @@ def _build_policy_evidence(
             if support > constraint_best_support:
                 constraint_best_support = support
                 constraint_best_kind = CONSTRAINT_MEMORY_TYPE
+            constraint_memory_only_support = max(constraint_memory_only_support, support)
         elif item.result_kind == "memory_hit" and item.type in {"task_checkpoint", "thread_summary"}:
             # Structured types can carry constraint signals
             payload = item.payload or {}
@@ -2329,6 +2438,7 @@ def _build_policy_evidence(
         "cross_thread_continuity_survives": cross_thread_continuity_survives,
         "constraint_best_support": constraint_best_support,
         "constraint_best_kind": constraint_best_kind,
+        "constraint_memory_only_support": constraint_memory_only_support,
     }
 
 
@@ -2393,6 +2503,180 @@ def _work_state_evidence_gate_passes(policy_evidence: dict[str, object]) -> bool
     if int(policy_evidence["source_evidence_best_work_usefulness"]) >= POLICY_WORK_STATE_USEFULNESS_THRESHOLD:
         return True
     return False
+
+
+def _determine_eligible_lanes(
+    *,
+    text: str,
+    query_shape_tags: list[str],
+    policy_evidence: dict[str, object],
+    anchor_prefiltered_candidates: list[QueryResultItem],
+    family_inference: dict[str, object],
+    runtime_context: QueryRuntimeContext | None,
+) -> LaneNarrowingResult:
+    lanes: list[LaneEligibility] = []
+
+    # --- constraint_policy ---
+    constraint_structural: list[str] = []
+    constraint_shape: list[str] = []
+    if _preferred_constraint_text(text):
+        constraint_structural.append("constraint_text_detected")
+    if int(policy_evidence.get("constraint_memory_only_support", 0)) >= POLICY_SUPPORT_THRESHOLD:
+        constraint_structural.append("constraint_memory_with_support")
+    if "constraint_recall" in query_shape_tags:
+        constraint_shape.append("constraint_recall_tag")
+
+    if constraint_structural:
+        constraint_state = "strongly_eligible"
+        constraint_reason = "Structural constraint signal: " + ", ".join(constraint_structural)
+    elif constraint_shape:
+        constraint_state = "plausible"
+        constraint_reason = "Query-shape hint only: " + ", ".join(constraint_shape)
+    else:
+        constraint_state = "excluded"
+        constraint_reason = "No constraint signals"
+    lanes.append(LaneEligibility(
+        lane="constraint_policy", state=constraint_state,
+        structural_signals=tuple(constraint_structural), shape_signals=tuple(constraint_shape),
+        reason=constraint_reason,
+    ))
+
+    # --- work_resumption ---
+    work_structural: list[str] = []
+    work_shape: list[str] = []
+    is_resumed_session = runtime_context is not None and runtime_context.turn_kind == "resumed_session"
+    has_resume_state_tag = "resume_state" in query_shape_tags
+    work_evidence_gate = _work_state_evidence_gate_passes(policy_evidence)
+    if is_resumed_session:
+        work_structural.append("resumed_session")
+    if has_resume_state_tag:
+        work_shape.append("resume_state_tag")
+    if int(policy_evidence.get("task_checkpoint_best_work_usefulness", 0)) > 0:
+        work_structural.append("checkpoint_usefulness_present")
+    # Strong eligibility requires both a query-side signal AND candidate-side evidence.
+    # resumed_session alone is only plausible — users ask broad recall questions in
+    # resumed sessions. Evidence gate alone is also insufficient (see constraint test).
+    if is_resumed_session and work_evidence_gate:
+        work_structural.append("resumed_session_with_evidence")
+        work_state = "strongly_eligible"
+        work_reason = "Structural work signal: resumed session with checkpoint evidence"
+    elif work_evidence_gate and has_resume_state_tag:
+        work_structural.append("work_state_evidence_gate")
+        work_state = "strongly_eligible"
+        work_reason = "Structural work signal: evidence gate + resume_state tag"
+    elif work_shape or work_structural:
+        work_state = "plausible"
+        all_hints = work_shape + [s for s in work_structural if s not in ("resumed_session_with_evidence", "work_state_evidence_gate")]
+        work_reason = ("Structural and shape hints: " if work_structural else "Query-shape hint only: ") + ", ".join(all_hints)
+    else:
+        work_state = "excluded"
+        work_reason = "No work resumption signals"
+    lanes.append(LaneEligibility(
+        lane="work_resumption", state=work_state,
+        structural_signals=tuple(work_structural), shape_signals=tuple(work_shape),
+        reason=work_reason,
+    ))
+
+    # --- evidence_trace ---
+    evidence_structural: list[str] = []
+    evidence_shape: list[str] = []
+    has_source_hits = any(item.result_kind == "source_hit" for item in anchor_prefiltered_candidates)
+    if "evidence_request" in query_shape_tags and has_source_hits:
+        evidence_structural.append("evidence_request_with_source_hits")
+    if has_source_hits and not evidence_structural:
+        evidence_shape.append("source_hits_present")
+
+    if evidence_structural:
+        evidence_state = "strongly_eligible"
+        evidence_reason = "Structural evidence signal: " + ", ".join(evidence_structural)
+    elif evidence_shape:
+        evidence_state = "plausible"
+        evidence_reason = "Source hits present but no explicit evidence request"
+    else:
+        evidence_state = "excluded"
+        evidence_reason = "No source evidence signals"
+    lanes.append(LaneEligibility(
+        lane="evidence_trace", state=evidence_state,
+        structural_signals=tuple(evidence_structural), shape_signals=tuple(evidence_shape),
+        reason=evidence_reason,
+    ))
+
+    # --- residual_recall ---
+    strongly_eligible_lanes = [le for le in lanes if le.state == "strongly_eligible"]
+    if strongly_eligible_lanes:
+        residual_state = "excluded"
+        residual_reason = "Excluded: other lane(s) strongly eligible"
+    else:
+        residual_state = "plausible"
+        residual_reason = "No lane strongly eligible; fallthrough to existing pipeline"
+    lanes.append(LaneEligibility(
+        lane="residual_recall", state=residual_state,
+        structural_signals=(), shape_signals=(), reason=residual_reason,
+    ))
+
+    # --- Decision logic ---
+    strongly_count = len(strongly_eligible_lanes)
+
+    if strongly_count == 1:
+        winner = strongly_eligible_lanes[0]
+        return LaneNarrowingResult(
+            eligible_lanes=tuple(lanes),
+            selected_lane=winner.lane,
+            selection_mode="single_lane_bypass",
+            lane_narrowing_used_intent=False,
+            intent_effect="none",
+            abstain_reason=None,
+            mapped_intent=LANE_INTENT_MAPPING.get(winner.lane),
+            mapped_policy_family=LANE_POLICY_FAMILY_MAPPING.get(winner.lane),
+        )
+
+    if strongly_count > 1:
+        constraint_is_strong = any(le.lane == "constraint_policy" and le.state == "strongly_eligible" for le in lanes)
+        if constraint_is_strong:
+            return LaneNarrowingResult(
+                eligible_lanes=tuple(lanes),
+                selected_lane="constraint_policy",
+                selection_mode="single_lane_bypass",
+                lane_narrowing_used_intent=False,
+                intent_effect="suppressed",
+                abstain_reason=None,
+                mapped_intent=LANE_INTENT_MAPPING["constraint_policy"],
+                mapped_policy_family=LANE_POLICY_FAMILY_MAPPING["constraint_policy"],
+            )
+        return LaneNarrowingResult(
+            eligible_lanes=tuple(lanes),
+            selected_lane=None,
+            selection_mode="abstain",
+            lane_narrowing_used_intent=False,
+            intent_effect="none",
+            abstain_reason="lane_ambiguity",
+            mapped_intent=None,
+            mapped_policy_family=None,
+        )
+
+    plausible_lanes = [le for le in lanes if le.state == "plausible"]
+    if plausible_lanes:
+        return LaneNarrowingResult(
+            eligible_lanes=tuple(lanes),
+            selected_lane=None,
+            selection_mode="residual_fallthrough",
+            lane_narrowing_used_intent=False,
+            intent_effect="none",
+            abstain_reason=None,
+            mapped_intent=None,
+            mapped_policy_family=None,
+        )
+
+    return LaneNarrowingResult(
+        eligible_lanes=tuple(lanes),
+        selected_lane=None,
+        selection_mode="abstain",
+        lane_narrowing_used_intent=False,
+        intent_effect="none",
+        abstain_reason="no_lane_eligible",
+        mapped_intent=None,
+        mapped_policy_family=None,
+    )
 
 
 def _classify_query_policy_family(
@@ -2729,6 +3013,41 @@ def _apply_policy_intent_restriction(
     return best_intent if best_intent else (next(iter(allowed)) if allowed else selected)
 
 
+def _build_lane_narrowing_trace(
+    lane_result: LaneNarrowingResult,
+    *,
+    final_intent_used: bool,
+) -> dict[str, object]:
+    eligible = [le for le in lane_result.eligible_lanes if le.state != "excluded"]
+    excluded = [le for le in lane_result.eligible_lanes if le.state == "excluded"]
+    trace: dict[str, object] = {
+        "eligible_lanes": [le.lane for le in eligible],
+        "excluded_lanes": [le.lane for le in excluded],
+        "lane_exclusion_reasons": {le.lane: le.reason for le in excluded},
+        "lane_details": [
+            {"lane": le.lane, "state": le.state,
+             "structural_signals": list(le.structural_signals),
+             "shape_signals": list(le.shape_signals),
+             "reason": le.reason}
+            for le in lane_result.eligible_lanes
+        ],
+        "selected_lane": lane_result.selected_lane,
+        "selection_mode": lane_result.selection_mode,
+        "lane_narrowing_used_intent": lane_result.lane_narrowing_used_intent,
+        "final_intent_used": final_intent_used,
+        "intent_effect": lane_result.intent_effect,
+        "abstain_reason": lane_result.abstain_reason,
+    }
+    strongly_eligible_count = sum(1 for le in lane_result.eligible_lanes if le.state == "strongly_eligible")
+    constraint_is_strong = any(
+        le.lane == "constraint_policy" and le.state == "strongly_eligible"
+        for le in lane_result.eligible_lanes
+    )
+    if constraint_is_strong and strongly_eligible_count > 1:
+        trace["constraint_safety_override"] = True
+    return trace
+
+
 def _build_routing_trace(
     *,
     intent: str,
@@ -2745,6 +3064,8 @@ def _build_routing_trace(
     kind_prefilter_summary: dict[str, object],
     anchor_prefilter_summary: dict[str, object],
     policy_ctx: PolicySelectedContext = PASSTHROUGH_POLICY,
+    lane_result: LaneNarrowingResult | None = None,
+    final_intent_used: bool = True,
 ) -> dict[str, object]:
     selected_results = [_build_routing_trace_entry(candidate) for candidate in final_candidates]
     demoted_higher_level_hits = [
@@ -2789,6 +3110,8 @@ def _build_routing_trace(
         "sharp_candidate_diagnostics": sharp_candidate_diagnostics,
         "query_policy_family": policy_ctx.query_policy_family,
     }
+    if lane_result is not None:
+        trace["lane_narrowing"] = _build_lane_narrowing_trace(lane_result, final_intent_used=final_intent_used)
     if packaging_summary:
         trace["packaging"] = packaging_summary
     if policy_ctx.resolver_invoked:
@@ -3794,6 +4117,7 @@ def _select_final_candidates(
     runtime_context: QueryRuntimeContext | None,
     packaging_summary: dict[str, object] | None,
     local_constraint_profile: dict[str, object] | None,
+    selected_lane: str | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None]:
     summary = dict(packaging_summary or {})
     if not ranked_candidates:
@@ -3805,6 +4129,7 @@ def _select_final_candidates(
             query_shape_tags=query_shape_tags,
             packaging_summary=summary,
             local_constraint_profile=local_constraint_profile,
+            selected_lane=selected_lane,
         )
     if intent != "work_resumption":
         return ranked_candidates[:requested_limit], summary or None
@@ -3894,6 +4219,7 @@ def _select_compatible_recall_candidates(
     query_shape_tags: list[str],
     packaging_summary: dict[str, object],
     local_constraint_profile: dict[str, object] | None,
+    selected_lane: str | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None]:
     compatible_candidates, packaging_summary, constraint_anchor, constraint_state = _apply_structured_constraint_compatibility(
         ranked_candidates=ranked_candidates,
@@ -3905,7 +4231,7 @@ def _select_compatible_recall_candidates(
             packaging_summary["mode"] = "compatible_structured_recall"
         return [], packaging_summary or None
 
-    explicit_constraint_focus = "constraint_recall" in query_shape_tags
+    explicit_constraint_focus = "constraint_recall" in query_shape_tags or selected_lane == "constraint_policy"
     if explicit_constraint_focus and constraint_anchor is not None and constraint_anchor in compatible_candidates:
         primary_candidate = constraint_anchor
     else:
