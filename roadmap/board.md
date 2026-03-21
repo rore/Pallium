@@ -1,8 +1,8 @@
 # Next
 - add-structural-query-lane-narrowing-before-intent-tiebreak
+- add-language-agnostic-query-signals-and-typed-constraint-state
 
 # Later
-- add-language-agnostic-query-signals-and-typed-constraint-state
 - add-live-integration-improvement-loop-and-replay-pipeline
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
