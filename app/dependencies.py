@@ -8,6 +8,8 @@ from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
 from core.observability import IntegrationDebugLogger
 from core.service import PalliumService
 from providers.embedding.base import EmbeddingProvider
+from providers.llm.aicore_anthropic import AICoreAnthropicLLMProvider
+from providers.llm.aicore_auth import AICoreDeploymentCatalog, AICoreTokenProvider
 from providers.llm.anthropic_claude import AnthropicClaudeLLMProvider
 from providers.llm.base import LLMProvider
 from providers.llm.openai_compatible import OpenAICompatibleLLMProvider
@@ -56,6 +58,37 @@ def build_llm_provider(config: AppConfig, *, provider_name: str, model: str) -> 
             timeout_seconds=provider_config.timeout_seconds,
             retry_policy=provider_config.retry_policy,
             auth_style=provider_config.auth_style,
+            max_tokens=provider_config.max_tokens,
+        )
+
+    if provider_kind == "aicore_anthropic":
+        aicore_cfg = provider_config.aicore
+        if not aicore_cfg:
+            raise ValueError(
+                f"LLM provider '{provider_name}' (kind=aicore_anthropic) "
+                "requires an [aicore] configuration sub-table"
+            )
+        token_provider = AICoreTokenProvider(
+            client_id=aicore_cfg.client_id,
+            client_secret=aicore_cfg.client_secret,
+            auth_url=aicore_cfg.auth_url,
+            timeout_seconds=provider_config.timeout_seconds,
+        )
+        deployment_catalog = AICoreDeploymentCatalog(
+            base_url=aicore_cfg.base_url,
+            resource_group=aicore_cfg.resource_group,
+            token_provider=token_provider,
+            timeout_seconds=provider_config.timeout_seconds,
+        )
+        return AICoreAnthropicLLMProvider(
+            provider_name=provider_name,
+            model=model,
+            base_url=aicore_cfg.base_url,
+            resource_group=aicore_cfg.resource_group,
+            token_provider=token_provider,
+            deployment_catalog=deployment_catalog,
+            timeout_seconds=provider_config.timeout_seconds,
+            retry_policy=provider_config.retry_policy,
             max_tokens=provider_config.max_tokens,
         )
 

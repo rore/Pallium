@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from capabilities.consolidation import ConsolidationPolicy, DEFAULT_CONSOLIDATION_STRATEGIES
+from providers.llm.aicore_config import AICoreProviderConfig
 from providers.llm.base import LLMRetryPolicy
 from storage.vector_index import VectorIndexConfig
 
@@ -39,6 +40,7 @@ class LLMProviderConfig:
     retry_policy: LLMRetryPolicy = field(default_factory=LLMRetryPolicy)
     auth_style: str = "native"  # "native" (provider default) or "bearer" (Authorization: Bearer)
     max_tokens: int = 1024
+    aicore: AICoreProviderConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -436,10 +438,45 @@ def _provider_from_raw(name: str, raw_value: dict[str, Any], env_values: dict[st
     api_key = _as_optional_string(raw_value.get("api_key"))
     if api_key_env and api_key_env in env_values:
         api_key = env_values[api_key_env]
+
+    kind = _as_string(raw_value.get("kind"))
+
+    # Parse AI Core sub-table when provider kind is aicore_anthropic.
+    aicore: AICoreProviderConfig | None = None
+    if kind == "aicore_anthropic":
+        aicore_raw = raw_value.get("aicore", {})
+        if not isinstance(aicore_raw, dict):
+            raise ValueError(f"Provider '{name}': 'aicore' must be a table")
+
+        def _resolve_env(env_key: str, field_label: str) -> str:
+            env_name = _as_string(aicore_raw.get(env_key))
+            if not env_name:
+                raise ValueError(f"Provider '{name}': aicore.{env_key} is required")
+            value = env_values.get(env_name) or os.environ.get(env_name)
+            if not value:
+                raise ValueError(
+                    f"Provider '{name}': env var '{env_name}' "
+                    f"(for aicore.{env_key}) is not set"
+                )
+            return value
+
+        aicore = AICoreProviderConfig(
+            client_id=_resolve_env("client_id_env", "client_id"),
+            client_secret=_resolve_env("client_secret_env", "client_secret"),
+            auth_url=_resolve_env("auth_url_env", "auth_url"),
+            base_url=_resolve_env("base_url_env", "base_url"),
+            resource_group=_as_string(aicore_raw.get("resource_group", "default")) or "default",
+        )
+
+    base_url = _as_optional_string(raw_value.get("base_url")) or ""
+    # For aicore_anthropic the base_url comes from the aicore sub-table.
+    if kind == "aicore_anthropic" and aicore:
+        base_url = aicore.base_url
+
     return LLMProviderConfig(
         name=name,
-        kind=_as_string(raw_value.get("kind")),
-        base_url=_as_string(raw_value.get("base_url")),
+        kind=kind,
+        base_url=base_url,
         api_key=api_key,
         api_key_env=api_key_env,
         timeout_seconds=float(raw_value.get("timeout_seconds", 30.0)),
@@ -452,6 +489,7 @@ def _provider_from_raw(name: str, raw_value: dict[str, Any], env_values: dict[st
         ),
         auth_style=_as_string(raw_value.get("auth_style", "native")) or "native",
         max_tokens=int(raw_value.get("max_tokens", 1024)),
+        aicore=aicore,
     )
 
 
