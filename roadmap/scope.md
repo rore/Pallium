@@ -63,10 +63,10 @@ Current focus:
   not as ad hoc prompt tweaking inside whatever feature currently happens to use
   a model call
 - keep privacy, query-debug traceability, retention safety, and timestamped runtime logs as permanent regression gates while the stabilization lane advances
-- treat live miss capture as valuable but later: once the architecture is more stable, captured misses can become durable replay assets instead of mostly rediscovering known heuristic weaknesses
+- treat live miss capture as valuable but later: first move routing authority from phrase-derived intent toward structural lane narrowing so captured misses become residual ambiguity and drift cases instead of mostly rediscovering known router weaknesses
 - treat external benchmark packs as useful pressure on the core memory engine, but not as the next best investment for product stability
 - treat vector retrieval and hybrid fusion as important follow-on retrieval work, but not as the next stabilization bottleneck:
-  - vector retrieval should not be the immediate next feature now that the bounded query-policy slice is shipped; live miss capture and replay promotion should come first
+  - vector retrieval should not be the immediate next feature now that the bounded query-policy slice is shipped; structural lane narrowing should come first, then live miss capture and replay promotion once the hot path is structurally calmer
   - once those deterministic narrowing layers land, vector retrieval becomes the expected semantic retrieval substrate for durable memory
   - it should stay bounded by scope, kind, and subject/workstream filters rather than acting as an unconstrained semantic fallback
   - it should not become the main mechanism for constraint/policy lookup or short-term local state
@@ -94,7 +94,8 @@ Planned future query pipeline:
 - query-time prompt use should remain selective and bounded even after that
   prompt-role formalization; it does not justify an always-on query-time model
   router
-- the next feature should now be the live miss-capture and replay-promotion loop so real traffic becomes bounded miss bundles and permanent regressions quickly
+- the next feature should now be structural query lane narrowing before intent tie-break so the shipped query-policy contract becomes authoritative in the hot path and phrase-derived intent stops acting like the switchboard
+- after that, move the live miss-capture and replay-promotion loop back up so real traffic becomes bounded miss bundles and permanent regressions once captured misses are more likely to reflect residual ambiguity and drift than known structural routing weaknesses
 - after that, move vector retrieval up as the bounded semantic candidate-generation layer for durable memory, then add hybrid fusion so lexical precision and paraphrase recall operate over the same narrowed candidate space
 - the targeted external memory pressure pack is now shipped as a non-gating confidence lane for stale-memory handling, update correctness, long noisy recall, and incremental drift; future retrieval-substrate work should use it as pressure, not as the product acceptance gate
 - only after those layers are clearer should explicit shared-memory derivation and cross-container bounded memory move up
@@ -141,7 +142,4 @@ Still out of scope for this phase:
 - public API expansion for explicit retention administration
 - replacing lower-level evidence-backed memory with only higher-level summaries
 - turning Pallium into a workflow engine, transcript archive, or raw tool-log store
-
-
-
 

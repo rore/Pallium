@@ -1,7 +1,8 @@
 # Next
-- add-live-integration-improvement-loop-and-replay-pipeline
+- add-structural-query-lane-narrowing-before-intent-tiebreak
 
 # Later
+- add-live-integration-improvement-loop-and-replay-pipeline
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
 

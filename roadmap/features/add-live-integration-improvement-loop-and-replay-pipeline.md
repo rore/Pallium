@@ -1,10 +1,10 @@
 ---
 id: add-live-integration-improvement-loop-and-replay-pipeline
 title: Live miss capture and replay promotion loop
-status: in-progress
+status: queued
 priority: high
 commitment: committed
-milestone: Next
+milestone: Later
 lane: integration-feedback
 ---
 
@@ -164,3 +164,4 @@ Implementation defaults:
 - `WORK_RESUMPTION_SHARP_CHECKPOINT_THRESHOLD` is defined but has no active
   call site in routing; it is excluded from `RoutingOverrides` intentionally
   until it is wired to a real scoring gate
+
