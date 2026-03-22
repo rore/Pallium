@@ -21,14 +21,26 @@ sequenceDiagram
     participant L as LLM
 
     S->>A: user message
-    A->>P: POST /items (store user message)
-    A->>P: POST /query (get relevant memory)
-    P-->>A: should_inject + injectable_blocks
+    A->>P: POST /item-and-query (store + retrieve in one call)
+    P-->>A: source_item_id + should_inject + injectable_blocks
     A->>L: prompt + injected memory
     L-->>A: reply
     A->>S: post reply
-    A->>P: POST /items (store reply + artifacts)
+    A->>P: POST /items (store reply as evidence)
 ```
+
+The `/item-and-query` endpoint stores the user message as evidence for future
+recall and retrieves previously derived memory in a single call. The
+just-ingested message won't appear in query results — processing is async.
+
+**When to use which endpoint:**
+
+- **User messages** → `POST /item-and-query` — store the message AND get
+  memory before drafting a reply. This is the only point where you need a
+  query.
+- **Assistant replies, tool summaries, todo snapshots** → `POST /items` —
+  store as evidence for future recall. No query needed — the agent already
+  has its answer, it's just preserving the result for later.
 
 ## Mapping Slack Concepts to Pallium Fields
 
@@ -55,7 +67,7 @@ from a different context.
 
 ## The Client
 
-A thin async client wraps the two Pallium endpoints:
+A thin async client wraps the Pallium endpoints:
 
 ```python
 import aiohttp
@@ -71,32 +83,32 @@ class PalliumClient:
             self._session = aiohttp.ClientSession(timeout=self._timeout)
         return self._session
 
+    async def item_and_query(self, payload: dict) -> dict | None:
+        """Store item + query for memory in one call."""
+        session = await self._ensure_session()
+        async with session.post(f"{self._base_url}/item-and-query", json=payload) as r:
+            if r.status != 200:
+                return None
+            return await r.json()
+
     async def post_item(self, payload: dict) -> None:
+        """Store an item (used for assistant replies and artifacts)."""
         session = await self._ensure_session()
         async with session.post(f"{self._base_url}/items", json=payload) as r:
             if r.status >= 400:
                 logging.warning("Pallium ingest failed: HTTP %s", r.status)
-
-    async def query(self, payload: dict) -> dict | None:
-        session = await self._ensure_session()
-        async with session.post(f"{self._base_url}/query", json=payload) as r:
-            if r.status != 200:
-                return None
-            return await r.json()
 ```
 
-Keep the client simple — Pallium owns the memory decisions, not the client.
+## Step 1: Ingest + Query in One Call
 
-## Step 1: Ingest the User Message
-
-When a Slack message arrives:
+When a Slack message arrives, store it and query for prior memory together:
 
 ```python
-async def ingest_user_message(client: PalliumClient, event: dict):
+async def ingest_and_query(client: PalliumClient, event: dict) -> dict | None:
     channel = event["channel"]
     thread_ts = event.get("thread_ts") or event["ts"]
 
-    await client.post_item({
+    return await client.item_and_query({
         "source_type": "conversation_agent_event",
         "source_id": f"slack-message:{channel}:{event['ts']}",
         "content_type": "text/plain",
@@ -111,91 +123,45 @@ async def ingest_user_message(client: PalliumClient, event: dict):
 ```
 
 Notes:
-- `source_id` is stable per message — re-ingesting the same message is
-  idempotent.
-- Processing happens in the background. The response returns immediately with
-  `processing_status: "pending"`.
-- Skip empty messages — don't ingest them.
+- `content` is used as both the stored evidence and the query text by default.
+  Use `query_text` to override if you need different query text.
+- `source_id` is stable per message — re-ingesting is idempotent.
+- The ingest is async — the just-ingested message won't appear in query
+  results. The query retrieves previously derived memory.
 
-## Step 2: Query for Memory Before Answering
+## Step 2: Build the LLM Prompt
 
-Before the LLM draft, ask Pallium for relevant memory:
-
-```python
-async def query_memory(
-    client: PalliumClient,
-    event: dict,
-    session_id: str,
-) -> str | None:
-    """Returns formatted memory block for prompt injection, or None."""
-    channel = event["channel"]
-    thread_ts = event.get("thread_ts") or event["ts"]
-
-    result = await client.query({
-        "text": event["text"],
-        "limit": 12,
-        "container_ref": container_ref(channel, event["user"], is_dm(event)),
-        "thread_ref": f"slack:thread:{channel}:{thread_ts}",
-        "container_visibility": channel_visibility(event),
-    })
-
-    if result is None or not result.get("should_inject"):
-        return None
-
-    blocks = result.get("injectable_blocks", [])
-    if not blocks:
-        return None
-
-    # Format blocks for prompt injection
-    formatted = []
-    for block in blocks:
-        title = block.get("title") or block.get("memory_type") or "context"
-        text = block.get("text", "")
-        if text.strip():
-            formatted.append(f"{title}\n{text}")
-
-    if not formatted:
-        return None
-
-    return (
-        "[Prior context from earlier related work]\n"
-        + "\n\n".join(formatted)
-        + "\n[End prior context]\n"
-    )
-```
-
-The key contract: check `should_inject` first, then use `injectable_blocks`.
-Don't filter, rerank, or second-guess — Pallium already made the decision.
-
-## Step 3: Build the LLM Prompt
-
-Include the memory block as a distinct section in the prompt, separate from
-the current conversation:
+Check `should_inject` and use `injectable_blocks` directly:
 
 ```python
-async def handle_message(event: dict, session_id: str):
-    # 1. Ingest user message
-    await ingest_user_message(pallium, event)
+async def handle_message(event: dict):
+    # 1. Ingest + query
+    result = await ingest_and_query(pallium, event)
 
-    # 2. Query for memory
-    memory_block = await query_memory(pallium, event, session_id)
-
-    # 3. Build prompt
+    # 2. Build prompt with injected memory
+    blocks = result["injectable_blocks"] if result and result.get("should_inject") else []
     parts = []
-    if memory_block:
-        parts.append(memory_block)
+    if blocks:
+        parts.append("[Prior context from earlier related work]")
+        for block in blocks:
+            title = block.get("title") or block.get("memory_type") or "context"
+            parts.append(f"{title}\n{block['text']}")
+        parts.append("[End prior context]\n")
     parts.append(f"User: {event['text']}")
-    prompt = "\n".join(parts)
+    prompt = "\n\n".join(parts)
 
-    # 4. Call LLM and post reply
+    # 3. Call LLM and post reply
     reply = await call_llm(prompt)
     reply_ts = await post_slack_reply(event, reply)
 
-    # 5. Ingest reply
+    # 4. Ingest reply
     await ingest_assistant_reply(pallium, event, reply_ts, reply)
 ```
 
-## Step 4: Ingest the Assistant Reply and Artifacts
+Don't filter, rerank, or second-guess — `should_inject` and
+`injectable_blocks` are the contract. Pallium already made the decision.
+
+## Step 3: Ingest the Assistant Reply and Artifacts
 
 After the LLM responds, store the reply. If the agent produced tool results
 or todo snapshots, ingest those too:

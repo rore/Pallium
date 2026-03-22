@@ -7,10 +7,12 @@ which is the main product focus today.
 
 ## Base Model
 
-The API has two main operations:
+The API has three main operations:
 
 - send selected evidence with `POST /items`
 - ask for continuity context with `POST /query` or `POST /query/debug`
+- do both in one call with `POST /item-and-query` or
+  `POST /item-and-query/debug`
 
 There are also two operational endpoints:
 
@@ -270,6 +272,54 @@ Use this endpoint when you need to understand:
 - why memory beat source evidence or vice versa
 - which candidates were excluded by visibility rules
 - what lexical matches were considered
+
+## POST /item-and-query
+
+Combines item ingest and memory query in a single call. This is the
+recommended endpoint for the common pattern: store the user message, then
+immediately query for relevant prior memory.
+
+The request body is the same as `POST /items`, plus optional query fields:
+
+- `query_text` — override query text (defaults to `content`)
+- `query_limit` — max results (default: 5, range: 1–50)
+- `runtime_context` — optional runtime hints (same as POST /query)
+
+Example:
+
+```json
+{
+  "source_type": "chat_message",
+  "source_id": "slack:C04ABC123:1700000001.000100",
+  "content_type": "text/plain",
+  "content": "Why did we choose event timestamps for ordering?",
+  "role": "user",
+  "artifact_kind": "message",
+  "container_ref": "slack:channel:C04ABC123",
+  "thread_ref": "slack:thread:C04ABC123:1700000001.000100",
+  "container_visibility": "limited",
+  "actor_ref": "slack:user:U01XYZ789"
+}
+```
+
+Response — same as `POST /query` plus `source_item_id`:
+
+```json
+{
+  "source_item_id": "si-abc123",
+  "should_inject": true,
+  "decision_reason": "carry_forward_available",
+  "injectable_blocks": [ ... ],
+  "results": [ ... ]
+}
+```
+
+The ingest runs first (async processing — the just-ingested message won't
+appear in query results). The query then retrieves previously derived memory
+relevant to the `content` (or `query_text` if provided).
+
+`POST /item-and-query/debug` returns the same plus `trace` (same as
+`POST /query/debug`).
 
 ## GET /debug/queue/health
 

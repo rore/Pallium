@@ -103,7 +103,8 @@ walkthrough.
 1. **Ingest** — selected evidence goes in via `POST /items` (not everything, just high-value events)
 2. **Process** — background workers extract structured memory (decisions, findings, checkpoints) and embed for retrieval
 3. **Query** — `POST /query` retrieves compact memory + source evidence, scoped by visibility, with an injection decision
-4. **Debug** — `POST /query/debug` exposes the full retrieval and routing trace
+4. **Combined** — `POST /item-and-query` does ingest + query in one call (recommended for the common per-message pattern)
+5. **Debug** — `POST /query/debug` or `POST /item-and-query/debug` exposes the full retrieval and routing trace
 
 Retrieval combines lexical search, vector similarity, and hybrid RRF fusion.
 The query path is deterministic by default, with selective LLM-assisted

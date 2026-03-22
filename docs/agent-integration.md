@@ -10,10 +10,10 @@ returned memory block is useful to inject.
 
 ```mermaid
 flowchart LR
-    A["Agent runtime"] -->|raw events + refs + visibility| B["Pallium /items"]
-    B --> C["source evidence + derived memory"]
-    A -->|current user text + runtime context| D["Pallium /query"]
-    D -->|injection decision + injectable blocks + debug trace| A
+    A["Agent runtime"] -->|user message + refs| B["Pallium /item-and-query"]
+    B -->|injection decision + injectable blocks| A
+    A -->|assistant reply + artifacts| C["Pallium /items"]
+    C --> D["source evidence + derived memory"]
 ```
 
 Pallium sits on the edge of your runtime:
@@ -37,24 +37,27 @@ engine.
 A realistic current-package loop looks like this:
 
 1. a user asks why a background job keeps missing status updates
-2. the assistant investigates and answers with a concrete decision
-3. the runtime stores the user message, the assistant output, and a compact tool
-   summary or next-step artifact
-4. later the user asks the same question again, or the work is resumed after an
-   interruption
-5. the runtime queries Pallium before building the next prompt
-6. Pallium returns a compact conclusion or work-state card plus supporting
-   evidence refs
+2. the runtime calls `POST /item-and-query` — this stores the user message
+   as evidence and retrieves prior memory in one call
+3. Pallium returns `should_inject=true` with a compact prior decision card
+4. the runtime injects that card into the LLM prompt and drafts an answer
+5. the runtime stores the assistant reply via `POST /items`
+6. later the user asks the same question again, or the work is resumed after an
+   interruption — step 2 fires again and Pallium returns the right memory
 
 That is the present value story. Pallium is not trying to be the whole runtime.
 
 ## When To Ingest
 
-Use `POST /items` when your runtime sees an event that is worth future reuse.
+There are two ingest patterns:
 
-Good ingest moments:
+- **User messages** — use `POST /item-and-query` to store and query in one
+  call. This is the only point where you need memory back.
+- **Assistant replies and artifacts** — use `POST /items` to store evidence
+  for future recall. No query needed.
 
-- a user message establishes a new question or requirement
+Good ingest moments for assistant artifacts:
+
 - an assistant answer contains a conclusion you want to carry forward
 - a tool run produced a compact explicit finding worth preserving
 - the runtime has an explicit progress update, blocker state, or next-step note
@@ -111,8 +114,13 @@ is stable.
 
 ## Query Patterns
 
-Use `POST /query` when the runtime needs memory for:
+Most integrations should use `POST /item-and-query` for user messages — it
+stores the message and queries in one call.
 
+Use standalone `POST /query` when you need to query without ingesting, for
+example re-querying during debugging or querying from a different context.
+
+The kinds of questions where Pallium adds value:
 - repeated questions
 - "why did we choose this?"
 - "what did the investigation find?"
@@ -192,16 +200,16 @@ side, Pallium-owned memory judgment on the other.
 
 One practical runtime pattern:
 
-1. ingest user message after it is accepted into the thread
-2. ingest final assistant answer when it contains a reusable conclusion
-3. ingest a compact tool-use summary only when it adds explicit finding,
-   blocker, or next-step value
-4. on repeated questions or resumed work, query Pallium before building the
-   next prompt and include runtime context if it is available
-5. inject Pallium's returned carry-forward block(s) directly when
+1. on each user message, call `POST /item-and-query` to store the message and
+   get relevant memory in one round-trip
+2. inject Pallium's returned carry-forward block(s) directly when
    `should_inject=true`
-6. if a result looks wrong, inspect `POST /query/debug` before changing prompts
-   or retrieval code
+3. ingest final assistant answer with `POST /items` when it contains a
+   reusable conclusion
+4. ingest a compact tool-use summary only when it adds explicit finding,
+   blocker, or next-step value
+5. if a result looks wrong, inspect `POST /item-and-query/debug` or
+   `POST /query/debug` before changing prompts or retrieval code
 
 The direct harness follows this same loop. In `chat-lite` mode it ingests the
 user turn through `/items`, calls `/query/debug` before the assistant turn, and

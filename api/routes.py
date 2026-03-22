@@ -3,6 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from api.schemas import (
+    ItemAndQueryDebugResponse,
+    ItemAndQueryRequest,
+    ItemAndQueryResponse,
     ItemCreateRequest,
     ItemCreateResponse,
     ProcessingStatusResponse,
@@ -310,6 +313,82 @@ def create_router(service: PalliumService) -> APIRouter:
             decision_reason=result.decision_reason,
             injectable_blocks=[_serialize_injectable_block(block) for block in result.injectable_blocks],
             trace=_serialize_trace(result.trace),
+        )
+
+    @router.post("/item-and-query", response_model=ItemAndQueryResponse)
+    def item_and_query(request: ItemAndQueryRequest) -> ItemAndQueryResponse:
+        ingest_result = service.ingest_item(
+            source_type=request.source_type,
+            source_id=request.source_id,
+            content_type=request.content_type,
+            content=request.content,
+            metadata=request.metadata,
+            use_case=request.use_case,
+            occurred_at=request.occurred_at,
+            actor_ref=request.actor_ref,
+            agent_ref=request.agent_ref,
+            role=request.role,
+            container_ref=request.container_ref,
+            thread_ref=request.thread_ref,
+            source_ref=request.source_ref,
+            artifact_kind=request.artifact_kind,
+            container_visibility=request.container_visibility_kind(),
+        )
+        query_text = request.query_text or request.content
+        query_result = service.query(
+            query_text,
+            request.query_limit,
+            container_ref=request.container_ref,
+            thread_ref=request.thread_ref,
+            container_visibility=request.container_visibility_kind(),
+            runtime_context=_deserialize_runtime_context(request.runtime_context),
+        )
+        return ItemAndQueryResponse(
+            source_item_id=ingest_result.source_item_id,
+            results=[_serialize_result(item) for item in query_result.results],
+            should_inject=query_result.should_inject,
+            decision_reason=query_result.decision_reason,
+            injectable_blocks=[_serialize_injectable_block(block) for block in query_result.injectable_blocks],
+        )
+
+    @router.post("/item-and-query/debug", response_model=ItemAndQueryDebugResponse)
+    def item_and_query_debug(request: ItemAndQueryRequest) -> ItemAndQueryDebugResponse:
+        ingest_result = service.ingest_item(
+            source_type=request.source_type,
+            source_id=request.source_id,
+            content_type=request.content_type,
+            content=request.content,
+            metadata=request.metadata,
+            use_case=request.use_case,
+            occurred_at=request.occurred_at,
+            actor_ref=request.actor_ref,
+            agent_ref=request.agent_ref,
+            role=request.role,
+            container_ref=request.container_ref,
+            thread_ref=request.thread_ref,
+            source_ref=request.source_ref,
+            artifact_kind=request.artifact_kind,
+            container_visibility=request.container_visibility_kind(),
+        )
+        query_text = request.query_text or request.content
+        query_result = service.query(
+            query_text,
+            request.query_limit,
+            container_ref=request.container_ref,
+            thread_ref=request.thread_ref,
+            container_visibility=request.container_visibility_kind(),
+            runtime_context=_deserialize_runtime_context(request.runtime_context),
+            include_trace=True,
+        )
+        if query_result.trace is None:
+            raise ValueError("debug query must include retrieval trace")
+        return ItemAndQueryDebugResponse(
+            source_item_id=ingest_result.source_item_id,
+            results=[_serialize_result(item) for item in query_result.results],
+            should_inject=query_result.should_inject,
+            decision_reason=query_result.decision_reason,
+            injectable_blocks=[_serialize_injectable_block(block) for block in query_result.injectable_blocks],
+            trace=_serialize_trace(query_result.trace),
         )
 
     return router

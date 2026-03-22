@@ -251,6 +251,51 @@ class QueryDebugResponse(QueryResponse):
     trace: QueryTraceResponse
 
 
+class ItemAndQueryRequest(BaseModel):
+    source_type: str = Field(min_length=1)
+    source_id: str = Field(min_length=1)
+    content_type: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+    metadata: dict[str, Any] | None = None
+    use_case: str | None = None
+    occurred_at: datetime | None = None
+    actor_ref: str | None = None
+    agent_ref: str | None = None
+    role: str | None = None
+    container_ref: str | None = None
+    thread_ref: str | None = None
+    source_ref: str | None = None
+    artifact_kind: ArtifactKind | None = None
+    container_visibility: VisibilityKind | VisibilityContextModel | None = None
+    visibility_context: VisibilityContextModel | None = None
+    query_text: str | None = None
+    query_limit: int = Field(default=5, ge=1, le=50)
+    runtime_context: RuntimeContextModel | None = None
+
+    def container_visibility_kind(self) -> str | None:
+        value = self.visibility_context or self.container_visibility
+        if isinstance(value, VisibilityContextModel):
+            return value.kind
+        return value
+
+
+class ItemAndQueryResponse(BaseModel):
+    source_item_id: str
+    results: list[QueryResultResponse]
+    should_inject: bool
+    decision_reason: str
+    injectable_blocks: list[InjectableBlockResponse] = Field(default_factory=list)
+
+
+class ItemAndQueryDebugResponse(BaseModel):
+    source_item_id: str
+    results: list[QueryResultResponse]
+    should_inject: bool
+    decision_reason: str
+    injectable_blocks: list[InjectableBlockResponse] = Field(default_factory=list)
+    trace: QueryTraceResponse
+
+
 class QueueHealthReasonCountResponse(BaseModel):
     reason: str
     count: int

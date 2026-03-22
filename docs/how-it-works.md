@@ -73,7 +73,7 @@ pretending memory never changes.
 
 The query path follows a staged pipeline:
 
-1. **Structured filters** — container, thread, session, artifact kind, role
+1. **Structured filters** — container, thread, artifact kind, role
 2. **Visibility enforcement** — scoped access checked before ranking
 3. **Hybrid retrieval** — lexical search + vector similarity, fused via
    Reciprocal Rank Fusion (RRF)
@@ -81,6 +81,10 @@ The query path follows a staged pipeline:
    shape, memory type, and structural signals
 5. **Injection decision** — Pallium decides whether to inject and returns
    `should_inject`, `decision_reason`, and `injectable_blocks`
+
+Most integrations use `POST /item-and-query` to combine evidence storage and
+memory retrieval in a single call. The separate `POST /items` and `POST /query`
+endpoints are also available when you need them independently.
 
 The query path is deterministic by default. A selective LLM-assisted
 disambiguation step (using a fast model with conservative fallback) runs only
