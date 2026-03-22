@@ -1,12 +1,20 @@
-"""Test that user-stated intent is promoted to an actionable memory type.
+"""Test that user-stated interest is promoted to an actionable memory type.
 
 Scenario: user discusses vector databases with the assistant across a thread,
-then explicitly states an intent to try a specific tool (Chroma). After a
-thread boundary (/new), a query asking what the user planned to try should
-surface a specific actionable memory — not only generic discussion summaries.
+then expresses specific interest in a tool (Chroma). After a thread boundary
+(/new), a query asking what the user wanted to try should surface a specific
+actionable memory — not only generic discussion summaries.
 
-This test is expected to FAIL until the extraction pipeline promotes
-user-stated intent into decision / task_checkpoint / continuity_memory.
+The original phrasing is deliberately vague ("i should check it some time")
+rather than a concrete commitment ("i'll try it this weekend"). The concrete
+version already works — the LLM emits next_step_text and the pipeline
+produces a task_checkpoint. The vague version is the gap: the LLM correctly
+judges it's not a "concrete future action" per the prompt, so it falls
+through to discussion_summary only.
+
+This test is expected to FAIL until either:
+- The extraction prompt/schema recognizes specific interest (not just commitments)
+- A new memory type (e.g. user_interest) captures expressed-but-uncommitted intent
 """
 from __future__ import annotations
 
@@ -84,7 +92,7 @@ THREAD_A_EVENTS = [
         'source_type': 'chat_message',
         'source_id': f'{THREAD_A}-msg-2',
         'content_type': 'text/plain',
-        'content': "ok, chroma sounds good. i'll try it this weekend.",
+        'content': "ok, chroma sounds interesting. i should check it some time.",
         'artifact_kind': 'message',
         'role': 'user',
         'container_ref': CONTAINER_REF,
@@ -105,11 +113,11 @@ THREAD_A_EVENTS = [
 ]
 
 
-@pytest.mark.xfail(reason='extraction does not yet promote user-stated intent to actionable memory type', strict=True)
+@pytest.mark.xfail(reason='vague user interest not promoted — concrete commitments already work', strict=True)
 def test_user_intent_promoted_to_actionable_memory(monkeypatch, test_db_url: str) -> None:
-    """After a user says 'I'll try Chroma this weekend', an actionable memory
-    (decision, task_checkpoint, or continuity_memory) should be created — not
-    only generic discussion/thread summaries."""
+    """After a user says 'chroma sounds interesting, i should check it some
+    time', an actionable memory (decision, task_checkpoint, or continuity_memory)
+    should be created — not only generic discussion/thread summaries."""
     with _build_client(monkeypatch, test_db_url) as client:
         # Ingest thread A conversation
         response = client.post('/items', json=THREAD_A_EVENTS)
@@ -139,10 +147,10 @@ def test_user_intent_promoted_to_actionable_memory(monkeypatch, test_db_url: str
         )
 
 
-@pytest.mark.xfail(reason='extraction does not yet promote user-stated intent to actionable memory type', strict=True)
+@pytest.mark.xfail(reason='vague user interest not promoted — concrete commitments already work', strict=True)
 def test_cross_thread_query_surfaces_user_intent(monkeypatch, test_db_url: str) -> None:
-    """From a new thread, asking 'what was the db I said I would try?' should
-    surface a specific memory about the user's intent to try Chroma."""
+    """From a new thread, asking 'what was the db I said I wanted to check?'
+    should surface a specific memory about the user's interest in Chroma."""
     with _build_client(monkeypatch, test_db_url) as client:
         # Ingest thread A and process
         response = client.post('/items', json=THREAD_A_EVENTS)
@@ -151,7 +159,7 @@ def test_cross_thread_query_surfaces_user_intent(monkeypatch, test_db_url: str) 
 
         # Query from thread B
         query_response = client.post('/query/debug', json={
-            'text': 'what was the db i said i would try?',
+            'text': 'what was the db i said i wanted to check?',
             'limit': 6,
             'container_ref': CONTAINER_REF,
             'thread_ref': THREAD_B,
