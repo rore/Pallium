@@ -3524,7 +3524,7 @@ def _candidate_evidence_shape_score(
         return score
 
     if item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
-        score += 34
+        score += 42
         payload = item.payload or {}
         if str(payload.get("decision_evidence_text") or payload.get("investigation_evidence_text") or "").strip():
             score += 10
