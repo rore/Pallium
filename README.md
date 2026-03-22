@@ -27,12 +27,11 @@ curl -X POST http://localhost:8000/items -H 'Content-Type: application/json' -d 
   "source_id": "msg-042",
   "content_type": "text/plain",
   "content": "Decision: use item event time for reservation ordering instead of wall clock. Reason: event time reflects actual hold sequence and avoids timezone drift across regional deployments.",
-  "use_case": "agent_conversation_memory",
   "artifact_kind": "assistant_output",
   "role": "assistant",
-  "container_ref": "room:catalog-sync",
-  "thread_ref": "thread-17",
-  "visibility_context": { "kind": "limited", "id": "room:catalog-sync" }
+  "container_ref": "channel:catalog-sync",
+  "container_visibility": "limited",
+  "thread_ref": "thread-17"
 }'
 ```
 
@@ -41,8 +40,8 @@ Later, ask why:
 ```bash
 curl -X POST http://localhost:8000/query -H 'Content-Type: application/json' -d '{
   "text": "Why did we choose event time for reservation ordering?",
-  "container_ref": "room:catalog-sync",
-  "visibility_context": { "kind": "limited", "id": "room:catalog-sync" }
+  "container_ref": "channel:catalog-sync",
+  "container_visibility": "limited"
 }'
 ```
 
@@ -52,13 +51,22 @@ Pallium returns:
 {
   "should_inject": true,
   "decision_reason": "carry_forward_available",
-  "injectable_blocks": ["Decision: use item event time for reservation ordering ..."],
+  "injectable_blocks": [
+    {
+      "block_type": "memory_hit",
+      "title": "decision",
+      "text": "Use item event time for reservation ordering instead of wall clock.",
+      "memory_type": "decision"
+    }
+  ],
   "results": [
     {
-      "kind": "memory_hit",
-      "memory_type": "decision",
-      "text": "Use item event time for reservation ordering instead of wall clock.",
-      "evidence_refs": ["msg-042"]
+      "result_kind": "memory_hit",
+      "type": "decision",
+      "score": 850,
+      "container_ref": "channel:catalog-sync",
+      "container_visibility": "limited",
+      "retrieval_source": "lexical"
     }
   ]
 }

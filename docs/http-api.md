@@ -78,14 +78,20 @@ Recommended example for `agent_conversation_memory`:
 
 Response fields:
 
-- `source_item_id`
-- `annotation_ids`
-- `memory_object_ids`
-- `relation_ids`
-- `index_entry_ids`
-- `processing_status`
-- `processing_attempts`
-- optional `processing_error`
+- `source_item_id` — internal ID assigned by Pallium
+- `annotation_ids` — IDs of semantic annotations produced (may be empty if
+  processing is still pending)
+- `memory_object_ids` — IDs of any memory objects promoted immediately
+- `relation_ids` — IDs of evidence relations created
+- `index_entry_ids` — IDs of retrieval index entries created
+- `processing_status` — `"pending"`, `"processing"`, `"completed"`,
+  `"skipped"`, or `"failed"`
+- `processing_attempts` — number of processing attempts so far
+- `processing_error` — error message if processing failed (null otherwise)
+
+Note: most items return with `processing_status: "pending"` because semantic
+extraction runs asynchronously in the background. Use
+`GET /items/{source_item_id}/processing` to inspect the result.
 
 Notes:
 
@@ -164,24 +170,83 @@ Current request rules:
 - for the current scoped package, missing `container_ref` causes
   fail-closed behavior rather than a broad fallback
 
+Response:
+
+```json
+{
+  "should_inject": true,
+  "decision_reason": "carry_forward_available",
+  "injectable_blocks": [
+    {
+      "result_id": "mem-abc123",
+      "block_type": "memory_hit",
+      "title": "decision",
+      "text": "Use event timestamps for ordering — avoids timezone drift.",
+      "memory_type": "decision",
+      "evidence": [
+        {
+          "source_item_id": "si-001",
+          "source_type": "chat_message",
+          "source_id": "msg-001",
+          "role": "assistant"
+        }
+      ]
+    }
+  ],
+  "results": [
+    {
+      "result_id": "mem-abc123",
+      "result_kind": "memory_hit",
+      "score": 850,
+      "type": "decision",
+      "memory_object_id": "mo-001",
+      "excerpt": null,
+      "container_ref": "channel:C04ABC123",
+      "thread_ref": "thread:1700000001",
+      "container_visibility": "limited",
+      "retrieval_source": "lexical",
+      "evidence": [
+        {
+          "source_item_id": "si-001",
+          "source_type": "chat_message",
+          "source_id": "msg-001",
+          "role": "assistant",
+          "container_ref": "channel:C04ABC123",
+          "container_visibility": "limited"
+        }
+      ]
+    }
+  ]
+}
+```
+
 Response fields:
 
-- `results`
-- `should_inject`
-- `decision_reason`
-- `injectable_blocks`
+- `should_inject` — whether Pallium recommends injecting memory into the
+  agent's prompt
+- `decision_reason` — why: `"carry_forward_available"`,
+  `"same_thread_context_sufficient"`, `"no_relevant_memory"`,
+  `"only_low_value_candidates"`, or `"low_value_query"`
+- `injectable_blocks` — ready-to-use blocks for prompt injection, each with
+  `block_type`, `title`, `text`, optional `memory_type`, and `evidence` refs
+- `results` — ranked result list (see below)
 
-Result kinds:
+Each result in `results[]`:
 
-- `memory_hit`
-  - compact derived memory such as a prior decision, investigation outcome,
-    thread summary, or task checkpoint
-- `source_hit`
-  - compact evidence card from a stored source item
-
-Each result can include refs such as `container_ref`, `thread_ref`,
-`source_ref`, and `container_visibility`. Each `memory_hit` also
-includes supporting evidence refs.
+- `result_id` — unique result identifier
+- `result_kind` — `"memory_hit"` (derived memory) or `"source_hit"` (stored
+  evidence)
+- `score` — retrieval score (integer, higher is better)
+- `type` — memory type for `memory_hit` results: `"decision"`,
+  `"investigation_outcome"`, `"thread_summary"`, `"task_checkpoint"`,
+  `"pattern_memory"`, `"continuity_memory"`, or `"discussion_summary"`
+- `memory_object_id` — ID of the memory object (for `memory_hit`)
+- `source_item_id` — ID of the source item (for `source_hit`)
+- `excerpt` — text excerpt (for `source_hit`)
+- `container_ref`, `thread_ref`, `container_visibility` — context refs
+- `retrieval_source` — `"lexical"`, `"vector"`, or `"fused"` (when hybrid
+  retrieval is enabled)
+- `evidence` — supporting evidence refs (for `memory_hit` results)
 
 ## POST /query/debug
 

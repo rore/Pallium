@@ -95,25 +95,8 @@ current semantic layer is text-oriented; keep the text explicit and bounded.
 
 ## Item Request Contract
 
-`POST /items` accepts:
-
-- required:
-  - `source_type`
-  - `source_id`
-  - `content_type`
-  - `content`
-- useful routing and evidence refs:
-  - `container_ref`
-  - `container_visibility`
-  - `thread_ref`
-  - `actor_ref`
-  - `agent_ref`
-  - `source_ref`
-  - `artifact_kind`
-  - `role`
-
-The semantic package is selected by server-side configuration
-(`default_use_case`). Callers do not normally need to send `use_case`.
+See [http-api.md — POST /items](http-api.md#post-items) for exact fields and
+examples.
 
 Practical guidance:
 
@@ -163,6 +146,9 @@ completion and colorized prompts plus role-prefixed output for agent/system/debu
 
 ## Query Input Contract
 
+See [http-api.md — POST /query](http-api.md#post-query) for exact fields and
+examples.
+
 The runtime should send:
 
 - current user text
@@ -182,38 +168,15 @@ mechanical override channel, not a semantic instruction channel.
 
 ## Query Result Contract
 
-Pallium should return integration-ready memory decisions rather than forcing the
-agent to infer injectability from generic ranked candidates.
+See [http-api.md — POST /query](http-api.md#post-query) for the full response
+shape and field reference.
 
-Expected response shape direction:
+The key fields for integration:
 
-- `should_inject`
-- `decision_reason`
-- `injectable_blocks` or `injectable_results`
-- optional raw or debug trace on the debug path
-
-Example `decision_reason` values:
-
-- `carry_forward_available`
-- `same_thread_context_sufficient`
-- `no_relevant_memory`
-- `only_low_value_candidates`
-
-Result kinds:
-
-- `memory_hit`
-  derived memory such as prior conclusions, investigation findings, thread
-  orientation, or resumed-work state
-- `source_hit`
-  compact evidence card with refs, excerpt, and visibility context
-
-Every `memory_hit` carries evidence refs back to supporting source items.
-
-That means an agent can:
-
-- use the memory object for fast orientation
-- keep source evidence available for grounding or verification
-- decide whether to fetch the original source from the system of record
+- `should_inject` — whether to inject memory into the agent's prompt
+- `decision_reason` — why (e.g. `"carry_forward_available"`,
+  `"no_relevant_memory"`)
+- `injectable_blocks` — ready-to-use blocks with title, text, and evidence
 
 The downstream agent should not need to decide:
 
