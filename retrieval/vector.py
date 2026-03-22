@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
-from datetime import timezone
 
+from core.filters import matches_filters, target_visibility_and_container
 from core.models import (
-    EvidenceReference,
     IndexEntry,
     QueryFilters,
     QueryResultItem,
     QueryTrace,
     RetrievalStageTrace,
     RetrievalTraceHit,
-    SourceItem,
 )
 from core.visibility import (
     QueryVisibilityTrace,
@@ -20,109 +17,13 @@ from core.visibility import (
 )
 from providers.embedding.base import EmbeddingProvider
 from retrieval.base import RetrievalProvider, RetrievalQueryResult
+from retrieval.common import build_evidence, build_excerpt
 from storage.base import StorageProvider
 from storage.vector_index import VectorIndex
 
 logger = logging.getLogger(__name__)
 
 VECTOR_STAGE_NAME = "vector"
-MAX_EXCERPT_LENGTH = 160
-
-
-def _build_excerpt(text: str, *, max_length: int = MAX_EXCERPT_LENGTH) -> str:
-    normalized = " ".join(text.split())
-    if len(normalized) <= max_length:
-        return normalized
-    return normalized[: max_length - 3].rstrip() + "..."
-
-
-def _build_evidence(source_item: SourceItem) -> EvidenceReference:
-    occurred_at = source_item.occurred_at
-    if occurred_at is not None and occurred_at.tzinfo is None:
-        occurred_at = occurred_at.replace(tzinfo=timezone.utc)
-    return EvidenceReference(
-        source_item_id=source_item.id,
-        source_type=source_item.source_type,
-        source_id=source_item.source_id,
-        occurred_at=occurred_at,
-        actor_ref=source_item.actor_ref,
-        agent_ref=source_item.agent_ref,
-        role=source_item.role,
-        container_ref=source_item.container_ref,
-        thread_ref=source_item.thread_ref,
-        source_ref=source_item.source_ref,
-        artifact_kind=source_item.artifact_kind,
-        container_visibility=source_item.container_visibility,
-    )
-
-
-def _matches_filters(
-    storage: StorageProvider,
-    target_kind: str,
-    target_id: str,
-    filters: QueryFilters | None,
-) -> bool:
-    """Apply filter logic matching sqlite_search.py._matches_filters."""
-    if target_kind == "memory_object":
-        memory_object = storage.get_memory_object(target_id)
-        if memory_object.lifecycle != "active":
-            return False
-    if filters is None:
-        return True
-    if target_kind == "source_item":
-        source_item = storage.get_source_item(target_id)
-        return _source_item_matches_filters(source_item, filters)
-    if target_kind == "memory_object":
-        evidence = storage.get_evidence_for_memory_object(target_id)
-        memory_filters = replace(filters, thread_ref=None) if filters.thread_ref is not None else filters
-        return any(_evidence_matches_filters(item, memory_filters) for item in evidence)
-    return True
-
-
-def _source_item_matches_filters(source_item: SourceItem, filters: QueryFilters) -> bool:
-    if filters.source_type is not None and source_item.source_type != filters.source_type:
-        return False
-    if filters.role is not None and source_item.role != filters.role:
-        return False
-    if filters.artifact_kind is not None and source_item.artifact_kind != filters.artifact_kind:
-        return False
-    if filters.container_ref is not None and source_item.container_visibility != "public" and source_item.container_ref != filters.container_ref:
-        return False
-    if filters.thread_ref is not None and source_item.thread_ref != filters.thread_ref:
-        return False
-    return True
-
-
-def _evidence_matches_filters(evidence: EvidenceReference, filters: QueryFilters) -> bool:
-    if filters.source_type is not None and evidence.source_type != filters.source_type:
-        return False
-    if filters.role is not None and evidence.role != filters.role:
-        return False
-    if filters.artifact_kind is not None and evidence.artifact_kind != filters.artifact_kind:
-        return False
-    if filters.container_ref is not None and evidence.container_visibility != "public" and evidence.container_ref != filters.container_ref:
-        return False
-    if filters.thread_ref is not None and evidence.thread_ref != filters.thread_ref:
-        return False
-    return True
-
-
-def _target_visibility_and_container(
-    storage: StorageProvider,
-    target_kind: str,
-    target_id: str,
-) -> tuple[str | None, str | None]:
-    """Return (container_visibility, container_ref) for a target."""
-    if target_kind == "source_item":
-        item = storage.get_source_item(target_id)
-        return item.container_visibility, item.container_ref
-    if target_kind == "memory_object":
-        mo = storage.get_memory_object(target_id)
-        container_ref = mo.container_ref
-        if container_ref is None and mo.envelope is not None:
-            container_ref = mo.envelope.scope.container_ref
-        return mo.container_visibility, container_ref
-    return None, None
 
 
 class VectorRetrievalProvider(RetrievalProvider):
@@ -230,14 +131,20 @@ class VectorRetrievalProvider(RetrievalProvider):
                 continue
 
             # Apply filters (lifecycle check for memory_objects + field matching)
-            if not _matches_filters(self._storage, index_entry.target_kind, index_entry.target_id, filters):
+            if not matches_filters(
+                self._storage.get_memory_object,
+                self._storage.get_source_item,
+                self._storage.get_evidence_for_memory_object,
+                index_entry.target_kind, index_entry.target_id, filters,
+            ):
                 continue
 
             hits_before_visibility += 1
 
             # Apply visibility using new is_visible()
-            candidate_visibility, candidate_container_ref = _target_visibility_and_container(
-                self._storage, index_entry.target_kind, index_entry.target_id
+            candidate_visibility, candidate_container_ref = target_visibility_and_container(
+                self._storage.get_source_item, self._storage.get_memory_object,
+                index_entry.target_kind, index_entry.target_id,
             )
             if not is_visible(candidate_visibility, candidate_container_ref, query_container_ref):
                 continue
@@ -274,7 +181,7 @@ class VectorRetrievalProvider(RetrievalProvider):
                         source_item_id=source_item.id,
                         source_type=source_item.source_type,
                         source_id=source_item.source_id,
-                        excerpt=_build_excerpt(source_item.content),
+                        excerpt=build_excerpt(source_item.content),
                         occurred_at=source_item.occurred_at,
                         actor_ref=source_item.actor_ref,
                         agent_ref=source_item.agent_ref,
@@ -284,7 +191,7 @@ class VectorRetrievalProvider(RetrievalProvider):
                         source_ref=source_item.source_ref,
                         artifact_kind=source_item.artifact_kind,
                         score=score,
-                        evidence=[_build_evidence(source_item)],
+                        evidence=[build_evidence(source_item)],
                         container_visibility=source_item.container_visibility,
                     )
                 )

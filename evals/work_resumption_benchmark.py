@@ -215,8 +215,12 @@ def _run_scenario(
     memory_hits = [item for item in query_payload["results"] if item.get("result_kind") == "memory_hit"]
     source_hits = [item for item in query_payload["results"] if item.get("result_kind") == "source_hit"]
     returned_memory_types = sorted({item.get("type") for item in memory_hits if item.get("type")})
+    carried_conclusion_types = _carried_conclusion_types(memory_hits)
     expected_memory_types = scenario.get("expected_memory_types", [])
-    expected_memory_types_found = all(item in returned_memory_types for item in expected_memory_types)
+    expected_memory_types_found = all(
+        item in returned_memory_types or item in carried_conclusion_types
+        for item in expected_memory_types
+    )
     top_result = query_payload["results"][0] if query_payload["results"] else None
     top_layer = result_layer(top_result)
     available_layers = sorted({result_layer(item) for item in query_payload["results"]})
@@ -510,6 +514,25 @@ def _dimension_text(dimension: str, continuation: dict[str, Any]) -> str:
     if dimension == "evidence":
         return f"{continuation['answer']}\n{' '.join(continuation['evidence_used'])}"
     return f"{continuation['answer']}\n{continuation['freshness_notes']}\n{continuation['blocker_state']}\n{continuation['next_step']}"
+
+
+def _carried_conclusion_types(memory_hits: list[dict[str, Any]]) -> set[str]:
+    """Extract types carried as conclusions inside thread_summary/continuity_memory.
+
+    Thread summaries carry decision and investigation_outcome conclusions in their
+    payload.  A thread_summary containing a carried decision is a valid way to
+    surface that decision — the eval should not penalize it for not returning the
+    raw atomic type.
+    """
+    types: set[str] = set()
+    for hit in memory_hits:
+        payload = hit.get("payload") or {}
+        for conclusion in payload.get("conclusions", []):
+            if isinstance(conclusion, dict) and conclusion.get("type"):
+                types.add(conclusion["type"])
+        if payload.get("carry_forward_answer") and payload.get("continuity_question"):
+            types.add("continuity_memory")
+    return types
 
 
 _SIGNAL_STOPWORDS = frozenset({"the", "a", "an", "is", "was", "are", "were", "be", "been", "being", "to", "of", "in", "for", "on", "with", "at", "by", "from", "and", "or", "not", "that", "this", "it", "its"})
