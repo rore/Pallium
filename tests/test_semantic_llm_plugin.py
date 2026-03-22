@@ -42,6 +42,24 @@ def test_grounded_investigation_evidence_requires_source_containment() -> None:
     assert has_grounded_investigation_evidence(source, "Investigation found something completely different.") is False
 
 
+def test_grounded_decision_evidence_accepts_llm_extracted_substance_without_prefix() -> None:
+    """LLM may extract the decision substance without the 'Decision:' prefix."""
+    source = SourceItem(
+        source_type="note", source_id="llm-1", content_type="text/plain",
+        content="Decision: use item event time for reservation ordering.",
+    )
+    assert has_grounded_decision_evidence(source, "use item event time for reservation ordering.") is True
+
+
+def test_grounded_investigation_evidence_accepts_llm_extracted_substance_without_prefix() -> None:
+    """LLM may extract investigation substance without 'Investigation found that' prefix."""
+    source = SourceItem(
+        source_type="note", source_id="llm-2", content_type="text/plain",
+        content="Investigation found that arrival-time ordering missed hold updates.",
+    )
+    assert has_grounded_investigation_evidence(source, "arrival-time ordering missed hold updates.") is True
+
+
 def test_grounded_investigation_evidence_tolerates_whitespace_normalization() -> None:
     source = SourceItem(
         source_type="note", source_id="inv-ws-1", content_type="text/plain",
@@ -468,7 +486,8 @@ def test_llm_plugin_uses_discussion_summary_when_typed_output_lacks_evidence_tex
     assert result.memory_objects[0].schema_id == "llm.discussion_summary"
 
 
-def test_llm_plugin_rejects_weak_decision_evidence_and_falls_back_to_discussion_summary() -> None:
+def test_llm_plugin_promotes_decision_when_evidence_is_grounded_in_source() -> None:
+    """When the LLM classifies as decision and evidence is grounded in source, trust it."""
     plugin = LLMAgentMemoryPlugin(
         provider=StubLLMProvider(
             response=LLMJsonResponse(
@@ -502,11 +521,12 @@ def test_llm_plugin_rejects_weak_decision_evidence_and_falls_back_to_discussion_
 
     result = plugin.process_item(source_item)
 
-    assert len(result.annotations) == 1
-    assert result.memory_objects[0].type == "discussion_summary"
+    assert len(result.annotations) == 2  # summary + typed_candidate
+    assert result.memory_objects[0].type == "decision"
 
 
-def test_llm_plugin_rejects_weak_investigation_evidence_and_falls_back_to_discussion_summary() -> None:
+def test_llm_plugin_promotes_investigation_when_evidence_is_grounded_in_source() -> None:
+    """When the LLM classifies as investigation and evidence is grounded in source, trust it."""
     plugin = LLMAgentMemoryPlugin(
         provider=StubLLMProvider(
             response=LLMJsonResponse(
@@ -540,8 +560,8 @@ def test_llm_plugin_rejects_weak_investigation_evidence_and_falls_back_to_discus
 
     result = plugin.process_item(source_item)
 
-    assert len(result.annotations) == 1
-    assert result.memory_objects[0].type == "discussion_summary"
+    assert len(result.annotations) == 2  # summary + typed_candidate
+    assert result.memory_objects[0].type == "investigation_outcome"
 
 
 def test_llm_plugin_raises_on_invalid_output() -> None:

@@ -48,36 +48,6 @@ INVESTIGATION_RATIONALE_SPLITTERS = (
 )
 INVESTIGATION_SOURCE_TYPES = {"investigation_summary", "assistant_artifact", "tool_summary", "incident_note", "assistant_output"}
 INVESTIGATION_ARTIFACT_KINDS = {"assistant_output", "tool_use_summary"}
-DECISION_EVIDENCE_PATTERNS = (
-    re.compile(r"^\s*decision:\s*", re.IGNORECASE),
-    re.compile(r"^\s*we decided(?: to)?\s+", re.IGNORECASE),
-    re.compile(r"^\s*we chose\s+", re.IGNORECASE),
-    re.compile(r"^\s*chosen approach[:\s]+", re.IGNORECASE),
-    re.compile(r"^\s*we will use\s+", re.IGNORECASE),
-)
-INVESTIGATION_EVIDENCE_PATTERNS = (
-    re.compile(r"^\s*root cause[:\s]+", re.IGNORECASE),
-    re.compile(r"^\s*investigation found(?: that)?\s+", re.IGNORECASE),
-    re.compile(r"^\s*investigation concluded(?: that)?\s+", re.IGNORECASE),
-    re.compile(r"^\s*analysis found(?: that)?\s+", re.IGNORECASE),
-    re.compile(r"^\s*findings?[:\s]+", re.IGNORECASE),
-    re.compile(r"^\s*outcome[:\s]+", re.IGNORECASE),
-    re.compile(r"^\s*we found that\s+", re.IGNORECASE),
-    re.compile(r"^\s*verdict[:\s]+", re.IGNORECASE),
-    re.compile(r"^\s*here's the verdict[:\s]+", re.IGNORECASE),
-    re.compile(r"^\s*the verdict is\s+", re.IGNORECASE),
-    re.compile(r"^\s*conclusion[:\s]+", re.IGNORECASE),
-    re.compile(r"^\s*the conclusion is\s+", re.IGNORECASE),
-)
-
-WEAK_INVESTIGATION_EVIDENCE_PATTERN = re.compile(
-    r"\b(may|might|could|should|watch|monitor|recommend(?:ed|s)?|proposal|prefer(?:s|red)?|need(?:ed|s)?|next step|risk)\b",
-    re.IGNORECASE,
-)
-GROUNDED_INVESTIGATION_MARKER_PATTERN = re.compile(
-    r"\b(verdict|conclusion|root cause|caused by|due to|because)\b",
-    re.IGNORECASE,
-)
 
 
 @dataclass(frozen=True)
@@ -220,55 +190,36 @@ def deterministic_extraction(source_item: SourceItem) -> SemanticExtraction:
     return SemanticExtraction(summary=summary)
 
 
-def has_explicit_decision_evidence(text: str | None) -> bool:
-    if not text:
-        return False
-    return any(pattern.search(text) for pattern in DECISION_EVIDENCE_PATTERNS)
-
-
 def _normalize_for_containment(text: str) -> str:
     return " ".join(text.lower().split())
 
 
 def has_grounded_decision_evidence(source_item: SourceItem, text: str | None) -> bool:
+    """Check that decision evidence text is grounded in the source content.
+
+    Language-agnostic: trusts the LLM's candidate_type classification and only
+    verifies the extracted evidence is a substring of the source (anti-hallucination).
+    """
     if not text:
         return False
     normalized = text.strip()
     if not normalized:
         return False
-    if not has_explicit_decision_evidence(normalized):
-        return False
-    if _normalize_for_containment(normalized) not in _normalize_for_containment(source_item.content):
-        return False
-    return True
-
-
-def has_explicit_investigation_evidence(text: str | None) -> bool:
-    if not text:
-        return False
-    return any(pattern.search(text) for pattern in INVESTIGATION_EVIDENCE_PATTERNS)
+    return _normalize_for_containment(normalized) in _normalize_for_containment(source_item.content)
 
 
 def has_grounded_investigation_evidence(source_item: SourceItem, text: str | None) -> bool:
-    if has_explicit_investigation_evidence(text):
-        normalized = (text or "").strip()
-        if not normalized:
-            return False
-        if _normalize_for_containment(normalized) not in _normalize_for_containment(source_item.content):
-            return False
-        return True
+    """Check that investigation evidence text is grounded in the source content.
+
+    Language-agnostic: trusts the LLM's candidate_type classification and only
+    verifies the extracted evidence is a substring of the source (anti-hallucination).
+    """
     if not text:
         return False
     normalized = text.strip()
     if not normalized:
         return False
-    if _normalize_for_containment(normalized) not in _normalize_for_containment(source_item.content):
-        return False
-    if WEAK_INVESTIGATION_EVIDENCE_PATTERN.search(normalized):
-        return False
-    if has_explicit_decision_evidence(normalized):
-        return False
-    return bool(GROUNDED_INVESTIGATION_MARKER_PATTERN.search(normalized))
+    return _normalize_for_containment(normalized) in _normalize_for_containment(source_item.content)
 
 
 def _memory_text_view_name(memory_type: str) -> str:

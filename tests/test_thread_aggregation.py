@@ -416,7 +416,8 @@ def test_low_value_meta_item_keeps_raw_source_and_summary_annotation_without_dur
     assert processing.thread_rebuild_requested is False
 
 
-def test_unsupported_typed_decision_candidate_does_not_create_durable_typed_memory_or_request_rebuild(monkeypatch, test_db_url: str) -> None:
+def test_grounded_decision_candidate_creates_typed_memory_when_evidence_matches_source(monkeypatch, test_db_url: str) -> None:
+    """When the LLM classifies as decision and evidence is grounded in source, trust it."""
     client = _create_thread_client(monkeypatch, test_db_url)
     response = client.post(
         "/items",
@@ -438,14 +439,13 @@ def test_unsupported_typed_decision_candidate_does_not_create_durable_typed_memo
     processing = client.app.state.pallium_service.get_item_processing(source_item_id)
     memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
 
-    assert all(memory.type != "decision" for memory in memory_objects)
-    assert all(memory.type != "thread_summary" for memory in memory_objects)
-    assert processing.thread_rebuild_requested is False
-    assert processing.thread_rebuild_completed is False
+    assert any(memory.type == "decision" for memory in memory_objects)
+    assert processing.thread_rebuild_requested is True
 
 
 
-def test_unsupported_typed_investigation_candidate_does_not_create_durable_typed_memory_or_request_rebuild(monkeypatch, test_db_url: str) -> None:
+def test_grounded_investigation_candidate_creates_typed_memory_when_evidence_matches_source(monkeypatch, test_db_url: str) -> None:
+    """When the LLM classifies as investigation and evidence is grounded in source, trust it."""
     client = _create_thread_client(monkeypatch, test_db_url)
     response = client.post(
         "/items",
@@ -467,10 +467,8 @@ def test_unsupported_typed_investigation_candidate_does_not_create_durable_typed
     processing = client.app.state.pallium_service.get_item_processing(source_item_id)
     memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
 
-    assert all(memory.type != "investigation_outcome" for memory in memory_objects)
-    assert all(memory.type != "thread_summary" for memory in memory_objects)
-    assert processing.thread_rebuild_requested is False
-    assert processing.thread_rebuild_completed is False
+    assert any(memory.type == "investigation_outcome" for memory in memory_objects)
+    assert processing.thread_rebuild_requested is True
 
 
 
