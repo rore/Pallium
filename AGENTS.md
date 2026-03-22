@@ -7,6 +7,8 @@ For delegated work, subagent work, or cross-thread worker coordination, follow t
 Treat `roadmap/` as the canonical repo-local roadmap workspace for humans and agents.
 Use `docs/context/` for broader design context, but keep roadmap state and queue changes in the minimap files.
 
+Data reset — to wipe all runtime data (SQLite DB, vector index, temp files) for a fresh start, run `bash scripts/clean-data.sh` from the repo root. Use this before clean-slate testing or when switching between experiments.
+
 Repo-level non-negotiables:
 
 - use `README.md`, `docs/context/*`, relevant `docs/designs/*`, and `roadmap/*` as the source of truth

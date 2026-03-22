@@ -30,6 +30,9 @@ python -m pytest tests/ -x -q
 # Run specific test slice
 python -m pytest tests/test_visibility_scope.py -x -q
 
+# Clean all runtime data (DB + vector index) for fresh start
+bash scripts/clean-data.sh
+
 # Start server
 python -m app.run serve --host 127.0.0.1 --port 8000
 
