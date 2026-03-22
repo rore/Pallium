@@ -228,6 +228,23 @@ These roles have simpler schemas and code-level fallback defaults that compensat
 for weaker LLM output. Write extraction stays on Sonnet (quality-critical,
 14-field schema with strict evidence rules).
 
+### 2026-03-22 - Constraint boundary correction
+
+Pallium remembers and returns constraints; it does not enforce them. The
+consuming agent handles enforcement. The constraint compatibility engine was
+removed (~1000 lines), including the `constraint_policy` routing lane and
+structured constraint profiles. Constraint memories now route through
+`residual_recall` like other memory types. Rationale: Pallium is a memory
+sidecar — enforcement is the consumer's job, not the recall layer's.
+
+### 2026-03-22 - Cue-free control plane
+
+English cue tables removed from the `agent_conversation_memory` control plane.
+Routing uses typed structure (`QuerySignalEnvelope`) and retrieval evidence, not
+English phrase matching. ~40 English constants eliminated. Scoring formula
+simplified from 7 to 5 components. Three routing lanes remain:
+`work_resumption`, `evidence_trace`, `residual_recall`.
+
 ## Open
 
 ### Ingestion policy

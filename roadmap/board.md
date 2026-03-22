@@ -1,5 +1,4 @@
 # Next
-- add-language-agnostic-query-signals-and-typed-constraint-state
 
 # Later
 - add-bounded-memory-lifecycle-hardening
@@ -12,6 +11,7 @@
 - idea-optional-reranker-support
 
 # Done
+- add-language-agnostic-query-signals-and-typed-constraint-state
 - add-structural-query-lane-narrowing-before-intent-tiebreak
 - add-live-integration-improvement-loop-and-replay-pipeline
 - add-hybrid-retrieval-fusion

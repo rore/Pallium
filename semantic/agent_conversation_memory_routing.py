@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import re
 from collections import OrderedDict
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable, TypedDict
 
@@ -20,9 +19,7 @@ from semantic.agent_conversation_memory_constraints import (
 )
 from semantic.agent_conversation_memory_threads import (
     SELECTED_WORK_ARTIFACT_KINDS,
-    WORK_SIGNAL_PREFIX_TO_TYPE,
     _classify_work_signal_text as _thread_classify_work_signal_text,
-    _extract_constraint_signal_text,
     _is_low_value_meta_text,
     _memory_hit_has_selected_work_artifacts,
     _parse_string_list,
@@ -1741,76 +1738,12 @@ def _higher_level_retrieval_floor_adjustment(layer: str, retrieval_score: int) -
     return 0
 
 
-def _query_topic_tokens(query_tokens: tuple[str, ...]) -> set[str]:
-    return set()
-
 def is_query_topic_signal_empty(query_tokens: Iterable[str]) -> bool:
     """Return True — topic signal classification removed (cue-free control plane)."""
     return True
 
 
 
-
-def _routing_item_text(item: QueryResultItem) -> str:
-    fragments: list[str] = []
-    if item.excerpt:
-        fragments.append(item.excerpt)
-    if item.payload:
-        if item.type == "decision":
-            fragments.extend(
-                str(item.payload.get(key) or "")
-                for key in ("decision", "decision_evidence_text", "rationale")
-            )
-        elif item.type == "investigation_outcome":
-            fragments.extend(
-                str(item.payload.get(key) or "")
-                for key in ("investigation_outcome", "investigation_evidence_text", "rationale")
-            )
-        elif item.type == CONSTRAINT_MEMORY_TYPE:
-            fragments.extend(
-                str(item.payload.get(key) or "")
-                for key in ("summary", "constraint_text", "action_class", "polarity")
-            )
-            for key in ("primary_scope_anchor", "target_anchor"):
-                anchor = item.payload.get(key)
-                if isinstance(anchor, dict):
-                    fragments.append(str(anchor.get("value") or ""))
-        elif item.type == "task_checkpoint":
-            fragments.extend(
-                str(item.payload.get(key) or "")
-                for key in ("summary", "task", "current_state", "blocker_state", "next_step", "freshness_signal")
-            )
-            for field in ("key_findings", "evidence"):
-                values = item.payload.get(field, [])
-                if isinstance(values, list):
-                    fragments.extend(str(value or "") for value in values)
-            for work_artifact in item.payload.get("selected_work_artifacts", []):
-                if isinstance(work_artifact, dict):
-                    fragments.append(str(work_artifact.get("signal_type") or ""))
-                    fragments.append(str(work_artifact.get("text") or ""))
-            for conclusion in item.payload.get("conclusions", []):
-                if isinstance(conclusion, dict):
-                    fragments.append(str(conclusion.get("text") or ""))
-        elif item.type in ROUTING_HIGHER_LEVEL_TYPES:
-            fragments.extend(
-                str(item.payload.get(key) or "")
-                for key in ("summary", "pattern_label", "continuity_question", "carry_forward_answer")
-            )
-            for conclusion in item.payload.get("conclusions", []):
-                if isinstance(conclusion, dict):
-                    fragments.append(str(conclusion.get("text") or ""))
-        elif item.type == "thread_summary":
-            fragments.append(str(item.payload.get("summary") or ""))
-            for conclusion in item.payload.get("conclusions", []):
-                if isinstance(conclusion, dict):
-                    fragments.append(str(conclusion.get("text") or ""))
-            for work_artifact in item.payload.get("selected_work_artifacts", []):
-                if isinstance(work_artifact, dict):
-                    fragments.append(str(work_artifact.get("signal_type") or ""))
-                    fragments.append(str(work_artifact.get("text") or ""))
-        else:
-            fragments.append(json.dumps(item.payload, sort_keys=True))
-    return " ".join(fragment for fragment in fragments if fragment)
 
 def _routing_reason(
     intent: str,
