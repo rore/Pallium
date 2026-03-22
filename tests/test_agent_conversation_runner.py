@@ -7,6 +7,10 @@ from app.config import AppConfig
 from evals.agent_conversation_runner import run_agent_conversation_scenarios
 from providers.llm.base import LLMJsonResponse
 
+import pytest
+
+pytestmark = pytest.mark.slow
+
 
 class StubAgentConversationLLMProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
