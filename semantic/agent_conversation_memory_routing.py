@@ -23,6 +23,7 @@ from semantic.agent_conversation_memory_constraints import (
     _candidate_has_self_conflicting_guidance,
     _preferred_constraint_text,
     _text_contains_operational_guidance,
+    _typed_constraint_signal_from_candidates,
 )
 from semantic.agent_conversation_memory_threads import (
     QUERY_ONLY_SUMMARY_MARKERS,
@@ -55,6 +56,42 @@ class PolicySelectedContext:
 
 
 PASSTHROUGH_POLICY = PolicySelectedContext(query_policy_family="passthrough", allowed_query_intents=None)
+
+
+@dataclass(frozen=True)
+class LaneEligibility:
+    lane: str
+    state: str
+    structural_signals: tuple[str, ...]
+    shape_signals: tuple[str, ...]
+    reason: str
+
+
+@dataclass(frozen=True)
+class LaneNarrowingResult:
+    eligible_lanes: tuple[LaneEligibility, ...]
+    selected_lane: str | None
+    selection_mode: str
+    lane_narrowing_used_intent: bool
+    intent_effect: str
+    abstain_reason: str | None
+    mapped_intent: str | None
+    mapped_policy_family: str | None
+
+
+@dataclass(frozen=True)
+class QuerySignalEnvelope:
+    low_value: bool = False
+    history_lookup: bool = False
+    latest_status_request: bool = False
+    resume_state: bool = False
+    constraint_lookup: bool = False
+    evidence_request: bool = False
+    source: str = "structural"
+    confidence: str = "low"
+    legacy_english_fallback_used: bool = False
+    semantic_classification_used: bool = False
+    derivation_signals: tuple[str, ...] = ()
 
 
 ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory", "task_checkpoint", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE}
@@ -165,6 +202,41 @@ POLICY_WORK_STATE_USEFULNESS_THRESHOLD = 24
 POLICY_SUPPORT_THRESHOLD = ROUTING_SUPPORT_THRESHOLD["supported"]
 AMBIGUITY_MARGIN_LATEST_VS_RESUME = 12
 AMBIGUITY_MARGIN_CONSTRAINTS_VS_RECALL = 10
+
+# Lane narrowing constants
+LANE_INTENT_MAPPING: dict[str, str] = {
+    "constraint_policy": "broad_recall",
+    "work_resumption": "work_resumption",
+    "evidence_trace": "evidence_trace",
+}
+
+LANE_POLICY_FAMILY_MAPPING: dict[str, str] = {
+    "constraint_policy": "check_constraints",
+    "work_resumption": "resume_work",
+    "evidence_trace": "recall_fact",
+}
+
+# Recall mode constants — modes only change weights and shaping, not selection path or gates
+RECALL_MODE_WEIGHTS: dict[str, dict[str, int]] = {
+    "default": ROUTING_LAYER_WEIGHTS["broad_recall"],
+    "continuity_preference": ROUTING_LAYER_WEIGHTS["answer_continuity"],
+    "sharp_fact_preference": ROUTING_LAYER_WEIGHTS["precise_fact"],
+    "investigation_preference": ROUTING_LAYER_WEIGHTS["investigative_conclusion"],
+}
+
+RECALL_MODE_FRESHNESS_BONUS: dict[str, int] = {
+    "default": 24,
+    "continuity_preference": 0,  # skip freshness shaping
+    "sharp_fact_preference": 24,
+    "investigation_preference": 42,
+}
+
+RECALL_MODE_FRESH_THREAD_PREFERENCE: dict[str, bool] = {
+    "default": True,
+    "continuity_preference": True,
+    "sharp_fact_preference": True,
+    "investigation_preference": False,
+}
 
 ROUTING_TOPIC_LOW_SIGNAL_TOKENS = {
     "about", "already", "before", "carry", "constraint", "concluded", "did", "do", "earlier",
@@ -394,6 +466,7 @@ def route_query_results(
     include_trace: bool = False,
     debug_candidate_loader=None,
     resolver_config: dict[str, object] | None = None,
+    signal_classifier_config: dict[str, object] | None = None,
     routing_overrides: RoutingOverrides | None = None,
 ) -> PackageQueryOutcome:
         _ov = routing_overrides or {}
@@ -403,36 +476,26 @@ def route_query_results(
         _support_threshold: dict[str, int] = _ov.get("support_threshold") or ROUTING_SUPPORT_THRESHOLD
         _thin_checkpoint_penalty: int = _ov.get("work_resumption_thin_checkpoint_penalty", WORK_RESUMPTION_THIN_CHECKPOINT_PENALTY)  # type: ignore[assignment]
         query_tokens = _routing_query_tokens(text)
-        family_inference = _infer_query_intent(
-            text=text,
-            query_tokens=query_tokens,
-            retrieved_candidates=retrieval_result.results,
-            query_filters=query_filters,
-            runtime_context=runtime_context,
-        )
-        # Step 1: Family-independent anchor prefilter (before policy, before kind prefilter)
+        # Step 1: Family-independent anchor prefilter
         anchor_prefiltered_candidates, anchor_prefilter_summary, anchor_prefilter_states = _anchor_prefilter_candidates(
             retrieval_result.results,
             query_tokens=query_tokens,
         )
-        # Step 2: Policy classification from post-anchor-prefilter evidence
+        # Step 2: Policy evidence + typed candidate evidence (language-agnostic)
         policy_evidence = _build_policy_evidence(anchor_prefiltered_candidates)
-        query_shape_tags = list(family_inference["query_shape_tags"]) if isinstance(family_inference.get("query_shape_tags"), (list, tuple)) else []
-        policy_family = _classify_query_policy_family(
-            text,
-            query_shape_tags=query_shape_tags,
-            runtime_context=runtime_context,
-            initial_intent=str(family_inference["selected_family"]),
-        )
-        policy_ctx, policy_options = _build_ambiguity_options(
-            policy_family,
+        candidate_evidence = _compute_typed_candidate_evidence(anchor_prefiltered_candidates, query_filters)
+        # Step 3: Derive canonical signal envelope
+        signal_envelope = _derive_query_signal_envelope(
             text=text,
+            query_tokens=query_tokens,
             policy_evidence=policy_evidence,
-            family_inference=family_inference,
+            candidate_evidence=candidate_evidence,
+            anchor_prefiltered_candidates=anchor_prefiltered_candidates,
             runtime_context=runtime_context,
-            query_shape_tags=query_shape_tags,
+            signal_classifier_config=signal_classifier_config,
         )
-        if policy_ctx.query_policy_family == "noise":
+        # Step 3a: Noise short-circuit (from envelope)
+        if signal_envelope.low_value:
             empty_trace = None
             if include_trace and retrieval_result.trace is not None:
                 empty_trace = QueryTrace(
@@ -445,7 +508,8 @@ def route_query_results(
                     requested_filters=retrieval_result.trace.requested_filters,
                     filter_scope_relaxed=retrieval_result.trace.filter_scope_relaxed,
                     filter_scope_reason=retrieval_result.trace.filter_scope_reason,
-                    routing={"policy_name": ROUTING_POLICY_NAME, "query_policy_family": "noise", "query_intent": "noise", "query_family": "noise"},
+                    routing={"policy_name": ROUTING_POLICY_NAME, "query_policy_family": "noise", "query_intent": "noise", "query_family": "noise",
+                             "query_signal_envelope": _build_signal_envelope_trace(signal_envelope)},
                 )
             return PackageQueryOutcome(
                 results=[],
@@ -455,18 +519,137 @@ def route_query_results(
                 injectable_blocks=[],
                 sharp_candidate_diagnostics=[],
             )
-        # Step 3: Optional resolver for ambiguity pairs
-        if policy_options and len(policy_options) == 2:
-            policy_ctx = _maybe_invoke_resolver(
-                policy_ctx=policy_ctx,
-                policy_options=policy_options,
-                anchor_prefiltered_candidates=anchor_prefiltered_candidates,
-                query_text=text,
-                runtime_context=runtime_context,
-                resolver_config=resolver_config,
+        # Step 4: Lane narrowing (consumes envelope via compatible shape tags)
+        _envelope_shape_tags: list[str] = []
+        if signal_envelope.constraint_lookup:
+            _envelope_shape_tags.append("constraint_recall")
+        if signal_envelope.resume_state:
+            _envelope_shape_tags.append("resume_state")
+        if signal_envelope.evidence_request:
+            _envelope_shape_tags.append("evidence_request")
+        lane_result = _determine_eligible_lanes(
+            text=text,
+            query_shape_tags=_envelope_shape_tags,
+            policy_evidence=policy_evidence,
+            anchor_prefiltered_candidates=anchor_prefiltered_candidates,
+            family_inference={},
+            runtime_context=runtime_context,
+        )
+        if lane_result.selection_mode == "abstain":
+            abstain_trace = None
+            if include_trace and retrieval_result.trace is not None:
+                abstain_trace = QueryTrace(
+                    query_text=retrieval_result.trace.query_text,
+                    query_tokens=retrieval_result.trace.query_tokens,
+                    limit=requested_limit,
+                    filters=retrieval_result.trace.filters,
+                    stages=retrieval_result.trace.stages,
+                    visibility=retrieval_result.trace.visibility,
+                    requested_filters=retrieval_result.trace.requested_filters,
+                    filter_scope_relaxed=retrieval_result.trace.filter_scope_relaxed,
+                    filter_scope_reason=retrieval_result.trace.filter_scope_reason,
+                    routing={
+                        "policy_name": ROUTING_POLICY_NAME,
+                        "query_policy_family": "abstain",
+                        "query_intent": "abstain",
+                        "query_family": "abstain",
+                        "lane_narrowing": _build_lane_narrowing_trace(lane_result, final_intent_used=False),
+                        "query_signal_envelope": _build_signal_envelope_trace(signal_envelope),
+                    },
+                )
+            return PackageQueryOutcome(
+                results=[],
+                trace=abstain_trace,
+                should_inject=False,
+                decision_reason=lane_result.abstain_reason or "lane_ambiguity",
+                injectable_blocks=[],
+                sharp_candidate_diagnostics=[],
             )
-        # Step 4: Intent restriction from policy
-        intent = _apply_policy_intent_restriction(family_inference, policy_ctx)
+        recall_mode = "default"
+        if lane_result.selection_mode == "single_lane_bypass" and lane_result.mapped_intent:
+            intent = lane_result.mapped_intent
+            policy_ctx = PolicySelectedContext(
+                query_policy_family=lane_result.mapped_policy_family or "recall_fact",
+                allowed_query_intents=frozenset({intent}),
+            )
+            final_intent_used = False
+        else:
+            # Residual fallthrough — envelope-driven routing + recall mode from candidate evidence
+            envelope_policy = _policy_family_from_signal_envelope(signal_envelope)
+            if envelope_policy == "noise":
+                # Shouldn't reach here (caught above), but safety
+                empty_trace = None
+                if include_trace and retrieval_result.trace is not None:
+                    empty_trace = QueryTrace(
+                        query_text=retrieval_result.trace.query_text,
+                        query_tokens=retrieval_result.trace.query_tokens,
+                        limit=requested_limit,
+                        filters=retrieval_result.trace.filters,
+                        stages=retrieval_result.trace.stages,
+                        visibility=retrieval_result.trace.visibility,
+                        requested_filters=retrieval_result.trace.requested_filters,
+                        filter_scope_relaxed=retrieval_result.trace.filter_scope_relaxed,
+                        filter_scope_reason=retrieval_result.trace.filter_scope_reason,
+                        routing={"policy_name": ROUTING_POLICY_NAME, "query_policy_family": "noise", "query_intent": "noise", "query_family": "noise",
+                                 "query_signal_envelope": _build_signal_envelope_trace(signal_envelope)},
+                    )
+                return PackageQueryOutcome(
+                    results=[],
+                    trace=empty_trace,
+                    should_inject=False,
+                    decision_reason="low_value_query",
+                    injectable_blocks=[],
+                    sharp_candidate_diagnostics=[],
+                )
+            # Hard routes from envelope that didn't go through lane narrowing bypass
+            if envelope_policy == "resume_work":
+                intent = "work_resumption"
+                recall_mode = "default"
+                policy_ctx = PolicySelectedContext(
+                    query_policy_family="resume_work",
+                    allowed_query_intents=frozenset({"work_resumption"}),
+                )
+                final_intent_used = signal_envelope.legacy_english_fallback_used
+            elif envelope_policy == "check_constraints":
+                intent = "broad_recall"
+                recall_mode = "default"
+                policy_ctx = PolicySelectedContext(
+                    query_policy_family="check_constraints",
+                    allowed_query_intents=QUERY_POLICY_FAMILY_ALLOWED_INTENTS.get("check_constraints", frozenset({"broad_recall"})),
+                )
+                final_intent_used = signal_envelope.legacy_english_fallback_used
+            else:
+                # Pure recall — use recall mode from candidate evidence
+                recall_mode = _select_recall_mode(candidate_evidence)
+                _mode_weights = RECALL_MODE_WEIGHTS.get(recall_mode, ROUTING_LAYER_WEIGHTS["broad_recall"])
+                _layer_weights = {intent_name: _mode_weights for intent_name in ROUTING_LAYER_WEIGHTS}
+                # Map recall mode to compatible intent for downstream scoring/shaping.
+                # Note: this means modes influence some downstream gates (envelope filtering,
+                # injection eligibility) through the mapped intent. This is a known trade-off
+                # until downstream code is refactored to branch on mode directly.
+                # The mode selector is conservative (only fires for dominant single-type
+                # candidate sets), so the risk of wrong gate activation is bounded.
+                _mode_intent_map = {
+                    "default": "broad_recall",
+                    "continuity_preference": "answer_continuity",
+                    "sharp_fact_preference": "broad_recall",
+                    "investigation_preference": "broad_recall",
+                }
+                intent = _mode_intent_map.get(recall_mode, "broad_recall")
+                policy_ctx = PolicySelectedContext(
+                    query_policy_family=envelope_policy,
+                    allowed_query_intents=frozenset({intent}),
+                )
+                final_intent_used = signal_envelope.legacy_english_fallback_used
+        # Post-routing: run _infer_query_intent() for shaping compatibility
+        family_inference = _infer_query_intent(
+            text=text,
+            query_tokens=query_tokens,
+            retrieved_candidates=retrieval_result.results,
+            query_filters=query_filters,
+            runtime_context=runtime_context,
+        )
+        query_shape_tags = list(family_inference["query_shape_tags"]) if isinstance(family_inference.get("query_shape_tags"), (list, tuple)) else []
         preferred_layers = ROUTING_PREFERRED_LAYERS[intent]
         # Step 5: Kind prefilter AFTER policy intent restriction
         kind_filtered_candidates, kind_prefilter_summary, kind_prefilter_states = _kind_prefilter_candidates(
@@ -554,15 +737,20 @@ def route_query_results(
         )
         for routing_rank, candidate in enumerate(ranked_candidates, start=1):
             candidate["routing_rank"] = routing_rank
+        # Derive envelope-based shape tags for downstream selection (not English-derived)
+        _envelope_selection_tags: list[str] = []
+        if signal_envelope.constraint_lookup:
+            _envelope_selection_tags.append("constraint_recall")
         final_candidates, packaging_summary = _select_final_candidates(
             intent=intent,
             ranked_candidates=ranked_candidates,
             requested_limit=requested_limit,
             query_filters=query_filters,
-            query_shape_tags=list(family_inference["query_shape_tags"]),
+            query_shape_tags=_envelope_selection_tags,
             runtime_context=runtime_context,
             packaging_summary=packaging_summary,
             local_constraint_profile=_build_local_query_constraint_profile(text, runtime_context, ranked_candidates),
+            selected_lane=lane_result.selected_lane,
         )
         injection_blocks, injection_summary = _build_injectable_blocks(
             final_candidates,
@@ -616,6 +804,10 @@ def route_query_results(
                     kind_prefilter_summary=kind_prefilter_summary,
                     anchor_prefilter_summary=anchor_prefilter_summary,
                     policy_ctx=policy_ctx,
+                    lane_result=lane_result,
+                    final_intent_used=final_intent_used,
+                    signal_envelope=signal_envelope,
+                    recall_mode=recall_mode,
                 ),
             )
 
@@ -2289,6 +2481,7 @@ def _build_policy_evidence(
     cross_thread_continuity_survives = False
     constraint_best_support = 0
     constraint_best_kind = ""
+    constraint_memory_only_support = 0
     structured_layers = {"thread_summary", "discussion_summary", "continuity_memory"}
 
     for item in candidates:
@@ -2313,6 +2506,7 @@ def _build_policy_evidence(
             if support > constraint_best_support:
                 constraint_best_support = support
                 constraint_best_kind = CONSTRAINT_MEMORY_TYPE
+            constraint_memory_only_support = max(constraint_memory_only_support, support)
         elif item.result_kind == "memory_hit" and item.type in {"task_checkpoint", "thread_summary"}:
             # Structured types can carry constraint signals
             payload = item.payload or {}
@@ -2329,6 +2523,7 @@ def _build_policy_evidence(
         "cross_thread_continuity_survives": cross_thread_continuity_survives,
         "constraint_best_support": constraint_best_support,
         "constraint_best_kind": constraint_best_kind,
+        "constraint_memory_only_support": constraint_memory_only_support,
     }
 
 
@@ -2393,6 +2588,547 @@ def _work_state_evidence_gate_passes(policy_evidence: dict[str, object]) -> bool
     if int(policy_evidence["source_evidence_best_work_usefulness"]) >= POLICY_WORK_STATE_USEFULNESS_THRESHOLD:
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Signal envelope: derivation, classification, recall mode selection
+# ---------------------------------------------------------------------------
+
+def _candidate_layer_dominance(
+    candidates: list[QueryResultItem],
+) -> dict[str, dict[str, object]]:
+    """Per-layer: count, best_support_score. Language-agnostic — no query text."""
+    layers: dict[str, dict[str, object]] = {}
+    for item in candidates:
+        layer = _result_layer(item)
+        support = _policy_candidate_support_estimate(item, layer)
+        if layer not in layers:
+            layers[layer] = {"count": 0, "best_support_score": 0}
+        layers[layer]["count"] = int(layers[layer]["count"]) + 1
+        layers[layer]["best_support_score"] = max(int(layers[layer]["best_support_score"]), support)
+    return layers
+
+
+def _compute_typed_candidate_evidence(
+    candidates: list[QueryResultItem],
+    query_filters: QueryFilters | None,
+) -> dict[str, object]:
+    """Language-agnostic candidate summary — no query text or tokens."""
+    layer_dom = _candidate_layer_dominance(candidates)
+    memory_layers = {
+        layer: info for layer, info in layer_dom.items()
+        if layer != "source_evidence"
+    }
+    dominant_memory_layer = max(
+        memory_layers,
+        key=lambda layer: int(memory_layers[layer]["best_support_score"]),
+    ) if memory_layers else None
+
+    checkpoint_best_usefulness = 0
+    strong_checkpoint_present = False
+    for item in candidates:
+        if _result_layer(item) == "task_checkpoint":
+            signal_types = _work_resumption_signal_types(item)
+            usefulness, _ = _work_resumption_usefulness_score(item, signal_types)
+            checkpoint_best_usefulness = max(checkpoint_best_usefulness, usefulness)
+            support = _policy_candidate_support_estimate(item, "task_checkpoint")
+            if support >= POLICY_SUPPORT_THRESHOLD:
+                strong_checkpoint_present = True
+
+    thread_ref = query_filters.thread_ref if query_filters else None
+    same_thread_hit_count = sum(
+        1 for item in candidates
+        if thread_ref and item.thread_ref == thread_ref
+    ) if thread_ref else 0
+
+    source_hit_count = sum(1 for item in candidates if item.result_kind == "source_hit")
+    total = len(candidates) or 1
+
+    return {
+        "per_layer_support": layer_dom,
+        "dominant_memory_layer": dominant_memory_layer,
+        "checkpoint_best_usefulness": checkpoint_best_usefulness,
+        "strong_checkpoint_present": strong_checkpoint_present,
+        "source_hit_count": source_hit_count,
+        "source_hit_ratio": source_hit_count / total,
+        "same_thread_hit_count": same_thread_hit_count,
+        "continuity_memory_present": any(item.type == "continuity_memory" for item in candidates if item.result_kind == "memory_hit"),
+        "cross_thread_continuity": any(
+            item.type == "continuity_memory" and item.thread_ref is None
+            for item in candidates if item.result_kind == "memory_hit"
+        ),
+        "constraint_memory_present": any(
+            item.type == CONSTRAINT_MEMORY_TYPE
+            for item in candidates if item.result_kind == "memory_hit"
+        ),
+    }
+
+
+def _select_recall_mode(candidate_evidence: dict[str, object]) -> str:
+    """Select recall-mode preference from candidate evidence. Weight/shaping only.
+
+    Conservative: only switch from default when the dominant layer type is
+    unambiguously the sole substantial signal. Mixed candidate sets always
+    get default mode, which is safe broad-recall behavior.
+    """
+    dominant = candidate_evidence.get("dominant_memory_layer")
+    per_layer = candidate_evidence.get("per_layer_support", {})
+
+    def _layer_support(layer: str) -> int:
+        info = per_layer.get(layer, {})
+        return int(info.get("best_support_score", 0)) if isinstance(info, dict) else 0
+
+    def _has_competing_layers(target_layers: set[str]) -> bool:
+        """True if any memory layer outside target_layers has multiple candidates.
+
+        Uses candidate count rather than support score because
+        _policy_candidate_support_estimate() gives type-specific bonuses that
+        make decision/investigation inherently score higher than pattern/continuity,
+        which would suppress competing-layer detection for recall-oriented types.
+        """
+        for layer, info in per_layer.items():
+            if layer in target_layers or layer == "source_evidence":
+                continue
+            if isinstance(info, dict) and int(info.get("count", 0)) >= 2:
+                return True
+        return False
+
+    # investigation_preference: dominant investigation_outcome, no competing recall layers
+    if (
+        dominant == "investigation_outcome"
+        and _layer_support("investigation_outcome") >= POLICY_SUPPORT_THRESHOLD
+        and not _has_competing_layers({"investigation_outcome", "decision"})
+    ):
+        return "investigation_preference"
+
+    # sharp_fact_preference: dominant decision/investigation, no competing recall layers
+    if dominant in {"decision", "investigation_outcome"}:
+        combined = _layer_support("decision") + _layer_support("investigation_outcome")
+        if combined >= POLICY_SUPPORT_THRESHOLD and not _has_competing_layers({"decision", "investigation_outcome"}):
+            return "sharp_fact_preference"
+
+    # continuity_preference: dominant continuity_memory + same-thread, no competing layers
+    if (
+        dominant == "continuity_memory"
+        and int(candidate_evidence.get("same_thread_hit_count", 0)) > 0
+        and not _has_competing_layers({"continuity_memory"})
+    ):
+        return "continuity_preference"
+
+    return "default"
+
+
+def _derive_query_signal_envelope(
+    *,
+    text: str,
+    query_tokens: tuple[str, ...],
+    policy_evidence: dict[str, object],
+    candidate_evidence: dict[str, object],
+    anchor_prefiltered_candidates: list[QueryResultItem],
+    runtime_context: QueryRuntimeContext | None,
+    signal_classifier_config: dict[str, object] | None,
+) -> QuerySignalEnvelope:
+    """Three-tier signal derivation: structural → semantic → legacy English."""
+    normalized = normalize_for_index(text)
+
+    # Tier 1: structural/typed derivation
+    signals: dict[str, bool] = {
+        "low_value": False,
+        "history_lookup": False,
+        "latest_status_request": False,
+        "resume_state": False,
+        "constraint_lookup": False,
+        "evidence_request": False,
+    }
+    derivation: list[str] = []
+
+    # low_value: only truly empty queries
+    if not normalized or not normalized.strip():
+        signals["low_value"] = True
+        derivation.append("empty_query")
+
+    if not signals["low_value"]:
+        dominant = str(candidate_evidence.get("dominant_memory_layer") or "")
+        per_layer = candidate_evidence.get("per_layer_support", {})
+
+        # constraint_lookup — prefer typed constraint profiles over English snippet extraction
+        constraint_only_support = int(policy_evidence.get("constraint_memory_only_support", 0))
+        has_typed_constraint = _typed_constraint_signal_from_candidates(anchor_prefiltered_candidates)
+        if constraint_only_support >= POLICY_SUPPORT_THRESHOLD:
+            signals["constraint_lookup"] = True
+            derivation.append("constraint_memory_with_support")
+        elif has_typed_constraint:
+            signals["constraint_lookup"] = True
+            derivation.append("typed_constraint_profile_present")
+        elif dominant == CONSTRAINT_MEMORY_TYPE:
+            signals["constraint_lookup"] = True
+            derivation.append("constraint_dominant_layer")
+
+        # resume_state: requires resumed_session context + candidate-side evidence
+        is_resumed = runtime_context is not None and runtime_context.turn_kind == "resumed_session"
+        work_gate = _work_state_evidence_gate_passes(policy_evidence)
+        if is_resumed and work_gate:
+            signals["resume_state"] = True
+            derivation.append("resumed_session_with_evidence")
+
+        # evidence_request: NOT derivable from Tier 1 structural signals
+
+        # history_lookup
+        history_layers = {"pattern_memory", "continuity_memory"}
+        sharp_layers = {"decision", "investigation_outcome"}
+        if dominant in history_layers:
+            signals["history_lookup"] = True
+            derivation.append(f"dominant_{dominant}")
+        elif dominant in sharp_layers:
+            layer_info = per_layer.get(dominant, {})
+            if isinstance(layer_info, dict) and int(layer_info.get("best_support_score", 0)) >= POLICY_SUPPORT_THRESHOLD:
+                signals["history_lookup"] = True
+                derivation.append(f"strong_{dominant}")
+
+        # latest_status_request: requires dominant fresh state memory
+        if not any(signals[s] for s in ("constraint_lookup", "resume_state", "history_lookup")):
+            from datetime import timezone as _tz
+            _now = datetime.now(_tz.utc)
+            for item in anchor_prefiltered_candidates:
+                if item.result_kind != "memory_hit":
+                    continue
+                if item.type not in {"task_checkpoint", "thread_summary"}:
+                    continue
+                payload = item.payload or {}
+                has_state = bool(payload.get("current_state") or payload.get("freshness_signal"))
+                if not has_state:
+                    continue
+                if item.freshness_at and (_now - item.freshness_at).total_seconds() < 86400:
+                    layer = _result_layer(item)
+                    if layer == dominant:
+                        signals["latest_status_request"] = True
+                        derivation.append("dominant_fresh_state_memory")
+                        break
+
+    # Tier 1 confidence
+    active_signals = [s for s, v in signals.items() if v and s != "low_value"]
+    if signals["low_value"] or len(active_signals) == 1:
+        tier1_confidence = "high"
+    elif len(active_signals) > 1:
+        tier1_confidence = "medium"
+    else:
+        tier1_confidence = "low"
+
+    # Tier 2: bounded evidence classifier — runs when source hits exist and
+    # no higher-priority hard route (work_resumption, constraint) has won
+    has_source_hits = any(item.result_kind == "source_hit" for item in anchor_prefiltered_candidates)
+    if has_source_hits and not signals["constraint_lookup"] and not signals["resume_state"]:
+        evidence_classified = _maybe_classify_evidence_request(
+            text=text,
+            candidate_evidence=candidate_evidence,
+            runtime_context=runtime_context,
+            signal_classifier_config=signal_classifier_config,
+        )
+        if evidence_classified:
+            signals["evidence_request"] = True
+            derivation.append("semantic_evidence_request")
+            return QuerySignalEnvelope(
+                **signals,
+                source="semantic",
+                confidence="medium",
+                legacy_english_fallback_used=False,
+                semantic_classification_used=True,
+                derivation_signals=tuple(derivation),
+            )
+
+    if tier1_confidence in ("high", "medium"):
+        return QuerySignalEnvelope(
+            **signals,
+            source="structural",
+            confidence=tier1_confidence,
+            legacy_english_fallback_used=False,
+            semantic_classification_used=False,
+            derivation_signals=tuple(derivation),
+        )
+
+    # Tier 3: legacy English fallback
+    return _legacy_english_query_signals(text, query_tokens)
+
+
+def _maybe_classify_evidence_request(
+    *,
+    text: str,
+    candidate_evidence: dict[str, object],
+    runtime_context: QueryRuntimeContext | None,
+    signal_classifier_config: dict[str, object] | None,
+) -> bool:
+    """Tier 2 evidence-request classifier. Returns True if evidence request detected."""
+    if signal_classifier_config is None:
+        return False
+    from semantic.agent_conversation_memory_signal_classifier import (
+        build_signal_classification_packet,
+        classify_evidence_request,
+    )
+    packet = build_signal_classification_packet(
+        query_text=text,
+        candidate_evidence=candidate_evidence,
+        runtime_context=runtime_context,
+    )
+    result = classify_evidence_request(
+        packet=packet,
+        provider=signal_classifier_config.get("provider"),
+        prompt_variant=str(signal_classifier_config.get("prompt_variant", "qsc_v1_evidence_request")),
+        timeout_ms=int(signal_classifier_config.get("timeout_ms", 600)),
+    )
+    return result.is_resolved and result.primary_signal == "evidence_request"
+
+
+def _legacy_english_query_signals(
+    text: str,
+    query_tokens: tuple[str, ...],
+) -> QuerySignalEnvelope:
+    """Tier 3: wrap all existing English logic behind one entry point."""
+    signals: dict[str, bool] = {
+        "low_value": False,
+        "history_lookup": False,
+        "latest_status_request": False,
+        "resume_state": False,
+        "constraint_lookup": False,
+        "evidence_request": False,
+    }
+    derivation: list[str] = []
+
+    if _query_is_low_value_greeting_or_noise(text):
+        signals["low_value"] = True
+        derivation.append("english_greeting_or_noise")
+
+    if not signals["low_value"]:
+        if _has_latest_status_wording(text):
+            signals["latest_status_request"] = True
+            derivation.append("english_latest_status_wording")
+
+        shape_tags = _query_shape_tags(text, query_tokens)
+        if "resume_state" in shape_tags:
+            signals["resume_state"] = True
+            derivation.append("english_resume_state_tag")
+        if "constraint_recall" in shape_tags or _preferred_constraint_text(text):
+            signals["constraint_lookup"] = True
+            derivation.append("english_constraint_text_or_tag")
+        if "evidence_request" in shape_tags:
+            signals["evidence_request"] = True
+            derivation.append("english_evidence_request_tag")
+        if "history_lookup" in shape_tags:
+            signals["history_lookup"] = True
+            derivation.append("english_history_lookup_tag")
+
+    return QuerySignalEnvelope(
+        **signals,
+        source="legacy_english_fallback",
+        confidence="medium",
+        legacy_english_fallback_used=True,
+        semantic_classification_used=False,
+        derivation_signals=tuple(derivation),
+    )
+
+
+def _build_signal_envelope_trace(envelope: QuerySignalEnvelope) -> dict[str, object]:
+    return {
+        "low_value": envelope.low_value,
+        "history_lookup": envelope.history_lookup,
+        "latest_status_request": envelope.latest_status_request,
+        "resume_state": envelope.resume_state,
+        "constraint_lookup": envelope.constraint_lookup,
+        "evidence_request": envelope.evidence_request,
+        "source": envelope.source,
+        "confidence": envelope.confidence,
+        "legacy_english_fallback_used": envelope.legacy_english_fallback_used,
+        "semantic_classification_used": envelope.semantic_classification_used,
+        "derivation_signals": list(envelope.derivation_signals),
+    }
+
+
+def _policy_family_from_signal_envelope(envelope: QuerySignalEnvelope) -> str:
+    """Map signal envelope to coarse route / policy family."""
+    if envelope.low_value:
+        return "noise"
+    if envelope.constraint_lookup:
+        return "check_constraints"
+    if envelope.resume_state:
+        return "resume_work"
+    if envelope.evidence_request:
+        return "recall_fact"  # evidence_trace handled at lane level
+    if envelope.latest_status_request:
+        return "latest_status"
+    return "recall_fact"
+
+
+def _determine_eligible_lanes(
+    *,
+    text: str,
+    query_shape_tags: list[str],
+    policy_evidence: dict[str, object],
+    anchor_prefiltered_candidates: list[QueryResultItem],
+    family_inference: dict[str, object],
+    runtime_context: QueryRuntimeContext | None,
+) -> LaneNarrowingResult:
+    lanes: list[LaneEligibility] = []
+
+    # --- constraint_policy ---
+    constraint_structural: list[str] = []
+    constraint_shape: list[str] = []
+    if _preferred_constraint_text(text):
+        constraint_structural.append("constraint_text_detected")
+    if int(policy_evidence.get("constraint_memory_only_support", 0)) >= POLICY_SUPPORT_THRESHOLD:
+        constraint_structural.append("constraint_memory_with_support")
+    if "constraint_recall" in query_shape_tags:
+        constraint_shape.append("constraint_recall_tag")
+
+    if constraint_structural:
+        constraint_state = "strongly_eligible"
+        constraint_reason = "Structural constraint signal: " + ", ".join(constraint_structural)
+    elif constraint_shape:
+        constraint_state = "plausible"
+        constraint_reason = "Query-shape hint only: " + ", ".join(constraint_shape)
+    else:
+        constraint_state = "excluded"
+        constraint_reason = "No constraint signals"
+    lanes.append(LaneEligibility(
+        lane="constraint_policy", state=constraint_state,
+        structural_signals=tuple(constraint_structural), shape_signals=tuple(constraint_shape),
+        reason=constraint_reason,
+    ))
+
+    # --- work_resumption ---
+    work_structural: list[str] = []
+    work_shape: list[str] = []
+    is_resumed_session = runtime_context is not None and runtime_context.turn_kind == "resumed_session"
+    has_resume_state_tag = "resume_state" in query_shape_tags
+    work_evidence_gate = _work_state_evidence_gate_passes(policy_evidence)
+    if is_resumed_session:
+        work_structural.append("resumed_session")
+    if has_resume_state_tag:
+        work_shape.append("resume_state_tag")
+    if int(policy_evidence.get("task_checkpoint_best_work_usefulness", 0)) > 0:
+        work_structural.append("checkpoint_usefulness_present")
+    # Strong eligibility requires both a query-side signal AND candidate-side evidence.
+    # resumed_session alone is only plausible — users ask broad recall questions in
+    # resumed sessions. Evidence gate alone is also insufficient (see constraint test).
+    if is_resumed_session and work_evidence_gate:
+        work_structural.append("resumed_session_with_evidence")
+        work_state = "strongly_eligible"
+        work_reason = "Structural work signal: resumed session with checkpoint evidence"
+    elif work_evidence_gate and has_resume_state_tag:
+        work_structural.append("work_state_evidence_gate")
+        work_state = "strongly_eligible"
+        work_reason = "Structural work signal: evidence gate + resume_state tag"
+    elif work_shape or work_structural:
+        work_state = "plausible"
+        all_hints = work_shape + [s for s in work_structural if s not in ("resumed_session_with_evidence", "work_state_evidence_gate")]
+        work_reason = ("Structural and shape hints: " if work_structural else "Query-shape hint only: ") + ", ".join(all_hints)
+    else:
+        work_state = "excluded"
+        work_reason = "No work resumption signals"
+    lanes.append(LaneEligibility(
+        lane="work_resumption", state=work_state,
+        structural_signals=tuple(work_structural), shape_signals=tuple(work_shape),
+        reason=work_reason,
+    ))
+
+    # --- evidence_trace ---
+    evidence_structural: list[str] = []
+    evidence_shape: list[str] = []
+    has_source_hits = any(item.result_kind == "source_hit" for item in anchor_prefiltered_candidates)
+    if "evidence_request" in query_shape_tags and has_source_hits:
+        evidence_structural.append("evidence_request_with_source_hits")
+    if has_source_hits and not evidence_structural:
+        evidence_shape.append("source_hits_present")
+
+    if evidence_structural:
+        evidence_state = "strongly_eligible"
+        evidence_reason = "Structural evidence signal: " + ", ".join(evidence_structural)
+    elif evidence_shape:
+        evidence_state = "plausible"
+        evidence_reason = "Source hits present but no explicit evidence request"
+    else:
+        evidence_state = "excluded"
+        evidence_reason = "No source evidence signals"
+    lanes.append(LaneEligibility(
+        lane="evidence_trace", state=evidence_state,
+        structural_signals=tuple(evidence_structural), shape_signals=tuple(evidence_shape),
+        reason=evidence_reason,
+    ))
+
+    # --- residual_recall ---
+    strongly_eligible_lanes = [le for le in lanes if le.state == "strongly_eligible"]
+    if strongly_eligible_lanes:
+        residual_state = "excluded"
+        residual_reason = "Excluded: other lane(s) strongly eligible"
+    else:
+        residual_state = "plausible"
+        residual_reason = "No lane strongly eligible; fallthrough to existing pipeline"
+    lanes.append(LaneEligibility(
+        lane="residual_recall", state=residual_state,
+        structural_signals=(), shape_signals=(), reason=residual_reason,
+    ))
+
+    # --- Decision logic ---
+    strongly_count = len(strongly_eligible_lanes)
+
+    if strongly_count == 1:
+        winner = strongly_eligible_lanes[0]
+        return LaneNarrowingResult(
+            eligible_lanes=tuple(lanes),
+            selected_lane=winner.lane,
+            selection_mode="single_lane_bypass",
+            lane_narrowing_used_intent=False,
+            intent_effect="none",
+            abstain_reason=None,
+            mapped_intent=LANE_INTENT_MAPPING.get(winner.lane),
+            mapped_policy_family=LANE_POLICY_FAMILY_MAPPING.get(winner.lane),
+        )
+
+    if strongly_count > 1:
+        constraint_is_strong = any(le.lane == "constraint_policy" and le.state == "strongly_eligible" for le in lanes)
+        if constraint_is_strong:
+            return LaneNarrowingResult(
+                eligible_lanes=tuple(lanes),
+                selected_lane="constraint_policy",
+                selection_mode="single_lane_bypass",
+                lane_narrowing_used_intent=False,
+                intent_effect="suppressed",
+                abstain_reason=None,
+                mapped_intent=LANE_INTENT_MAPPING["constraint_policy"],
+                mapped_policy_family=LANE_POLICY_FAMILY_MAPPING["constraint_policy"],
+            )
+        return LaneNarrowingResult(
+            eligible_lanes=tuple(lanes),
+            selected_lane=None,
+            selection_mode="abstain",
+            lane_narrowing_used_intent=False,
+            intent_effect="none",
+            abstain_reason="lane_ambiguity",
+            mapped_intent=None,
+            mapped_policy_family=None,
+        )
+
+    plausible_lanes = [le for le in lanes if le.state == "plausible"]
+    if plausible_lanes:
+        return LaneNarrowingResult(
+            eligible_lanes=tuple(lanes),
+            selected_lane=None,
+            selection_mode="residual_fallthrough",
+            lane_narrowing_used_intent=False,
+            intent_effect="none",
+            abstain_reason=None,
+            mapped_intent=None,
+            mapped_policy_family=None,
+        )
+
+    return LaneNarrowingResult(
+        eligible_lanes=tuple(lanes),
+        selected_lane=None,
+        selection_mode="abstain",
+        lane_narrowing_used_intent=False,
+        intent_effect="none",
+        abstain_reason="no_lane_eligible",
+        mapped_intent=None,
+        mapped_policy_family=None,
+    )
 
 
 def _classify_query_policy_family(
@@ -2729,6 +3465,41 @@ def _apply_policy_intent_restriction(
     return best_intent if best_intent else (next(iter(allowed)) if allowed else selected)
 
 
+def _build_lane_narrowing_trace(
+    lane_result: LaneNarrowingResult,
+    *,
+    final_intent_used: bool,
+) -> dict[str, object]:
+    eligible = [le for le in lane_result.eligible_lanes if le.state != "excluded"]
+    excluded = [le for le in lane_result.eligible_lanes if le.state == "excluded"]
+    trace: dict[str, object] = {
+        "eligible_lanes": [le.lane for le in eligible],
+        "excluded_lanes": [le.lane for le in excluded],
+        "lane_exclusion_reasons": {le.lane: le.reason for le in excluded},
+        "lane_details": [
+            {"lane": le.lane, "state": le.state,
+             "structural_signals": list(le.structural_signals),
+             "shape_signals": list(le.shape_signals),
+             "reason": le.reason}
+            for le in lane_result.eligible_lanes
+        ],
+        "selected_lane": lane_result.selected_lane,
+        "selection_mode": lane_result.selection_mode,
+        "lane_narrowing_used_intent": lane_result.lane_narrowing_used_intent,
+        "final_intent_used": final_intent_used,
+        "intent_effect": lane_result.intent_effect,
+        "abstain_reason": lane_result.abstain_reason,
+    }
+    strongly_eligible_count = sum(1 for le in lane_result.eligible_lanes if le.state == "strongly_eligible")
+    constraint_is_strong = any(
+        le.lane == "constraint_policy" and le.state == "strongly_eligible"
+        for le in lane_result.eligible_lanes
+    )
+    if constraint_is_strong and strongly_eligible_count > 1:
+        trace["constraint_safety_override"] = True
+    return trace
+
+
 def _build_routing_trace(
     *,
     intent: str,
@@ -2745,6 +3516,10 @@ def _build_routing_trace(
     kind_prefilter_summary: dict[str, object],
     anchor_prefilter_summary: dict[str, object],
     policy_ctx: PolicySelectedContext = PASSTHROUGH_POLICY,
+    lane_result: LaneNarrowingResult | None = None,
+    final_intent_used: bool = True,
+    signal_envelope: QuerySignalEnvelope | None = None,
+    recall_mode: str = "default",
 ) -> dict[str, object]:
     selected_results = [_build_routing_trace_entry(candidate) for candidate in final_candidates]
     demoted_higher_level_hits = [
@@ -2789,6 +3564,11 @@ def _build_routing_trace(
         "sharp_candidate_diagnostics": sharp_candidate_diagnostics,
         "query_policy_family": policy_ctx.query_policy_family,
     }
+    if lane_result is not None:
+        trace["lane_narrowing"] = _build_lane_narrowing_trace(lane_result, final_intent_used=final_intent_used)
+    if signal_envelope is not None:
+        trace["query_signal_envelope"] = _build_signal_envelope_trace(signal_envelope)
+    trace["recall_mode"] = recall_mode
     if packaging_summary:
         trace["packaging"] = packaging_summary
     if policy_ctx.resolver_invoked:
@@ -3794,6 +4574,7 @@ def _select_final_candidates(
     runtime_context: QueryRuntimeContext | None,
     packaging_summary: dict[str, object] | None,
     local_constraint_profile: dict[str, object] | None,
+    selected_lane: str | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None]:
     summary = dict(packaging_summary or {})
     if not ranked_candidates:
@@ -3805,6 +4586,7 @@ def _select_final_candidates(
             query_shape_tags=query_shape_tags,
             packaging_summary=summary,
             local_constraint_profile=local_constraint_profile,
+            selected_lane=selected_lane,
         )
     if intent != "work_resumption":
         return ranked_candidates[:requested_limit], summary or None
@@ -3894,6 +4676,7 @@ def _select_compatible_recall_candidates(
     query_shape_tags: list[str],
     packaging_summary: dict[str, object],
     local_constraint_profile: dict[str, object] | None,
+    selected_lane: str | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None]:
     compatible_candidates, packaging_summary, constraint_anchor, constraint_state = _apply_structured_constraint_compatibility(
         ranked_candidates=ranked_candidates,
@@ -3905,7 +4688,7 @@ def _select_compatible_recall_candidates(
             packaging_summary["mode"] = "compatible_structured_recall"
         return [], packaging_summary or None
 
-    explicit_constraint_focus = "constraint_recall" in query_shape_tags
+    explicit_constraint_focus = "constraint_recall" in query_shape_tags or selected_lane == "constraint_policy"
     if explicit_constraint_focus and constraint_anchor is not None and constraint_anchor in compatible_candidates:
         primary_candidate = constraint_anchor
     else:

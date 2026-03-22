@@ -757,6 +757,20 @@ def _typed_constraint_profile_from_item(item: QueryResultItem) -> dict[str, obje
         freshness_at=item.freshness_at,
     )
 
+
+def _typed_constraint_signal_from_candidates(
+    candidates: list[QueryResultItem],
+) -> bool:
+    """Return True if any candidate has a valid typed constraint profile.
+
+    Language-agnostic: checks typed fields (action_class, polarity,
+    target_anchor) on CONSTRAINT_MEMORY_TYPE candidates, not English text.
+    """
+    for item in candidates:
+        if _typed_constraint_profile_from_item(item) is not None:
+            return True
+    return False
+
 def _matching_constraint_scope_anchors_from_candidate(
     candidate: dict[str, object],
     *,
