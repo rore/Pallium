@@ -45,9 +45,9 @@ def test_end_to_end_simulation_flow(client) -> None:
     ]
 
     for item in sample_items:
-        assert client.post("/items", json=item).status_code == 200
+        assert client.post("/items", json=[item]).status_code == 200
     for item in sample_items:
-        assert client.post("/items", json=item).status_code == 200
+        assert client.post("/items", json=[item]).status_code == 200
 
     client.app.state.pallium_service.drain_processing_queue(worker_id="e2e-test")
 

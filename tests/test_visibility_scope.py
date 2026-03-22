@@ -28,10 +28,10 @@ def _ingest(client: TestClient, *, source_id: str, content: str, container_visib
     }
     if container_visibility is not None:
         payload["container_visibility"] = container_visibility
-    response = client.post("/items", json=payload)
+    response = client.post("/items", json=[payload])
     assert response.status_code == 200
     client.app.state.pallium_service.drain_processing_queue(worker_id="visibility-test")
-    return response.json()
+    return response.json()[0]
 
 
 def _query(client: TestClient, *, container_visibility: str | None, container_ref: str = "chat:privacy", debug: bool = False, text: str = "what did we decide about reservation ordering?") -> dict[str, object]:
@@ -131,7 +131,7 @@ def test_thread_aggregation_stays_within_exact_visibility_context(monkeypatch, t
     with _build_client(monkeypatch, test_db_url) as client:
         client.post(
             "/items",
-            json={
+            json=[{
                 "source_type": "chat_message",
                 "source_id": "thread-public-msg",
                 "content_type": "text/plain",
@@ -141,11 +141,11 @@ def test_thread_aggregation_stays_within_exact_visibility_context(monkeypatch, t
                 "container_ref": "chat:privacy",
                 "thread_ref": "chat:privacy:mixed-thread",
                 "container_visibility": "public",
-            },
+            }],
         )
         client.post(
             "/items",
-            json={
+            json=[{
                 "source_type": "assistant_artifact",
                 "source_id": "thread-limited-artifact",
                 "content_type": "text/plain",
@@ -155,7 +155,7 @@ def test_thread_aggregation_stays_within_exact_visibility_context(monkeypatch, t
                 "container_ref": "chat:privacy",
                 "thread_ref": "chat:privacy:mixed-thread",
                 "container_visibility": "limited",
-            },
+            }],
         )
         client.app.state.pallium_service.drain_processing_queue(worker_id="visibility-test")
 

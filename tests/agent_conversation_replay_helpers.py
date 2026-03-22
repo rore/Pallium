@@ -36,6 +36,12 @@ def _agent_conversation_client(monkeypatch, test_db_url: str, *, auto_drain_item
             payload = dict(payload)
             payload["container_visibility"] = "public"
             kwargs["json"] = payload
+        elif isinstance(payload, list) and url == "/items":
+            payload = [
+                {**item, "container_visibility": "public"} if isinstance(item, dict) and "container_visibility" not in item else item
+                for item in payload
+            ]
+            kwargs["json"] = payload
         response = original_post(url, *args, **kwargs)
         if auto_drain_items and url == "/items" and response.status_code == 200:
             client.app.state.pallium_service.drain_processing_queue(worker_id="api-contract-test")
@@ -253,7 +259,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
         },
     )
     for payload in payloads:
-        response = client.post("/items", json=payload)
+        response = client.post("/items", json=[payload])
         assert response.status_code == 200
 
     thread_memory_ids = _collect_thread_memory_ids(client, container_ref=container_ref, threads=threads)
@@ -396,7 +402,7 @@ def _seed_short_noun_isolation_history(client: TestClient) -> dict[str, object]:
         },
     )
     for payload in payloads:
-        response = client.post("/items", json=payload)
+        response = client.post("/items", json=[payload])
         assert response.status_code == 200
 
     thread_memory_ids = _collect_thread_memory_ids(client, container_ref=container_ref, threads=threads)

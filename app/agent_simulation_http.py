@@ -19,7 +19,8 @@ class HarnessHttpClient:
         self._client = client or httpx.Client(base_url=self.base_url, timeout=timeout_seconds)
 
     def create_item(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._post_json("/items", payload)
+        results = self._post_json("/items", [payload])
+        return results[0]
 
     def query(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post_json("/query", payload)

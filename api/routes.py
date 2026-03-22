@@ -184,8 +184,7 @@ def _serialize_trace(trace: QueryTrace) -> dict[str, object]:
 def create_router(service: PalliumService) -> APIRouter:
     router = APIRouter()
 
-    @router.post("/items", response_model=ItemCreateResponse)
-    def create_item(request: ItemCreateRequest) -> ItemCreateResponse:
+    def _ingest_one(request: ItemCreateRequest) -> ItemCreateResponse:
         result = service.ingest_item(
             source_type=request.source_type,
             source_id=request.source_id,
@@ -204,6 +203,14 @@ def create_router(service: PalliumService) -> APIRouter:
             container_visibility=request.container_visibility_kind(),
         )
         return ItemCreateResponse(**result.as_dict())
+
+    MAX_ITEMS_PER_REQUEST = 50
+
+    @router.post("/items", response_model=list[ItemCreateResponse])
+    def create_items(request: list[ItemCreateRequest]) -> list[ItemCreateResponse]:
+        if len(request) > MAX_ITEMS_PER_REQUEST:
+            raise HTTPException(status_code=422, detail=f"Too many items: max {MAX_ITEMS_PER_REQUEST} per request")
+        return [_ingest_one(item) for item in request]
 
     @router.get("/items/{source_item_id}/processing", response_model=ProcessingStatusResponse)
     def get_item_processing(source_item_id: str) -> ProcessingStatusResponse:

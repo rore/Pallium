@@ -33,9 +33,9 @@ class HarnessHttpFromTestClient:
         self._client = client
 
     def create_item(self, payload):
-        response = self._client.post("/items", json=payload)
+        response = self._client.post("/items", json=[payload])
         assert response.status_code == 200
-        return response.json()
+        return response.json()[0]
 
     def query(self, payload):
         response = self._client.post("/query", json=payload)
@@ -94,7 +94,7 @@ _PUBLIC = "public"
 
 def _seed_history(client: TestClient, payloads: list[dict[str, object]]) -> None:
     for payload in payloads:
-        assert client.post("/items", json=payload).status_code == 200
+        assert client.post("/items", json=[payload]).status_code == 200
     client.app.state.pallium_service.drain_processing_queue(worker_id="agent-simulation-e2e")
 
 

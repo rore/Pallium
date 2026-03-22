@@ -141,13 +141,13 @@ def test_targeted_waits_complete_for_user_and_assistant_without_full_drain(test_
     config = AppConfig(storage_backend="sqlite", sqlite_url=test_db_url, default_use_case="demo_agent_memory", vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)))
     client = TestClient(create_app(config))
     try:
-        user_response = client.post("/items", json=_item_payload("targeted-user", "Decision: user stage."))
-        assistant_response = client.post("/items", json=_item_payload("targeted-assistant", "Decision: assistant stage."))
+        user_response = client.post("/items", json=[_item_payload("targeted-user", "Decision: user stage.")])
+        assistant_response = client.post("/items", json=[_item_payload("targeted-assistant", "Decision: assistant stage.")])
         assert user_response.status_code == 200
         assert assistant_response.status_code == 200
         event = {
-            "user_item": {"response": user_response.json()},
-            "assistant": {"response": assistant_response.json()},
+            "user_item": {"response": user_response.json()[0]},
+            "assistant": {"response": assistant_response.json()[0]},
         }
 
         with BackgroundProcessor(config=config, worker_id="targeted-waits", poll_interval_seconds=0.01):
@@ -175,9 +175,9 @@ def test_background_processor_processes_pending_item_and_stops_cleanly(test_db_u
     config = AppConfig(storage_backend="sqlite", sqlite_url=test_db_url, default_use_case="demo_agent_memory", vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)))
     client = TestClient(create_app(config))
     try:
-        response = client.post("/items", json=_item_payload("background-processor-1", "Decision: process this item."))
+        response = client.post("/items", json=[_item_payload("background-processor-1", "Decision: process this item.")])
         assert response.status_code == 200
-        source_item_id = response.json()["source_item_id"]
+        source_item_id = response.json()[0]["source_item_id"]
         processor = BackgroundProcessor(config=config, worker_id="background-processor", poll_interval_seconds=0.01)
         processor.start()
         outcome = wait_for_item_processing(
@@ -206,15 +206,15 @@ def test_scenario_isolation_keeps_separate_sqlite_dbs(test_db_url: str) -> None:
     first_client = TestClient(create_app(first_config))
     second_client = TestClient(create_app(second_config))
     try:
-        first_response = first_client.post("/items", json=_item_payload(shared_source_id, "Decision: first db content."))
-        second_response = second_client.post("/items", json=_item_payload(shared_source_id, "Decision: second db content."))
+        first_response = first_client.post("/items", json=[_item_payload(shared_source_id, "Decision: first db content.")])
+        second_response = second_client.post("/items", json=[_item_payload(shared_source_id, "Decision: second db content.")])
         assert first_response.status_code == 200
         assert second_response.status_code == 200
 
         with BackgroundProcessor(config=first_config, worker_id="isolation-first", poll_interval_seconds=0.01):
             wait_for_item_processing(
                 first_client.app.state.pallium_service.get_item_processing,
-                first_response.json()["source_item_id"],
+                first_response.json()[0]["source_item_id"],
                 stage_timeout_label="user_item_processing_timeout",
                 timeout_seconds=2.0,
                 poll_interval_seconds=0.01,
@@ -222,7 +222,7 @@ def test_scenario_isolation_keeps_separate_sqlite_dbs(test_db_url: str) -> None:
         with BackgroundProcessor(config=second_config, worker_id="isolation-second", poll_interval_seconds=0.01):
             wait_for_item_processing(
                 second_client.app.state.pallium_service.get_item_processing,
-                second_response.json()["source_item_id"],
+                second_response.json()[0]["source_item_id"],
                 stage_timeout_label="user_item_processing_timeout",
                 timeout_seconds=2.0,
                 poll_interval_seconds=0.01,

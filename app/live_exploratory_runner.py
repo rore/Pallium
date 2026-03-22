@@ -50,9 +50,9 @@ class HarnessHttpFromTestClient:
         self._client = client
 
     def create_item(self, payload: dict[str, Any]) -> dict[str, Any]:
-        response = self._client.post("/items", json=payload)
+        response = self._client.post("/items", json=[payload])
         response.raise_for_status()
-        return response.json()
+        return response.json()[0]
 
     def query(self, payload: dict[str, Any]) -> dict[str, Any]:
         response = self._client.post("/query", json=payload)

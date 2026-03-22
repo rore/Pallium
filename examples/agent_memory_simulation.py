@@ -91,8 +91,8 @@ def _scoped_query_payload(text: str) -> dict:
 
 def main() -> int:
     for item in SAMPLE_ITEMS:
-        result = _post("/items", item)
-        print(f"ingested {item['source_id']}: {result['memory_object_ids']}")
+        result = _post("/items", [item])
+        print(f"ingested {item['source_id']}: {result[0]['memory_object_ids']}")
 
     decision_query = _post(
         "/query",

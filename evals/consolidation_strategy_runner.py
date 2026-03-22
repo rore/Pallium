@@ -167,7 +167,7 @@ def _run_consolidation_scenario(
         with TestClient(create_app(scenario_config)) as client:
             try:
                 for event in scenario.get('prior_events', []):
-                    response = client.post('/items', json=_with_default_visibility(event))
+                    response = client.post('/items', json=[_with_default_visibility(event)])
                     response.raise_for_status()
                 client.app.state.pallium_service.drain_processing_queue(worker_id='consolidation-strategy-runner')
 

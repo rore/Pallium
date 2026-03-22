@@ -218,6 +218,12 @@ def _create_thread_client(monkeypatch, test_db_url: str) -> TestClient:
             payload = dict(payload)
             payload["container_visibility"] = "public"
             kwargs["json"] = payload
+        elif isinstance(payload, list) and url == "/items":
+            payload = [
+                {**item, "container_visibility": "public"} if isinstance(item, dict) and "container_visibility" not in item else item
+                for item in payload
+            ]
+            kwargs["json"] = payload
         response = original_post(url, *args, **kwargs)
         if url == "/items" and response.status_code == 200:
             client.app.state.pallium_service.drain_processing_queue(worker_id="thread-test")
@@ -241,8 +247,8 @@ def _write_public_visibility_scenario(target_path: Path, source_path: Path) -> P
 
 def test_thread_summary_is_created_and_superseded(monkeypatch, test_db_url: str) -> None:
     client = _create_thread_client(monkeypatch, test_db_url)
-    client.post("/items", json={"source_type": "chat_message", "source_id": "thread-msg-1", "content_type": "text/plain", "content": "Why are some library holds disappearing after catalog sync delays?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"})
-    client.post("/items", json={"source_type": "assistant_artifact", "source_id": "thread-artifact-1", "content_type": "text/plain", "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"})
+    client.post("/items", json=[{"source_type": "chat_message", "source_id": "thread-msg-1", "content_type": "text/plain", "content": "Why are some library holds disappearing after catalog sync delays?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"}])
+    client.post("/items", json=[{"source_type": "assistant_artifact", "source_id": "thread-artifact-1", "content_type": "text/plain", "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"}])
 
     storage = client.app.state.pallium_service._storage
     thread_items = storage.list_source_items_for_thread("chat:library-help", "chat:library-help:thread-agg-001")
@@ -259,7 +265,7 @@ def test_thread_summary_and_task_checkpoint_preserve_selected_work_artifacts(mon
         {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-1", "content_type": "text/plain", "content": "Partial progress: ticket LIB-241 has the schema change and backfill done.", "artifact_kind": "tool_use_summary", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-001", "occurred_at": "2026-03-11T11:01:00Z"},
         {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-2", "content_type": "text/plain", "content": "Next step: wire the admin toggle and add retry-path coverage before enabling the flag.", "artifact_kind": "todo_snapshot", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-001", "occurred_at": "2026-03-11T11:02:00Z"},
     ):
-        client.post("/items", json=payload)
+        client.post("/items", json=[payload])
 
     query_response = client.post("/query", json={"text": "what state were we in on ticket lib 241 and what should i do next?", "limit": 8, "container_ref": "chat:library-help"})
     memory_hits = [item for item in query_response.json()["results"] if item["result_kind"] == "memory_hit"]
@@ -288,7 +294,7 @@ def test_task_checkpoint_is_created_and_superseded(monkeypatch, test_db_url: str
         {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-7", "content_type": "text/plain", "content": "Next step: refresh the catalog service token and rerun the sync from batch 313.", "artifact_kind": "todo_snapshot", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-003", "occurred_at": "2026-03-11T10:02:00Z"},
         {"source_type": "assistant_artifact", "source_id": "thread-work-artifact-8", "content_type": "text/plain", "content": "Next step: refresh the catalog service token, rerun the sync from batch 313, and capture verbose auth logging.", "artifact_kind": "todo_snapshot", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-work-003", "occurred_at": "2026-03-11T10:03:00Z"},
     ):
-        client.post("/items", json=payload)
+        client.post("/items", json=[payload])
 
     storage = client.app.state.pallium_service._storage
     thread_items = storage.list_source_items_for_thread("chat:library-help", "chat:library-help:thread-agg-work-003")
@@ -312,7 +318,7 @@ def test_downstream_agent_style_thread_promotes_verdict_and_uses_summary_fallbac
         {"source_type": "assistant_artifact", "source_id": "downstream-agent-ledger-artifact-5", "content_type": "text/plain", "content": "Task complete. No Slack message needed. Nothing new to report.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "slack:CLOCAL001", "thread_ref": thread_ref},
     )
     for payload in payloads:
-        client.post("/items", json=payload)
+        client.post("/items", json=[payload])
 
     storage = client.app.state.pallium_service._storage
     thread_items = storage.list_source_items_for_thread("slack:CLOCAL001", thread_ref)
@@ -348,7 +354,7 @@ def test_thread_summary_carries_forward_typed_conclusions(monkeypatch, test_db_u
         {"source_type": "assistant_artifact", "source_id": "thread-artifact-2", "content_type": "text/plain", "content": "Investigation found that arrival-time ordering skipped hold updates during catalog sync delays.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-002"},
         {"source_type": "assistant_artifact", "source_id": "thread-artifact-3", "content_type": "text/plain", "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-002"},
     ):
-        client.post("/items", json=payload)
+        client.post("/items", json=[payload])
 
     query_response = client.post("/query", json={"text": "why do we use item event time for reservation ordering?", "limit": 8, "container_ref": "chat:library-help"})
     # envelope-first routing: thread_summary may not appear in top results with broad_recall weights
@@ -377,7 +383,7 @@ def test_low_value_meta_item_keeps_raw_source_and_summary_annotation_without_dur
     client = _create_thread_client(monkeypatch, test_db_url)
     response = client.post(
         "/items",
-        json={
+        json=[{
             "source_type": "assistant_artifact",
             "source_id": "thread-meta-1",
             "content_type": "text/plain",
@@ -386,11 +392,11 @@ def test_low_value_meta_item_keeps_raw_source_and_summary_annotation_without_dur
             "role": "assistant",
             "container_ref": "slack:CLOCAL001",
             "thread_ref": "slack:CLOCAL001:thread-meta",
-        },
+        }],
     )
 
     assert response.status_code == 200
-    source_item_id = response.json()["source_item_id"]
+    source_item_id = response.json()[0]["source_item_id"]
     storage = client.app.state.pallium_service._storage
     source_item = storage.get_source_item(source_item_id)
     annotations = storage.list_annotations_for_source_item(source_item_id)
@@ -408,7 +414,7 @@ def test_unsupported_typed_decision_candidate_does_not_create_durable_typed_memo
     client = _create_thread_client(monkeypatch, test_db_url)
     response = client.post(
         "/items",
-        json={
+        json=[{
             "source_type": "assistant_artifact",
             "source_id": "thread-weak-decision-1",
             "content_type": "text/plain",
@@ -417,11 +423,11 @@ def test_unsupported_typed_decision_candidate_does_not_create_durable_typed_memo
             "role": "assistant",
             "container_ref": "chat:library-help",
             "thread_ref": "chat:library-help:thread-weak-decision",
-        },
+        }],
     )
 
     assert response.status_code == 200
-    source_item_id = response.json()["source_item_id"]
+    source_item_id = response.json()[0]["source_item_id"]
     storage = client.app.state.pallium_service._storage
     processing = client.app.state.pallium_service.get_item_processing(source_item_id)
     memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
@@ -437,7 +443,7 @@ def test_unsupported_typed_investigation_candidate_does_not_create_durable_typed
     client = _create_thread_client(monkeypatch, test_db_url)
     response = client.post(
         "/items",
-        json={
+        json=[{
             "source_type": "assistant_artifact",
             "source_id": "thread-weak-investigation-1",
             "content_type": "text/plain",
@@ -446,11 +452,11 @@ def test_unsupported_typed_investigation_candidate_does_not_create_durable_typed
             "role": "assistant",
             "container_ref": "chat:library-help",
             "thread_ref": "chat:library-help:thread-weak-investigation",
-        },
+        }],
     )
 
     assert response.status_code == 200
-    source_item_id = response.json()["source_item_id"]
+    source_item_id = response.json()[0]["source_item_id"]
     storage = client.app.state.pallium_service._storage
     processing = client.app.state.pallium_service.get_item_processing(source_item_id)
     memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
@@ -466,7 +472,7 @@ def test_supported_typed_memory_still_requests_thread_rebuild(monkeypatch, test_
     client = _create_thread_client(monkeypatch, test_db_url)
     response = client.post(
         "/items",
-        json={
+        json=[{
             "source_type": "assistant_artifact",
             "source_id": "thread-supported-decision-1",
             "content_type": "text/plain",
@@ -475,11 +481,11 @@ def test_supported_typed_memory_still_requests_thread_rebuild(monkeypatch, test_
             "role": "assistant",
             "container_ref": "chat:library-help",
             "thread_ref": "chat:library-help:thread-supported-decision",
-        },
+        }],
     )
 
     assert response.status_code == 200
-    source_item_id = response.json()["source_item_id"]
+    source_item_id = response.json()[0]["source_item_id"]
     storage = client.app.state.pallium_service._storage
     processing = client.app.state.pallium_service.get_item_processing(source_item_id)
     memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
@@ -495,7 +501,7 @@ def test_substantive_item_still_requests_thread_rebuild(monkeypatch, test_db_url
     client = _create_thread_client(monkeypatch, test_db_url)
     response = client.post(
         "/items",
-        json={
+        json=[{
             "source_type": "chat_message",
             "source_id": "thread-substantive-1",
             "content_type": "text/plain",
@@ -504,11 +510,11 @@ def test_substantive_item_still_requests_thread_rebuild(monkeypatch, test_db_url
             "role": "user",
             "container_ref": "chat:library-help",
             "thread_ref": "chat:library-help:thread-substantive",
-        },
+        }],
     )
 
     assert response.status_code == 200
-    source_item_id = response.json()["source_item_id"]
+    source_item_id = response.json()[0]["source_item_id"]
     storage = client.app.state.pallium_service._storage
     processing = client.app.state.pallium_service.get_item_processing(source_item_id)
     memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
@@ -524,7 +530,7 @@ def test_natural_language_assistant_output_creates_task_checkpoint_from_metadata
         {"source_type": "chat_message", "source_id": "thread-msg-natural-1", "content_type": "text/plain", "content": "I need to pick this sync retry back up.", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-001", "occurred_at": "2026-03-11T10:00:00Z"},
         {"source_type": "assistant_artifact", "source_id": "thread-natural-artifact-1", "content_type": "text/plain", "content": "The token refresh worked and the sync got through batch 417, but the retry window is exhausted now. Wait 15 minutes and resume from batch 418.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-001", "occurred_at": "2026-03-11T10:03:00Z"},
     ):
-        client.post("/items", json=payload)
+        client.post("/items", json=[payload])
 
     query_response = client.post("/query", json={"text": "what is the current blocker and where do i resume the sync?", "limit": 8, "container_ref": "chat:library-help"})
     memory_hits = [item for item in query_response.json()["results"] if item["result_kind"] == "memory_hit"]
@@ -542,7 +548,7 @@ def test_task_checkpoint_current_state_prefers_active_blocker_over_resolved_key_
         {"source_type": "chat_message", "source_id": "thread-msg-natural-3", "content_type": "text/plain", "content": "I need to leave myself a clean sync handoff.", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-003", "occurred_at": "2026-03-11T13:00:00Z"},
         {"source_type": "assistant_artifact", "source_id": "thread-natural-artifact-3", "content_type": "text/plain", "content": "Token refresh succeeded. Sync completed through batch 417, but the retry window is exhausted now. Resume at batch 418 after the retry window clears.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-003", "occurred_at": "2026-03-11T13:02:00Z"},
     ):
-        client.post("/items", json=payload)
+        client.post("/items", json=[payload])
 
     query_response = client.post("/query", json={"text": "what is still blocking the sync and where do i resume?", "limit": 8, "container_ref": "chat:library-help"})
     memory_hits = [item for item in query_response.json()["results"] if item["result_kind"] == "memory_hit"]
@@ -575,7 +581,7 @@ def test_key_finding_only_signal_does_not_create_task_checkpoint(monkeypatch, te
         {"source_type": "chat_message", "source_id": "thread-msg-natural-2", "content_type": "text/plain", "content": "What should we remember from this grocery planning thread?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-002", "occurred_at": "2026-03-11T12:00:00Z"},
         {"source_type": "assistant_artifact", "source_id": "thread-natural-artifact-2", "content_type": "text/plain", "content": "The biggest lesson is that unordered grocery lists cause backtracking through the store.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-002", "occurred_at": "2026-03-11T12:01:00Z"},
     ):
-        client.post("/items", json=payload)
+        client.post("/items", json=[payload])
 
     storage = client.app.state.pallium_service._storage
     thread_items = storage.list_source_items_for_thread("chat:library-help", "chat:library-help:thread-agg-natural-002")

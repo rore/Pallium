@@ -92,6 +92,12 @@ def test_downstream_query_returns_sharp_integration_ready_blocks(monkeypatch, te
             payload = dict(payload)
             payload["container_visibility"] = "public"
             kwargs["json"] = payload
+        elif isinstance(payload, list) and url == "/items":
+            payload = [
+                {**item, "container_visibility": "public"} if isinstance(item, dict) and "container_visibility" not in item else item
+                for item in payload
+            ]
+            kwargs["json"] = payload
         response = original_post(url, *args, **kwargs)
         if url == "/items" and response.status_code == 200:
             client.app.state.pallium_service.drain_processing_queue(worker_id="integration-ready-test")
@@ -141,7 +147,7 @@ def test_downstream_query_returns_sharp_integration_ready_blocks(monkeypatch, te
             "thread_ref": "slack:CLOCAL001:thread-integration",
         },
     ):
-        response = client.post("/items", json=payload)
+        response = client.post("/items", json=[payload])
         assert response.status_code == 200
 
     response = client.post(

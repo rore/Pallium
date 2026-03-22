@@ -121,7 +121,7 @@ def _run_episode(
         scenario_config = replace(config, sqlite_url=database_url, default_use_case="agent_conversation_memory", vector_index=vector_index_config)
         with TestClient(create_app(scenario_config)) as client:
             for event in episode.get("prior_events", []):
-                response = client.post("/items", json=_with_default_visibility(event))
+                response = client.post("/items", json=[_with_default_visibility(event)])
                 response.raise_for_status()
             client.app.state.pallium_service.drain_processing_queue(worker_id="external-memory-pressure-runner")
             if consolidation_strategy:

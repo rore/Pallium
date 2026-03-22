@@ -91,12 +91,14 @@ class PalliumClient:
                 return None
             return await r.json()
 
-    async def post_item(self, payload: dict) -> None:
-        """Store an item (used for assistant replies and artifacts)."""
+    async def post_items(self, items: list[dict]) -> list[dict]:
+        """Store one or more items."""
         session = await self._ensure_session()
-        async with session.post(f"{self._base_url}/items", json=payload) as r:
+        async with session.post(f"{self._base_url}/items", json=items) as r:
             if r.status >= 400:
                 logging.warning("Pallium ingest failed: HTTP %s", r.status)
+                return []
+            return await r.json()
 ```
 
 ## Step 1: Ingest + Query in One Call
@@ -154,8 +156,8 @@ async def handle_message(event: dict):
     reply = await call_llm(prompt)
     reply_ts = await post_slack_reply(event, reply)
 
-    # 4. Ingest reply
-    await ingest_assistant_reply(pallium, event, reply_ts, reply)
+    # 4. Ingest reply and artifacts
+    await ingest_assistant_artifacts(pallium, event, reply_ts, reply)
 ```
 
 Don't filter, rerank, or second-guess — `should_inject` and
@@ -163,32 +165,59 @@ Don't filter, rerank, or second-guess — `should_inject` and
 
 ## Step 3: Ingest the Assistant Reply and Artifacts
 
-After the LLM responds, store the reply. If the agent produced tool results
-or todo snapshots, ingest those too:
+After the LLM responds, store the reply and any artifacts. Use batch ingest
+to send them in a single call:
 
 ```python
-async def ingest_assistant_reply(
-    client: PalliumClient, event: dict, reply_ts: str, text: str
+async def ingest_assistant_artifacts(
+    client: PalliumClient,
+    event: dict,
+    reply_ts: str,
+    reply_text: str,
+    tool_summary: str | None = None,
+    todo_snapshot: str | None = None,
 ):
     channel = event["channel"]
     thread_ts = event.get("thread_ts") or event["ts"]
-
-    await client.post_item({
+    shared = {
         "source_type": "conversation_agent_artifact",
-        "source_id": f"agent-artifact:{channel}:{reply_ts}:assistant_output",
         "content_type": "text/plain",
-        "content": text,
         "role": "assistant",
-        "artifact_kind": "assistant_output",
         "container_ref": container_ref(channel, event["user"], is_dm(event)),
         "thread_ref": f"slack:thread:{channel}:{thread_ts}",
         "container_visibility": channel_visibility(event),
         "agent_ref": f"slack-bot:{BOT_ID}",
-    })
+    }
+
+    items = [{
+        **shared,
+        "source_id": f"agent-artifact:{channel}:{reply_ts}:assistant_output",
+        "content": reply_text,
+        "artifact_kind": "assistant_output",
+    }]
+
+    if tool_summary:
+        items.append({
+            **shared,
+            "source_id": f"agent-artifact:{channel}:{reply_ts}:tool_use_summary",
+            "content": tool_summary,
+            "artifact_kind": "tool_use_summary",
+        })
+
+    if todo_snapshot:
+        items.append({
+            **shared,
+            "source_id": f"agent-artifact:{channel}:{reply_ts}:todo_snapshot",
+            "content": todo_snapshot,
+            "artifact_kind": "todo_snapshot",
+        })
+
+    # Batch ingest — one HTTP call for all artifacts
+    await client.post_items(items)
 ```
 
-For tool summaries and todo snapshots, use `artifact_kind="tool_use_summary"`
-and `artifact_kind="todo_snapshot"` respectively. Format them as compact text:
+`POST /items` accepts an array, so the reply, tool summary, and todo snapshot
+go in a single round-trip. Format tool and todo content as compact text:
 
 ```python
 # Tool summary example

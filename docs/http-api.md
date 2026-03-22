@@ -21,9 +21,32 @@ There are also two operational endpoints:
 
 ## POST /items
 
-Use this endpoint to store one source item.
+Use this endpoint to store source items. Always accepts an array, always
+returns an array. Maximum 50 items per request.
 
-Required fields:
+```json
+[
+  {
+    "source_type": "chat_message",
+    "source_id": "msg-001",
+    "content_type": "text/plain",
+    "content": "We decided to use event timestamps for ordering."
+  }
+]
+```
+
+For multiple items in one call (e.g. assistant reply + tool summary + todo
+snapshot after an agent turn):
+
+```json
+[
+  { "source_type": "...", "source_id": "reply-1", "artifact_kind": "assistant_output", ... },
+  { "source_type": "...", "source_id": "tools-1", "artifact_kind": "tool_use_summary", ... },
+  { "source_type": "...", "source_id": "todo-1", "artifact_kind": "todo_snapshot", ... }
+]
+```
+
+Required fields (per item):
 
 - `source_type` — name of the upstream system (e.g. `"chat_message"`,
   `"ticket_update"`)
@@ -54,18 +77,18 @@ Additional context fields:
 Minimal example:
 
 ```json
-{
+[{
   "source_type": "chat_message",
   "source_id": "msg-001",
   "content_type": "text/plain",
   "content": "We decided to use event timestamps for ordering."
-}
+}]
 ```
 
 Recommended example for `agent_conversation_memory`:
 
 ```json
-{
+[{
   "source_type": "chat_message",
   "source_id": "msg-001",
   "content_type": "text/plain",
@@ -75,10 +98,10 @@ Recommended example for `agent_conversation_memory`:
   "container_ref": "channel:C04ABC123",
   "container_visibility": "limited",
   "thread_ref": "thread:1700000001"
-}
+}]
 ```
 
-Response fields:
+Response — always an array:
 
 - `source_item_id` — internal ID assigned by Pallium
 - `annotation_ids` — IDs of semantic annotations produced (may be empty if

@@ -64,9 +64,9 @@ def test_batch_digest_recall_converges_from_pending_source_evidence_to_structure
         },
     )
     for payload in payloads:
-        response = client.post("/items", json=payload)
+        response = client.post("/items", json=[payload])
         assert response.status_code == 200
-        assert response.json()["processing_status"] == "pending"
+        assert response.json()[0]["processing_status"] == "pending"
 
     query_payload = {
         "text": "can you remind me what we had latest about batch digests?",

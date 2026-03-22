@@ -85,9 +85,9 @@ def _run_scenario(*, scenario: dict[str, Any], config: AppConfig) -> dict[str, A
         with TestClient(create_app(scenario_config)) as client:
             source_item_ids: list[str] = []
             for event in scenario.get("events", []):
-                response = client.post("/items", json=_with_default_visibility(event))
+                response = client.post("/items", json=[_with_default_visibility(event)])
                 response.raise_for_status()
-                source_item_ids.append(response.json()["source_item_id"])
+                source_item_ids.append(response.json()[0]["source_item_id"])
             client.app.state.pallium_service.drain_processing_queue(worker_id="low-value-churn-runner")
 
             processing_rows = []

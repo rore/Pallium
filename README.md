@@ -22,7 +22,7 @@ supporting evidence.
 Store a decision the agent made:
 
 ```bash
-curl -X POST http://localhost:8000/items -H 'Content-Type: application/json' -d '{
+curl -X POST http://localhost:8000/items -H 'Content-Type: application/json' -d '[{
   "source_type": "chat_message",
   "source_id": "msg-042",
   "content_type": "text/plain",
@@ -32,7 +32,7 @@ curl -X POST http://localhost:8000/items -H 'Content-Type: application/json' -d 
   "container_ref": "channel:catalog-sync",
   "container_visibility": "limited",
   "thread_ref": "thread-17"
-}'
+}]'
 ```
 
 Later, ask why:
