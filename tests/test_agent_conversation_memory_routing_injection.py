@@ -1500,7 +1500,11 @@ def test_typo_variant_greeting_fails_closed_without_memory_injection() -> None:
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
     assert outcome.should_inject is False
-    assert outcome.decision_reason == 'low_value_query'
+    # After removing query-time noise detection (cue-free control plane),
+    # greeting-like queries are no longer classified as low_value_query.
+    # The system still correctly refuses injection because the source-only
+    # candidate set has no relevant memory to inject.
+    assert outcome.decision_reason in {'low_value_query', 'no_relevant_memory'}
     assert outcome.injectable_blocks == []
 
 def test_same_thread_batch_reminder_lately_prefers_structured_carry_forward_over_polluted_sources() -> None:

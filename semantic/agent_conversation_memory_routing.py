@@ -352,28 +352,6 @@ ROUTING_FAMILY_INFERENCE_PRIORITY = (
     "precise_fact",
 )
 
-LOW_VALUE_GREETING_NOISE_PREFIXES = (
-    "good morning",
-    "good afternoon",
-    "good evening",
-    "hello",
-    "hi",
-    "hey",
-    "thanks",
-    "thank you",
-)
-
-LOW_VALUE_GREETING_NOISE_QUERIES = {
-    "good morning",
-    "good afternoon",
-    "good evening",
-    "hello",
-    "hi",
-    "hey",
-    "thanks",
-    "thank you",
-}
-
 def route_query_results(
     *,
     text: str,
@@ -1826,12 +1804,6 @@ def _source_noise_suppression_reason(
         return None
     if _is_low_value_meta_text(excerpt):
         return "low_value_meta_source", "Low-value orchestration source is not useful carry-forward for recall packaging."
-    if _source_hit_is_greeting_or_noise_text(excerpt):
-        return "greeting_source_noise", "Greeting or pleasantry chatter was excluded from recall packaging."
-    if _source_hit_is_heartbeat_text(excerpt):
-        return "heartbeat_source_noise", "Heartbeat-style source noise was excluded from recall packaging."
-    if _source_hit_is_generic_capability_text(excerpt):
-        return "generic_capability_source", "Generic capability chatter was excluded from recall packaging."
     if _source_hit_looks_like_recall_query(item, query_text):
         if _runtime_context_prefers_cross_thread_recall(runtime_context) and query_filters is not None and query_filters.thread_ref and item.thread_ref == query_filters.thread_ref:
             return "current_thread_recall_query", "The current fresh-thread query was excluded from cross-thread recall packaging."
@@ -2001,14 +1973,6 @@ def _assistant_source_is_answer_bearing_local_state(excerpt: str, query_text: st
         return True
     return '"' in normalized_excerpt or "'" in normalized_excerpt
 
-def _source_hit_is_generic_capability_text(text: str) -> bool:
-    lowered = text.lower()
-    return lowered.startswith("capabilities:") or "many talents" in lowered or ("i can" in lowered and "help" in lowered and "status" in lowered)
-
-def _source_hit_is_heartbeat_text(text: str) -> bool:
-    lowered = text.lower()
-    return "heartbeat" in lowered or "still alive" in lowered or "still monitoring" in lowered or "healthcheck" in lowered
-
 def _result_layer(item: QueryResultItem) -> str:
     if item.result_kind == "source_hit":
         return "source_evidence"
@@ -2063,68 +2027,6 @@ def _specificity_bonus(item: QueryResultItem, intent: str) -> int:
         bonus += 6 if item.artifact_kind == "assistant_output" else 2
     return bonus
 
-
-def _edit_distance_with_limit(left: str, right: str, limit: int) -> int:
-    if abs(len(left) - len(right)) > limit:
-        return limit + 1
-    previous = list(range(len(right) + 1))
-    for left_index, left_char in enumerate(left, start=1):
-        current = [left_index]
-        row_min = current[0]
-        for right_index, right_char in enumerate(right, start=1):
-            cost = 0 if left_char == right_char else 1
-            value = min(
-                previous[right_index] + 1,
-                current[right_index - 1] + 1,
-                previous[right_index - 1] + cost,
-            )
-            current.append(value)
-            row_min = min(row_min, value)
-        if row_min > limit:
-            return limit + 1
-        previous = current
-    return previous[-1]
-
-def _looks_like_low_value_greeting_variant(normalized: str) -> bool:
-    tokens = [token for token in normalized.split() if token]
-    if not tokens:
-        return False
-    if normalized in LOW_VALUE_GREETING_NOISE_QUERIES:
-        return True
-    low_value_trailing_tokens = {"again", "sir", "team", "friend", "folks", "maam", "madam"}
-    if tokens[0] == "good" and len(tokens) >= 2:
-        if any(_edit_distance_with_limit(tokens[1], marker, 2) <= 2 for marker in ("morning", "afternoon", "evening")):
-            return all(token in low_value_trailing_tokens for token in tokens[2:])
-    for marker in ("hello", "hi", "hey", "thanks"):
-        if _edit_distance_with_limit(tokens[0], marker, 1) <= 1:
-            return all(token in low_value_trailing_tokens for token in tokens[1:])
-    return False
-
-def _source_hit_is_greeting_or_noise_text(text: str) -> bool:
-    normalized = normalize_for_index(text)
-    if not normalized:
-        return False
-    if _looks_like_low_value_greeting_variant(normalized):
-        return True
-    for prefix in LOW_VALUE_GREETING_NOISE_PREFIXES:
-        if not normalized.startswith(prefix):
-            continue
-        remainder = normalized[len(prefix):].strip()
-        if not remainder:
-            return True
-        if _looks_like_low_value_greeting_variant(f"{prefix} {remainder}".strip()):
-            return True
-        if remainder.startswith(("i can help", "let me know", "when you are ready", "how can i help")):
-            return True
-    return False
-
-def _query_is_low_value_greeting_or_noise(text: str) -> bool:
-    normalized = normalize_for_index(text)
-    if not normalized:
-        return False
-    if _looks_like_low_value_greeting_variant(normalized):
-        return True
-    return len(normalized.split()) <= 4 and _source_hit_is_greeting_or_noise_text(text)
 
 def _routing_query_tokens(text: str) -> tuple[str, ...]:
     normalized = normalize_for_index(text)
@@ -2613,10 +2515,13 @@ def _derive_query_signal_envelope(
     }
     derivation: list[str] = []
 
-    # low_value: only truly empty queries
+    # low_value: empty or ultra-short queries (structural guard)
     if not normalized or not normalized.strip():
         signals["low_value"] = True
         derivation.append("empty_query")
+    elif len(normalized.strip()) < 3:
+        signals["low_value"] = True
+        derivation.append("ultra_short_query")
 
     if not signals["low_value"]:
         dominant = str(candidate_evidence.get("dominant_memory_layer") or "")
@@ -2815,28 +2720,23 @@ def _legacy_english_query_signals(
     }
     derivation: list[str] = []
 
-    if _query_is_low_value_greeting_or_noise(text):
-        signals["low_value"] = True
-        derivation.append("english_greeting_or_noise")
+    if _has_latest_status_wording(text):
+        signals["latest_status_request"] = True
+        derivation.append("english_latest_status_wording")
 
-    if not signals["low_value"]:
-        if _has_latest_status_wording(text):
-            signals["latest_status_request"] = True
-            derivation.append("english_latest_status_wording")
-
-        shape_tags = _query_shape_tags(text, query_tokens)
-        if "resume_state" in shape_tags:
-            signals["resume_state"] = True
-            derivation.append("english_resume_state_tag")
-        if "constraint_recall" in shape_tags or _preferred_constraint_text(text):
-            signals["constraint_lookup"] = True
-            derivation.append("english_constraint_text_or_tag")
-        if "evidence_request" in shape_tags:
-            signals["evidence_request"] = True
-            derivation.append("english_evidence_request_tag")
-        if "history_lookup" in shape_tags:
-            signals["history_lookup"] = True
-            derivation.append("english_history_lookup_tag")
+    shape_tags = _query_shape_tags(text, query_tokens)
+    if "resume_state" in shape_tags:
+        signals["resume_state"] = True
+        derivation.append("english_resume_state_tag")
+    if "constraint_recall" in shape_tags or _preferred_constraint_text(text):
+        signals["constraint_lookup"] = True
+        derivation.append("english_constraint_text_or_tag")
+    if "evidence_request" in shape_tags:
+        signals["evidence_request"] = True
+        derivation.append("english_evidence_request_tag")
+    if "history_lookup" in shape_tags:
+        signals["history_lookup"] = True
+        derivation.append("english_history_lookup_tag")
 
     return QuerySignalEnvelope(
         **signals,
@@ -3063,8 +2963,6 @@ def _classify_query_policy_family(
     runtime_context: QueryRuntimeContext | None,
     initial_intent: str | None = None,
 ) -> str:
-    if _query_is_low_value_greeting_or_noise(text):
-        return "noise"
     if _has_latest_status_wording(text):
         return "latest_status"
     if "resume_state" in query_shape_tags:
@@ -3598,16 +3496,6 @@ def _build_injectable_blocks(
             "cap": 3,
             "same_thread_context_evaluation": same_thread_context,
         }
-    if _query_is_low_value_greeting_or_noise(query_text):
-        return [], {
-            "should_inject": False,
-            "decision_reason": "low_value_query",
-            "returned_block_ids": [],
-            "eligible_result_ids": [],
-            "dropped_by_cap_result_ids": [],
-            "cap": 3,
-            "same_thread_context_evaluation": same_thread_context,
-        }
     if not final_candidates:
         return [], {
             "should_inject": False,
@@ -3810,8 +3698,6 @@ def _candidate_qualifies_as_same_thread_local_state(
         excerpt = str(item.excerpt or "")
         if normalize_for_index(excerpt) == normalize_for_index(query_text):
             return False, "current_query_same_thread_source"
-        if _source_hit_is_greeting_or_noise_text(excerpt):
-            return False, "greeting_or_noise_same_thread_source"
         if _source_hit_looks_like_recall_query(item, query_text):
             return False, "query_like_same_thread_source"
         if item.role == "assistant" and _assistant_source_is_answer_bearing_local_state(excerpt, query_text):

@@ -321,10 +321,13 @@ def test_fresh_thread_recall_suppresses_duplicate_queries_and_meta_source_noise(
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
     assert outcome.trace.routing['selected_layer'] != 'source_evidence'
-    assert all(item.result_kind == 'memory_hit' for item in outcome.results)
-    assert all(block.block_type == 'memory' for block in outcome.injectable_blocks)
+    # After removing query-time noise detection (cue-free control plane),
+    # only structural suppression (current-query echo, duplicate recall query) remains.
+    # Capability and heartbeat source hits are no longer suppressed at query time.
     excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
-    assert {'current_query_source_echo', 'duplicate_recall_query_source', 'generic_capability_source', 'heartbeat_source_noise'}.issubset(excluded)
+    assert {'current_query_source_echo', 'duplicate_recall_query_source'}.issubset(excluded)
+    assert 'generic_capability_source' not in excluded
+    assert 'heartbeat_source_noise' not in excluded
 
 def test_fresh_thread_recall_excludes_conflicting_structured_checkpoint() -> None:
     plugin = AgentConversationMemoryPlugin(

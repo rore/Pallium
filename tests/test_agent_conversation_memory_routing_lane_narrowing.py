@@ -408,8 +408,9 @@ def test_abstention_returns_empty_with_lane_trace():
 # ---------------------------------------------------------------------------
 
 def test_noise_query_short_circuits_before_lane_narrowing():
+    """Ultra-short queries (< 3 chars) are classified as low_value structurally."""
     checkpoint = _make_task_checkpoint()
-    text = 'hello'
+    text = 'hi'
     outcome = _route_full(text, [checkpoint])
     assert outcome.should_inject is False
     assert outcome.decision_reason == 'low_value_query'

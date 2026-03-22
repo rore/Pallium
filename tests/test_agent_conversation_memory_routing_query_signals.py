@@ -257,9 +257,11 @@ def test_envelope_trace_in_routing_output():
 
 # --- Legacy English fallback ---
 
-def test_legacy_english_detects_greeting():
+def test_legacy_english_no_longer_detects_greeting():
+    """After removing query-time noise detection (cue-free control plane),
+    greetings are not classified as low_value by legacy English signals."""
     env = _legacy_english_query_signals('hello', _routing_query_tokens('hello'))
-    assert env.low_value is True
+    assert env.low_value is False
     assert env.legacy_english_fallback_used is True
     assert env.source == 'legacy_english_fallback'
 
