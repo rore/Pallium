@@ -1,10 +1,11 @@
 ---
 id: idea-generic-memory-lifecycle-signals
 title: Generic memory lifecycle signals
-status: queued
+status: done
 priority: medium
 commitment: uncommitted
-milestone: Idea
+milestone: Done
+resolved_by: add-bounded-memory-lifecycle-hardening
 ---
 
 ## Summary
@@ -45,7 +46,9 @@ trustworthy, and less prone to stale dominance.
 
 ## Notes
 
-This should remain an idea until the current product slice is more proven on
-real interaction shape.
+This idea is now resolved by a bounded committed lifecycle-hardening feature so
+the roadmap can move from generic exploration to a concrete trust and freshness
+slice.
 
 Sources: `docs/designs/009-derived-knowledge-memory-and-lifecycle-signals.md`, `docs/context/vision.md`
+

@@ -4,7 +4,7 @@ title: Language-agnostic query signals and typed constraint state
 status: queued
 priority: high
 commitment: committed
-milestone: Later
+milestone: Next
 lane: stabilization-foundation
 ---
 

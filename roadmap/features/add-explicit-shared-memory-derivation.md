@@ -13,9 +13,11 @@ Add the explicit shared-derived-memory path and provenance model that lets a sem
 
 This slice should bridge the gap between native-scope enforcement and later cross-container reuse.
 
+It should also become the first explicit coordination-memory surface for later multi-agent and multi-container handoff, where broader-scope decisions, findings, and checkpoints must be published intentionally rather than inferred from local memory leakage.
+
 ## Why
 
-The privacy-aware scope foundation defines local visibility boundaries, but later cross-container memory also needs an explicit way to create broader-scope memory safely. Without a separate shared-memory path, Pallium would be forced to blur local memory and shared memory into the same object lifecycle, which would make auditing, revocation, and false-share debugging much harder.
+The privacy-aware scope foundation defines local visibility boundaries, but later cross-container memory also needs an explicit way to create broader-scope memory safely. Without a separate shared-memory path, Pallium would be forced to blur local memory and shared memory into the same object lifecycle, which would make auditing, revocation, handoff debugging, and false-share debugging much harder.
 
 ## In Scope
 
@@ -49,6 +51,7 @@ The privacy-aware scope foundation defines local visibility boundaries, but late
 Dependency note:
 
 - this feature should follow `add-privacy-aware-memory-scope-and-sharing-foundation`
+- this feature should follow `add-bounded-memory-lifecycle-hardening` so shared derivation inherits stronger freshness, supersession, and contradiction semantics instead of broadening stale local memory into wider scope
 - this feature should precede `add-cross-container-bounded-memory`
 
 Design note:

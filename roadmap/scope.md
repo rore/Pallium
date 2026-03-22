@@ -96,10 +96,11 @@ Planned future query pipeline:
   router
 - the next feature should now be structural query lane narrowing before intent tie-break so the shipped query-policy contract becomes authoritative in the hot path and phrase-derived intent stops acting like the switchboard
 - after that, remove the remaining English-first residual router by landing language-agnostic query signals and typed constraint state so residual routing depends on typed signals and bounded semantic help rather than English cue tables
+- after that, move bounded memory lifecycle hardening up so stale, superseded, and contradictory structured memory are governed before broader reuse and sharing work expands
 - after that, move the live miss-capture and replay-promotion loop back up so real traffic becomes bounded miss bundles and permanent regressions once captured misses are more likely to reflect residual ambiguity and operational drift than known structural or English-specific routing weaknesses
 - after that, move vector retrieval up as the bounded semantic candidate-generation layer for durable memory, then add hybrid fusion so lexical precision and paraphrase recall operate over the same narrowed candidate space
 - the targeted external memory pressure pack is now shipped as a non-gating confidence lane for stale-memory handling, update correctness, long noisy recall, and incremental drift; future retrieval-substrate work should use it as pressure, not as the product acceptance gate
-- only after those layers are clearer should explicit shared-memory derivation and cross-container bounded memory move up
+- only after those layers are clearer should explicit shared-memory derivation and cross-container bounded memory move up; those later coordination features should build on stronger lifecycle trust so Pallium does not turn stale local continuity into stale shared continuity
 
 Parallel workstreams for the next phase:
 - Stream A (`stabilization-foundation`): the bounded query-policy and selective ambiguity-resolution foundation is now shipped
@@ -143,3 +144,4 @@ Still out of scope for this phase:
 - public API expansion for explicit retention administration
 - replacing lower-level evidence-backed memory with only higher-level summaries
 - turning Pallium into a workflow engine, transcript archive, or raw tool-log store
+

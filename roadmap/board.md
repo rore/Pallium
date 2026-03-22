@@ -1,13 +1,13 @@
 # Next
 - add-structural-query-lane-narrowing-before-intent-tiebreak
+- add-language-agnostic-query-signals-and-typed-constraint-state
 
 # Later
-- add-language-agnostic-query-signals-and-typed-constraint-state
+- add-bounded-memory-lifecycle-hardening
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
 
 # Ideas
-- idea-generic-memory-lifecycle-signals
 - idea-operational-scale-hardening
 - idea-multi-package-source-item-processing
 - idea-optional-reranker-support

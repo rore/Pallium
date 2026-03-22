@@ -19,6 +19,8 @@ Real recurring questions and conclusions can span multiple containers, such as d
 
 This feature exists to capture that higher-value cross-container continuity while keeping safety stronger than within-container consolidation.
 
+In the longer term, this is also the clearest bounded path toward coordination memory across separate workspaces or agent contexts, so it should not move ahead of the lifecycle and provenance work needed to keep shared reuse trustworthy.
+
 ## In Scope
 
 - bounded cross-container shared-memory behavior for the active semantic package after the generic scope/sharing prerequisites exist
@@ -73,5 +75,6 @@ Dependency note:
 
 - this feature depends on `add-privacy-aware-memory-scope-and-sharing-foundation`
 - this feature depends on `add-explicit-shared-memory-derivation`
+- this feature depends on `add-bounded-memory-lifecycle-hardening`
 
 This should be approached only after retrieval trace, hybrid retrieval groundwork, and the scope/sharing prerequisites are stronger, because cross-container mistakes will be harder to debug without explainability and explicit privacy boundaries.
