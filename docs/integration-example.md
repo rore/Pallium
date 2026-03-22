@@ -13,12 +13,21 @@ answers using an LLM. Pallium sits between the Slack event and the LLM call —
 it stores selected evidence, derives compact memory, and returns it before the
 next answer so the agent can stay oriented across conversations.
 
-```text
-Slack message  →  your agent  →  Pallium /items   (store user message)
-                               →  Pallium /query   (get relevant memory)
-                               →  LLM              (answer with injected memory)
-                               →  Slack            (post reply)
-                               →  Pallium /items   (store reply + artifacts)
+```mermaid
+sequenceDiagram
+    participant S as Slack
+    participant A as Your Agent
+    participant P as Pallium
+    participant L as LLM
+
+    S->>A: user message
+    A->>P: POST /items (store user message)
+    A->>P: POST /query (get relevant memory)
+    P-->>A: should_inject + injectable_blocks
+    A->>L: prompt + injected memory
+    L-->>A: reply
+    A->>S: post reply
+    A->>P: POST /items (store reply + artifacts)
 ```
 
 ## Mapping Slack Concepts to Pallium Fields
