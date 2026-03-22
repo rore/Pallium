@@ -11,6 +11,8 @@ from tests.config_helpers import build_llm_test_config
 from tests.public_corpus_stub_providers import PublicCorpusSemanticProvider
 from tests.stub_providers import TieredMemorySemanticProvider
 
+pytestmark = pytest.mark.slow
+
 
 class FakeIO:
     def __init__(self, responses: list[str]) -> None:

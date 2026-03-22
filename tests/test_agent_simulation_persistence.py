@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from app.agent_simulation import AgentSimulationApp, TerminalIO
 from app.agent_simulation_render import render_replay_diff
 from app.agent_simulation_session import HarnessSession, ScopeDefaults, SessionStore, rewrite_payload_for_replay
+import pytest
+
+pytestmark = pytest.mark.slow
 
 
 class FakeIO:

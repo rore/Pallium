@@ -6,6 +6,9 @@ from pathlib import Path
 from tests.config_helpers import build_llm_test_config
 from evals.low_value_churn_benchmark import run_low_value_churn_benchmark
 from tests.stub_providers import TieredMemorySemanticProvider
+import pytest
+
+pytestmark = pytest.mark.slow
 
 
 SCENARIOS = Path('evals/low_value_churn/scenarios.json')

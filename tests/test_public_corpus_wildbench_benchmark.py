@@ -6,6 +6,9 @@ from pathlib import Path
 from app.config import AppConfig
 from evals.public_corpus_benchmark import run_public_corpus_benchmark
 from tests.stub_providers import PublicCorpusAnswerProvider, PublicCorpusSemanticProvider
+import pytest
+
+pytestmark = pytest.mark.slow
 
 
 FIXTURE = Path('tests/fixtures/wildbench_export_sample.json')

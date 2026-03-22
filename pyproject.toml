@@ -24,6 +24,10 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not slow'"
+markers = [
+    "slow: benchmark and eval harness tests — run explicitly with -m slow",
+]
 
 [tool.setuptools]
 packages = [

@@ -6,6 +6,9 @@ from typing import Any
 
 from app.agent_simulation import AgentSimulationApp, TerminalIO, build_parser, run
 from app.agent_simulation_session import SessionStore
+import pytest
+
+pytestmark = pytest.mark.slow
 
 
 class FakeIO:

@@ -12,6 +12,9 @@ from evals.public_corpus_wildchat_local import (
     validate_local_corpus,
 )
 from tests.stub_providers import PublicCorpusAnswerProvider, PublicCorpusSemanticProvider
+import pytest
+
+pytestmark = pytest.mark.slow
 
 
 FIXTURE = Path('tests/fixtures/wildchat_export_sample.jsonl')

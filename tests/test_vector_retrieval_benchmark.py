@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.slow
+
 from evals.vector_retrieval.vector_retrieval_runner import (
     BenchmarkSummary,
     MockEmbeddingProvider,

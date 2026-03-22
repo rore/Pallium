@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from app.agent_simulation import AgentSimulationApp, TerminalIO
 from app.agent_simulation_model import ModelUnavailableError, build_user_prompt
 from app.agent_simulation_session import SessionStore
+import pytest
+
+pytestmark = pytest.mark.slow
 
 
 class FakeIO:
