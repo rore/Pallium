@@ -6,6 +6,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+try:
+    import usearch  # noqa: F401
+    HAS_USEARCH = True
+except ImportError:
+    HAS_USEARCH = False
+
+pytestmark = pytest.mark.skipif(
+    not HAS_USEARCH,
+    reason="usearch not installed — mock fixture unreliable under xdist",
+)
+
 
 class FakeResults:
     """Mock for usearch search results."""
