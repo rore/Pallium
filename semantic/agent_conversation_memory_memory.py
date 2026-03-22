@@ -12,13 +12,7 @@ from semantic.agent_conversation_memory_constraints import (
     CONSTRAINT_MEMORY_SCHEMA_VERSION,
     CONSTRAINT_MEMORY_TYPE,
     SUBJECT_HINT_METADATA_KEY,
-    _constraint_compatibility_domain,
-    _constraint_confidence_from_candidate,
-    _constraint_strength_for_polarity,
-    _constraint_summary_text,
-    _constraint_supersession_identity,
     _merge_subject_anchors,
-    _serialize_subject_anchor,
     _serialize_subject_anchors,
 )
 
@@ -119,24 +113,11 @@ def _append_typed_constraint_memory_objects(
     relations = list(result.relations)
     index_entries = list(result.index_entries)
     for candidate in extraction.constraint_candidates:
-        canonical_key = _constraint_supersession_identity(candidate.primary_scope_anchor, candidate.target_anchor, candidate.action_class)
         constraint_text = candidate.constraint_text.strip()
-        envelope_subjects = _merge_subject_anchors((candidate.primary_scope_anchor,), (candidate.target_anchor,), extraction.subject_hints)
+        envelope_subjects = _merge_subject_anchors(extraction.subject_hints)
         payload = {
-            "summary": _constraint_summary_text(candidate),
+            "summary": constraint_text,
             "constraint_text": constraint_text,
-            "primary_scope_anchor": _serialize_subject_anchor(candidate.primary_scope_anchor),
-            "target_anchor": _serialize_subject_anchor(candidate.target_anchor),
-            "action_class": candidate.action_class,
-            "polarity": candidate.polarity,
-            "strength": _constraint_strength_for_polarity(candidate.polarity),
-            "status": "active",
-            "evidence": [constraint_text],
-            "freshness_signal": source_item.occurred_at.isoformat() if source_item.occurred_at is not None else None,
-            "confidence": candidate.confidence,
-            "canonical_key": canonical_key,
-            "compatibility_domain_key": _constraint_compatibility_domain(candidate.primary_scope_anchor, candidate.action_class),
-            "precise_coverage_key": canonical_key,
             "container_ref": source_item.container_ref,
             "thread_ref": source_item.thread_ref,
             "semantic_provenance": dict(semantic_provenance),
@@ -153,7 +134,7 @@ def _append_typed_constraint_memory_objects(
                 kind="constraint",
                 container_ref=source_item.container_ref,
                 thread_ref=source_item.thread_ref,
-                confidence=_constraint_confidence_from_candidate(candidate),
+                confidence="medium",
                 producer_kind="item_extraction",
                 producer_schema_id=producer_schema_id,
                 producer_schema_version=producer_schema_version,
@@ -177,20 +158,7 @@ def _append_typed_constraint_memory_objects(
                 target_kind="memory_object",
                 target_id=memory_object.id,
                 index_type="lexical",
-                text_view=normalize_for_index(
-                    " ".join(
-                        part
-                        for part in (
-                            payload["summary"],
-                            constraint_text,
-                            candidate.primary_scope_anchor.value,
-                            candidate.target_anchor.value,
-                            candidate.action_class,
-                            candidate.polarity,
-                        )
-                        if part
-                    )
-                ),
+                text_view=normalize_for_index(constraint_text),
                 text_view_name="memory_object.constraint_memory_context",
             )
         )

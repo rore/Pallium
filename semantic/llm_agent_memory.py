@@ -420,29 +420,11 @@ def _normalize_constraint_candidates(value: Any) -> tuple[ConstraintCandidate, .
     for item in value:
         if not isinstance(item, dict):
             continue
-        primary_scope_anchor = _normalize_subject_anchor(item.get("primary_scope_anchor"))
-        target_anchor = _normalize_subject_anchor(item.get("target_anchor"))
-        action_class = str(item.get("action_class") or "").strip().lower()
-        polarity = str(item.get("polarity") or "").strip().lower()
-        confidence = str(item.get("confidence") or "").strip().lower() or "unknown"
         constraint_text = str(item.get("constraint_text") or "").strip()
-        if primary_scope_anchor is None or target_anchor is None:
-            continue
-        if action_class not in {"use_surface", "use_source", "perform_step"}:
-            continue
-        if polarity not in {"prohibit", "prefer", "require"}:
-            continue
-        if confidence not in {"high", "medium", "low", "unknown"}:
-            confidence = "unknown"
         if not constraint_text or constraint_text.lower() == "unknown":
             continue
         normalized.append(
             ConstraintCandidate(
-                primary_scope_anchor=primary_scope_anchor,
-                target_anchor=target_anchor,
-                action_class=action_class,
-                polarity=polarity,
-                confidence=confidence,
                 constraint_text=constraint_text,
             )
         )

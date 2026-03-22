@@ -82,11 +82,6 @@ GROUNDED_INVESTIGATION_MARKER_PATTERN = re.compile(
 
 @dataclass(frozen=True)
 class ConstraintCandidate:
-    primary_scope_anchor: MemorySubjectAnchor
-    target_anchor: MemorySubjectAnchor
-    action_class: str
-    polarity: str
-    confidence: str
     constraint_text: str
 
 

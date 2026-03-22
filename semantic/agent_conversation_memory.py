@@ -7,12 +7,6 @@ from core.models import MemoryObject, QueryFilters, QueryRuntimeContext, SourceI
 from providers.llm.base import LLMProvider
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin
-from semantic.agent_conversation_memory_constraints import (
-    _build_constraint_state,
-    _structured_constraint_profile_from_payload,
-    _structured_text_conflicts_with_constraint,
-    reconcile_process_result_against_active_constraints,
-)
 from semantic.agent_conversation_memory_memory import _append_typed_constraint_memory_objects, _apply_direct_memory_envelopes, build_supersession_hints
 from semantic.agent_conversation_memory_routing import RoutingOverrides, route_query_results
 from semantic.agent_conversation_memory_threads import _supports_thread_aggregation, build_consolidated_memory, build_pattern_memory, build_thread_summary
@@ -97,21 +91,6 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
     def source_item_embedding_text(self, source_item: SourceItem) -> str | None:
         from semantic.agent_conversation_memory_embedding import source_item_embedding_text
         return source_item_embedding_text(source_item)
-
-    def reconcile_process_result(
-        self,
-        result: ProcessResult,
-        *,
-        storage,
-        container_ref: str | None,
-        container_visibility: str,
-    ) -> ProcessResult:
-        return reconcile_process_result_against_active_constraints(
-            result,
-            storage=storage,
-            container_ref=container_ref,
-            container_visibility=container_visibility,
-        )
 
     def route_query_results(
         self,

@@ -390,6 +390,7 @@ def test_same_thread_trivial_local_context_allows_cross_thread_carry_forward() -
                 type='thread_summary',
                 payload={
                     'summary': 'The thread contains a single user message about the catalog sync retry and no resolved information yet.',
+                    'content_quality': 'unresolved',
                     'conclusions': [],
                     'selected_work_artifacts': [],
                 },
@@ -880,6 +881,7 @@ def test_query_only_current_thread_summary_is_excluded_from_recall_packaging() -
                 type='thread_summary',
                 payload={
                     'summary': 'User asked, "What do we know the latest about the catalog sync retry?" The thread contains only this question.',
+                    'content_quality': 'query_only',
                     'conclusions': [],
                     'selected_work_artifacts': [],
                 },
@@ -1305,6 +1307,7 @@ def test_same_thread_batch_reminder_after_trivial_greetings_uses_carry_forward_m
                 type='thread_summary',
                 payload={
                     'summary': 'User asked, "can you remind me what we had latest about batches?" The thread contains only this question.',
+                    'content_quality': 'query_only',
                     'conclusions': [],
                     'selected_work_artifacts': [],
                 },
@@ -1611,4 +1614,3 @@ def test_same_thread_batch_reminder_lately_prefers_structured_carry_forward_over
     assert 'inventory batch digest' in rendered_blocks or 'last confirmed batch' in rendered_blocks
     assert 'remind me what we had about the batch digests lately' not in rendered_blocks
     assert 'good afternoon' not in rendered_blocks
-    assert 'attempt to authenticate' not in rendered_blocks

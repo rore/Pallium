@@ -150,9 +150,11 @@ def test_passthrough_policy_singleton() -> None:
 
 # --- Phase 3: Policy classification tests ---
 
-def test_classify_noise_for_greetings() -> None:
-    assert _classify_query_policy_family("hello", query_shape_tags=[], runtime_context=None, initial_intent=None) == "noise"
-    assert _classify_query_policy_family("thanks", query_shape_tags=[], runtime_context=None, initial_intent=None) == "noise"
+def test_classify_greeting_as_recall_fact_without_noise_detection() -> None:
+    """After removing query-time noise detection (cue-free control plane),
+    greetings are classified as recall_fact instead of noise."""
+    assert _classify_query_policy_family("hello", query_shape_tags=[], runtime_context=None, initial_intent=None) == "recall_fact"
+    assert _classify_query_policy_family("thanks", query_shape_tags=[], runtime_context=None, initial_intent=None) == "recall_fact"
 
 
 def test_classify_latest_status_for_status_queries() -> None:
@@ -210,13 +212,15 @@ def test_classify_recall_fact_for_resumed_session_without_work_intent() -> None:
     ) == "recall_fact"
 
 
-def test_classify_check_constraints_for_constraint_queries() -> None:
+def test_classify_constraint_query_as_recall_fact_without_check_constraints() -> None:
+    """After removing check_constraints policy family, constraint queries
+    fall through to recall_fact."""
     assert _classify_query_policy_family(
         "What constraint had I given about the Jira portal?",
         query_shape_tags=["constraint_recall"],
         runtime_context=None,
         initial_intent=None,
-    ) == "check_constraints"
+    ) == "recall_fact"
 
 
 def test_classify_recall_fact_as_default() -> None:
@@ -282,11 +286,8 @@ def test_noise_query_returns_empty_results() -> None:
         include_trace=True,
     )
 
-    assert outcome.results == []
-    assert outcome.should_inject is False
-    assert outcome.decision_reason == "low_value_query"
-    assert outcome.trace is not None
-    assert outcome.trace.routing["query_policy_family"] == "noise"
+    # After removing noise detection, greetings route through recall and may find memory.
+    assert outcome.decision_reason in ("carry_forward_available", "no_relevant_memory")
 
 
 def test_intent_restriction_preserves_allowed_intent() -> None:

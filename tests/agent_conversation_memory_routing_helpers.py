@@ -23,9 +23,6 @@ from providers.llm.base import LLMJsonResponse
 from retrieval.base import RetrievalQueryResult
 from semantic.agent_conversation_memory import (
     AgentConversationMemoryPlugin,
-    _build_constraint_state,
-    _structured_constraint_profile_from_payload,
-    _structured_text_conflicts_with_constraint,
 )
 from tests.config_helpers import build_llm_test_config
 from tests.tiered_memory_stub_providers import TieredMemorySemanticProvider

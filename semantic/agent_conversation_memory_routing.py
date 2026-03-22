@@ -17,20 +17,10 @@ from semantic.agent_conversation_memory_anchors import (
 )
 from semantic.agent_conversation_memory_constraints import (
     CONSTRAINT_MEMORY_TYPE,
-    _apply_structured_constraint_compatibility,
-    _build_local_query_constraint_profile,
-    _candidate_aligns_with_constraint_state,
-    _candidate_has_self_conflicting_guidance,
-    _preferred_constraint_text,
-    _text_contains_operational_guidance,
-    _typed_constraint_signal_from_candidates,
 )
 from semantic.agent_conversation_memory_threads import (
-    QUERY_ONLY_SUMMARY_MARKERS,
     SELECTED_WORK_ARTIFACT_KINDS,
     WORK_SIGNAL_PREFIX_TO_TYPE,
-    UNRESOLVED_SUMMARY_MARKERS,
-    WEAK_THREAD_SUMMARY_TEXT,
     _classify_work_signal_text as _thread_classify_work_signal_text,
     _extract_constraint_signal_text,
     _is_low_value_meta_text,
@@ -85,7 +75,6 @@ class QuerySignalEnvelope:
     history_lookup: bool = False
     latest_status_request: bool = False
     resume_state: bool = False
-    constraint_lookup: bool = False
     evidence_request: bool = False
     source: str = "structural"
     confidence: str = "low"
@@ -147,7 +136,6 @@ QUERY_POLICY_FAMILY_ALLOWED_INTENTS: dict[str, frozenset[str]] = {
     "recall_fact": frozenset({"answer_continuity", "broad_recall", "precise_fact", "evidence_trace", "investigative_conclusion"}),
     "latest_status": frozenset({"broad_recall", "work_resumption"}),
     "resume_work": frozenset({"work_resumption"}),
-    "check_constraints": frozenset({"broad_recall", "work_resumption"}),
 }
 LATEST_STATUS_COLLAPSED_INTENTS = frozenset({"broad_recall"})
 LATEST_STATUS_WORDING_TOKENS = {"latest", "lately"}
@@ -160,13 +148,11 @@ AMBIGUITY_MARGIN_CONSTRAINTS_VS_RECALL = 10
 
 # Lane narrowing constants
 LANE_INTENT_MAPPING: dict[str, str] = {
-    "constraint_policy": "broad_recall",
     "work_resumption": "work_resumption",
     "evidence_trace": "evidence_trace",
 }
 
 LANE_POLICY_FAMILY_MAPPING: dict[str, str] = {
-    "constraint_policy": "check_constraints",
     "work_resumption": "resume_work",
     "evidence_trace": "recall_fact",
 }
@@ -424,8 +410,6 @@ def route_query_results(
         )
         # Step 4: Lane narrowing (consumes envelope via compatible shape tags)
         _envelope_shape_tags: list[str] = []
-        if signal_envelope.constraint_lookup:
-            _envelope_shape_tags.append("constraint_recall")
         if signal_envelope.resume_state:
             _envelope_shape_tags.append("resume_state")
         if signal_envelope.evidence_request:
@@ -511,14 +495,6 @@ def route_query_results(
                 policy_ctx = PolicySelectedContext(
                     query_policy_family="resume_work",
                     allowed_query_intents=frozenset({"work_resumption"}),
-                )
-                final_intent_used = signal_envelope.legacy_english_fallback_used
-            elif envelope_policy == "check_constraints":
-                intent = "broad_recall"
-                recall_mode = "default"
-                policy_ctx = PolicySelectedContext(
-                    query_policy_family="check_constraints",
-                    allowed_query_intents=QUERY_POLICY_FAMILY_ALLOWED_INTENTS.get("check_constraints", frozenset({"broad_recall"})),
                 )
                 final_intent_used = signal_envelope.legacy_english_fallback_used
             else:
@@ -642,8 +618,6 @@ def route_query_results(
             candidate["routing_rank"] = routing_rank
         # Derive envelope-based shape tags for downstream selection (not English-derived)
         _envelope_selection_tags: list[str] = []
-        if signal_envelope.constraint_lookup:
-            _envelope_selection_tags.append("constraint_recall")
         final_candidates, packaging_summary = _select_final_candidates(
             intent=intent,
             ranked_candidates=ranked_candidates,
@@ -652,7 +626,6 @@ def route_query_results(
             query_shape_tags=_envelope_selection_tags,
             runtime_context=runtime_context,
             packaging_summary=packaging_summary,
-            local_constraint_profile=_build_local_query_constraint_profile(text, runtime_context, ranked_candidates),
             selected_lane=lane_result.selected_lane,
         )
         injection_blocks, injection_summary = _build_injectable_blocks(
@@ -975,9 +948,7 @@ def _infer_query_intent(
         reverse=True,
     )
     selected_family = ranked_families[0] if ranked_families else text_hint_family
-    if _preferred_constraint_text(text):
-        selected_family = "broad_recall"
-    elif text_hint_family == "broad_recall" and "history_lookup" in query_shape_tags and "evidence_request" not in query_shape_tags:
+    if text_hint_family == "broad_recall" and "history_lookup" in query_shape_tags and "evidence_request" not in query_shape_tags:
         selected_family = "broad_recall"
     elif selected_family == "evidence_trace" and text_hint_family != "evidence_trace" and "evidence_request" not in query_shape_tags:
         # evidence_trace must not win via candidate source-hit scores alone when the query text
@@ -996,8 +967,6 @@ def _infer_query_intent(
 
 def _classify_query_intent_from_text(text: str) -> str:
     lowered = text.lower()
-    if _preferred_constraint_text(text):
-        return "broad_recall"
     if "remind me" in lowered and ("latest" in lowered or "lately" in lowered or "what we had about" in lowered):
         return "broad_recall"
     if any(cue in lowered for cue in EVIDENCE_TRACE_CUES):
@@ -1047,8 +1016,6 @@ def _query_shape_tags(text: str, query_tokens: tuple[str, ...]) -> list[str]:
         detected.update({"history_lookup", "carry_forward"})
     if "remind me" in lowered and ("lately" in lowered or "latest" in lowered or "what we had about" in lowered):
         detected.update({"history_lookup", "carry_forward"})
-    if _preferred_constraint_text(text):
-        detected.add("constraint_recall")
     if lowered.startswith("why "):
         detected.add("big_picture")
     if lowered.startswith(("what ", "which ", "when ")):
@@ -1876,57 +1843,14 @@ def _summary_low_value_reason(
 ) -> tuple[str, str] | None:
     if memory_type not in ROUTING_SUMMARY_TYPES or not summary_text:
         return None
-    # Prefer write-time content_quality field (added in Slice 3).
     content_quality = payload.get("content_quality")
-    if content_quality is not None:
-        if content_quality == "query_only":
-            return "query_only_thread_summary", "A query-only summary was excluded from recall packaging."
-        if content_quality == "unresolved":
-            return "unresolved_thread_summary", "An unresolved summary without durable state was excluded from recall packaging."
-        if content_quality == "weak":
-            return "weak_thread_summary", "A weak summary was excluded from recall packaging."
-        # "substantive" — not low value
-        return None
-    # Fallback for summaries without the field (pre-Slice 3 data).
-    if payload.get("selected_work_artifacts") or payload.get("conclusions"):
-        return None
-    if _preferred_constraint_text(summary_text) or _summary_text_has_durable_state_cue(summary_text):
-        return None
-    if _summary_text_looks_query_only(summary_text, query_text):
+    if content_quality == "query_only":
         return "query_only_thread_summary", "A query-only summary was excluded from recall packaging."
-    if _summary_text_looks_unresolved(summary_text):
+    if content_quality == "unresolved":
         return "unresolved_thread_summary", "An unresolved summary without durable state was excluded from recall packaging."
+    if content_quality == "weak":
+        return "weak_thread_summary", "A weak summary was excluded from recall packaging."
     return None
-
-def _summary_text_looks_query_only(summary_text: str, query_text: str) -> bool:
-    lowered = summary_text.lower()
-    if any(marker in lowered for marker in QUERY_ONLY_SUMMARY_MARKERS):
-        return True
-    overlap = len(set(_routing_query_tokens(summary_text)).intersection(set(_routing_query_tokens(query_text))))
-    return overlap >= 4 and lowered.startswith("user asked")
-
-def _summary_text_looks_unresolved(summary_text: str) -> bool:
-    lowered = summary_text.lower().strip()
-    if lowered in WEAK_THREAD_SUMMARY_TEXT or lowered.startswith("unresolved"):
-        return True
-    return any(marker in lowered for marker in UNRESOLVED_SUMMARY_MARKERS)
-
-def _summary_text_has_durable_state_cue(summary_text: str) -> bool:
-    lowered = summary_text.lower().strip()
-    return any(
-        marker in lowered
-        for marker in (
-            "constraint:",
-            "blocked by",
-            "blocker:",
-            "next step:",
-            "current state:",
-            "decision:",
-            "investigation outcome:",
-            "resolved that",
-            "concluded that",
-        )
-    )
 
 def _source_hit_looks_like_recall_query(item: QueryResultItem, query_text: str) -> bool:
     excerpt = str(item.excerpt or "").strip()
@@ -2510,7 +2434,6 @@ def _derive_query_signal_envelope(
         "history_lookup": False,
         "latest_status_request": False,
         "resume_state": False,
-        "constraint_lookup": False,
         "evidence_request": False,
     }
     derivation: list[str] = []
@@ -2526,11 +2449,6 @@ def _derive_query_signal_envelope(
     if not signals["low_value"]:
         dominant = str(candidate_evidence.get("dominant_memory_layer") or "")
         per_layer = candidate_evidence.get("per_layer_support", {})
-
-        # constraint_lookup — only set from query-level signals, not candidate-set
-        # presence. Candidate-level constraint evidence (constraint_memory in results)
-        # feeds into lane narrowing as a shape hint but does not force the hard route.
-        # The English Tier 3 fallback handles constraint detection from query text.
 
         # resume_state: requires resumed_session context + candidate-side evidence
         is_resumed = runtime_context is not None and runtime_context.turn_kind == "resumed_session"
@@ -2554,7 +2472,7 @@ def _derive_query_signal_envelope(
                 derivation.append(f"strong_{dominant}")
 
         # latest_status_request: requires dominant fresh state memory
-        if not any(signals[s] for s in ("constraint_lookup", "resume_state", "history_lookup")):
+        if not any(signals[s] for s in ("resume_state", "history_lookup")):
             from datetime import timezone as _tz
             _now = datetime.now(_tz.utc)
             for item in anchor_prefiltered_candidates:
@@ -2612,7 +2530,7 @@ def _check_evidence_trace_override(
         return envelope  # noise/greeting — never invoke resolver
     if source_ratio < 0.3:
         return envelope  # insufficient source presence
-    if envelope.constraint_lookup or envelope.resume_state:
+    if envelope.resume_state:
         return envelope  # stronger route already won
     if resolver_config is None or not resolver_config.get("resolver_enabled", True):
         return envelope  # resolver not available
@@ -2632,7 +2550,6 @@ def _check_evidence_trace_override(
             history_lookup=envelope.history_lookup,
             latest_status_request=envelope.latest_status_request,
             resume_state=envelope.resume_state,
-            constraint_lookup=envelope.constraint_lookup,
             evidence_request=True,
             source="semantic",
             confidence="medium",
@@ -2715,7 +2632,6 @@ def _legacy_english_query_signals(
         "history_lookup": False,
         "latest_status_request": False,
         "resume_state": False,
-        "constraint_lookup": False,
         "evidence_request": False,
     }
     derivation: list[str] = []
@@ -2728,9 +2644,6 @@ def _legacy_english_query_signals(
     if "resume_state" in shape_tags:
         signals["resume_state"] = True
         derivation.append("english_resume_state_tag")
-    if "constraint_recall" in shape_tags or _preferred_constraint_text(text):
-        signals["constraint_lookup"] = True
-        derivation.append("english_constraint_text_or_tag")
     if "evidence_request" in shape_tags:
         signals["evidence_request"] = True
         derivation.append("english_evidence_request_tag")
@@ -2754,7 +2667,6 @@ def _build_signal_envelope_trace(envelope: QuerySignalEnvelope) -> dict[str, obj
         "history_lookup": envelope.history_lookup,
         "latest_status_request": envelope.latest_status_request,
         "resume_state": envelope.resume_state,
-        "constraint_lookup": envelope.constraint_lookup,
         "evidence_request": envelope.evidence_request,
         "source": envelope.source,
         "confidence": envelope.confidence,
@@ -2768,8 +2680,6 @@ def _policy_family_from_signal_envelope(envelope: QuerySignalEnvelope) -> str:
     """Map signal envelope to coarse route / policy family."""
     if envelope.low_value:
         return "noise"
-    if envelope.constraint_lookup:
-        return "check_constraints"
     if envelope.resume_state:
         return "resume_work"
     if envelope.evidence_request:
@@ -2789,34 +2699,6 @@ def _determine_eligible_lanes(
     runtime_context: QueryRuntimeContext | None,
 ) -> LaneNarrowingResult:
     lanes: list[LaneEligibility] = []
-
-    # --- constraint_policy ---
-    constraint_structural: list[str] = []
-    constraint_shape: list[str] = []
-    if _preferred_constraint_text(text):
-        constraint_structural.append("constraint_text_detected")
-    if "constraint_recall" in query_shape_tags:
-        # Envelope detected constraint_lookup — this is a query-level signal
-        constraint_structural.append("constraint_recall_tag")
-    if int(policy_evidence.get("constraint_memory_only_support", 0)) >= POLICY_SUPPORT_THRESHOLD:
-        # Candidate-set evidence: constraint memory exists with support, but this is
-        # retrieval-shape not query-meaning — treat as shape hint, not structural signal.
-        constraint_shape.append("constraint_memory_with_support")
-
-    if constraint_structural:
-        constraint_state = "strongly_eligible"
-        constraint_reason = "Structural constraint signal: " + ", ".join(constraint_structural)
-    elif constraint_shape:
-        constraint_state = "plausible"
-        constraint_reason = "Query-shape hint only: " + ", ".join(constraint_shape)
-    else:
-        constraint_state = "excluded"
-        constraint_reason = "No constraint signals"
-    lanes.append(LaneEligibility(
-        lane="constraint_policy", state=constraint_state,
-        structural_signals=tuple(constraint_structural), shape_signals=tuple(constraint_shape),
-        reason=constraint_reason,
-    ))
 
     # --- work_resumption ---
     work_structural: list[str] = []
@@ -2908,18 +2790,6 @@ def _determine_eligible_lanes(
         )
 
     if strongly_count > 1:
-        constraint_is_strong = any(le.lane == "constraint_policy" and le.state == "strongly_eligible" for le in lanes)
-        if constraint_is_strong:
-            return LaneNarrowingResult(
-                eligible_lanes=tuple(lanes),
-                selected_lane="constraint_policy",
-                selection_mode="single_lane_bypass",
-                lane_narrowing_used_intent=False,
-                intent_effect="suppressed",
-                abstain_reason=None,
-                mapped_intent=LANE_INTENT_MAPPING["constraint_policy"],
-                mapped_policy_family=LANE_POLICY_FAMILY_MAPPING["constraint_policy"],
-            )
         return LaneNarrowingResult(
             eligible_lanes=tuple(lanes),
             selected_lane=None,
@@ -2969,8 +2839,6 @@ def _classify_query_policy_family(
         return "resume_work"
     if runtime_context is not None and runtime_context.turn_kind == "resumed_session" and initial_intent == "work_resumption":
         return "resume_work"
-    if _preferred_constraint_text(text) or "constraint_recall" in query_shape_tags:
-        return "check_constraints"
     return "recall_fact"
 
 
@@ -3005,29 +2873,6 @@ def _build_ambiguity_options(
         return PolicySelectedContext(
             query_policy_family="resume_work",
             allowed_query_intents=QUERY_POLICY_FAMILY_ALLOWED_INTENTS["resume_work"],
-        ), []
-
-    if policy_family == "check_constraints":
-        family_scores = family_inference.get("family_scores", {})
-        recall_fact_intents = QUERY_POLICY_FAMILY_ALLOWED_INTENTS["recall_fact"]
-        if isinstance(family_scores, dict):
-            max_recall_score = max(
-                (int((family_scores.get(f) or {}).get("total", 0) if isinstance(family_scores.get(f), dict) else 0) for f in recall_fact_intents),
-                default=0,
-            )
-        else:
-            max_recall_score = 0
-        has_constraint_support = bool(_preferred_constraint_text(text)) or "constraint_recall" in query_shape_tags
-        if has_constraint_support and max_recall_score > 0:
-            return _build_constraints_vs_recall_pair(
-                text=text,
-                policy_evidence=policy_evidence,
-                family_inference=family_inference,
-                query_shape_tags=query_shape_tags,
-            )
-        return PolicySelectedContext(
-            query_policy_family="check_constraints",
-            allowed_query_intents=QUERY_POLICY_FAMILY_ALLOWED_INTENTS["check_constraints"],
         ), []
 
     # recall_fact — default
@@ -3096,70 +2941,6 @@ def _build_latest_vs_resume_pair(
         ambiguity_pair_type="latest_status_vs_resume_work",
     ), options
 
-
-def _build_constraints_vs_recall_pair(
-    *,
-    text: str,
-    policy_evidence: dict[str, object],
-    family_inference: dict[str, object],
-    query_shape_tags: list[str],
-) -> tuple[PolicySelectedContext, list[dict[str, object]]]:
-    check_constraints_score = 0
-    if _preferred_constraint_text(text):
-        check_constraints_score += 24
-    if "constraint_recall" in query_shape_tags:
-        check_constraints_score += 18
-    # Constraint support from post-anchor-prefilter policy evidence
-    constraint_best_support = int(policy_evidence.get("constraint_best_support", 0))
-    if constraint_best_support >= POLICY_SUPPORT_THRESHOLD:
-        check_constraints_score += 20
-        constraint_best_kind = str(policy_evidence.get("constraint_best_kind", ""))
-        if constraint_best_kind in {"task_checkpoint", "thread_summary"}:
-            check_constraints_score += 12
-
-    family_scores = family_inference.get("family_scores")
-    recall_fact_intents = QUERY_POLICY_FAMILY_ALLOWED_INTENTS["recall_fact"]
-    if isinstance(family_scores, dict):
-        recall_fact_score = max(
-            (int((family_scores.get(f) or {}).get("total", 0) if isinstance(family_scores.get(f), dict) else 0) for f in recall_fact_intents),
-            default=0,
-        )
-    else:
-        recall_fact_score = 0
-
-    if check_constraints_score >= recall_fact_score:
-        option_a_family = "check_constraints"
-    else:
-        option_a_family = "recall_fact"
-    option_b_family = "recall_fact" if option_a_family == "check_constraints" else "check_constraints"
-
-    options = [
-        {
-            "option_id": "A",
-            "query_policy_family": option_a_family,
-            "allowed_query_intents": list(QUERY_POLICY_FAMILY_ALLOWED_INTENTS[option_a_family]),
-            "score": check_constraints_score if option_a_family == "check_constraints" else recall_fact_score,
-        },
-        {
-            "option_id": "B",
-            "query_policy_family": option_b_family,
-            "allowed_query_intents": list(QUERY_POLICY_FAMILY_ALLOWED_INTENTS[option_b_family]),
-            "score": check_constraints_score if option_b_family == "check_constraints" else recall_fact_score,
-        },
-    ]
-
-    # Phase 3: always use option A
-    selected_family = option_a_family
-    allowed_intents = QUERY_POLICY_FAMILY_ALLOWED_INTENTS[selected_family]
-
-    return PolicySelectedContext(
-        query_policy_family=selected_family,
-        allowed_query_intents=allowed_intents,
-        option_a_family=option_a_family,
-        option_b_family=option_b_family,
-        deterministic_option="A",
-        ambiguity_pair_type="check_constraints_vs_recall_fact",
-    ), options
 
 
 def _maybe_invoke_resolver(
@@ -3313,13 +3094,6 @@ def _build_lane_narrowing_trace(
         "intent_effect": lane_result.intent_effect,
         "abstain_reason": lane_result.abstain_reason,
     }
-    strongly_eligible_count = sum(1 for le in lane_result.eligible_lanes if le.state == "strongly_eligible")
-    constraint_is_strong = any(
-        le.lane == "constraint_policy" and le.state == "strongly_eligible"
-        for le in lane_result.eligible_lanes
-    )
-    if constraint_is_strong and strongly_eligible_count > 1:
-        trace["constraint_safety_override"] = True
     return trace
 
 
@@ -3704,9 +3478,6 @@ def _candidate_qualifies_as_same_thread_local_state(
             return True, ""
         if work_usefulness >= 18:
             return True, ""
-        if support_grade in {"supported", "strong"} and _text_contains_operational_guidance(excerpt):
-            if item.role == "assistant" or _preferred_constraint_text(excerpt):
-                return True, ""
         if support_grade in {"supported", "strong"} and len(overlap_tokens) >= 2 and not _source_hit_looks_like_request_or_question(item):
             if item.role == "assistant" or intent in {"precise_fact", "evidence_trace", "investigative_conclusion"}:
                 return True, ""
@@ -3730,7 +3501,7 @@ def _candidate_qualifies_as_same_thread_local_state(
             return False, summary_rejection[0]
         if payload.get("selected_work_artifacts") or payload.get("conclusions"):
             return True, ""
-        if _preferred_constraint_text(summary_text) or _summary_text_has_durable_state_cue(summary_text):
+        if payload.get("content_quality") == "substantive":
             return True, ""
         if support_grade in {"supported", "strong"} and (support_score >= ROUTING_SUPPORT_THRESHOLD["supported"] or len(overlap_tokens) >= 2):
             return True, ""
@@ -3858,20 +3629,11 @@ def _candidate_is_low_value(candidate: dict[str, object]) -> bool:
     return False
 
 def _task_checkpoint_injection_text(payload: dict[str, object]) -> str:
-    constraint = _preferred_constraint_text(
-        str(payload.get("summary") or ""),
-        str(payload.get("current_state") or ""),
-        str(payload.get("blocker_state") or ""),
-        *[str(value or "") for value in _parse_string_list(payload.get("key_findings"))],
-        *[str(value or "") for value in _parse_string_list(payload.get("evidence"))],
-    )
     summary = str(payload.get("summary") or "").strip()
     current_state = str(payload.get("current_state") or "").strip()
     blocker = str(payload.get("blocker_state") or "").strip()
     next_step = str(payload.get("next_step") or "").strip()
     parts: list[str] = []
-    if constraint:
-        parts.append(f"Constraint: {constraint}")
     # When an active blocker is present, lead with it so the blocking issue is
     # immediately visible — it is the most actionable signal for resumption.
     if blocker:
@@ -3976,23 +3738,11 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
         )
     if item.type in {"thread_summary", "discussion_summary"}:
         summary_text = str(payload.get("summary") or "").strip()
-        constraint = _preferred_constraint_text(summary_text)
-        if constraint:
-            # Strip any leading "Constraint:" label from summary_text to avoid
-            # producing "Constraint: X Constraint: X" when the summary itself
-            # already begins with that label.
-            clean_summary = re.sub(r"(?i)^constraint\s*:\s*", "", summary_text).strip()
-            text_parts = [f"Constraint: {constraint}"]
-            if clean_summary and normalize_for_index(clean_summary) != normalize_for_index(constraint):
-                text_parts.append(clean_summary)
-            block_text = _join_unique_text_parts(text_parts)
-        else:
-            block_text = summary_text
         return InjectableBlock(
             result_id=str(item.result_id),
             block_type="memory",
             title="Thread Summary" if item.type == "thread_summary" else "Discussion Summary",
-            text=block_text,
+            text=summary_text,
             evidence=item.evidence,
             memory_type=item.type,
         )
@@ -4383,7 +4133,6 @@ def _select_final_candidates(
     query_shape_tags: list[str],
     runtime_context: QueryRuntimeContext | None,
     packaging_summary: dict[str, object] | None,
-    local_constraint_profile: dict[str, object] | None,
     selected_lane: str | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None]:
     summary = dict(packaging_summary or {})
@@ -4395,25 +4144,16 @@ def _select_final_candidates(
             requested_limit=requested_limit,
             query_shape_tags=query_shape_tags,
             packaging_summary=summary,
-            local_constraint_profile=local_constraint_profile,
             selected_lane=selected_lane,
         )
     if intent != "work_resumption":
         return ranked_candidates[:requested_limit], summary or None
 
-    ranked_candidates, summary, _constraint_anchor, constraint_state = _apply_structured_constraint_compatibility(
-        ranked_candidates=ranked_candidates,
-        packaging_summary=summary,
-        local_constraint_profile=local_constraint_profile,
-    )
-    if not ranked_candidates:
-        if constraint_state is not None or summary.get("incompatible_structured_candidates"):
-            summary["mode"] = "compatible_work_resumption"
+    # Filter out suppressed candidates
+    unsuppressed = [c for c in ranked_candidates if not c.get("suppression_reason_code")]
+    if not unsuppressed:
         return [], summary or None
-    if summary.get("incompatible_structured_candidates") and not any(candidate["layer"] == "task_checkpoint" for candidate in ranked_candidates):
-        summary["mode"] = "compatible_work_resumption"
-        return [], summary or None
-    top_candidate = ranked_candidates[0]
+    top_candidate = unsuppressed[0]
     summary["top_result_layer"] = top_candidate["layer"]
     if top_candidate["layer"] != "task_checkpoint" or requested_limit <= 1:
         demoted_checkpoint = next((candidate for candidate in ranked_candidates if candidate["layer"] == "task_checkpoint"), None)
@@ -4448,8 +4188,6 @@ def _select_final_candidates(
     if adjacent_evidence:
         summary["mode"] = "task_checkpoint_plus_adjacent_evidence"
         summary["adjacent_evidence"] = adjacent_evidence
-    elif constraint_state is not None or summary.get("incompatible_structured_candidates"):
-        summary["mode"] = "compatible_work_resumption"
     else:
         summary["mode"] = "task_checkpoint_only"
 
@@ -4485,38 +4223,19 @@ def _select_compatible_recall_candidates(
     requested_limit: int,
     query_shape_tags: list[str],
     packaging_summary: dict[str, object],
-    local_constraint_profile: dict[str, object] | None,
     selected_lane: str | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None]:
-    compatible_candidates, packaging_summary, constraint_anchor, constraint_state = _apply_structured_constraint_compatibility(
-        ranked_candidates=ranked_candidates,
-        packaging_summary=packaging_summary,
-        local_constraint_profile=local_constraint_profile,
-    )
+    # Filter out suppressed candidates
+    compatible_candidates = [c for c in ranked_candidates if not c.get("suppression_reason_code")]
     if not compatible_candidates:
-        if constraint_state is not None or packaging_summary.get("incompatible_structured_candidates"):
-            packaging_summary["mode"] = "compatible_structured_recall"
         return [], packaging_summary or None
 
-    explicit_constraint_focus = "constraint_recall" in query_shape_tags or selected_lane == "constraint_policy"
-    if explicit_constraint_focus and constraint_anchor is not None and constraint_anchor in compatible_candidates:
-        primary_candidate = constraint_anchor
-    else:
-        primary_candidate = compatible_candidates[0]
+    primary_candidate = compatible_candidates[0]
 
     selected_candidates = [primary_candidate]
     used_result_ids = {_routing_result_id(primary_candidate["item"])}
     primary_retrieval_score = int(primary_candidate.get("retrieval_score") or 0)
     retrieval_score_floor = primary_retrieval_score * 0.5
-    primary_aligns_with_active_constraint = _candidate_aligns_with_constraint_state(primary_candidate, constraint_state)
-    if constraint_anchor is not None and constraint_anchor in compatible_candidates:
-        anchor_result_id = _routing_result_id(constraint_anchor["item"])
-        if (
-            anchor_result_id not in used_result_ids
-            and len(selected_candidates) < requested_limit
-        ):
-            selected_candidates.append(constraint_anchor)
-            used_result_ids.add(anchor_result_id)
 
     remaining_candidates = [
         candidate
@@ -4548,10 +4267,6 @@ def _select_compatible_recall_candidates(
         if len(selected_candidates) >= requested_limit:
             break
 
-    if packaging_summary.get("incompatible_structured_candidates"):
-        packaging_summary["mode"] = "compatible_structured_recall"
-    elif constraint_state is not None:
-        packaging_summary["mode"] = "compatible_structured_recall"
     return selected_candidates, packaging_summary or None
 
 def _candidate_locality_compatible_for_packaging(

@@ -127,9 +127,9 @@ def test_constraint_signal_from_typed_memory():
         container_ref=constraint.container_ref, thread_ref=constraint.thread_ref, envelope=constraint.envelope,
     )
     env = _envelope('What should I avoid?', [constraint, _make_pattern()])
-    # Constraint detection now comes from query text (Tier 3 English), not from
-    # candidate-set presence. The constraint IS detected, just via a different tier.
-    assert env.constraint_lookup is True
+    # Constraint detection removed from signal envelope (cue-free control plane).
+    # Constraint recall is handled through shape tags and routing, not the envelope.
+    assert env.source in {'structural', 'legacy_english_fallback'}
 
 
 def test_resume_state_from_resumed_session_with_evidence():
@@ -208,11 +208,6 @@ def test_sharp_fact_when_decision_dominant_no_competition():
 
 # --- Policy family from envelope ---
 
-def test_constraint_signal_maps_to_check_constraints():
-    env = QuerySignalEnvelope(constraint_lookup=True, source='structural', confidence='high')
-    assert _policy_family_from_signal_envelope(env) == 'check_constraints'
-
-
 def test_resume_signal_maps_to_resume_work():
     env = QuerySignalEnvelope(resume_state=True, source='structural', confidence='high')
     assert _policy_family_from_signal_envelope(env) == 'resume_work'
@@ -266,12 +261,13 @@ def test_legacy_english_no_longer_detects_greeting():
     assert env.source == 'legacy_english_fallback'
 
 
-def test_legacy_english_detects_constraint():
+def test_legacy_english_no_constraint_lookup():
+    """Constraint lookup removed from signal envelope in cue-free control plane."""
     env = _legacy_english_query_signals(
         'What constraint did I give about the portal?',
         _routing_query_tokens('What constraint did I give about the portal?'),
     )
-    assert env.constraint_lookup is True
+    # constraint_lookup no longer exists on QuerySignalEnvelope
     assert env.legacy_english_fallback_used is True
 
 
@@ -281,7 +277,7 @@ def test_evidence_override_skips_when_already_detected():
     from semantic.agent_conversation_memory_routing import _check_evidence_trace_override
     env = QuerySignalEnvelope(
         low_value=False, history_lookup=False, latest_status_request=False,
-        resume_state=False, constraint_lookup=False, evidence_request=True,
+        resume_state=False, evidence_request=True,
         source='legacy_english_fallback', confidence='high',
     )
     result = _check_evidence_trace_override(
@@ -295,7 +291,7 @@ def test_evidence_override_skips_when_source_ratio_low():
     from semantic.agent_conversation_memory_routing import _check_evidence_trace_override
     env = QuerySignalEnvelope(
         low_value=False, history_lookup=False, latest_status_request=False,
-        resume_state=False, constraint_lookup=False, evidence_request=False,
+        resume_state=False, evidence_request=False,
         source='structural', confidence='medium',
     )
     result = _check_evidence_trace_override(
@@ -305,25 +301,25 @@ def test_evidence_override_skips_when_source_ratio_low():
     assert result.evidence_request is False  # unchanged
 
 
-def test_evidence_override_skips_when_constraint_won():
+def test_evidence_override_skips_when_resume_won():
     from semantic.agent_conversation_memory_routing import _check_evidence_trace_override
     env = QuerySignalEnvelope(
         low_value=False, history_lookup=False, latest_status_request=False,
-        resume_state=False, constraint_lookup=True, evidence_request=False,
+        resume_state=True, evidence_request=False,
         source='structural', confidence='high',
     )
     result = _check_evidence_trace_override(
         envelope=env, source_ratio=0.5, query_text='show proof',
         candidates=[], runtime_context=None, resolver_config={'resolver_enabled': True, 'provider': None},
     )
-    assert result.evidence_request is False  # constraint wins
+    assert result.evidence_request is False  # resume wins
 
 
 def test_evidence_override_skips_when_resolver_disabled():
     from semantic.agent_conversation_memory_routing import _check_evidence_trace_override
     env = QuerySignalEnvelope(
         low_value=False, history_lookup=False, latest_status_request=False,
-        resume_state=False, constraint_lookup=False, evidence_request=False,
+        resume_state=False, evidence_request=False,
         source='structural', confidence='medium',
     )
     result = _check_evidence_trace_override(
@@ -338,7 +334,7 @@ def test_evidence_override_falls_back_without_live_provider():
     from semantic.agent_conversation_memory_routing import _check_evidence_trace_override
     env = QuerySignalEnvelope(
         low_value=False, history_lookup=False, latest_status_request=False,
-        resume_state=False, constraint_lookup=False, evidence_request=False,
+        resume_state=False, evidence_request=False,
         source='structural', confidence='medium',
     )
     result = _check_evidence_trace_override(
