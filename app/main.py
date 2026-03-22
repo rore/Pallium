@@ -15,4 +15,6 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     return app
 
 
-app = create_app()
+def app() -> FastAPI:
+    """ASGI factory for uvicorn --factory mode."""
+    return create_app()

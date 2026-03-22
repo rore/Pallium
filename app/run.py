@@ -43,6 +43,7 @@ def run(args: list[str] | None = None) -> int:
     if parsed.mode == "serve":
         uvicorn.run(
             "app.main:app",
+            factory=True,
             host=parsed.host,
             port=parsed.port,
             reload=parsed.reload,

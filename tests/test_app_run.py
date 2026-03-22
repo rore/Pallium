@@ -61,6 +61,7 @@ def test_run_serve_mode_configures_timestamped_uvicorn_logging(monkeypatch) -> N
 
     assert exit_code == 0
     assert captured["app"] == "app.main:app"
+    assert captured["factory"] is True
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 8011
     log_config = captured["log_config"]

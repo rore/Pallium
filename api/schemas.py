@@ -9,6 +9,18 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 ArtifactKind = Literal["message", "assistant_output", "tool_use_summary", "todo_snapshot", "notification"]
 ProcessingStatus = Literal["pending", "processing", "completed", "skipped", "failed"]
 TurnKind = Literal["new_thread", "same_thread", "same_thread_continuation", "resumed_session", "new_session"]
+VisibilityKind = Literal["public", "limited", "private"]
+
+
+class VisibilityContextModel(BaseModel):
+    kind: VisibilityKind
+    id: str | None = None
+
+    @model_validator(mode="after")
+    def normalize_scope_id(self) -> VisibilityContextModel:
+        if self.kind != "limited":
+            self.id = None
+        return self
 
 
 class RuntimeContextModel(BaseModel):
@@ -31,7 +43,14 @@ class ItemCreateRequest(BaseModel):
     thread_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: ArtifactKind | None = None
-    container_visibility: str = "private"
+    container_visibility: VisibilityKind | VisibilityContextModel | None = None
+    visibility_context: VisibilityContextModel | None = None
+
+    def container_visibility_kind(self) -> str | None:
+        value = self.visibility_context or self.container_visibility
+        if isinstance(value, VisibilityContextModel):
+            return value.kind
+        return value
 
 
 class ItemCreateResponse(BaseModel):
@@ -84,8 +103,15 @@ class QueryRequest(BaseModel):
     artifact_kind: ArtifactKind | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
-    container_visibility: str | None = None
+    container_visibility: VisibilityKind | VisibilityContextModel | None = None
+    visibility_context: VisibilityContextModel | None = None
     runtime_context: RuntimeContextModel | None = None
+
+    def container_visibility_kind(self) -> str | None:
+        value = self.visibility_context or self.container_visibility
+        if isinstance(value, VisibilityContextModel):
+            return value.kind
+        return value
 
 
 class EvidenceResponse(BaseModel):

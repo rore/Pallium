@@ -73,6 +73,7 @@ class MemoryObjectRecord(Base):
     envelope_json = Column(Text, nullable=True)
     lifecycle = Column(String, nullable=False, default="active")
     container_visibility = Column(String, nullable=True, default="private")
+    container_ref = Column(String, nullable=True)
     freshness_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
 
@@ -160,6 +161,7 @@ class SQLiteSchemaMixin:
         "container_visibility": "ALTER TABLE memory_objects ADD COLUMN container_visibility VARCHAR DEFAULT 'private'",
         "freshness_at": "ALTER TABLE memory_objects ADD COLUMN freshness_at DATETIME",
         "envelope_json": "ALTER TABLE memory_objects ADD COLUMN envelope_json TEXT",
+        "container_ref": "ALTER TABLE memory_objects ADD COLUMN container_ref VARCHAR",
     }
     _INDEX_ENTRY_MIGRATIONS = {
         "text_view_name": "ALTER TABLE index_entries ADD COLUMN text_view_name VARCHAR",

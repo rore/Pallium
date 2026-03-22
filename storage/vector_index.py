@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+
 @dataclass(frozen=True)
 class VectorIndexConfig:
     enabled: bool = True
@@ -123,7 +124,8 @@ class VectorIndex:
         instance._key_to_id = {v: k for k, v in instance._id_to_key.items()}
         instance._next_key = idmap_data["next_key"]
 
-        if index_path.exists():
+        # Loading an empty persisted usearch index can crash the Windows native runtime.
+        if meta_data.get("entry_count", 0) > 0 and index_path.exists() and index_path.stat().st_size > 0:
             instance._index.load(str(index_path))
 
         return instance

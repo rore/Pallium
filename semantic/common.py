@@ -353,6 +353,7 @@ def build_process_result(
                     **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
                 },
                 container_visibility=source_item.container_visibility,
+                container_ref=source_item.container_ref,
             )
         )
         index_source = " ".join(
@@ -409,6 +410,7 @@ def build_process_result(
                     **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
                 },
                 container_visibility=source_item.container_visibility,
+                container_ref=source_item.container_ref,
             )
         )
         index_source = " ".join(
@@ -436,6 +438,7 @@ def build_process_result(
                     **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
                 },
                 container_visibility=source_item.container_visibility,
+                container_ref=source_item.container_ref,
             )
         )
         index_source = " ".join(

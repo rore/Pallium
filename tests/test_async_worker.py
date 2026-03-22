@@ -6,6 +6,8 @@ import threading
 from subprocess import TimeoutExpired
 
 from app.config import AppConfig
+from storage.vector_index import VectorIndexConfig
+from tests.config_helpers import _vector_index_path_for_sqlite
 from app.processor import run_processor
 from app.worker import run_worker
 from app import supervisor
@@ -168,7 +170,7 @@ def test_run_worker_once_processes_pending_item(test_db_url: str, capsys) -> Non
     )
     assert ingest.processing_status == 'pending'
 
-    exit_code = run_worker(['--once', '--worker-id', 'worker-test'], config=AppConfig(storage_backend='sqlite', sqlite_url=test_db_url, default_use_case='demo_agent_memory'))
+    exit_code = run_worker(['--once', '--worker-id', 'worker-test'], config=AppConfig(storage_backend='sqlite', sqlite_url=test_db_url, default_use_case='demo_agent_memory', vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url))))
     assert exit_code == 0
 
     status = service.get_item_processing(ingest.source_item_id)
@@ -182,7 +184,7 @@ def test_run_worker_once_processes_pending_item(test_db_url: str, capsys) -> Non
 def test_run_worker_stops_cleanly_when_stop_is_requested(test_db_url: str) -> None:
     exit_code = run_worker(
         ['--worker-id', 'worker-stop-test'],
-        config=AppConfig(storage_backend='sqlite', sqlite_url=test_db_url, default_use_case='demo_agent_memory'),
+        config=AppConfig(storage_backend='sqlite', sqlite_url=test_db_url, default_use_case='demo_agent_memory', vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url))),
         sleep_fn=lambda _: None,
         should_stop=lambda: True,
         install_signal_handlers=False,
@@ -205,7 +207,7 @@ def test_run_processor_once_processes_pending_item(test_db_url: str, capsys) -> 
     )
     assert ingest.processing_status == 'pending'
 
-    exit_code = run_processor(['--once', '--processor-id', 'processor-test'], config=AppConfig(storage_backend='sqlite', sqlite_url=test_db_url, default_use_case='demo_agent_memory'))
+    exit_code = run_processor(['--once', '--processor-id', 'processor-test'], config=AppConfig(storage_backend='sqlite', sqlite_url=test_db_url, default_use_case='demo_agent_memory', vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url))))
     assert exit_code == 0
 
     status = service.get_item_processing(ingest.source_item_id)

@@ -42,12 +42,12 @@ class SQLiteSearchMixin:
                 continue
             total_hits_before_visibility += 1
             candidate_visibility, candidate_container_ref = self._target_visibility(record.target_kind, record.target_id)
-            if not is_visible(candidate_visibility, candidate_container_ref, query_container_ref):
-                if include_visibility_trace and query_container_ref is not None:
+            if query_container_ref is not None and not is_visible(candidate_visibility, candidate_container_ref, query_container_ref):
+                if include_visibility_trace:
                     reason = (
                         "candidate_visibility_missing"
                         if candidate_visibility is None
-                        else "query_container_excludes_candidate"
+                        else "query_container_visibility_excludes_candidate"
                     )
                     exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue
@@ -97,7 +97,10 @@ class SQLiteSearchMixin:
             return item.container_visibility, item.container_ref
         if target_kind == "memory_object":
             obj = self.get_memory_object(target_id)
-            return obj.container_visibility, None
+            container_ref = obj.container_ref
+            if container_ref is None and obj.envelope is not None:
+                container_ref = obj.envelope.scope.container_ref
+            return obj.container_visibility, container_ref
         return None, None
 
     def _source_item_matches_filters(self, source_item: SourceItem, filters: QueryFilters) -> bool:
@@ -107,7 +110,7 @@ class SQLiteSearchMixin:
             return False
         if filters.artifact_kind is not None and source_item.artifact_kind != filters.artifact_kind:
             return False
-        if filters.container_ref is not None and source_item.container_ref != filters.container_ref:
+        if filters.container_ref is not None and source_item.container_visibility != "public" and source_item.container_ref != filters.container_ref:
             return False
         if filters.thread_ref is not None and source_item.thread_ref != filters.thread_ref:
             return False
@@ -120,7 +123,7 @@ class SQLiteSearchMixin:
             return False
         if filters.artifact_kind is not None and evidence.artifact_kind != filters.artifact_kind:
             return False
-        if filters.container_ref is not None and evidence.container_ref != filters.container_ref:
+        if filters.container_ref is not None and evidence.container_visibility != "public" and evidence.container_ref != filters.container_ref:
             return False
         if filters.thread_ref is not None and evidence.thread_ref != filters.thread_ref:
             return False

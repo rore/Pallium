@@ -80,7 +80,7 @@ Embedding write path:
 - embedding happens at background processing time, not at ingest
 - `SourceItem` embedding is plugin-owned: the semantic plugin boundary exposes a package method that controls which text views are embedded for source items
 - all 6 promoted memory types are embedded
-- `OnnxEmbeddingProvider` provides Python 3.14 compatibility; fastembed provider also available
+- `OnnxEmbeddingProvider` and `FastEmbedProvider` are both available; fastembed requires Python 3.12/3.13
 
 ## Implemented Semantic Behavior
 

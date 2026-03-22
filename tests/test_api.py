@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from app.config import AppConfig
+from storage.vector_index import VectorIndexConfig
+from tests.config_helpers import _vector_index_path_for_sqlite
 from app.main import create_app
 from core.models import MemoryObject
 from evals.continuity_common import compare_query_contract_payloads
@@ -169,6 +171,7 @@ def test_missing_required_visibility_creates_skipped_not_pending(monkeypatch, te
                 llm_model="fake-model",
                 llm_base_url="http://fake-provider.local",
                 llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
+                vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)),
             )
         )
     )
@@ -242,6 +245,7 @@ def test_llm_plugin_path_processes_after_worker_completion(monkeypatch, test_db_
                 llm_model="fake-model",
                 llm_base_url="http://fake-provider.local",
                 llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
+                vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)),
             )
         )
     )
@@ -281,6 +285,7 @@ def test_worker_failure_is_reported_via_processing_endpoint(monkeypatch, test_db
                 llm_model="fake-model",
                 llm_base_url="http://fake-provider.local",
                 llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
+                vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)),
             )
         )
     )
@@ -1258,7 +1263,7 @@ def test_query_debug_batch_digest_pollution_replay_uses_structured_carry_forward
     container_ref = scenario["container_ref"]
     container_visibility = scenario["container_visibility"]
     preferred_batch_memory_ids = set(scenario["thread_memory_ids"]["constraint"]["all"])
-    allowed_batch_memory_ids = preferred_batch_memory_ids | set(scenario["thread_memory_ids"]["auth_retry_old"]["all"])
+    allowed_batch_memory_ids = preferred_batch_memory_ids | set(scenario["thread_memory_ids"]["auth_retry_old"]["all"]) | set(scenario["thread_memory_ids"]["same_thread"]["all"])
     conflicting_memory_ids = set(scenario["thread_memory_ids"]["auth_retry_new"]["all"])
 
     greeting_response = client.post(
@@ -1286,7 +1291,7 @@ def test_query_debug_batch_digest_pollution_replay_uses_structured_carry_forward
             "text": "can you remind me what we had latest about batch digests?",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread"]["sessions"]["same_thread"],
+            "thread_ref": scenario["threads"]["same_thread"],
             "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
@@ -1455,7 +1460,7 @@ def test_query_debug_short_noun_isolation_replay_routes_correctly(monkeypatch, t
     scenario = _seed_short_noun_isolation_history(client)
     container_ref = scenario["container_ref"]
     container_visibility = scenario["container_visibility"]
-    allowed_batch_memory_ids = set(scenario["thread_memory_ids"]["constraint"]["all"]) | set(scenario["thread_memory_ids"]["auth_retry_old"]["all"])
+    allowed_batch_memory_ids = set(scenario["thread_memory_ids"]["constraint"]["all"]) | set(scenario["thread_memory_ids"]["auth_retry_old"]["all"]) | set(scenario["thread_memory_ids"]["same_thread"]["all"])
     reserve_memory_ids = set(scenario["thread_memory_ids"]["reserve"]["all"])
     conflicting_batch_memory_ids = set(scenario["thread_memory_ids"]["auth_retry_new"]["all"])
 
@@ -1485,7 +1490,7 @@ def test_query_debug_short_noun_isolation_replay_routes_correctly(monkeypatch, t
             "text": "remind me what we had about the batch digests lately",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_x"]["sessions"]["same_thread_x"],
+            "thread_ref": scenario["threads"]["same_thread_x"],
             "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
@@ -1516,7 +1521,7 @@ def test_query_debug_short_noun_isolation_replay_routes_correctly(monkeypatch, t
             "text": "no, remember that we cannot use control-panel sign-in here so there is no point trying to connect that way",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_x"]["sessions"]["same_thread_x"],
+            "thread_ref": scenario["threads"]["same_thread_x"],
             "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
@@ -1545,7 +1550,7 @@ def test_query_debug_short_noun_isolation_replay_routes_correctly(monkeypatch, t
             "text": "what is the latest we have in reserve snapshot?",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_y"]["sessions"]["same_thread_y"],
+            "thread_ref": scenario["threads"]["same_thread_y"],
             "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
@@ -1591,7 +1596,7 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
             "text": "remind me what we had about the batch digests lately",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_x"]["sessions"]["same_thread_x"],
+            "thread_ref": scenario["threads"]["same_thread_x"],
             "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
@@ -1602,7 +1607,7 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
             "text": "no, remember that we cannot use control-panel sign-in here so there is no point trying to connect that way",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_x"]["sessions"]["same_thread_x"],
+            "thread_ref": scenario["threads"]["same_thread_x"],
             "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
@@ -1613,7 +1618,7 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
             "text": "what is the latest we have in reserve snapshot?",
             "limit": 12,
             "container_ref": container_ref,
-            "thread_ref": scenario["threads"]["same_thread_y"]["sessions"]["same_thread_y"],
+            "thread_ref": scenario["threads"]["same_thread_y"],
             "container_visibility": container_visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",

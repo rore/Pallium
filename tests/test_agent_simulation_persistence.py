@@ -88,7 +88,7 @@ def test_session_store_roundtrip_preserves_metadata_and_events(tmp_path) -> None
 
     assert loaded.session_id == "session-1"
     assert loaded.debug_enabled is True
-    assert loaded.defaults.container_visibility == {"kind": "limited", "id": "scope-1"}
+    assert loaded.defaults.container_visibility_kind() == "limited"
     assert loaded.defaults.runtime_context_overrides == {"turn_kind": True}
     assert loaded.events[0]["user_message"] == "hello"
 

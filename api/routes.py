@@ -198,7 +198,7 @@ def create_router(service: PalliumService) -> APIRouter:
             thread_ref=request.thread_ref,
             source_ref=request.source_ref,
             artifact_kind=request.artifact_kind,
-            container_visibility=request.container_visibility,
+            container_visibility=request.container_visibility_kind(),
         )
         return ItemCreateResponse(**result.as_dict())
 
@@ -278,7 +278,7 @@ def create_router(service: PalliumService) -> APIRouter:
             artifact_kind=request.artifact_kind,
             container_ref=request.container_ref,
             thread_ref=request.thread_ref,
-            container_visibility=request.container_visibility,
+            container_visibility=request.container_visibility_kind(),
             runtime_context=_deserialize_runtime_context(request.runtime_context),
         )
         return QueryResponse(
@@ -298,7 +298,7 @@ def create_router(service: PalliumService) -> APIRouter:
             artifact_kind=request.artifact_kind,
             container_ref=request.container_ref,
             thread_ref=request.thread_ref,
-            container_visibility=request.container_visibility,
+            container_visibility=request.container_visibility_kind(),
             runtime_context=_deserialize_runtime_context(request.runtime_context),
             include_trace=True,
         )

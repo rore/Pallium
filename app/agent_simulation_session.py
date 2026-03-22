@@ -9,10 +9,11 @@ from uuid import uuid4
 
 
 SESSION_FORMAT_VERSION = 1
-DEFAULT_SESSION_DIR = Path(".local/harness-sessions")
+DEFAULT_SESSION_DIR = Path('.local/harness-sessions')
 LOCAL_THREAD_CONTEXT_MAX_MESSAGES = 4
 LOCAL_THREAD_CONTEXT_MAX_CHARS = 1200
-RUNTIME_CONTEXT_OVERRIDE_KEYS = ("turn_kind", "session_has_sufficient_local_context")
+RUNTIME_CONTEXT_OVERRIDE_KEYS = ('turn_kind', 'session_has_sufficient_local_context')
+VISIBILITY_KINDS = {'public', 'limited', 'private'}
 
 
 def utc_now() -> datetime:
@@ -20,26 +21,28 @@ def utc_now() -> datetime:
 
 
 def new_ref(prefix: str) -> str:
-    return f"{prefix}:{uuid4().hex[:12]}"
+    return f'{prefix}:{uuid4().hex[:12]}'
 
 
 @dataclass
 class ScopeDefaults:
     container_ref: str | None
     thread_ref: str | None
-    container_visibility: str
+    container_visibility: dict[str, Any] | str
     runtime_context: dict[str, Any] = field(default_factory=dict)
     runtime_context_overrides: dict[str, bool] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload['container_visibility'] = self.visibility_context()
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> ScopeDefaults:
-        runtime_context = payload.get("runtime_context")
+        runtime_context = payload.get('runtime_context')
         if not isinstance(runtime_context, dict):
             runtime_context = {}
-        runtime_context_overrides = payload.get("runtime_context_overrides")
+        runtime_context_overrides = payload.get('runtime_context_overrides')
         if not isinstance(runtime_context_overrides, dict):
             runtime_context_overrides = {}
         normalized_overrides = {
@@ -48,12 +51,23 @@ class ScopeDefaults:
             if runtime_context_overrides.get(key) is not None
         }
         return cls(
-            container_ref=payload.get("container_ref"),
-            thread_ref=payload.get("thread_ref"),
-            container_visibility=payload.get("container_visibility", "private"),
+            container_ref=payload.get('container_ref'),
+            thread_ref=payload.get('thread_ref'),
+            container_visibility=_normalize_visibility_context(
+                payload.get('container_visibility', payload.get('visibility_context'))
+            ),
             runtime_context=runtime_context,
             runtime_context_overrides=normalized_overrides,
         )
+
+    def visibility_context(self) -> dict[str, Any]:
+        return _normalize_visibility_context(self.container_visibility)
+
+    def container_visibility_kind(self) -> str:
+        return str(self.visibility_context().get('kind') or 'private')
+
+    def set_container_visibility(self, kind: str, scope_id: str | None = None) -> None:
+        self.container_visibility = _normalize_visibility_context({'kind': kind, 'id': scope_id})
 
     def set_runtime_context(self, key: str, value: Any, *, manual: bool) -> None:
         self.runtime_context[key] = value
@@ -89,34 +103,34 @@ class HarnessSession:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "format_version": SESSION_FORMAT_VERSION,
-            "session_id": self.session_id,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "base_url": self.base_url,
-            "mode": self.mode,
-            "debug_enabled": self.debug_enabled,
-            "defaults": self.defaults.to_dict(),
-            "model": self.model,
-            "events": self.events,
-            "session_path": self.session_path,
+            'format_version': SESSION_FORMAT_VERSION,
+            'session_id': self.session_id,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
+            'base_url': self.base_url,
+            'mode': self.mode,
+            'debug_enabled': self.debug_enabled,
+            'defaults': self.defaults.to_dict(),
+            'model': self.model,
+            'events': self.events,
+            'session_path': self.session_path,
         }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> HarnessSession:
-        if payload.get("format_version") != SESSION_FORMAT_VERSION:
+        if payload.get('format_version') != SESSION_FORMAT_VERSION:
             raise ValueError(f"Unsupported session format version: {payload.get('format_version')}")
         return cls(
-            session_id=payload["session_id"],
-            created_at=payload["created_at"],
-            updated_at=payload["updated_at"],
-            base_url=payload["base_url"],
-            mode=payload.get("mode", "chat"),
-            debug_enabled=bool(payload.get("debug_enabled", False)),
-            defaults=ScopeDefaults.from_dict(payload["defaults"]),
-            model=payload.get("model", {}),
-            events=list(payload.get("events", [])),
-            session_path=payload.get("session_path"),
+            session_id=payload['session_id'],
+            created_at=payload['created_at'],
+            updated_at=payload['updated_at'],
+            base_url=payload['base_url'],
+            mode=payload.get('mode', 'chat'),
+            debug_enabled=bool(payload.get('debug_enabled', False)),
+            defaults=ScopeDefaults.from_dict(payload['defaults']),
+            model=payload.get('model', {}),
+            events=list(payload.get('events', [])),
+            session_path=payload.get('session_path'),
         )
 
     def record_event(self, event: dict[str, Any]) -> None:
@@ -129,15 +143,15 @@ class HarnessSession:
 
 
 def create_default_session(*, base_url: str, mode: str, model: dict[str, Any] | None = None) -> HarnessSession:
-    session_id = new_ref("harness-session")
+    session_id = new_ref('harness-session')
     now = utc_now().isoformat()
     defaults = ScopeDefaults(
-        container_ref=f"simulation:{session_id}",
-        thread_ref=new_ref("thread"),
-        container_visibility="public",
+        container_ref=f'simulation:{session_id}',
+        thread_ref=new_ref('thread'),
+        container_visibility={'kind': 'public', 'id': None},
         runtime_context={
-            "turn_kind": None,
-            "session_has_sufficient_local_context": None,
+            'turn_kind': None,
+            'session_has_sufficient_local_context': None,
         },
         runtime_context_overrides={},
     )
@@ -163,9 +177,9 @@ class SessionStore:
 
     def save(self, session: HarnessSession, name: str | None = None) -> Path:
         self._root.mkdir(parents=True, exist_ok=True)
-        filename = _normalize_name(name) if name else f"{session.session_id}.json"
+        filename = _normalize_name(name) if name else f'{session.session_id}.json'
         path = self._root / filename
-        path.write_text(json.dumps(session.to_dict(), indent=2), encoding="utf-8")
+        path.write_text(json.dumps(session.to_dict(), indent=2), encoding='utf-8')
         session.session_path = str(path)
         return path
 
@@ -173,7 +187,7 @@ class SessionStore:
         resolved = Path(path)
         if not resolved.is_absolute():
             resolved = self._root / resolved
-        payload = json.loads(resolved.read_text(encoding="utf-8"))
+        payload = json.loads(resolved.read_text(encoding='utf-8'))
         session = HarnessSession.from_dict(payload)
         session.session_path = str(resolved)
         return session
@@ -191,18 +205,18 @@ def build_local_thread_context(
 
     messages: list[dict[str, str]] = []
     for event in session.events:
-        if event.get("event_type") != "chat_turn":
+        if event.get('event_type') != 'chat_turn':
             continue
-        scope = event.get("scope") or {}
-        if scope.get("thread_ref") != thread_ref:
+        scope = event.get('scope') or {}
+        if scope.get('thread_ref') != thread_ref:
             continue
-        assistant = event.get("assistant") or {}
-        assistant_text = str(assistant.get("content") or "").strip()
-        user_text = str(event.get("user_message") or "").strip()
+        assistant = event.get('assistant') or {}
+        assistant_text = str(assistant.get('content') or '').strip()
+        user_text = str(event.get('user_message') or '').strip()
         if not user_text or not assistant_text:
             continue
-        messages.append({"role": "user", "text": user_text})
-        messages.append({"role": "assistant", "text": assistant_text})
+        messages.append({'role': 'user', 'text': user_text})
+        messages.append({'role': 'assistant', 'text': assistant_text})
 
     if not messages:
         return []
@@ -210,7 +224,7 @@ def build_local_thread_context(
     selected: list[dict[str, str]] = []
     total_chars = 0
     for message in reversed(messages):
-        text = str(message.get("text") or "").strip()
+        text = str(message.get('text') or '').strip()
         if not text:
             continue
         if not selected and len(text) > max_chars:
@@ -218,7 +232,7 @@ def build_local_thread_context(
         projected_chars = total_chars + len(text)
         if selected and (len(selected) >= max_messages or projected_chars > max_chars):
             break
-        selected.append({"role": str(message.get("role") or "user"), "text": text})
+        selected.append({'role': str(message.get('role') or 'user'), 'text': text})
         total_chars += len(text)
         if len(selected) >= max_messages:
             break
@@ -227,7 +241,7 @@ def build_local_thread_context(
 
 
 def rewrite_session_for_replay(session: HarnessSession) -> HarnessSession:
-    replay_id = new_ref("replay")
+    replay_id = new_ref('replay')
     cloned = HarnessSession.from_dict(session.to_dict())
     cloned.session_id = replay_id
     cloned.created_at = utc_now().isoformat()
@@ -240,23 +254,43 @@ def rewrite_session_for_replay(session: HarnessSession) -> HarnessSession:
 
 def rewrite_payload_for_replay(payload: dict[str, Any], replay_id: str) -> dict[str, Any]:
     rewritten = json.loads(json.dumps(payload))
-    if "source_id" in rewritten:
-        rewritten["source_id"] = _prefixed_ref(rewritten["source_id"], replay_id)
-    if "thread_ref" in rewritten:
-        rewritten["thread_ref"] = _prefixed_ref(rewritten.get("thread_ref"), replay_id)
+    if 'source_id' in rewritten:
+        rewritten['source_id'] = _prefixed_ref(rewritten['source_id'], replay_id)
+    if 'thread_ref' in rewritten:
+        rewritten['thread_ref'] = _prefixed_ref(rewritten.get('thread_ref'), replay_id)
     return rewritten
 
 
 def _normalize_name(name: str) -> str:
     candidate = name.strip()
     if not candidate:
-        raise ValueError("session file name cannot be empty")
-    if not candidate.endswith(".json"):
-        candidate = f"{candidate}.json"
+        raise ValueError('session file name cannot be empty')
+    if not candidate.endswith('.json'):
+        candidate = f'{candidate}.json'
     return candidate
 
 
 def _prefixed_ref(value: str | None, replay_id: str) -> str | None:
     if not value:
         return value
-    return f"{replay_id}:{value}"
+    return f'{replay_id}:{value}'
+
+
+def _normalize_visibility_context(value: Any) -> dict[str, Any]:
+    kind = 'private'
+    scope_id: str | None = None
+
+    if isinstance(value, dict):
+        raw_kind = value.get('kind')
+        if isinstance(raw_kind, str) and raw_kind.strip().lower() in VISIBILITY_KINDS:
+            kind = raw_kind.strip().lower()
+        raw_id = value.get('id')
+        if raw_id is not None:
+            scope_id = str(raw_id)
+    elif isinstance(value, str) and value.strip().lower() in VISIBILITY_KINDS:
+        kind = value.strip().lower()
+
+    if kind != 'limited':
+        scope_id = None
+
+    return {'kind': kind, 'id': scope_id}

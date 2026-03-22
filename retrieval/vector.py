@@ -116,7 +116,10 @@ def _target_visibility_and_container(
         return item.container_visibility, item.container_ref
     if target_kind == "memory_object":
         mo = storage.get_memory_object(target_id)
-        return mo.container_visibility, None
+        container_ref = mo.container_ref
+        if container_ref is None and mo.envelope is not None:
+            container_ref = mo.envelope.scope.container_ref
+        return mo.container_visibility, container_ref
     return None, None
 
 

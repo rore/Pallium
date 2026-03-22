@@ -278,6 +278,7 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 "semantic_provenance": semantic_provenance,
             },
             container_visibility=aggregate.container_visibility,
+            container_ref=aggregate.container_ref,
             freshness_at=aggregate.latest_occurred_at,
         )
         thread_summary_memory = replace(
@@ -486,6 +487,7 @@ def build_task_checkpoint_memory(
                 },
             },
             container_visibility=aggregate.container_visibility,
+            container_ref=aggregate.container_ref,
             freshness_at=aggregate.latest_occurred_at,
         )
         index_source = " ".join(
@@ -603,6 +605,7 @@ def build_pattern_memory(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 "consolidation_provenance": consolidation_provenance,
             },
             container_visibility=group.container_visibility,
+            container_ref=group.container_ref,
             freshness_at=group.latest_occurred_at,
         )
         memory_object = replace(
@@ -729,6 +732,7 @@ def build_continuity_memory(*, provider: LLMProvider, prompt_variant: str, plugi
                 },
             },
             container_visibility=group.container_visibility,
+            container_ref=group.container_ref,
             freshness_at=group.latest_occurred_at,
         )
         memory_object = replace(

@@ -59,6 +59,7 @@ def _make_memory_object(
     mo_type: str = "decision",
     visibility: str | None = None,
     lifecycle: str = "active",
+    container_ref: str | None = None,
 ) -> MemoryObject:
     return MemoryObject(
         id=mo_id,
@@ -67,7 +68,8 @@ def _make_memory_object(
         schema_version="1",
         payload={"summary_text": "test decision content"},
         lifecycle=lifecycle,
-        container_visibility="public" or _public(),
+        container_visibility=visibility or _public(),
+        container_ref=container_ref,
     )
 
 
@@ -87,7 +89,7 @@ def _make_source_item(
         source_id=source_id,
         content_type="text/plain",
         content=content,
-        container_visibility="public" or _public(),
+        container_visibility=visibility or _public(),
         container_ref=container_ref,
         thread_ref=thread_ref,
         role=role,
@@ -105,7 +107,7 @@ def _make_evidence(
         source_item_id=source_item_id,
         source_type=source_type,
         source_id=source_id,
-        container_visibility="public" or _public(),
+        container_visibility=visibility or _public(),
         container_ref=container_ref,
     )
 
@@ -345,7 +347,7 @@ class TestVisibilityFiltering:
         embedding = FakeEmbeddingProvider()
 
         provider = VectorRetrievalProvider(storage, vector_index, embedding)
-        result = provider.query("test", limit=10, container_visibility="public")
+        result = provider.query("test", limit=10, container_visibility="public", query_container_ref="channel-x")
 
         assert len(result.results) == 1
         assert result.results[0].memory_object_id == "mo-pub"
@@ -355,8 +357,8 @@ class TestVisibilityFiltering:
         entry_lim_a = _make_index_entry(entry_id="idx-lim-a", target_kind="memory_object", target_id="mo-lim-a")
         entry_lim_b = _make_index_entry(entry_id="idx-lim-b", target_kind="memory_object", target_id="mo-lim-b")
         mo_pub = _make_memory_object(mo_id="mo-pub", visibility=_public())
-        mo_lim_a = _make_memory_object(mo_id="mo-lim-a", visibility=_limited("channel-a"))
-        mo_lim_b = _make_memory_object(mo_id="mo-lim-b", visibility=_limited("channel-b"))
+        mo_lim_a = _make_memory_object(mo_id="mo-lim-a", visibility=_limited("channel-a"), container_ref="channel-a")
+        mo_lim_b = _make_memory_object(mo_id="mo-lim-b", visibility=_limited("channel-b"), container_ref="channel-b")
 
         entries = {"idx-pub": entry_pub, "idx-lim-a": entry_lim_a, "idx-lim-b": entry_lim_b}
         objs = {"mo-pub": mo_pub, "mo-lim-a": mo_lim_a, "mo-lim-b": mo_lim_b}
@@ -372,7 +374,7 @@ class TestVisibilityFiltering:
         embedding = FakeEmbeddingProvider()
 
         provider = VectorRetrievalProvider(storage, vector_index, embedding)
-        result = provider.query("test", limit=10, container_visibility="limited")
+        result = provider.query("test", limit=10, container_visibility="limited", query_container_ref="channel-a")
 
         returned_ids = {r.memory_object_id for r in result.results}
         assert returned_ids == {"mo-pub", "mo-lim-a"}

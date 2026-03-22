@@ -12,6 +12,7 @@ from app.agent_simulation_render import render_debug_summary, render_replay_diff
 from app.agent_simulation_session import (
     HarnessSession,
     SessionStore,
+    VISIBILITY_KINDS,
     build_local_thread_context,
     create_default_session,
     new_ref,
@@ -386,7 +387,7 @@ class AgentSimulationApp:
             "role": role,
             "container_ref": self._session.defaults.container_ref,
             "thread_ref": self._session.defaults.thread_ref,
-            "container_visibility": self._session.defaults.container_visibility,
+            "container_visibility": self._session.defaults.container_visibility_kind(),
         }
         return {key: value for key, value in payload.items() if value is not None}
 
@@ -396,7 +397,7 @@ class AgentSimulationApp:
             "limit": 5,
             "container_ref": self._session.defaults.container_ref,
             "thread_ref": self._session.defaults.thread_ref,
-            "container_visibility": self._session.defaults.container_visibility,
+            "container_visibility": self._session.defaults.container_visibility_kind(),
         }
         runtime_context = self._runtime_context_payload()
         if runtime_context is not None:
@@ -421,13 +422,16 @@ class AgentSimulationApp:
         defaults = self._session.defaults
         container_ref = self._prompt_optional(f"container_ref [{defaults.container_ref}]: ") or defaults.container_ref
         thread_ref = self._prompt_optional(f"thread_ref [{defaults.thread_ref}]: ") or defaults.thread_ref
-        current_visibility = defaults.container_visibility or "public"
-        visibility_kind = self._prompt_optional(f"container_visibility [{current_visibility}]: ") or current_visibility
+        current_visibility = defaults.visibility_context()
+        current_kind = str(current_visibility.get("kind") or "public")
+        visibility_kind = self._prompt_optional(f"container_visibility [{current_kind}]: ") or current_kind
+        if visibility_kind not in VISIBILITY_KINDS:
+            self._write_warning(f"Unsupported container visibility: {visibility_kind}")
+            return
         defaults.container_ref = container_ref
         defaults.thread_ref = thread_ref
-        defaults.container_visibility = visibility_kind
+        defaults.set_container_visibility(visibility_kind)
         self._write_scope()
-
     def _set_turn_kind(self, value: str | None) -> None:
         if value is None:
             value = self._prompt_optional("turn kind [new_thread|same_thread|same_thread_continuation|resumed_session|new_session|clear]: ")

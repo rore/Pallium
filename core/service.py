@@ -182,7 +182,7 @@ class PalliumService:
         Filters committed index entries for index_type="vector", embeds them
         via the embedding provider, and adds them to the vector index.
         If either embedding_provider or vector_index is None, this is a no-op.
-        If embedding fails, the error is logged and execution continues —
+        If embedding fails, the error is logged and execution continues â€”
         reconciliation catches gaps.
         """
         if self._embedding_provider is None or self._vector_index is None:
@@ -221,7 +221,7 @@ class PalliumService:
         thread_ref: str | None = None,
         source_ref: str | None = None,
         artifact_kind: str | None = None,
-        container_visibility: str = "private",
+        container_visibility: str | None = None,
     ) -> IngestResult:
         existing_source_item = self._storage.find_source_item(source_type=source_type, source_id=source_id)
         if existing_source_item is not None:
@@ -231,7 +231,7 @@ class PalliumService:
         plugin = self._semantic_plugins[plugin_name]
         processing_status = "pending"
         processing_error = None
-        if plugin.requires_visibility_context and container_ref is None:
+        if plugin.requires_visibility_context and (container_ref is None or container_visibility is None):
             processing_status = "skipped"
             processing_error = "visibility_context_required"
 
@@ -685,7 +685,7 @@ class PalliumService:
         requested_filters = filter_resolution.requested_filters
         effective_filters = filter_resolution.effective_filters
         plugin = self._semantic_plugins[self._default_use_case]
-        if plugin.requires_visibility_context and container_ref is None:
+        if plugin.requires_visibility_context and (container_ref is None or container_visibility is None):
             trace = None
             if include_trace:
                 trace = QueryTrace(
@@ -789,7 +789,7 @@ class PalliumService:
         def load_candidates(*, memory_types: list[str] | None = None) -> list[QueryResultItem]:
             results: list[QueryResultItem] = []
             for memory_object in self._storage.list_memory_objects(memory_types=memory_types, lifecycle="active"):
-                if require_visibility and not is_visible(memory_object.container_visibility, memory_object.payload.get("container_ref"), query_container_ref):
+                if require_visibility and not is_visible(memory_object.container_visibility, memory_object.container_ref, query_container_ref):
                     continue
                 evidence = self._storage.get_evidence_for_memory_object(memory_object.id)
                 if filters is not None and not any(self._evidence_matches_filters(item, filters) for item in evidence):
