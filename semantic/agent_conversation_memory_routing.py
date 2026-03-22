@@ -78,7 +78,6 @@ class QuerySignalEnvelope:
     evidence_request: bool = False
     source: str = "structural"
     confidence: str = "low"
-    legacy_english_fallback_used: bool = False
     semantic_classification_used: bool = False
     derivation_signals: tuple[str, ...] = ()
 
@@ -138,9 +137,6 @@ QUERY_POLICY_FAMILY_ALLOWED_INTENTS: dict[str, frozenset[str]] = {
     "resume_work": frozenset({"work_resumption"}),
 }
 LATEST_STATUS_COLLAPSED_INTENTS = frozenset({"broad_recall"})
-LATEST_STATUS_WORDING_TOKENS = {"latest", "lately"}
-LATEST_STATUS_HISTORY_PHRASES = ("what is the latest", "what's the latest")
-LATEST_STATUS_RESUME_PHRASES = ("what is the latest state", "what's the latest state")
 POLICY_WORK_STATE_USEFULNESS_THRESHOLD = 24
 POLICY_SUPPORT_THRESHOLD = ROUTING_SUPPORT_THRESHOLD["supported"]
 AMBIGUITY_MARGIN_LATEST_VS_RESUME = 12
@@ -202,96 +198,7 @@ class RoutingOverrides(TypedDict, total=False):
     support_threshold: dict[str, int]
     work_resumption_thin_checkpoint_penalty: int
 
-ANSWER_CONTINUITY_CUES = (
-    "already answered",
-    "answered before",
-    "have we already",
-    "asked again",
-    "asking again",
-    "prior answer",
-    "old answer",
-    "not a new brainstorm",
-    "carry forward",
-)
-
-BROAD_RECALL_CUES = (
-    "what public conclusion",
-    "what did we previously conclude",
-    "what did we conclude before",
-    "what did we conclude",
-    "what did we learn",
-    "why did we choose",
-    "why do we use",
-    "general lesson",
-    "what lesson",
-    "should we remember",
-    "what should we remember",
-    # Discussion/topic history vocabulary — must precede generic "what " startswith check at line ~911
-    "what were we discussing",
-    "what did we talk about",
-    "what had we been discussing",
-    "what was the topic",
-    "what was our topic",
-    "what have we been discussing",
-    "what were we working on",
-    "what had we been working on",
-)
-
-
-PRECISE_FACT_CUES = (
-    "what ordering",
-    "which ordering",
-    "what did we choose",
-    "what decision",
-    "exact choice",
-    "exact value",
-)
-
-EVIDENCE_TRACE_CUES = (
-    "exact finding",
-    "what exact finding",
-    "which exact prior evidence",
-    "exact prior evidence",
-    "what evidence",
-    "show evidence",
-    "quote the earlier",
-    "quote the earlier note",
-    "quote the note",
-    "which source",
-    "source evidence",
-    "supported the",
-    "supporting evidence",
-    "trace",
-    "which prior message",
-    "prior message",
-    "backed the",
-)
-
-INVESTIGATIVE_CONCLUSION_CUES = (
-    "what had we concluded",
-    "what did the investigation find",
-    "what did investigation find",
-    "which repo changed more and why",
-    "which repo changed more",
-    "what was the verdict",
-    "what was our verdict",
-    "what conclusion did we reach",
-)
-
 SHARP_DIAGNOSTIC_MEMORY_TYPES = {"task_checkpoint", "investigation_outcome", "decision"}
-
-WORK_RESUMPTION_CUES = (
-    "what blocker",
-    "what progress",
-    "what progress was preserved",
-    "what state were we in",
-    "what should i do next",
-    "what should we do next",
-    "what should we try next",
-    "what finding should orient us",
-    "queued again",
-    "resume work",
-)
 
 WORK_RESUMPTION_SIGNAL_TYPES = ("task", "progress_update", "key_finding", "blocker", "next_step", "evidence", "freshness")
 
@@ -308,26 +215,6 @@ WORK_RESUMPTION_FRESH_STATE_BONUS = 18
 WORK_RESUMPTION_FRESHNESS_MARGIN_SECONDS = 2700
 
 WORK_RESUMPTION_SIGNAL_PRIORITY = ("blocker", "next_step", "progress_update")
-
-ROUTING_QUERY_SHAPE_TOKENS = {
-    "history_lookup": {"before", "earlier", "historical", "history", "past", "previously", "prior", "latest", "lately"},
-    "big_picture": {"lesson", "pattern", "remember", "takeaway"},
-    "analysis_request": {"concluded", "conclusion", "finding", "findings", "land", "outcome", "settled", "true", "verdict"},
-    "carry_forward": {"again", "already", "carry", "forward", "old", "remind", "repeat", "repeated"},
-    "constraint_recall": {"auth", "authenticate", "authentication", "avoid", "browser", "constraint", "jira", "login", "portal", "rely", "relying", "restriction", "sign", "slack"},
-    "resume_state": {"blocked", "blocker", "continue", "continued", "continuing", "left", "next", "progress", "queued", "resume", "resumed", "state", "stuck", "unblock"},
-    "evidence_request": {"backed", "evidence", "prove", "quote", "source", "support", "supported", "trace"},
-    "precise_lookup": {"exact", "when", "which"},
-}
-
-ROUTING_QUERY_SHAPE_PHRASES = {
-    "history_lookup": ("what do we know", "what is the latest", "what's the latest", "what had we concluded", "what had you concluded", "what constraint had i given", "remind me what we had latest", "remind me what we had latest about", "remind me what we had about", "what we had about", "what were we discussing", "what did we talk about", "what have we been discussing", "what had we been discussing", "what were we working on", "what had we been working on"),
-    "big_picture": ("big picture", "general lesson", "larger lesson", "main takeaway", "should we remember", "what should we remember"),
-    "analysis_request": ("where did we land", "what ended up being true", "what settled", "how did that shake out"),
-    "constraint_recall": ("what constraint had i given", "what constraint did i give", "what had i told you not to use", "what did i tell you not to use", "anything i should avoid", "what should i not rely on", "what should i avoid", "anything to avoid"),
-    "resume_state": ("pick this back up", "pick that back up", "where did we leave off", "where were we", "what is the latest state", "what's the latest state"),
-    "evidence_request": ("what backs that up", "what points to", "what points back to", "where did that come from"),
-}
 
 ROUTING_FAMILY_INFERENCE_PRIORITY = (
     "work_resumption",
@@ -496,7 +383,7 @@ def route_query_results(
                     query_policy_family="resume_work",
                     allowed_query_intents=frozenset({"work_resumption"}),
                 )
-                final_intent_used = signal_envelope.legacy_english_fallback_used
+                final_intent_used = False
             else:
                 # Pure recall — use recall mode from candidate evidence
                 recall_mode = _select_recall_mode(candidate_evidence)
@@ -519,7 +406,7 @@ def route_query_results(
                     query_policy_family=envelope_policy,
                     allowed_query_intents=frozenset({intent}),
                 )
-                final_intent_used = signal_envelope.legacy_english_fallback_used
+                final_intent_used = False
         # Post-routing: run _infer_query_intent() for shaping compatibility
         family_inference = _infer_query_intent(
             text=text,
@@ -902,9 +789,7 @@ def _infer_query_intent(
     query_filters: QueryFilters | None,
     runtime_context: QueryRuntimeContext | None,
 ) -> dict[str, object]:
-    text_hint_family = _classify_query_intent_from_text(text)
-    cue_matches = _matched_query_family_cues(text)
-    query_shape_tags = _query_shape_tags(text, query_tokens)
+    query_shape_tags: list[str] = []
     candidate_signals = _summarize_query_family_candidates(
         retrieved_candidates=retrieved_candidates,
         query_text=text,
@@ -913,11 +798,6 @@ def _infer_query_intent(
     )
     family_scores: dict[str, dict[str, object]] = {}
     for family in ROUTING_FAMILY_INFERENCE_PRIORITY:
-        cue_score = _query_family_cue_score(
-            family,
-            cue_matches=cue_matches,
-            text_hint_family=text_hint_family,
-        )
         query_shape_score, query_shape_reasons = _query_family_query_shape_score(
             family,
             query_shape_tags=query_shape_tags,
@@ -930,8 +810,8 @@ def _infer_query_intent(
             runtime_context=runtime_context,
         )
         family_scores[family] = {
-            "total": cue_score + query_shape_score + candidate_score,
-            "cue_score": cue_score,
+            "total": query_shape_score + candidate_score,
+            "cue_score": 0,
             "query_shape_score": query_shape_score,
             "candidate_score": candidate_score,
             "reasons": list(OrderedDict.fromkeys([*query_shape_reasons, *candidate_reasons])),
@@ -942,103 +822,21 @@ def _infer_query_intent(
         key=lambda family: (
             int(family_scores[family]["total"]),
             int(family_scores[family]["candidate_score"]),
-            int(family_scores[family]["cue_score"]),
             -ROUTING_FAMILY_INFERENCE_PRIORITY.index(family),
         ),
         reverse=True,
     )
-    selected_family = ranked_families[0] if ranked_families else text_hint_family
-    if text_hint_family == "broad_recall" and "history_lookup" in query_shape_tags and "evidence_request" not in query_shape_tags:
-        selected_family = "broad_recall"
-    elif selected_family == "evidence_trace" and text_hint_family != "evidence_trace" and "evidence_request" not in query_shape_tags:
-        # evidence_trace must not win via candidate source-hit scores alone when the query text
-        # contains no evidence-request signals. Fall back to the text-based classification.
-        selected_family = text_hint_family
+    selected_family = ranked_families[0] if ranked_families else "broad_recall"
     runner_up_family = ranked_families[1] if len(ranked_families) > 1 else None
     return {
         "selected_family": selected_family,
-        "text_hint_family": text_hint_family,
+        "text_hint_family": "broad_recall",
         "runner_up_family": runner_up_family,
         "query_shape_tags": query_shape_tags,
-        "matched_cues": {family: matches for family, matches in cue_matches.items() if matches},
+        "matched_cues": {},
         "candidate_signals": candidate_signals,
         "family_scores": family_scores,
     }
-
-def _classify_query_intent_from_text(text: str) -> str:
-    lowered = text.lower()
-    if "remind me" in lowered and ("latest" in lowered or "lately" in lowered or "what we had about" in lowered):
-        return "broad_recall"
-    if any(cue in lowered for cue in EVIDENCE_TRACE_CUES):
-        return "evidence_trace"
-    if any(cue in lowered for cue in WORK_RESUMPTION_CUES):
-        return "work_resumption"
-    if any(cue in lowered for cue in ANSWER_CONTINUITY_CUES):
-        return "answer_continuity"
-    if any(cue in lowered for cue in INVESTIGATIVE_CONCLUSION_CUES):
-        return "investigative_conclusion"
-    if any(phrase in lowered for phrase in ROUTING_QUERY_SHAPE_PHRASES["history_lookup"]):
-        return "broad_recall"
-    if any(cue in lowered for cue in BROAD_RECALL_CUES) or lowered.startswith("why "):
-        return "broad_recall"
-    if any(cue in lowered for cue in PRECISE_FACT_CUES) or lowered.startswith(("what ", "which ", "when ")):
-        return "precise_fact"
-    return "broad_recall"
-
-def _matched_query_family_cues(text: str) -> dict[str, list[str]]:
-    lowered = text.lower()
-    history_matches = [phrase for phrase in ROUTING_QUERY_SHAPE_PHRASES["history_lookup"] if phrase in lowered][:3]
-    matched = {
-        "answer_continuity": [cue for cue in ANSWER_CONTINUITY_CUES if cue in lowered][:3],
-        "broad_recall": list(OrderedDict.fromkeys([*[cue for cue in BROAD_RECALL_CUES if cue in lowered][:3], *history_matches])),
-        "work_resumption": [cue for cue in WORK_RESUMPTION_CUES if cue in lowered][:3],
-        "precise_fact": [cue for cue in PRECISE_FACT_CUES if cue in lowered][:3],
-        "evidence_trace": [cue for cue in EVIDENCE_TRACE_CUES if cue in lowered][:3],
-        "investigative_conclusion": [cue for cue in INVESTIGATIVE_CONCLUSION_CUES if cue in lowered][:3],
-    }
-    if lowered.startswith("why "):
-        matched["broad_recall"] = list(OrderedDict.fromkeys([*matched["broad_recall"], "why*"]))
-    if lowered.startswith(("what ", "which ", "when ")) and not history_matches:
-        matched["precise_fact"] = list(OrderedDict.fromkeys([*matched["precise_fact"], "wh*"]))
-    return matched
-
-def _query_shape_tags(text: str, query_tokens: tuple[str, ...]) -> list[str]:
-    lowered = text.lower()
-    token_set = set(query_tokens)
-    detected: set[str] = set()
-    for tag, tokens in ROUTING_QUERY_SHAPE_TOKENS.items():
-        if token_set.intersection(tokens):
-            detected.add(tag)
-    for tag, phrases in ROUTING_QUERY_SHAPE_PHRASES.items():
-        if any(phrase in lowered for phrase in phrases):
-            detected.add(tag)
-    if "remind me" in lowered:
-        detected.update({"history_lookup", "carry_forward"})
-    if "remind me" in lowered and ("lately" in lowered or "latest" in lowered or "what we had about" in lowered):
-        detected.update({"history_lookup", "carry_forward"})
-    if lowered.startswith("why "):
-        detected.add("big_picture")
-    if lowered.startswith(("what ", "which ", "when ")):
-        detected.add("precise_lookup")
-    return [
-        tag
-        for tag in ("history_lookup", "big_picture", "analysis_request", "carry_forward", "constraint_recall", "resume_state", "evidence_request", "precise_lookup")
-        if tag in detected
-    ]
-
-def _query_family_cue_score(
-    family: str,
-    *,
-    cue_matches: dict[str, list[str]],
-    text_hint_family: str,
-) -> int:
-    family_matches = cue_matches.get(family, [])
-    score = 0
-    if family_matches:
-        score += 44 + (min(len(family_matches), 3) * 8)
-    if family == text_hint_family:
-        score += 16
-    return score
 
 def _query_family_query_shape_score(
     family: str,
@@ -1759,6 +1557,22 @@ def _apply_recall_source_noise_suppression(
         candidate["suppression_reason_code"] = reason_code
         candidate["suppression_reason"] = reason_text
 
+def _is_current_query_echo(
+    item: QueryResultItem,
+    *,
+    query_text: str,
+    query_filters: QueryFilters | None,
+) -> bool:
+    """Return True when a source hit is the user's own query echoed back from the same thread."""
+    if item.result_kind != "source_hit":
+        return False
+    if item.role not in {None, "user"}:
+        return False
+    thread_ref = query_filters.thread_ref if query_filters else None
+    if not thread_ref or item.thread_ref != thread_ref:
+        return False
+    return normalize_for_index(item.excerpt or "") == normalize_for_index(query_text)
+
 def _source_noise_suppression_reason(
     item: QueryResultItem,
     *,
@@ -1771,8 +1585,8 @@ def _source_noise_suppression_reason(
         return None
     if _is_low_value_meta_text(excerpt):
         return "low_value_meta_source", "Low-value orchestration source is not useful carry-forward for recall packaging."
-    if _source_hit_looks_like_recall_query(item, query_text):
-        if _runtime_context_prefers_cross_thread_recall(runtime_context) and query_filters is not None and query_filters.thread_ref and item.thread_ref == query_filters.thread_ref:
+    if _is_current_query_echo(item, query_text=query_text, query_filters=query_filters):
+        if _runtime_context_prefers_cross_thread_recall(runtime_context):
             return "current_thread_recall_query", "The current fresh-thread query was excluded from cross-thread recall packaging."
         return "duplicate_recall_query_source", "A duplicate unresolved recall question was excluded from recall packaging."
     return None
@@ -1851,51 +1665,6 @@ def _summary_low_value_reason(
     if content_quality == "weak":
         return "weak_thread_summary", "A weak summary was excluded from recall packaging."
     return None
-
-def _source_hit_looks_like_recall_query(item: QueryResultItem, query_text: str) -> bool:
-    excerpt = str(item.excerpt or "").strip()
-    if not excerpt:
-        return False
-    if not _source_hit_looks_like_request_or_question(item):
-        return False
-    if item.role not in {None, "user"} and (item.source_type or "") not in {"chat_message", "message"}:
-        return False
-    excerpt_tokens = tuple(_routing_query_tokens(excerpt))
-    query_tokens = set(_routing_query_tokens(query_text))
-    overlap = len(set(excerpt_tokens).intersection(query_tokens))
-    excerpt_tags = set(_query_shape_tags(excerpt, excerpt_tokens))
-    return overlap >= 3 and bool(excerpt_tags.intersection({"history_lookup", "carry_forward", "constraint_recall"}))
-
-def _source_hit_looks_like_request_or_question(item: QueryResultItem) -> bool:
-    excerpt = str(item.excerpt or "").strip()
-    if not excerpt:
-        return False
-    lowered = excerpt.lower()
-    request_prefixes = (
-        "can you", "could you", "would you", "will you", "please", "remind me", "what ", "which ", "why ", "how ",
-        "when ", "where ", "who ", "do we", "did we", "are we", "is there", "should we", "so what"
-    )
-    if lowered.startswith(request_prefixes):
-        return True
-    if item.role == "assistant":
-        return False
-    if "?" in excerpt:
-        return True
-    if item.role == "user" and lowered.endswith(("right", "please")) and len(lowered.split()) <= 8:
-        return True
-    return False
-
-def _assistant_source_is_answer_bearing_local_state(excerpt: str, query_text: str) -> bool:
-    lowered_query = query_text.lower()
-    if not any(marker in lowered_query for marker in ("paste", "repeat", "rewrite", "again", "exact", "exactly")):
-        return False
-    normalized_excerpt = str(excerpt or "").strip()
-    if len(normalized_excerpt.split()) < 8:
-        return False
-    lowered_excerpt = normalized_excerpt.lower()
-    if lowered_excerpt.startswith(("sure:", "here is", "here's", "try this", "rewrite:")):
-        return True
-    return '"' in normalized_excerpt or "'" in normalized_excerpt
 
 def _result_layer(item: QueryResultItem) -> str:
     if item.result_kind == "source_hit":
@@ -2257,27 +2026,6 @@ def _policy_candidate_support_estimate(item: QueryResultItem, layer: str) -> int
     return score
 
 
-def _has_latest_status_wording(text: str) -> bool:
-    """Detect queries specifically asking about current status/state, not general recall with 'latest'."""
-    lowered = text.lower()
-    if any(phrase in lowered for phrase in LATEST_STATUS_RESUME_PHRASES):
-        return True
-    if any(phrase in lowered for phrase in LATEST_STATUS_HISTORY_PHRASES):
-        # "what is the latest" / "what's the latest" are status queries only when NOT followed
-        # by broad recall patterns like "about" or when standing alone
-        for phrase in LATEST_STATUS_HISTORY_PHRASES:
-            idx = lowered.find(phrase)
-            if idx < 0:
-                continue
-            after = lowered[idx + len(phrase):].strip()
-            # "what's the latest state" is a resume phrase (already handled above)
-            # "what's the latest on X" or "what's the latest?" = status query
-            # "what do we know the latest about X" = broad recall, not status
-            if not after or after.startswith("on ") or after.startswith("?") or after.startswith("with "):
-                return True
-    return False
-
-
 def _work_state_evidence_gate_passes(policy_evidence: dict[str, object]) -> bool:
     if bool(policy_evidence["strong_task_checkpoint_survives"]):
         return True
@@ -2425,7 +2173,7 @@ def _derive_query_signal_envelope(
     anchor_prefiltered_candidates: list[QueryResultItem],
     runtime_context: QueryRuntimeContext | None,
 ) -> QuerySignalEnvelope:
-    """Three-tier signal derivation: structural → semantic → legacy English."""
+    """Structural signal derivation: typed candidate evidence drives routing."""
     normalized = normalize_for_index(text)
 
     # Tier 1: structural/typed derivation
@@ -2505,13 +2253,19 @@ def _derive_query_signal_envelope(
             **signals,
             source="structural",
             confidence=tier1_confidence,
-            legacy_english_fallback_used=False,
             semantic_classification_used=False,
             derivation_signals=tuple(derivation),
         )
 
-    # Tier 3: legacy English fallback
-    return _legacy_english_query_signals(text, query_tokens)
+    # Low confidence: return structural envelope with all signals False.
+    # Candidate evidence drives routing through lane narrowing.
+    return QuerySignalEnvelope(
+        **signals,
+        source="structural",
+        confidence="low",
+        semantic_classification_used=False,
+        derivation_signals=tuple(derivation),
+    )
 
 
 def _check_evidence_trace_override(
@@ -2553,7 +2307,6 @@ def _check_evidence_trace_override(
             evidence_request=True,
             source="semantic",
             confidence="medium",
-            legacy_english_fallback_used=envelope.legacy_english_fallback_used,
             semantic_classification_used=True,
             derivation_signals=envelope.derivation_signals + ("resolver_evidence_override",),
         )
@@ -2622,45 +2375,6 @@ def _build_resolver_candidate_cards(
     return cards
 
 
-def _legacy_english_query_signals(
-    text: str,
-    query_tokens: tuple[str, ...],
-) -> QuerySignalEnvelope:
-    """Tier 3: wrap all existing English logic behind one entry point."""
-    signals: dict[str, bool] = {
-        "low_value": False,
-        "history_lookup": False,
-        "latest_status_request": False,
-        "resume_state": False,
-        "evidence_request": False,
-    }
-    derivation: list[str] = []
-
-    if _has_latest_status_wording(text):
-        signals["latest_status_request"] = True
-        derivation.append("english_latest_status_wording")
-
-    shape_tags = _query_shape_tags(text, query_tokens)
-    if "resume_state" in shape_tags:
-        signals["resume_state"] = True
-        derivation.append("english_resume_state_tag")
-    if "evidence_request" in shape_tags:
-        signals["evidence_request"] = True
-        derivation.append("english_evidence_request_tag")
-    if "history_lookup" in shape_tags:
-        signals["history_lookup"] = True
-        derivation.append("english_history_lookup_tag")
-
-    return QuerySignalEnvelope(
-        **signals,
-        source="legacy_english_fallback",
-        confidence="medium",
-        legacy_english_fallback_used=True,
-        semantic_classification_used=False,
-        derivation_signals=tuple(derivation),
-    )
-
-
 def _build_signal_envelope_trace(envelope: QuerySignalEnvelope) -> dict[str, object]:
     return {
         "low_value": envelope.low_value,
@@ -2670,7 +2384,6 @@ def _build_signal_envelope_trace(envelope: QuerySignalEnvelope) -> dict[str, obj
         "evidence_request": envelope.evidence_request,
         "source": envelope.source,
         "confidence": envelope.confidence,
-        "legacy_english_fallback_used": envelope.legacy_english_fallback_used,
         "semantic_classification_used": envelope.semantic_classification_used,
         "derivation_signals": list(envelope.derivation_signals),
     }
@@ -2833,8 +2546,6 @@ def _classify_query_policy_family(
     runtime_context: QueryRuntimeContext | None,
     initial_intent: str | None = None,
 ) -> str:
-    if _has_latest_status_wording(text):
-        return "latest_status"
     if "resume_state" in query_shape_tags:
         return "resume_work"
     if runtime_context is not None and runtime_context.turn_kind == "resumed_session" and initial_intent == "work_resumption":
@@ -3400,6 +3111,7 @@ def _evaluate_same_thread_local_context(
                 candidate,
                 intent=intent,
                 query_text=query_text,
+                query_filters=query_filters,
             )
             if qualifies:
                 qualifying_result_ids.append(result_id)
@@ -3454,6 +3166,7 @@ def _candidate_qualifies_as_same_thread_local_state(
     *,
     intent: str,
     query_text: str,
+    query_filters: QueryFilters | None,
 ) -> tuple[bool, str]:
     item = candidate["item"]
     assert isinstance(item, QueryResultItem)
@@ -3472,13 +3185,11 @@ def _candidate_qualifies_as_same_thread_local_state(
         excerpt = str(item.excerpt or "")
         if normalize_for_index(excerpt) == normalize_for_index(query_text):
             return False, "current_query_same_thread_source"
-        if _source_hit_looks_like_recall_query(item, query_text):
+        if _is_current_query_echo(item, query_text=query_text, query_filters=query_filters):
             return False, "query_like_same_thread_source"
-        if item.role == "assistant" and _assistant_source_is_answer_bearing_local_state(excerpt, query_text):
-            return True, ""
         if work_usefulness >= 18:
             return True, ""
-        if support_grade in {"supported", "strong"} and len(overlap_tokens) >= 2 and not _source_hit_looks_like_request_or_question(item):
+        if support_grade in {"supported", "strong"} and len(overlap_tokens) >= 2:
             if item.role == "assistant" or intent in {"precise_fact", "evidence_trace", "investigative_conclusion"}:
                 return True, ""
         return False, "weak_same_thread_source"

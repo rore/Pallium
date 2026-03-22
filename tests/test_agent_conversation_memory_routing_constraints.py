@@ -309,11 +309,11 @@ def test_fresh_thread_recall_suppresses_duplicate_queries_and_meta_source_noise(
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
     assert outcome.trace.routing['selected_layer'] != 'source_evidence'
-    # After removing query-time noise detection (cue-free control plane),
-    # only structural suppression (current-query echo, duplicate recall query) remains.
-    # Capability and heartbeat source hits are no longer suppressed at query time.
+    # After removing legacy English fallback (cue-free control plane),
+    # only same-thread current-query echo suppression remains.
+    # Cross-thread duplicate recall questions are no longer suppressed.
     excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
-    assert {'current_query_source_echo', 'duplicate_recall_query_source'}.issubset(excluded)
+    assert 'current_query_source_echo' in excluded
     assert 'generic_capability_source' not in excluded
     assert 'heartbeat_source_noise' not in excluded
 

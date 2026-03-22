@@ -19,7 +19,6 @@ from semantic.agent_conversation_memory_routing import (
     PolicySelectedContext,
     PASSTHROUGH_POLICY,
     _classify_query_policy_family,
-    _has_latest_status_wording,
     _build_policy_evidence,
     _build_ambiguity_options,
     _work_state_evidence_gate_passes,
@@ -157,24 +156,27 @@ def test_classify_greeting_as_recall_fact_without_noise_detection() -> None:
     assert _classify_query_policy_family("thanks", query_shape_tags=[], runtime_context=None, initial_intent=None) == "recall_fact"
 
 
-def test_classify_latest_status_for_status_queries() -> None:
+def test_classify_status_queries_as_recall_fact_without_latest_status_wording() -> None:
+    """With _has_latest_status_wording removed, status queries classify as recall_fact
+    unless they have resume_state shape tag."""
     assert _classify_query_policy_family(
         "What's the latest on the deployment?",
         query_shape_tags=["history_lookup"],
         runtime_context=None,
         initial_intent=None,
-    ) == "latest_status"
+    ) == "recall_fact"
 
+    # With resume_state tag, it classifies as resume_work
     assert _classify_query_policy_family(
         "What is the latest state of the migration?",
         query_shape_tags=["history_lookup", "resume_state"],
         runtime_context=None,
         initial_intent=None,
-    ) == "latest_status"
+    ) == "resume_work"
 
 
-def test_classify_latest_status_not_triggered_by_broad_recall_with_latest() -> None:
-    # "what do we know the latest about X" is broad recall, not status
+def test_classify_broad_recall_with_latest_as_recall_fact() -> None:
+    # "what do we know the latest about X" is recall_fact now
     assert _classify_query_policy_family(
         "What do we know the latest about the catalog sync retry?",
         query_shape_tags=["history_lookup"],
@@ -329,20 +331,6 @@ def test_recall_fact_allows_all_standard_intents() -> None:
     assert "evidence_trace" in allowed
     assert "investigative_conclusion" in allowed
     assert "work_resumption" not in allowed
-
-
-def test_has_latest_status_wording_positive_cases() -> None:
-    assert _has_latest_status_wording("What's the latest on the deploy?")
-    assert _has_latest_status_wording("What is the latest?")
-    assert _has_latest_status_wording("What is the latest state of the migration?")
-    assert _has_latest_status_wording("What's the latest state of things?")
-
-
-def test_has_latest_status_wording_negative_cases() -> None:
-    # "what do we know the latest about X" is broad recall pattern
-    assert not _has_latest_status_wording("What do we know the latest about the catalog sync?")
-    assert not _has_latest_status_wording("remind me what we had latest about batches")
-    assert not _has_latest_status_wording("What did we decide about authentication?")
 
 
 def test_anchor_filtered_constraint_does_not_inflate_ambiguity_score() -> None:
