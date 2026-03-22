@@ -1904,6 +1904,18 @@ def _summary_low_value_reason(
 ) -> tuple[str, str] | None:
     if memory_type not in ROUTING_SUMMARY_TYPES or not summary_text:
         return None
+    # Prefer write-time content_quality field (added in Slice 3).
+    content_quality = payload.get("content_quality")
+    if content_quality is not None:
+        if content_quality == "query_only":
+            return "query_only_thread_summary", "A query-only summary was excluded from recall packaging."
+        if content_quality == "unresolved":
+            return "unresolved_thread_summary", "An unresolved summary without durable state was excluded from recall packaging."
+        if content_quality == "weak":
+            return "weak_thread_summary", "A weak summary was excluded from recall packaging."
+        # "substantive" — not low value
+        return None
+    # Fallback for summaries without the field (pre-Slice 3 data).
     if payload.get("selected_work_artifacts") or payload.get("conclusions"):
         return None
     if _preferred_constraint_text(summary_text) or _summary_text_has_durable_state_cue(summary_text):
