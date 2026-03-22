@@ -184,8 +184,8 @@ survives extraction failures). Policy: messages + assistant outputs >= 40 chars.
 ### 2026-03-20 - Local-first embedding via ONNX
 
 OnnxEmbeddingProvider wraps onnxruntime + tokenizers directly, bypassing
-fastembed's dependency chain for Python 3.14 compatibility. Same model, same
-output.
+fastembed's dependency chain. Same model, same output. fastembed works on
+Python 3.12/3.13; onnx works on all supported versions.
 
 ### 2026-03-20 - Minimum similarity threshold 0.55
 

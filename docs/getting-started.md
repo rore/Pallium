@@ -5,7 +5,7 @@ Pallium's decisions — in about 10 minutes.
 
 ## Prerequisites
 
-- Python 3.12 or newer
+- Python 3.12 or 3.13 recommended (3.14 is supported but has known native library issues on Windows)
 - An API key for an LLM provider (OpenAI-compatible or Anthropic) if you want
   the full `agent_conversation_memory` setup
 

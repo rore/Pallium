@@ -54,7 +54,7 @@
 - committed examples and tests use a neutral library reservation and catalog sync sample domain
 - hybrid retrieval is now the shipped production retrieval path:
   - `CompositeRetrievalProvider` fuses lexical and vector results via Reciprocal Rank Fusion (RRF, k=60, scale=600)
-  - `OnnxEmbeddingProvider` provides embedding support with Python 3.14 compatibility (fastembed provider also available)
+  - `OnnxEmbeddingProvider` and `FastEmbedProvider` available; fastembed requires Python 3.12/3.13
   - all 6 promoted memory types are embedded at background processing time, not at ingest
   - `SourceItem` embedding is plugin-owned via a package method on the semantic plugin boundary
   - production `/query` path activates hybrid retrieval by default

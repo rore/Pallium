@@ -341,7 +341,7 @@ model = "BAAI/bge-small-en-v1.5"
 
 Supported fields today:
 
-- `kind` — `"onnx"` (Python 3.14 compatible) or `"fastembed"` (Python 3.12/3.13)
+- `kind` — `"onnx"` or `"fastembed"` (fastembed requires Python 3.12/3.13; onnx works on all supported versions)
 - `model` — HuggingFace model name
 - `dimensions` — optional override (auto-detected from model)
 - `cache_dir` — optional model cache directory (default: HuggingFace global cache)

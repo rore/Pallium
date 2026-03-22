@@ -16,8 +16,8 @@ DEFAULT_TOKENIZER_FILE = "tokenizer.json"
 class OnnxEmbeddingProvider(EmbeddingProvider):
     """Embedding provider using onnxruntime + tokenizers directly.
 
-    Bypasses fastembed entirely — works on Python 3.14+ where fastembed's
-    py-rust-stemmers dependency has no wheels.  Uses the same ONNX models
+    Bypasses fastembed entirely — for environments where fastembed is unavailable
+    (fastembed requires Python 3.12/3.13 due to py-rust-stemmers). Uses the same ONNX models
     from HuggingFace Hub, producing identical embeddings.
 
     Model bootstrap policy: The constructor eagerly downloads (if needed)
