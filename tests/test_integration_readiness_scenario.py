@@ -6,6 +6,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.config import AppConfig
+from storage.vector_index import VectorIndexConfig
+from tests.config_helpers import _vector_index_path_for_sqlite
 from app.main import create_app
 from evals.integration_readiness_scenario import run_integration_readiness_scenario
 from tests.test_work_resumption_benchmark import StubWorkResumptionAnswerProvider
@@ -21,6 +23,7 @@ def _benchmark_config() -> AppConfig:
         llm_model="fake-answer-model",
         llm_base_url="http://fake-provider.local",
         llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
+        vector_index=VectorIndexConfig(enabled=False),
     )
 
 
@@ -77,6 +80,7 @@ def test_downstream_query_returns_sharp_integration_ready_blocks(monkeypatch, te
                 llm_model="fake-answer-model",
                 llm_base_url="http://fake-provider.local",
                 llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
+                vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)),
             )
         )
     )

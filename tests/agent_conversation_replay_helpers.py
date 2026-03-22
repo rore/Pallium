@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from app.config import AppConfig
+from storage.vector_index import VectorIndexConfig
+from tests.config_helpers import _vector_index_path_for_sqlite
 from app.main import create_app
 from tests.tiered_memory_stub_providers import TieredMemorySemanticProvider
 
@@ -22,6 +24,7 @@ def _agent_conversation_client(monkeypatch, test_db_url: str, *, auto_drain_item
                 llm_model="fake-model",
                 llm_base_url="http://fake-provider.local",
                 llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
+                vector_index=VectorIndexConfig(enabled=False),
             )
         )
     )
@@ -419,7 +422,7 @@ def _collect_thread_memory_ids(
     storage = client.app.state.pallium_service._storage
     collected: dict[str, dict[str, list[str]]] = {}
     for name, thread_ref in threads.items():
-        memory_ids = {"task_checkpoint": [], "thread_summary": [], "discussion_summary": []}
+        memory_ids = {"task_checkpoint": [], "thread_summary": [], "discussion_summary": [], "pattern_memory": [], "continuity_memory": []}
         all_ids: list[str] = []
         for source_item in storage.list_source_items_for_thread(container_ref, thread_ref):
             for memory in storage.list_memory_objects_for_source_item(source_item.id):
@@ -438,7 +441,7 @@ def _render_thread_memory(client: TestClient, *, container_ref: str, thread_ref:
     rendered: list[str] = []
     for source_item in storage.list_source_items_for_thread(container_ref, thread_ref):
         for memory in storage.list_memory_objects_for_source_item(source_item.id):
-            if memory.lifecycle != "active" or memory.type not in {"task_checkpoint", "thread_summary", "discussion_summary"}:
+            if memory.lifecycle != "active" or memory.type not in {"task_checkpoint", "thread_summary", "discussion_summary", "pattern_memory", "continuity_memory"}:
                 continue
             payload = memory.payload or {}
             rendered.append(

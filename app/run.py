@@ -41,11 +41,9 @@ def build_parser() -> argparse.ArgumentParser:
 def run(args: list[str] | None = None) -> int:
     parsed = build_parser().parse_args(args)
     if parsed.mode == "serve":
-        from app.main import create_app
-        from app.config import AppConfig as _AppConfig
-        _app = create_app(_AppConfig.from_env())
         uvicorn.run(
-            _app,
+            "app.main:app",
+            factory=True,
             host=parsed.host,
             port=parsed.port,
             reload=parsed.reload,

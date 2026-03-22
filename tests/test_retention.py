@@ -8,6 +8,8 @@ from sqlalchemy import text
 
 from api.schemas import QueueHealthResponse
 from app.config import AppConfig, RetentionConfig
+from storage.vector_index import VectorIndexConfig
+from tests.config_helpers import _vector_index_path_for_sqlite
 from app.main import create_app
 from core.models import IndexEntry, MemoryObject, Relation, SourceItem
 from core.service import PalliumService
@@ -238,6 +240,7 @@ def test_queue_health_exposes_retention_stats(test_db_url: str) -> None:
         sqlite_url=test_db_url,
         default_use_case="demo_agent_memory",
         retention=RetentionConfig(enabled=True, run_interval_seconds=300, lease_seconds=300, batch_size=20),
+        vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)),
     )
     client = TestClient(create_app(config))
     service = client.app.state.pallium_service
