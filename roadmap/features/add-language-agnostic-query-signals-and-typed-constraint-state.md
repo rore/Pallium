@@ -1,6 +1,6 @@
 ---
 id: add-language-agnostic-query-signals-and-typed-constraint-state
-title: Language-agnostic query signals and typed constraint state
+title: "Cue-free routing, compatibility, and work-state typing for agent_conversation_memory"
 status: in-progress
 priority: high
 commitment: committed
@@ -10,128 +10,144 @@ lane: stabilization-foundation
 
 ## Summary
 
-Add a package-owned `QuerySignalEnvelope` for residual query routing and
-ambiguity handling in `agent_conversation_memory`.
+Remove English cue-table dependence from the `agent_conversation_memory` package
+control plane. The package should route queries, evaluate constraint compatibility,
+and classify work-state signals using typed structure and retrieval evidence — not
+English phrase matching.
 
-After structural lane narrowing lands, Pallium should stop relying on
-English-specific query-shape and phrase tables as the default residual control
-plane. Structural context and typed state should remain primary. When the
-structural path does not resolve the case, Pallium should derive bounded query
-signals from typed evidence first and selective semantic resolution second,
-while keeping legacy English cue logic only as a measurable compatibility
-fallback.
+This is one explicit committed feature, not scattered cleanup. Success means the
+control plane is cue-free, not that every English string in the repo is deleted.
 
-This feature also moves constraint lookup and compatibility toward typed stored
-constraint state rather than English snippet recovery.
+## What shipped so far
 
-## Why
+- `QuerySignalEnvelope` as canonical routing authority (Tier 1 structural → Tier 3
+  legacy English fallback)
+- Structural lane narrowing with 3 lanes + residual recall
+- Recall modes (weight-only preferences from candidate evidence)
+- Evidence_trace detection consolidated into existing resolver seam
+- Constraint over-promotion fix (candidate-set evidence → shape hint, not structural)
+- Legacy English cues moved behind measurable Tier 3 fallback
 
-Structural lane narrowing will remove phrase-derived intent from the hot path
-for clear cases, but it does not make Pallium language agnostic by itself.
-The residual path remains English-first today:
+## What remains
 
-- query-family and query-shape inference still depend on English tokens,
-  phrases, and prefix rules
-- policy classification for `noise`, `latest_status`, `resume_work`, and
-  `check_constraints` still depends on English wording
-- active constraint recovery still prefers English snippet extraction such as
-  `do not`, `avoid`, and `cannot use`
+### 1. Query hot-path cue removal
 
-That is acceptable only as temporary compatibility behavior. It should not
-remain the primary read-time control plane if Pallium is supposed to answer
-bounded recall and resumed-work questions outside English.
+Remove English cue dependence from residual routing and candidate scoring:
 
-The goal of this feature is not full multilingual parity across the whole
-system. The goal is a smaller and more defensible step: remove the specific
-English dependency from the residual query router and typed constraint lookup so
-Pallium becomes language-agnostic enough for the current product slice.
+- **Query-shape token/phrase control logic** (`ROUTING_QUERY_SHAPE_TOKENS`,
+  `ROUTING_QUERY_SHAPE_PHRASES`): still used in source suppression and lane
+  narrowing. Replace with candidate-type evidence (typed memory layer, retrieval
+  source, envelope signals).
+- **Specificity bonus cues** (`WORK_RESUMPTION_NEXT_STEP_CUES`,
+  `BROAD_RECALL_CONCLUSION_CUES`, etc.): boost candidates based on English query
+  words. Replace with typed-field presence scoring (if candidate has `blocker_state`
+  and lane is work_resumption, boost).
+- **Latest-status wording logic** (`LATEST_STATUS_*_PHRASES`,
+  `_has_latest_status_wording`): English-only disambiguation. Move to envelope
+  structural detection or remove if envelope already handles it.
+- **Summary suppression** (`WEAK_THREAD_SUMMARY_TEXT`, `QUERY_ONLY_SUMMARY_MARKERS`,
+  `UNRESOLVED_SUMMARY_MARKERS`): English phrase matching on LLM-generated text.
+  Replace with structured quality fields from extraction (see §3).
+- **Greeting/noise detection** (`LOW_VALUE_GREETING_NOISE_*`, inline patterns):
+  English phrase matching. Move to write-time classification or score-floor gate.
+- **Source noise suppression** (heartbeat, capability, request/question detection):
+  inline English patterns. Move to write-time tagging.
+- **Stopword filtering** (`ROUTING_META_QUERY_TOKENS`,
+  `ROUTING_TOPIC_LOW_SIGNAL_TOKENS`): English tokenization assumption. Accept as
+  last-mile item — embedding-based scoring is the natural replacement, depends on
+  vector retrieval maturity.
 
-## In Scope
+### 2. Constraint-path cue removal
 
-- add a package-owned `QuerySignalEnvelope` for residual routing and ambiguity
-  handling
-- define a bounded signal set for the current product slice, including at
-  least:
-  - `low_value`
-  - `history_lookup`
-  - `latest_status_request`
-  - `resume_state`
-  - `constraint_lookup`
-  - `evidence_request`
-- derive the signal envelope using this precedence:
-  - structural context first
-  - typed candidate evidence and runtime context second
-  - bounded semantic query resolution only for unresolved residual cases
-- change residual policy-family selection and ambiguity handling to consume the
-  signal envelope instead of directly consuming English cue tables and
-  query-shape tags
-- keep structural lane narrowing authoritative for clear single-lane cases; do
-  not reopen excluded lanes through signal inference
-- prefer typed or stored constraint state over English snippet extraction when
-  building local constraint context or resolving constraint-focused recall
-- keep legacy English cue tables and English constraint snippet extraction only
-  as compatibility fallback, with explicit trace visibility when they are used
-- extend query/debug trace with at least:
-  - `query_signal_source = structural | semantic | legacy_english_fallback`
-  - `query_signal_confidence`
-  - `legacy_english_fallback_used`
-  - bounded signal contents or selected signal summary
-- add focused deterministic tests and replay or benchmark coverage for:
-  - non-English paraphrase variants in the residual path
-  - typed constraint lookup without English query wording
-  - evidence request without English cue phrases
-  - low-confidence semantic fallback and abstention behavior
-  - English compatibility fallback behavior
+Make typed constraint profiles authoritative. Stop relying on English snippet
+extraction and English text scanning for constraint compatibility:
 
-## Out of Scope
+- **Constraint snippet extraction** (`CONSTRAINT_MARKERS`,
+  `CONSTRAINT_TOOL_MARKERS`, `_extract_constraint_snippets`): English phrase
+  matching to find constraints in text. Replace with typed `constraint_candidates`
+  from extraction — the write path already produces these.
+- **Constraint compatibility scanning** (`OPERATIONAL_GUIDANCE_MARKERS`,
+  `CONSTRAINT_POLICY_ACTION_TOKENS`, `CONSTRAINT_FOCUS_TOOL_TOKENS`, anchor
+  patterns): English text analysis to check if a candidate conflicts with a
+  constraint. Replace with structured constraint profiles (action_class, polarity,
+  target_anchor) that were designed for exactly this purpose.
+- **Constraint policy stopwords and token sets** (6+ sets in constraints.py): used
+  for token overlap between constraints and candidates. Replace with typed anchor
+  comparison.
 
-- an always-on model router
-- generic multilingual abstractions in `core/`
-- a full multilingual rewrite of write-time extraction or promotion
-- historical backfill or retyping of all stored memory
-- retrieval-substrate changes such as vector or hybrid retrieval work
-- public API expansion beyond bounded trace additions needed to explain signal
-  derivation
+### 3. Write-path schema work to make removal honest
+
+The query path can't stop reading English text unless the write path produces typed
+fields instead. Required additions to extraction output:
+
+- **Summary quality fields**: `is_resolved: bool`, `has_actionable_content: bool`,
+  `content_quality: "empty" | "query_only" | "unresolved" | "substantive"` on thread
+  summaries. Replaces `WEAK_THREAD_SUMMARY_TEXT`, `QUERY_ONLY_SUMMARY_MARKERS`,
+  `UNRESOLVED_SUMMARY_MARKERS` matching at query time.
+- **Work-signal typed fields**: the LLM extraction already produces `next_step_text`,
+  `blocker_text`, `progress_text`, `key_finding_text`. Ensure these are the
+  authoritative source for work-state routing, not English prefix matching
+  (`WORK_SIGNAL_PREFIX_TO_TYPE`).
+- **Source item classification tags**: `is_low_value_meta`, `is_greeting`,
+  `is_heartbeat` as write-time tags. Replaces query-time English pattern matching
+  against source content.
+- **Constraint normalization completeness**: ensure `constraint_candidates` extraction
+  produces `action_class`, `polarity`, `target_anchor` reliably enough that
+  query-time English scanning is not needed as fallback.
+
+### 4. Trace and regression proof
+
+- Trace must show typed/structural source of every routing decision — no hidden
+  English fallback paths.
+- Replay coverage must prove non-English cases work through the typed path.
+- English cases must stay stable without hidden fallback dependence.
+- Benchmark suite must pass with English cue tables emptied (not deleted — emptied)
+  to prove the typed path is actually authoritative.
+
+## Boundary
+
+Remove English cue dependence from the current package control plane. Not:
+- Rewrite every extraction prompt
+- Delete every English string in the repo
+- Full multilingual parity across the entire system
+- Rewrite the lexical retrieval tokenizer
+
+The right boundary is: **queries route correctly, constraints evaluate correctly,
+and work-state classifies correctly using typed structure alone.** English cue
+tables may remain in the codebase as dead code or documentation, but must not be
+on any decision path.
 
 ## Done When
 
-1. Residual query routing no longer depends primarily on English cue tables or
-   English query-shape tags.
-2. Non-English paraphrase cases in the current product slice can reach the
-   correct bounded policy or lane without requiring English wording matches.
-3. Structural lane narrowing remains authoritative for clear single-lane cases,
-   and residual query signals do not reopen excluded lanes.
-4. Constraint lookup and constraint compatibility prefer typed stored state over
-   English snippet recovery.
-5. Legacy English heuristics remain available only as measurable compatibility
-   fallback, not as the default read-time control plane.
-6. Query/debug trace shows how the residual signal was produced, whether
-   semantic help was used, and whether legacy English fallback was needed.
-7. Existing English regressions remain stable while non-English residual cases
-   improve without introducing an always-on query-time model call.
+1. Query routing hot path makes no decisions based on English cue tables or phrase
+   matching. Envelope, lane narrowing, recall modes, and candidate scoring all
+   consume typed structure.
+2. Constraint compatibility evaluates using typed profiles (action_class, polarity,
+   target_anchor), not English text scanning.
+3. Work-state classification (next_step, blocker, progress) reads typed extraction
+   fields, not English prefix patterns.
+4. Summary quality assessment reads typed extraction fields, not English phrase
+   markers.
+5. Source noise suppression uses write-time classification tags, not query-time
+   English pattern matching.
+6. Non-English queries reach the correct routing outcome through the typed path
+   without requiring English wording.
+7. Emptying English cue tables does not degrade benchmark results (proving the typed
+   path is authoritative).
+8. Existing English regressions remain stable.
+9. Trace shows typed/structural decision source throughout.
 
 ## Notes
 
-Implementation defaults:
+Sequencing within this feature:
 
-- keep this feature package-owned in `agent_conversation_memory`
-- prefer one explicit `QuerySignalEnvelope` helper and one explicit residual
-  routing seam over scattering new multilingual logic across existing cue-table
-  call sites
-- isolate current English lexical logic behind a single legacy fallback helper
-  so the new signal path remains reviewable and measurable
-- if semantic help is needed, evidence_trace detection is consolidated into the
-  existing `query_ambiguity_resolution` resolver seam as a new ambiguity pair
-  type (`evidence_trace_vs_recall`), not a separate classifier contract
-- treat this feature as read-time control-plane cleanup, not as a promise of
-  full multilingual understanding across the whole write path
+1. Write-path schema additions first (§3) — the query path can't stop reading
+   English until typed alternatives exist.
+2. Constraint-path cue removal (§2) — highest query-time impact, typed profiles
+   already partially exist.
+3. Query hot-path cue removal (§1) — largest surface area, depends on §3.
+4. Trace and regression proof (§4) — acceptance gate.
 
-Recommended sequencing relative to other roadmap work:
-
-1. land structural query lane narrowing before intent tie-break
-2. land language-agnostic query signals and typed constraint state
-3. move the live miss-capture and replay-promotion loop back up once misses are
-   more likely to reflect residual ambiguity and operational drift than known
-   English-specific router behavior
-4. keep later vector and hybrid retrieval work bounded by the less-English
-   residual path so semantic retrieval does not become an unconstrained fallback
+Stopword filtering (`ROUTING_META_QUERY_TOKENS`) is accepted as last-mile. The
+natural replacement is embedding-based candidate scoring, which depends on vector
+retrieval maturity. Not blocking this feature on that.

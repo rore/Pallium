@@ -1,10 +1,10 @@
 ---
 id: add-structural-query-lane-narrowing-before-intent-tiebreak
 title: Structural query lane narrowing before intent tie-break
-status: in-progress
+status: done
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
 lane: stabilization-foundation
 ---
 

@@ -1,5 +1,4 @@
 # Next
-- add-structural-query-lane-narrowing-before-intent-tiebreak
 - add-language-agnostic-query-signals-and-typed-constraint-state
 
 # Later
@@ -13,6 +12,7 @@
 - idea-optional-reranker-support
 
 # Done
+- add-structural-query-lane-narrowing-before-intent-tiebreak
 - add-live-integration-improvement-loop-and-replay-pipeline
 - add-hybrid-retrieval-fusion
 - add-vector-retrieval-provider
