@@ -33,6 +33,13 @@ Slack message  →  your agent  →  Pallium /items   (store user message)
 | User ID | `actor_ref` | `"slack:user:U01XYZ789"` |
 | Bot/agent ID | `agent_ref` | `"slack-bot:B04DEF456"` |
 
+Slack-specific note: Slack identifies messages by `ts` — a string that looks
+like a Unix timestamp (e.g. `"1700000001.000100"`) but is actually a unique ID
+within a channel. The pair `(channel, ts)` is globally unique. Threads are
+identified by the `ts` of the first message: replies carry `thread_ts`
+pointing back to it. This is why `ts` works well as both `source_id` and
+`thread_ref` — it's stable and unique.
+
 `container_ref` groups related conversations. `container_visibility` controls
 who can see the memory — a private channel's memory never leaks into queries
 from a different context.

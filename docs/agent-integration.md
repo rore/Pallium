@@ -234,6 +234,9 @@ but the integration loop does not require you to think in those terms first.
 - keep local seam rules mechanical rather than semantic
 - use the debug endpoint before changing heuristics blindly
 
+For a concrete code walkthrough, see
+[integration-example.md](integration-example.md).
+
 ## Boundaries
 
 Pallium is the memory layer, not an authorization service or agent runtime.

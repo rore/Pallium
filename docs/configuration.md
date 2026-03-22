@@ -5,8 +5,8 @@ This page explains Pallium's local configuration surface today.
 Use it when you need to:
 
 - wire a live LLM provider
-- enable hybrid retrieval (embedding + vector)
 - override prompt variants or model roles
+- tune vector retrieval or embedding settings
 - enable debug observability
 - tune retention behavior
 
@@ -70,6 +70,7 @@ sqlite_url = "sqlite:///./pallium.db"
 
 [llm_providers.anthropic]
 kind = "anthropic_claude"
+base_url = "https://api.anthropic.com/v1"
 api_key_env = "ANTHROPIC_API_KEY"
 
 [semantic_packages.agent_conversation_memory]
@@ -84,20 +85,8 @@ ANTHROPIC_API_KEY=your-key
 ```
 
 That is enough to run the full semantic path. Prompt variants, model roles,
-embedding, and vector retrieval all have working code defaults. Override them
-only when you have a reason.
-
-To enable hybrid retrieval (recommended), add:
-
-```toml
-[embedding_providers.onnx]
-kind = "onnx"
-model = "BAAI/bge-small-en-v1.5"
-
-[vector_index]
-enabled = true
-embedding_provider = "onnx"
-```
+embedding, and vector retrieval all have working defaults — hybrid retrieval
+is enabled out of the box with a local ONNX embedding provider.
 
 ## TOML Structure
 
@@ -400,7 +389,8 @@ The following defaults apply when fields are omitted:
 - `agent_conversation_memory.resolver_enabled` defaults to `true`
 - `agent_conversation_memory.resolver_timeout_ms` defaults to `800`
 - `model_roles` defaults to empty — all roles use the package `model`
-- `vector_index.enabled` defaults to `false`
+- `vector_index.enabled` defaults to `true`
+- `vector_index.embedding_provider` defaults to `"onnx"`
 - `vector_index.index_path` defaults to `"./pallium_vector.index"`
 - `vector_index.min_similarity` defaults to `0.55`
 
