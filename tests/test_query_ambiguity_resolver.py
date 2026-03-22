@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from semantic.agent_conversation_memory_resolver import (
+    AMBIGUITY_PAIR_PROMPT_VARIANTS,
     FALLBACK_RESULT,
     ResolverPacket,
     ResolverResult,
@@ -128,7 +129,7 @@ def test_qar_variants_exist() -> None:
     assert "qar_v1_compact_contract" in variants
     assert "qar_v1_compact_reasons" in variants
     assert "qar_v1_compact_examples" in variants
-    assert len(variants) == 3
+    assert len(variants) == 4
 
 
 def test_qar_variant_text_retrieval() -> None:
@@ -137,9 +138,57 @@ def test_qar_variant_text_retrieval() -> None:
     assert "SELECT" in text
 
 
+def test_qar_evidence_vs_recall_variant_exists() -> None:
+    text = get_qar_variant_text("qar_v1_evidence_vs_recall")
+    assert "evidence" in text.lower()
+    assert "FALLBACK" in text
+
+
 def test_qar_variant_unknown_raises() -> None:
     try:
         get_qar_variant_text("nonexistent_variant")
         raise AssertionError("Should have raised ValueError")
     except ValueError:
         pass
+
+
+# --- Evidence pair type tests ---
+
+
+def test_evidence_pair_packet_construction() -> None:
+    packet = build_resolver_packet(
+        query_text="Show me the proof for the migration decision",
+        turn_kind=None,
+        ambiguity_pair_type="evidence_trace_vs_recall",
+        option_a={"query_policy_family": "evidence_trace", "allowed_query_intents": ["evidence_trace"], "score": 0},
+        option_b={"query_policy_family": "recall_fact", "allowed_query_intents": ["broad_recall"], "score": 0},
+        candidates=[],
+    )
+    assert packet.ambiguity_pair_type == "evidence_trace_vs_recall"
+    assert packet.option_a_summary["query_policy_family"] == "evidence_trace"
+    assert packet.option_b_summary["query_policy_family"] == "recall_fact"
+
+
+def test_ambiguity_pair_prompt_variants_maps_evidence_type() -> None:
+    assert "evidence_trace_vs_recall" in AMBIGUITY_PAIR_PROMPT_VARIANTS
+    assert AMBIGUITY_PAIR_PROMPT_VARIANTS["evidence_trace_vs_recall"] == "qar_v1_evidence_vs_recall"
+
+
+def test_resolve_evidence_pair_falls_back_without_provider() -> None:
+    packet = build_resolver_packet(
+        query_text="What evidence supports this?",
+        turn_kind=None,
+        ambiguity_pair_type="evidence_trace_vs_recall",
+        option_a={"query_policy_family": "evidence_trace", "allowed_query_intents": ["evidence_trace"], "score": 0},
+        option_b={"query_policy_family": "recall_fact", "allowed_query_intents": ["broad_recall"], "score": 0},
+        candidates=[],
+    )
+    result = resolve_query_ambiguity(
+        provider=None,
+        model=None,
+        prompt_variant=None,
+        resolver_packet=packet,
+        timeout_ms=100,
+    )
+    assert result.action == "FALLBACK"
+    assert not result.is_valid_selection

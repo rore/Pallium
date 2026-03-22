@@ -32,7 +32,6 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         prompt_variant: str,
         consolidation_config: ConsolidationPolicy | None = None,
         resolver_config: dict[str, object] | None = None,
-        signal_classifier_config: dict[str, object] | None = None,
         routing_overrides: RoutingOverrides | None = None,
         providers_by_role: dict[str, LLMProvider] | None = None,
     ) -> None:
@@ -42,7 +41,6 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         self._delegate = LLMAgentMemoryPlugin(provider=write_extraction_provider, prompt_variant=prompt_variant)
         self._consolidation_config = consolidation_config
         self._resolver_config = resolver_config
-        self._signal_classifier_config = signal_classifier_config
         self._routing_overrides = routing_overrides
 
     def _provider_for_role(self, role: str) -> LLMProvider:
@@ -135,7 +133,6 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             include_trace=include_trace,
             debug_candidate_loader=debug_candidate_loader,
             resolver_config=self._resolver_config,
-            signal_classifier_config=self._signal_classifier_config,
             routing_overrides=self._routing_overrides,
         )
 

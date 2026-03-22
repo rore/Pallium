@@ -466,7 +466,6 @@ def route_query_results(
     include_trace: bool = False,
     debug_candidate_loader=None,
     resolver_config: dict[str, object] | None = None,
-    signal_classifier_config: dict[str, object] | None = None,
     routing_overrides: RoutingOverrides | None = None,
 ) -> PackageQueryOutcome:
         _ov = routing_overrides or {}
@@ -492,7 +491,6 @@ def route_query_results(
             candidate_evidence=candidate_evidence,
             anchor_prefiltered_candidates=anchor_prefiltered_candidates,
             runtime_context=runtime_context,
-            signal_classifier_config=signal_classifier_config,
         )
         # Step 3a: Noise short-circuit (from envelope)
         if signal_envelope.low_value:
@@ -519,6 +517,15 @@ def route_query_results(
                 injectable_blocks=[],
                 sharp_candidate_diagnostics=[],
             )
+        # Step 3b: Orthogonal evidence_trace override (post-envelope, post-noise)
+        signal_envelope = _check_evidence_trace_override(
+            envelope=signal_envelope,
+            source_ratio=float(candidate_evidence.get("source_hit_ratio", 0)),
+            query_text=text,
+            candidates=anchor_prefiltered_candidates,
+            runtime_context=runtime_context,
+            resolver_config=resolver_config,
+        )
         # Step 4: Lane narrowing (consumes envelope via compatible shape tags)
         _envelope_shape_tags: list[str] = []
         if signal_envelope.constraint_lookup:
@@ -2726,7 +2733,6 @@ def _derive_query_signal_envelope(
     candidate_evidence: dict[str, object],
     anchor_prefiltered_candidates: list[QueryResultItem],
     runtime_context: QueryRuntimeContext | None,
-    signal_classifier_config: dict[str, object] | None,
 ) -> QuerySignalEnvelope:
     """Three-tier signal derivation: structural → semantic → legacy English."""
     normalized = normalize_for_index(text)
@@ -2814,28 +2820,6 @@ def _derive_query_signal_envelope(
     else:
         tier1_confidence = "low"
 
-    # Tier 2: bounded evidence classifier — runs when source hits exist and
-    # no higher-priority hard route (work_resumption, constraint) has won
-    has_source_hits = any(item.result_kind == "source_hit" for item in anchor_prefiltered_candidates)
-    if has_source_hits and not signals["constraint_lookup"] and not signals["resume_state"]:
-        evidence_classified = _maybe_classify_evidence_request(
-            text=text,
-            candidate_evidence=candidate_evidence,
-            runtime_context=runtime_context,
-            signal_classifier_config=signal_classifier_config,
-        )
-        if evidence_classified:
-            signals["evidence_request"] = True
-            derivation.append("semantic_evidence_request")
-            return QuerySignalEnvelope(
-                **signals,
-                source="semantic",
-                confidence="medium",
-                legacy_english_fallback_used=False,
-                semantic_classification_used=True,
-                derivation_signals=tuple(derivation),
-            )
-
     if tier1_confidence in ("high", "medium"):
         return QuerySignalEnvelope(
             **signals,
@@ -2850,32 +2834,113 @@ def _derive_query_signal_envelope(
     return _legacy_english_query_signals(text, query_tokens)
 
 
-def _maybe_classify_evidence_request(
+def _check_evidence_trace_override(
     *,
-    text: str,
-    candidate_evidence: dict[str, object],
+    envelope: QuerySignalEnvelope,
+    source_ratio: float,
+    query_text: str,
+    candidates: list[QueryResultItem],
     runtime_context: QueryRuntimeContext | None,
-    signal_classifier_config: dict[str, object] | None,
-) -> bool:
-    """Tier 2 evidence-request classifier. Returns True if evidence request detected."""
-    if signal_classifier_config is None:
-        return False
-    from semantic.agent_conversation_memory_signal_classifier import (
-        build_signal_classification_packet,
-        classify_evidence_request,
-    )
-    packet = build_signal_classification_packet(
-        query_text=text,
-        candidate_evidence=candidate_evidence,
+    resolver_config: dict[str, object] | None,
+) -> QuerySignalEnvelope:
+    """Post-envelope evidence_trace override via resolver. Orthogonal to Tier cascade."""
+    if envelope.evidence_request:
+        return envelope  # already detected
+    if envelope.low_value:
+        return envelope  # noise/greeting — never invoke resolver
+    if source_ratio < 0.3:
+        return envelope  # insufficient source presence
+    if envelope.constraint_lookup or envelope.resume_state:
+        return envelope  # stronger route already won
+    if resolver_config is None or not resolver_config.get("resolver_enabled", True):
+        return envelope  # resolver not available
+
+    selected = _invoke_resolver_for_ambiguity(
+        ambiguity_pair_type="evidence_trace_vs_recall",
+        query_text=query_text,
+        candidates=candidates,
         runtime_context=runtime_context,
+        resolver_config=resolver_config,
+        option_a={"query_policy_family": "evidence_trace", "allowed_query_intents": ["evidence_trace"], "score": 0},
+        option_b={"query_policy_family": "recall_fact", "allowed_query_intents": ["broad_recall"], "score": 0},
     )
-    result = classify_evidence_request(
-        packet=packet,
-        provider=signal_classifier_config.get("provider"),
-        prompt_variant=str(signal_classifier_config.get("prompt_variant", "qsc_v1_evidence_request")),
-        timeout_ms=int(signal_classifier_config.get("timeout_ms", 600)),
+    if selected:
+        return QuerySignalEnvelope(
+            low_value=envelope.low_value,
+            history_lookup=envelope.history_lookup,
+            latest_status_request=envelope.latest_status_request,
+            resume_state=envelope.resume_state,
+            constraint_lookup=envelope.constraint_lookup,
+            evidence_request=True,
+            source="semantic",
+            confidence="medium",
+            legacy_english_fallback_used=envelope.legacy_english_fallback_used,
+            semantic_classification_used=True,
+            derivation_signals=envelope.derivation_signals + ("resolver_evidence_override",),
+        )
+    return envelope
+
+
+def _invoke_resolver_for_ambiguity(
+    *,
+    ambiguity_pair_type: str,
+    query_text: str,
+    candidates: list[QueryResultItem],
+    runtime_context: QueryRuntimeContext | None,
+    resolver_config: dict[str, object],
+    option_a: dict[str, object],
+    option_b: dict[str, object],
+) -> bool:
+    """Single entry point for all resolver-mediated ambiguity decisions.
+
+    Returns True if option A was selected with valid confidence.
+    """
+    from semantic.agent_conversation_memory_resolver import (
+        build_resolver_packet,
+        resolve_query_ambiguity,
     )
-    return result.is_resolved and result.primary_signal == "evidence_request"
+
+    scored_cards = _build_resolver_candidate_cards(candidates, option_a, option_b)
+    packet = build_resolver_packet(
+        query_text=query_text,
+        turn_kind=runtime_context.turn_kind if runtime_context else None,
+        ambiguity_pair_type=ambiguity_pair_type,
+        option_a=option_a,
+        option_b=option_b,
+        candidates=scored_cards,
+    )
+    result = resolve_query_ambiguity(
+        provider=resolver_config["provider"],
+        model=None,
+        prompt_variant=None,  # resolver selects based on ambiguity_pair_type
+        resolver_packet=packet,
+        timeout_ms=int(resolver_config.get("resolver_timeout_ms", 800)),
+    )
+    return result.is_valid_selection and result.selected_option_id == "A"
+
+
+def _build_resolver_candidate_cards(
+    candidates: list[QueryResultItem],
+    option_a: dict[str, object],
+    option_b: dict[str, object],
+) -> list[dict[str, object]]:
+    """Build compact candidate cards for the resolver from routing candidates."""
+    cards: list[dict[str, object]] = []
+    for c in candidates[:10]:
+        layer = "source_evidence" if c.result_kind == "source_hit" else c.type or "unknown"
+        summary = ""
+        if c.payload:
+            summary = str(c.payload.get("summary", ""))[:200]
+        elif c.result_kind == "source_hit":
+            summary = str(c.source_type or "source")[:200]
+        cards.append({
+            "result_id": c.result_id or c.memory_object_id or "",
+            "layer": layer,
+            "memory_type": c.type or c.result_kind,
+            "support_score": int(c.score or 0),
+            "summary": summary,
+        })
+    return cards
 
 
 def _legacy_english_query_signals(

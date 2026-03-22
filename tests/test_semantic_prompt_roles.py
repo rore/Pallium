@@ -11,13 +11,11 @@ def test_prompt_role_registry_contains_expected_roles() -> None:
         "write_reconciliation",
         "write_enrichment",
         "query_ambiguity_resolution",
-        "query_signal_classification",
     }
     assert contracts["write_extraction"].status == "implemented"
     assert contracts["write_reconciliation"].status == "contract_only"
     assert contracts["write_enrichment"].status == "implemented"
     assert contracts["query_ambiguity_resolution"].status == "contract_only"
-    assert contracts["query_signal_classification"].status == "contract_only"
 
 
 def test_prompt_role_contracts_define_explicit_abstain_or_no_op_behavior() -> None:

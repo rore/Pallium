@@ -155,14 +155,11 @@ def _build_plugin_for_package(*, config: AppConfig, package_config: SemanticPack
             return LLMAgentMemoryPlugin(provider=providers_by_role.get("write_extraction", provider), prompt_variant=prompt_variant)
         resolver_provider = providers_by_role.get("query_ambiguity_resolution", provider)
         resolver_config = _build_resolver_config(provider=resolver_provider, package_config=package_config)
-        classifier_provider = providers_by_role.get("query_signal_classification", provider)
-        signal_classifier_config = _build_signal_classifier_config(provider=classifier_provider, package_config=package_config)
         return AgentConversationMemoryPlugin(
             provider=provider,
             prompt_variant=prompt_variant,
             consolidation_config=package_config.consolidation,
             resolver_config=resolver_config,
-            signal_classifier_config=signal_classifier_config,
             routing_overrides=routing_overrides,
             providers_by_role=providers_by_role or None,
         )
@@ -203,24 +200,6 @@ def _build_resolver_config(*, provider: LLMProvider, package_config: SemanticPac
     return {
         "resolver_enabled": package_config.resolver_enabled,
         "resolver_timeout_ms": package_config.resolver_timeout_ms,
-        "prompt_variant": prompt_variant,
-        "provider": provider,
-    }
-
-
-def _build_signal_classifier_config(*, provider: LLMProvider, package_config: SemanticPackageConfig) -> dict[str, object] | None:
-    if not package_config.signal_classifier_enabled:
-        return None
-    from semantic.llm_agent_memory import resolve_prompt_variant_for_role
-    prompt_variant = resolve_prompt_variant_for_role(
-        "query_signal_classification",
-        prompt_variants=package_config.prompt_variants,
-        prompt_variant=package_config.prompt_variant,
-        default="qsc_v1_evidence_request",
-    )
-    return {
-        "signal_classifier_enabled": package_config.signal_classifier_enabled,
-        "signal_classifier_timeout_ms": package_config.signal_classifier_timeout_ms,
         "prompt_variant": prompt_variant,
         "provider": provider,
     }

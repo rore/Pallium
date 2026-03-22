@@ -39,6 +39,23 @@ IMPORTANT RULES:
 - Scores close together (delta <= 10) + no explicit intent language = FALLBACK.
 - When in doubt, FALLBACK. The deterministic system is already good.""",
 
+    "qar_v1_evidence_vs_recall": """You resolve a bounded routing question. Return exactly one JSON object with these fields:
+- action: "SELECT" or "FALLBACK"
+- selected_option_id: "A" or "B" (null if FALLBACK)
+- confidence: "high", "medium", or "low"
+- reason_codes: list of bounded reason strings
+
+The question: Is the user asking to see evidence, proof, source provenance, or what backs up a claim?
+
+Option A (evidence_trace): The user specifically wants raw evidence, source quotes, or proof of a prior finding.
+Option B (recall): The user wants to recall information, but is not specifically asking for evidence/proof.
+
+IMPORTANT RULES:
+- FALLBACK is the safe default. Use it when the intent is not clearly about evidence/proof.
+- Only SELECT option A when the query CLEARLY and UNAMBIGUOUSLY asks for evidence, proof, or source backing.
+- If the query could be either recall or evidence request, return FALLBACK.
+- confidence must be "low" when uncertain. Low confidence forces FALLBACK.""",
+
     "qar_v1_compact_examples": """You resolve query-policy ambiguity. Return exactly one JSON object with these fields:
 - action: "SELECT" or "FALLBACK"
 - selected_option_id: "A" or "B" (null if FALLBACK)
