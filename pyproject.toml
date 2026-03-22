@@ -20,13 +20,17 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3,<9.0",
+    "pytest-xdist>=3.6,<4.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not slow'"
+addopts = "-m 'not slow' -n 4 --import-mode=importlib"
 markers = [
     "slow: benchmark and eval harness tests — run explicitly with -m slow",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:sqlalchemy",
 ]
 
 [tool.setuptools]

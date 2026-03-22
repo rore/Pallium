@@ -68,7 +68,7 @@ def build_llm_test_config(
                 consolidation=DEFAULT_CONSOLIDATION_POLICY,
             ),
         },
-        vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(sqlite_url)),
+        vector_index=VectorIndexConfig(enabled=False),
     )
 
 
