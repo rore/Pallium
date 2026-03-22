@@ -52,6 +52,11 @@ def _build_client(monkeypatch, sqlite_url: str) -> TestClient:
             payload = dict(payload)
             payload['container_visibility'] = 'public'
             kwargs['json'] = payload
+        elif isinstance(payload, list) and url == '/items':
+            kwargs['json'] = [
+                {**item, 'container_visibility': 'public'} if isinstance(item, dict) and 'container_visibility' not in item else item
+                for item in payload
+            ]
         return original_post(url, *args, **kwargs)
 
     client.post = post_with_public_visibility
@@ -61,7 +66,7 @@ def _build_client(monkeypatch, sqlite_url: str) -> TestClient:
 def _ingest_prior_events(client: TestClient, scenario_id: str) -> dict[str, object]:
     scenario = next(item for item in _load_scenarios() if item['scenario_id'] == scenario_id)
     for event in scenario['prior_events']:
-        response = client.post('/items', json=event)
+        response = client.post('/items', json=[event])
         assert response.status_code == 200
     client.app.state.pallium_service.drain_processing_queue(worker_id='routing-test')
     return scenario
@@ -153,7 +158,7 @@ def _ingest_resumption_work(client: TestClient, *, thread_ref: str) -> None:
             'occurred_at': '2026-03-11T10:02:00Z',
         },
     ):
-        response = client.post('/items', json=payload)
+        response = client.post('/items', json=[payload])
         assert response.status_code == 200
     client.app.state.pallium_service.drain_processing_queue(worker_id='routing-test')
 

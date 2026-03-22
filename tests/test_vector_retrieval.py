@@ -678,7 +678,7 @@ class TestFilterMatching:
     def test_container_ref_filter_excludes_non_matching(self) -> None:
         index_entry = _make_index_entry(entry_id="idx-1", target_kind="memory_object", target_id="mo-1")
         memory_obj = _make_memory_object(mo_id="mo-1")
-        evidence = _make_evidence(container_ref="chat:other")
+        evidence = _make_evidence(container_ref="chat:other", visibility="private")
 
         storage = MagicMock(spec=StorageProvider)
         storage.get_index_entry.return_value = index_entry

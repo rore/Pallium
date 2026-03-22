@@ -2212,6 +2212,8 @@ def _source_hit_is_greeting_or_noise_text(text: str) -> bool:
         return False
     if _looks_like_low_value_greeting_variant(normalized):
         return True
+    help_offer_phrases = ("i can help", "let me know", "when you are ready", "how can i help", "what can i")
+    filler_words = {"there", "everyone", "all", "team", "folks"}
     for prefix in LOW_VALUE_GREETING_NOISE_PREFIXES:
         if not normalized.startswith(prefix):
             continue
@@ -2220,7 +2222,17 @@ def _source_hit_is_greeting_or_noise_text(text: str) -> bool:
             return True
         if _looks_like_low_value_greeting_variant(f"{prefix} {remainder}".strip()):
             return True
-        if remainder.startswith(("i can help", "let me know", "when you are ready", "how can i help")):
+        if remainder.startswith(help_offer_phrases):
+            return True
+        # Skip filler words between greeting and help-offer pattern
+        filler_remainder = remainder
+        while filler_remainder:
+            first_word = filler_remainder.split(maxsplit=1)[0]
+            if first_word not in filler_words:
+                break
+            parts = filler_remainder.split(maxsplit=1)
+            filler_remainder = parts[1] if len(parts) > 1 else ""
+        if filler_remainder and filler_remainder.startswith(help_offer_phrases):
             return True
     return False
 
@@ -4100,7 +4112,8 @@ def _candidate_is_low_value(candidate: dict[str, object]) -> bool:
     item = candidate["item"]
     assert isinstance(item, QueryResultItem)
     if item.result_kind == "source_hit":
-        return _is_low_value_meta_text(str(item.excerpt or ""))
+        excerpt = str(item.excerpt or "")
+        return _is_low_value_meta_text(excerpt) or _source_hit_is_greeting_or_noise_text(excerpt)
     if item.type in {"discussion_summary", "thread_summary"}:
         payload = item.payload or {}
         return _is_low_value_meta_text(str(payload.get("summary") or ""))
