@@ -127,53 +127,8 @@ ROUTING_LAYER_WEIGHTS = {
     "investigative_conclusion": {"investigation_outcome": 480, "decision": 430, CONSTRAINT_MEMORY_TYPE: 220, "source_evidence": 360, "thread_summary": 220, "discussion_summary": 120, "continuity_memory": 110, "task_checkpoint": 100, "pattern_memory": 80, "lower_level_memory": 320},
 }
 
-ROUTING_META_QUERY_TOKENS = {
-    "a",
-    "about",
-    "already",
-    "an",
-    "before",
-    "did",
-    "do",
-    "exact",
-    "have",
-    "i",
-    "need",
-    "previously",
-    "show",
-    "source",
-    "support",
-    "supported",
-    "the",
-    "this",
-    "trace",
-    "we",
-    "what",
-    "which",
-    "again",
-    "can",
-    "had",
-    "have",
-    "here",
-    "in",
-    "is",
-    "lately",
-    "latest",
-    "me",
-    "sir",
-    "that",
-    "there",
-    "you",
-}
 
-ROUTING_WEAK_HIGHER_LEVEL_MATCH_PENALTY = {
-    "answer_continuity": 0,
-    "broad_recall": 260,
-    "work_resumption": 200,
-    "precise_fact": 120,
-    "evidence_trace": 120,
-    "investigative_conclusion": 90,
-}
+HIGHER_LEVEL_RETRIEVAL_FLOOR = 40
 
 ROUTING_SAFE_FALLBACK_LAYERS = {
     "answer_continuity": ("lower_level_memory", "source_evidence"),
@@ -238,11 +193,6 @@ RECALL_MODE_FRESH_THREAD_PREFERENCE: dict[str, bool] = {
     "investigation_preference": False,
 }
 
-ROUTING_TOPIC_LOW_SIGNAL_TOKENS = {
-    "about", "already", "before", "carry", "constraint", "concluded", "did", "do", "earlier",
-    "forward", "history", "latest", "lately", "old", "past", "prior", "previously", "remember",
-    "remind", "repeat", "repeated", "resume", "state", "use", "using", "what", "which", "why",
-}
 
 ROUTING_FALLBACK_MARGIN = 35
 
@@ -301,19 +251,6 @@ BROAD_RECALL_CUES = (
     "what had we been working on",
 )
 
-BROAD_RECALL_ABSTRACTION_CUES = (
-    "general lesson",
-    "what lesson",
-    "should we remember",
-    "what should we remember",
-)
-
-BROAD_RECALL_CONCLUSION_CUES = (
-    "what public conclusion",
-    "what did we previously conclude",
-    "what did we conclude before",
-    "what did we conclude",
-)
 
 PRECISE_FACT_CUES = (
     "what ordering",
@@ -368,25 +305,6 @@ WORK_RESUMPTION_CUES = (
     "what finding should orient us",
     "queued again",
     "resume work",
-)
-
-WORK_RESUMPTION_NEXT_STEP_CUES = (
-    "next step",
-    "do next",
-    "try next",
-)
-
-WORK_RESUMPTION_PROGRESS_CUES = (
-    "what progress",
-    "progress was preserved",
-    "what state were we in",
-)
-
-WORK_RESUMPTION_BLOCKER_CUES = (
-    "what blocker",
-    "blocked",
-    "failure",
-    "failed",
 )
 
 WORK_RESUMPTION_SIGNAL_TYPES = ("task", "progress_update", "key_finding", "blocker", "next_step", "evidence", "freshness")
@@ -1216,12 +1134,9 @@ def _summarize_query_family_candidates(
     continuity_candidates: list[dict[str, object]] = []
     for item in retrieved_candidates:
         layer = _result_layer(item)
-        overlap_tokens = _routing_overlap_tokens(item, query_tokens)
-        content_overlap_tokens = [token for token in overlap_tokens if token not in ROUTING_META_QUERY_TOKENS]
         support_score = _candidate_evidence_shape_score(
             item,
             layer=layer,
-            content_overlap_tokens=content_overlap_tokens,
             query_filters=query_filters,
         )
         same_thread = _candidate_matches_thread(item, query_filters)
@@ -1262,16 +1177,16 @@ def _summarize_query_family_candidates(
                     "result_id": _routing_result_id(item),
                     "support": support_score,
                     "same_thread": same_thread,
-                    "content_overlap_count": len(content_overlap_tokens),
-                    "content_overlap_tokens": list(content_overlap_tokens[:6]),
+                    "content_overlap_count": 0,
+                    "content_overlap_tokens": [],
                     "strong_candidate": candidate_is_strong,
                 }
             )
         if support_score >= int(stats["best_support"]):
             stats["best_support"] = support_score
             stats["best_work_usefulness"] = work_usefulness
-            stats["best_content_overlap_count"] = len(content_overlap_tokens)
-            stats["best_content_overlap_tokens"] = list(content_overlap_tokens[:6])
+            stats["best_content_overlap_count"] = 0
+            stats["best_content_overlap_tokens"] = []
             stats["best_result_id"] = _routing_result_id(item)
             stats["strong_candidate"] = candidate_is_strong
             stats["sharp_candidate"] = bool(
@@ -1651,31 +1566,23 @@ def _query_family_label(intent: str, *, runtime_context: QueryRuntimeContext | N
         return "broad_recurring_recall"
     return intent
 
-def _continuity_compatibility_adjustment(
+def _locality_adjustment(
     *,
-    intent: str,
     layer: str,
-    topic_overlap_tokens: list[str],
     same_thread: bool,
     same_container: bool,
 ) -> int:
-    """Scoring adjustment for answer_continuity + continuity_memory when topic signal is absent.
+    """Structural locality bonus for continuity_memory candidates.
 
-    When a query carries no domain-token overlap with a continuity_memory candidate
-    (topic_overlap_tokens is empty), thread and container affinity become the only
-    available structural discriminators.  A candidate from the same thread is preferred;
-    one from a different thread and container is mildly penalised so that an unrelated
-    carry-forward does not silently win over a structurally compatible one.
-
-    This is intentionally moderate: cross-thread carry-forward is a legitimate use case
-    when both candidates have no affinity, so the adjustment must not act as a hard filter.
+    Replaces the former topic-overlap-gated continuity compatibility
+    adjustment.  Uses only structural thread/container affinity, no tokens.
     """
-    if intent != "answer_continuity" or layer != "continuity_memory" or topic_overlap_tokens:
+    if layer != "continuity_memory":
         return 0
     if same_thread:
         return 60
     if same_container:
-        return 10
+        return 0
     return -60
 
 
@@ -1692,33 +1599,21 @@ def _score_routed_candidate(
 ) -> dict[str, object]:
     layer = _result_layer(item)
     retrieval_score = int(item.score)
-    overlap_tokens = _routing_overlap_tokens(item, query_tokens)
-    content_overlap_tokens = [token for token in overlap_tokens if token not in ROUTING_META_QUERY_TOKENS]
-    query_topic_tokens = _query_topic_tokens(query_tokens)
-    topic_overlap_tokens = [token for token in content_overlap_tokens if token in query_topic_tokens]
     same_thread = _candidate_matches_thread(item, query_filters)
     same_container = _candidate_matches_container(item, query_filters)
     evidence_shape_score = _candidate_evidence_shape_score(
         item,
         layer=layer,
-        content_overlap_tokens=content_overlap_tokens,
         query_filters=query_filters,
     )
     _weights = layer_weights or ROUTING_LAYER_WEIGHTS
     base_routing_score = (
         _weights[intent][layer]
         + (retrieval_score * 10)
-        + _specificity_bonus(item, intent, query_text=query_text)
+        + _specificity_bonus(item, intent)
         + evidence_shape_score
-        + _routing_overlap_adjustment(layer, intent, content_overlap_tokens)
-        + _topic_alignment_adjustment(layer=layer, query_topic_tokens=query_topic_tokens, topic_overlap_tokens=topic_overlap_tokens)
-        + _continuity_compatibility_adjustment(
-            intent=intent,
-            layer=layer,
-            topic_overlap_tokens=topic_overlap_tokens,
-            same_thread=same_thread,
-            same_container=same_container,
-        )
+        + _higher_level_retrieval_floor_adjustment(layer, retrieval_score)
+        + _locality_adjustment(layer=layer, same_thread=same_thread, same_container=same_container)
     )
     support_grade = _routing_support_grade(evidence_shape_score, support_threshold=support_threshold)
     return {
@@ -1735,8 +1630,8 @@ def _score_routed_candidate(
         "envelope_confidence": item.envelope.confidence if item.envelope is not None else None,
         "reason": "",
         "strategy_name": _routing_strategy_name(item),
-        "content_overlap_tokens": content_overlap_tokens,
-        "topic_overlap_tokens": topic_overlap_tokens,
+        "content_overlap_tokens": [],
+        "topic_overlap_tokens": [],
         "evidence_count": len(item.evidence),
         "same_thread": same_thread,
         "same_container": same_container,
@@ -2121,7 +2016,7 @@ def _result_layer(item: QueryResultItem) -> str:
         return "decision"
     return "lower_level_memory"
 
-def _specificity_bonus(item: QueryResultItem, intent: str, *, query_text: str) -> int:
+def _specificity_bonus(item: QueryResultItem, intent: str) -> int:
     bonus = 0
     if item.result_kind == "memory_hit" and item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
         if intent == "investigative_conclusion":
@@ -2138,37 +2033,24 @@ def _specificity_bonus(item: QueryResultItem, intent: str, *, query_text: str) -
     if item.result_kind == "memory_hit" and item.type == "task_checkpoint":
         if intent == "work_resumption":
             bonus += 55
-            if _query_contains_any(query_text, WORK_RESUMPTION_NEXT_STEP_CUES) and str(item.payload.get("next_step") or "").strip():
-                bonus += 25
-            if _query_contains_any(query_text, WORK_RESUMPTION_PROGRESS_CUES) and str(item.payload.get("current_state") or "").strip():
-                bonus += 20
-            if _query_contains_any(query_text, WORK_RESUMPTION_BLOCKER_CUES) and str(item.payload.get("blocker_state") or "").strip():
-                bonus += 25
         elif intent in {"precise_fact", "evidence_trace", "investigative_conclusion"}:
             bonus -= 35
     if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "answer_continuity":
         bonus += 25
-    if item.result_kind == "memory_hit" and item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES and intent == "broad_recall" and _query_contains_any(query_text, BROAD_RECALL_CONCLUSION_CUES):
+    if item.result_kind == "memory_hit" and item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES and intent == "broad_recall":
         bonus += 85 if item.type == "decision" else 75
-    if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "broad_recall" and _query_contains_any(query_text, BROAD_RECALL_CONCLUSION_CUES):
+    if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "broad_recall":
         bonus -= 45
     if item.result_kind == "memory_hit" and item.type == "pattern_memory" and intent == "broad_recall":
         bonus += 25
-        if _query_contains_any(query_text, BROAD_RECALL_ABSTRACTION_CUES):
-            bonus += 45
     if item.result_kind == "source_hit" and intent == "evidence_trace":
         bonus += 30 if item.artifact_kind == "assistant_output" else 10
     if item.result_kind == "source_hit" and intent == "work_resumption":
         bonus += 45 if (item.artifact_kind or "") in SELECTED_WORK_ARTIFACT_KINDS else 20
-        if (item.artifact_kind or "") == "todo_snapshot" and _query_contains_any(query_text, WORK_RESUMPTION_NEXT_STEP_CUES):
-            bonus += 25
     if item.result_kind == "source_hit" and intent == "investigative_conclusion":
         bonus += 6 if item.artifact_kind == "assistant_output" else 2
     return bonus
 
-def _query_contains_any(text: str, cues: Iterable[str]) -> bool:
-    lowered = text.lower()
-    return any(cue in lowered for cue in cues)
 
 def _edit_distance_with_limit(left: str, right: str, limit: int) -> int:
     if abs(len(left) - len(right)) > limit:
@@ -2238,58 +2120,29 @@ def _routing_query_tokens(text: str) -> tuple[str, ...]:
         return ()
     return tuple(token for token in normalized.split() if token)
 
-def _routing_overlap_adjustment(layer: str, intent: str, content_overlap_tokens: Iterable[str]) -> int:
-    overlap_count = len(tuple(content_overlap_tokens))
+def _higher_level_retrieval_floor_adjustment(layer: str, retrieval_score: int) -> int:
+    """Penalise higher-level memory whose retrieval score falls below the floor.
+
+    Replaces the former token-overlap binary check.  The penalty magnitude
+    (-260) matches the prior broad_recall overlap penalty so ranking behaviour
+    is comparable.
+    """
     if layer not in ROUTING_HIGHER_LEVEL_TYPES:
         return 0
-    if overlap_count == 0:
-        return -ROUTING_WEAK_HIGHER_LEVEL_MATCH_PENALTY[intent]
+    if retrieval_score < HIGHER_LEVEL_RETRIEVAL_FLOOR:
+        return -260
     return 0
 
-def _routing_overlap_tokens(item: QueryResultItem, query_tokens: tuple[str, ...]) -> list[str]:
-    if not query_tokens:
-        return []
-    item_tokens = set(_routing_item_tokens(item))
-    return sorted(token for token in set(query_tokens) if token in item_tokens)
-
-def _routing_item_tokens(item: QueryResultItem) -> tuple[str, ...]:
-    normalized = normalize_for_index(_routing_item_text(item))
-    if not normalized:
-        return ()
-    return tuple(token for token in normalized.split() if token)
 
 def _query_topic_tokens(query_tokens: tuple[str, ...]) -> set[str]:
-    return {
-        token
-        for token in query_tokens
-        if token not in ROUTING_META_QUERY_TOKENS and token not in ROUTING_TOPIC_LOW_SIGNAL_TOKENS
-    }
+    return set()
 
 def is_query_topic_signal_empty(query_tokens: Iterable[str]) -> bool:
-    """Return True if none of the query tokens carry topic signal.
-
-    A token carries topic signal when it is neither a generic meta-query word
-    (ROUTING_META_QUERY_TOKENS) nor a structural low-signal routing word
-    (ROUTING_TOPIC_LOW_SIGNAL_TOKENS).  Used by benchmark runners to classify
-    whether a query was generic-topic-free, which matters for diagnosing
-    answer_continuity contamination failures.
-    """
-    return not any(
-        t for t in query_tokens
-        if t not in ROUTING_META_QUERY_TOKENS and t not in ROUTING_TOPIC_LOW_SIGNAL_TOKENS
-    )
+    """Return True — topic signal classification removed (cue-free control plane)."""
+    return True
 
 
-def _topic_alignment_adjustment(*, layer: str, query_topic_tokens: set[str], topic_overlap_tokens: list[str]) -> int:
-    if not query_topic_tokens:
-        return 0
-    if topic_overlap_tokens:
-        return min(len(topic_overlap_tokens), 2) * 36
-    if layer in {"task_checkpoint", "thread_summary", "discussion_summary", "continuity_memory", "pattern_memory"}:
-        return -140
-    if layer == "source_evidence":
-        return -110
-    return -90
+
 
 def _routing_item_text(item: QueryResultItem) -> str:
     fragments: list[str] = []
@@ -4357,10 +4210,9 @@ def _candidate_evidence_shape_score(
     item: QueryResultItem,
     *,
     layer: str,
-    content_overlap_tokens: list[str],
     query_filters: QueryFilters | None,
 ) -> int:
-    score = len(content_overlap_tokens) * 24
+    score = 0
     evidence_count = len(item.evidence)
     score += min(evidence_count, 3) * 8
     if _candidate_matches_thread(item, query_filters):
@@ -4756,20 +4608,14 @@ def _select_compatible_recall_candidates(
 
     selected_candidates = [primary_candidate]
     used_result_ids = {_routing_result_id(primary_candidate["item"])}
-    primary_topic_tokens = set(primary_candidate.get("topic_overlap_tokens") or [])
-    strict_primary_topic_filter = bool(primary_topic_tokens)
+    primary_retrieval_score = int(primary_candidate.get("retrieval_score") or 0)
+    retrieval_score_floor = primary_retrieval_score * 0.5
     primary_aligns_with_active_constraint = _candidate_aligns_with_constraint_state(primary_candidate, constraint_state)
     if constraint_anchor is not None and constraint_anchor in compatible_candidates:
         anchor_result_id = _routing_result_id(constraint_anchor["item"])
-        anchor_topic_tokens = set(constraint_anchor.get("topic_overlap_tokens") or [])
         if (
             anchor_result_id not in used_result_ids
             and len(selected_candidates) < requested_limit
-            and (
-                explicit_constraint_focus
-                or not strict_primary_topic_filter
-                or primary_topic_tokens.intersection(anchor_topic_tokens)
-            )
         ):
             selected_candidates.append(constraint_anchor)
             used_result_ids.add(anchor_result_id)
@@ -4796,18 +4642,8 @@ def _select_compatible_recall_candidates(
                 continue
             if len(selected_candidates) >= requested_limit:
                 break
-            candidate_topic_tokens = set(candidate.get("topic_overlap_tokens") or [])
-            if strict_primary_topic_filter and not primary_topic_tokens.intersection(candidate_topic_tokens):
-                if not (
-                    primary_aligns_with_active_constraint
-                    and _candidate_aligns_with_constraint_state(candidate, constraint_state)
-                ):
-                    continue
-            if (
-                primary_topic_tokens
-                and not candidate_topic_tokens.intersection(primary_topic_tokens)
-                and str(candidate.get("layer")) in {"continuity_memory", "pattern_memory", "thread_summary", "discussion_summary"}
-            ):
+            candidate_retrieval_score = int(candidate.get("retrieval_score") or 0)
+            if primary_retrieval_score > 0 and candidate_retrieval_score < retrieval_score_floor:
                 continue
             selected_candidates.append(candidate)
             used_result_ids.add(candidate_result_id)
