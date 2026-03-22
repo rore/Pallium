@@ -123,7 +123,6 @@ Useful query filters:
 
 - `container_ref`
 - `thread_ref`
-- `session_ref`
 - `artifact_kind`
 - `role`
 - `source_type`

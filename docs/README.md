@@ -11,6 +11,7 @@ Start here if you're evaluating or using Pallium.
 | [HTTP API](http-api.md) | Endpoints, request/response shapes, examples |
 | [Configuration](configuration.md) | Providers, packages, prompt roles, tuning knobs |
 | [Agent Integration](agent-integration.md) | Wiring Pallium into an agent runtime |
+| [Integration Example](integration-example.md) | Concrete Slack agent walkthrough with code |
 | [Privacy and Visibility](privacy-and-visibility.md) | Scoped memory boundaries and enforcement |
 
 Recommended order for a first read: Getting Started → How It Works → HTTP API.
