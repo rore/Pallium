@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import defaultdict
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -458,7 +459,7 @@ def _score_continuation(
         expected_signals = list(expected_dimensions.get(dimension, []))
         applicable = dimension in normalized_must_preserve or bool(expected_signals)
         haystack = _dimension_text(dimension, continuation)
-        matches = [signal for signal in expected_signals if signal.lower() in haystack.lower()]
+        matches = [signal for signal in expected_signals if _signal_matches(signal, haystack)]
         missing = [signal for signal in expected_signals if signal not in matches]
         if not applicable:
             score = None
@@ -509,6 +510,28 @@ def _dimension_text(dimension: str, continuation: dict[str, Any]) -> str:
     if dimension == "evidence":
         return f"{continuation['answer']}\n{' '.join(continuation['evidence_used'])}"
     return f"{continuation['answer']}\n{continuation['freshness_notes']}\n{continuation['blocker_state']}\n{continuation['next_step']}"
+
+
+_SIGNAL_STOPWORDS = frozenset({"the", "a", "an", "is", "was", "are", "were", "be", "been", "being", "to", "of", "in", "for", "on", "with", "at", "by", "from", "and", "or", "not", "that", "this", "it", "its"})
+_SIGNAL_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+
+
+def _signal_matches(signal: str, haystack: str) -> bool:
+    """Check if a signal phrase matches in the haystack using word overlap.
+
+    Exact substring match first (fast path). Falls back to checking that all
+    content words from the signal appear in the haystack, allowing the LLM to
+    paraphrase word order while preserving key terms.
+    """
+    signal_lower = signal.lower()
+    haystack_lower = haystack.lower()
+    if signal_lower in haystack_lower:
+        return True
+    signal_words = set(_SIGNAL_TOKEN_PATTERN.findall(signal_lower)) - _SIGNAL_STOPWORDS
+    if not signal_words:
+        return False
+    haystack_words = set(_SIGNAL_TOKEN_PATTERN.findall(haystack_lower))
+    return signal_words.issubset(haystack_words)
 
 
 def _score_signal_coverage(matches: list[str], expected_signals: list[str]) -> int:
@@ -741,16 +764,22 @@ def _format_retrieval_results(results: list[dict[str, Any]]) -> str:
             if item.get("type") == "task_checkpoint":
                 findings = payload.get("key_findings") or []
                 evidence = payload.get("evidence") or []
-                checkpoint_fields = [
-                    payload.get("task"),
-                    payload.get("current_state"),
-                    payload.get("blocker_state"),
-                    payload.get("next_step"),
-                    "; ".join(str(value) for value in findings[:2]),
-                    "; ".join(str(value) for value in evidence[:2]),
-                    payload.get("freshness_signal"),
-                ]
-                summary = " | ".join(str(value).strip() for value in checkpoint_fields if str(value).strip())
+                checkpoint_parts: list[str] = []
+                if payload.get("task"):
+                    checkpoint_parts.append(f"Task: {payload['task']}")
+                if payload.get("current_state"):
+                    checkpoint_parts.append(f"Current state: {payload['current_state']}")
+                if payload.get("blocker_state"):
+                    checkpoint_parts.append(f"Blocker: {payload['blocker_state']}")
+                if payload.get("next_step"):
+                    checkpoint_parts.append(f"Next step: {payload['next_step']}")
+                if findings:
+                    checkpoint_parts.append(f"Findings: {'; '.join(str(v) for v in findings[:2])}")
+                if evidence:
+                    checkpoint_parts.append(f"Evidence: {'; '.join(str(v) for v in evidence[:2])}")
+                if payload.get("freshness_signal"):
+                    checkpoint_parts.append(f"Freshness: {payload['freshness_signal']}")
+                summary = " | ".join(checkpoint_parts)
             else:
                 summary = (
                     payload.get("carry_forward_answer")
