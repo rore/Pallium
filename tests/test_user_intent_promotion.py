@@ -1,0 +1,175 @@
+"""Test that user-stated intent is promoted to an actionable memory type.
+
+Scenario: user discusses vector databases with the assistant across a thread,
+then explicitly states an intent to try a specific tool (Chroma). After a
+thread boundary (/new), a query asking what the user planned to try should
+surface a specific actionable memory — not only generic discussion summaries.
+
+This test is expected to FAIL until the extraction pipeline promotes
+user-stated intent into decision / task_checkpoint / continuity_memory.
+"""
+from __future__ import annotations
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.main import create_app
+from tests.config_helpers import build_llm_test_config
+from tests.tiered_memory_stub_providers import TieredMemorySemanticProvider
+
+CONTAINER_REF = 'chat:vector-db-intent-test'
+THREAD_A = f'{CONTAINER_REF}:thread-a'
+THREAD_B = f'{CONTAINER_REF}:thread-b'
+
+
+def _build_client(monkeypatch, sqlite_url: str) -> TestClient:
+    monkeypatch.setattr(
+        'app.dependencies.build_llm_provider',
+        lambda config, **_: TieredMemorySemanticProvider(),
+    )
+    client = TestClient(
+        create_app(build_llm_test_config(
+            default_use_case='agent_conversation_memory',
+            sqlite_url=sqlite_url,
+        ))
+    )
+    original_post = client.post
+
+    def post_with_public_visibility(url: str, *args, **kwargs):
+        payload = kwargs.get('json')
+        if isinstance(payload, dict) and url in {'/items', '/query', '/query/debug'} and 'container_visibility' not in payload:
+            payload = dict(payload)
+            payload['container_visibility'] = 'public'
+            kwargs['json'] = payload
+        elif isinstance(payload, list) and url == '/items':
+            kwargs['json'] = [
+                {**item, 'container_visibility': 'public'}
+                if isinstance(item, dict) and 'container_visibility' not in item else item
+                for item in payload
+            ]
+        return original_post(url, *args, **kwargs)
+
+    client.post = post_with_public_visibility
+    return client
+
+
+THREAD_A_EVENTS = [
+    {
+        'source_type': 'chat_message',
+        'source_id': f'{THREAD_A}-msg-1',
+        'content_type': 'text/plain',
+        'content': "I'm looking for a lightweight vector database for a side project.",
+        'artifact_kind': 'message',
+        'role': 'user',
+        'container_ref': CONTAINER_REF,
+        'thread_ref': THREAD_A,
+        'occurred_at': '2026-03-20T18:00:00Z',
+    },
+    {
+        'source_type': 'assistant_artifact',
+        'source_id': f'{THREAD_A}-asst-1',
+        'content_type': 'text/plain',
+        'content': (
+            'Chroma is a great choice — simple Python API, runs locally, '
+            'pip install chromadb and you are ready. Qdrant is another '
+            'option if you need more performance.'
+        ),
+        'artifact_kind': 'assistant_output',
+        'role': 'assistant',
+        'container_ref': CONTAINER_REF,
+        'thread_ref': THREAD_A,
+        'occurred_at': '2026-03-20T18:00:30Z',
+    },
+    {
+        'source_type': 'chat_message',
+        'source_id': f'{THREAD_A}-msg-2',
+        'content_type': 'text/plain',
+        'content': "ok, chroma sounds good. i'll try it this weekend.",
+        'artifact_kind': 'message',
+        'role': 'user',
+        'container_ref': CONTAINER_REF,
+        'thread_ref': THREAD_A,
+        'occurred_at': '2026-03-20T18:01:00Z',
+    },
+    {
+        'source_type': 'assistant_artifact',
+        'source_id': f'{THREAD_A}-asst-2',
+        'content_type': 'text/plain',
+        'content': 'Great choice! Let me know how it goes.',
+        'artifact_kind': 'assistant_output',
+        'role': 'assistant',
+        'container_ref': CONTAINER_REF,
+        'thread_ref': THREAD_A,
+        'occurred_at': '2026-03-20T18:01:30Z',
+    },
+]
+
+
+@pytest.mark.xfail(reason='extraction does not yet promote user-stated intent to actionable memory type', strict=True)
+def test_user_intent_promoted_to_actionable_memory(monkeypatch, test_db_url: str) -> None:
+    """After a user says 'I'll try Chroma this weekend', an actionable memory
+    (decision, task_checkpoint, or continuity_memory) should be created — not
+    only generic discussion/thread summaries."""
+    with _build_client(monkeypatch, test_db_url) as client:
+        # Ingest thread A conversation
+        response = client.post('/items', json=THREAD_A_EVENTS)
+        assert response.status_code == 200
+        client.app.state.pallium_service.drain_processing_queue(worker_id='intent-test')
+
+        # Check what memory types were created
+        storage = client.app.state.pallium_service._storage
+        active_memories = storage.list_memory_objects(lifecycle='active')
+        active_types = {m.type for m in active_memories}
+
+        actionable_types = {'decision', 'task_checkpoint', 'continuity_memory'}
+        assert active_types & actionable_types, (
+            f'Expected at least one actionable memory type {actionable_types}, '
+            f'but only found: {active_types}'
+        )
+
+        # Verify the actionable memory mentions Chroma
+        actionable_memories = [m for m in active_memories if m.type in actionable_types]
+        chroma_mentioned = any(
+            'chroma' in str(m.payload).lower()
+            for m in actionable_memories
+        )
+        assert chroma_mentioned, (
+            f'Actionable memory should mention Chroma. '
+            f'Payloads: {[m.payload for m in actionable_memories]}'
+        )
+
+
+@pytest.mark.xfail(reason='extraction does not yet promote user-stated intent to actionable memory type', strict=True)
+def test_cross_thread_query_surfaces_user_intent(monkeypatch, test_db_url: str) -> None:
+    """From a new thread, asking 'what was the db I said I would try?' should
+    surface a specific memory about the user's intent to try Chroma."""
+    with _build_client(monkeypatch, test_db_url) as client:
+        # Ingest thread A and process
+        response = client.post('/items', json=THREAD_A_EVENTS)
+        assert response.status_code == 200
+        client.app.state.pallium_service.drain_processing_queue(worker_id='intent-test')
+
+        # Query from thread B
+        query_response = client.post('/query/debug', json={
+            'text': 'what was the db i said i would try?',
+            'limit': 6,
+            'container_ref': CONTAINER_REF,
+            'thread_ref': THREAD_B,
+        })
+        assert query_response.status_code == 200
+        payload = query_response.json()
+
+        assert payload['should_inject'] is True
+
+        # At least one injectable block should specifically mention Chroma
+        # as something the user intended to try (not just a discussion topic)
+        injectable_blocks = payload.get('injectable_blocks') or []
+        chroma_intent_blocks = [
+            block for block in injectable_blocks
+            if 'chroma' in str(block.get('text', '')).lower()
+            and block.get('memory_type') in {'decision', 'task_checkpoint', 'continuity_memory'}
+        ]
+        assert chroma_intent_blocks, (
+            f'Expected an actionable injectable block mentioning Chroma intent. '
+            f'Got blocks: {[(b.get("memory_type"), b.get("text", "")[:80]) for b in injectable_blocks]}'
+        )
