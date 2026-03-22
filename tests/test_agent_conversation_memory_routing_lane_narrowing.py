@@ -201,29 +201,29 @@ def test_constraint_lane_bypass_on_constraint_text():
     assert result.mapped_intent == 'broad_recall'
 
 
-def test_constraint_lane_bypass_on_real_constraint_memory_with_support():
+def test_constraint_memory_support_is_plausible_not_strongly_eligible():
     constraint = _make_strong_constraint()
     pattern = _make_pattern_memory()
-    text = 'What do we know about the portal?'
+    text = 'What did we decide about ordering?'
     result = _build_lane_result(text, [constraint, pattern])
-    assert result.selection_mode == 'single_lane_bypass'
-    assert result.selected_lane == 'constraint_policy'
+    # constraint_memory_with_support is a shape hint (plausible), not structural.
+    # A non-constraint query shouldn't get constraint_policy bypass just because
+    # constraint_memory exists in the candidate set.
     constraint_lane = next(le for le in result.eligible_lanes if le.lane == 'constraint_policy')
-    assert 'constraint_memory_with_support' in constraint_lane.structural_signals
+    assert constraint_lane.state == 'plausible'
+    assert 'constraint_memory_with_support' in constraint_lane.shape_signals
+    assert result.selected_lane != 'constraint_policy'
 
 
-def test_constraint_lane_bypass_makes_constraint_primary_candidate():
+def test_constraint_memory_support_does_not_force_primary_candidate():
     constraint = _make_strong_constraint()
     pattern = _make_pattern_memory(score=22)
-    text = 'What do we know about the portal?'
+    text = 'What did we decide about ordering?'
     outcome = _route_full(text, [constraint, pattern])
     assert outcome.trace is not None
     lane_trace = outcome.trace.routing.get('lane_narrowing', {})
-    assert lane_trace.get('selection_mode') == 'single_lane_bypass'
-    assert lane_trace.get('selected_lane') == 'constraint_policy'
-    assert lane_trace.get('final_intent_used') is False
-    if outcome.results:
-        assert outcome.results[0].type == CONSTRAINT_MEMORY_TYPE
+    # Non-constraint query: constraint_memory is plausible, not bypass
+    assert lane_trace.get('selected_lane') != 'constraint_policy'
 
 
 def test_work_resumption_lane_bypass_on_resumed_session():
@@ -270,39 +270,42 @@ def test_blocker_only_checkpoint_does_not_make_constraint_lane_strongly_eligible
     assert constraint_lane.state != 'strongly_eligible'
 
 
-def test_real_constraint_memory_makes_constraint_lane_strongly_eligible():
+def test_real_constraint_memory_with_ambiguous_query_is_plausible():
     constraint = _make_strong_constraint()
-    text = 'What should I avoid?'
+    text = 'What was the migration plan?'
     result = _build_lane_result(text, [constraint])
     constraint_lane = next(le for le in result.eligible_lanes if le.lane == 'constraint_policy')
-    assert constraint_lane.state == 'strongly_eligible'
-    assert 'constraint_memory_with_support' in constraint_lane.structural_signals
+    # A non-constraint query: constraint_memory_with_support is a shape hint (plausible),
+    # not structural. Query text doesn't mention constraints.
+    assert constraint_lane.state == 'plausible'
+    assert 'constraint_memory_with_support' in constraint_lane.shape_signals
 
 
 def test_constraint_safety_override_fires_only_on_real_constraint_evidence():
     constraint = _make_strong_constraint()
     checkpoint = _make_task_checkpoint(blocker_state='Token expired.')
-    text = 'What is the state of this? What should I avoid?'
+    text = 'What constraint did I set? What is the state of this?'
     runtime = QueryRuntimeContext(turn_kind='resumed_session')
     result = _build_lane_result(text, [constraint, checkpoint], runtime_context=runtime)
     assert result.selected_lane == 'constraint_policy'
     assert result.selection_mode == 'single_lane_bypass'
     assert result.intent_effect == 'suppressed'
     constraint_lane = next(le for le in result.eligible_lanes if le.lane == 'constraint_policy')
-    assert 'constraint_memory_with_support' in constraint_lane.structural_signals
+    assert 'constraint_recall_tag' in constraint_lane.structural_signals
 
 
 # ---------------------------------------------------------------------------
 # Query-shape guardrail tests
 # ---------------------------------------------------------------------------
 
-def test_shape_tag_alone_does_not_make_lane_strongly_eligible():
+def test_constraint_query_text_without_memory_is_strongly_eligible():
     pattern = _make_pattern_memory()
     text = 'What constraint should I follow?'
     result = _build_lane_result(text, [pattern])
     constraint_lane = next(le for le in result.eligible_lanes if le.lane == 'constraint_policy')
-    assert constraint_lane.state in ('plausible', 'excluded')
-    assert result.selection_mode == 'residual_fallthrough'
+    # Query text explicitly mentions constraints — strongly_eligible via constraint_recall_tag.
+    assert constraint_lane.state == 'strongly_eligible'
+    assert 'constraint_recall_tag' in constraint_lane.structural_signals
 
 
 def test_resume_state_tag_without_checkpoint_evidence_is_plausible():

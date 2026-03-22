@@ -2757,18 +2757,10 @@ def _derive_query_signal_envelope(
         dominant = str(candidate_evidence.get("dominant_memory_layer") or "")
         per_layer = candidate_evidence.get("per_layer_support", {})
 
-        # constraint_lookup — prefer typed constraint profiles over English snippet extraction
-        constraint_only_support = int(policy_evidence.get("constraint_memory_only_support", 0))
-        has_typed_constraint = _typed_constraint_signal_from_candidates(anchor_prefiltered_candidates)
-        if constraint_only_support >= POLICY_SUPPORT_THRESHOLD:
-            signals["constraint_lookup"] = True
-            derivation.append("constraint_memory_with_support")
-        elif has_typed_constraint:
-            signals["constraint_lookup"] = True
-            derivation.append("typed_constraint_profile_present")
-        elif dominant == CONSTRAINT_MEMORY_TYPE:
-            signals["constraint_lookup"] = True
-            derivation.append("constraint_dominant_layer")
+        # constraint_lookup — only set from query-level signals, not candidate-set
+        # presence. Candidate-level constraint evidence (constraint_memory in results)
+        # feeds into lane narrowing as a shape hint but does not force the hard route.
+        # The English Tier 3 fallback handles constraint detection from query text.
 
         # resume_state: requires resumed_session context + candidate-side evidence
         is_resumed = runtime_context is not None and runtime_context.turn_kind == "resumed_session"
@@ -3038,10 +3030,13 @@ def _determine_eligible_lanes(
     constraint_shape: list[str] = []
     if _preferred_constraint_text(text):
         constraint_structural.append("constraint_text_detected")
-    if int(policy_evidence.get("constraint_memory_only_support", 0)) >= POLICY_SUPPORT_THRESHOLD:
-        constraint_structural.append("constraint_memory_with_support")
     if "constraint_recall" in query_shape_tags:
-        constraint_shape.append("constraint_recall_tag")
+        # Envelope detected constraint_lookup — this is a query-level signal
+        constraint_structural.append("constraint_recall_tag")
+    if int(policy_evidence.get("constraint_memory_only_support", 0)) >= POLICY_SUPPORT_THRESHOLD:
+        # Candidate-set evidence: constraint memory exists with support, but this is
+        # retrieval-shape not query-meaning — treat as shape hint, not structural signal.
+        constraint_shape.append("constraint_memory_with_support")
 
     if constraint_structural:
         constraint_state = "strongly_eligible"
