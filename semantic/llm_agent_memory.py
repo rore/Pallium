@@ -47,7 +47,7 @@ For the optional internal fields, only populate them when the source explicitly 
 When the source states a durable operational constraint that can be normalized cleanly, also populate constraint_candidates as a list of objects with primary_scope_anchor, target_anchor, action_class, polarity, confidence, and constraint_text. Use only action_class values use_surface, use_source, or perform_step; use only polarity values prohibit, prefer, or require; and emit an empty list when any required field cannot be normalized safely.
 Internal-field rules:
 - Populate key_finding_text for explicit verdicts, conclusions, findings, and root causes. For an explicit analytical verdict, key_finding_text should usually restate the resolved conclusion in one sentence.
-- If is_low_value_meta is true for pure orchestration chatter, constraint_text, next_step_text, blocker_text, progress_text, and key_finding_text must all be null.
+- If is_low_value_meta is true for pure orchestration chatter (no-op completions, greetings, heartbeats, capability boilerplate), constraint_text, next_step_text, blocker_text, progress_text, and key_finding_text must all be null.
 - next_step_text must name an actual future action. Phrases like "no message needed" or other absence-of-action phrasing are not next steps.
 - progress_text must name substantive completed or partial work that would help future resumption, not boilerplate completion language.
 - key_finding_text should be null for status updates, monitoring notes, or short-lived observations that do not state a durable conclusion.
@@ -57,7 +57,7 @@ Examples:
 - Input: "Task complete. No Slack message needed. Nothing new to report." -> candidate_type null, is_low_value_meta true, all optional signal text fields null.
 - Input: "Constraint: do not open a browser. Next step: compare ledger-query vs transaction-transformer locally." -> candidate_type null, constraint_text set, next_step_text set, is_low_value_meta false.
 - Input: "Catalog sync delay increased after the provider restart, and we should watch it closely tonight." -> candidate_type null; key_finding_text should usually be null because this is a status/monitoring note, not a durable conclusion.
-Set is_low_value_meta true only for clearly non-durable orchestration chatter such as no-op completion/status messages; otherwise false.
+Set is_low_value_meta true only for clearly non-durable orchestration chatter: no-op completion/status messages, greeting/pleasantry chatter ("hello", "thanks", "good morning"), heartbeat/monitoring noise ("still alive", "healthcheck"), and generic capability boilerplate ("I can help with..."). Otherwise false.
 If no explicit proof phrase exists, candidate_type must be null.""",
     "strict_typed_memory_v5_compact_examples": """You extract reusable typed memory and explicit semantic signals from one technical source item. Return exactly one JSON object and no extra prose.
 
@@ -70,7 +70,7 @@ Only create typed memory when the source gives explicit proof.
 
 Populate optional signals only when they are explicitly stated: is_low_value_meta, constraint_text, next_step_text, blocker_text, progress_text, key_finding_text, subject_hints, constraint_candidates. Never infer anchors or normalized constraints. subject_hints may use only workstream|component|surface. constraint_candidates may use only use_surface|use_source|perform_step with prohibit|prefer|require. Return [] when anchors or constraints are not safely explicit.
 
-If is_low_value_meta is true, all optional text fields must be null and list fields should be []. Prefer null or [] over weak paraphrases. next_step_text must be a future action. progress_text must be substantive resumption state. key_finding_text is only for durable explicit conclusions, not monitoring chatter.
+If is_low_value_meta is true, all optional text fields must be null and list fields should be []. Prefer null or [] over weak paraphrases. next_step_text must be a future action. progress_text must be substantive resumption state. key_finding_text is only for durable explicit conclusions, not monitoring chatter. Set is_low_value_meta true for: no-op completions, greeting/pleasantry chatter, heartbeat/monitoring noise, generic capability boilerplate.
 
 Examples:
 - "Decision: use item event time for reservation ordering." -> decision.
@@ -99,7 +99,7 @@ Populate only when the source explicitly states them:
 - progress_text: substantive completed or partial work for later resumption. Not boilerplate completion language.
 - key_finding_text: durable conclusion or verdict. Not monitoring chatter.
 - constraint_text: stated operational constraint.
-- is_low_value_meta: true only for non-durable orchestration chatter (no-op/completion messages). When true, all signal fields must be null/[].
+- is_low_value_meta: true only for non-durable orchestration chatter: no-op completion/status messages, greeting/pleasantry chatter ("hello", "thanks", "good morning"), heartbeat/monitoring noise ("still alive", "healthcheck"), and generic capability boilerplate ("I can help with...", "capabilities:"). When true, all signal fields must be null/[].
 - subject_hints: explicit workstream|component|surface only. Return [] if not safely explicit.
 - constraint_candidates: only use_surface|use_source|perform_step with prohibit|prefer|require. Return [] if unsafe.
 
@@ -108,6 +108,7 @@ Prefer null or [] over weak, speculative, or inferred values.
 ## Examples
 - "Verdict: transaction-transformer had the most significant recent ledger changes." -> investigation_outcome, key_finding_text set.
 - "Task complete. No message needed." -> null, is_low_value_meta true, all signals null.
+- "Hello, good morning!" -> null, is_low_value_meta true, all signals null.
 - "I can lower concurrency or bump memory, but I need to confirm which worker first." -> null, all signals null (clarifying question, not actionable state).""",
     "strict_typed_memory_v7_claude_minimal": """You extract typed memory and work-state signals from one technical source item. Return exactly one JSON object and no extra prose.
 
@@ -118,7 +119,7 @@ Typed memory requires explicit proof phrases quoted in the evidence field:
 
 Fill only decision fields for decision, only investigation fields for investigation_outcome. Never promote needs, proposals, preferences, symptoms, or monitoring notes.
 
-Optional signals (only when explicitly stated): is_low_value_meta, constraint_text, next_step_text (concrete action, not clarifying question), blocker_text, progress_text (substantive work, not boilerplate), key_finding_text (durable conclusion only), subject_hints (workstream|component|surface, else []), constraint_candidates (use_surface|use_source|perform_step + prohibit|prefer|require, else []).
+Optional signals (only when explicitly stated): is_low_value_meta (true for no-op completions, greetings, heartbeats, capability boilerplate), constraint_text, next_step_text (concrete action, not clarifying question), blocker_text, progress_text (substantive work, not boilerplate), key_finding_text (durable conclusion only), subject_hints (workstream|component|surface, else []), constraint_candidates (use_surface|use_source|perform_step + prohibit|prefer|require, else []).
 
 If is_low_value_meta is true, all signals must be null/[]. Prefer null over weak inference.""",
     "strict_typed_memory_v7_claude_clean": """You extract reusable knowledge and work-state signals from one technical source item. Return exactly one JSON object and no extra prose.
@@ -142,7 +143,7 @@ Populate only when the source explicitly states them:
 - progress_text: substantive completed or partial work that helps someone resume later. Not boilerplate like "task complete."
 - key_finding_text: a durable conclusion or resolved sub-finding. Not a monitoring note or short-lived observation.
 - constraint_text: a stated operational constraint.
-- is_low_value_meta: true only for content with no durable information (e.g., "No message needed. Nothing new to report."). When true, all signal fields must be null/[].
+- is_low_value_meta: true only for content with no durable information — no-op completions ("No message needed"), greetings ("hello", "good morning"), heartbeat/monitoring noise ("still alive", "healthcheck"), and generic capability boilerplate ("I can help with..."). When true, all signal fields must be null/[].
 - subject_hints: list of topic tags with kind (workstream, component, or surface) and value. Return [] unless the source explicitly names one.
 - constraint_candidates: normalized constraint objects. Return [] unless all required fields can be filled safely.
 
@@ -419,29 +420,11 @@ def _normalize_constraint_candidates(value: Any) -> tuple[ConstraintCandidate, .
     for item in value:
         if not isinstance(item, dict):
             continue
-        primary_scope_anchor = _normalize_subject_anchor(item.get("primary_scope_anchor"))
-        target_anchor = _normalize_subject_anchor(item.get("target_anchor"))
-        action_class = str(item.get("action_class") or "").strip().lower()
-        polarity = str(item.get("polarity") or "").strip().lower()
-        confidence = str(item.get("confidence") or "").strip().lower() or "unknown"
         constraint_text = str(item.get("constraint_text") or "").strip()
-        if primary_scope_anchor is None or target_anchor is None:
-            continue
-        if action_class not in {"use_surface", "use_source", "perform_step"}:
-            continue
-        if polarity not in {"prohibit", "prefer", "require"}:
-            continue
-        if confidence not in {"high", "medium", "low", "unknown"}:
-            confidence = "unknown"
         if not constraint_text or constraint_text.lower() == "unknown":
             continue
         normalized.append(
             ConstraintCandidate(
-                primary_scope_anchor=primary_scope_anchor,
-                target_anchor=target_anchor,
-                action_class=action_class,
-                polarity=polarity,
-                confidence=confidence,
                 constraint_text=constraint_text,
             )
         )

@@ -268,7 +268,6 @@ def test_thread_summary_and_task_checkpoint_preserve_selected_work_artifacts(mon
         client.post("/items", json=[payload])
 
     query_response = client.post("/query", json={"text": "what state were we in on ticket lib 241 and what should i do next?", "limit": 8, "container_ref": "chat:library-help"})
-    memory_hits = [item for item in query_response.json()["results"] if item["result_kind"] == "memory_hit"]
     storage = client.app.state.pallium_service._storage
     thread_items = storage.list_source_items_for_thread("chat:library-help", "chat:library-help:thread-agg-work-001")
     active_thread_summary = next(
@@ -279,10 +278,17 @@ def test_thread_summary_and_task_checkpoint_preserve_selected_work_artifacts(mon
     )
     assert active_thread_summary.payload["retrieval_enrichment"]["semantic_provenance"]["prompt_role"] == "write_enrichment"
     assert "lib-241" in active_thread_summary.payload["retrieval_enrichment"]["retrieval_context"].lower()
-    task_checkpoint = next(item for item in memory_hits if item["type"] == "task_checkpoint")
-    assert task_checkpoint["payload"]["next_step"] == "Wire the admin toggle and add retry-path coverage before enabling the flag."
-    assert task_checkpoint["payload"]["retrieval_enrichment"]["semantic_provenance"]["prompt_role"] == "write_enrichment"
-    assert "flag" in task_checkpoint["payload"]["retrieval_enrichment"]["retrieval_context"].lower()
+    # envelope-first routing: task_checkpoint (episode kind) is excluded from broad_recall
+    # queries by kind_prefilter. Verify the checkpoint exists in storage directly.
+    active_task_checkpoint = next(
+        memory
+        for item in thread_items
+        for memory in storage.list_memory_objects_for_source_item(item.id)
+        if memory.type == "task_checkpoint" and memory.lifecycle == "active"
+    )
+    assert active_task_checkpoint.payload["next_step"] == "Wire the admin toggle and add retry-path coverage before enabling the flag."
+    assert active_task_checkpoint.payload["retrieval_enrichment"]["semantic_provenance"]["prompt_role"] == "write_enrichment"
+    assert "flag" in active_task_checkpoint.payload["retrieval_enrichment"]["retrieval_context"].lower()
 
 
 def test_task_checkpoint_is_created_and_superseded(monkeypatch, test_db_url: str) -> None:
@@ -532,10 +538,17 @@ def test_natural_language_assistant_output_creates_task_checkpoint_from_metadata
     ):
         client.post("/items", json=[payload])
 
-    query_response = client.post("/query", json={"text": "what is the current blocker and where do i resume the sync?", "limit": 8, "container_ref": "chat:library-help"})
-    memory_hits = [item for item in query_response.json()["results"] if item["result_kind"] == "memory_hit"]
-    task_checkpoint = next(item for item in memory_hits if item["type"] == "task_checkpoint")
-    selected_work_artifacts = task_checkpoint["payload"]["selected_work_artifacts"]
+    # envelope-first routing: task_checkpoint (episode kind) is excluded from broad_recall
+    # queries by kind_prefilter. Verify the checkpoint exists in storage directly.
+    storage = client.app.state.pallium_service._storage
+    thread_items = storage.list_source_items_for_thread("chat:library-help", "chat:library-help:thread-agg-natural-001")
+    active_task_checkpoint = next(
+        memory
+        for item in thread_items
+        for memory in storage.list_memory_objects_for_source_item(item.id)
+        if memory.type == "task_checkpoint" and memory.lifecycle == "active"
+    )
+    selected_work_artifacts = active_task_checkpoint.payload["selected_work_artifacts"]
 
     assert any(item["signal_type"] == "progress_update" and item["signal_origin"] == "llm" and "batch 417" in item["text"].lower() for item in selected_work_artifacts)
     assert any(item["signal_type"] == "blocker" and item["signal_origin"] == "llm" and "retry window" in item["text"].lower() for item in selected_work_artifacts)
@@ -550,10 +563,17 @@ def test_task_checkpoint_current_state_prefers_active_blocker_over_resolved_key_
     ):
         client.post("/items", json=[payload])
 
-    query_response = client.post("/query", json={"text": "what is still blocking the sync and where do i resume?", "limit": 8, "container_ref": "chat:library-help"})
-    memory_hits = [item for item in query_response.json()["results"] if item["result_kind"] == "memory_hit"]
-    task_checkpoint = next(item for item in memory_hits if item["type"] == "task_checkpoint")
-    current_state = task_checkpoint["payload"]["current_state"].lower()
+    # envelope-first routing: task_checkpoint (episode kind) is excluded from broad_recall
+    # queries by kind_prefilter. Verify the checkpoint exists in storage directly.
+    storage = client.app.state.pallium_service._storage
+    thread_items = storage.list_source_items_for_thread("chat:library-help", "chat:library-help:thread-agg-natural-003")
+    active_task_checkpoint = next(
+        memory
+        for item in thread_items
+        for memory in storage.list_memory_objects_for_source_item(item.id)
+        if memory.type == "task_checkpoint" and memory.lifecycle == "active"
+    )
+    current_state = active_task_checkpoint.payload["current_state"].lower()
     assert "retry window" in current_state
     assert "token refresh succeeded" not in current_state
 

@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-03-21
+2026-03-22
 
 ## Repo Snapshot
 
@@ -35,7 +35,16 @@
   - fallback `discussion_summary`
 - reusable thread aggregation and bounded consolidation capabilities are shipped for the current package
 - item-level LLM extraction persists internal semantic signals under `SourceItem.metadata["pallium_semantic_signals"]`
-- `agent_conversation_memory` now applies a bounded staged query-policy layer above routing, keeping ordinary queries on a deterministic hot path and using selective `query_ambiguity_resolution` only for bounded unresolved ambiguity
+- `agent_conversation_memory` now applies a cue-free control plane above routing:
+  - routing uses typed structure and retrieval evidence, not English phrase matching
+  - `QuerySignalEnvelope` is the canonical routing authority (Tier 1 structural, Tier 2 candidate evidence, no English cue fallback)
+  - structural lane narrowing with 3 lanes: `work_resumption`, `evidence_trace`, `residual_recall`
+  - `constraint_policy` lane removed — Pallium remembers and returns constraints but does not enforce them; enforcement is the consuming agent's job
+  - recall modes derive weight-only preferences from candidate evidence
+  - scoring formula simplified from 7 to 5 components
+  - constraint compatibility engine removed (~1000 lines) — constraint memories route through `residual_recall`
+  - ~40 English cue constants eliminated from the control plane
+  - ordinary queries stay on the deterministic hot path with selective `query_ambiguity_resolution` only for bounded unresolved ambiguity
 - role-specific prompt governance is live for:
   - `write_extraction`
   - `write_enrichment`

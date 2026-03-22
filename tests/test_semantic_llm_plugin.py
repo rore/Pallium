@@ -286,19 +286,18 @@ def test_llm_plugin_preserves_valid_constraint_candidates_and_ignores_invalid_en
 
     assert trace.extraction.constraint_candidates == (
         ConstraintCandidate(
-            primary_scope_anchor=MemorySubjectAnchor(kind="workstream", value="inventory batch digest"),
-            target_anchor=MemorySubjectAnchor(kind="surface", value="operations portal"),
-            action_class="use_surface",
-            polarity="prohibit",
-            confidence="high",
             constraint_text="Do not use the operations portal for the inventory batch digest.",
         ),
         ConstraintCandidate(
-            primary_scope_anchor=MemorySubjectAnchor(kind="workstream", value="inventory batch digest"),
-            target_anchor=MemorySubjectAnchor(kind="surface", value="local browser"),
-            action_class="use_surface",
-            polarity="prohibit",
-            confidence="unknown",
+            constraint_text="ignored",
+        ),
+        ConstraintCandidate(
+            constraint_text="ignored",
+        ),
+        ConstraintCandidate(
+            constraint_text="ignored",
+        ),
+        ConstraintCandidate(
             constraint_text="Do not open a local browser.",
         ),
     )

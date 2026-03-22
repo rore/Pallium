@@ -122,6 +122,31 @@ PATTERN_MEMORY_PROMPT_SCHEMA_ID = "pattern_memory_extraction"
 
 PATTERN_MEMORY_PROMPT_SCHEMA_VERSION = "v2"
 
+
+def _compute_thread_summary_content_quality(
+    summary: str,
+    conclusions: list[object],
+    work_artifacts: list[object],
+) -> str:
+    """Classify thread summary quality at write time.
+
+    Returns one of: "substantive", "query_only", "unresolved", "weak".
+    Uses the same English markers that routing previously applied at query time,
+    but evaluated once during thread summary building.
+    """
+    if conclusions or work_artifacts:
+        return "substantive"
+    lowered = summary.lower().strip()
+    if not lowered:
+        return "weak"
+    if lowered in WEAK_THREAD_SUMMARY_TEXT:
+        return "weak"
+    if any(marker in lowered for marker in QUERY_ONLY_SUMMARY_MARKERS):
+        return "query_only"
+    if any(marker in lowered for marker in UNRESOLVED_SUMMARY_MARKERS):
+        return "unresolved"
+    return "substantive"
+
 PATTERN_MEMORY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "pattern_label": "string", "retrieval_context": "string or null"}, indent=2)
 
 PATTERN_MEMORY_SYSTEM_PROMPT = (
@@ -274,6 +299,7 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 "summary": summary,
                 "conclusions": conclusion_payload,
                 "selected_work_artifacts": selected_work_artifacts,
+                "content_quality": _compute_thread_summary_content_quality(summary, conclusion_payload, selected_work_artifacts),
                 "latest_occurred_at": aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else None,
                 "semantic_provenance": semantic_provenance,
             },

@@ -17,7 +17,8 @@ from semantic.agent_conversation_memory_routing import (
     LaneNarrowingResult,
     _determine_eligible_lanes,
     _build_policy_evidence,
-    _preferred_constraint_text,
+    _compute_typed_candidate_evidence,
+    _derive_query_signal_envelope,
     _work_state_evidence_gate_passes,
     _infer_query_intent,
     _routing_query_tokens,
@@ -148,6 +149,23 @@ def _make_pattern_memory(memory_object_id='pattern-1', score=16):
 
 def _build_lane_result(text, candidates, runtime_context=None):
     query_tokens = _routing_query_tokens(text)
+    policy_evidence = _build_policy_evidence(candidates)
+    candidate_evidence = _compute_typed_candidate_evidence(
+        candidates, QueryFilters(container_ref='chat:test', thread_ref='chat:test:thread-1'),
+    )
+    signal_envelope = _derive_query_signal_envelope(
+        text=text, query_tokens=query_tokens,
+        policy_evidence=policy_evidence,
+        candidate_evidence=candidate_evidence,
+        anchor_prefiltered_candidates=candidates,
+        runtime_context=runtime_context,
+    )
+    # Derive shape tags from signal envelope (matches main route_query_results flow)
+    envelope_shape_tags: list[str] = []
+    if signal_envelope.resume_state:
+        envelope_shape_tags.append("resume_state")
+    if signal_envelope.evidence_request:
+        envelope_shape_tags.append("evidence_request")
     family_inference = _infer_query_intent(
         text=text,
         query_tokens=query_tokens,
@@ -155,11 +173,9 @@ def _build_lane_result(text, candidates, runtime_context=None):
         query_filters=QueryFilters(container_ref='chat:test'),
         runtime_context=runtime_context,
     )
-    query_shape_tags = list(family_inference.get('query_shape_tags', []))
-    policy_evidence = _build_policy_evidence(candidates)
     return _determine_eligible_lanes(
         text=text,
-        query_shape_tags=query_shape_tags,
+        query_shape_tags=envelope_shape_tags,
         policy_evidence=policy_evidence,
         anchor_prefiltered_candidates=candidates,
         family_inference=family_inference,
@@ -188,44 +204,6 @@ def _route_full(text, candidates, runtime_context=None, query_filters=None, incl
 # Single-lane bypass tests
 # ---------------------------------------------------------------------------
 
-def test_constraint_lane_bypass_on_constraint_text():
-    constraint = _inventory_batch_typed_constraint_result()
-    pattern = _make_pattern_memory()
-    text = 'Do not use the operations portal for the inventory batch digest.'
-    assert _preferred_constraint_text(text)
-    result = _build_lane_result(text, [constraint, pattern])
-    assert result.selection_mode == 'single_lane_bypass'
-    assert result.selected_lane == 'constraint_policy'
-    assert result.lane_narrowing_used_intent is False
-    assert result.intent_effect == 'none'
-    assert result.mapped_intent == 'broad_recall'
-
-
-def test_constraint_memory_support_is_plausible_not_strongly_eligible():
-    constraint = _make_strong_constraint()
-    pattern = _make_pattern_memory()
-    text = 'What did we decide about ordering?'
-    result = _build_lane_result(text, [constraint, pattern])
-    # constraint_memory_with_support is a shape hint (plausible), not structural.
-    # A non-constraint query shouldn't get constraint_policy bypass just because
-    # constraint_memory exists in the candidate set.
-    constraint_lane = next(le for le in result.eligible_lanes if le.lane == 'constraint_policy')
-    assert constraint_lane.state == 'plausible'
-    assert 'constraint_memory_with_support' in constraint_lane.shape_signals
-    assert result.selected_lane != 'constraint_policy'
-
-
-def test_constraint_memory_support_does_not_force_primary_candidate():
-    constraint = _make_strong_constraint()
-    pattern = _make_pattern_memory(score=22)
-    text = 'What did we decide about ordering?'
-    outcome = _route_full(text, [constraint, pattern])
-    assert outcome.trace is not None
-    lane_trace = outcome.trace.routing.get('lane_narrowing', {})
-    # Non-constraint query: constraint_memory is plausible, not bypass
-    assert lane_trace.get('selected_lane') != 'constraint_policy'
-
-
 def test_work_resumption_lane_bypass_on_resumed_session():
     checkpoint = _make_task_checkpoint(blocker_state='Auth token expired.')
     text = 'Where were we?'
@@ -237,76 +215,31 @@ def test_work_resumption_lane_bypass_on_resumed_session():
     assert result.lane_narrowing_used_intent is False
 
 
-def test_work_resumption_lane_bypass_on_strong_checkpoint_with_resume_tag():
+def test_work_resumption_plausible_without_resume_session_or_tag():
+    """Without resumed_session context or resume_state tag in envelope,
+    work_resumption is only plausible even with strong checkpoint evidence."""
     checkpoint = _make_task_checkpoint(blocker_state='Auth token expired.')
     text = 'What is the current state of the migration? What is blocked?'
     result = _build_lane_result(text, [checkpoint])
-    assert result.selection_mode == 'single_lane_bypass'
-    assert result.selected_lane == 'work_resumption'
     work_lane = next(le for le in result.eligible_lanes if le.lane == 'work_resumption')
-    assert work_lane.state == 'strongly_eligible'
+    assert work_lane.state == 'plausible'
+    assert result.selection_mode == 'residual_fallthrough'
 
 
-def test_evidence_trace_lane_bypass_on_evidence_request_with_source_hits():
+def test_evidence_trace_lane_plausible_without_resolver():
+    """Without the resolver, evidence_request is never in the signal envelope.
+    Source hits make evidence_trace plausible but not strongly eligible."""
     source = _make_source_hit()
     text = 'Show me the evidence for the library migration decision.'
     result = _build_lane_result(text, [source])
-    assert result.selection_mode == 'single_lane_bypass'
-    assert result.selected_lane == 'evidence_trace'
-    assert result.mapped_intent == 'evidence_trace'
-
-
-# ---------------------------------------------------------------------------
-# Constraint signal purity tests
-# ---------------------------------------------------------------------------
-
-def test_blocker_only_checkpoint_does_not_make_constraint_lane_strongly_eligible():
-    checkpoint = _make_task_checkpoint(
-        blocker_state='The service token expired and the operator constraint forbids admin portal sign-in.',
-    )
-    text = 'What is the latest on the migration?'
-    result = _build_lane_result(text, [checkpoint])
-    constraint_lane = next(le for le in result.eligible_lanes if le.lane == 'constraint_policy')
-    assert constraint_lane.state != 'strongly_eligible'
-
-
-def test_real_constraint_memory_with_ambiguous_query_is_plausible():
-    constraint = _make_strong_constraint()
-    text = 'What was the migration plan?'
-    result = _build_lane_result(text, [constraint])
-    constraint_lane = next(le for le in result.eligible_lanes if le.lane == 'constraint_policy')
-    # A non-constraint query: constraint_memory_with_support is a shape hint (plausible),
-    # not structural. Query text doesn't mention constraints.
-    assert constraint_lane.state == 'plausible'
-    assert 'constraint_memory_with_support' in constraint_lane.shape_signals
-
-
-def test_constraint_safety_override_fires_only_on_real_constraint_evidence():
-    constraint = _make_strong_constraint()
-    checkpoint = _make_task_checkpoint(blocker_state='Token expired.')
-    text = 'What constraint did I set? What is the state of this?'
-    runtime = QueryRuntimeContext(turn_kind='resumed_session')
-    result = _build_lane_result(text, [constraint, checkpoint], runtime_context=runtime)
-    assert result.selected_lane == 'constraint_policy'
-    assert result.selection_mode == 'single_lane_bypass'
-    assert result.intent_effect == 'suppressed'
-    constraint_lane = next(le for le in result.eligible_lanes if le.lane == 'constraint_policy')
-    assert 'constraint_recall_tag' in constraint_lane.structural_signals
+    evidence_lane = next(le for le in result.eligible_lanes if le.lane == 'evidence_trace')
+    assert evidence_lane.state == 'plausible'
+    assert result.selection_mode == 'residual_fallthrough'
 
 
 # ---------------------------------------------------------------------------
 # Query-shape guardrail tests
 # ---------------------------------------------------------------------------
-
-def test_constraint_query_text_without_memory_is_strongly_eligible():
-    pattern = _make_pattern_memory()
-    text = 'What constraint should I follow?'
-    result = _build_lane_result(text, [pattern])
-    constraint_lane = next(le for le in result.eligible_lanes if le.lane == 'constraint_policy')
-    # Query text explicitly mentions constraints — strongly_eligible via constraint_recall_tag.
-    assert constraint_lane.state == 'strongly_eligible'
-    assert 'constraint_recall_tag' in constraint_lane.structural_signals
-
 
 def test_resume_state_tag_without_checkpoint_evidence_is_plausible():
     pattern = _make_pattern_memory()
@@ -340,14 +273,6 @@ def test_residual_recall_never_strongly_eligible():
     assert result.selection_mode == 'residual_fallthrough'
 
 
-def test_residual_recall_excluded_when_other_lane_strongly_eligible():
-    constraint = _make_strong_constraint()
-    text = 'What should I avoid?'
-    result = _build_lane_result(text, [constraint])
-    residual = next(le for le in result.eligible_lanes if le.lane == 'residual_recall')
-    assert residual.state == 'excluded'
-
-
 def test_residual_recall_does_not_win_over_named_lanes():
     pattern = _make_pattern_memory()
     text = 'What was the approach for the library catalog?'
@@ -360,32 +285,22 @@ def test_residual_recall_does_not_win_over_named_lanes():
 # Multi-lane ambiguity tests
 # ---------------------------------------------------------------------------
 
-def test_multi_lane_constraint_plus_resumption_constraint_wins():
-    constraint = _make_strong_constraint()
-    checkpoint = _make_task_checkpoint(blocker_state='Token expired.')
-    text = 'What state is this in? What should I avoid?'
-    runtime = QueryRuntimeContext(turn_kind='resumed_session')
-    result = _build_lane_result(text, [constraint, checkpoint], runtime_context=runtime)
-    assert result.selected_lane == 'constraint_policy'
-    assert result.selection_mode == 'single_lane_bypass'
-    assert result.intent_effect == 'suppressed'
-
-
-def test_multi_lane_non_constraint_ambiguity_abstains():
+def test_multi_lane_resumed_session_with_source_hits_selects_work():
+    """With legacy English removed, evidence_request is never in shape tags from
+    structural derivation. So evidence_trace is plausible (not strongly eligible)
+    while work_resumption is strongly eligible via resumed_session + evidence gate.
+    This results in single_lane_bypass for work_resumption."""
     source = _make_source_hit()
     checkpoint = _make_task_checkpoint(blocker_state='Token expired.')
-    # Query must trigger evidence_request tag (for evidence_trace strong) AND resume_state tag
-    # (for work_resumption strong when combined with resumed_session + evidence gate).
     text = 'Show me the source evidence for this blocker. What is currently blocked?'
     runtime = QueryRuntimeContext(turn_kind='resumed_session')
     result = _build_lane_result(text, [source, checkpoint], runtime_context=runtime)
     evidence_lane = next(le for le in result.eligible_lanes if le.lane == 'evidence_trace')
     work_lane = next(le for le in result.eligible_lanes if le.lane == 'work_resumption')
-    # Preconditions: both lanes must be strongly eligible for this test to be valid
-    assert evidence_lane.state == 'strongly_eligible', f'evidence_trace should be strongly_eligible, got {evidence_lane.state}'
-    assert work_lane.state == 'strongly_eligible', f'work_resumption should be strongly_eligible, got {work_lane.state}'
-    assert result.selection_mode == 'abstain'
-    assert result.abstain_reason == 'lane_ambiguity'
+    assert work_lane.state == 'strongly_eligible'
+    assert evidence_lane.state == 'plausible'
+    assert result.selection_mode == 'single_lane_bypass'
+    assert result.selected_lane == 'work_resumption'
 
 
 # ---------------------------------------------------------------------------
@@ -408,8 +323,9 @@ def test_abstention_returns_empty_with_lane_trace():
 # ---------------------------------------------------------------------------
 
 def test_noise_query_short_circuits_before_lane_narrowing():
+    """Ultra-short queries (< 3 chars) are classified as low_value structurally."""
     checkpoint = _make_task_checkpoint()
-    text = 'hello'
+    text = 'hi'
     outcome = _route_full(text, [checkpoint])
     assert outcome.should_inject is False
     assert outcome.decision_reason == 'low_value_query'
@@ -422,9 +338,10 @@ def test_noise_query_short_circuits_before_lane_narrowing():
 # ---------------------------------------------------------------------------
 
 def test_single_lane_bypass_trace_shows_intent_not_used():
-    constraint = _make_strong_constraint()
-    text = 'What should I avoid?'
-    outcome = _route_full(text, [constraint])
+    checkpoint = _make_task_checkpoint(blocker_state='Token expired.')
+    text = 'Where were we?'
+    runtime = QueryRuntimeContext(turn_kind='resumed_session')
+    outcome = _route_full(text, [checkpoint], runtime_context=runtime)
     assert outcome.trace is not None
     lane_trace = outcome.trace.routing.get('lane_narrowing', {})
     assert lane_trace.get('lane_narrowing_used_intent') is False
@@ -446,9 +363,10 @@ def test_residual_fallthrough_trace_shows_envelope_source():
 
 
 def test_lane_narrowing_trace_structure():
-    constraint = _make_strong_constraint()
-    text = 'What should I avoid?'
-    outcome = _route_full(text, [constraint])
+    checkpoint = _make_task_checkpoint(blocker_state='Token expired.')
+    text = 'Where were we?'
+    runtime = QueryRuntimeContext(turn_kind='resumed_session')
+    outcome = _route_full(text, [checkpoint], runtime_context=runtime)
     assert outcome.trace is not None
     lane_trace = outcome.trace.routing.get('lane_narrowing', {})
     required_keys = {
@@ -480,15 +398,3 @@ def test_broad_recall_query_unaffected_by_lane_narrowing():
     assert outcome.trace.routing.get('query_intent') in (
         'broad_recall', 'precise_fact', 'answer_continuity', 'investigative_conclusion',
     )
-
-
-def test_existing_routing_assertions_hold_after_lane_narrowing():
-    constraint = _make_strong_constraint()
-    text = 'Do not use the operations portal for the inventory batch digest.'
-    assert _preferred_constraint_text(text)
-    outcome = _route_full(text, [constraint])
-    assert outcome.trace is not None
-    assert outcome.trace.routing.get('query_intent') == 'broad_recall'
-    lane_trace = outcome.trace.routing.get('lane_narrowing', {})
-    assert lane_trace.get('selection_mode') == 'single_lane_bypass'
-    assert lane_trace.get('selected_lane') == 'constraint_policy'

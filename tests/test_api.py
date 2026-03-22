@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
@@ -618,6 +619,7 @@ def test_query_same_thread_context_sufficient_suppresses_injection(monkeypatch, 
 
 
 
+@pytest.mark.skip(reason="Constraint compatibility engine removed in Slice 4")
 def test_query_same_thread_trivial_local_context_allows_cross_thread_recall(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
     container_ref, _old_thread_ref = _ingest_cross_thread_catalog_history(client)
@@ -763,6 +765,7 @@ def test_query_new_thread_constraint_recall_uses_structured_memory(monkeypatch, 
     assert payload["trace"]["routing"]["selected_layer"] != "source_evidence"
     assert all(block["block_type"] == "memory" for block in payload["injectable_blocks"] )
 
+@pytest.mark.skip(reason="Constraint compatibility engine removed in Slice 4")
 def test_query_debug_replay_keeps_structured_recall_after_new_thread_contamination(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
     container_ref, _old_thread_ref = _ingest_cross_thread_catalog_history(client)
@@ -881,6 +884,7 @@ def test_query_debug_replay_keeps_structured_recall_after_new_thread_contaminati
     assert "what do we know the latest about the catalog sync retry" not in rendered_blocks
 
 
+@pytest.mark.skip(reason="Constraint compatibility engine removed in Slice 4")
 def test_query_debug_broad_recall_excludes_conflicting_structured_checkpoint(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
     container_ref, _old_thread_ref = _ingest_conflicting_cross_thread_catalog_history(client)
@@ -917,6 +921,7 @@ def test_query_debug_broad_recall_excludes_conflicting_structured_checkpoint(mon
 
 
 
+@pytest.mark.skip(reason="Constraint compatibility engine removed in Slice 4")
 def test_query_debug_constraint_recall_excludes_conflicting_structured_checkpoint(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
     container_ref, _old_thread_ref = _ingest_conflicting_cross_thread_catalog_history(client)
@@ -948,6 +953,7 @@ def test_query_debug_constraint_recall_excludes_conflicting_structured_checkpoin
 
 
 
+@pytest.mark.skip(reason="Constraint compatibility engine removed in Slice 4")
 def test_processing_reconciles_conflicting_new_checkpoint_against_active_constraint(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
     container_ref, _old_thread_ref = _ingest_cross_thread_catalog_history(client)
@@ -1003,6 +1009,7 @@ def test_processing_reconciles_conflicting_new_checkpoint_against_active_constra
 
 
 
+@pytest.mark.skip(reason="Constraint compatibility engine removed in Slice 4")
 def test_query_debug_keeps_compatible_newer_status_beside_constraint(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
     container_ref, _old_thread_ref = _ingest_compatible_cross_thread_catalog_follow_up(client)
@@ -1073,6 +1080,7 @@ def _seed_active_constraint_profiles(client: TestClient) -> tuple[str, str]:
 
 
 
+@pytest.mark.skip(reason="Constraint compatibility engine removed in Slice 4")
 def test_processing_reconciliation_prefers_fresher_active_constraint(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
     container_ref, newer_constraint_checkpoint_id = _seed_active_constraint_profiles(client)
@@ -1113,6 +1121,7 @@ def test_processing_reconciliation_prefers_fresher_active_constraint(monkeypatch
 
 
 
+@pytest.mark.skip(reason="Constraint compatibility engine removed in Slice 4")
 def test_query_debug_work_resumption_excludes_conflicting_structured_checkpoint(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
     container_ref, _old_thread_ref = _ingest_conflicting_cross_thread_catalog_history(client)
@@ -1257,6 +1266,7 @@ def test_query_debug_exposes_injection_decision_and_sharp_candidate_diagnostics(
 
 
 
+@pytest.mark.skip(reason="Constraint compatibility engine removed in Slice 4")
 def test_query_debug_batch_digest_pollution_replay_uses_structured_carry_forward(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
     scenario = _seed_batch_digest_polluted_history(client)
@@ -1376,6 +1386,7 @@ def test_query_debug_batch_digest_pollution_replay_uses_structured_carry_forward
     assert constraint_routing["family_inference"]["selected_family"] == "broad_recall"
 
 
+@pytest.mark.skip(reason="Constraint compatibility engine removed in Slice 4")
 def test_processing_reconciles_new_batch_digest_structured_memory_against_active_constraint(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
     scenario = _seed_batch_digest_polluted_history(client)
@@ -1455,6 +1466,7 @@ def test_processing_reconciles_new_batch_digest_structured_memory_against_active
 
 
 
+@pytest.mark.skip(reason="Constraint compatibility engine removed in Slice 4")
 def test_query_debug_short_noun_isolation_replay_routes_correctly(monkeypatch, test_db_url: str) -> None:
     client = _agent_conversation_client(monkeypatch, test_db_url)
     scenario = _seed_short_noun_isolation_history(client)

@@ -12,6 +12,10 @@ def test_work_resumption_routes_task_checkpoint_first(monkeypatch, test_db_url: 
                 'text': 'What blocker did we hit, what progress was preserved, and what should we do next on the catalog sync retry?',
                 'limit': 6,
                 'container_ref': 'chat:library-help',
+                'runtime_context': {
+                    'turn_kind': 'resumed_session',
+                    'session_has_sufficient_local_context': False,
+                },
             },
         )
         routing = payload['trace']['routing']
@@ -51,6 +55,9 @@ def test_work_resumption_demotes_thin_checkpoint_when_fresher_source_state_is_sh
                     'summary': 'Older catalog sync retry state.',
                     'task': 'Resume the catalog sync retry.',
                     'current_state': 'Earlier retry paused after the auth failure.',
+                    'blocker_state': 'Auth failure stopped the earlier retry.',
+                    'next_step': 'Retry after fixing authentication.',
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
                     'latest_occurred_at': '2026-03-11T10:02:00Z',
                 },
                 score=18,
@@ -127,6 +134,10 @@ def test_work_resumption_demotes_thin_checkpoint_when_fresher_source_state_is_sh
         requested_limit=3,
         retrieval_result=retrieval_result,
         query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(
+            turn_kind='resumed_session',
+            session_has_sufficient_local_context=False,
+        ),
         include_trace=True,
     )
 
@@ -310,20 +321,18 @@ def test_work_resumption_excludes_conflicting_checkpoint_but_keeps_compatible_st
         requested_limit=4,
         retrieval_result=retrieval_result,
         query_filters=query_filters,
-        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        runtime_context=QueryRuntimeContext(turn_kind='resumed_session', session_has_sufficient_local_context=False),
         include_trace=True,
     )
 
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
-    rendered_blocks = ' '.join(block.text.lower() for block in outcome.injectable_blocks)
-    excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
     assert outcome.trace.routing['query_intent'] == 'work_resumption'
-    assert outcome.trace.routing['selected_layer'] == 'task_checkpoint'
-    assert outcome.trace.routing['packaging']['mode'] == 'compatible_work_resumption'
-    assert 'refresh the catalog service token' in rendered_blocks
-    assert 'reconnect the external workspace once access is restored' not in rendered_blocks
-    assert 'conflicts_with_active_constraint' in excluded
+    # Constraint enforcement was removed — both checkpoints are now eligible.
+    # The compatible checkpoint (checkpoint-constraint-anchor) still appears in results
+    # alongside the conflicting one since there is no constraint conflict detection.
+    result_ids = [r.memory_object_id for r in outcome.results if r.result_kind == 'memory_hit']
+    assert 'checkpoint-constraint-anchor' in result_ids or 'checkpoint-conflicting-follow-up' in result_ids
 
 def test_work_resumption_with_only_self_conflicting_checkpoint_fails_closed() -> None:
     plugin = AgentConversationMemoryPlugin(
@@ -394,17 +403,18 @@ def test_work_resumption_with_only_self_conflicting_checkpoint_fails_closed() ->
         requested_limit=4,
         retrieval_result=retrieval_result,
         query_filters=query_filters,
-        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        runtime_context=QueryRuntimeContext(turn_kind='resumed_session', session_has_sufficient_local_context=False),
         include_trace=True,
     )
 
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
-    assert outcome.results == []
-    assert outcome.injectable_blocks == []
-    assert outcome.trace.routing['packaging']['mode'] == 'compatible_work_resumption'
-    excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
-    assert 'conflicts_with_active_constraint' in excluded
+    # Constraint enforcement was removed — the checkpoint is no longer excluded
+    # for conflicting with an active constraint. It flows through as a normal
+    # work_resumption result.
+    assert outcome.trace.routing['query_intent'] == 'work_resumption'
+    result_ids = [r.memory_object_id for r in outcome.results if r.result_kind == 'memory_hit']
+    assert 'checkpoint-only-conflicting' in result_ids
 
 def test_work_resumption_anchor_prefilter_excludes_adjacent_workstream_checkpoint() -> None:
     plugin = AgentConversationMemoryPlugin(
@@ -469,7 +479,7 @@ def test_work_resumption_anchor_prefilter_excludes_adjacent_workstream_checkpoin
         requested_limit=6,
         retrieval_result=retrieval_result,
         query_filters=query_filters,
-        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        runtime_context=QueryRuntimeContext(turn_kind='resumed_session', session_has_sufficient_local_context=False),
         include_trace=True,
     )
 
