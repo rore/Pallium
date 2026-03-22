@@ -64,8 +64,6 @@ class SemanticPackageConfig:
     consolidation: ConsolidationPolicy | None = None
     resolver_enabled: bool = True
     resolver_timeout_ms: int = 800
-    signal_classifier_enabled: bool = True
-    signal_classifier_timeout_ms: int = 600
 
 
 @dataclass(frozen=True)

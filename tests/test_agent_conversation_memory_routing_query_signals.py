@@ -98,7 +98,6 @@ def _envelope(text, candidates, runtime_context=None):
     return _derive_query_signal_envelope(
         text=text, query_tokens=tokens, policy_evidence=pe, candidate_evidence=ce,
         anchor_prefiltered_candidates=candidates, runtime_context=runtime_context,
-        signal_classifier_config=None,
     )
 
 
@@ -271,3 +270,77 @@ def test_legacy_english_detects_constraint():
     )
     assert env.constraint_lookup is True
     assert env.legacy_english_fallback_used is True
+
+
+# --- Evidence trace override tests ---
+
+def test_evidence_override_skips_when_already_detected():
+    from semantic.agent_conversation_memory_routing import _check_evidence_trace_override
+    env = QuerySignalEnvelope(
+        low_value=False, history_lookup=False, latest_status_request=False,
+        resume_state=False, constraint_lookup=False, evidence_request=True,
+        source='legacy_english_fallback', confidence='high',
+    )
+    result = _check_evidence_trace_override(
+        envelope=env, source_ratio=0.5, query_text='show proof',
+        candidates=[], runtime_context=None, resolver_config={'resolver_enabled': True, 'provider': None},
+    )
+    assert result is env  # unchanged
+
+
+def test_evidence_override_skips_when_source_ratio_low():
+    from semantic.agent_conversation_memory_routing import _check_evidence_trace_override
+    env = QuerySignalEnvelope(
+        low_value=False, history_lookup=False, latest_status_request=False,
+        resume_state=False, constraint_lookup=False, evidence_request=False,
+        source='structural', confidence='medium',
+    )
+    result = _check_evidence_trace_override(
+        envelope=env, source_ratio=0.1, query_text='show proof',
+        candidates=[], runtime_context=None, resolver_config={'resolver_enabled': True, 'provider': None},
+    )
+    assert result.evidence_request is False  # unchanged
+
+
+def test_evidence_override_skips_when_constraint_won():
+    from semantic.agent_conversation_memory_routing import _check_evidence_trace_override
+    env = QuerySignalEnvelope(
+        low_value=False, history_lookup=False, latest_status_request=False,
+        resume_state=False, constraint_lookup=True, evidence_request=False,
+        source='structural', confidence='high',
+    )
+    result = _check_evidence_trace_override(
+        envelope=env, source_ratio=0.5, query_text='show proof',
+        candidates=[], runtime_context=None, resolver_config={'resolver_enabled': True, 'provider': None},
+    )
+    assert result.evidence_request is False  # constraint wins
+
+
+def test_evidence_override_skips_when_resolver_disabled():
+    from semantic.agent_conversation_memory_routing import _check_evidence_trace_override
+    env = QuerySignalEnvelope(
+        low_value=False, history_lookup=False, latest_status_request=False,
+        resume_state=False, constraint_lookup=False, evidence_request=False,
+        source='structural', confidence='medium',
+    )
+    result = _check_evidence_trace_override(
+        envelope=env, source_ratio=0.5, query_text='show proof',
+        candidates=[], runtime_context=None, resolver_config=None,
+    )
+    assert result.evidence_request is False
+
+
+def test_evidence_override_falls_back_without_live_provider():
+    """Resolver with no LLM provider returns FALLBACK, so evidence_request stays False."""
+    from semantic.agent_conversation_memory_routing import _check_evidence_trace_override
+    env = QuerySignalEnvelope(
+        low_value=False, history_lookup=False, latest_status_request=False,
+        resume_state=False, constraint_lookup=False, evidence_request=False,
+        source='structural', confidence='medium',
+    )
+    result = _check_evidence_trace_override(
+        envelope=env, source_ratio=0.5, query_text='show me the proof',
+        candidates=[_make_source(), _make_decision()], runtime_context=None,
+        resolver_config={'resolver_enabled': True, 'provider': None, 'resolver_timeout_ms': 100},
+    )
+    assert result.evidence_request is False  # FALLBACK — no live provider

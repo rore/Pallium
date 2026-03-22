@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from semantic.agent_conversation_memory_resolver_prompts import get_qar_variant_text
+from semantic.agent_conversation_memory_resolver_prompts import DEFAULT_QAR_VARIANT, get_qar_variant_text
 
 
 @dataclass(frozen=True)
@@ -45,19 +45,29 @@ def resolve_query_ambiguity(
     *,
     provider: object,
     model: str | None,
-    prompt_variant: str,
+    prompt_variant: str | None,
     resolver_packet: ResolverPacket,
     timeout_ms: int = 800,
 ) -> ResolverResult:
-    """Resolve query ambiguity via LLM call. Falls back on any failure."""
+    """Resolve query ambiguity via LLM call. Falls back on any failure.
+
+    When ``prompt_variant`` is None the variant is selected from
+    :data:`AMBIGUITY_PAIR_PROMPT_VARIANTS` using the packet's
+    ``ambiguity_pair_type``, falling back to the default variant.
+    """
     import time
+
+    resolved_variant = prompt_variant or AMBIGUITY_PAIR_PROMPT_VARIANTS.get(
+        resolver_packet.ambiguity_pair_type,
+        DEFAULT_QAR_VARIANT,
+    )
 
     start = time.monotonic()
     try:
         result = _invoke_resolver(
             provider=provider,
             model=model,
-            prompt_variant=prompt_variant,
+            prompt_variant=resolved_variant,
             packet=resolver_packet,
             timeout_ms=timeout_ms,
         )
@@ -245,6 +255,14 @@ OPTION_FAMILY_PREFERRED_LAYERS: dict[str, tuple[str, ...]] = {
     "latest_status": ("thread_summary", "discussion_summary", "continuity_memory", "pattern_memory"),
     "check_constraints": ("constraint_memory", "task_checkpoint"),
     "recall_fact": ("pattern_memory", "investigation_outcome", "decision", "continuity_memory"),
+    "evidence_trace": ("source_evidence", "investigation_outcome", "decision"),
+}
+
+
+AMBIGUITY_PAIR_PROMPT_VARIANTS: dict[str, str] = {
+    "latest_status_vs_resume_work": "qar_v1_compact_contract",
+    "check_constraints_vs_recall_fact": "qar_v1_compact_contract",
+    "evidence_trace_vs_recall": "qar_v1_evidence_vs_recall",
 }
 
 
