@@ -7,6 +7,10 @@ from app.config import AppConfig
 from evals.consolidation_strategy_runner import run_consolidation_strategy_comparison
 from tests.stub_providers import TieredMemoryAnswerProvider, TieredMemorySemanticProvider
 
+import pytest
+
+pytestmark = pytest.mark.slow
+
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]

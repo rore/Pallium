@@ -13,6 +13,9 @@ from tests.stub_providers import (
     TieredMemorySemanticProvider,
 )
 from tests.test_work_resumption_benchmark import StubWorkResumptionAnswerProvider
+import pytest
+
+pytestmark = pytest.mark.slow
 
 WORK_SCENARIOS = Path('evals/work_resumption/scenarios.json')
 MEMORY_ROUTING_SCENARIOS = Path('evals/memory_routing/scenarios.json')

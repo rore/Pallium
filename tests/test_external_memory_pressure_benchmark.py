@@ -6,6 +6,9 @@ from pathlib import Path
 from app.config import AppConfig
 from evals.external_memory_pressure_benchmark import run_external_memory_pressure_benchmark
 from tests.stub_providers import TieredMemorySemanticProvider
+import pytest
+
+pytestmark = pytest.mark.slow
 
 FIXTURE = Path('tests/fixtures/external_memory_pressure_longmemeval_sample.json')
 MANIFEST = Path('evals/external_memory_pressure/longmemeval_review_manifest.json')

@@ -6,6 +6,9 @@ from pathlib import Path
 from app.config import AppConfig
 from evals.recurring_question_benchmark import run_recurring_question_benchmark
 from tests.stub_providers import TieredMemoryAnswerProvider, TieredMemorySemanticProvider
+import pytest
+
+pytestmark = pytest.mark.slow
 
 
 SCENARIOS = Path('evals/recurring_question/scenarios.json')

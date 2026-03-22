@@ -8,6 +8,9 @@ from tests.config_helpers import build_llm_test_config
 from evals.work_resumption_benchmark import run_work_resumption_benchmark
 from providers.llm.base import LLMJsonResponse
 from tests.stub_providers import TieredMemorySemanticProvider
+import pytest
+
+pytestmark = pytest.mark.slow
 
 
 SCENARIOS = Path("evals/work_resumption/scenarios.json")

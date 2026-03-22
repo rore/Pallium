@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from sqlalchemy import select
 
@@ -88,7 +89,8 @@ class SQLiteSearchMixin:
             return self._source_item_matches_filters(self.get_source_item(target_id), filters)
         if target_kind == "memory_object":
             evidence = self.get_evidence_for_memory_object(target_id)
-            return any(self._evidence_matches_filters(item, filters) for item in evidence)
+            memory_filters = replace(filters, thread_ref=None) if filters.thread_ref is not None else filters
+            return any(self._evidence_matches_filters(item, memory_filters) for item in evidence)
         return True
 
     def _target_visibility(self, target_kind: str, target_id: str) -> tuple[str | None, str | None]:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from providers.embedding.base import EmbeddingProvider
 
@@ -11,6 +12,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL_REPO = "BAAI/bge-small-en-v1.5"
 DEFAULT_ONNX_FILE = "onnx/model.onnx"
 DEFAULT_TOKENIZER_FILE = "tokenizer.json"
+
+# Process-level cache: keyed by (model_path, tokenizer_path).
+# ort.InferenceSession and Tokenizer are stateless after init — safe to share
+# across provider instances within the same process.
+_SESSION_CACHE: dict[tuple[str, str], tuple[Any, Any]] = {}
 
 
 class OnnxEmbeddingProvider(EmbeddingProvider):
@@ -57,11 +63,16 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
             model, onnx_file, tokenizer_file, cache_dir
         )
 
-        # Load ONNX session and tokenizer
-        self._session = ort.InferenceSession(
-            model_path, providers=["CPUExecutionProvider"]
-        )
-        self._tokenizer = Tokenizer.from_file(tokenizer_path)
+        cache_key = (model_path, tokenizer_path)
+        if cache_key in _SESSION_CACHE:
+            self._session, self._tokenizer = _SESSION_CACHE[cache_key]
+        else:
+            # Load ONNX session and tokenizer
+            self._session = ort.InferenceSession(
+                model_path, providers=["CPUExecutionProvider"]
+            )
+            self._tokenizer = Tokenizer.from_file(tokenizer_path)
+            _SESSION_CACHE[cache_key] = (self._session, self._tokenizer)
 
         # Determine dimensions
         if dimensions is not None:

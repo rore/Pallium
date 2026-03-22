@@ -6,6 +6,9 @@ from pathlib import Path
 from tests.config_helpers import build_llm_test_config
 from evals.public_corpus_benchmark import run_public_corpus_benchmark
 from tests.stub_providers import PublicCorpusAnswerProvider, PublicCorpusSemanticProvider
+import pytest
+
+pytestmark = pytest.mark.slow
 
 
 FIXTURE = Path('tests/fixtures/wildchat_export_sample.jsonl')

@@ -20,3 +20,13 @@ Repo-level non-negotiables:
 - delegated work is not complete until it has been reviewed, findings have been addressed, and roadmap/docs have been aligned when the feature status changed
 - if `apply_patch` fails because of sandbox or environment limitations on this machine, delegated workers may use the smallest deterministic local file-write fallback and must report that fallback explicitly
 
+Test marking — any new test file that falls into one of these categories MUST be marked `pytestmark = pytest.mark.slow` at module level:
+
+- **eval harnesses**: tests that run scenario files through a full pipeline and assert on aggregate metrics (e.g. `run_*_benchmark`, `run_*_validation`, `run_*_scenarios`)
+- **polling wait loops**: tests that use `BackgroundProcessor`, `wait_for_item_processing`, or any sleep/poll loop with a timeout
+- **corpus/dataset runners**: tests that load external fixtures or large datasets and iterate over them
+
+Add `import pytest` if not already present. The `slow` marker is registered in `pyproject.toml`. The default `pytest tests/` run excludes slow tests (`addopts = "-m 'not slow' -n 4 --import-mode=importlib"`). Run them explicitly with `pytest tests/ -m slow`.
+
+Test vector index — the shared test helpers (`build_llm_test_config` in `tests/config_helpers.py`, the `client` fixture in `tests/conftest.py`) use `VectorIndexConfig(enabled=False)` by default. Do not change this. Tests that specifically exercise vector retrieval, embedding, or composite retrieval must create their own `AppConfig` with an explicit `VectorIndexConfig(enabled=True, index_path=...)`. This keeps the default test run fast (~20s) by avoiding ONNX model inference and usearch index creation in tests that don't need them.
+

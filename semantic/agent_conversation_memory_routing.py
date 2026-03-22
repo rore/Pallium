@@ -3266,7 +3266,8 @@ def _candidate_is_low_value(candidate: dict[str, object]) -> bool:
     item = candidate["item"]
     assert isinstance(item, QueryResultItem)
     if item.result_kind == "source_hit":
-        return _is_low_value_meta_text(str(item.excerpt or ""))
+        excerpt = str(item.excerpt or "")
+        return _is_low_value_meta_text(excerpt)
     if item.type in {"discussion_summary", "thread_summary"}:
         payload = item.payload or {}
         return _is_low_value_meta_text(str(payload.get("summary") or ""))

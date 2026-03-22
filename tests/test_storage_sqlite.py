@@ -317,6 +317,7 @@ def _initialize_sqlite_storage_process(database_url: str, result_queue) -> None:
     result_queue.put("ok")
 
 
+@pytest.mark.slow
 def test_sqlite_storage_provider_serializes_schema_initialization(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'concurrent-startup.db'}"
     context = multiprocessing.get_context("spawn")

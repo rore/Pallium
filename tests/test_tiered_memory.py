@@ -24,10 +24,18 @@ def _build_client(monkeypatch, sqlite_url: str) -> TestClient:
 
     def post_with_public_visibility(url: str, *args, **kwargs):
         payload = kwargs.get('json')
-        if isinstance(payload, dict) and url in {'/items', '/query', '/query/debug'} and 'container_visibility' not in payload:
-            payload = dict(payload)
-            payload['container_visibility'] = 'public'
-            kwargs['json'] = payload
+        if url in {'/items', '/query', '/query/debug'}:
+            if isinstance(payload, dict) and 'container_visibility' not in payload:
+                payload = dict(payload)
+                payload['container_visibility'] = 'public'
+                kwargs['json'] = payload
+            elif isinstance(payload, list):
+                payload = [
+                    {**item, 'container_visibility': item.get('container_visibility', 'public')}
+                    if isinstance(item, dict) else item
+                    for item in payload
+                ]
+                kwargs['json'] = payload
         response = original_post(url, *args, **kwargs)
         if url == '/items' and response.status_code == 200:
             client.app.state.pallium_service.drain_processing_queue(worker_id='tiered-test')
@@ -40,7 +48,7 @@ def _build_client(monkeypatch, sqlite_url: str) -> TestClient:
 def _ingest_prior_events(client: TestClient, scenario_id: str) -> dict[str, object]:
     scenario = next(item for item in _load_scenarios() if item['scenario_id'] == scenario_id)
     for event in scenario['prior_events']:
-        response = client.post('/items', json=event)
+        response = client.post('/items', json=[event])
         assert response.status_code == 200
     return scenario
 
@@ -117,7 +125,7 @@ def test_task_checkpoint_preserves_work_state_and_evidence(monkeypatch, test_db_
             {'source_type': 'assistant_artifact', 'source_id': 'task-checkpoint-artifact-2', 'content_type': 'text/plain', 'content': 'Blocked: catalog API returned 401 because the service token expired.', 'artifact_kind': 'tool_use_summary', 'role': 'assistant', 'container_ref': 'chat:library-help', 'thread_ref': 'chat:library-help:thread-task-checkpoint-001'},
             {'source_type': 'assistant_artifact', 'source_id': 'task-checkpoint-artifact-3', 'content_type': 'text/plain', 'content': 'Next step: refresh the catalog service token and rerun the sync from batch 313.', 'artifact_kind': 'todo_snapshot', 'role': 'assistant', 'container_ref': 'chat:library-help', 'thread_ref': 'chat:library-help:thread-task-checkpoint-001'},
         ):
-            response = client.post('/items', json=payload)
+            response = client.post('/items', json=[payload])
             assert response.status_code == 200
 
         storage = client.app.state.pallium_service._storage

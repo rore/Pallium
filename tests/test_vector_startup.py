@@ -327,7 +327,7 @@ class TestModelMismatch:
         assert "model mismatch" in caplog.text.lower()
 
     def test_model_match_with_entries_keeps_vector(self, tmp_path: Path, monkeypatch) -> None:
-        """If the model matches and there are entries, vector is kept."""
+        """If the model matches and entry counts agree, vector is kept."""
         from app.config import EmbeddingProviderConfig
         from storage.vector_index import VectorIndex
 
@@ -338,6 +338,9 @@ class TestModelMismatch:
         mock_index.model_name = "test-model"
 
         stub_provider = StubEmbeddingProvider(model="test-model")
+
+        mock_storage = MagicMock()
+        mock_storage.count_index_entries_by_type.return_value = 5
 
         config = _minimal_config(
             vector_index=VectorIndexConfig(
@@ -360,6 +363,10 @@ class TestModelMismatch:
         monkeypatch.setattr(
             "app.dependencies._load_or_create_vector_index",
             lambda config, provider: mock_index,
+        )
+        monkeypatch.setattr(
+            "app.dependencies.build_storage_provider",
+            lambda config: mock_storage,
         )
 
         service = build_service(config)
@@ -416,8 +423,8 @@ class TestModelMismatch:
 
 class TestCountMismatch:
 
-    def test_count_mismatch_logs_warning(self, tmp_path: Path, monkeypatch, caplog) -> None:
-        """When SQLite and index entry counts differ, a warning is logged but vector stays active."""
+    def test_count_mismatch_logs_error_and_disables_vector(self, tmp_path: Path, monkeypatch, caplog) -> None:
+        """When SQLite and index entry counts differ, an error is logged and vector is disabled."""
         from app.config import EmbeddingProviderConfig
         from storage.vector_index import VectorIndex
 
@@ -459,11 +466,11 @@ class TestCountMismatch:
             lambda config: mock_storage,
         )
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.ERROR):
             service = build_service(config)
 
-        # Vector still active despite mismatch
-        assert isinstance(service._retrieval, CompositeRetrievalProvider)
+        # Vector disabled to prevent native crash
+        assert not isinstance(service._retrieval, CompositeRetrievalProvider)
         assert "mismatch" in caplog.text.lower()
         assert "rebuild-vector-index" in caplog.text.lower()
 

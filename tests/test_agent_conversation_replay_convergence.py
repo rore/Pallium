@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.slow
+
 from tests.agent_conversation_replay_helpers import (
     _agent_conversation_client,
     _drain_processing_queue,

@@ -6,6 +6,9 @@ from pathlib import Path
 from app.config import AppConfig
 from evals.memory_routing_benchmark import run_memory_routing_benchmark
 from tests.stub_providers import TieredMemoryAnswerProvider, TieredMemorySemanticProvider
+import pytest
+
+pytestmark = pytest.mark.slow
 
 
 SCENARIOS = Path('evals/memory_routing/scenarios.json')

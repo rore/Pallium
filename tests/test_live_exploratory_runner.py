@@ -27,6 +27,10 @@ from tools.replay_promotion.promote_to_replay import (
     main as promote_main,
 )
 
+import pytest
+
+pytestmark = pytest.mark.slow
+
 
 def _processing_result(
     source_item_id: str,

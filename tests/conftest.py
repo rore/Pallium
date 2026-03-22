@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 
 from app.config import AppConfig
 from app.main import create_app
-from tests.config_helpers import _vector_index_path_for_sqlite
 
 
 @pytest.fixture()
@@ -23,7 +22,7 @@ def client(test_db_url: str) -> TestClient:
             storage_backend="sqlite",
             sqlite_url=test_db_url,
             default_use_case="demo_agent_memory",
-            vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)),
+            vector_index=VectorIndexConfig(enabled=False),
         )
     )
     return TestClient(app)

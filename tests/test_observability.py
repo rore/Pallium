@@ -24,16 +24,16 @@ class FailingLLMProvider:
 def test_processing_endpoint_includes_observability_summary_fields(client, drain_queue) -> None:
     create_response = client.post(
         "/items",
-        json={
+        json=[{
             "source_type": "decision_note",
             "source_id": "decision-observability-1",
             "content_type": "text/plain",
             "content": "Decision: use item event time ordering so reservation updates are applied deterministically.",
             "artifact_kind": "assistant_output",
             "role": "assistant",
-        },
+        }],
     )
-    source_item_id = create_response.json()["source_item_id"]
+    source_item_id = create_response.json()[0]["source_item_id"]
 
     drain_queue(client)
 
@@ -106,12 +106,12 @@ def test_queue_health_endpoint_reports_unclaimable_pending_and_recent_failure(mo
 
     create_response = client.post(
         "/items",
-        json={
+        json=[{
             "source_type": "decision_note",
             "source_id": "llm-failure-observability-1",
             "content_type": "text/plain",
             "content": "Decision: force the llm plugin failure path.",
-        },
+        }],
     )
     assert create_response.status_code == 200
     client.app.state.pallium_service.drain_processing_queue(worker_id="queue-health", max_attempts=1)
@@ -128,14 +128,15 @@ def test_queue_health_endpoint_reports_unclaimable_pending_and_recent_failure(mo
 def test_query_debug_includes_candidate_flow_and_result_summary(client, drain_queue) -> None:
     client.post(
         "/items",
-        json={
+        json=[{
             "source_type": "decision_note",
             "source_id": "decision-query-trace-1",
             "content_type": "text/plain",
             "content": "Decision: use item event time ordering so reservation updates are applied deterministically.",
             "artifact_kind": "assistant_output",
             "role": "assistant",
-        },
+            "container_visibility": "public",
+        }],
     )
     drain_queue(client)
 
