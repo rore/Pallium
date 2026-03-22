@@ -51,6 +51,24 @@ class VariantAwareStubLLMProvider:
                     "is_low_value_meta": True,
                 }
             )
+        elif any(phrase in user_prompt.lower() for phrase in ('hello, good morning', 'hi there, thanks for checking in')):
+            parsed_json.update(
+                {
+                    "is_low_value_meta": True,
+                }
+            )
+        elif any(phrase in user_prompt.lower() for phrase in ('heartbeat: still alive', 'healthcheck passed')):
+            parsed_json.update(
+                {
+                    "is_low_value_meta": True,
+                }
+            )
+        elif any(phrase in user_prompt.lower() for phrase in ('capabilities: i can help', 'i have many talents')):
+            parsed_json.update(
+                {
+                    "is_low_value_meta": True,
+                }
+            )
         elif 'Constraint: do not open a browser.' in user_prompt:
             parsed_json.update(
                 {
@@ -268,6 +286,36 @@ def test_run_semantic_eval_can_compare_prompt_variants_and_signal_metrics(tmp_pa
     metrics = describe_prompt_variants()
     assert summary["prompt_text_metrics"][DEFAULT_VARIANT]["estimated_tokens"] == metrics[DEFAULT_VARIANT]["estimated_tokens"]
     assert metrics[DEFAULT_VARIANT]["estimated_tokens"] < metrics["strict_typed_memory_v4_evidence_guarded"]["estimated_tokens"]
+
+
+def test_is_low_value_meta_covers_greeting_heartbeat_capability_noise(tmp_path: Path) -> None:
+    """Write-time coverage contract: is_low_value_meta must cover greeting, heartbeat, and capability boilerplate."""
+    input_file = tmp_path / "items.jsonl"
+    output_dir = tmp_path / "output"
+    _write_input_file(
+        input_file,
+        _signal_record("greeting-1", "Hello, good morning!", {"is_low_value_meta": True}),
+        _signal_record("greeting-2", "Hi there, thanks for checking in.", {"is_low_value_meta": True}),
+        _signal_record("heartbeat-1", "Heartbeat: still alive and monitoring.", {"is_low_value_meta": True}),
+        _signal_record("heartbeat-2", "Healthcheck passed, all systems nominal.", {"is_low_value_meta": True}),
+        _signal_record("capability-1", "Capabilities: I can help with code review, debugging, and planning.", {"is_low_value_meta": True}),
+        _signal_record("capability-2", "I have many talents including analysis and summarization.", {"is_low_value_meta": True}),
+        _signal_record("noop-1", "Task complete. No Slack message needed. Nothing new to report.", {"is_low_value_meta": True}),
+    )
+
+    plugin = LLMAgentMemoryPlugin(provider=VariantAwareStubLLMProvider())
+    run_dir = run_semantic_eval(
+        input_file=input_file,
+        output_root=output_dir,
+        plugin=plugin,
+        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant=DEFAULT_VARIANT),
+        run_name="noise-coverage-run",
+    )
+
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["per_variant"][DEFAULT_VARIANT]["signal_cases_total"] == 7
+    assert summary["per_variant"][DEFAULT_VARIANT]["signal_cases_correct"] == 7
+    assert summary["per_variant"][DEFAULT_VARIANT]["signal_metrics"]["is_low_value_meta"]["correct"] == 7
 
 
 def test_run_semantic_eval_parallel_keeps_stable_result_order(tmp_path: Path) -> None:
