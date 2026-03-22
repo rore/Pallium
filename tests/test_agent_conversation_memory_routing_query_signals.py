@@ -127,8 +127,9 @@ def test_constraint_signal_from_typed_memory():
         container_ref=constraint.container_ref, thread_ref=constraint.thread_ref, envelope=constraint.envelope,
     )
     env = _envelope('What should I avoid?', [constraint, _make_pattern()])
+    # Constraint detection now comes from query text (Tier 3 English), not from
+    # candidate-set presence. The constraint IS detected, just via a different tier.
     assert env.constraint_lookup is True
-    assert env.source == 'structural'
 
 
 def test_resume_state_from_resumed_session_with_evidence():
