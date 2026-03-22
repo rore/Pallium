@@ -399,6 +399,90 @@
     "expected_answer_signals": ["duplicate holds", "catalog sync delays"],
     "expected_pattern_signals": ["duplicate holds"],
     "forbidden_terms": ["30-minute batches", "staff inbox spam"]
+  },
+  {
+    "scenario_id": "cross-thread-interest-surfacing",
+    "scenario_kind": "cross_thread_interest_surfacing",
+    "description": "When a user expresses specific interest in a tool during one thread, a follow-up query from another thread should surface the interest memory — not only generic discussion summaries.",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "tmv-thread-interest-msg-1",
+        "content_type": "text/plain",
+        "content": "I need a lightweight way to manage background jobs in our catalog sync pipeline.",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-tmv-interest-001",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://tmv/thread-interest-msg-1",
+        "occurred_at": "2026-03-11T14:00:00Z",
+        "metadata": {"topic": "job_scheduling"}
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "tmv-thread-interest-artifact-1",
+        "content_type": "text/plain",
+        "content": "Celery is the standard choice for Python task queues. For something lighter, APScheduler or RQ are worth considering — RQ is minimal and Redis-backed.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-tmv-interest-001",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://tmv/thread-interest-artifact-1",
+        "occurred_at": "2026-03-11T14:01:00Z",
+        "metadata": {"topic": "job_scheduling"}
+      },
+      {
+        "source_type": "chat_message",
+        "source_id": "tmv-thread-interest-msg-2",
+        "content_type": "text/plain",
+        "content": "RQ sounds interesting, I should check it some time for the sync pipeline.",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-tmv-interest-001",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://tmv/thread-interest-msg-2",
+        "occurred_at": "2026-03-11T14:02:00Z",
+        "metadata": {"topic": "job_scheduling"}
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "tmv-thread-interest-artifact-2",
+        "content_type": "text/plain",
+        "content": "Good choice — RQ is very simple to set up. Let me know if you want a quick example.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-tmv-interest-001",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://tmv/thread-interest-artifact-2",
+        "occurred_at": "2026-03-11T14:03:00Z",
+        "metadata": {"topic": "job_scheduling"}
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "What was that job queue tool I said I wanted to try for the sync pipeline?"
+      }
+    ],
+    "current_query": {
+      "text": "What was that job queue tool I said I wanted to try for the sync pipeline?",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    },
+    "target_question": "What was that job queue tool I said I wanted to try for the sync pipeline?",
+    "preferred_branch": "tiered",
+    "expected_good_strategies": ["container_topic_window"],
+    "expected_higher_level_memory_types_by_strategy": {
+      "container_topic_window": ["interest"]
+    },
+    "expected_answer_signals": ["RQ", "job queue", "sync pipeline"],
+    "expected_pattern_signals": [],
+    "forbidden_terms": []
   }
 ]
 

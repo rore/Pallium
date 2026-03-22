@@ -167,3 +167,35 @@ def test_cross_thread_query_surfaces_user_intent(monkeypatch, test_db_url: str) 
             f'Expected an actionable injectable block mentioning Chroma interest. '
             f'Got blocks: {[(b.get("memory_type"), b.get("text", "")[:80]) for b in injectable_blocks]}'
         )
+
+
+def test_assistant_response_does_not_produce_interest(monkeypatch, test_db_url: str) -> None:
+    """Assistant responses should never produce interest memories — only user messages can."""
+    assistant_events = [
+        {
+            'source_type': 'assistant_artifact',
+            'source_id': f'{THREAD_A}-asst-interest-check',
+            'content_type': 'text/plain',
+            'content': (
+                'Chroma sounds interesting and you should check it out! '
+                'It may be worth looking into for your use case.'
+            ),
+            'artifact_kind': 'assistant_output',
+            'role': 'assistant',
+            'container_ref': CONTAINER_REF,
+            'thread_ref': THREAD_A,
+            'occurred_at': '2026-03-20T18:02:00Z',
+        },
+    ]
+    with _build_client(monkeypatch, test_db_url) as client:
+        response = client.post('/items', json=assistant_events)
+        assert response.status_code == 200
+        client.app.state.pallium_service.drain_processing_queue(worker_id='intent-test')
+
+        storage = client.app.state.pallium_service._storage
+        active_memories = storage.list_memory_objects(lifecycle='active')
+        interest_memories = [m for m in active_memories if m.type == 'interest']
+        assert not interest_memories, (
+            f'Assistant response should not create interest memories, '
+            f'but found: {[m.payload for m in interest_memories]}'
+        )

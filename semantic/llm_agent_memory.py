@@ -28,7 +28,7 @@ A decision exists only when the source explicitly records a concrete choice that
 An investigation_outcome exists only when the source explicitly records an established finding, root cause, conclusion, diagnostic outcome, or evidence-backed analytical verdict.
 Also extract optional internal-only semantic signals when the source explicitly states them: low-value meta chatter, constraints, blocker state, progress state, next step, and key findings. Also extract optional subject_hints when the source explicitly names a durable workstream, component, or surface.
 If the source only states a need, a symptom, a proposal, a preference, a recommendation, a status update, or something to watch, candidate_type must be null.
-An interest exists when the speaker identifies a specific subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject of interest. Examples: "Chroma sounds interesting, I should check it some time" -> interest, interest_text about Chroma. "pgvector may be worth looking into" -> interest, interest_text about pgvector. "We talked about Chroma" -> null (no future-oriented interest expressed).
+An interest exists when the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject of interest. Do NOT classify as interest: assistant responses summarizing or recommending things, follow-up questions without a named subject ("is there something lite?"), backward-looking recall ("didn't we discuss X?"), or restatements of prior content. Examples: "Chroma sounds interesting, I should check it some time" -> interest, interest_text about Chroma. "pgvector may be worth looking into" -> interest, interest_text about pgvector. "We talked about Chroma" -> null (no future-oriented interest expressed).
 
 Evidence rule:
 - candidate_type may be non-null only if decision_evidence_text or investigation_evidence_text quotes an exact explicit statement from the source that proves the type.
@@ -65,7 +65,7 @@ If no explicit proof phrase exists, candidate_type must be null.""",
 Only create typed memory when the source gives explicit proof.
 - decision: an explicit concrete choice already made.
 - investigation_outcome: an explicit established finding, root cause, conclusion, diagnostic outcome, or analytical verdict.
-- interest: the speaker identifies a specific subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject of interest.
+- interest: the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject of interest. Do NOT classify as interest: assistant responses, follow-up questions without a named subject, backward-looking recall, or restatements of prior content.
 - otherwise candidate_type = null.
 - a non-null type requires an exact quoted proof phrase in the matching evidence field (except interest, which needs only a non-empty interest_text).
 - fill only the decision fields for decision and only the investigation fields for investigation_outcome.
@@ -87,7 +87,7 @@ Examples:
 Only promote to typed memory when the source contains an explicit proof phrase:
 - decision: requires committed-choice language ("Decision:", "we decided", "we chose", "chosen approach", "we will use").
 - investigation_outcome: requires resolved-finding language ("Root cause:", "Investigation found", "Analysis found", "Findings:", "Outcome:", "We found that", "Verdict:", "Conclusion:", "Investigation concluded", "The conclusion is").
-- interest: the speaker identifies a specific subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject. No proof phrase needed.
+- interest: the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject. No proof phrase needed. Do NOT classify as interest: assistant responses, follow-up questions without a named subject, backward-looking recall, or restatements of prior content.
 - otherwise candidate_type = null.
 - A non-null type requires the exact proof phrase quoted in the matching evidence field.
 - Fill only decision fields for decision, only investigation fields for investigation_outcome.
@@ -118,7 +118,7 @@ Prefer null or [] over weak, speculative, or inferred values.
 Typed memory requires explicit proof phrases quoted in the evidence field:
 - decision: "Decision:", "we decided", "we chose", "chosen approach", "we will use".
 - investigation_outcome: "Root cause:", "Investigation found", "Analysis found", "We found that", "Verdict:", "Conclusion:", "Investigation concluded".
-- interest: the speaker identifies a specific subject as worth future attention but does not commit to action. Fill interest_text. No proof phrase needed.
+- interest: the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to action. Fill interest_text. No proof phrase needed. Not for assistant responses, backward-looking recall, or follow-ups without a named subject.
 - otherwise null.
 
 Fill only decision fields for decision, only investigation fields for investigation_outcome. Never promote needs, proposals, preferences, symptoms, or monitoring notes.
@@ -133,7 +133,7 @@ If is_low_value_meta is true, all signals must be null/[]. Prefer null over weak
 Only create a typed record when the source contains an explicit proof phrase:
 - decision: the source records a concrete choice already made, using language like "Decision:", "we decided", "we chose", "chosen approach", or "we will use".
 - investigation_outcome: the source records a resolved finding, root cause, or conclusion, using language like "Root cause:", "Investigation found", "Analysis found", "We found that", "Verdict:", "Conclusion:", or "Investigation concluded".
-- interest: the speaker identifies a specific subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject. No proof phrase needed.
+- interest: the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject. No proof phrase needed. Do NOT classify as interest: assistant responses, follow-up questions without a named subject, backward-looking recall, or restatements of prior content.
 - otherwise candidate_type = null.
 - A non-null type requires the exact proof phrase quoted in the matching evidence field.
 - Fill only decision fields for a decision, only investigation fields for a finding.
@@ -163,7 +163,7 @@ Prefer null or [] over guessed or weakly inferred values.
 Typed memory stays conservative:
 - decision only for an explicit concrete choice already made.
 - investigation_outcome only for an explicit established finding, root cause, conclusion, diagnostic outcome, or analytical verdict.
-- interest when the speaker identifies a specific subject as worth future attention but does not commit to action. Fill interest_text with the subject.
+- interest when the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to action. Fill interest_text with the subject. Not for assistant responses, backward-looking recall, or follow-ups without a named subject.
 - otherwise candidate_type = null.
 - a non-null type requires an exact quoted proof phrase in the matching evidence field.
 - fill only the decision fields for decision and only the investigation fields for investigation_outcome.
@@ -185,7 +185,7 @@ If is_low_value_meta is true, all optional text fields must be null and list fie
 Typed memory stays conservative:
 - decision only for an explicit concrete choice already made.
 - investigation_outcome only for an explicit established finding, root cause, conclusion, diagnostic outcome, or analytical verdict.
-- interest when the speaker identifies a specific subject as worth future attention but does not commit to action. Fill interest_text with the subject.
+- interest when the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to action. Fill interest_text with the subject. Not for assistant responses, backward-looking recall, or follow-ups without a named subject.
 - otherwise candidate_type = null.
 - a non-null type requires an exact quoted proof phrase in the matching evidence field.
 - fill only the decision fields for decision and only the investigation fields for investigation_outcome.
@@ -214,7 +214,7 @@ If is_low_value_meta is true, all optional text fields must be null and list fie
 Only create typed memory when the source gives explicit proof.
 - decision: an explicit concrete choice already made.
 - investigation_outcome: an explicit established finding, root cause, conclusion, diagnostic outcome, or analytical verdict.
-- interest: the speaker identifies a specific subject as worth future attention but does not commit to action. Fill interest_text with the subject.
+- interest: the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to action. Fill interest_text with the subject. Not for assistant responses, backward-looking recall, or follow-ups without a named subject.
 - otherwise candidate_type = null.
 - a non-null type requires an exact quoted proof phrase in the matching evidence field (except interest, which needs only a non-empty interest_text).
 - fill only the decision fields for decision and only the investigation fields for investigation_outcome.

@@ -423,7 +423,9 @@ def build_process_result(
             )
             if part
         )
-    elif extraction.candidate_type == "interest" and extraction.interest_text:
+    elif extraction.candidate_type == "interest" and extraction.interest_text and (
+        not source_item.role or source_item.role.lower() == "user"
+    ):
         memory_objects.append(
             MemoryObject(
                 type="interest",

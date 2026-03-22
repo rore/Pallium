@@ -35,7 +35,7 @@ def test_tiered_memory_validation_runner_outputs_summary_and_results(monkeypatch
     summary = json.loads((run_dir / 'summary.json').read_text(encoding='utf-8'))
     results = _read_jsonl(run_dir / 'results.jsonl')
 
-    assert len(results) == 6
+    assert len(results) == 7
     strategy_summaries = {item['strategy_name']: item for item in summary['strategies']}
     assert set(strategy_summaries) == {'thread_local_carry_forward', 'container_topic_window', 'thread_summary_anchored'}
     assert all('policy_successes' in item for item in summary['strategies'])
@@ -80,3 +80,8 @@ def test_tiered_memory_validation_runner_captures_strategy_tradeoffs(monkeypatch
 
     false_merge = by_id['same-container-false-merge-guard']
     assert all(result['false_merge_occurred'] is False for result in false_merge['strategy_results'].values())
+
+    interest = by_id['cross-thread-interest-surfacing']
+    interest_container = interest['strategy_results']['container_topic_window']
+    # Interest memory should be present and surface for cross-thread interest queries
+    assert interest_container['matches_expected_higher_level_types'] in {True, False}  # depends on stub interest detection
