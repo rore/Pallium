@@ -99,6 +99,8 @@ Implemented semantic behavior now includes:
   - `pattern_memory`
   - `continuity_memory`
   - `task_checkpoint`
+- item-level typed memory for:
+  - `interest`
 - fallback `discussion_summary` for non-typed extraction results
 - prompt provenance attached to LLM-derived annotations and memory objects
 - internal-only item semantic signals now extracted in the same item-level LLM call and persisted under `SourceItem.metadata["pallium_semantic_signals"]` for later higher-level synthesis

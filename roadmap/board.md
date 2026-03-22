@@ -1,4 +1,5 @@
 # Next
+- add-interest-memory-kind
 
 # Later
 - add-bounded-memory-lifecycle-hardening

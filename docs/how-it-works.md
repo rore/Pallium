@@ -49,6 +49,7 @@ jobs:
 | Investigation findings | `investigation_outcome` | "Root cause: stale cache after deploy" |
 | Thread orientation | `thread_summary` | "Discussed migration strategy, agreed on staged rollout" |
 | Resumed-work state | `task_checkpoint` | "Blocked on API rate limit, next: implement backoff" |
+| Expressed interest | `interest` | "Chroma sounds interesting, should check it some time" |
 | Cross-thread carry-forward | `continuity_memory` | Same question answered consistently across threads |
 | Recurring patterns | `pattern_memory` | Repeated architectural preference across conversations |
 

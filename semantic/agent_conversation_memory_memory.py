@@ -36,6 +36,7 @@ def _memory_kind_for_type(memory_type: str) -> MemoryEnvelopeKind:
         "task_checkpoint": "episode",
         "thread_summary": "summary",
         "discussion_summary": "summary",
+        "interest": "summary",
         "continuity_memory": "summary",
         "pattern_memory": "summary",
     }.get(memory_type, "unknown")
@@ -45,7 +46,7 @@ def _memory_confidence_for_type(memory_type: str, *, extraction: SemanticExtract
         return "high"
     if memory_type == CONSTRAINT_MEMORY_TYPE:
         return "medium"
-    if memory_type in {"task_checkpoint", "thread_summary", "continuity_memory", "pattern_memory"}:
+    if memory_type in {"task_checkpoint", "thread_summary", "continuity_memory", "pattern_memory", "interest"}:
         return "medium"
     if memory_type == "discussion_summary":
         return "medium" if extraction is not None and _has_explicit_semantic_signals(extraction) else "low"

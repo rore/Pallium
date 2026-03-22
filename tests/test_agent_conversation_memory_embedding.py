@@ -179,6 +179,7 @@ class TestEmbeddableMemoryTypes:
             "task_checkpoint": {"task": "Investigate catalog sync scheduled job failure and token rotation policy gap"},
             "pattern_memory": {"summary": "Recurring pattern: nightly batch jobs accumulating backlogs cause downstream queue failures"},
             "continuity_memory": {"continuity_question": "What is the status of the catalog sync investigation and token refresh?"},
+            "interest": {"interest_text": "Chroma vector database for lightweight local embedding and retrieval", "summary": "User expressed interest in trying Chroma for a side project"},
         }
         for memory_type in EMBEDDABLE_MEMORY_TYPES:
             mo = _make_memory(memory_type, payloads[memory_type])

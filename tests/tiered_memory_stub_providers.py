@@ -343,6 +343,22 @@ def _build_item_extraction_payload(user_prompt: str) -> dict[str, object]:
             'key_finding_text': None,
         }
 
+    # Interest detection: user expresses specific future-oriented interest
+    interest_markers = ('sounds interesting', 'should check', 'worth looking into', 'may be worth', 'want to look into', 'want to try')
+    if any(marker in lower for marker in interest_markers):
+        # Extract the subject from the content — use the first noun-like phrase before the marker
+        interest_subject = user_prompt.strip().split('.')[0].strip()
+        return {
+            'summary': f'User expresses interest: {interest_subject}',
+            'candidate_type': 'interest',
+            'interest_text': interest_subject,
+            'decision_text': None,
+            'decision_evidence_text': None,
+            'investigation_text': None,
+            'investigation_evidence_text': None,
+            'rationale_text': None,
+        }
+
     return {
         'summary': 'Conversation summary.',
         'candidate_type': None,

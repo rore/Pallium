@@ -6,6 +6,7 @@ from core.models import MemoryObject, SourceItem
 EMBEDDABLE_MEMORY_TYPES = {
     "decision",
     "investigation_outcome",
+    "interest",
     "thread_summary",
     "task_checkpoint",
     "pattern_memory",
@@ -32,6 +33,7 @@ def build_embedding_text(memory_object: MemoryObject) -> str | None:
     builders = {
         "decision": _build_decision_text,
         "investigation_outcome": _build_investigation_outcome_text,
+        "interest": _build_interest_text,
         "thread_summary": _build_thread_summary_text,
         "task_checkpoint": _build_task_checkpoint_text,
         "pattern_memory": _build_pattern_memory_text,
@@ -68,6 +70,18 @@ def _build_investigation_outcome_text(payload: dict) -> str:
     rationale = payload.get("rationale")
     if rationale:
         parts.append(f"Rationale: {rationale}")
+    return " ".join(parts) if parts else ""
+
+
+def _build_interest_text(payload: dict) -> str:
+    """Interest: interest_text + summary."""
+    parts: list[str] = []
+    interest = payload.get("interest_text")
+    if interest:
+        parts.append(f"Interest: {interest}")
+    summary = payload.get("summary")
+    if summary:
+        parts.append(summary)
     return " ".join(parts) if parts else ""
 
 

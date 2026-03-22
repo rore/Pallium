@@ -30,6 +30,7 @@
   - `investigation_outcome`
   - `thread_summary`
   - `task_checkpoint`
+  - `interest`
   - `pattern_memory`
   - `continuity_memory`
   - fallback `discussion_summary`

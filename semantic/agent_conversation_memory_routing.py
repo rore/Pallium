@@ -79,19 +79,19 @@ class QuerySignalEnvelope:
     derivation_signals: tuple[str, ...] = ()
 
 
-ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory", "task_checkpoint", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE}
+ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory", "task_checkpoint", "interest", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE}
 
 ROUTING_LOWER_LEVEL_EXACT_TYPES = {"decision", "investigation_outcome"}
 
 ROUTING_SUMMARY_TYPES = {"thread_summary", "discussion_summary"}
 
 ROUTING_PREFERRED_LAYERS = {
-    "answer_continuity": ("continuity_memory", "investigation_outcome", "decision", "source_evidence", "task_checkpoint", "pattern_memory", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE),
-    "broad_recall": ("pattern_memory", "investigation_outcome", "decision", "continuity_memory", "task_checkpoint", "source_evidence", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE),
-    "work_resumption": ("task_checkpoint", "source_evidence", "investigation_outcome", "decision", "continuity_memory", "pattern_memory", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE),
-    "precise_fact": ("decision", "investigation_outcome", "source_evidence", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory", CONSTRAINT_MEMORY_TYPE),
-    "evidence_trace": ("source_evidence", "investigation_outcome", "decision", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory"),
-    "investigative_conclusion": ("investigation_outcome", "decision", "source_evidence", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory", CONSTRAINT_MEMORY_TYPE),
+    "answer_continuity": ("continuity_memory", "investigation_outcome", "decision", "source_evidence", "task_checkpoint", "pattern_memory", "interest", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE),
+    "broad_recall": ("pattern_memory", "investigation_outcome", "decision", "continuity_memory", "task_checkpoint", "source_evidence", "interest", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE),
+    "work_resumption": ("task_checkpoint", "source_evidence", "investigation_outcome", "decision", "continuity_memory", "pattern_memory", "interest", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE),
+    "precise_fact": ("decision", "investigation_outcome", "source_evidence", "interest", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory", CONSTRAINT_MEMORY_TYPE),
+    "evidence_trace": ("source_evidence", "investigation_outcome", "decision", "interest", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory"),
+    "investigative_conclusion": ("investigation_outcome", "decision", "source_evidence", "interest", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory", CONSTRAINT_MEMORY_TYPE),
 }
 
 ROUTING_FAMILY_ALLOWED_ENVELOPE_KINDS = {
@@ -104,12 +104,12 @@ ROUTING_FAMILY_ALLOWED_ENVELOPE_KINDS = {
 }
 
 ROUTING_LAYER_WEIGHTS = {
-    "answer_continuity": {"continuity_memory": 400, CONSTRAINT_MEMORY_TYPE: 360, "investigation_outcome": 320, "decision": 300, "source_evidence": 200, "task_checkpoint": 140, "pattern_memory": 120, "thread_summary": 100, "discussion_summary": 70, "lower_level_memory": 260},
-    "broad_recall": {CONSTRAINT_MEMORY_TYPE: 430, "pattern_memory": 400, "investigation_outcome": 330, "decision": 310, "continuity_memory": 180, "task_checkpoint": 150, "source_evidence": 120, "thread_summary": 130, "discussion_summary": 80, "lower_level_memory": 250},
-    "work_resumption": {CONSTRAINT_MEMORY_TYPE: 490, "task_checkpoint": 470, "source_evidence": 390, "investigation_outcome": 300, "decision": 290, "continuity_memory": 180, "pattern_memory": 70, "thread_summary": 130, "discussion_summary": 70, "lower_level_memory": 250},
-    "precise_fact": {"decision": 440, "investigation_outcome": 430, CONSTRAINT_MEMORY_TYPE: 260, "source_evidence": 320, "thread_summary": 110, "discussion_summary": 70, "continuity_memory": 140, "task_checkpoint": 110, "pattern_memory": 60, "lower_level_memory": 340},
-    "evidence_trace": {"source_evidence": 460, "investigation_outcome": 380, "decision": 360, CONSTRAINT_MEMORY_TYPE: 110, "thread_summary": 120, "discussion_summary": 80, "continuity_memory": 120, "task_checkpoint": 90, "pattern_memory": 40, "lower_level_memory": 300},
-    "investigative_conclusion": {"investigation_outcome": 480, "decision": 430, CONSTRAINT_MEMORY_TYPE: 220, "source_evidence": 360, "thread_summary": 220, "discussion_summary": 120, "continuity_memory": 110, "task_checkpoint": 100, "pattern_memory": 80, "lower_level_memory": 320},
+    "answer_continuity": {"continuity_memory": 400, CONSTRAINT_MEMORY_TYPE: 360, "investigation_outcome": 320, "decision": 300, "source_evidence": 200, "task_checkpoint": 140, "pattern_memory": 120, "interest": 100, "thread_summary": 100, "discussion_summary": 70, "lower_level_memory": 260},
+    "broad_recall": {CONSTRAINT_MEMORY_TYPE: 430, "pattern_memory": 400, "investigation_outcome": 330, "decision": 310, "continuity_memory": 180, "task_checkpoint": 150, "source_evidence": 120, "interest": 110, "thread_summary": 130, "discussion_summary": 80, "lower_level_memory": 250},
+    "work_resumption": {CONSTRAINT_MEMORY_TYPE: 490, "task_checkpoint": 470, "source_evidence": 390, "investigation_outcome": 300, "decision": 290, "continuity_memory": 180, "pattern_memory": 70, "interest": 100, "thread_summary": 130, "discussion_summary": 70, "lower_level_memory": 250},
+    "precise_fact": {"decision": 440, "investigation_outcome": 430, CONSTRAINT_MEMORY_TYPE: 260, "source_evidence": 320, "interest": 90, "thread_summary": 110, "discussion_summary": 70, "continuity_memory": 140, "task_checkpoint": 110, "pattern_memory": 60, "lower_level_memory": 340},
+    "evidence_trace": {"source_evidence": 460, "investigation_outcome": 380, "decision": 360, CONSTRAINT_MEMORY_TYPE: 110, "interest": 85, "thread_summary": 120, "discussion_summary": 80, "continuity_memory": 120, "task_checkpoint": 90, "pattern_memory": 40, "lower_level_memory": 300},
+    "investigative_conclusion": {"investigation_outcome": 480, "decision": 430, CONSTRAINT_MEMORY_TYPE: 220, "source_evidence": 360, "interest": 110, "thread_summary": 220, "discussion_summary": 120, "continuity_memory": 110, "task_checkpoint": 100, "pattern_memory": 80, "lower_level_memory": 320},
 }
 
 
@@ -1674,6 +1674,8 @@ def _result_layer(item: QueryResultItem) -> str:
         return "task_checkpoint"
     if item.type == "thread_summary":
         return "thread_summary"
+    if item.type == "interest":
+        return "interest"
     if item.type == "discussion_summary":
         return "discussion_summary"
     if item.type == "investigation_outcome":
@@ -3173,7 +3175,7 @@ def _candidate_is_injection_eligible(
         if _source_candidate_is_primary_injection_eligible(candidate, intent, query_text=query_text):
             return True
         return allow_source_companion and _source_candidate_is_companion_injection_eligible(intent)
-    if item.type in {"decision", "investigation_outcome", "task_checkpoint", "continuity_memory", "pattern_memory", "thread_summary", CONSTRAINT_MEMORY_TYPE}:
+    if item.type in {"decision", "investigation_outcome", "task_checkpoint", "continuity_memory", "pattern_memory", "interest", "thread_summary", CONSTRAINT_MEMORY_TYPE}:
         return True
     if item.type == "discussion_summary":
         return allow_discussion_fallback
@@ -3378,6 +3380,16 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             block_type="memory",
             title="Pattern Memory",
             text=str(payload.get("summary") or "").strip(),
+            evidence=item.evidence,
+            memory_type=item.type,
+        )
+    if item.type == "interest":
+        interest_text = str(payload.get("interest_text") or payload.get("summary") or "").strip()
+        return InjectableBlock(
+            result_id=str(item.result_id),
+            block_type="memory",
+            title="Interest",
+            text=interest_text,
             evidence=item.evidence,
             memory_type=item.type,
         )

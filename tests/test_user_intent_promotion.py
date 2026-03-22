@@ -1,20 +1,9 @@
-"""Test that user-stated interest is promoted to an actionable memory type.
+"""Test that user-stated interest is promoted to the `interest` memory type.
 
 Scenario: user discusses vector databases with the assistant across a thread,
 then expresses specific interest in a tool (Chroma). After a thread boundary
 (/new), a query asking what the user wanted to try should surface a specific
-actionable memory — not only generic discussion summaries.
-
-The original phrasing is deliberately vague ("i should check it some time")
-rather than a concrete commitment ("i'll try it this weekend"). The concrete
-version already works — the LLM emits next_step_text and the pipeline
-produces a task_checkpoint. The vague version is the gap: the LLM correctly
-judges it's not a "concrete future action" per the prompt, so it falls
-through to discussion_summary only.
-
-This test is expected to FAIL until either:
-- The extraction prompt/schema recognizes specific interest (not just commitments)
-- A new memory type (e.g. user_interest) captures expressed-but-uncommitted intent
+interest memory — not only generic discussion summaries.
 """
 from __future__ import annotations
 
@@ -113,11 +102,9 @@ THREAD_A_EVENTS = [
 ]
 
 
-@pytest.mark.xfail(reason='vague user interest not promoted — concrete commitments already work', strict=True)
 def test_user_intent_promoted_to_actionable_memory(monkeypatch, test_db_url: str) -> None:
     """After a user says 'chroma sounds interesting, i should check it some
-    time', an actionable memory (decision, task_checkpoint, or continuity_memory)
-    should be created — not only generic discussion/thread summaries."""
+    time', an interest memory should be created — not only generic summaries."""
     with _build_client(monkeypatch, test_db_url) as client:
         # Ingest thread A conversation
         response = client.post('/items', json=THREAD_A_EVENTS)
@@ -129,7 +116,7 @@ def test_user_intent_promoted_to_actionable_memory(monkeypatch, test_db_url: str
         active_memories = storage.list_memory_objects(lifecycle='active')
         active_types = {m.type for m in active_memories}
 
-        actionable_types = {'decision', 'task_checkpoint', 'continuity_memory'}
+        actionable_types = {'decision', 'task_checkpoint', 'continuity_memory', 'interest'}
         assert active_types & actionable_types, (
             f'Expected at least one actionable memory type {actionable_types}, '
             f'but only found: {active_types}'
@@ -147,7 +134,6 @@ def test_user_intent_promoted_to_actionable_memory(monkeypatch, test_db_url: str
         )
 
 
-@pytest.mark.xfail(reason='vague user interest not promoted — concrete commitments already work', strict=True)
 def test_cross_thread_query_surfaces_user_intent(monkeypatch, test_db_url: str) -> None:
     """From a new thread, asking 'what was the db I said I wanted to check?'
     should surface a specific memory about the user's interest in Chroma."""
@@ -170,14 +156,14 @@ def test_cross_thread_query_surfaces_user_intent(monkeypatch, test_db_url: str) 
         assert payload['should_inject'] is True
 
         # At least one injectable block should specifically mention Chroma
-        # as something the user intended to try (not just a discussion topic)
+        # as something the user expressed interest in
         injectable_blocks = payload.get('injectable_blocks') or []
         chroma_intent_blocks = [
             block for block in injectable_blocks
             if 'chroma' in str(block.get('text', '')).lower()
-            and block.get('memory_type') in {'decision', 'task_checkpoint', 'continuity_memory'}
+            and block.get('memory_type') in {'decision', 'task_checkpoint', 'continuity_memory', 'interest'}
         ]
         assert chroma_intent_blocks, (
-            f'Expected an actionable injectable block mentioning Chroma intent. '
+            f'Expected an actionable injectable block mentioning Chroma interest. '
             f'Got blocks: {[(b.get("memory_type"), b.get("text", "")[:80]) for b in injectable_blocks]}'
         )

@@ -94,6 +94,7 @@ class SemanticExtraction:
     investigation_text: str | None = None
     investigation_evidence_text: str | None = None
     rationale_text: str | None = None
+    interest_text: str | None = None
     matched_phrase: str | None = None
     is_low_value_meta: bool = False
     constraint_text: str | None = None
@@ -275,6 +276,8 @@ def _memory_text_view_name(memory_type: str) -> str:
         return "memory_object.decision_context"
     if memory_type == "investigation_outcome":
         return "memory_object.investigation_context"
+    if memory_type == "interest":
+        return "memory_object.interest_context"
     return "memory_object.summary"
 
 
@@ -417,6 +420,31 @@ def build_process_result(
                 extraction.rationale_text or "",
                 extraction.key_finding_text or "",
                 canonical_key,
+            )
+            if part
+        )
+    elif extraction.candidate_type == "interest" and extraction.interest_text:
+        memory_objects.append(
+            MemoryObject(
+                type="interest",
+                schema_id=f"{schema_prefix}.interest",
+                schema_version="v1",
+                payload={
+                    "interest_text": extraction.interest_text,
+                    "summary": extraction.summary,
+                    "source_type": source_item.source_type,
+                    "source_id": source_item.source_id,
+                    **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
+                },
+                container_visibility=source_item.container_visibility,
+                container_ref=source_item.container_ref,
+            )
+        )
+        index_source = " ".join(
+            part
+            for part in (
+                extraction.summary,
+                extraction.interest_text or "",
             )
             if part
         )
