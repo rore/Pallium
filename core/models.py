@@ -116,6 +116,7 @@ class MemoryObject:
     payload: dict[str, Any]
     lifecycle: str = "active"
     container_visibility: str = "private"
+    container_ref: str | None = None
     freshness_at: datetime | None = None
     envelope: MemoryEnvelope | None = None
     id: str = field(default_factory=new_id)

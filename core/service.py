@@ -789,7 +789,7 @@ class PalliumService:
         def load_candidates(*, memory_types: list[str] | None = None) -> list[QueryResultItem]:
             results: list[QueryResultItem] = []
             for memory_object in self._storage.list_memory_objects(memory_types=memory_types, lifecycle="active"):
-                if require_visibility and not is_visible(memory_object.container_visibility, memory_object.payload.get("container_ref"), query_container_ref):
+                if require_visibility and not is_visible(memory_object.container_visibility, memory_object.container_ref, query_container_ref):
                     continue
                 evidence = self._storage.get_evidence_for_memory_object(memory_object.id)
                 if filters is not None and not any(self._evidence_matches_filters(item, filters) for item in evidence):

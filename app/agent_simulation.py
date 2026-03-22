@@ -428,14 +428,9 @@ class AgentSimulationApp:
         if visibility_kind not in VISIBILITY_KINDS:
             self._write_warning(f"Unsupported container visibility: {visibility_kind}")
             return
-        current_scope_id = current_visibility.get("id")
-        scope_id = None
-        if visibility_kind == "limited":
-            scope_prompt_default = current_scope_id or container_ref or ""
-            scope_id = self._prompt_optional(f"visibility_scope_id [{scope_prompt_default}]: ") or scope_prompt_default
         defaults.container_ref = container_ref
         defaults.thread_ref = thread_ref
-        defaults.set_container_visibility(visibility_kind, scope_id)
+        defaults.set_container_visibility(visibility_kind)
         self._write_scope()
     def _set_turn_kind(self, value: str | None) -> None:
         if value is None:

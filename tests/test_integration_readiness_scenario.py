@@ -86,7 +86,7 @@ def test_downstream_query_returns_sharp_integration_ready_blocks(monkeypatch, te
         payload = kwargs.get("json")
         if isinstance(payload, dict) and url in {"/items", "/query", "/query/debug"} and "container_visibility" not in payload:
             payload = dict(payload)
-            payload["container_visibility"] = {"kind": "public", "id": None}
+            payload["container_visibility"] = "public"
             kwargs["json"] = payload
         response = original_post(url, *args, **kwargs)
         if url == "/items" and response.status_code == 200:

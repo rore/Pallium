@@ -147,6 +147,7 @@ def _append_typed_constraint_memory_objects(
             schema_version=CONSTRAINT_MEMORY_SCHEMA_VERSION,
             payload=payload,
             container_visibility=source_item.container_visibility,
+            container_ref=source_item.container_ref,
             freshness_at=source_item.occurred_at,
             envelope=_build_memory_envelope(
                 kind="constraint",
