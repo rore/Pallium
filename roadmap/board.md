@@ -1,5 +1,8 @@
 # Next
 - add-interest-memory-kind
+- add-idf-weighted-lexical-scoring
+- investigate-thread-level-interest-and-threadless-aggregation
+- investigate-lexical-retrieval-scaling
 
 # Later
 - add-bounded-memory-lifecycle-hardening

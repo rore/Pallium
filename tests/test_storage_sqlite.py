@@ -185,6 +185,80 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     assert evidence[0].container_visibility == "limited"
 
 
+def test_idf_weighted_scoring_downweights_common_tokens(test_db_url: str) -> None:
+    """Tokens appearing in most documents should score near zero.
+
+    A query matching only on a ubiquitous word like 'the' should score much
+    lower than a query matching on a domain-specific word like 'reservation'.
+    """
+    storage = SQLiteStorageProvider(test_db_url)
+
+    # Create enough entries to activate IDF (>= 5).
+    # All entries contain 'the'; only one contains 'reservation'.
+    common_texts = [
+        "the quick brown fox jumps over the lazy dog",
+        "the weather today is sunny and warm",
+        "the latest release notes are available",
+        "update the configuration file for deployment",
+        "the team discussed project milestones",
+        "review the pull request before merging",
+    ]
+    domain_text = "the reservation ordering system avoids missed hold updates"
+
+    for i, text in enumerate(common_texts):
+        si = SourceItem(
+            source_type="chat_message",
+            source_id=f"idf-common-{i}",
+            content_type="text/plain",
+            content=text,
+            container_visibility="public",
+        )
+        storage.create_source_item(si)
+        storage.create_index_entry(IndexEntry(
+            target_kind="source_item",
+            target_id=si.id,
+            index_type="lexical",
+            text_view=text,
+        ))
+
+    domain_si = SourceItem(
+        source_type="chat_message",
+        source_id="idf-domain-1",
+        content_type="text/plain",
+        content=domain_text,
+        container_visibility="public",
+    )
+    storage.create_source_item(domain_si)
+    storage.create_index_entry(IndexEntry(
+        target_kind="source_item",
+        target_id=domain_si.id,
+        index_type="lexical",
+        text_view=domain_text,
+    ))
+
+    # Query with a common-only token: appears in all 7 docs, IDF near zero but floor=1
+    common_hits = storage.search_index_entries(["the"], limit=10).hits
+    assert common_hits
+    common_top_score = common_hits[0].score
+
+    # Query with a domain-specific token: should match only the domain entry
+    domain_hits = storage.search_index_entries(["reservation"], limit=10).hits
+    assert domain_hits
+    assert domain_hits[0].target_id == domain_si.id
+    domain_top_score = domain_hits[0].score
+
+    # Domain-specific token should score higher than common token
+    assert domain_top_score > common_top_score, (
+        f"Domain token score ({domain_top_score}) should be higher "
+        f"than common token score ({common_top_score})"
+    )
+
+    # A mixed query should rank the domain-relevant document first
+    # (the common token contributes minimal weight)
+    mixed_hits = storage.search_index_entries(["the", "reservation"], limit=10).hits
+    assert mixed_hits[0].target_id == domain_si.id
+
+
 @pytest.mark.parametrize(
     ("label", "payload"),
     [

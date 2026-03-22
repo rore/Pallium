@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import replace
 
@@ -13,6 +14,14 @@ from storage.sqlite_schema import IndexEntryRecord
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 
+# Minimum number of indexed records before IDF weighting activates.
+# Below this threshold, raw token count is used (IDF is too noisy).
+_IDF_MIN_CORPUS_SIZE = 5
+
+# Scale factor for converting float IDF sums to integer scores.
+# Kept small so IDF scores remain in a similar range to raw token counts
+# (1-10), preserving downstream routing weight balance.
+_IDF_SCORE_SCALE = 1
 
 class SQLiteSearchMixin:
     def search_index_entries(
@@ -33,13 +42,35 @@ class SQLiteSearchMixin:
         unique_tokens = set(tokens)
         total_hits_before_visibility = 0
         total_hits_after_visibility = 0
+
+        # Pre-filter records and tokenize; build document frequency for query tokens.
+        filtered: list[tuple[object, set[str]]] = []
+        doc_freq: dict[str, int] = {}
         for record in records:
             if not self._matches_filters(record.target_kind, record.target_id, filters):
                 continue
             text_tokens = set(TOKEN_PATTERN.findall(record.text_view.lower()))
+            filtered.append((record, text_tokens))
+            for qt in unique_tokens:
+                if qt in text_tokens:
+                    doc_freq[qt] = doc_freq.get(qt, 0) + 1
+
+        corpus_size = len(filtered)
+        use_idf = corpus_size >= _IDF_MIN_CORPUS_SIZE
+
+        for record, text_tokens in filtered:
             matched_tokens = tuple(sorted(unique_tokens.intersection(text_tokens)))
-            score = len(matched_tokens)
-            if score == 0:
+            if not matched_tokens:
+                continue
+            if use_idf:
+                idf_sum = sum(
+                    math.log(1.0 + (corpus_size - doc_freq.get(t, 0) + 0.5) / (doc_freq.get(t, 0) + 0.5))
+                    for t in matched_tokens
+                )
+                score = max(round(idf_sum * _IDF_SCORE_SCALE), 1)
+            else:
+                score = len(matched_tokens)
+            if score <= 0:
                 continue
             total_hits_before_visibility += 1
             candidate_visibility, candidate_container_ref = self._target_visibility(record.target_kind, record.target_id)
