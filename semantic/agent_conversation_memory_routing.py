@@ -1308,6 +1308,7 @@ def _query_family_label(intent: str, *, runtime_context: QueryRuntimeContext | N
 
 def _locality_adjustment(
     *,
+    intent: str,
     layer: str,
     same_thread: bool,
     same_container: bool,
@@ -1316,11 +1317,17 @@ def _locality_adjustment(
 
     Replaces the former topic-overlap-gated continuity compatibility
     adjustment.  Uses only structural thread/container affinity, no tokens.
+
+    The same-container bonus (+20) is gated on answer_continuity intent to
+    avoid boosting cross-topic carry-forward when the query isn't a repeated
+    question.
     """
     if layer != "continuity_memory":
         return 0
     if same_thread:
         return 60
+    if same_container and intent == "answer_continuity":
+        return 20
     if same_container:
         return 0
     return -60
@@ -1353,7 +1360,7 @@ def _score_routed_candidate(
         + _specificity_bonus(item, intent)
         + evidence_shape_score
         + _higher_level_retrieval_floor_adjustment(layer, retrieval_score)
-        + _locality_adjustment(layer=layer, same_thread=same_thread, same_container=same_container)
+        + _locality_adjustment(intent=intent, layer=layer, same_thread=same_thread, same_container=same_container)
     )
     support_grade = _routing_support_grade(evidence_shape_score, support_threshold=support_threshold)
     return {
