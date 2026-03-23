@@ -121,15 +121,13 @@ def completion_candidates(text: str) -> list[str]:
         return [command for command in COMMAND_COMPLETIONS if command.startswith(current)]
 
     command = parts[0].lower()
-    # /channel: first arg is free-form name, second arg is visibility
+    # /channel: first arg is free-form name, second arg is visibility.
+    # Show visibility options at any position as a hint for the syntax.
     if command == "/channel":
-        arg_count = len(parts) - 1 if stripped.endswith(" ") else len(parts) - 2
-        if arg_count >= 1:
-            candidates = ["public", "limited", "private"]
-            if stripped.endswith(" "):
-                return candidates
-            return [c for c in candidates if c.startswith(current)]
-        return []
+        candidates = ["public", "limited", "private"]
+        if stripped.endswith(" "):
+            return candidates
+        return [c for c in candidates if c.startswith(current)]
     candidates = list(ARGUMENT_COMPLETIONS.get(command, ()))
     if stripped.endswith(" "):
         return candidates
