@@ -559,7 +559,7 @@ class PalliumService:
                 result=direct_result,
                 thread_rebuild_scope=thread_rebuild_scope,
             )
-            vectors_added = self._embed_vector_entries(direct_result)
+            memory_vectors_added = self._embed_vector_entries(direct_result)
             memory_provenance = _build_memory_provenance(
                 direct_result,
                 default_source_item_id=source_item.id,
@@ -601,15 +601,16 @@ class PalliumService:
             )
             return
 
+        source_vector_added = False
         if source_vector_entry is not None:
             try:
                 vectors = self._embedding_provider.embed([source_vector_entry.text_view])
                 self._vector_index.add(source_vector_entry.id, vectors[0])
-                vectors_added = True
+                source_vector_added = True
             except Exception:
                 self._logger.warning("Source item vector embedding failed", exc_info=True)
 
-        if vectors_added:
+        if memory_vectors_added or source_vector_added:
             self._save_vector_index()
 
     def _build_ingest_result(self, source_item: SourceItem) -> IngestResult:
@@ -1037,8 +1038,8 @@ class PalliumService:
                     worker_id=worker_id,
                     claimed_at=current_lease.processing_claimed_at,
                 )
-                self._embed_vector_entries(thread_result)
-                self._save_vector_index()
+                if self._embed_vector_entries(thread_result):
+                    self._save_vector_index()
             else:
                 has_pending = self._storage.complete_thread_processing_scope(
                     scope_key=current_lease.scope_key,
