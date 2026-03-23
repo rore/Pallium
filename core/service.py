@@ -27,7 +27,6 @@ from storage.vector_index import VectorIndex
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 THREAD_CONCLUSION_TYPES = {"decision", "investigation_outcome"}
-THREAD_SUMMARY_TYPE = "thread_summary"
 DEFAULT_PROCESSING_LEASE_SECONDS = 15 * 60
 DEFAULT_PROCESSING_MAX_ATTEMPTS = 3
 DEFAULT_RETRY_BACKOFF_SECONDS = 5
@@ -135,15 +134,9 @@ def _classify_failure(error: Exception, *, phase: str) -> str:
 def _preferred_active_summary_ref(memory_objects: list[MemoryObject]) -> dict[str, str] | None:
     if not memory_objects:
         return None
-    priority = {
-        THREAD_SUMMARY_TYPE: 0,
-        "task_checkpoint": 1,
-        "continuity_memory": 2,
-        "pattern_memory": 3,
-    }
     preferred = min(
         memory_objects,
-        key=lambda item: (priority.get(item.type, 10), item.created_at, item.id),
+        key=lambda item: (item.created_at, item.id),
     )
     return {"kind": preferred.type, "id": preferred.id}
 
