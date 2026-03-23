@@ -176,20 +176,25 @@ class PalliumService:
         self._vector_index = vector_index
         self._logger = logging.getLogger(__name__)
 
-    def _embed_vector_entries(self, result: ProcessResult) -> None:
-        """Embed vector index entries after SQLite commit.
+    def _embed_vector_entries(self, result: ProcessResult) -> bool:
+        """Add vector index entries to the in-memory index after SQLite commit.
 
         Filters committed index entries for index_type="vector", embeds them
-        via the embedding provider, and adds them to the vector index.
+        via the embedding provider, and adds them to the in-memory vector index.
+        Does NOT save the index to disk -- the caller is responsible for calling
+        _save_vector_index() once all embedding work for the current processing
+        cycle is complete.
         If either embedding_provider or vector_index is None, this is a no-op.
-        If embedding fails, the error is logged and execution continues â€”
+        If embedding fails, the error is logged and execution continues --
         reconciliation catches gaps.
+
+        Returns True if any vectors were added to the in-memory index.
         """
         if self._embedding_provider is None or self._vector_index is None:
-            return
+            return False
         vector_entries = [e for e in result.index_entries if e.index_type == VECTOR_INDEX_TYPE]
         if not vector_entries:
-            return
+            return False
         try:
             texts = [entry.text_view for entry in vector_entries]
             vectors = self._embedding_provider.embed(texts)
@@ -200,9 +205,23 @@ class PalliumService:
                     provider_name=self._embedding_provider.model_name(),
                     provider_version=f"dim={self._embedding_provider.dimensions()}",
                 )
-            self._vector_index.save()
+            return True
         except Exception:
             self._logger.warning("Vector embedding failed after commit; reconciliation will catch gaps", exc_info=True)
+            return False
+
+    def _save_vector_index(self) -> None:
+        """Flush the in-memory vector index to disk.
+
+        No-op when vector_index is None.  Failures are logged and swallowed --
+        reconciliation via rebuild-vector-index recovers missing vectors.
+        """
+        if self._vector_index is None:
+            return
+        try:
+            self._vector_index.save()
+        except Exception:
+            self._logger.warning("Vector index save failed; reconciliation will catch gaps", exc_info=True)
 
     def ingest_item(
         self,
@@ -378,7 +397,6 @@ class PalliumService:
             source_item,
             max_attempts=max_attempts,
             worker_id=worker_id,
-            lease_seconds=lease_seconds,
         )
         return self.get_item_processing(source_item.id)
 
@@ -429,7 +447,6 @@ class PalliumService:
         *,
         max_attempts: int,
         worker_id: str | None = None,
-        lease_seconds: int = DEFAULT_PROCESSING_LEASE_SECONDS,
     ) -> None:
         worker_label = worker_id or source_item.processing_claimed_by or "source-item-worker"
         plugin_name = source_item.use_case or self._default_use_case
@@ -542,7 +559,7 @@ class PalliumService:
                 result=direct_result,
                 thread_rebuild_scope=thread_rebuild_scope,
             )
-            self._embed_vector_entries(direct_result)
+            memory_vectors_added = self._embed_vector_entries(direct_result)
             memory_provenance = _build_memory_provenance(
                 direct_result,
                 default_source_item_id=source_item.id,
@@ -584,25 +601,18 @@ class PalliumService:
             )
             return
 
+        source_vector_added = False
         if source_vector_entry is not None:
             try:
                 vectors = self._embedding_provider.embed([source_vector_entry.text_view])
                 self._vector_index.add(source_vector_entry.id, vectors[0])
-                self._vector_index.save()
+                source_vector_added = True
             except Exception:
                 self._logger.warning("Source item vector embedding failed", exc_info=True)
 
-        if thread_rebuild_scope is None:
-            return
+        if memory_vectors_added or source_vector_added:
+            self._save_vector_index()
 
-        lease = self._storage.claim_thread_processing_scope(
-            scope=thread_rebuild_scope,
-            worker_id=worker_label,
-            lease_seconds=lease_seconds,
-        )
-        if lease is None:
-            return
-        self._process_thread_rebuild_lease(lease, worker_id=worker_label, lease_seconds=lease_seconds)
     def _build_ingest_result(self, source_item: SourceItem) -> IngestResult:
         processing = self._build_processing_result(source_item)
         return IngestResult(
@@ -1028,7 +1038,8 @@ class PalliumService:
                     worker_id=worker_id,
                     claimed_at=current_lease.processing_claimed_at,
                 )
-                self._embed_vector_entries(thread_result)
+                if self._embed_vector_entries(thread_result):
+                    self._save_vector_index()
             else:
                 has_pending = self._storage.complete_thread_processing_scope(
                     scope_key=current_lease.scope_key,
@@ -1074,9 +1085,12 @@ class PalliumService:
         if not thread_items:
             return None, {}, []
 
-        active_thread_memory_ids = self._find_active_thread_memory_ids(thread_items)
+        memory_by_source = self._storage.list_memory_objects_for_source_items(
+            [item.id for item in thread_items],
+        )
+        active_thread_memory_ids = self._find_active_thread_memory_ids(thread_items, memory_by_source)
         aggregate = build_thread_aggregate(thread_items)
-        conclusions = self._collect_thread_conclusions(thread_items)
+        conclusions = self._collect_thread_conclusions(thread_items, memory_by_source)
         thread_result = plugin.build_thread_summary(aggregate, conclusions)
         reconcile_process_result = getattr(plugin, "reconcile_process_result", None)
         if callable(reconcile_process_result) and thread_result is not None:
@@ -1099,11 +1113,12 @@ class PalliumService:
     def _find_active_thread_memory_ids(
         self,
         thread_items: list[SourceItem],
+        memory_by_source: dict[str, list[MemoryObject]],
     ) -> dict[tuple[str, str], list[str]]:
         seen: set[str] = set()
         ids: dict[tuple[str, str], list[str]] = {}
         for source_item in thread_items:
-            for memory_object in self._storage.list_memory_objects_for_source_item(source_item.id):
+            for memory_object in memory_by_source.get(source_item.id, []):
                 if memory_object.lifecycle != "active":
                     continue
                 if memory_object.id in seen:
@@ -1115,11 +1130,11 @@ class PalliumService:
     def _collect_thread_conclusions(
         self,
         thread_items: list[SourceItem],
+        memory_by_source: dict[str, list[MemoryObject]],
     ) -> list[MemoryObject]:
         conclusions: dict[str, MemoryObject] = {}
         for source_item in thread_items:
-            memory_objects = self._storage.list_memory_objects_for_source_item(source_item.id)
-            for memory_object in memory_objects:
+            for memory_object in memory_by_source.get(source_item.id, []):
                 if memory_object.lifecycle != "active":
                     continue
                 if memory_object.type not in THREAD_CONCLUSION_TYPES:

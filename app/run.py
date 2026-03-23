@@ -29,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reload", action="store_true")
     parser.add_argument("--processor-id", default=None)
     parser.add_argument("--cleaner-id", default=None)
-    parser.add_argument("--poll-interval-seconds", type=float, default=1.0)
+    parser.add_argument("--poll-interval-seconds", type=float, default=0.2)
     parser.add_argument("--run-interval-seconds", type=float, default=None)
     parser.add_argument("--lease-seconds", type=int, default=None)
     parser.add_argument("--max-attempts", type=int, default=None)

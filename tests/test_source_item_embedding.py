@@ -79,6 +79,30 @@ class SelectiveEmbeddingPlugin(SemanticPlugin):
         return ProcessResult(annotations=[], memory_objects=[], relations=[], index_entries=[])
 
 
+class VectorProducingPlugin(SemanticPlugin):
+    """Plugin that produces vector index entries from process_item, simulating
+    memory objects that need embedding (like the production LLM plugin does)."""
+    name = "vector_producing"
+
+    def source_item_embedding_text(self, source_item: SourceItem) -> str | None:
+        from semantic.agent_conversation_memory_embedding import source_item_embedding_text
+        return source_item_embedding_text(source_item)
+
+    def process_item(self, source_item: SourceItem) -> ProcessResult:
+        from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
+        vector_entry = build_index_entry(
+            target_kind="source_item",
+            target_id=source_item.id,
+            index_type=VECTOR_INDEX_TYPE,
+            text_view="memory embedding text that is long enough for the minimum threshold",
+            text_view_name="test_memory.embedding",
+        )
+        return ProcessResult(
+            annotations=[], memory_objects=[], relations=[],
+            index_entries=[vector_entry],
+        )
+
+
 class NoMemoryPlugin(SemanticPlugin):
     """Plugin whose process_item produces no memory objects but still supports embedding."""
     name = "no_memory"
@@ -351,6 +375,99 @@ class TestRetryIdempotency:
         )
         assert existing is not None
         assert existing.id == vector_type_entries[0].id
+
+
+# ---------------------------------------------------------------------------
+# Vector index save frequency: one save per processing cycle, not per phase
+# ---------------------------------------------------------------------------
+
+class TestVectorIndexSaveFrequency:
+    def test_single_item_saves_vector_index_once(self, test_db_url):
+        """Processing one item that produces both source item AND memory object
+        vector entries should save the vector index exactly once, not once per
+        embedding phase."""
+        embedding = FakeEmbeddingProvider()
+        vector_idx = FakeVectorIndex()
+        service = _build_service(
+            test_db_url,
+            plugins={"vector_producing": VectorProducingPlugin()},
+            default_use_case="vector_producing",
+            embedding_provider=embedding,
+            vector_index=vector_idx,
+        )
+
+        service.ingest_item(
+            source_type="chat_message",
+            source_id="save-freq-1",
+            content_type="text/plain",
+            content="This is a user message that is definitely over forty characters long.",
+            metadata=None,
+            use_case="vector_producing",
+            artifact_kind="message",
+        )
+        service.drain_processing_queue(worker_id="test")
+
+        # Both memory object vector + source item vector should be in the index
+        assert len(vector_idx.entries) == 2
+        # But save should only be called once (batched), not twice
+        assert vector_idx.save_count == 1
+
+    def test_multiple_items_save_once_per_item(self, test_db_url):
+        """Processing N items should save the vector index N times (once per item),
+        not 2N times."""
+        embedding = FakeEmbeddingProvider()
+        vector_idx = FakeVectorIndex()
+        service = _build_service(
+            test_db_url,
+            plugins={"vector_producing": VectorProducingPlugin()},
+            default_use_case="vector_producing",
+            embedding_provider=embedding,
+            vector_index=vector_idx,
+        )
+
+        for i in range(3):
+            service.ingest_item(
+                source_type="chat_message",
+                source_id=f"save-freq-{i}",
+                content_type="text/plain",
+                content=f"User message number {i} that is definitely over forty characters long.",
+                metadata=None,
+                use_case="vector_producing",
+                artifact_kind="message",
+            )
+        service.drain_processing_queue(worker_id="test")
+
+        # 3 items × 2 vectors each = 6 entries
+        assert len(vector_idx.entries) == 6
+        # 3 saves (one per item), not 6
+        assert vector_idx.save_count == 3
+
+    def test_non_qualifying_item_does_not_save(self, test_db_url):
+        """Items that don't qualify for source embedding and produce no memory
+        vectors should not trigger a save."""
+        embedding = FakeEmbeddingProvider()
+        vector_idx = FakeVectorIndex()
+        service = _build_service(
+            test_db_url,
+            plugins={"selective_embedding": SelectiveEmbeddingPlugin()},
+            default_use_case="selective_embedding",
+            embedding_provider=embedding,
+            vector_index=vector_idx,
+        )
+
+        service.ingest_item(
+            source_type="tool_summary",
+            source_id="no-save-1",
+            content_type="text/plain",
+            content="Tool use summary that should not be embedded even though it is long enough.",
+            metadata=None,
+            use_case="selective_embedding",
+            artifact_kind="tool_use_summary",
+        )
+        service.drain_processing_queue(worker_id="test")
+
+        assert len(vector_idx.entries) == 0
+        assert vector_idx.save_count == 0
 
 
 # ---------------------------------------------------------------------------

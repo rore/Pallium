@@ -30,7 +30,7 @@ def test_run_processor_mode_invokes_processor(monkeypatch) -> None:
     exit_code = app_run.run(["processor", "--processor-id", "proc-1", "--once"])
 
     assert exit_code == 0
-    assert captured["args"] == ["--processor-id", "proc-1", "--poll-interval-seconds", "1.0", "--once"]
+    assert captured["args"] == ["--processor-id", "proc-1", "--poll-interval-seconds", "0.2", "--once"]
 
 
 def test_run_cleaner_mode_invokes_cleaner(monkeypatch) -> None:
