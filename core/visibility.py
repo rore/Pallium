@@ -25,12 +25,17 @@ def is_visible(
     candidate_visibility: str | None,
     candidate_container_ref: str | None,
     query_container_ref: str | None,
+    candidate_actor_ref: str | None = None,
 ) -> bool:
     if query_container_ref is None:
         return True
-    if candidate_visibility == "public":
+    if candidate_container_ref is not None and candidate_container_ref == query_container_ref:
         return True
-    return candidate_container_ref is not None and candidate_container_ref == query_container_ref
+    # Cross-container: only public shared memories (actor_ref=null).
+    # Personal memories (actor_ref set) stay in their own container.
+    if candidate_visibility == "public" and candidate_actor_ref is None:
+        return True
+    return False
 
 
 def visibility_matches_exact(left: str | None, right: str | None) -> bool:

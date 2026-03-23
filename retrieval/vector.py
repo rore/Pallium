@@ -142,11 +142,11 @@ class VectorRetrievalProvider(RetrievalProvider):
             hits_before_visibility += 1
 
             # Apply visibility using new is_visible()
-            candidate_visibility, candidate_container_ref = target_visibility_and_container(
+            candidate_visibility, candidate_container_ref, candidate_actor_ref = target_visibility_and_container(
                 self._storage.get_source_item, self._storage.get_memory_object,
                 index_entry.target_kind, index_entry.target_id,
             )
-            if not is_visible(candidate_visibility, candidate_container_ref, query_container_ref):
+            if not is_visible(candidate_visibility, candidate_container_ref, query_container_ref, candidate_actor_ref):
                 continue
 
             hits_after_visibility += 1

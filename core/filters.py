@@ -80,15 +80,15 @@ def target_visibility_and_container(
     get_memory_object,
     target_kind: str,
     target_id: str,
-) -> tuple[str | None, str | None]:
-    """Return (container_visibility, container_ref) for a retrieval target."""
+) -> tuple[str | None, str | None, str | None]:
+    """Return (container_visibility, container_ref, actor_ref) for a retrieval target."""
     if target_kind == "source_item":
         item = get_source_item(target_id)
-        return item.container_visibility, item.container_ref
+        return item.container_visibility, item.container_ref, getattr(item, 'actor_ref', None)
     if target_kind == "memory_object":
         mo = get_memory_object(target_id)
         container_ref = mo.container_ref
         if container_ref is None and mo.envelope is not None:
             container_ref = mo.envelope.scope.container_ref
-        return mo.container_visibility, container_ref
-    return None, None
+        return mo.container_visibility, container_ref, getattr(mo, 'actor_ref', None)
+    return None, None, None

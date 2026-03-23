@@ -80,11 +80,11 @@ class SQLiteSearchMixin:
             if score <= 0:
                 continue
             total_hits_before_visibility += 1
-            candidate_visibility, candidate_container_ref = target_visibility_and_container(
+            candidate_visibility, candidate_container_ref, candidate_actor_ref = target_visibility_and_container(
                 self.get_source_item, self.get_memory_object,
                 record.target_kind, record.target_id,
             )
-            if query_container_ref is not None and not is_visible(candidate_visibility, candidate_container_ref, query_container_ref):
+            if query_container_ref is not None and not is_visible(candidate_visibility, candidate_container_ref, query_container_ref, candidate_actor_ref):
                 if include_visibility_trace:
                     reason = (
                         "candidate_visibility_missing"

@@ -232,9 +232,13 @@ def test_public_query_injectable_blocks_respect_visibility(monkeypatch, test_db_
 def test_is_visible_passes_through_when_no_query_container_ref() -> None:
     from core.visibility import is_visible
 
-    # Public items are always visible
+    # Public shared items (actor_ref=None) are visible cross-container
     assert is_visible("public", "container-a", None) is True
     assert is_visible("public", None, None) is True
+    assert is_visible("public", "container-a", "container-b") is True
+    # Public personal items (actor_ref set) stay in their container
+    assert is_visible("public", "container-a", "container-b", candidate_actor_ref="user-1") is False
+    assert is_visible("public", "container-a", "container-a", candidate_actor_ref="user-1") is True
     # Limited/private items need matching container_ref
     assert is_visible("limited", "container-a", "container-a") is True
     assert is_visible("limited", "container-a", "container-b") is False
