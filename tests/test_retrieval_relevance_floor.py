@@ -197,7 +197,7 @@ class TestRetrievalRelevanceFloorIntegration:
             include_trace=True,
         )
         assert result.should_inject is False
-        assert result.decision_reason == "low_retrieval_relevance"
+        assert result.decision_reason == "low_justification_score"
 
     def test_on_topic_query_not_blocked_by_floor(self, test_db_url: str) -> None:
         """'what did we discuss about vector databases?' has lexical overlap
@@ -218,7 +218,7 @@ class TestRetrievalRelevanceFloorIntegration:
             container_visibility="private",
             include_trace=True,
         )
-        assert result.decision_reason != "low_retrieval_relevance", (
+        assert result.decision_reason != "low_justification_score", (
             f"Floor check should pass for on-topic query, got: {result.decision_reason}"
         )
 
@@ -312,7 +312,7 @@ class TestRelevanceFloorLexicalOnly:
     bypassed the floor entirely.
     """
 
-    @pytest.mark.xfail(reason="Lexical-only mode bypasses relevance floor — see docs/designs/off-topic-injection-analysis.md")
+    @pytest.mark.xfail(reason="Lexical-only mode uses floor=1 (any IDF match passes) — off-topic suppression requires composite retrieval")
     def test_off_topic_suppressed_lexical_only(self, test_db_url: str) -> None:
         """Weather query against catalog memories — lexical-only mode."""
         service = _build_lexical_only_service(test_db_url)
@@ -342,7 +342,7 @@ class TestRelevanceFloorLexicalOnly:
             container_visibility="private",
             include_trace=True,
         )
-        assert result.decision_reason != "low_retrieval_relevance", (
+        assert result.decision_reason != "low_justification_score", (
             f"On-topic query should pass the floor, got: {result.decision_reason}"
         )
 
@@ -364,6 +364,6 @@ class TestRelevanceFloorLexicalOnly:
         )
         # The floor should pass because on-topic candidates exist.
         # This test verifies the floor doesn't suppress everything.
-        assert result.decision_reason != "low_retrieval_relevance", (
+        assert result.decision_reason != "low_justification_score", (
             f"Floor should pass when on-topic candidates exist, got: {result.decision_reason}"
         )
