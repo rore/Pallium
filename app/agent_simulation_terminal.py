@@ -3,6 +3,7 @@ from __future__ import annotations
 import shlex
 
 COMMAND_COMPLETIONS = (
+    "/channel",
     "/new",
     "/new-conversation",
     "/artifact",
@@ -25,6 +26,7 @@ COMMAND_COMPLETIONS = (
 )
 
 ARGUMENT_COMPLETIONS = {
+    "/channel": ("public", "limited", "private"),
     "/debug": ("on", "off"),
     "/fork": ("--new-session",),
     "/help": ("advanced",),
