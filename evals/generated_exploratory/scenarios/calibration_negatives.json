@@ -1,0 +1,661 @@
+[
+  {
+    "scenario_id": "cal-off-topic-weather-simple",
+    "description": "Simple weather query should not inject library memories",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "switch"},
+      "priority_tier": "P0",
+      "tier_reason": "calibration_negative",
+      "review_status": "authored",
+      "expected_should_inject": false
+    },
+    "steps": [
+      {
+        "step_id": "ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-weather-1",
+            "content_type": "text/plain",
+            "content": "We decided to use the Dewey Decimal system for the new catalog indexing project. The team agreed this was the best approach for our small branch library.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-catalog",
+            "thread_ref": "chat:library-catalog:thread-1",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          },
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-weather-2",
+            "content_type": "text/plain",
+            "content": "I investigated the barcode scanner integration options. The USB-HID protocol works with our existing checkout terminals without additional drivers.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-catalog",
+            "thread_ref": "chat:library-catalog:thread-1",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:05:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query",
+        "action": "query",
+        "query": {
+          "text": "how is the weather today?",
+          "limit": 5,
+          "container_ref": "chat:library-catalog",
+          "container_visibility": "public"
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cal-off-topic-politics",
+    "description": "Politics query against technical memories",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "switch"},
+      "priority_tier": "P0",
+      "tier_reason": "calibration_negative",
+      "review_status": "authored",
+      "expected_should_inject": false
+    },
+    "steps": [
+      {
+        "step_id": "ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-pol-1",
+            "content_type": "text/plain",
+            "content": "The reservation hold queue needs to be reworked. Currently holds expire after 7 days but patrons complain this is too short for inter-library loans.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-system",
+            "thread_ref": "chat:library-system:thread-1",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query",
+        "action": "query",
+        "query": {
+          "text": "what do you think about the latest political developments?",
+          "limit": 5,
+          "container_ref": "chat:library-system",
+          "container_visibility": "public"
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cal-off-topic-sports",
+    "description": "Sports query against library memories",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "switch"},
+      "priority_tier": "P0",
+      "tier_reason": "calibration_negative",
+      "review_status": "authored",
+      "expected_should_inject": false
+    },
+    "steps": [
+      {
+        "step_id": "ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-sports-1",
+            "content_type": "text/plain",
+            "content": "Cataloging backlog reduced to 45 items after we batch-processed the new fiction arrivals. The MARC record import tool saved about 3 hours of manual entry.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-catalog",
+            "thread_ref": "chat:library-catalog:thread-1",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query",
+        "action": "query",
+        "query": {
+          "text": "did you watch the game last night?",
+          "limit": 5,
+          "container_ref": "chat:library-catalog",
+          "container_visibility": "public"
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cal-off-topic-food",
+    "description": "Food/restaurant query against library memories",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "switch"},
+      "priority_tier": "P0",
+      "tier_reason": "calibration_negative",
+      "review_status": "authored",
+      "expected_should_inject": false
+    },
+    "steps": [
+      {
+        "step_id": "ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-food-1",
+            "content_type": "text/plain",
+            "content": "The self-checkout kiosk firmware update resolved the receipt printer jam issue. We should schedule the remaining 3 kiosks for tomorrow morning before opening.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-ops",
+            "thread_ref": "chat:library-ops:thread-1",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query",
+        "action": "query",
+        "query": {
+          "text": "what's a good restaurant nearby?",
+          "limit": 5,
+          "container_ref": "chat:library-ops",
+          "container_visibility": "public"
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cal-off-topic-idiom-hit-books",
+    "description": "Idiom with false-match domain word",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "idiom"},
+      "priority_tier": "P0",
+      "tier_reason": "calibration_negative",
+      "review_status": "authored",
+      "expected_should_inject": false
+    },
+    "steps": [
+      {
+        "step_id": "ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-idiom-1",
+            "content_type": "text/plain",
+            "content": "The children's section book return process now has automated sorting by age group. Books are scanned and routed to the correct shelf zone automatically.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-books",
+            "thread_ref": "chat:library-books:thread-1",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query",
+        "action": "query",
+        "query": {
+          "text": "I really need to hit the books tonight",
+          "limit": 5,
+          "container_ref": "chat:library-books",
+          "container_visibility": "public"
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cal-off-topic-idiom-break-ice",
+    "description": "Idiom 'break the ice' against system memories",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "idiom"},
+      "priority_tier": "P0",
+      "tier_reason": "calibration_negative",
+      "review_status": "authored",
+      "expected_should_inject": false
+    },
+    "steps": [
+      {
+        "step_id": "ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-ice-1",
+            "content_type": "text/plain",
+            "content": "The patron engagement survey results show that the reading groups are our most effective community program. We should expand the Friday afternoon sessions.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-programs",
+            "thread_ref": "chat:library-programs:thread-1",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query",
+        "action": "query",
+        "query": {
+          "text": "just trying to break the ice here",
+          "limit": 5,
+          "container_ref": "chat:library-programs",
+          "container_visibility": "public"
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cal-off-topic-self-sufficient-math",
+    "description": "Self-sufficient query needing no memory",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "noise"},
+      "priority_tier": "P0",
+      "tier_reason": "calibration_negative",
+      "review_status": "authored",
+      "expected_should_inject": false
+    },
+    "steps": [
+      {
+        "step_id": "ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-math-1",
+            "content_type": "text/plain",
+            "content": "Budget analysis shows we can allocate $12,000 for new acquisitions next quarter. That covers approximately 400 paperbacks or 200 hardcovers at current prices.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-budget",
+            "thread_ref": "chat:library-budget:thread-1",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query",
+        "action": "query",
+        "query": {
+          "text": "what is 5 plus 3?",
+          "limit": 5,
+          "container_ref": "chat:library-budget",
+          "container_visibility": "public"
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cal-off-topic-self-sufficient-time",
+    "description": "Time query needing no memory",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "noise"},
+      "priority_tier": "P0",
+      "tier_reason": "calibration_negative",
+      "review_status": "authored",
+      "expected_should_inject": false
+    },
+    "steps": [
+      {
+        "step_id": "ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-time-1",
+            "content_type": "text/plain",
+            "content": "The late return notification system sends automated emails at 9 AM each day. Overdue items accumulate fines at $0.25 per day per item.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-ops",
+            "thread_ref": "chat:library-ops:thread-2",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query",
+        "action": "query",
+        "query": {
+          "text": "what time is it?",
+          "limit": 5,
+          "container_ref": "chat:library-ops",
+          "container_visibility": "public"
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cal-off-topic-phatic-interesting",
+    "description": "Phatic/noise response that needs no memory",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "noise"},
+      "priority_tier": "P0",
+      "tier_reason": "calibration_negative",
+      "review_status": "authored",
+      "expected_should_inject": false
+    },
+    "steps": [
+      {
+        "step_id": "ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-phatic-1",
+            "content_type": "text/plain",
+            "content": "The acquisition workflow now routes purchase requests through department heads before reaching the acquisitions librarian for final approval.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-workflow",
+            "thread_ref": "chat:library-workflow:thread-1",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query",
+        "action": "query",
+        "query": {
+          "text": "interesting",
+          "limit": 5,
+          "container_ref": "chat:library-workflow",
+          "container_visibility": "public"
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cal-off-topic-phatic-ok-thanks",
+    "description": "Short acknowledgment that needs no memory",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "noise"},
+      "priority_tier": "P0",
+      "tier_reason": "calibration_negative",
+      "review_status": "authored",
+      "expected_should_inject": false
+    },
+    "steps": [
+      {
+        "step_id": "ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-ok-1",
+            "content_type": "text/plain",
+            "content": "Investigation found the duplicate ISBN entries were caused by a race condition in the batch import script. Fixed by adding a unique constraint on the ISBN column.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-data",
+            "thread_ref": "chat:library-data:thread-1",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query",
+        "action": "query",
+        "query": {
+          "text": "ok thanks",
+          "limit": 5,
+          "container_ref": "chat:library-data",
+          "container_visibility": "public"
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cal-off-topic-topic-switch-new",
+    "description": "Explicit topic switch request",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "switch"},
+      "priority_tier": "P0",
+      "tier_reason": "calibration_negative",
+      "review_status": "authored",
+      "expected_should_inject": false
+    },
+    "steps": [
+      {
+        "step_id": "ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-switch-1",
+            "content_type": "text/plain",
+            "content": "We decided to migrate from the legacy catalog system to the open-source Koha ILS. The migration timeline is 6 months starting next quarter.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-migration",
+            "thread_ref": "chat:library-migration:thread-1",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query",
+        "action": "query",
+        "query": {
+          "text": "let's talk about something completely different",
+          "limit": 5,
+          "container_ref": "chat:library-migration",
+          "container_visibility": "public"
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cal-off-topic-personal-weekend",
+    "description": "Personal weekend plans against work memories",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "switch"},
+      "priority_tier": "P0",
+      "tier_reason": "calibration_negative",
+      "review_status": "authored",
+      "expected_should_inject": false
+    },
+    "steps": [
+      {
+        "step_id": "ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-weekend-1",
+            "content_type": "text/plain",
+            "content": "The interlibrary loan request processing time has been reduced from 5 days to 2 days after implementing the automated routing system between branch libraries.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-ill",
+            "thread_ref": "chat:library-ill:thread-1",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query",
+        "action": "query",
+        "query": {
+          "text": "any plans for the weekend?",
+          "limit": 5,
+          "container_ref": "chat:library-ill",
+          "container_visibility": "public"
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cal-off-topic-music-taste",
+    "description": "Music preference query against technical memories",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "switch"},
+      "priority_tier": "P0",
+      "tier_reason": "calibration_negative",
+      "review_status": "authored",
+      "expected_should_inject": false
+    },
+    "steps": [
+      {
+        "step_id": "ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-music-1",
+            "content_type": "text/plain",
+            "content": "The digital archive scanning project completed phase one. We digitized 2,400 pages of local history documents and indexed them with full-text search capabilities.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-archive",
+            "thread_ref": "chat:library-archive:thread-1",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query",
+        "action": "query",
+        "query": {
+          "text": "what kind of music do you like?",
+          "limit": 5,
+          "container_ref": "chat:library-archive",
+          "container_visibility": "public"
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cal-off-topic-tomorrow-bridging",
+    "description": "Generic bridging word 'tomorrow' against technical memories",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "bridging_word"},
+      "priority_tier": "P0",
+      "tier_reason": "calibration_negative",
+      "review_status": "authored",
+      "expected_should_inject": false
+    },
+    "steps": [
+      {
+        "step_id": "ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-tomorrow-1",
+            "content_type": "text/plain",
+            "content": "Task checkpoint: tomorrow we need to finish the shelf label printing. The label printer driver was updated and tested, 200 labels remaining in the queue.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-ops",
+            "thread_ref": "chat:library-ops:thread-3",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query",
+        "action": "query",
+        "query": {
+          "text": "is it going to rain tomorrow?",
+          "limit": 5,
+          "container_ref": "chat:library-ops",
+          "container_visibility": "public"
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cal-off-topic-existential",
+    "description": "Existential question needing no memory",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "noise"},
+      "priority_tier": "P0",
+      "tier_reason": "calibration_negative",
+      "review_status": "authored",
+      "expected_should_inject": false
+    },
+    "steps": [
+      {
+        "step_id": "ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cal-neg-exist-1",
+            "content_type": "text/plain",
+            "content": "The patron database cleanup removed 340 inactive accounts older than 5 years. Active membership is now 8,200 across all branches.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "chat:library-admin",
+            "thread_ref": "chat:library-admin:thread-1",
+            "actor_ref": "agent:assistant-1",
+            "source_ref": "calibration",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query",
+        "action": "query",
+        "query": {
+          "text": "what is the meaning of life?",
+          "limit": 5,
+          "container_ref": "chat:library-admin",
+          "container_visibility": "public"
+        }
+      }
+    ]
+  }
+]

@@ -180,20 +180,25 @@ def compute_injection_signals(
 
 @dataclass(frozen=True)
 class LinearWeights:
-    """Calibrated weights for the linear justification formula."""
+    """Calibrated weights for the linear justification formula.
 
-    w_top_routing: float = 0.25
-    w_retrieval: float = 0.20
+    Calibrated against 44 labeled scenarios (23 positive, 21 negative) from
+    seed invariants, memory_routing benchmarks, work_resumption benchmarks,
+    and authored off-topic negatives.
+    """
+
+    w_top_routing: float = 0.15
+    w_retrieval: float = 0.30
     w_support: float = 0.15
     w_type_richness: float = 0.15
     w_dispersion: float = 0.10
     w_top_gap: float = 0.10
     w_work_signals: float = 0.05
-    threshold: float = 0.35
+    threshold: float = 0.20
 
     # Normalization ranges (derived from calibration data)
-    routing_score_max: float = 1100.0
-    retrieval_score_max: float = 12.0
+    routing_score_max: float = 700.0
+    retrieval_score_max: float = 30.0
     dispersion_max: float = 300.0
     top_gap_max: float = 500.0
 
@@ -272,18 +277,24 @@ def justify_injection_linear(
 
 @dataclass(frozen=True)
 class RuleThresholds:
-    """Calibrated thresholds for the rule-based justification."""
+    """Calibrated thresholds for the rule-based justification.
+
+    Calibrated against 44 labeled scenarios (23 positive, 21 negative) from
+    seed invariants, memory_routing benchmarks, work_resumption benchmarks,
+    and authored off-topic negatives.
+    """
 
     # Gate 1: Strong retrieval + structure
-    high_retrieval_score: int = 4
+    high_retrieval_score: int = 3
     min_support_grade_for_retrieval: str = "supported"
 
     # Gate 2: Active work + minimum routing score
     min_work_routing_score: int = 300
 
-    # Gate 3: Score shape (2+ candidates)
+    # Gate 3: Score shape (2+ candidates) + minimum retrieval
     dispersion_floor: float = 80.0
     gap_floor: int = 50
+    min_retrieval_for_shape: int = 2
 
     # Gate 4: Vector confidence (composite only)
     vector_confidence_floor: int = 700
@@ -321,11 +332,12 @@ def justify_injection_rules(
             reason="gate2:active_work+high_value_types",
         )
 
-    # Gate 3: Score shape (2+ candidates, peaked distribution)
+    # Gate 3: Score shape (2+ candidates, peaked distribution, minimum retrieval)
     if (
         signals.candidate_count >= 2
         and signals.score_dispersion >= t.dispersion_floor
         and signals.top_gap >= t.gap_floor
+        and signals.max_retrieval_score >= t.min_retrieval_for_shape
     ):
         return JustificationResult(
             justified=True,

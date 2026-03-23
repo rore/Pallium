@@ -64,11 +64,19 @@ def _derive_label(scenario: dict[str, Any], source: str) -> bool | None:
         meta = scenario.get("_generation_metadata") or {}
         if "expected_should_inject" in meta:
             return bool(meta["expected_should_inject"])
-        # Seed scenarios that are P0 correctness invariants and not off-topic
-        # are generally about correct retrieval/injection behavior.
-        # We mark them as positive (should inject) unless they have
-        # soft_expectations.must_not_include that suggests suppression.
-        return True
+        # Many seed P0 scenarios test isolation/visibility/role (not injection
+        # quality).  Only label seeds as positive if they are specifically about
+        # injection or recall.  Default to None (skip) for ambiguous cases.
+        tier_reason = meta.get("tier_reason", "")
+        if tier_reason in ("calibration_negative",):
+            return False
+        # P1 quality scenarios about injection/recall are positive
+        if "recall" in scenario_id or "injection" in scenario_id:
+            return True
+        # P0 correctness scenarios about isolation/visibility are ambiguous
+        # — they test that injection is correctly suppressed, not that it
+        # should happen.  Skip them.
+        return None
 
     if source == "memory_routing":
         expected = scenario.get("expected_value")
@@ -78,8 +86,13 @@ def _derive_label(scenario: dict[str, Any], source: str) -> bool | None:
 
     if source == "work_resumption":
         should_help = scenario.get("should_memory_help")
-        if should_help is not None:
-            return bool(should_help)
+        if should_help is False:
+            return False
+        # For positive cases: the label is inferred from actual system
+        # behavior after execution.  Return True as a provisional label —
+        # the runner will override with actual_should_inject when available.
+        if should_help is True:
+            return True
         return None
 
     if source == "generated_negative":
@@ -215,14 +228,20 @@ def _extract_signals_from_debug(debug_payload: dict[str, Any]) -> InjectionSigna
     """Build InjectionSignals from the debug trace's routing data.
 
     Reconstructs candidate-like dicts from the trace entries and feeds them
-    to compute_injection_signals.
+    to compute_injection_signals.  Uses selected_results (final candidates
+    that survived to the injection decision) plus excluded_high_scoring
+    candidates to capture the full picture the justification function would see.
     """
     routing = debug_payload.get("trace", {}).get("routing") or {}
     selected_results = routing.get("selected_results") or []
+    excluded = routing.get("excluded_high_scoring_candidates") or []
 
-    # Reconstruct candidate dicts from trace entries
+    # Combine selected + excluded to reconstruct the ranked candidate set
+    # that _build_injectable_blocks receives as final_candidates.
+    all_entries = list(selected_results) + list(excluded)
+
     candidates: list[dict[str, object]] = []
-    for entry in selected_results:
+    for entry in all_entries:
         candidates.append({
             "routing_score": int(entry.get("routing_score", 0)),
             "retrieval_score": int(entry.get("retrieval_score", 0)),
@@ -468,7 +487,7 @@ def run_calibration(
         if r["misclassified"]:
             print(f"  Misclassified ({len(r['misclassified'])}):")
             for m in r["misclassified"]:
-                print(f"    {m['type']}: {m['scenario_id']} [{m['source']}] → {m['reason']}")
+                print(f"    {m['type']}: {m['scenario_id']} [{m['source']}] -> {m['reason']}")
 
     rec = evaluation.get("recommendation", {})
     print(f"\nRECOMMENDATION: {rec.get('winner', '?')} — {rec.get('reason', '?')}")
