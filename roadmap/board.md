@@ -14,6 +14,7 @@
 - idea-document-schema-evolution-strategy
 
 # Done
+- add-qpp-injection-justification
 - add-idf-weighted-lexical-scoring
 - add-interest-memory-kind
 - add-actor-scoped-memory-and-container-visibility-rules
