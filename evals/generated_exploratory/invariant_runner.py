@@ -239,9 +239,14 @@ def _run_multi_step(
             query_payload = _post_query(client, query_request)
             debug_payload = _post_query_debug(client, query_request)
 
+            # Build a per-step scenario view so invariant helpers
+            # (_query_container_ref, _query_actor_ref, _query_visibility)
+            # resolve from THIS step's query, not the last query step.
+            step_scenario = {**scenario, "current_query": step["query"]}
+
             invariant_ids = step.get("invariant_assertions") or _applicable_invariants(scenario)
             results = run_invariants(
-                scenario, query_payload, debug_payload, invariant_ids=invariant_ids
+                step_scenario, query_payload, debug_payload, invariant_ids=invariant_ids
             )
 
             soft = _check_soft_expectations(
