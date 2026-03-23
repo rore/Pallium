@@ -50,3 +50,4 @@ evals/external_memory_pressure/output/
 evals/low_value_churn/output/
 evals/write_enrichment/output/
 evals/vector_retrieval/output/
+evals/cosine_escape_hatch_validation_results.json
