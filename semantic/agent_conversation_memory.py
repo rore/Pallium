@@ -51,6 +51,10 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         return 'agent_conversation_memory.thread_summary'
 
     @property
+    def thread_conclusion_types(self) -> frozenset[str]:
+        return frozenset({"decision", "investigation_outcome"})
+
+    @property
     def consolidation_policy(self) -> ConsolidationPolicy | None:
         return self._consolidation_config
 

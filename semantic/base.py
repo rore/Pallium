@@ -37,6 +37,13 @@ class ThreadAggregationSemanticPlugin(SemanticPlugin):
     def thread_summary_schema_id(self) -> str:
         raise NotImplementedError
 
+    @property
+    def thread_conclusion_types(self) -> frozenset[str]:
+        """Memory types that represent thread conclusions.
+        Core uses this to filter memory objects before passing them to
+        build_thread_summary(). Default: empty (pass all active memory)."""
+        return frozenset()
+
     @abstractmethod
     def supports_thread_aggregation(self, source_item: SourceItem) -> bool:
         raise NotImplementedError

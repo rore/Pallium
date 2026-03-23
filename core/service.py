@@ -26,7 +26,6 @@ from storage.vector_index import VectorIndex
 
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
-THREAD_CONCLUSION_TYPES = {"decision", "investigation_outcome"}
 DEFAULT_PROCESSING_LEASE_SECONDS = 15 * 60
 DEFAULT_PROCESSING_MAX_ATTEMPTS = 3
 DEFAULT_RETRY_BACKOFF_SECONDS = 5
@@ -1097,7 +1096,7 @@ class PalliumService:
         )
         active_thread_memory_ids = self._find_active_thread_memory_ids(thread_items, memory_by_source)
         aggregate = build_thread_aggregate(thread_items)
-        conclusions = self._collect_thread_conclusions(thread_items, memory_by_source)
+        conclusions = self._collect_thread_conclusions(thread_items, memory_by_source, conclusion_types=plugin.thread_conclusion_types)
         thread_result = plugin.build_thread_summary(aggregate, conclusions)
         reconcile_process_result = getattr(plugin, "reconcile_process_result", None)
         if callable(reconcile_process_result) and thread_result is not None:
@@ -1138,13 +1137,17 @@ class PalliumService:
         self,
         thread_items: list[SourceItem],
         memory_by_source: dict[str, list[MemoryObject]],
+        *,
+        conclusion_types: frozenset[str] = frozenset(),
     ) -> list[MemoryObject]:
         conclusions: dict[str, MemoryObject] = {}
+        if not conclusion_types:
+            return []
         for source_item in thread_items:
             for memory_object in memory_by_source.get(source_item.id, []):
                 if memory_object.lifecycle != "active":
                     continue
-                if memory_object.type not in THREAD_CONCLUSION_TYPES:
+                if memory_object.type not in conclusion_types:
                     continue
                 conclusions[memory_object.id] = memory_object
         return list(conclusions.values())
