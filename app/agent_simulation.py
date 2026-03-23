@@ -425,8 +425,7 @@ class AgentSimulationApp:
         defaults = self._session.defaults
         container_ref = self._prompt_optional(f"container_ref [{defaults.container_ref}]: ") or defaults.container_ref
         thread_ref = self._prompt_optional(f"thread_ref [{defaults.thread_ref}]: ") or defaults.thread_ref
-        current_visibility = defaults.visibility_context()
-        current_kind = str(current_visibility.get("kind") or "public")
+        current_kind = defaults.container_visibility_kind()
         visibility_kind = self._prompt_optional(f"container_visibility [{current_kind}]: ") or current_kind
         if visibility_kind not in VISIBILITY_KINDS:
             self._write_warning(f"Unsupported container visibility: {visibility_kind}")

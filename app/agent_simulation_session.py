@@ -28,13 +28,12 @@ def new_ref(prefix: str) -> str:
 class ScopeDefaults:
     container_ref: str | None
     thread_ref: str | None
-    container_visibility: dict[str, Any] | str
+    container_visibility: str
     runtime_context: dict[str, Any] = field(default_factory=dict)
     runtime_context_overrides: dict[str, bool] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
-        payload['container_visibility'] = self.visibility_context()
         return payload
 
     @classmethod
@@ -53,7 +52,7 @@ class ScopeDefaults:
         return cls(
             container_ref=payload.get('container_ref'),
             thread_ref=payload.get('thread_ref'),
-            container_visibility=_normalize_visibility_context(
+            container_visibility=_normalize_visibility_kind(
                 payload.get('container_visibility', payload.get('visibility_context'))
             ),
             runtime_context=runtime_context,
@@ -61,13 +60,13 @@ class ScopeDefaults:
         )
 
     def visibility_context(self) -> dict[str, Any]:
-        return _normalize_visibility_context(self.container_visibility)
+        return {'kind': self.container_visibility, 'id': None}
 
     def container_visibility_kind(self) -> str:
-        return str(self.visibility_context().get('kind') or 'private')
+        return self.container_visibility
 
     def set_container_visibility(self, kind: str, scope_id: str | None = None) -> None:
-        self.container_visibility = _normalize_visibility_context({'kind': kind, 'id': scope_id})
+        self.container_visibility = _normalize_visibility_kind(kind)
 
     def set_runtime_context(self, key: str, value: Any, *, manual: bool) -> None:
         self.runtime_context[key] = value
@@ -148,7 +147,7 @@ def create_default_session(*, base_url: str, mode: str, model: dict[str, Any] | 
     defaults = ScopeDefaults(
         container_ref=f'simulation:{session_id}',
         thread_ref=new_ref('thread'),
-        container_visibility={'kind': 'public', 'id': None},
+        container_visibility='public',
         runtime_context={
             'turn_kind': None,
             'session_has_sufficient_local_context': None,
@@ -276,21 +275,11 @@ def _prefixed_ref(value: str | None, replay_id: str) -> str | None:
     return f'{replay_id}:{value}'
 
 
-def _normalize_visibility_context(value: Any) -> dict[str, Any]:
-    kind = 'private'
-    scope_id: str | None = None
-
+def _normalize_visibility_kind(value: Any) -> str:
     if isinstance(value, dict):
         raw_kind = value.get('kind')
         if isinstance(raw_kind, str) and raw_kind.strip().lower() in VISIBILITY_KINDS:
-            kind = raw_kind.strip().lower()
-        raw_id = value.get('id')
-        if raw_id is not None:
-            scope_id = str(raw_id)
+            return raw_kind.strip().lower()
     elif isinstance(value, str) and value.strip().lower() in VISIBILITY_KINDS:
-        kind = value.strip().lower()
-
-    if kind != 'limited':
-        scope_id = None
-
-    return {'kind': kind, 'id': scope_id}
+        return value.strip().lower()
+    return 'private'
