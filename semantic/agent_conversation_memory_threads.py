@@ -227,6 +227,49 @@ TASK_CHECKPOINT_MAX_TEXT_CHARS = 3200
 
 TASK_CHECKPOINT_TEXT_VIEW = "memory_object.task_checkpoint_context"
 
+# ---------------------------------------------------------------------------
+# Merged thread summary + task checkpoint (single LLM call)
+# ---------------------------------------------------------------------------
+
+THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_ID = "thread_summary_with_checkpoint_extraction"
+
+THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v1"
+
+THREAD_SUMMARY_WITH_CHECKPOINT_SCHEMA_DESCRIPTION = json.dumps(
+    {
+        "summary": "string",
+        "retrieval_context": "string or null",
+        "task_checkpoint": {
+            "summary": "string",
+            "task": "string",
+            "current_state": "string",
+            "key_findings": ["string"],
+            "blocker_state": "string",
+            "next_step": "string",
+            "evidence": ["string"],
+            "freshness_signal": "string",
+            "retrieval_context": "string or null",
+        },
+    },
+    indent=2,
+)
+
+THREAD_SUMMARY_WITH_CHECKPOINT_SYSTEM_PROMPT = (
+    "Summarize one agent-mediated conversation thread for future recall and "
+    "create a compact resumed-work task checkpoint from the same thread. "
+    "Return exactly one JSON object and no extra prose. "
+    "Use only facts that are explicitly present in the thread items, selected work artifacts, or carried conclusions. "
+    "Selected work artifacts may describe explicit partial progress, blockers, next steps, constraints, or durable findings; include them only when they are explicitly stated. "
+    "Do not infer causes, recommendations, next steps, risks, or unresolved conclusions that are not stated. "
+    "Only say the thread is unresolved when the supplied content truly lacks any resolved conclusion, durable constraint, progress state, blocker, or supported next step. "
+    "For the top-level summary: keep it concise, at most two sentences and roughly 60 words. "
+    "For the top-level retrieval_context: write one short search-friendly context line (12-30 words) that helps the summary match later queries, or null when the summary already has enough search cues. Do not restate the summary. "
+    "For the task_checkpoint section: capture the task, the current state, key findings, blocker or failed-attempt state when present, the next supported step when present, and a concise freshness signal. "
+    "Do not turn the checkpoint into a workflow graph, transcript replay, or speculative recommendation. "
+    "Keep the task_checkpoint summary concise: at most two sentences and roughly 80 words. "
+    "For task_checkpoint retrieval_context: write one short search-friendly context line (12-30 words) that helps this checkpoint match later queries, or null when the checkpoint summary already has enough search cues. Do not restate the checkpoint summary."
+)
+
 def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_name: str, thread_summary_schema_id: str, task_checkpoint_schema_id: str, aggregate: ThreadAggregate, conclusions: list[MemoryObject]) -> ProcessResult:
         carried_conclusions = sorted(
             [
@@ -244,24 +287,28 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 conclusion_lines.append(f"- {conclusion.type}: {text}")
 
         selected_work_artifacts = _collect_selected_work_artifacts(aggregate.source_items)
+        use_merged_call = _should_build_task_checkpoint(selected_work_artifacts)
 
         thread_material = _build_thread_material(aggregate.source_items)
         if len(thread_material) > THREAD_SUMMARY_MAX_TEXT_CHARS:
             thread_material = thread_material[:THREAD_SUMMARY_MAX_TEXT_CHARS].rstrip() + "\n[thread items truncated for token budget]"
 
+        user_prompt_text = (
+            ("Summarize this thread conservatively for later recall and "
+             "create one compact resumed-work checkpoint from the same content. " if use_merged_call else
+             "Summarize this thread conservatively for later recall. ") +
+            "Use only explicit information from the provided content.\n\n"
+            f"Container ref: {aggregate.container_ref}\n"
+            f"Thread ref: {aggregate.thread_ref}\n"
+            f"Latest occurred at: {aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else 'null'}\n"
+            f"Carried conclusions:\n{chr(10).join(conclusion_lines) if conclusion_lines else '- none'}\n\n"
+            f"Selected work artifacts:\n{_format_selected_work_artifacts(selected_work_artifacts)}\n\n"
+            f"Thread items:\n{thread_material}"
+        )
         response = provider.generate_json(
-            system_prompt=THREAD_SUMMARY_SYSTEM_PROMPT,
-            user_prompt=(
-                "Summarize this thread conservatively for later recall. "
-                "Use only explicit information from the provided content.\n\n"
-                f"Container ref: {aggregate.container_ref}\n"
-                f"Thread ref: {aggregate.thread_ref}\n"
-                f"Latest occurred at: {aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else 'null'}\n"
-                f"Carried conclusions:\n{chr(10).join(conclusion_lines) if conclusion_lines else '- none'}\n\n"
-                f"Selected work artifacts:\n{_format_selected_work_artifacts(selected_work_artifacts)}\n\n"
-                f"Thread items:\n{thread_material}"
-            ),
-            schema_description=THREAD_SUMMARY_SCHEMA_DESCRIPTION,
+            system_prompt=THREAD_SUMMARY_WITH_CHECKPOINT_SYSTEM_PROMPT if use_merged_call else THREAD_SUMMARY_SYSTEM_PROMPT,
+            user_prompt=user_prompt_text,
+            schema_description=THREAD_SUMMARY_WITH_CHECKPOINT_SCHEMA_DESCRIPTION if use_merged_call else THREAD_SUMMARY_SCHEMA_DESCRIPTION,
         )
         parsed_summary = response.parsed_json.get("summary")
         if not isinstance(parsed_summary, str) or not parsed_summary.strip():
@@ -381,16 +428,20 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 )
             )
 
-        if _should_build_task_checkpoint(selected_work_artifacts):
-            task_checkpoint_memory, task_checkpoint_index_entries = build_task_checkpoint_memory(
+        if use_merged_call:
+            checkpoint_parsed = response.parsed_json.get("task_checkpoint", {})
+            if not isinstance(checkpoint_parsed, dict):
+                checkpoint_parsed = {}
+            task_checkpoint_memory, task_checkpoint_index_entries = _build_task_checkpoint_from_parsed(
+                checkpoint_parsed=checkpoint_parsed,
                 aggregate=aggregate,
                 summary=summary,
                 conclusion_payload=conclusion_payload,
                 selected_work_artifacts=selected_work_artifacts,
-                provider=provider,
                 prompt_variant=prompt_variant,
                 plugin_name=plugin_name,
                 task_checkpoint_schema_id=task_checkpoint_schema_id,
+                llm_metadata=response.metadata,
             )
             task_checkpoint_memory = replace(
                 task_checkpoint_memory,
@@ -469,23 +520,47 @@ def build_task_checkpoint_memory(
             ),
             schema_description=TASK_CHECKPOINT_SCHEMA_DESCRIPTION,
         )
-        parsed_summary = response.parsed_json.get("summary")
-        if not isinstance(parsed_summary, str) or not parsed_summary.strip():
-            raise ValueError("task checkpoint extraction must return a non-empty summary string")
-        parsed_summary = parsed_summary.strip()
-        task = str(response.parsed_json.get("task") or "").strip() or _default_task_checkpoint_task(summary, conclusion_payload)
+        return _build_task_checkpoint_from_parsed(
+            checkpoint_parsed=response.parsed_json,
+            aggregate=aggregate,
+            summary=summary,
+            conclusion_payload=conclusion_payload,
+            selected_work_artifacts=selected_work_artifacts,
+            prompt_variant=prompt_variant,
+            plugin_name=plugin_name,
+            task_checkpoint_schema_id=task_checkpoint_schema_id,
+            llm_metadata=response.metadata,
+        )
+
+
+def _build_task_checkpoint_from_parsed(
+    *,
+    checkpoint_parsed: dict,
+    aggregate: ThreadAggregate,
+    summary: str,
+    conclusion_payload: list[dict[str, str]],
+    selected_work_artifacts: list[dict[str, str]],
+    prompt_variant: str,
+    plugin_name: str,
+    task_checkpoint_schema_id: str,
+    llm_metadata=None,
+) -> tuple[MemoryObject, list[object]]:
+        parsed_summary = str(checkpoint_parsed.get("summary") or "").strip()
+        if not parsed_summary:
+            parsed_summary = _default_task_checkpoint_task(summary, conclusion_payload)
+        task = str(checkpoint_parsed.get("task") or "").strip() or _default_task_checkpoint_task(summary, conclusion_payload)
         derived_current_state = _default_task_checkpoint_state(summary, selected_work_artifacts)
-        parsed_current_state = str(response.parsed_json.get("current_state") or "").strip()
+        parsed_current_state = str(checkpoint_parsed.get("current_state") or "").strip()
         current_state = _normalize_task_checkpoint_current_state(
             current_state=parsed_current_state,
             derived_current_state=derived_current_state,
             selected_work_artifacts=selected_work_artifacts,
         ) or derived_current_state
-        key_findings = _parse_string_list(response.parsed_json.get("key_findings")) or _default_task_checkpoint_findings(conclusion_payload, selected_work_artifacts)
-        blocker_state = str(response.parsed_json.get("blocker_state") or "").strip() or _default_task_checkpoint_blocker(selected_work_artifacts)
-        next_step = str(response.parsed_json.get("next_step") or "").strip() or _default_task_checkpoint_next_step(selected_work_artifacts)
-        evidence = _parse_string_list(response.parsed_json.get("evidence")) or _default_task_checkpoint_evidence(conclusion_payload, selected_work_artifacts, summary)
-        freshness_signal = str(response.parsed_json.get("freshness_signal") or "").strip() or _default_task_checkpoint_freshness_signal(aggregate.latest_occurred_at)
+        key_findings = _parse_string_list(checkpoint_parsed.get("key_findings")) or _default_task_checkpoint_findings(conclusion_payload, selected_work_artifacts)
+        blocker_state = str(checkpoint_parsed.get("blocker_state") or "").strip() or _default_task_checkpoint_blocker(selected_work_artifacts)
+        next_step = str(checkpoint_parsed.get("next_step") or "").strip() or _default_task_checkpoint_next_step(selected_work_artifacts)
+        evidence = _parse_string_list(checkpoint_parsed.get("evidence")) or _default_task_checkpoint_evidence(conclusion_payload, selected_work_artifacts, summary)
+        freshness_signal = str(checkpoint_parsed.get("freshness_signal") or "").strip() or _default_task_checkpoint_freshness_signal(aggregate.latest_occurred_at)
 
         memory_object = MemoryObject(
             type="task_checkpoint",
@@ -537,12 +612,13 @@ def build_task_checkpoint_memory(
             text_view=normalize_for_index(index_source),
             text_view_name=TASK_CHECKPOINT_TEXT_VIEW,
         )
+        retrieval_context = str(checkpoint_parsed.get("retrieval_context") or "").strip() or None
         memory_object, enrichment_index_entry = _apply_inline_enrichment(
             memory_object=memory_object,
-            retrieval_context=str(response.parsed_json.get("retrieval_context") or "").strip() or None,
+            retrieval_context=retrieval_context,
             plugin_name=plugin_name,
             prompt_variant=prompt_variant,
-            llm_metadata=response.metadata,
+            llm_metadata=llm_metadata,
         )
         index_entries = [index_entry]
         if enrichment_index_entry is not None:

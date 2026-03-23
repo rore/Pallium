@@ -14,19 +14,27 @@ from providers.llm.base import LLMJsonResponse
 
 
 class ThreadAwareStubProvider:
+    def _resolve_thread_summary_payload(self, user_prompt: str) -> dict:
+        lower = user_prompt.lower()
+        if "transaction-transformer had the most significant recent ledger changes" in lower and "local repos only" in lower:
+            return {"summary": "unresolved"}
+        if "schema change and backfill done" in lower and "admin toggle" in lower:
+            return {"summary": "Ticket LIB-241 has the schema and backfill done, and the next step is wiring the admin toggle plus retry-path coverage.", "retrieval_context": "Flag-gated LIB-241 reservation ordering rollout with remaining admin-toggle and retry-path coverage work."}
+        if "service token expired" in lower and "batch 313" in lower:
+            return {"summary": "The sync retry hit a 401 because the service token expired after 312 reservation records, so the next step is refreshing the token and resuming from batch 313.", "retrieval_context": "Catalog sync retry resume state anchored on the batch 313 restart after service-token expiry."}
+        return {"summary": "Reservation ordering thread summary with prior findings and decision."}
+
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+        if "task_checkpoint" in schema_description and "Thread items:" in user_prompt:
+            summary_payload = self._resolve_thread_summary_payload(user_prompt)
+            checkpoint_payload = _build_task_checkpoint_payload(user_prompt)
+            merged = dict(summary_payload)
+            merged["task_checkpoint"] = checkpoint_payload
+            return LLMJsonResponse(raw_text=json.dumps(merged), parsed_json=merged)
         if "key_findings" in schema_description and "freshness_signal" in schema_description:
             payload = _build_task_checkpoint_payload(user_prompt)
         elif "Thread items:" in user_prompt:
-            lower = user_prompt.lower()
-            if "transaction-transformer had the most significant recent ledger changes" in lower and "local repos only" in lower:
-                payload = {"summary": "unresolved"}
-            elif "schema change and backfill done" in lower and "admin toggle" in lower:
-                payload = {"summary": "Ticket LIB-241 has the schema and backfill done, and the next step is wiring the admin toggle plus retry-path coverage.", "retrieval_context": "Flag-gated LIB-241 reservation ordering rollout with remaining admin-toggle and retry-path coverage work."}
-            elif "service token expired" in lower and "batch 313" in lower:
-                payload = {"summary": "The sync retry hit a 401 because the service token expired after 312 reservation records, so the next step is refreshing the token and resuming from batch 313.", "retrieval_context": "Catalog sync retry resume state anchored on the batch 313 restart after service-token expiry."}
-            else:
-                payload = {"summary": "Reservation ordering thread summary with prior findings and decision."}
+            payload = self._resolve_thread_summary_payload(user_prompt)
         elif "Here's the verdict: transaction-transformer had the most significant recent ledger changes" in user_prompt:
             payload = {
                 "summary": "Comparative repo verdict.",

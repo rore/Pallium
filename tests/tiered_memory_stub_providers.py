@@ -7,6 +7,12 @@ from providers.llm.base import LLMJsonResponse
 
 class TieredMemorySemanticProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+        if 'task_checkpoint' in schema_description and 'Thread items:' in user_prompt:
+            summary_payload = _build_thread_summary_payload(user_prompt)
+            checkpoint_payload = _build_task_checkpoint_payload(user_prompt)
+            merged = dict(summary_payload)
+            merged['task_checkpoint'] = checkpoint_payload
+            return LLMJsonResponse(raw_text=json.dumps(merged), parsed_json=merged)
         if 'freshness_signal' in schema_description:
             payload = _build_task_checkpoint_payload(user_prompt)
         elif 'carry_forward_answer' in schema_description:
