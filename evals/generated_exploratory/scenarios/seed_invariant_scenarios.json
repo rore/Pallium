@@ -1,0 +1,428 @@
+[
+  {
+    "scenario_id": "p0-cross-container-isolation-001",
+    "description": "Non-public memory created in container A must not appear when querying from container B.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "limited"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_container_a",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cross-c-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: we will use arrival-time ordering for reservation queues to avoid skipped holds during catalog sync delays.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-downtown",
+            "thread_ref": "chat:library-downtown:thread-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/cross-c-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "container_visibility": "limited"
+          }
+        ]
+      },
+      {
+        "step_id": "query_container_b",
+        "action": "query",
+        "query": {
+          "text": "What ordering do we use for reservation queues?",
+          "limit": 6,
+          "container_ref": "chat:library-uptown",
+          "container_visibility": "limited"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"]
+      }
+    ]
+  },
+  {
+    "scenario_id": "p0-cross-container-isolation-002",
+    "description": "Private container memory must not leak to a different container even if topic matches.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "private"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_private_container",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cross-c-002-msg-1",
+            "content_type": "text/plain",
+            "content": "Investigation found that the batch catalog sync fails when the staging database has stale connection handles.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-staging",
+            "thread_ref": "chat:catalog-staging:thread-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://seed/cross-c-002-msg-1",
+            "occurred_at": "2026-03-20T09:00:00Z",
+            "container_visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "query_different_container",
+        "action": "query",
+        "query": {
+          "text": "Why does batch catalog sync fail?",
+          "limit": 6,
+          "container_ref": "chat:catalog-production",
+          "container_visibility": "private"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"]
+      }
+    ]
+  },
+  {
+    "scenario_id": "p0-wrong-role-attribution-001",
+    "description": "When assistant elaborates on a user topic, no interest memory should be created from assistant evidence alone.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"source_role": "assistant", "memory_type_target": "interest"},
+      "invariant_assertions": ["INV-02", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "user_expresses_interest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "role-001-msg-1",
+            "content_type": "text/plain",
+            "content": "I've been looking at RFID-based inventory tracking for branch libraries. It sounds promising.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-role-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/role-001-msg-1",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "assistant_elaborates",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "assistant_artifact",
+            "source_id": "role-001-assist-1",
+            "content_type": "text/plain",
+            "content": "RFID tracking is widely used in modern library systems. It reduces manual scanning time and improves inventory accuracy.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-role-001",
+            "actor_ref": "agent:assistant",
+            "source_ref": "memory://seed/role-001-assist-1",
+            "occurred_at": "2026-03-20T10:01:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query_for_interest",
+        "action": "query",
+        "query": {
+          "text": "What technologies have we discussed for inventory tracking?",
+          "limit": 6,
+          "container_ref": "chat:library-help",
+          "container_visibility": "public"
+        },
+        "invariant_assertions": ["INV-02", "INV-07"]
+      }
+    ]
+  },
+  {
+    "scenario_id": "p0-visibility-scope-001",
+    "description": "Non-public results from a different container must not appear in query results.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"visibility": "limited", "container_relation": "different_container"},
+      "invariant_assertions": ["INV-04", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "vis-001-msg-1",
+        "content_type": "text/plain",
+        "content": "Decision: reserve the large meeting room for the summer reading program kick-off on June 15.",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-downtown",
+        "thread_ref": "chat:library-downtown:thread-vis-001",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://seed/vis-001-msg-1",
+        "occurred_at": "2026-03-20T11:00:00Z",
+        "container_visibility": "limited"
+      }
+    ],
+    "current_query": {
+      "text": "What room is reserved for the summer reading program?",
+      "limit": 6,
+      "container_ref": "chat:library-uptown",
+      "container_visibility": "limited"
+    }
+  },
+  {
+    "scenario_id": "p1-topic-switch-return-001",
+    "description": "After discussing topic A, switching to topic B, then asking about A again, the system should recall A without injecting B.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "return_to_prior", "query_intent": "backward_recall"},
+      "invariant_assertions": ["INV-03", "INV-05", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "discuss_topic_a",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "switch-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: we will migrate the catalog index from Solr to Elasticsearch for better faceted search performance.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-switch-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://seed/switch-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "discuss_topic_b",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "switch-001-msg-2",
+            "content_type": "text/plain",
+            "content": "The summer reading program needs new badge designs. Can you draft some options with ocean and space themes?",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-switch-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/switch-001-msg-2",
+            "occurred_at": "2026-03-20T09:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_topic_a",
+        "action": "query",
+        "query": {
+          "text": "Didn't we decide to migrate the catalog index? What was the plan?",
+          "limit": 6,
+          "container_ref": "chat:library-help",
+          "container_visibility": "public"
+        },
+        "invariant_assertions": ["INV-03", "INV-05", "INV-07"],
+        "soft_expectations": {
+          "must_include": ["elasticsearch", "catalog"],
+          "must_not_include": ["badge", "ocean", "summer reading program"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "p1-greeting-suppression-001",
+    "description": "A greeting followed by a domain query must not inject the greeting as evidence.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "single", "injection_outcome": "inject"},
+      "invariant_assertions": ["INV-06", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "greeting",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "greet-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Hi there!",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-greet-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/greet-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "real_question",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "greet-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Decision: we decided to switch the hold notification system from email-only to email plus SMS for patrons who opt in.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-greet-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/greet-001-msg-2",
+            "occurred_at": "2026-03-20T08:01:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query_decision",
+        "action": "query",
+        "query": {
+          "text": "What did we decide about hold notifications?",
+          "limit": 6,
+          "container_ref": "chat:library-help",
+          "container_visibility": "public"
+        },
+        "invariant_assertions": ["INV-06", "INV-07"],
+        "soft_expectations": {
+          "must_include": ["sms", "notification"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "p1-cross-thread-recall-001",
+    "description": "A decision made in thread 1 should be recallable from thread 2 within the same container.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"thread_relation": "cross_thread", "query_intent": "backward_recall"},
+      "invariant_assertions": ["INV-05", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "thread_1_decision",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xthread-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Why are some book holds disappearing after catalog sync delays?",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-xthread-1",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/xthread-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "container_visibility": "public"
+          },
+          {
+            "source_type": "assistant_artifact",
+            "source_id": "xthread-001-assist-1",
+            "content_type": "text/plain",
+            "content": "Investigation found that arrival-time ordering skipped hold updates during catalog sync delays. Decision: use item event time for reservation ordering.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-xthread-1",
+            "actor_ref": "agent:assistant",
+            "source_ref": "memory://seed/xthread-001-assist-1",
+            "occurred_at": "2026-03-20T08:01:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "thread_2_recall",
+        "action": "query",
+        "query": {
+          "text": "Didn't we discuss why holds were disappearing?",
+          "limit": 6,
+          "container_ref": "chat:library-help",
+          "thread_ref": "chat:library-help:thread-xthread-2",
+          "container_visibility": "public"
+        },
+        "invariant_assertions": ["INV-05", "INV-07"],
+        "soft_expectations": {
+          "must_include": ["event time", "reservation ordering"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "p1-noise-no-injection-001",
+    "description": "A low-value greeting-only query must not trigger memory injection.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "single", "injection_outcome": "suppress"},
+      "invariant_assertions": ["INV-08", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_memory",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "noise-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: the branch will close early on Fridays during summer to allow for deep cleaning of the children's section.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-noise-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/noise-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "greeting_query",
+        "action": "query",
+        "query": {
+          "text": "Hey, how's it going?",
+          "limit": 6,
+          "container_ref": "chat:library-help",
+          "container_visibility": "public"
+        },
+        "invariant_assertions": ["INV-08", "INV-07"]
+      }
+    ]
+  }
+]

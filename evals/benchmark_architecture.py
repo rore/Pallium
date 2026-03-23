@@ -102,6 +102,13 @@ SUITE_BENCHMARK_CONFIGS: dict[str, SuiteBenchmarkConfig] = {
         scored_lanes=(BenchmarkLane.REALISM, BenchmarkLane.OPERATIONAL),
         hard_gate_lanes=(),
     ),
+    "generated_exploratory": SuiteBenchmarkConfig(
+        suite_id="generated_exploratory",
+        dataset_tier=DatasetTier.ITERATION,
+        primary_lane=BenchmarkLane.CONTRACT,
+        scored_lanes=(BenchmarkLane.CONTRACT,),
+        hard_gate_lanes=(BenchmarkLane.CONTRACT,),
+    ),
 }
 
 
