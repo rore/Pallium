@@ -1855,7 +1855,7 @@ def test_vector_cosine_escape_hatch_suppresses_below_boundary() -> None:
 
 
 def test_vector_cosine_escape_hatch_trace_shows_reason() -> None:
-    """When a vector-only match passes via cosine escape hatch, trace shows the reason."""
+    """When a vector-only match passes via cosine escape hatch, trace shows the justification."""
     result = _build_floor_test_retrieval_result(
         score=9,
         retrieval_source='vector',
@@ -1864,4 +1864,5 @@ def test_vector_cosine_escape_hatch_trace_shows_reason() -> None:
     )
     outcome = _run_floor_test(result, query_text='what approach for tracking changes?')
     injection_decision = outcome.trace.routing.get('injection_decision', {})
-    assert injection_decision.get('retrieval_relevance_floor_reason') != 'no_candidate_above_floor'
+    assert 'justification_reason' in injection_decision
+    assert 'gate4' in injection_decision.get('justification_reason', '')
