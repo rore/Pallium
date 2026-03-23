@@ -1,182 +1,90 @@
 from __future__ import annotations
 
-from collections import OrderedDict
-from datetime import datetime, timezone
-
 from core.contracts import PackageQueryOutcome
-from core.models import InjectableBlock, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace
-from semantic.common import normalize_for_index
+from core.models import QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace
 from semantic.agent_conversation_memory_anchors import (
     _classify_memory_candidate_anchor_state,
     _infer_selected_query_anchor,
     _serialize_subject_anchor,
-    _serialize_subject_anchors,
 )
-from semantic.agent_conversation_memory_constraints import (
-    CONSTRAINT_MEMORY_TYPE,
-)
-from semantic.agent_conversation_memory_threads import (
-    SELECTED_WORK_ARTIFACT_KINDS,
-    _is_low_value_meta_text,
-    _memory_hit_has_selected_work_artifacts,
-    _parse_string_list,
-)
-
-# Re-export everything from the constants module so existing importers work unchanged.
-from semantic.agent_conversation_memory_routing_constants import (  # noqa: F401
-    PolicySelectedContext,
-    LaneEligibility,
-    LaneNarrowingResult,
-    QuerySignalEnvelope,
-    RoutingOverrides,
-    ROUTING_POLICY_NAME,
-    PASSTHROUGH_POLICY,
-    ROUTING_HIGHER_LEVEL_TYPES,
-    ROUTING_LOWER_LEVEL_EXACT_TYPES,
-    ROUTING_SUMMARY_TYPES,
-    ROUTING_PREFERRED_LAYERS,
-    ROUTING_FAMILY_ALLOWED_ENVELOPE_KINDS,
-    ROUTING_LAYER_WEIGHTS,
-    HIGHER_LEVEL_RETRIEVAL_FLOOR,
-    ROUTING_SAFE_FALLBACK_LAYERS,
-    ROUTING_SUPPORT_THRESHOLD,
-    QUERY_POLICY_FAMILY_ALLOWED_INTENTS,
-    LATEST_STATUS_COLLAPSED_INTENTS,
-    POLICY_WORK_STATE_USEFULNESS_THRESHOLD,
-    POLICY_SUPPORT_THRESHOLD,
-    AMBIGUITY_MARGIN_LATEST_VS_RESUME,
-    AMBIGUITY_MARGIN_CONSTRAINTS_VS_RECALL,
-    LANE_INTENT_MAPPING,
-    LANE_POLICY_FAMILY_MAPPING,
+from semantic.agent_conversation_memory_routing_constants import (
     RECALL_MODE_WEIGHTS,
-    RECALL_MODE_FRESHNESS_BONUS,
-    RECALL_MODE_FRESH_THREAD_PREFERENCE,
     ROUTING_FALLBACK_MARGIN,
+    ROUTING_FAMILY_ALLOWED_ENVELOPE_KINDS,
     ROUTING_FOCUS_BOOST,
-    ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY,
-    SHARP_DIAGNOSTIC_MEMORY_TYPES,
-    WORK_RESUMPTION_SIGNAL_TYPES,
-    WORK_RESUMPTION_SHARP_CHECKPOINT_THRESHOLD,
+    ROUTING_LAYER_WEIGHTS,
+    ROUTING_POLICY_NAME,
+    ROUTING_PREFERRED_LAYERS,
+    ROUTING_SUPPORT_THRESHOLD,
     WORK_RESUMPTION_THIN_CHECKPOINT_PENALTY,
-    WORK_RESUMPTION_STALE_STATE_PENALTY,
-    WORK_RESUMPTION_STALE_SOURCE_PENALTY,
-    WORK_RESUMPTION_FRESH_STATE_BONUS,
-    WORK_RESUMPTION_FRESHNESS_MARGIN_SECONDS,
-    WORK_RESUMPTION_SIGNAL_PRIORITY,
-    ROUTING_FAMILY_INFERENCE_PRIORITY,
-    _routing_result_id,
-    _result_layer,
+    PolicySelectedContext,
+    RoutingOverrides,
     _routing_query_tokens,
-    _routing_support_grade,
-    _candidate_matches_thread,
-    _candidate_matches_container,
-    _candidate_thread_refs,
-    _candidate_container_refs,
-    _candidate_freshness_timestamp,
-    _normalize_timestamp,
-    _parse_iso_timestamp,
-    is_query_topic_signal_empty,
+    _routing_result_id,
 )
-
-# Re-export everything from the trace module so existing importers work unchanged.
-from semantic.agent_conversation_memory_routing_trace import (  # noqa: F401
-    _build_routing_trace,
-    _build_routing_trace_entry,
-    _build_lane_narrowing_trace,
-    _build_signal_envelope_trace,
-    _build_kind_prefilter_trace_entry,
+from semantic.agent_conversation_memory_routing_trace import (
     _build_anchor_prefilter_trace_entry,
+    _build_kind_prefilter_trace_entry,
+    _build_lane_narrowing_trace,
+    _build_routing_trace,
     _build_sharp_candidate_diagnostics,
+    _build_signal_envelope_trace,
     _routing_reason,
-    _routing_strategy_name,
-    _routing_fallback_suffix,
-    _routing_packaging_suffix,
-    _query_family_label,
 )
-
-# Re-export everything from the signals module so existing importers work unchanged.
-from semantic.agent_conversation_memory_routing_signals import (  # noqa: F401
-    _derive_query_signal_envelope,
+from semantic.agent_conversation_memory_routing_signals import (
+    _build_policy_evidence,
     _check_evidence_trace_override,
+    _compute_typed_candidate_evidence,
+    _derive_query_signal_envelope,
     _policy_family_from_signal_envelope,
     _select_recall_mode,
-    _build_policy_evidence,
-    _policy_candidate_support_estimate,
-    _work_state_evidence_gate_passes,
-    _candidate_layer_dominance,
-    _compute_typed_candidate_evidence,
-    _work_resumption_signal_types,
-    _work_resumption_usefulness_score,
-    _classify_work_signal_text,
-    _is_thin_task_checkpoint_payload,
 )
-
-# Re-export everything from the policy module so existing importers work unchanged.
-from semantic.agent_conversation_memory_routing_policy import (  # noqa: F401
+from semantic.agent_conversation_memory_routing_policy import (
     _determine_eligible_lanes,
-    _classify_query_policy_family,
-    _build_ambiguity_options,
-    _build_latest_vs_resume_pair,
-    _maybe_invoke_resolver,
-    _apply_policy_intent_restriction,
     _invoke_resolver_for_ambiguity,
-    _build_resolver_candidate_cards,
 )
-
-# Re-export everything from the scoring module so existing importers work unchanged.
-from semantic.agent_conversation_memory_routing_scoring import (  # noqa: F401
-    _infer_query_intent,
-    _query_family_query_shape_score,
-    _summarize_query_family_candidates,
-    _query_family_candidate_score,
-    _query_family_layer_metric,
-    _query_family_top_layer,
-    _candidate_has_rationale,
-    _candidate_has_explicit_evidence,
-    _score_routed_candidate,
-    _locality_adjustment,
-    _specificity_bonus,
-    _higher_level_retrieval_floor_adjustment,
-    _candidate_evidence_shape_score,
-    _apply_same_kind_freshness_shaping,
-    _runtime_context_prefers_cross_thread_recall,
-    _apply_fresh_thread_structured_recall_preference,
-    _source_hit_matches_current_query_text,
+from semantic.agent_conversation_memory_routing_scoring import (
     _apply_current_query_source_suppression,
+    _apply_fresh_thread_structured_recall_preference,
     _apply_recall_source_noise_suppression,
-    _is_current_query_echo,
-    _source_noise_suppression_reason,
     _apply_recall_structured_summary_suppression,
-    _structured_summary_suppression_reason,
-    _summary_low_value_reason,
+    _apply_same_kind_freshness_shaping,
     _apply_work_resumption_packaging,
-    _candidate_matches_requested_locality,
-    _work_resumption_freshness_adjustment,
-    _summarize_routing_layers,
-    _select_routing_focus,
+    _infer_query_intent,
     _routing_focus_adjustment,
+    _score_routed_candidate,
+    _select_routing_focus,
+    _summarize_routing_layers,
+)
+from semantic.agent_conversation_memory_routing_selection import (
+    _annotate_excluded_candidates,
+    _build_injectable_blocks,
+    _candidate_is_injection_eligible,
+    _select_final_candidates,
 )
 
-# Re-export everything from the selection module so existing importers work unchanged.
-from semantic.agent_conversation_memory_routing_selection import (  # noqa: F401
-    _select_final_candidates,
-    _select_compatible_recall_candidates,
-    _candidate_locality_compatible_for_packaging,
-    _build_injectable_blocks,
-    _build_injectable_block_from_candidate,
-    _task_checkpoint_injection_text,
-    _join_unique_text_parts,
-    _evaluate_same_thread_local_context,
-    _candidate_could_supply_external_carry_forward,
-    _candidate_qualifies_as_same_thread_local_state,
-    _candidate_is_injection_eligible,
-    _candidate_is_low_value,
-    _source_candidate_is_primary_injection_eligible,
-    _source_candidate_is_companion_injection_eligible,
-    _source_candidate_has_quote_grade_support,
-    _source_excerpt_disclaims_exact_evidence,
-    _query_requests_quote_grade_source,
-    _annotate_excluded_candidates,
+# ---------------------------------------------------------------------------
+# Re-exports for backward compatibility.
+# Test files and eval scripts import these names from this module.
+# Only names that are actually imported externally are listed here.
+# ---------------------------------------------------------------------------
+from semantic.agent_conversation_memory_routing_constants import (  # noqa: F401
+    CONSTRAINT_MEMORY_TYPE,
+    LaneEligibility,
+    LaneNarrowingResult,
+    PASSTHROUGH_POLICY,
+    POLICY_SUPPORT_THRESHOLD,
+    QUERY_POLICY_FAMILY_ALLOWED_INTENTS,
+    QuerySignalEnvelope,
+    is_query_topic_signal_empty,
+)
+from semantic.agent_conversation_memory_routing_signals import (  # noqa: F401
+    _work_state_evidence_gate_passes,
+)
+from semantic.agent_conversation_memory_routing_policy import (  # noqa: F401
+    _apply_policy_intent_restriction,
+    _build_ambiguity_options,
+    _classify_query_policy_family,
 )
 
 def route_query_results(
