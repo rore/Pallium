@@ -365,6 +365,38 @@ def _build_item_extraction_payload(user_prompt: str) -> dict[str, object]:
             'rationale_text': None,
         }
 
+    # Constraint detection: definitive constraints only, not tentative preferences.
+    # Hedging markers suppress constraint extraction regardless of content.
+    _TENTATIVE_MARKERS = ('i think', 'maybe', 'probably', 'leaning towards', 'leaning toward',
+                          'not sure', 'i was thinking', "i'd prefer", 'we could probably')
+    _DEFINITIVE_MARKERS = ('do not', "don't", 'must', 'cannot', 'non-negotiable', 'has to',
+                           'have to', 'not going', 'no external', 'absolutely cannot',
+                           'not allowed', 'all data must')
+    is_tentative = any(marker in lower for marker in _TENTATIVE_MARKERS)
+    has_definitive = any(marker in lower for marker in _DEFINITIVE_MARKERS)
+    if has_definitive and not is_tentative and 'Role: assistant' not in user_prompt:
+        # Extract a short constraint summary from the content
+        content_line = user_prompt.strip().split('\n')[-1].strip()
+        # Find the content after "Content:" if present
+        if 'Content:' in user_prompt:
+            content_line = user_prompt.split('Content:', 1)[1].strip().split('\n')[0].strip()
+        return {
+            'summary': 'Constraint recorded in the conversation.',
+            'candidate_type': None,
+            'decision_text': None,
+            'decision_evidence_text': None,
+            'investigation_text': None,
+            'investigation_evidence_text': None,
+            'rationale_text': None,
+            'is_low_value_meta': False,
+            'constraint_text': content_line,
+            'constraint_candidates': [{'constraint_text': content_line}],
+            'next_step_text': None,
+            'blocker_text': None,
+            'progress_text': None,
+            'key_finding_text': None,
+        }
+
     return {
         'summary': 'Conversation summary.',
         'candidate_type': None,
