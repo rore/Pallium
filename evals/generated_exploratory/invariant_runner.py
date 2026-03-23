@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +30,8 @@ from app.config import AppConfig
 from app.main import create_app
 from evals.generated_exploratory.invariants import ALL_INVARIANTS, run_invariants
 from evals.generated_exploratory.taxonomy import infer_priority_tier
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_SCENARIO_FILE = Path("evals/generated_exploratory/scenarios/seed_invariant_scenarios.json")
@@ -56,6 +60,14 @@ def main() -> int:
         "--composite-retrieval", action="store_true",
         help="Enable composite (lexical + vector) retrieval. Slower but tests the production path.",
     )
+    parser.add_argument(
+        "--workers", type=int, default=1,
+        help="Number of parallel workers for scenario execution (default: 1 = sequential).",
+    )
+    parser.add_argument(
+        "--cache-dir", type=Path, default=None,
+        help="Directory for LLM response cache. Caches drain-time LLM calls (write_extraction, thread_rebuild) to skip network on repeat runs.",
+    )
     args = parser.parse_args()
 
     tiers = args.tier or DEFAULT_TIERS
@@ -67,6 +79,8 @@ def main() -> int:
         tiers=tiers,
         run_name=args.run_name,
         composite_retrieval=args.composite_retrieval,
+        max_workers=args.workers,
+        cache_dir=args.cache_dir,
     )
     print(run_dir)
     return 0
@@ -80,6 +94,8 @@ def run_invariant_evaluation(
     tiers: list[str] | None = None,
     run_name: str | None = None,
     composite_retrieval: bool = False,
+    max_workers: int = 1,
+    cache_dir: Path | None = None,
 ) -> Path:
     """Run invariant checks on all scenarios in the file.
 
@@ -87,42 +103,45 @@ def run_invariant_evaluation(
     per scenario (slower, requires ONNX model). This tests the production
     retrieval path including the relevance floor.
 
+    When ``max_workers`` > 1, runs scenarios in parallel using a thread pool.
+    Each scenario is fully isolated (own DB, own TestClient) so parallelism
+    is safe. The bottleneck is LLM network latency during drain, so threads
+    (not processes) are the right primitive.
+
     Returns the path to the output directory containing results.jsonl and
     summary.json.
     """
     allowed_tiers = set(tiers) if tiers else {"P0", "P1"}
     scenarios = _load_scenarios(scenario_file)
 
+    # Filter scenarios by tier before dispatching to workers.
+    eligible: list[tuple[dict[str, Any], str]] = []
+    for scenario in scenarios:
+        tier = _scenario_tier(scenario)
+        if tier in allowed_tiers:
+            eligible.append((scenario, tier))
+
     run_id = run_name or _build_run_id()
     run_dir = output_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     results_path = run_dir / "results.jsonl"
 
+    logger.info(
+        "Running %d scenarios (workers=%d, composite=%s)",
+        len(eligible), max_workers, composite_retrieval,
+    )
+
     all_results: list[dict[str, Any]] = []
 
-    with results_path.open("w", encoding="utf-8") as results_file:
-        for scenario in scenarios:
-            tier = _scenario_tier(scenario)
-            if tier not in allowed_tiers:
-                continue
+    if max_workers <= 1:
+        # Sequential execution (original path).
+        all_results = _run_sequential(eligible, config, composite_retrieval, cache_dir)
+    else:
+        all_results = _run_parallel(eligible, config, composite_retrieval, max_workers, cache_dir)
 
-            scenario_id = scenario.get("scenario_id", "unknown")
-            try:
-                result = _run_scenario(scenario=scenario, config=config, composite_retrieval=composite_retrieval)
-            except Exception as exc:
-                result = {
-                    "scenario_id": scenario_id,
-                    "description": scenario.get("description", ""),
-                    "step_results": [],
-                    "all_passed": False,
-                    "violated_invariants": [],
-                    "taxonomy_cell": (scenario.get("_generation_metadata") or {}).get("taxonomy_cell"),
-                    "invariant_count": 0,
-                    "query_contract_consistent": False,
-                    "runner_error": f"{type(exc).__name__}: {exc}",
-                }
-            result["priority_tier"] = tier
-            all_results.append(result)
+    # Write results.
+    with results_path.open("w", encoding="utf-8") as results_file:
+        for result in all_results:
             results_file.write(json.dumps(result, default=str) + "\n")
 
     summary = _build_summary(all_results, scenario_file, run_id)
@@ -132,11 +151,77 @@ def run_invariant_evaluation(
     return run_dir
 
 
+def _run_sequential(
+    eligible: list[tuple[dict[str, Any], str]],
+    config: AppConfig,
+    composite_retrieval: bool,
+    cache_dir: Path | None,
+) -> list[dict[str, Any]]:
+    """Run scenarios sequentially (original behavior)."""
+    results: list[dict[str, Any]] = []
+    for scenario, tier in eligible:
+        result = _execute_one(scenario, tier, config, composite_retrieval, cache_dir)
+        results.append(result)
+    return results
+
+
+def _run_parallel(
+    eligible: list[tuple[dict[str, Any], str]],
+    config: AppConfig,
+    composite_retrieval: bool,
+    max_workers: int,
+    cache_dir: Path | None,
+) -> list[dict[str, Any]]:
+    """Run scenarios in parallel using a thread pool."""
+    results: list[dict[str, Any]] = [None] * len(eligible)  # type: ignore[list-item]
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_idx = {
+            executor.submit(_execute_one, scenario, tier, config, composite_retrieval, cache_dir): idx
+            for idx, (scenario, tier) in enumerate(eligible)
+        }
+        completed = 0
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            results[idx] = future.result()
+            completed += 1
+            if completed % 10 == 0 or completed == len(eligible):
+                logger.info("  %d/%d scenarios completed", completed, len(eligible))
+    return results
+
+
+def _execute_one(
+    scenario: dict[str, Any],
+    tier: str,
+    config: AppConfig,
+    composite_retrieval: bool,
+    cache_dir: Path | None,
+) -> dict[str, Any]:
+    """Execute a single scenario with error handling. Used by both sequential and parallel paths."""
+    scenario_id = scenario.get("scenario_id", "unknown")
+    try:
+        result = _run_scenario(scenario=scenario, config=config, composite_retrieval=composite_retrieval, cache_dir=cache_dir)
+    except Exception as exc:
+        result = {
+            "scenario_id": scenario_id,
+            "description": scenario.get("description", ""),
+            "step_results": [],
+            "all_passed": False,
+            "violated_invariants": [],
+            "taxonomy_cell": (scenario.get("_generation_metadata") or {}).get("taxonomy_cell"),
+            "invariant_count": 0,
+            "query_contract_consistent": False,
+            "runner_error": f"{type(exc).__name__}: {exc}",
+        }
+    result["priority_tier"] = tier
+    return result
+
+
 def _run_scenario(
     *,
     scenario: dict[str, Any],
     config: AppConfig,
     composite_retrieval: bool = False,
+    cache_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Execute a single scenario and return invariant results."""
     scenario_id = scenario.get("scenario_id", "unknown")
@@ -156,6 +241,10 @@ def _run_scenario(
         )
 
         with TestClient(create_app(scenario_config)) as client:
+            # Optionally wrap LLM providers with cache.
+            if cache_dir is not None:
+                _wrap_providers_with_cache(client, cache_dir)
+
             if "steps" in scenario:
                 step_results = _run_multi_step(scenario, client)
             else:
@@ -313,6 +402,40 @@ def _check_soft_expectations(
         "must_not_include_ok": len(forbidden_found) == 0,
         "forbidden_found": forbidden_found,
     }
+
+
+# ---------------------------------------------------------------------------
+# LLM cache integration
+# ---------------------------------------------------------------------------
+
+def _wrap_providers_with_cache(client: TestClient, cache_dir: Path) -> None:
+    """Wrap all LLM providers in the app's semantic plugins with a file cache.
+
+    This caches drain-time LLM calls (write_extraction, thread_rebuild,
+    consolidation) so repeat runs skip network calls. The cache is shared
+    across scenarios since prompt+content deterministically produces the
+    same response.
+
+    Note: the query-time resolver provider (_resolver_config["provider"])
+    is intentionally NOT wrapped — it runs during query, not drain, and
+    its caching would mask query-time behavior changes.
+    """
+    from providers.llm.cached import CachedLLMProvider
+
+    service = client.app.state.pallium_service
+    for plugin in service._semantic_plugins.values():
+        # Wrap the default provider.
+        if hasattr(plugin, "_provider") and not isinstance(plugin._provider, CachedLLMProvider):
+            plugin._provider = CachedLLMProvider(plugin._provider, cache_dir)
+        # Wrap role-specific providers.
+        if hasattr(plugin, "_providers_by_role"):
+            for role, prov in plugin._providers_by_role.items():
+                if not isinstance(prov, CachedLLMProvider):
+                    plugin._providers_by_role[role] = CachedLLMProvider(prov, cache_dir)
+        # Wrap the delegate's provider (LLMAgentMemoryPlugin).
+        if hasattr(plugin, "_delegate") and hasattr(plugin._delegate, "_provider"):
+            if not isinstance(plugin._delegate._provider, CachedLLMProvider):
+                plugin._delegate._provider = CachedLLMProvider(plugin._delegate._provider, cache_dir)
 
 
 # ---------------------------------------------------------------------------
