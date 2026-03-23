@@ -91,10 +91,63 @@ path.
 the injection hot path.
 
 ## Recommendation
-Option 3 is the most principled fix. The small-corpus IDF fallback to token count
-is the root cause — it removes the scoring system's ability to discriminate. The
-existing floor (2) and escape hatch (cosine >= 0.70) are correctly calibrated for
-IDF-weighted scores. They just need IDF to actually be computed.
+
+Option 3 + weak spot #6 fix, combined.
+
+**Option 3** (always compute IDF) restores discrimination in small corpora but
+has two gaps:
+
+1. **Idiom false match**: "under the weather" scores HIGH because "weather" is
+   a rare corpus term. IDF correctly identifies it as important — but can't
+   distinguish idiomatic usage from topical usage. IDF makes this case worse.
+
+2. **Zero-overlap structured memory**: "let's talk about something new" has
+   zero lexical overlap with any candidate, but structured memory types bypass
+   the floor via unconditional injection eligibility (weak spot #6).
+
+**Weak spot #6 fix**: structured memory should not be unconditionally
+injection-eligible. If the raw retrieval score (lexical + vector) is near zero,
+no memory type should be injected regardless of its structural importance. This
+is a per-candidate relevance gate in `_candidate_is_injection_eligible`, not a
+batch gate.
+
+Combined, these two fixes address all observed failure classes:
+- Common-word bridging ("tomorrow", "the") → Option 3 gives low IDF weight
+- Zero-overlap injection → weak spot #6 fix blocks structured memory
+- Idiom false match → weak spot #6 fix blocks when the only match is a single
+  word, even if IDF is high (per-candidate relevance gate requires minimum
+  overlap breadth, not just depth)
+
+## Manual Testing Observations
+
+Extended chat-lite sessions confirmed all weak spots with specific examples:
+
+**Session 1 — Weather query gets vector DB memories:**
+- "how about politics?" → injects constraint_memory about sidecar pattern (score=9)
+- "how is the weather today?" → injects 3 thread_summaries about vector DBs (score 8-9)
+- "i'm kind of fond of weather things" → injects interest: vector databases
+- "i'm a winter kind of guy" → injects constraint_memory + vector DB thread_summary
+
+**Session 2 — Idiom false match:**
+- "i'm a bit under the weather" → injects decision about ChromaDB (score=8) +
+  thread_summary about weather enthusiasm (score=18) + vector DB thread_summary
+  (score=9). "weather" is rare in the corpus so IDF scores it HIGH — correct
+  identification, wrong topical match.
+
+**Session 3 — Topic change signal ignored:**
+- "let's talk about something new" → injects weather thread_summary + weather
+  interest + lightweight software interest. Zero topical overlap. Structured
+  memory types are unconditionally injection-eligible (weak spot #6).
+
+## What's Already Shipped That Interacts
+
+- **IDF-weighted lexical scoring** — helps for common-word overlap but makes
+  rare words (like "weather" in an idiom) score even higher
+- **Personal memory cross-container blocking** — public memories with actor_ref
+  set no longer leak across containers; shared memories (thread_summary, decision
+  with actor_ref=null) still cross containers and cause off-topic injection
+- **Interest role guard** — assistant messages can't create interest; reduces
+  volume but doesn't fix off-topic injection of existing interests
 
 ## Test Infrastructure
 - `tests/test_retrieval_relevance_floor.py` has 2 pre-existing failures (composite

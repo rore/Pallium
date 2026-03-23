@@ -626,5 +626,180 @@
         }
       }
     ]
+  },
+  {
+    "scenario_id": "p0-off-topic-weather-query-001",
+    "description": "Weather query must not inject library catalog memories. Reproduces manual chat-lite finding: 'how is the weather today?' injected vector DB thread_summaries.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "switch", "injection_outcome": "suppress"},
+      "invariant_assertions": ["INV-03", "INV-07", "INV-08"],
+      "priority_tier": "P0",
+      "tier_reason": "confirmed_manual_regression",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_library_discussion",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "offtopic-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: use arrival-time ordering for reservation queues to prevent skipped holds during catalog sync delays.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-offtopic-1",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/offtopic-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "container_visibility": "public"
+          },
+          {
+            "source_type": "assistant_artifact",
+            "source_id": "offtopic-001-asst-1",
+            "content_type": "text/plain",
+            "content": "Confirmed. Arrival-time ordering is now the default for all branch reservation queues. The catalog sync delay window is set to 30 seconds.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-offtopic-1",
+            "actor_ref": "agent:assistant",
+            "source_ref": "memory://seed/offtopic-001-asst-1",
+            "occurred_at": "2026-03-20T08:02:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "weather_query",
+        "action": "query",
+        "query": {
+          "text": "how is the weather today?",
+          "limit": 6,
+          "container_ref": "chat:library-help",
+          "container_visibility": "public"
+        },
+        "invariant_assertions": ["INV-03", "INV-07"],
+        "soft_expectations": {
+          "must_not_include": ["reservation", "catalog", "ordering", "arrival"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "p0-off-topic-zero-overlap-001",
+    "description": "Query with zero topical overlap must not inject structured memory. Reproduces manual finding: 'let's talk about something new' injected thread_summaries and interests.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "switch", "injection_outcome": "suppress"},
+      "invariant_assertions": ["INV-03", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "confirmed_manual_regression",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_catalog_discussion",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "offtopic-002-msg-1",
+            "content_type": "text/plain",
+            "content": "Investigation found that the batch catalog sync fails when the staging database has stale connection handles after the nightly maintenance window.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-offtopic-2",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/offtopic-002-msg-1",
+            "occurred_at": "2026-03-20T09:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "topic_change_query",
+        "action": "query",
+        "query": {
+          "text": "let's talk about something new",
+          "limit": 6,
+          "container_ref": "chat:library-help",
+          "container_visibility": "public"
+        },
+        "invariant_assertions": ["INV-03", "INV-07"],
+        "soft_expectations": {
+          "must_not_include": ["catalog", "sync", "staging", "database", "maintenance"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "p0-off-topic-idiom-001",
+    "description": "Idiomatic use of a domain word must not trigger injection. 'Under the weather' is an idiom for feeling sick, not a weather query — but 'weather' as a rare corpus term scores high with IDF.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "mixed", "injection_outcome": "suppress"},
+      "invariant_assertions": ["INV-03", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "confirmed_manual_regression",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_weather_thread",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "offtopic-003-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: the branch will adjust opening hours based on weather forecasts during winter. Close early when severe weather warnings are issued by the county emergency office.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-offtopic-3",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/offtopic-003-msg-1",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "seed_catalog_thread",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "offtopic-003-msg-2",
+            "content_type": "text/plain",
+            "content": "Decision: switch overdue notice delivery from postal mail to SMS for patrons under 35. Email remains the default for all other patrons.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-offtopic-4",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/offtopic-003-msg-2",
+            "occurred_at": "2026-03-20T10:30:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "idiom_query",
+        "action": "query",
+        "query": {
+          "text": "i'm a bit under the weather today, i have to say",
+          "limit": 6,
+          "container_ref": "chat:library-help",
+          "container_visibility": "public"
+        },
+        "invariant_assertions": ["INV-03", "INV-07"],
+        "soft_expectations": {
+          "must_not_include": ["overdue", "sms", "postal", "notice"]
+        }
+      }
+    ]
   }
 ]
