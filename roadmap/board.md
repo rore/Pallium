@@ -1,6 +1,7 @@
 # Next
 - add-interest-memory-kind
 - add-idf-weighted-lexical-scoring
+- add-actor-scoped-memory-and-container-visibility-rules
 - investigate-thread-level-interest-and-threadless-aggregation
 - investigate-lexical-retrieval-scaling
 
