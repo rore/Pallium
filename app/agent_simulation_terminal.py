@@ -4,6 +4,7 @@ import shlex
 
 COMMAND_COMPLETIONS = (
     "/channel",
+    "/clear",
     "/new",
     "/new-conversation",
     "/artifact",

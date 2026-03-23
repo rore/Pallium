@@ -193,6 +193,10 @@ class AgentSimulationApp:
         args = parts[1:]
         if command in {"/quit", "/exit"}:
             return False
+        if command == "/clear":
+            print("\033[2J\033[H", end="", flush=True)
+            self._write_scope()
+            return True
         if command == "/help":
             self._write_help(args[0] if args else None)
             return True
