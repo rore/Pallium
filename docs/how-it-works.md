@@ -131,7 +131,8 @@ decisions, visibility exclusions, and injection reasoning.
 Locality is not privacy. `container_ref` identifies where an item belongs, and
 `container_visibility` controls who can see it across containers.
 
-- `public` — visible to queries from any container
+- `public` — shared memories (`actor_ref = null`) visible from any container;
+  personal memories (`actor_ref` set) visible only from their own container
 - `limited` — visible only within the same container (e.g. a private channel)
 - `private` — visible only within the same container (e.g. a DM)
 

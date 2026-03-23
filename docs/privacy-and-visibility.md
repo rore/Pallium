@@ -40,9 +40,16 @@ from other containers.
 ## Retrieval Rules
 
 - query from container X sees:
-  - all `public` items (from any container)
   - all `limited` and `private` items where `container_ref` matches X
+  - all `public` shared items from any container (`actor_ref = null`)
+  - `public` personal items (`actor_ref` set) only if `container_ref` matches X
 - query without `container_ref` sees only `public` items
+
+Personal memories do not leak across containers. A `public` item with
+`actor_ref` set is only visible from its own container. This prevents a
+user's personal interest from a public channel appearing in a different
+session's context. Shared knowledge like decisions and thread summaries
+(`actor_ref = null`) flows freely across containers when public.
 
 The caller sends `container_ref` and `container_visibility` on ingest and
 query. Pallium applies the filtering rules.

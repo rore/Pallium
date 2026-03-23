@@ -282,10 +282,16 @@ in shared containers (`limited`, `public`) and fall through to
 `discussion_summary`. `actor_ref` is propagated from source item only in private
 containers; shared containers always produce `actor_ref = null`.
 
+Personal memories (`actor_ref` set) do not cross container boundaries even when
+public. Only shared memories (`actor_ref = null`) are visible cross-container.
+This prevents a user's interest from one session bleeding into another session's
+context while still allowing shared decisions and thread summaries to flow.
+
 Why:
 
 - detecting "I" vs "we" in content is unreliable — container type is a stable signal
 - personal statements in shared channels should become shared evidence, not personal memories for other users
+- personal memories from one container should not appear in a different container's context
 - keeps the model simple: one nullable field plus container-driven rules, no taxonomy matrices or scope enums
 - `constraint_memory` gets the same role guard as `interest` — only user messages can create it
 
