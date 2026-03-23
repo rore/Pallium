@@ -217,6 +217,9 @@ class AgentSimulationApp:
         if command in {"/new-conversation", "/new"}:
             self._start_new_conversation()
             return True
+        if command == "/channel":
+            self._switch_channel(args)
+            return True
         if command == "/fork":
             self._fork_scope(new_session="--new-session" in args)
             return True
@@ -487,6 +490,25 @@ class AgentSimulationApp:
         self._session.defaults.thread_ref = self._ref_factory("thread")
         self._session.defaults.set_runtime_context("turn_kind", "new_thread", manual=False)
         self._session.defaults.set_runtime_context("session_has_sufficient_local_context", False, manual=False)
+        self._write_scope()
+
+    def _switch_channel(self, args: list[str]) -> None:
+        if not args:
+            defaults = self._session.defaults
+            kind = defaults.container_visibility_kind()
+            self._write_system(f"channel: {defaults.container_ref} ({kind})")
+            return
+        name = args[0]
+        visibility = args[1] if len(args) > 1 else "public"
+        if visibility not in VISIBILITY_KINDS:
+            self._write_warning(f"Unknown visibility: {visibility}. Use: public, limited, private")
+            return
+        defaults = self._session.defaults
+        defaults.container_ref = f"simulation:channel:{name}"
+        defaults.set_container_visibility(visibility)
+        defaults.thread_ref = self._ref_factory("thread")
+        defaults.set_runtime_context("turn_kind", "new_thread", manual=False)
+        defaults.set_runtime_context("session_has_sufficient_local_context", False, manual=False)
         self._write_scope()
 
     def _apply_inferred_same_thread_defaults(self) -> None:
