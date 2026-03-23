@@ -77,7 +77,7 @@ Pallium returns:
 ```bash
 python -m venv .venv
 source .venv/bin/activate       # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+pip install -e ".[dev,vector]"
 cp pallium.example.toml pallium.local.toml
 cp .env.example .env.local
 # Set your LLM API key in .env.local

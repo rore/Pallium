@@ -11,6 +11,7 @@
 - idea-operational-scale-hardening
 - idea-multi-package-source-item-processing
 - idea-optional-reranker-support
+- idea-document-schema-evolution-strategy
 
 # Done
 - add-idf-weighted-lexical-scoring

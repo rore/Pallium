@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -12,10 +12,18 @@ try:
 except ImportError:
     HAS_USEARCH = False
 
-pytestmark = pytest.mark.skipif(
-    not HAS_USEARCH,
-    reason="usearch not installed — mock fixture unreliable under xdist",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not HAS_USEARCH,
+        reason="usearch not installed — mock fixture unreliable under xdist",
+    ),
+    # Force all tests in this module into the same xdist worker.
+    # The mock_usearch fixture patches sys.modules for usearch, and numpy's
+    # native C extension cannot be re-loaded in a process that already imported
+    # it.  Grouping prevents xdist from scattering these tests across workers
+    # where the patching collides with numpy's one-load-per-process constraint.
+    pytest.mark.xdist_group("vector_index"),
+]
 
 
 class FakeResults:
@@ -77,10 +85,15 @@ class FakeIndex:
 
 @pytest.fixture()
 def mock_usearch():
-    """Patch usearch.index.Index with FakeIndex for all tests in this module."""
-    mock_module = MagicMock()
-    mock_module.Index = FakeIndex
-    with patch.dict("sys.modules", {"usearch": MagicMock(), "usearch.index": mock_module}):
+    """Patch usearch.index.Index with FakeIndex for all tests in this module.
+
+    Only patches the Index class, not the whole usearch module tree.
+    Replacing the top-level ``usearch`` entry in sys.modules with a MagicMock
+    poisons numpy's C-extension loader (numpy cannot be re-imported in a
+    process that already loaded it), causing spurious ImportErrors under
+    pytest-xdist and even in sequential runs.
+    """
+    with patch("usearch.index.Index", FakeIndex):
         yield
 
 

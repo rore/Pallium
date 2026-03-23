@@ -221,6 +221,10 @@ def create_router(service: PalliumService) -> APIRouter:
             raise HTTPException(status_code=404, detail="source item not found") from exc
         return ProcessingStatusResponse(**result.as_dict())
 
+    @router.get("/health")
+    def health_check():
+        return {"status": "ok"}
+
     @router.get("/debug/queue/health", response_model=QueueHealthResponse)
     def get_queue_health() -> QueueHealthResponse:
         snapshot = service.get_queue_health()

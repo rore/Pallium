@@ -340,7 +340,13 @@ Supported fields today:
 The vector index enables hybrid retrieval (lexical + vector via RRF).
 
 Vector retrieval is **enabled by default** with a default ONNX embedding
-provider (`BAAI/bge-small-en-v1.5`). On first run, the model weights are
+provider (`BAAI/bge-small-en-v1.5`). It requires the `vector` optional extra:
+
+```bash
+pip install -e ".[vector]"
+```
+
+On first run, the model weights are
 downloaded automatically (~130 MB).
 
 To override:
