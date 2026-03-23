@@ -52,6 +52,10 @@ def main() -> int:
         help="Priority tiers to run (P0, P1, P2). Default: P0 P1",
     )
     parser.add_argument("--run-name", default=None)
+    parser.add_argument(
+        "--composite-retrieval", action="store_true",
+        help="Enable composite (lexical + vector) retrieval. Slower but tests the production path.",
+    )
     args = parser.parse_args()
 
     tiers = args.tier or DEFAULT_TIERS
@@ -62,6 +66,7 @@ def main() -> int:
         config=AppConfig.from_env(),
         tiers=tiers,
         run_name=args.run_name,
+        composite_retrieval=args.composite_retrieval,
     )
     print(run_dir)
     return 0
@@ -74,8 +79,13 @@ def run_invariant_evaluation(
     config: AppConfig,
     tiers: list[str] | None = None,
     run_name: str | None = None,
+    composite_retrieval: bool = False,
 ) -> Path:
     """Run invariant checks on all scenarios in the file.
+
+    When ``composite_retrieval`` is True, enables vector + lexical retrieval
+    per scenario (slower, requires ONNX model). This tests the production
+    retrieval path including the relevance floor.
 
     Returns the path to the output directory containing results.jsonl and
     summary.json.
@@ -98,7 +108,7 @@ def run_invariant_evaluation(
 
             scenario_id = scenario.get("scenario_id", "unknown")
             try:
-                result = _run_scenario(scenario=scenario, config=config)
+                result = _run_scenario(scenario=scenario, config=config, composite_retrieval=composite_retrieval)
             except Exception as exc:
                 result = {
                     "scenario_id": scenario_id,
@@ -126,6 +136,7 @@ def _run_scenario(
     *,
     scenario: dict[str, Any],
     config: AppConfig,
+    composite_retrieval: bool = False,
 ) -> dict[str, Any]:
     """Execute a single scenario and return invariant results."""
     scenario_id = scenario.get("scenario_id", "unknown")
@@ -135,6 +146,7 @@ def _run_scenario(
         vector_index_config = replace(
             config.vector_index,
             index_path=str(Path(temp_dir) / "vector.index"),
+            enabled=composite_retrieval,
         )
         scenario_config = replace(
             config,
