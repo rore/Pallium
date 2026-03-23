@@ -137,7 +137,8 @@ class CompositeRetrievalProvider(RetrievalProvider):
 
             fused_score = int(rrf_score * RRF_SCORE_SCALE)
             lexical_raw_score = lexical_items[result_id].score if result_id in lexical_items else None
-            fused_item = replace(item, retrieval_source=source, score=fused_score, lexical_score=lexical_raw_score)
+            vector_raw_score = vector_items[result_id].score if result_id in vector_items else None
+            fused_item = replace(item, retrieval_source=source, score=fused_score, lexical_score=lexical_raw_score, vector_score=vector_raw_score)
             fused_results.append(fused_item)
 
             if include_trace:

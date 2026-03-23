@@ -207,6 +207,7 @@ class QueryResultItem:
     container_visibility: str = "private"
     retrieval_source: str | None = None
     lexical_score: int | None = None
+    vector_score: int | None = None
 
     def __post_init__(self) -> None:
         if self.result_id is None:

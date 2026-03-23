@@ -11,6 +11,7 @@ from semantic.agent_conversation_memory_threads import (
 from semantic.agent_conversation_memory_routing_constants import (
     INJECTION_RETRIEVAL_RELEVANCE_FLOOR,
     ROUTING_SUPPORT_THRESHOLD,
+    VECTOR_SIMILARITY_INJECTION_FLOOR,
     WORK_RESUMPTION_SIGNAL_PRIORITY,
     _candidate_container_refs,
     _candidate_thread_refs,
@@ -192,6 +193,7 @@ def _any_candidate_passes_retrieval_relevance_floor(
     candidates: list[dict[str, object]],
     *,
     floor: int,
+    vector_similarity_floor: int,
 ) -> tuple[bool, str]:
     """Check if any candidate has sufficient lexical retrieval quality.
 
@@ -203,6 +205,11 @@ def _any_candidate_passes_retrieval_relevance_floor(
     (retrieval_source is set).  In lexical-only mode the score IS the
     IDF quality signal, not a rank-derived RRF score, so the existing
     scoring pipeline is sufficient.
+
+    Vector-only candidates (no lexical match) can still pass if their
+    vector similarity exceeds ``vector_similarity_floor``, indicating
+    the embedding model is confident the query and memory are
+    semantically related despite zero token overlap.
     """
     has_composite_candidate = False
     for c in candidates:
@@ -212,7 +219,10 @@ def _any_candidate_passes_retrieval_relevance_floor(
             return True, "lexical_only_retrieval"
         has_composite_candidate = True
         if item.retrieval_source == "vector":
-            continue  # No lexical match at all
+            # No lexical match — check vector similarity escape hatch
+            if item.vector_score is not None and item.vector_score >= vector_similarity_floor:
+                return True, "high_vector_similarity"
+            continue
         if item.lexical_score is not None:
             if item.lexical_score >= floor:
                 return True, "lexical_score_above_floor"
@@ -262,7 +272,9 @@ def _build_injectable_blocks(
         }
 
     passes_floor, floor_reason = _any_candidate_passes_retrieval_relevance_floor(
-        final_candidates, floor=INJECTION_RETRIEVAL_RELEVANCE_FLOOR,
+        final_candidates,
+        floor=INJECTION_RETRIEVAL_RELEVANCE_FLOOR,
+        vector_similarity_floor=VECTOR_SIMILARITY_INJECTION_FLOOR,
     )
     if not passes_floor:
         return [], {

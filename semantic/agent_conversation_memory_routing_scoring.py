@@ -619,6 +619,7 @@ def _score_routed_candidate(
         "work_signal_types": (),
         "work_usefulness_score": 0,
         "lexical_score": item.lexical_score,
+        "vector_score": item.vector_score,
     }
 
 def _locality_adjustment(

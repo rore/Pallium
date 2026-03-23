@@ -1631,6 +1631,7 @@ def _build_floor_test_retrieval_result(
     score: int = 14,
     retrieval_source: str | None = None,
     lexical_score: int | None = None,
+    vector_score: int | None = None,
     memory_type: str = 'thread_summary',
     payload: dict | None = None,
 ) -> RetrievalQueryResult:
@@ -1650,6 +1651,7 @@ def _build_floor_test_retrieval_result(
                 thread_ref='chat:floor-test:thread-A',
                 retrieval_source=retrieval_source,
                 lexical_score=lexical_score,
+                vector_score=vector_score,
             ),
         ],
         trace=QueryTrace(
@@ -1685,11 +1687,12 @@ def _run_floor_test(
 
 
 def test_retrieval_relevance_floor_suppresses_vector_only_candidates() -> None:
-    """Composite retrieval with vector-only hits (no lexical match) should suppress injection."""
+    """Composite retrieval with vector-only hits and low cosine should suppress injection."""
     result = _build_floor_test_retrieval_result(
         score=9,
         retrieval_source='vector',
         lexical_score=None,
+        vector_score=480,  # cosine 0.48 — below VECTOR_SIMILARITY_INJECTION_FLOOR (700)
     )
     outcome = _run_floor_test(result, query_text="let's talk about something new")
     assert outcome.should_inject is False
@@ -1806,8 +1809,59 @@ def test_retrieval_relevance_floor_trace_shows_reason() -> None:
         score=9,
         retrieval_source='vector',
         lexical_score=None,
+        vector_score=480,
     )
     outcome = _run_floor_test(result, query_text="let's talk about something new")
     injection_decision = outcome.trace.routing.get('injection_decision', {})
     assert injection_decision.get('decision_reason') == 'low_retrieval_relevance'
     assert injection_decision.get('retrieval_relevance_floor_reason') == 'no_candidate_above_floor'
+
+
+def test_vector_cosine_escape_hatch_passes_high_similarity() -> None:
+    """Vector-only match with high cosine similarity should pass the floor."""
+    result = _build_floor_test_retrieval_result(
+        score=9,
+        retrieval_source='vector',
+        lexical_score=None,
+        vector_score=750,  # cosine 0.75 — above VECTOR_SIMILARITY_INJECTION_FLOOR (700)
+    )
+    outcome = _run_floor_test(result, query_text='what approach for tracking changes?')
+    assert outcome.decision_reason != 'low_retrieval_relevance'
+
+
+def test_vector_cosine_escape_hatch_at_boundary() -> None:
+    """Vector-only match exactly at the cosine floor (700) should pass."""
+    result = _build_floor_test_retrieval_result(
+        score=9,
+        retrieval_source='vector',
+        lexical_score=None,
+        vector_score=700,
+    )
+    outcome = _run_floor_test(result, query_text='what approach for tracking changes?')
+    assert outcome.decision_reason != 'low_retrieval_relevance'
+
+
+def test_vector_cosine_escape_hatch_suppresses_below_boundary() -> None:
+    """Vector-only match just below the cosine floor should be suppressed."""
+    result = _build_floor_test_retrieval_result(
+        score=9,
+        retrieval_source='vector',
+        lexical_score=None,
+        vector_score=699,
+    )
+    outcome = _run_floor_test(result, query_text="let's talk about something new")
+    assert outcome.should_inject is False
+    assert outcome.decision_reason == 'low_retrieval_relevance'
+
+
+def test_vector_cosine_escape_hatch_trace_shows_reason() -> None:
+    """When a vector-only match passes via cosine escape hatch, trace shows the reason."""
+    result = _build_floor_test_retrieval_result(
+        score=9,
+        retrieval_source='vector',
+        lexical_score=None,
+        vector_score=750,
+    )
+    outcome = _run_floor_test(result, query_text='what approach for tracking changes?')
+    injection_decision = outcome.trace.routing.get('injection_decision', {})
+    assert injection_decision.get('retrieval_relevance_floor_reason') != 'no_candidate_above_floor'

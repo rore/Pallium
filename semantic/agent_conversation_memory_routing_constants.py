@@ -128,6 +128,20 @@ HIGHER_LEVEL_RETRIEVAL_FLOOR = 40
 
 INJECTION_RETRIEVAL_RELEVANCE_FLOOR = 2
 
+# Minimum vector similarity score (int, = cosine * 1000) for a vector-only
+# match to pass the retrieval relevance floor.  Vector-only matches have zero
+# lexical token overlap — this threshold gates whether the embedding model's
+# semantic confidence is high enough to trust for injection.
+#
+# Calibrated for BAAI/bge-small-en-v1.5 (384 dims):
+#   - Unrelated memories max at cosine ~0.63 (score 630)
+#   - Cross-vocabulary paraphrases score 0.66-0.82 (score 660-820)
+#   - Threshold 700 (cosine 0.70): 100% precision, 60% recall on validation set
+#   - Validated in evals/cosine_escape_hatch_validation.py
+#
+# Recalibrate when changing the embedding model.
+VECTOR_SIMILARITY_INJECTION_FLOOR = 700
+
 ROUTING_SAFE_FALLBACK_LAYERS = {
     "answer_continuity": ("lower_level_memory", "source_evidence"),
     "broad_recall": ("task_checkpoint", "thread_summary", "lower_level_memory", "source_evidence"),
