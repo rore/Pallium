@@ -18,6 +18,9 @@ def source_item_matches_filters(source_item: SourceItem, filters: QueryFilters) 
         return False
     if filters.thread_ref is not None and source_item.thread_ref != filters.thread_ref:
         return False
+    if filters.actor_ref is not None and source_item.actor_ref is not None:
+        if source_item.actor_ref != filters.actor_ref:
+            return False
     return True
 
 
@@ -32,6 +35,9 @@ def evidence_matches_filters(evidence: EvidenceReference, filters: QueryFilters)
         return False
     if filters.thread_ref is not None and evidence.thread_ref != filters.thread_ref:
         return False
+    if filters.actor_ref is not None and evidence.actor_ref is not None:
+        if evidence.actor_ref != filters.actor_ref:
+            return False
     return True
 
 

@@ -428,3 +428,124 @@ def test_query_without_actor_ref_sees_everything(monkeypatch, test_db_url: str) 
         assert query_response.status_code == 200
         results = query_response.json()["results"]
         assert results, "Expected results when querying without actor_ref"
+
+
+# ---------------------------------------------------------------------------
+# Step 6: source_item actor_ref filtering
+# ---------------------------------------------------------------------------
+
+
+def test_source_item_matches_filters_respects_actor_ref() -> None:
+    """source_item_matches_filters must reject items from a different actor."""
+    from core.filters import source_item_matches_filters
+    from core.models import QueryFilters, SourceItem
+
+    item_a = SourceItem(
+        source_type="chat_message", source_id="si-a", content_type="text/plain",
+        content="hello", actor_ref=ACTOR_A, container_ref=CONTAINER_PRIVATE,
+        container_visibility="private",
+    )
+    item_b = SourceItem(
+        source_type="chat_message", source_id="si-b", content_type="text/plain",
+        content="hello", actor_ref=ACTOR_B, container_ref=CONTAINER_PRIVATE,
+        container_visibility="private",
+    )
+    item_shared = SourceItem(
+        source_type="chat_message", source_id="si-shared", content_type="text/plain",
+        content="hello", actor_ref=None, container_ref=CONTAINER_PRIVATE,
+        container_visibility="private",
+    )
+
+    filters_a = QueryFilters(actor_ref=ACTOR_A, container_ref=CONTAINER_PRIVATE)
+    filters_none = QueryFilters(container_ref=CONTAINER_PRIVATE)
+
+    # Actor A's item passes for actor A query
+    assert source_item_matches_filters(item_a, filters_a) is True
+    # Actor B's item must NOT pass for actor A query
+    assert source_item_matches_filters(item_b, filters_a) is False
+    # Shared item (actor_ref=None) always passes
+    assert source_item_matches_filters(item_shared, filters_a) is True
+    # Query without actor_ref sees everything
+    assert source_item_matches_filters(item_a, filters_none) is True
+    assert source_item_matches_filters(item_b, filters_none) is True
+
+
+def test_evidence_matches_filters_respects_actor_ref() -> None:
+    """evidence_matches_filters must reject evidence from a different actor."""
+    from core.filters import evidence_matches_filters
+    from core.models import EvidenceReference, QueryFilters
+
+    ev_a = EvidenceReference(
+        source_item_id="si-a", source_type="chat_message", source_id="ev-a",
+        actor_ref=ACTOR_A, container_ref=CONTAINER_PRIVATE,
+        container_visibility="private",
+    )
+    ev_b = EvidenceReference(
+        source_item_id="si-b", source_type="chat_message", source_id="ev-b",
+        actor_ref=ACTOR_B, container_ref=CONTAINER_PRIVATE,
+        container_visibility="private",
+    )
+    ev_shared = EvidenceReference(
+        source_item_id="si-s", source_type="chat_message", source_id="ev-s",
+        actor_ref=None, container_ref=CONTAINER_PRIVATE,
+        container_visibility="private",
+    )
+
+    filters_a = QueryFilters(actor_ref=ACTOR_A, container_ref=CONTAINER_PRIVATE)
+
+    assert evidence_matches_filters(ev_a, filters_a) is True
+    assert evidence_matches_filters(ev_b, filters_a) is False
+    assert evidence_matches_filters(ev_shared, filters_a) is True
+
+
+def test_query_with_actor_ref_excludes_other_actors_source_items(monkeypatch, test_db_url: str) -> None:
+    """Query with actor_ref=A should NOT return source_hits from actor B."""
+    events = [
+        {
+            "source_type": "chat_message",
+            "source_id": "actor-a-src-1",
+            "content_type": "text/plain",
+            "content": "Decision: use item event time for reservation ordering.",
+            "artifact_kind": "message",
+            "role": "user",
+            "actor_ref": ACTOR_A,
+            "container_ref": CONTAINER_PRIVATE,
+            "thread_ref": THREAD_A,
+            "container_visibility": "private",
+            "occurred_at": "2026-03-23T10:10:00Z",
+        },
+        {
+            "source_type": "chat_message",
+            "source_id": "actor-b-src-1",
+            "content_type": "text/plain",
+            "content": "Decision: use arrival time for hold ordering during catalog sync.",
+            "artifact_kind": "message",
+            "role": "user",
+            "actor_ref": ACTOR_B,
+            "container_ref": CONTAINER_PRIVATE,
+            "thread_ref": THREAD_A,
+            "container_visibility": "private",
+            "occurred_at": "2026-03-23T10:11:00Z",
+        },
+    ]
+    with _build_client(monkeypatch, test_db_url) as client:
+        response = client.post("/items", json=events)
+        assert response.status_code == 200
+        client.app.state.pallium_service.drain_processing_queue(worker_id="test")
+
+        # Query as actor A
+        query_response = client.post("/query", json={
+            "text": "what decisions about ordering?",
+            "limit": 10,
+            "container_ref": CONTAINER_PRIVATE,
+            "container_visibility": "private",
+            "actor_ref": ACTOR_A,
+        })
+        assert query_response.status_code == 200
+        results = query_response.json()["results"]
+        for result in results:
+            if result["result_kind"] == "source_hit":
+                assert result.get("actor_ref") != ACTOR_B, (
+                    f"Actor A's query should not return actor B's source item: "
+                    f"source_id={result.get('source_id')}"
+                )
