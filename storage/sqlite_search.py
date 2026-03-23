@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import replace
 
 from sqlalchemy import select
 
-from core.models import EvidenceReference, QueryFilters, SourceItem
+from core.filters import (
+    matches_filters,
+    target_visibility_and_container,
+)
+from core.models import QueryFilters
 from core.visibility import VisibilityExclusion, is_visible
 from storage.base import IndexSearchHit, IndexSearchResult
 from storage.sqlite_schema import IndexEntryRecord
@@ -47,7 +50,11 @@ class SQLiteSearchMixin:
         filtered: list[tuple[object, set[str]]] = []
         doc_freq: dict[str, int] = {}
         for record in records:
-            if not self._matches_filters(record.target_kind, record.target_id, filters):
+            if not matches_filters(
+                self.get_memory_object, self.get_source_item,
+                self.get_evidence_for_memory_object,
+                record.target_kind, record.target_id, filters,
+            ):
                 continue
             text_tokens = set(TOKEN_PATTERN.findall(record.text_view.lower()))
             filtered.append((record, text_tokens))
@@ -73,7 +80,10 @@ class SQLiteSearchMixin:
             if score <= 0:
                 continue
             total_hits_before_visibility += 1
-            candidate_visibility, candidate_container_ref = self._target_visibility(record.target_kind, record.target_id)
+            candidate_visibility, candidate_container_ref = target_visibility_and_container(
+                self.get_source_item, self.get_memory_object,
+                record.target_kind, record.target_id,
+            )
             if query_container_ref is not None and not is_visible(candidate_visibility, candidate_container_ref, query_container_ref):
                 if include_visibility_trace:
                     reason = (
@@ -109,55 +119,3 @@ class SQLiteSearchMixin:
             total_hits_after_visibility=total_hits_after_visibility,
         )
 
-    def _matches_filters(self, target_kind: str, target_id: str, filters: QueryFilters | None) -> bool:
-        if target_kind == "memory_object":
-            memory_object = self.get_memory_object(target_id)
-            if memory_object.lifecycle != "active":
-                return False
-        if filters is None:
-            return True
-        if target_kind == "source_item":
-            return self._source_item_matches_filters(self.get_source_item(target_id), filters)
-        if target_kind == "memory_object":
-            evidence = self.get_evidence_for_memory_object(target_id)
-            memory_filters = replace(filters, thread_ref=None) if filters.thread_ref is not None else filters
-            return any(self._evidence_matches_filters(item, memory_filters) for item in evidence)
-        return True
-
-    def _target_visibility(self, target_kind: str, target_id: str) -> tuple[str | None, str | None]:
-        if target_kind == "source_item":
-            item = self.get_source_item(target_id)
-            return item.container_visibility, item.container_ref
-        if target_kind == "memory_object":
-            obj = self.get_memory_object(target_id)
-            container_ref = obj.container_ref
-            if container_ref is None and obj.envelope is not None:
-                container_ref = obj.envelope.scope.container_ref
-            return obj.container_visibility, container_ref
-        return None, None
-
-    def _source_item_matches_filters(self, source_item: SourceItem, filters: QueryFilters) -> bool:
-        if filters.source_type is not None and source_item.source_type != filters.source_type:
-            return False
-        if filters.role is not None and source_item.role != filters.role:
-            return False
-        if filters.artifact_kind is not None and source_item.artifact_kind != filters.artifact_kind:
-            return False
-        if filters.container_ref is not None and source_item.container_visibility != "public" and source_item.container_ref != filters.container_ref:
-            return False
-        if filters.thread_ref is not None and source_item.thread_ref != filters.thread_ref:
-            return False
-        return True
-
-    def _evidence_matches_filters(self, evidence: EvidenceReference, filters: QueryFilters) -> bool:
-        if filters.source_type is not None and evidence.source_type != filters.source_type:
-            return False
-        if filters.role is not None and evidence.role != filters.role:
-            return False
-        if filters.artifact_kind is not None and evidence.artifact_kind != filters.artifact_kind:
-            return False
-        if filters.container_ref is not None and evidence.container_visibility != "public" and evidence.container_ref != filters.container_ref:
-            return False
-        if filters.thread_ref is not None and evidence.thread_ref != filters.thread_ref:
-            return False
-        return True

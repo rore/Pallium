@@ -3,8 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.config import AppConfig, LLMProviderConfig, SemanticPackageConfig
+from app.main import create_app
 from capabilities.consolidation import ConsolidationPolicy, DEFAULT_CONSOLIDATION_STRATEGIES
 from storage.vector_index import VectorIndexConfig
+from starlette.testclient import TestClient
 
 
 DEFAULT_LLM_PROMPT_VARIANT = "strict_typed_memory_v5_compact_examples"
@@ -78,3 +80,69 @@ def _vector_index_path_for_sqlite(sqlite_url: str) -> str:
         return VectorIndexConfig().index_path
     db_path = Path(sqlite_url[len(prefix):])
     return str(db_path.with_suffix(".vector.index"))
+
+
+def build_agent_conversation_client(
+    monkeypatch,
+    sqlite_url: str,
+    *,
+    llm_provider_factory=None,
+    auto_drain: bool = False,
+    drain_worker_id: str = "test-worker",
+) -> TestClient:
+    """Build a TestClient for agent_conversation_memory tests.
+
+    Patches the LLM provider, creates a TestClient, and wraps ``post``
+    to auto-inject ``container_visibility: "public"`` on /items, /query,
+    and /query/debug endpoints.
+
+    Parameters
+    ----------
+    auto_drain:
+        When *True*, automatically drain the processing queue after
+        successful ``/items`` ingests.
+    drain_worker_id:
+        Worker ID used when auto-draining.
+    llm_provider_factory:
+        Callable that returns an LLM provider stub.  When *None*,
+        ``TieredMemorySemanticProvider()`` is used (imported lazily to
+        avoid circular imports in config_helpers).
+    """
+    if llm_provider_factory is None:
+        from tests.tiered_memory_stub_providers import TieredMemorySemanticProvider
+        llm_provider_factory = TieredMemorySemanticProvider
+
+    monkeypatch.setattr(
+        "app.dependencies.build_llm_provider",
+        lambda config, **_: llm_provider_factory(),
+    )
+    client = TestClient(
+        create_app(
+            build_llm_test_config(
+                default_use_case="agent_conversation_memory",
+                sqlite_url=sqlite_url,
+            )
+        )
+    )
+    original_post = client.post
+
+    def post_with_public_visibility(url: str, *args, **kwargs):
+        payload = kwargs.get("json")
+        if isinstance(payload, dict) and url in {"/items", "/query", "/query/debug"} and "container_visibility" not in payload:
+            payload = dict(payload)
+            payload["container_visibility"] = "public"
+            kwargs["json"] = payload
+        elif isinstance(payload, list) and url == "/items":
+            kwargs["json"] = [
+                {**item, "container_visibility": "public"}
+                if isinstance(item, dict) and "container_visibility" not in item
+                else item
+                for item in payload
+            ]
+        response = original_post(url, *args, **kwargs)
+        if auto_drain and url == "/items" and response.status_code == 200:
+            client.app.state.pallium_service.drain_processing_queue(worker_id=drain_worker_id)
+        return response
+
+    client.post = post_with_public_visibility
+    return client

@@ -40,7 +40,7 @@ def build_thread_aggregate(source_items: list[SourceItem]) -> ThreadAggregate:
         raise ValueError("Thread aggregation requires exact container_visibility match")
 
     latest_item = ordered_items[-1]
-    aggregate_text = "`n".join(
+    aggregate_text = "\n".join(
         f"{item.role or 'unknown'}/{item.artifact_kind or 'unknown'}: {item.content.strip()}"
         for item in ordered_items
         if item.content.strip()

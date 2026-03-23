@@ -10,9 +10,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import create_app
-from tests.config_helpers import build_llm_test_config
-from tests.tiered_memory_stub_providers import TieredMemorySemanticProvider
+from tests.config_helpers import build_agent_conversation_client
 
 CONTAINER_REF = 'chat:vector-db-intent-test'
 THREAD_A = f'{CONTAINER_REF}:thread-a'
@@ -20,34 +18,7 @@ THREAD_B = f'{CONTAINER_REF}:thread-b'
 
 
 def _build_client(monkeypatch, sqlite_url: str) -> TestClient:
-    monkeypatch.setattr(
-        'app.dependencies.build_llm_provider',
-        lambda config, **_: TieredMemorySemanticProvider(),
-    )
-    client = TestClient(
-        create_app(build_llm_test_config(
-            default_use_case='agent_conversation_memory',
-            sqlite_url=sqlite_url,
-        ))
-    )
-    original_post = client.post
-
-    def post_with_public_visibility(url: str, *args, **kwargs):
-        payload = kwargs.get('json')
-        if isinstance(payload, dict) and url in {'/items', '/query', '/query/debug'} and 'container_visibility' not in payload:
-            payload = dict(payload)
-            payload['container_visibility'] = 'public'
-            kwargs['json'] = payload
-        elif isinstance(payload, list) and url == '/items':
-            kwargs['json'] = [
-                {**item, 'container_visibility': 'public'}
-                if isinstance(item, dict) and 'container_visibility' not in item else item
-                for item in payload
-            ]
-        return original_post(url, *args, **kwargs)
-
-    client.post = post_with_public_visibility
-    return client
+    return build_agent_conversation_client(monkeypatch, sqlite_url)
 
 
 THREAD_A_EVENTS = [

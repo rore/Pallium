@@ -5,9 +5,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from app.main import create_app
-from tests.config_helpers import build_llm_test_config
-from tests.stub_providers import TieredMemorySemanticProvider
+from tests.config_helpers import build_agent_conversation_client
 
 
 SCENARIO_FILE = Path('evals/consolidation/scenarios.json')
@@ -18,31 +16,9 @@ def _load_scenarios() -> list[dict[str, object]]:
 
 
 def _build_client(monkeypatch, sqlite_url: str) -> TestClient:
-    monkeypatch.setattr('app.dependencies.build_llm_provider', lambda config, **_: TieredMemorySemanticProvider())
-    client = TestClient(create_app(build_llm_test_config(default_use_case='agent_conversation_memory', sqlite_url=sqlite_url)))
-    original_post = client.post
-
-    def post_with_public_visibility(url: str, *args, **kwargs):
-        payload = kwargs.get('json')
-        if url in {'/items', '/query', '/query/debug'}:
-            if isinstance(payload, dict) and 'container_visibility' not in payload:
-                payload = dict(payload)
-                payload['container_visibility'] = 'public'
-                kwargs['json'] = payload
-            elif isinstance(payload, list):
-                payload = [
-                    {**item, 'container_visibility': item.get('container_visibility', 'public')}
-                    if isinstance(item, dict) else item
-                    for item in payload
-                ]
-                kwargs['json'] = payload
-        response = original_post(url, *args, **kwargs)
-        if url == '/items' and response.status_code == 200:
-            client.app.state.pallium_service.drain_processing_queue(worker_id='tiered-test')
-        return response
-
-    client.post = post_with_public_visibility
-    return client
+    return build_agent_conversation_client(
+        monkeypatch, sqlite_url, auto_drain=True, drain_worker_id="tiered-test",
+    )
 
 
 def _ingest_prior_events(client: TestClient, scenario_id: str) -> dict[str, object]:

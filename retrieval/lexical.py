@@ -1,24 +1,20 @@
 from __future__ import annotations
 
 import re
-from datetime import timezone
 
 from core.models import (
-    EvidenceReference,
     QueryFilters,
     QueryResultItem,
     QueryTrace,
     RetrievalStageTrace,
-    RetrievalTraceHit,
-    SourceItem,
 )
 from core.visibility import QueryVisibilityTrace, VisibilityExclusion, is_visible, visibility_label
 from retrieval.base import RetrievalProvider, RetrievalQueryResult
-from storage.base import IndexSearchHit, StorageProvider
+from retrieval.common import build_evidence, build_excerpt, build_trace_hit
+from storage.base import StorageProvider
 
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
-MAX_EXCERPT_LENGTH = 160
 LEXICAL_STAGE_NAME = "lexical"
 
 
@@ -44,47 +40,6 @@ def _token_variants(token: str) -> tuple[str, ...]:
     elif len(token) > 4 and token.endswith("s") and not token.endswith(("ss", "us", "is")):
         variants.append(token[:-1])
     return tuple(dict.fromkeys(variants))
-
-
-def _build_excerpt(text: str, *, max_length: int = MAX_EXCERPT_LENGTH) -> str:
-    normalized = " ".join(text.split())
-    if len(normalized) <= max_length:
-        return normalized
-    return normalized[: max_length - 3].rstrip() + "..."
-
-
-def _build_evidence(source_item: SourceItem) -> EvidenceReference:
-    occurred_at = source_item.occurred_at
-    if occurred_at is not None and occurred_at.tzinfo is None:
-        occurred_at = occurred_at.replace(tzinfo=timezone.utc)
-    return EvidenceReference(
-        source_item_id=source_item.id,
-        source_type=source_item.source_type,
-        source_id=source_item.source_id,
-        occurred_at=occurred_at,
-        actor_ref=source_item.actor_ref,
-        agent_ref=source_item.agent_ref,
-        role=source_item.role,
-        container_ref=source_item.container_ref,
-        thread_ref=source_item.thread_ref,
-        source_ref=source_item.source_ref,
-        artifact_kind=source_item.artifact_kind,
-        container_visibility=source_item.container_visibility,
-    )
-
-
-def _build_trace_hit(hit: IndexSearchHit) -> RetrievalTraceHit:
-    return RetrievalTraceHit(
-        target_kind=hit.target_kind,
-        target_id=hit.target_id,
-        index_entry_id=hit.index_entry_id,
-        index_type=hit.index_type,
-        text_view_name=hit.text_view_name,
-        score=hit.score,
-        matched_tokens=tuple(hit.matched_tokens),
-        provider_name=hit.provider_name,
-        provider_version=hit.provider_version,
-    )
 
 
 class LexicalRetrievalProvider(RetrievalProvider):
@@ -180,7 +135,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
                         source_item_id=source_item.id,
                         source_type=source_item.source_type,
                         source_id=source_item.source_id,
-                        excerpt=_build_excerpt(source_item.content),
+                        excerpt=build_excerpt(source_item.content),
                         occurred_at=source_item.occurred_at,
                         actor_ref=source_item.actor_ref,
                         agent_ref=source_item.agent_ref,
@@ -190,7 +145,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
                         source_ref=source_item.source_ref,
                         artifact_kind=source_item.artifact_kind,
                         score=hit.score,
-                        evidence=[_build_evidence(source_item)],
+                        evidence=[build_evidence(source_item)],
                         container_visibility=source_item.container_visibility,
                     )
                 )
@@ -198,7 +153,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
                 continue
 
             if include_trace:
-                selected_hits.append(_build_trace_hit(hit))
+                selected_hits.append(build_trace_hit(hit))
 
             if len(results) >= limit:
                 break
@@ -214,7 +169,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
                     RetrievalStageTrace(
                         stage_name=LEXICAL_STAGE_NAME,
                         candidate_hits_considered=len(hits),
-                        candidate_hits=tuple(_build_trace_hit(hit) for hit in hits),
+                        candidate_hits=tuple(build_trace_hit(hit) for hit in hits),
                         selected_hits=tuple(selected_hits),
                         candidate_hits_before_visibility=search_result.total_hits_before_visibility,
                         candidate_hits_after_visibility=search_result.total_hits_after_visibility,

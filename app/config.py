@@ -562,8 +562,8 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
             package_name = str(name).strip().lower()
             current = packages.get(package_name, SemanticPackageConfig(name=package_name, implementation=package_name))
             consolidation = _build_consolidation_policy(raw_value.get("consolidation"), current.consolidation)
-            prompt_variants = _build_prompt_variants(raw_value.get("prompt_variants"), current.prompt_variants)
-            model_roles = _build_model_roles(raw_value.get("model_roles"), current.model_roles)
+            prompt_variants = _merge_normalized_dict(raw_value.get("prompt_variants"), current.prompt_variants)
+            model_roles = _merge_normalized_dict(raw_value.get("model_roles"), current.model_roles)
             packages[package_name] = SemanticPackageConfig(
                 name=package_name,
                 implementation=_as_string(raw_value.get("implementation", current.implementation)),
@@ -686,21 +686,8 @@ def _build_consolidation_policy(raw_value: Any, current: ConsolidationPolicy | N
     )
 
 
-def _build_prompt_variants(raw_value: Any, current: dict[str, str] | None) -> dict[str, str] | None:
-    if raw_value is None:
-        return current
-    if not isinstance(raw_value, dict):
-        return current
-    merged = dict(current) if current else {}
-    for key, val in raw_value.items():
-        normalized_key = str(key).strip().lower()
-        normalized_val = str(val).strip()
-        if normalized_key and normalized_val:
-            merged[normalized_key] = normalized_val
-    return merged or None
-
-
-def _build_model_roles(raw_value: Any, current: dict[str, str] | None) -> dict[str, str] | None:
+def _merge_normalized_dict(raw_value: Any, current: dict[str, str] | None) -> dict[str, str] | None:
+    """Merge a raw dict into an existing normalized string dict."""
     if raw_value is None:
         return current
     if not isinstance(raw_value, dict):

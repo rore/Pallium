@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import argparse
 import os
-import signal
 import socket
-import threading
 import time
 from collections.abc import Callable
 
 from app.config import AppConfig
 from app.dependencies import build_service
 from app.runtime_logging import emit_runtime_log
+from app.signal_context import graceful_stop
 from storage.base import RetentionLeaseLostError, RetentionRunStats
 
 
@@ -44,54 +43,36 @@ def run_cleaner(
     lease_seconds = parsed.lease_seconds if parsed.lease_seconds is not None else resolved_config.retention.lease_seconds
     batch_size = parsed.batch_size if parsed.batch_size is not None else resolved_config.retention.batch_size
 
-    stop_requested = False
-
-    def request_stop(_signum=None, _frame=None) -> None:
-        nonlocal stop_requested
-        stop_requested = True
-
-    if install_signal_handlers is None:
-        install_signal_handlers = threading.current_thread() is threading.main_thread()
-
-    previous_sigint = None
-    previous_sigterm = None
-    if install_signal_handlers:
-        previous_sigint = signal.signal(signal.SIGINT, request_stop)
-        previous_sigterm = signal.signal(signal.SIGTERM, request_stop)
-
-    try:
-        while True:
-            if stop_requested or (should_stop is not None and should_stop()):
-                return 0
-            try:
-                stats = service.run_retention_pass(
-                    worker_id=cleaner_id,
-                    lease_seconds=lease_seconds,
-                    batch_size=batch_size,
-                )
-            except RetentionLeaseLostError as exc:
-                emit_runtime_log("cleaner", f"cleaner_id={cleaner_id} retention lease lost error={exc}", stderr=True)
-                if parsed.once:
-                    return 1
-                if stop_requested or (should_stop is not None and should_stop()):
+    with graceful_stop(install=install_signal_handlers) as stop:
+        try:
+            while True:
+                if stop.requested or (should_stop is not None and should_stop()):
+                    return 0
+                try:
+                    stats = service.run_retention_pass(
+                        worker_id=cleaner_id,
+                        lease_seconds=lease_seconds,
+                        batch_size=batch_size,
+                    )
+                except RetentionLeaseLostError as exc:
+                    emit_runtime_log("cleaner", f"cleaner_id={cleaner_id} retention lease lost error={exc}", stderr=True)
+                    if parsed.once:
+                        return 1
+                    if stop.requested or (should_stop is not None and should_stop()):
+                        return 0
+                    sleep_fn(run_interval_seconds)
+                    continue
+                if stats is not None:
+                    _log_retention_stats(cleaner_id, stats)
+                    if parsed.once:
+                        return 0
+                elif parsed.once:
+                    return 0
+                if stop.requested or (should_stop is not None and should_stop()):
                     return 0
                 sleep_fn(run_interval_seconds)
-                continue
-            if stats is not None:
-                _log_retention_stats(cleaner_id, stats)
-                if parsed.once:
-                    return 0
-            elif parsed.once:
-                return 0
-            if stop_requested or (should_stop is not None and should_stop()):
-                return 0
-            sleep_fn(run_interval_seconds)
-    except KeyboardInterrupt:
-        return 0
-    finally:
-        if install_signal_handlers:
-            signal.signal(signal.SIGINT, previous_sigint)
-            signal.signal(signal.SIGTERM, previous_sigterm)
+        except KeyboardInterrupt:
+            return 0
 
 
 def _log_retention_stats(cleaner_id: str, stats: RetentionRunStats) -> None:
