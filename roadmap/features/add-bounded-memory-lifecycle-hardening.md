@@ -45,6 +45,15 @@ stay reliable over time.
   - explicit supersession lineage
   - contradiction or conflict markers
   - bounded trust or confidence downgrade state
+- user-invoked memory reset or selective forget:
+  - users may explicitly request "forget what I told you" or "start fresh"
+  - this requires a mechanism to deactivate or archive memories within a scope
+    (container, thread, or actor) without deleting supporting evidence
+  - the reset signal should be detectable at the routing/query layer so that
+    subsequent turns do not inject memories the user asked to forget
+  - scope of reset: at minimum container-level ("forget everything we discussed"),
+    ideally also topic-level ("forget what I said about vector databases")
+  - this is distinct from automatic staleness — it is an explicit user action
 - keep lifecycle explainable and evidence-backed rather than hidden inside
   opaque ranking behavior
 - make retrieval and packaging prefer current, supported memory by default when
