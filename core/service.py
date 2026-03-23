@@ -13,7 +13,8 @@ from sqlalchemy.exc import IntegrityError
 from capabilities.consolidation import ConsolidationCapability, ConsolidationRunGroupResult, ConsolidationRunResult
 from capabilities.thread_aggregation import build_thread_aggregate
 from core.contracts import IngestResult, ItemProcessingResult, MemoryRetentionPolicy, PackageQueryOutcome, ProcessResult, QueryResult, build_source_item, resolve_query_filters
-from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, VECTOR_INDEX_TYPE, build_index_entry
+from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
+from core.vector_embed import VectorEmbedder
 from core.models import MemoryObject, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace, Relation, SourceItem, utc_now
 from core.observability import IntegrationDebugLogger, OBSERVABILITY_METADATA_KEY
 from core.visibility import QueryVisibilityTrace, is_visible, visibility_matches_exact, visibility_label
@@ -166,6 +167,7 @@ class PalliumService:
         self._retention_batch_size = retention_batch_size
         self._embedding_provider = embedding_provider
         self._vector_index = vector_index
+        self._vector_embedder = VectorEmbedder(storage, embedding_provider, vector_index)
         self._logger = logging.getLogger(__name__)
 
         merged_retention = MemoryRetentionPolicy()
@@ -178,53 +180,6 @@ class PalliumService:
                     orphan_delete_types=merged_retention.orphan_delete_types | plugin_policy.orphan_delete_types,
                 )
         self._retention_policy = merged_retention
-
-    def _embed_vector_entries(self, result: ProcessResult) -> bool:
-        """Add vector index entries to the in-memory index after SQLite commit.
-
-        Filters committed index entries for index_type="vector", embeds them
-        via the embedding provider, and adds them to the in-memory vector index.
-        Does NOT save the index to disk -- the caller is responsible for calling
-        _save_vector_index() once all embedding work for the current processing
-        cycle is complete.
-        If either embedding_provider or vector_index is None, this is a no-op.
-        If embedding fails, the error is logged and execution continues --
-        reconciliation catches gaps.
-
-        Returns True if any vectors were added to the in-memory index.
-        """
-        if self._embedding_provider is None or self._vector_index is None:
-            return False
-        vector_entries = [e for e in result.index_entries if e.index_type == VECTOR_INDEX_TYPE]
-        if not vector_entries:
-            return False
-        try:
-            texts = [entry.text_view for entry in vector_entries]
-            vectors = self._embedding_provider.embed(texts)
-            for entry, vector in zip(vector_entries, vectors):
-                self._vector_index.add(entry.id, vector)
-                self._storage.update_index_entry_provider(
-                    entry.id,
-                    provider_name=self._embedding_provider.model_name(),
-                    provider_version=f"dim={self._embedding_provider.dimensions()}",
-                )
-            return True
-        except Exception:
-            self._logger.warning("Vector embedding failed after commit; reconciliation will catch gaps", exc_info=True)
-            return False
-
-    def _save_vector_index(self) -> None:
-        """Flush the in-memory vector index to disk.
-
-        No-op when vector_index is None.  Failures are logged and swallowed --
-        reconciliation via rebuild-vector-index recovers missing vectors.
-        """
-        if self._vector_index is None:
-            return
-        try:
-            self._vector_index.save()
-        except Exception:
-            self._logger.warning("Vector index save failed; reconciliation will catch gaps", exc_info=True)
 
     def ingest_item(
         self,
@@ -494,32 +449,7 @@ class PalliumService:
             self._emit_processing_failure(source_item, worker_id=worker_label, failure_category=failure_category, error=error)
             return
 
-        source_vector_entry = None
-        if (self._embedding_provider is not None
-                and self._vector_index is not None):
-            try:
-                embedding_text = plugin.source_item_embedding_text(source_item)
-                if embedding_text is not None:
-                    existing = self._storage.find_index_entry(
-                        target_kind="source_item",
-                        target_id=source_item.id,
-                        index_type=VECTOR_INDEX_TYPE,
-                        text_view_name="source_content.embedding",
-                    )
-                    if existing is None:
-                        source_vector_entry = build_index_entry(
-                            target_kind="source_item",
-                            target_id=source_item.id,
-                            index_type=VECTOR_INDEX_TYPE,
-                            text_view=embedding_text,
-                            text_view_name="source_content.embedding",
-                            provider_name=self._embedding_provider.model_name(),
-                            provider_version=f"dim={self._embedding_provider.dimensions()}",
-                        )
-                        self._storage.create_index_entry(source_vector_entry)
-            except Exception:
-                self._logger.warning("Source item vector entry creation failed", exc_info=True)
-                source_vector_entry = None
+        source_vector_entry = self._vector_embedder.build_source_item_vector_entry(plugin, source_item)
 
         try:
             direct_result = plugin.process_item(source_item)
@@ -563,7 +493,7 @@ class PalliumService:
                 result=direct_result,
                 thread_rebuild_scope=thread_rebuild_scope,
             )
-            memory_vectors_added = self._embed_vector_entries(direct_result)
+            memory_vectors_added = self._vector_embedder.embed_process_result(direct_result)
             memory_provenance = _build_memory_provenance(
                 direct_result,
                 default_source_item_id=source_item.id,
@@ -607,15 +537,10 @@ class PalliumService:
 
         source_vector_added = False
         if source_vector_entry is not None:
-            try:
-                vectors = self._embedding_provider.embed([source_vector_entry.text_view])
-                self._vector_index.add(source_vector_entry.id, vectors[0])
-                source_vector_added = True
-            except Exception:
-                self._logger.warning("Source item vector embedding failed", exc_info=True)
+            source_vector_added = self._vector_embedder.embed_and_persist_vector_entry(source_vector_entry)
 
         if memory_vectors_added or source_vector_added:
-            self._save_vector_index()
+            self._vector_embedder.save_vector_index()
 
     def _build_ingest_result(self, source_item: SourceItem) -> IngestResult:
         processing = self._build_processing_result(source_item)
@@ -1044,8 +969,8 @@ class PalliumService:
                     worker_id=worker_id,
                     claimed_at=current_lease.processing_claimed_at,
                 )
-                if self._embed_vector_entries(thread_result):
-                    self._save_vector_index()
+                if self._vector_embedder.embed_process_result(thread_result):
+                    self._vector_embedder.save_vector_index()
             else:
                 has_pending = self._storage.complete_thread_processing_scope(
                     scope_key=current_lease.scope_key,
