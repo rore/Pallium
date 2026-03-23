@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from core.models import InjectableBlock, QueryFilters, QueryResultItem, QueryRuntimeContext
 from semantic.common import normalize_for_index
 from semantic.agent_conversation_memory_constraints import (
@@ -9,13 +11,15 @@ from semantic.agent_conversation_memory_threads import (
     _is_low_value_meta_text,
 )
 from semantic.agent_conversation_memory_routing_constants import (
-    INJECTION_RETRIEVAL_RELEVANCE_FLOOR,
     ROUTING_SUPPORT_THRESHOLD,
-    VECTOR_SIMILARITY_INJECTION_FLOOR,
     WORK_RESUMPTION_SIGNAL_PRIORITY,
     _candidate_container_refs,
     _candidate_thread_refs,
     _routing_result_id,
+)
+from semantic.agent_conversation_memory_routing_justification import (
+    compute_injection_signals,
+    justify_injection_rules,
 )
 from semantic.agent_conversation_memory_routing_scoring import (
     _is_current_query_echo,
@@ -271,16 +275,15 @@ def _build_injectable_blocks(
             "same_thread_context_evaluation": same_thread_context,
         }
 
-    passes_floor, floor_reason = _any_candidate_passes_retrieval_relevance_floor(
-        final_candidates,
-        floor=INJECTION_RETRIEVAL_RELEVANCE_FLOOR,
-        vector_similarity_floor=VECTOR_SIMILARITY_INJECTION_FLOOR,
-    )
-    if not passes_floor:
+    injection_signals = compute_injection_signals(final_candidates)
+    justification = justify_injection_rules(injection_signals)
+    if not justification.justified:
         return [], {
             "should_inject": False,
-            "decision_reason": "low_retrieval_relevance",
-            "retrieval_relevance_floor_reason": floor_reason,
+            "decision_reason": "low_justification_score",
+            "justification_reason": justification.reason,
+            "justification_score": justification.score,
+            "justification_signals": asdict(injection_signals),
             "returned_block_ids": [],
             "eligible_result_ids": [],
             "dropped_by_cap_result_ids": [],
@@ -366,6 +369,9 @@ def _build_injectable_blocks(
     return blocks, {
         "should_inject": bool(blocks),
         "decision_reason": "carry_forward_available" if blocks else "no_relevant_memory",
+        "justification_reason": justification.reason,
+        "justification_score": justification.score,
+        "justification_signals": asdict(injection_signals),
         "returned_block_ids": returned_ids,
         "eligible_result_ids": eligible_ids,
         "dropped_by_cap_result_ids": dropped_ids,

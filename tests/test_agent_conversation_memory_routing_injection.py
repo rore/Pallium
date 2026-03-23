@@ -1696,7 +1696,7 @@ def test_retrieval_relevance_floor_suppresses_vector_only_candidates() -> None:
     )
     outcome = _run_floor_test(result, query_text="let's talk about something new")
     assert outcome.should_inject is False
-    assert outcome.decision_reason == 'low_retrieval_relevance'
+    assert outcome.decision_reason == 'low_justification_score'
 
 
 def test_retrieval_relevance_floor_suppresses_low_lexical_score() -> None:
@@ -1708,7 +1708,7 @@ def test_retrieval_relevance_floor_suppresses_low_lexical_score() -> None:
     )
     outcome = _run_floor_test(result, query_text='how about politics?')
     assert outcome.should_inject is False
-    assert outcome.decision_reason == 'low_retrieval_relevance'
+    assert outcome.decision_reason == 'low_justification_score'
 
 
 def test_retrieval_relevance_floor_passes_high_lexical_score() -> None:
@@ -1720,7 +1720,7 @@ def test_retrieval_relevance_floor_passes_high_lexical_score() -> None:
     )
     outcome = _run_floor_test(result, query_text='what did we discuss about vector databases?')
     assert outcome.should_inject is True
-    assert outcome.decision_reason != 'low_retrieval_relevance'
+    assert outcome.decision_reason != 'low_justification_score'
 
 
 def test_retrieval_relevance_floor_passes_at_boundary() -> None:
@@ -1732,7 +1732,7 @@ def test_retrieval_relevance_floor_passes_at_boundary() -> None:
     )
     outcome = _run_floor_test(result, query_text='what about vector databases?')
     assert outcome.should_inject is True
-    assert outcome.decision_reason != 'low_retrieval_relevance'
+    assert outcome.decision_reason != 'low_justification_score'
 
 
 def test_retrieval_relevance_floor_passes_lexical_only_retrieval() -> None:
@@ -1744,7 +1744,7 @@ def test_retrieval_relevance_floor_passes_lexical_only_retrieval() -> None:
     )
     outcome = _run_floor_test(result)
     # Floor does not activate for lexical-only retrieval
-    assert outcome.decision_reason != 'low_retrieval_relevance'
+    assert outcome.decision_reason != 'low_justification_score'
 
 
 def test_retrieval_relevance_floor_mixed_candidates_one_passes() -> None:
@@ -1800,11 +1800,11 @@ def test_retrieval_relevance_floor_mixed_candidates_one_passes() -> None:
         include_trace=True,
     )
     assert outcome.should_inject is True
-    assert outcome.decision_reason != 'low_retrieval_relevance'
+    assert outcome.decision_reason != 'low_justification_score'
 
 
 def test_retrieval_relevance_floor_trace_shows_reason() -> None:
-    """The injection decision trace should include the floor reason."""
+    """The injection decision trace should include the justification reason."""
     result = _build_floor_test_retrieval_result(
         score=9,
         retrieval_source='vector',
@@ -1813,8 +1813,8 @@ def test_retrieval_relevance_floor_trace_shows_reason() -> None:
     )
     outcome = _run_floor_test(result, query_text="let's talk about something new")
     injection_decision = outcome.trace.routing.get('injection_decision', {})
-    assert injection_decision.get('decision_reason') == 'low_retrieval_relevance'
-    assert injection_decision.get('retrieval_relevance_floor_reason') == 'no_candidate_above_floor'
+    assert injection_decision.get('decision_reason') == 'low_justification_score'
+    assert 'justification_reason' in injection_decision
 
 
 def test_vector_cosine_escape_hatch_passes_high_similarity() -> None:
@@ -1826,7 +1826,7 @@ def test_vector_cosine_escape_hatch_passes_high_similarity() -> None:
         vector_score=750,  # cosine 0.75 — above VECTOR_SIMILARITY_INJECTION_FLOOR (700)
     )
     outcome = _run_floor_test(result, query_text='what approach for tracking changes?')
-    assert outcome.decision_reason != 'low_retrieval_relevance'
+    assert outcome.decision_reason != 'low_justification_score'
 
 
 def test_vector_cosine_escape_hatch_at_boundary() -> None:
@@ -1838,7 +1838,7 @@ def test_vector_cosine_escape_hatch_at_boundary() -> None:
         vector_score=700,
     )
     outcome = _run_floor_test(result, query_text='what approach for tracking changes?')
-    assert outcome.decision_reason != 'low_retrieval_relevance'
+    assert outcome.decision_reason != 'low_justification_score'
 
 
 def test_vector_cosine_escape_hatch_suppresses_below_boundary() -> None:
@@ -1851,7 +1851,7 @@ def test_vector_cosine_escape_hatch_suppresses_below_boundary() -> None:
     )
     outcome = _run_floor_test(result, query_text="let's talk about something new")
     assert outcome.should_inject is False
-    assert outcome.decision_reason == 'low_retrieval_relevance'
+    assert outcome.decision_reason == 'low_justification_score'
 
 
 def test_vector_cosine_escape_hatch_trace_shows_reason() -> None:

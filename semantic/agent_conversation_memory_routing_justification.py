@@ -45,6 +45,9 @@ class InjectionSignals:
     # Recency
     best_candidate_age_seconds: float | None  # seconds since freshest candidate
 
+    # Retrieval mode
+    is_lexical_only: bool = False         # True when no composite retrieval candidates
+
 
 @dataclass(frozen=True)
 class JustificationResult:
@@ -98,6 +101,7 @@ def compute_injection_signals(
             max_lexical_score=None,
             max_vector_score=None,
             best_candidate_age_seconds=None,
+            is_lexical_only=False,
         )
 
     routing_scores = [int(c["routing_score"]) for c in final_candidates]
@@ -147,6 +151,13 @@ def compute_injection_signals(
     max_lexical_score = max(lexical_scores) if lexical_scores else None
     max_vector_score = max(vector_scores) if vector_scores else None
 
+    # Detect lexical-only mode: when no candidate has retrieval_source set,
+    # the system is running in lexical-only mode (no vector provider).
+    is_lexical_only = all(
+        _candidate_retrieval_source(c) is None
+        for c in final_candidates
+    )
+
     # Recency
     best_candidate_age_seconds: float | None = None
     if now_timestamp is not None:
@@ -171,6 +182,7 @@ def compute_injection_signals(
         max_lexical_score=max_lexical_score,
         max_vector_score=max_vector_score,
         best_candidate_age_seconds=best_candidate_age_seconds,
+        is_lexical_only=is_lexical_only,
     )
 
 
@@ -282,11 +294,19 @@ class RuleThresholds:
     Calibrated against 44 labeled scenarios (23 positive, 21 negative) from
     seed invariants, memory_routing benchmarks, work_resumption benchmarks,
     and authored off-topic negatives.
+
+    Positives: max_retrieval_score >= 2 covers 96%, >= 3 covers 91%.
+    Negatives with candidates: max_retrieval_score >= 2 in only 36%.
     """
 
-    # Gate 1: Strong retrieval + structure
+    # Gate 1a: Strong retrieval + structural support
     high_retrieval_score: int = 3
     min_support_grade_for_retrieval: str = "supported"
+
+    # Gate 1b: Moderate retrieval (replaces old lexical floor)
+    # IDF-weighted score >= 2 means 2+ content-bearing tokens matched.
+    # Off-topic queries (weather, idioms) typically score 0-1.
+    moderate_retrieval_score: int = 2
 
     # Gate 2: Active work + minimum routing score
     min_work_routing_score: int = 300
@@ -307,7 +327,7 @@ def justify_injection_rules(
     """Rule-based tiered gate justification."""
     t = thresholds or RuleThresholds()
 
-    # Gate 1: Strong retrieval + non-weak support
+    # Gate 1a: Strong retrieval + non-weak support
     min_support_rank = _SUPPORT_GRADE_RANK.get(t.min_support_grade_for_retrieval, 1)
     actual_support_rank = _SUPPORT_GRADE_RANK.get(signals.best_support_grade, 0)
     if (
@@ -317,8 +337,37 @@ def justify_injection_rules(
         return JustificationResult(
             justified=True,
             score=1.0,
-            reason="gate1:strong_retrieval+supported_evidence",
+            reason="gate1a:strong_retrieval+supported_evidence",
         )
+
+    # Gate 1b: Moderate retrieval quality (IDF floor replacement)
+    # The check varies by retrieval mode to match the signal semantics.
+    #
+    # Lexical-only: IDF score >= 1 is sufficient.  The scoring pipeline IS the
+    #   quality signal and IDF scores are compressed in small corpora.  Off-topic
+    #   suppression relies on score=0 (zero overlap).
+    #
+    # Composite: check max_lexical_score against the IDF threshold.  Lexical
+    #   overlap is the primary evidence of topical relevance.  Vector-only
+    #   candidates (no lexical match) are handled by Gate 4 (vector confidence).
+    if signals.is_lexical_only:
+        if signals.max_retrieval_score >= 1:
+            return JustificationResult(
+                justified=True,
+                score=0.85,
+                reason="gate1b:moderate_retrieval_quality_lexical_only",
+            )
+    else:
+        # Composite mode: check lexical score specifically
+        if (
+            signals.max_lexical_score is not None
+            and signals.max_lexical_score >= t.moderate_retrieval_score
+        ):
+            return JustificationResult(
+                justified=True,
+                score=0.85,
+                reason="gate1b:moderate_retrieval_quality_composite",
+            )
 
     # Gate 2: Active work signals + high-value types + minimum routing
     if (
@@ -358,7 +407,7 @@ def justify_injection_rules(
 
     # No gate passed — suppress
     parts = []
-    if signals.max_retrieval_score < t.high_retrieval_score:
+    if signals.max_retrieval_score < t.moderate_retrieval_score:
         parts.append("low_retrieval")
     if actual_support_rank < min_support_rank:
         parts.append("weak_support")
@@ -386,3 +435,11 @@ def _candidate_layer(candidate: dict[str, object]) -> str:
     if isinstance(item, QueryResultItem):
         return str(item.type or "")
     return ""
+
+
+def _candidate_retrieval_source(candidate: dict[str, object]) -> str | None:
+    """Extract retrieval_source from the candidate's item."""
+    item = candidate.get("item")
+    if item is not None and hasattr(item, "retrieval_source"):
+        return item.retrieval_source
+    return None
