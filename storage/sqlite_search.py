@@ -17,10 +17,6 @@ from storage.sqlite_schema import IndexEntryRecord
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 
-# Minimum number of indexed records before IDF weighting activates.
-# Below this threshold, raw token count is used (IDF is too noisy).
-_IDF_MIN_CORPUS_SIZE = 5
-
 # Scale factor for converting float IDF sums to integer scores.
 # Kept small so IDF scores remain in a similar range to raw token counts
 # (1-10), preserving downstream routing weight balance.
@@ -63,20 +59,16 @@ class SQLiteSearchMixin:
                     doc_freq[qt] = doc_freq.get(qt, 0) + 1
 
         corpus_size = len(filtered)
-        use_idf = corpus_size >= _IDF_MIN_CORPUS_SIZE
 
         for record, text_tokens in filtered:
             matched_tokens = tuple(sorted(unique_tokens.intersection(text_tokens)))
             if not matched_tokens:
                 continue
-            if use_idf:
-                idf_sum = sum(
-                    math.log(1.0 + (corpus_size - doc_freq.get(t, 0) + 0.5) / (doc_freq.get(t, 0) + 0.5))
-                    for t in matched_tokens
-                )
-                score = max(round(idf_sum * _IDF_SCORE_SCALE), 1)
-            else:
-                score = len(matched_tokens)
+            idf_sum = sum(
+                math.log(1.0 + (corpus_size - doc_freq.get(t, 0) + 0.5) / (doc_freq.get(t, 0) + 0.5))
+                for t in matched_tokens
+            )
+            score = max(round(idf_sum * _IDF_SCORE_SCALE), 1)
             if score <= 0:
                 continue
             total_hits_before_visibility += 1
