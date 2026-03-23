@@ -75,6 +75,48 @@ def _content_tokens(text: str) -> set[str]:
     return words - _STOPWORDS
 
 
+def _topic_overlap(tokens_a: set[str], tokens_b: set[str]) -> set[str]:
+    """Find topical overlap between two token sets.
+
+    Uses two strategies:
+    1. Exact match (fast path).
+    2. Common-prefix match: two words share a prefix of at least
+       _PREFIX_MATCH_MIN_LEN characters. This catches singular/plural
+       ("hold"/"holds"), verb forms ("reserve"/"reserved"/"reserving"),
+       and compound variations ("catalog"/"cataloging") without a
+       stemming library or brittle suffix rules.
+
+    Returns the set of matching tokens from tokens_a.
+    """
+    overlap = tokens_a & tokens_b
+    if overlap:
+        return overlap
+
+    # Prefix matching — only for tokens long enough to be meaningful.
+    for a in tokens_a:
+        if len(a) < _PREFIX_MATCH_MIN_LEN:
+            continue
+        for b in tokens_b:
+            if len(b) < _PREFIX_MATCH_MIN_LEN:
+                continue
+            # Common prefix length.
+            prefix_len = 0
+            for ca, cb in zip(a, b):
+                if ca != cb:
+                    break
+                prefix_len += 1
+            if prefix_len >= _PREFIX_MATCH_MIN_LEN:
+                overlap.add(a)
+                break  # one match per a-token is enough
+    return overlap
+
+
+# Minimum shared prefix length for two words to be considered "same topic".
+# 4 catches hold/holds, loan/loans, sync/syncing.
+# Too low (3) would false-match unrelated words.
+_PREFIX_MATCH_MIN_LEN = 4
+
+
 # ---------------------------------------------------------------------------
 # INV-01: no_cross_container_leak
 # ---------------------------------------------------------------------------
@@ -194,7 +236,7 @@ def check_no_off_topic_injection(
     off_topic = []
     for block in blocks:
         block_tokens = _content_tokens(block.get("text", ""))
-        overlap = query_tokens & block_tokens
+        overlap = _topic_overlap(query_tokens, block_tokens)
         if len(overlap) < _TOPIC_OVERLAP_MIN_TOKENS:
             off_topic.append({
                 "result_id": block.get("result_id"),

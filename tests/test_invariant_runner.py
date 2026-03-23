@@ -127,6 +127,33 @@ class TestINV03OffTopicInjection:
         result = check_no_off_topic_injection(scenario, _EMPTY_QUERY, _EMPTY_DEBUG)
         assert result.passed
 
+    def test_pass_prefix_match_singular_plural(self):
+        """'holds' in query should match 'hold' in block via prefix overlap."""
+        scenario = {"current_query": {"text": "What are the holds notification limits?"}}
+        query = {**_EMPTY_QUERY, "injectable_blocks": [
+            {"result_id": "r1", "text": "The hold queue limit was set to 8 active notifications per patron."},
+        ]}
+        result = check_no_off_topic_injection(scenario, query, _EMPTY_DEBUG)
+        assert result.passed
+
+    def test_pass_prefix_match_verb_forms(self):
+        """'reserving' in block should match 'reservation' in query."""
+        scenario = {"current_query": {"text": "What is the reservation policy?"}}
+        query = {**_EMPTY_QUERY, "injectable_blocks": [
+            {"result_id": "r1", "text": "Reserving items requires a valid library card."},
+        ]}
+        result = check_no_off_topic_injection(scenario, query, _EMPTY_DEBUG)
+        assert result.passed
+
+    def test_fail_short_prefix_no_match(self):
+        """Short words that happen to share a prefix should not match."""
+        scenario = {"current_query": {"text": "catalog sync plan"}}
+        query = {**_EMPTY_QUERY, "injectable_blocks": [
+            {"result_id": "r1", "text": "The cat jumped over the fence yesterday."},
+        ]}
+        result = check_no_off_topic_injection(scenario, query, _EMPTY_DEBUG)
+        assert not result.passed
+
 
 class TestINV04VisibilityViolation:
     def test_pass_public_results_visible_to_all(self):
