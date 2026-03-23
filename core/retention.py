@@ -4,7 +4,8 @@ from datetime import timedelta
 from typing import Any
 
 from core.observability import OBSERVABILITY_METADATA_KEY
-from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY
+
+SEMANTIC_SIGNAL_METADATA_KEY = "pallium_semantic_signals"
 
 
 RETENTION_MAINTENANCE_KEY = "retention_compaction"
