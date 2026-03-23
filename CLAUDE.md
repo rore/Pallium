@@ -52,6 +52,15 @@ python -m app.run serve --host 127.0.0.1 --port 8000
 
 # Run agent simulation harness
 python -m app.agent_simulation
+
+# Run exploratory QA invariant runner (seed scenarios)
+python -m evals.generated_exploratory.invariant_runner
+
+# Run exploratory QA with parallel workers and LLM cache
+python -m evals.generated_exploratory.invariant_runner --workers 4 --cache-dir .local/llm-cache
+
+# Generate exploratory QA scenarios from taxonomy
+python -m evals.generated_exploratory.generator --high-risk-only --count 1 --output evals/generated_exploratory/scenarios/batch.json
 ```
 
 ## Local Config

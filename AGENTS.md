@@ -40,3 +40,12 @@ Exploratory QA — `evals/generated_exploratory/` contains taxonomy-driven invar
 
 Do not add generated (P2) scenarios to `pytest` or any CI pipeline. The fast test suite (`tests/test_invariant_runner.py`, `tests/test_taxonomy.py`) validates invariant logic against synthetic payloads only. Full pipeline runs go through the CLI runner. Confirmed bugs from any tier get promoted into the P0/P1 set with authored expectations. See `docs/context/decisions.md` for the full rationale.
 
+Eval performance — the invariant runner supports two performance flags:
+
+- `--workers N` — parallel scenario execution (default 1 = sequential). Each scenario is fully isolated (own DB, own TestClient). Use 4 workers for ~4x speedup on large batches. The bottleneck is LLM network latency, so threads are the right primitive.
+- `--cache-dir PATH` — file-backed LLM response cache. Caches drain-time LLM calls (write_extraction, thread_rebuild, consolidation) so repeat runs skip network calls. First run populates the cache; subsequent runs are ~5-8x faster. Cache is keyed on (model, system_prompt, user_prompt, schema_description). Query-time resolver calls are intentionally NOT cached.
+
+Example: `python -m evals.generated_exploratory.invariant_runner --workers 4 --cache-dir .local/llm-cache`
+
+The LLM cache (`providers/llm/cached.py`) wraps any `LLMProvider` and can be reused by other eval runners.
+
