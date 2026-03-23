@@ -44,6 +44,57 @@ logger = logging.getLogger(__name__)
 # Default model for scenario generation (quality-critical structured output).
 _DEFAULT_MODEL = "claude-sonnet-4-20250514"
 
+# Higher token limit for generation — scenarios with multiple steps and events
+# easily exceed the default 1024. The provider's configured max_tokens is
+# overridden at call time via the provider's generate_json interface.
+_GENERATION_MAX_TOKENS = 4096
+
+# Number of retries on LLM parse failure before giving up on a cell.
+_MAX_RETRIES = 1
+
+
+def _build_provider(
+    config: AppConfig,
+    *,
+    provider_name: str,
+    model: str,
+    max_tokens: int = _GENERATION_MAX_TOKENS,
+) -> Any:
+    """Build an LLM provider with an overridden max_tokens for generation.
+
+    Generation needs more tokens than the default extraction config (1024)
+    because multi-step scenarios with events are larger.
+    """
+    provider_config = config.provider_config(provider_name)
+    provider_kind = provider_config.kind.lower()
+
+    if provider_kind in {"anthropic_claude", "claude", "anthropic"}:
+        from providers.llm.anthropic_claude import AnthropicClaudeLLMProvider
+
+        return AnthropicClaudeLLMProvider(
+            provider_name=provider_name,
+            model=model,
+            base_url=provider_config.base_url,
+            api_key=provider_config.api_key,
+            timeout_seconds=provider_config.timeout_seconds,
+            retry_policy=provider_config.retry_policy,
+            auth_style=provider_config.auth_style,
+            max_tokens=max_tokens,
+        )
+    if provider_kind == "openai_compatible":
+        from providers.llm.openai_compatible import OpenAICompatibleLLMProvider
+
+        return OpenAICompatibleLLMProvider(
+            provider_name=provider_name,
+            model=model,
+            base_url=provider_config.base_url,
+            api_key=provider_config.api_key,
+            timeout_seconds=provider_config.timeout_seconds,
+            retry_policy=provider_config.retry_policy,
+        )
+    # Fallback to standard builder (no max_tokens override).
+    return build_llm_provider(config, provider_name=provider_name, model=model)
+
 # ---------------------------------------------------------------------------
 # Prompt templates
 # ---------------------------------------------------------------------------
@@ -242,8 +293,12 @@ def generate_scenarios_for_cell(
     cell: dict[str, str],
     count: int = 1,
     batch_id: str | None = None,
+    max_retries: int = _MAX_RETRIES,
 ) -> list[dict[str, Any]]:
-    """Generate scenarios for a single taxonomy cell using the LLM."""
+    """Generate scenarios for a single taxonomy cell using the LLM.
+
+    Retries up to ``max_retries`` times on LLM parse failures before giving up.
+    """
     batch_id = batch_id or uuid.uuid4().hex[:12]
 
     user_prompt = _USER_PROMPT_TEMPLATE.format(
@@ -253,11 +308,22 @@ def generate_scenarios_for_cell(
         format_example=_FORMAT_EXAMPLE,
     )
 
-    response = provider.generate_json(
-        system_prompt=_SYSTEM_PROMPT,
-        user_prompt=user_prompt,
-        schema_description='{"scenarios": [{"scenario_id": "string", "description": "string", "steps": [...]}]}',
-    )
+    last_error: Exception | None = None
+    for attempt in range(1 + max_retries):
+        try:
+            response = provider.generate_json(
+                system_prompt=_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                schema_description='{"scenarios": [{"scenario_id": "string", "description": "string", "steps": [...]}]}',
+            )
+            break
+        except Exception as exc:
+            last_error = exc
+            if attempt < max_retries:
+                logger.warning("  Retry %d/%d after: %s", attempt + 1, max_retries, exc)
+            continue
+    else:
+        raise last_error  # type: ignore[misc]
 
     # parse_json_object returns a dict. We asked for {"scenarios": [...]}.
     parsed = response.parsed_json
@@ -288,28 +354,54 @@ def generate_batch(
     provider: Any,
     cells: list[dict[str, str]],
     count_per_cell: int = 1,
+    output_path: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """Generate scenarios for multiple taxonomy cells."""
+    """Generate scenarios for multiple taxonomy cells.
+
+    When ``output_path`` is provided, writes each scenario incrementally
+    so partial results survive interruption.
+    """
     batch_id = uuid.uuid4().hex[:12]
     all_scenarios: list[dict[str, Any]] = []
 
-    for i, cell in enumerate(cells):
-        logger.info(
-            "Generating %d scenario(s) for cell %d/%d: %s",
-            count_per_cell, i + 1, len(cells), cell,
-        )
-        try:
-            scenarios = generate_scenarios_for_cell(
-                provider=provider,
-                cell=cell,
-                count=count_per_cell,
-                batch_id=batch_id,
+    # Incremental output: write a JSON array, appending after each cell.
+    out_file = None
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        out_file = output_path.open("w", encoding="utf-8")
+        out_file.write("[\n")
+
+    try:
+        for i, cell in enumerate(cells):
+            logger.info(
+                "Generating %d scenario(s) for cell %d/%d: %s",
+                count_per_cell, i + 1, len(cells), cell,
             )
-            all_scenarios.extend(scenarios)
-            logger.info("  -> %d scenario(s) generated", len(scenarios))
-        except Exception as exc:
-            logger.error("  -> Failed for cell %s: %s", cell, exc)
-            continue
+            try:
+                scenarios = generate_scenarios_for_cell(
+                    provider=provider,
+                    cell=cell,
+                    count=count_per_cell,
+                    batch_id=batch_id,
+                )
+                all_scenarios.extend(scenarios)
+                logger.info("  -> %d scenario(s) generated", len(scenarios))
+
+                # Write incrementally.
+                if out_file:
+                    for s in scenarios:
+                        if len(all_scenarios) > 1:
+                            out_file.write(",\n")
+                        out_file.write(json.dumps(s, indent=2, default=str))
+                    out_file.flush()
+
+            except Exception as exc:
+                logger.error("  -> Failed for cell %s: %s", cell, exc)
+                continue
+    finally:
+        if out_file:
+            out_file.write("\n]\n")
+            out_file.close()
 
     return all_scenarios
 
@@ -364,6 +456,10 @@ def main(argv: list[str] | None = None) -> None:
         "--model", type=str, default=None,
         help=f"Model name (default: {_DEFAULT_MODEL})",
     )
+    parser.add_argument(
+        "--max-tokens", type=int, default=_GENERATION_MAX_TOKENS,
+        help=f"Max response tokens for LLM (default: {_GENERATION_MAX_TOKENS})",
+    )
     parser.add_argument("--verbose", action="store_true")
 
     args = parser.parse_args(argv)
@@ -402,20 +498,18 @@ def main(argv: list[str] | None = None) -> None:
             provider_name = provider_names[0]
 
     model = args.model or _DEFAULT_MODEL
-    provider = build_llm_provider(config, provider_name=provider_name, model=model)
-    logger.info("Using provider=%s model=%s", provider_name, model)
+    provider = _build_provider(config, provider_name=provider_name, model=model, max_tokens=args.max_tokens)
+    logger.info("Using provider=%s model=%s max_tokens=%d", provider_name, model, args.max_tokens)
 
-    # Generate.
+    # Generate with incremental output.
+    output_path = Path(args.output)
     scenarios = generate_batch(
         provider=provider,
         cells=cells,
         count_per_cell=args.count,
+        output_path=output_path,
     )
 
-    # Write output.
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(scenarios, indent=2, default=str), encoding="utf-8")
     logger.info("Wrote %d scenarios to %s", len(scenarios), output_path)
 
 
