@@ -131,7 +131,7 @@ def check_no_cross_container_leak(
 # Interest represents user-expressed preferences ("Chroma sounds interesting").
 # If an assistant elaborates on a topic, that should not create an interest
 # memory attributed to the user. See agent_conversation_memory_memory.py.
-_USER_ONLY_MEMORY_TYPES = frozenset({"interest"})
+_USER_ONLY_MEMORY_TYPES = frozenset({"interest", "constraint_memory"})
 
 
 def check_no_wrong_role_memory(
@@ -502,6 +502,161 @@ def check_idf_discrimination(
 
 
 # ---------------------------------------------------------------------------
+# INV-11: no_personal_memory_in_shared_container
+# ---------------------------------------------------------------------------
+
+# Memory types that are inherently personal and should only exist in private
+# containers. In shared containers (limited/public) they fall through to
+# discussion_summary. See add-actor-scoped-memory-and-container-visibility-rules.
+_PERSONAL_MEMORY_TYPES = frozenset({"interest", "constraint_memory"})
+
+
+def check_no_personal_memory_in_shared_container(
+    scenario: dict[str, Any],
+    query_payload: dict[str, Any],
+    debug_payload: dict[str, Any],
+) -> InvariantResult:
+    """Personal memory types must not exist in shared (limited/public) containers.
+
+    Interest and constraint_memory are inherently personal. In shared containers
+    they should fall through to discussion_summary at write time. If they appear
+    in results from a shared-container query, it means the write-time guard failed.
+    """
+    query_vis = _query_visibility(scenario, debug_payload)
+    if query_vis == "private" or query_vis is None:
+        return InvariantResult(
+            invariant_id="INV-11",
+            passed=True,
+            details="Private or unknown visibility — invariant not applicable",
+        )
+
+    violations = []
+    for result in debug_payload.get("results", []):
+        if result.get("result_kind") != "memory_hit":
+            continue
+        memory_type = result.get("type")
+        if memory_type in _PERSONAL_MEMORY_TYPES:
+            violations.append({
+                "result_id": result.get("result_id"),
+                "memory_type": memory_type,
+                "container_visibility": result.get("container_visibility"),
+            })
+
+    if violations:
+        return InvariantResult(
+            invariant_id="INV-11",
+            passed=False,
+            details=(
+                f"Personal memory in shared container: {len(violations)} "
+                f"{_PERSONAL_MEMORY_TYPES} hit(s) in {query_vis} context"
+            ),
+            evidence={"query_visibility": query_vis, "violations": violations},
+        )
+    return InvariantResult(invariant_id="INV-11", passed=True)
+
+
+# ---------------------------------------------------------------------------
+# INV-12: no_cross_actor_leak
+# ---------------------------------------------------------------------------
+
+def check_no_cross_actor_leak(
+    scenario: dict[str, Any],
+    query_payload: dict[str, Any],
+    debug_payload: dict[str, Any],
+) -> InvariantResult:
+    """When a query specifies actor_ref, no results with a different actor_ref should appear.
+
+    Actor scoping rules: memories with actor_ref=null are shared and visible to all.
+    Memories with actor_ref=X are personal to X and should only appear when the
+    querying actor is X. This invariant checks that no result has a non-null actor_ref
+    that differs from the query's actor_ref.
+
+    Only applicable when the query supplies actor_ref.
+    """
+    query_actor = _query_actor_ref(scenario, debug_payload)
+    if not query_actor:
+        return InvariantResult(
+            invariant_id="INV-12",
+            passed=True,
+            details="No actor_ref on query — invariant not applicable",
+        )
+
+    leaked = []
+    for result in debug_payload.get("results", []):
+        result_actor = result.get("actor_ref")
+        # Shared memories (actor_ref=null) are visible to all — not a leak.
+        if result_actor is None:
+            continue
+        if result_actor != query_actor:
+            leaked.append({
+                "result_id": result.get("result_id"),
+                "result_actor_ref": result_actor,
+                "memory_type": result.get("type"),
+            })
+
+    if leaked:
+        return InvariantResult(
+            invariant_id="INV-12",
+            passed=False,
+            details=(
+                f"Cross-actor leak: {len(leaked)} result(s) with actor_ref != "
+                f"query actor {query_actor!r}"
+            ),
+            evidence={"query_actor": query_actor, "leaked_results": leaked},
+        )
+    return InvariantResult(invariant_id="INV-12", passed=True)
+
+
+# ---------------------------------------------------------------------------
+# INV-13: thread_level_memory_always_shared
+# ---------------------------------------------------------------------------
+
+# Thread-level memory types must always have actor_ref=null regardless of
+# container type. Thread summaries are about the conversation, not an individual.
+# See docs/context/architecture.md line 234.
+_THREAD_LEVEL_MEMORY_TYPES = frozenset({"thread_summary", "task_checkpoint"})
+
+
+def check_thread_level_memory_always_shared(
+    scenario: dict[str, Any],
+    query_payload: dict[str, Any],
+    debug_payload: dict[str, Any],
+) -> InvariantResult:
+    """Thread-level memories must have actor_ref=null (shared).
+
+    Architecture rule: thread_summary and task_checkpoint always have
+    actor_ref=null regardless of container type. A thread-level memory
+    with a non-null actor_ref indicates a write-path bug.
+    """
+    violations = []
+    for result in debug_payload.get("results", []):
+        if result.get("result_kind") != "memory_hit":
+            continue
+        memory_type = result.get("type")
+        if memory_type not in _THREAD_LEVEL_MEMORY_TYPES:
+            continue
+        actor_ref = result.get("actor_ref")
+        if actor_ref is not None:
+            violations.append({
+                "result_id": result.get("result_id"),
+                "memory_type": memory_type,
+                "actor_ref": actor_ref,
+            })
+
+    if violations:
+        return InvariantResult(
+            invariant_id="INV-13",
+            passed=False,
+            details=(
+                f"Thread-level memory with actor_ref set: {len(violations)} "
+                f"hit(s) should have actor_ref=null"
+            ),
+            evidence={"violations": violations},
+        )
+    return InvariantResult(invariant_id="INV-13", passed=True)
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -516,6 +671,9 @@ ALL_INVARIANTS = {
     "INV-08": check_noise_no_injection,
     "INV-09": check_no_superseded_in_results,
     "INV-10": check_idf_discrimination,
+    "INV-11": check_no_personal_memory_in_shared_container,
+    "INV-12": check_no_cross_actor_leak,
+    "INV-13": check_thread_level_memory_always_shared,
 }
 
 
@@ -585,3 +743,25 @@ def _nested_get(d: dict[str, Any], *keys: str) -> Any:
             return None
         d = d.get(key)  # type: ignore[assignment]
     return d
+
+
+def _query_visibility(scenario: dict[str, Any], debug_payload: dict[str, Any]) -> str | None:
+    """Extract container_visibility from scenario query."""
+    cq = scenario.get("current_query") or {}
+    if cq.get("container_visibility"):
+        return cq["container_visibility"]
+    for step in reversed(scenario.get("steps") or []):
+        if step.get("action") == "query":
+            return (step.get("query") or {}).get("container_visibility")
+    return None
+
+
+def _query_actor_ref(scenario: dict[str, Any], debug_payload: dict[str, Any]) -> str | None:
+    """Extract actor_ref from scenario query."""
+    cq = scenario.get("current_query") or {}
+    if cq.get("actor_ref"):
+        return cq["actor_ref"]
+    for step in reversed(scenario.get("steps") or []):
+        if step.get("action") == "query":
+            return (step.get("query") or {}).get("actor_ref")
+    return None

@@ -41,16 +41,18 @@ HIGH_RISK_PAIRS: list[tuple[str, str]] = [
     ("thread_relation", "query_intent"),
     ("container_relation", "visibility"),
     ("actor_count", "visibility"),
+    ("actor_count", "container_relation"),
     ("topic_pattern", "query_intent"),
     ("source_role", "memory_type_target"),
     ("query_intent", "injection_outcome"),
     ("thread_relation", "memory_type_target"),
     ("scoring_quality", "retrieval_path"),
     ("topic_pattern", "injection_outcome"),
+    ("visibility", "memory_type_target"),
 ]
 
 # Invariant-to-tier mapping: which invariants make a scenario P0 vs P1.
-P0_INVARIANTS = frozenset({"INV-01", "INV-02", "INV-04"})
+P0_INVARIANTS = frozenset({"INV-01", "INV-02", "INV-04", "INV-11", "INV-12", "INV-13"})
 P1_INVARIANTS = frozenset({"INV-03", "INV-05", "INV-06", "INV-07", "INV-08", "INV-09", "INV-10"})
 
 

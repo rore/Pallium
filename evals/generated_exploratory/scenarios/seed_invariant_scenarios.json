@@ -424,5 +424,207 @@
         "invariant_assertions": ["INV-08", "INV-07"]
       }
     ]
+  },
+  {
+    "scenario_id": "p0-personal-memory-shared-container-001",
+    "description": "User expresses interest in a public channel — must create discussion_summary, not interest. Interest is personal and suppressed in shared containers.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"visibility": "public", "memory_type_target": "interest"},
+      "invariant_assertions": ["INV-11", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "user_interest_in_public",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "shared-interest-001-msg-1",
+            "content_type": "text/plain",
+            "content": "ok, the new self-checkout kiosks sound interesting. I should look into the vendor catalog for those.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-help",
+            "thread_ref": "chat:library-help:thread-shared-int-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/shared-interest-001-msg-1",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "container_visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query_for_interest",
+        "action": "query",
+        "query": {
+          "text": "What equipment or kiosks have we been looking at?",
+          "limit": 6,
+          "container_ref": "chat:library-help",
+          "container_visibility": "public"
+        },
+        "invariant_assertions": ["INV-11", "INV-07"]
+      }
+    ]
+  },
+  {
+    "scenario_id": "p0-personal-memory-shared-container-002",
+    "description": "User states a constraint in a limited (team) channel — must not create constraint_memory. Falls through to discussion_summary.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"visibility": "limited", "memory_type_target": "constraint_memory"},
+      "invariant_assertions": ["INV-11", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "user_constraint_in_team",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "shared-constraint-002-msg-1",
+            "content_type": "text/plain",
+            "content": "Important: do not use the admin portal for overdue notice batches. Use only the CLI-based batch runner for any patron communication runs.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-team",
+            "thread_ref": "chat:catalog-team:thread-constraint-002",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://seed/shared-constraint-002-msg-1",
+            "occurred_at": "2026-03-20T10:30:00Z",
+            "container_visibility": "limited"
+          }
+        ]
+      },
+      {
+        "step_id": "query_for_constraints",
+        "action": "query",
+        "query": {
+          "text": "Are there any constraints on how we send overdue notices?",
+          "limit": 6,
+          "container_ref": "chat:catalog-team",
+          "container_visibility": "limited"
+        },
+        "invariant_assertions": ["INV-11", "INV-07"]
+      }
+    ]
+  },
+  {
+    "scenario_id": "p0-cross-actor-leak-001",
+    "description": "User A's personal interest memory in a private container must not appear when user B queries the same container.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"actor_count": "multi_user", "visibility": "private"},
+      "invariant_assertions": ["INV-12", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "user_a_interest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "actor-leak-001-msg-1",
+            "content_type": "text/plain",
+            "content": "ok, the RFID-based shelf inventory scanner sounds interesting. I should check the vendor page for that.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-private-a",
+            "thread_ref": "chat:library-private-a:thread-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/actor-leak-001-msg-1",
+            "occurred_at": "2026-03-20T11:00:00Z",
+            "container_visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "user_b_query",
+        "action": "query",
+        "query": {
+          "text": "What inventory scanners have I been looking at?",
+          "limit": 6,
+          "container_ref": "chat:library-private-a",
+          "container_visibility": "private",
+          "actor_ref": "user:catalog-admin"
+        },
+        "invariant_assertions": ["INV-12", "INV-07"]
+      }
+    ]
+  },
+  {
+    "scenario_id": "p0-cross-actor-leak-002",
+    "description": "In a private container with two actors, querying as actor A must not return actor B's personal memories. Shared memories (actor_ref=null) are fine.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"actor_count": "multi_user", "container_relation": "same_container"},
+      "invariant_assertions": ["INV-12", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "actor_a_decision",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "actor-leak-002-msg-a",
+            "content_type": "text/plain",
+            "content": "Decision: I will use the express checkout terminal for interlibrary loan returns instead of the main desk.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-private-shared",
+            "thread_ref": "chat:library-private-shared:thread-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/actor-leak-002-msg-a",
+            "occurred_at": "2026-03-20T11:30:00Z",
+            "container_visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "actor_b_decision",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "actor-leak-002-msg-b",
+            "content_type": "text/plain",
+            "content": "Decision: I will handle overdue notice escalation through the automated batch runner rather than manual patron contact.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-private-shared",
+            "thread_ref": "chat:library-private-shared:thread-002",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://seed/actor-leak-002-msg-b",
+            "occurred_at": "2026-03-20T11:35:00Z",
+            "container_visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "actor_a_query",
+        "action": "query",
+        "query": {
+          "text": "What decisions have I made about checkout or returns?",
+          "limit": 6,
+          "container_ref": "chat:library-private-shared",
+          "container_visibility": "private",
+          "actor_ref": "user:branch-librarian"
+        },
+        "invariant_assertions": ["INV-12", "INV-07"],
+        "soft_expectations": {
+          "must_include": ["express checkout", "interlibrary loan"],
+          "must_not_include": ["overdue notice", "batch runner"]
+        }
+      }
+    ]
   }
 ]

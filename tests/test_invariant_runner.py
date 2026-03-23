@@ -9,15 +9,18 @@ from __future__ import annotations
 from evals.generated_exploratory.invariants import (
     InvariantResult,
     check_idf_discrimination,
+    check_no_cross_actor_leak,
     check_no_cross_container_leak,
     check_no_greeting_in_blocks,
     check_no_off_topic_injection,
+    check_no_personal_memory_in_shared_container,
     check_no_superseded_in_results,
     check_no_visibility_violation,
     check_no_wrong_role_memory,
     check_noise_no_injection,
     check_query_contract_consistency,
     check_recall_not_routed_as_noise,
+    check_thread_level_memory_always_shared,
     run_invariants,
 )
 
@@ -263,10 +266,112 @@ class TestINV10IdfDiscrimination:
         assert not result.passed
 
 
+class TestINV11NoPersonalMemoryInSharedContainer:
+    def test_not_applicable_for_private(self):
+        scenario = {"current_query": {"text": "test", "container_ref": "c", "container_visibility": "private"}}
+        result = check_no_personal_memory_in_shared_container(scenario, _EMPTY_QUERY, _EMPTY_DEBUG)
+        assert result.passed
+        assert "not applicable" in result.details
+
+    def test_pass_no_personal_types_in_public(self):
+        scenario = {"current_query": {"text": "test", "container_ref": "c", "container_visibility": "public"}}
+        debug = {**_EMPTY_DEBUG, "results": [
+            {"result_kind": "memory_hit", "type": "discussion_summary", "container_visibility": "public"},
+            {"result_kind": "memory_hit", "type": "decision", "container_visibility": "public"},
+        ]}
+        result = check_no_personal_memory_in_shared_container(scenario, _EMPTY_QUERY, debug)
+        assert result.passed
+
+    def test_fail_interest_in_public(self):
+        scenario = {"current_query": {"text": "test", "container_ref": "c", "container_visibility": "public"}}
+        debug = {**_EMPTY_DEBUG, "results": [
+            {"result_kind": "memory_hit", "type": "interest", "result_id": "r1", "container_visibility": "public"},
+        ]}
+        result = check_no_personal_memory_in_shared_container(scenario, _EMPTY_QUERY, debug)
+        assert not result.passed
+        assert "interest" in result.details.lower() or "personal" in result.details.lower()
+
+    def test_fail_constraint_in_limited(self):
+        scenario = {"current_query": {"text": "test", "container_ref": "c", "container_visibility": "limited"}}
+        debug = {**_EMPTY_DEBUG, "results": [
+            {"result_kind": "memory_hit", "type": "constraint_memory", "result_id": "r1", "container_visibility": "limited"},
+        ]}
+        result = check_no_personal_memory_in_shared_container(scenario, _EMPTY_QUERY, debug)
+        assert not result.passed
+
+
+class TestINV12NoCrossActorLeak:
+    def test_not_applicable_without_actor(self):
+        result = check_no_cross_actor_leak(_EMPTY_SCENARIO, _EMPTY_QUERY, _EMPTY_DEBUG)
+        assert result.passed
+        assert "not applicable" in result.details
+
+    def test_pass_shared_memories_visible(self):
+        scenario = {"current_query": {"text": "test", "container_ref": "c", "actor_ref": "user:alice"}}
+        debug = {**_EMPTY_DEBUG, "results": [
+            {"result_id": "r1", "actor_ref": None, "type": "decision"},
+            {"result_id": "r2", "actor_ref": "user:alice", "type": "interest"},
+        ]}
+        result = check_no_cross_actor_leak(scenario, _EMPTY_QUERY, debug)
+        assert result.passed
+
+    def test_fail_other_actor_memory(self):
+        scenario = {"current_query": {"text": "test", "container_ref": "c", "actor_ref": "user:alice"}}
+        debug = {**_EMPTY_DEBUG, "results": [
+            {"result_id": "r1", "actor_ref": "user:bob", "type": "interest"},
+        ]}
+        result = check_no_cross_actor_leak(scenario, _EMPTY_QUERY, debug)
+        assert not result.passed
+        assert "bob" in result.details.lower() or "cross-actor" in result.details.lower()
+
+    def test_pass_same_actor(self):
+        scenario = {"current_query": {"text": "test", "container_ref": "c", "actor_ref": "user:alice"}}
+        debug = {**_EMPTY_DEBUG, "results": [
+            {"result_id": "r1", "actor_ref": "user:alice", "type": "interest"},
+        ]}
+        result = check_no_cross_actor_leak(scenario, _EMPTY_QUERY, debug)
+        assert result.passed
+
+
+class TestINV13ThreadLevelMemoryAlwaysShared:
+    def test_pass_no_thread_memories(self):
+        result = check_thread_level_memory_always_shared(_EMPTY_SCENARIO, _EMPTY_QUERY, _EMPTY_DEBUG)
+        assert result.passed
+
+    def test_pass_thread_memory_with_null_actor(self):
+        debug = {**_EMPTY_DEBUG, "results": [
+            {"result_kind": "memory_hit", "type": "thread_summary", "result_id": "r1", "actor_ref": None},
+            {"result_kind": "memory_hit", "type": "task_checkpoint", "result_id": "r2", "actor_ref": None},
+        ]}
+        result = check_thread_level_memory_always_shared(_EMPTY_SCENARIO, _EMPTY_QUERY, debug)
+        assert result.passed
+
+    def test_fail_thread_summary_with_actor_ref(self):
+        debug = {**_EMPTY_DEBUG, "results": [
+            {"result_kind": "memory_hit", "type": "thread_summary", "result_id": "r1", "actor_ref": "user:alice"},
+        ]}
+        result = check_thread_level_memory_always_shared(_EMPTY_SCENARIO, _EMPTY_QUERY, debug)
+        assert not result.passed
+
+    def test_fail_task_checkpoint_with_actor_ref(self):
+        debug = {**_EMPTY_DEBUG, "results": [
+            {"result_kind": "memory_hit", "type": "task_checkpoint", "result_id": "r1", "actor_ref": "user:bob"},
+        ]}
+        result = check_thread_level_memory_always_shared(_EMPTY_SCENARIO, _EMPTY_QUERY, debug)
+        assert not result.passed
+
+    def test_ignores_non_thread_types(self):
+        debug = {**_EMPTY_DEBUG, "results": [
+            {"result_kind": "memory_hit", "type": "decision", "result_id": "r1", "actor_ref": "user:alice"},
+        ]}
+        result = check_thread_level_memory_always_shared(_EMPTY_SCENARIO, _EMPTY_QUERY, debug)
+        assert result.passed
+
+
 class TestRunInvariants:
     def test_runs_all_by_default(self):
         results = run_invariants(_EMPTY_SCENARIO, _EMPTY_QUERY, _EMPTY_DEBUG)
-        assert len(results) == 10
+        assert len(results) == 13
         assert all(isinstance(r, InvariantResult) for r in results)
 
     def test_runs_selected_subset(self):
