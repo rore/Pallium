@@ -52,6 +52,12 @@ def matches_filters(
         memory_object = get_memory_object(target_id)
         if memory_object.lifecycle != "active":
             return False
+        # Actor-scoped filtering: if query specifies an actor AND the memory
+        # has an actor, they must match. Shared memories (actor_ref=null)
+        # always pass. Queries without actor_ref skip this filter.
+        if filters is not None and filters.actor_ref is not None and memory_object.actor_ref is not None:
+            if memory_object.actor_ref != filters.actor_ref:
+                return False
     if filters is None:
         return True
     if target_kind == "source_item":

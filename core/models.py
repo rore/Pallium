@@ -117,6 +117,7 @@ class MemoryObject:
     lifecycle: str = "active"
     container_visibility: str = "private"
     container_ref: str | None = None
+    actor_ref: str | None = None
     freshness_at: datetime | None = None
     envelope: MemoryEnvelope | None = None
     id: str = field(default_factory=new_id)
@@ -168,6 +169,7 @@ class QueryFilters:
     artifact_kind: str | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
+    actor_ref: str | None = None
 
 
 TurnKind = Literal["new_thread", "same_thread", "same_thread_continuation", "resumed_session", "new_session"]

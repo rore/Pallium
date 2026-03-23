@@ -189,6 +189,7 @@ def build_query_filters(
     artifact_kind: str | None = None,
     container_ref: str | None = None,
     thread_ref: str | None = None,
+    actor_ref: str | None = None,
 ) -> QueryFilters | None:
     filters = QueryFilters(
         source_type=source_type,
@@ -196,6 +197,7 @@ def build_query_filters(
         artifact_kind=artifact_kind,
         container_ref=container_ref,
         thread_ref=thread_ref,
+        actor_ref=actor_ref,
     )
     if not any(value is not None for value in filters.__dict__.values()):
         return None
@@ -223,6 +225,7 @@ def resolve_query_filters(
     artifact_kind: str | None = None,
     container_ref: str | None = None,
     thread_ref: str | None = None,
+    actor_ref: str | None = None,
     runtime_context: QueryRuntimeContext | None = None,
 ) -> QueryFilterResolution:
     requested_filters = build_query_filters(
@@ -231,6 +234,7 @@ def resolve_query_filters(
         artifact_kind=artifact_kind,
         container_ref=container_ref,
         thread_ref=thread_ref,
+        actor_ref=actor_ref,
     )
     if requested_filters is None or runtime_context is None:
         return QueryFilterResolution(
@@ -255,6 +259,7 @@ def resolve_query_filters(
             artifact_kind=effective_filters.artifact_kind,
             container_ref=effective_filters.container_ref,
             thread_ref=effective_filters.thread_ref,
+            actor_ref=effective_filters.actor_ref,
         )
         return QueryFilterResolution(
             requested_filters=requested_filters,
@@ -280,6 +285,7 @@ def resolve_query_filters(
         artifact_kind=effective_filters.artifact_kind,
         container_ref=effective_filters.container_ref,
         thread_ref=effective_filters.thread_ref,
+        actor_ref=effective_filters.actor_ref,
     )
     return QueryFilterResolution(
         requested_filters=requested_filters,

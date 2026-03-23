@@ -245,6 +245,21 @@ English phrase matching. ~40 English constants eliminated. Scoring formula
 simplified from 7 to 5 components. Three routing lanes remain:
 `work_resumption`, `evidence_trace`, `residual_recall`.
 
+### 2026-03-23 - Container-driven actor scoping
+
+Container type drives memory scoping, not memory type detection or content
+analysis. Personal memory types (`interest`, `constraint_memory`) are suppressed
+in shared containers (`limited`, `public`) and fall through to
+`discussion_summary`. `actor_ref` is propagated from source item only in private
+containers; shared containers always produce `actor_ref = null`.
+
+Why:
+
+- detecting "I" vs "we" in content is unreliable — container type is a stable signal
+- personal statements in shared channels should become shared evidence, not personal memories for other users
+- keeps the model simple: one nullable field plus container-driven rules, no taxonomy matrices or scope enums
+- `constraint_memory` gets the same role guard as `interest` — only user messages can create it
+
 ## Open
 
 ### Ingestion policy

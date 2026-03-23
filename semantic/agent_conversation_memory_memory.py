@@ -6,7 +6,7 @@ from typing import Iterable
 from core.contracts import ProcessResult, SupersessionHint
 from core.indexing import build_index_entry
 from core.models import MemoryEnvelope, MemoryEnvelopeConfidence, MemoryEnvelopeDerivation, MemoryEnvelopeKind, MemoryEnvelopeScope, MemoryObject, MemorySubjectAnchor, Relation, SourceItem
-from semantic.common import SemanticExtraction, normalize_for_index
+from semantic.common import SemanticExtraction, normalize_for_index, _resolve_actor_ref
 from semantic.agent_conversation_memory_constraints import (
     CONSTRAINT_MEMORY_SCHEMA_ID,
     CONSTRAINT_MEMORY_SCHEMA_VERSION,
@@ -106,6 +106,10 @@ def _append_typed_constraint_memory_objects(
 ) -> ProcessResult:
     if not extraction.constraint_candidates:
         return result
+    if source_item.role and source_item.role.lower() != "user":
+        return result
+    if source_item.container_visibility in ("limited", "public"):
+        return result
     semantic_provenance = _semantic_provenance_from_process_result(result)
     producer_schema_id = str(semantic_provenance.get("prompt_schema_id") or CONSTRAINT_MEMORY_SCHEMA_ID)
     producer_schema_version = str(semantic_provenance.get("prompt_schema_version") or CONSTRAINT_MEMORY_SCHEMA_VERSION)
@@ -130,6 +134,7 @@ def _append_typed_constraint_memory_objects(
             payload=payload,
             container_visibility=source_item.container_visibility,
             container_ref=source_item.container_ref,
+            actor_ref=_resolve_actor_ref(source_item),
             freshness_at=source_item.occurred_at,
             envelope=_build_memory_envelope(
                 kind="constraint",

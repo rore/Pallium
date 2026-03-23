@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-03-22
+2026-03-23
 
 ## Repo Snapshot
 
@@ -33,7 +33,15 @@
   - `interest`
   - `pattern_memory`
   - `continuity_memory`
+  - `constraint_memory`
   - fallback `discussion_summary`
+- actor-scoped memory and container-driven visibility rules are shipped:
+  - `actor_ref` field on MemoryObject tracks who a memory is personal to
+  - personal memory types (interest, constraint_memory) are suppressed in shared containers (limited/public), falling through to discussion_summary
+  - constraint_memory has a role guard — assistant messages cannot create it
+  - query-time actor filtering via optional `actor_ref` on QueryFilters and query API
+  - thread-level memories (thread_summary, task_checkpoint) always have actor_ref=null (shared)
+  - backward compatible — queries without actor_ref work as before
 - reusable thread aggregation and bounded consolidation capabilities are shipped for the current package
 - item-level LLM extraction persists internal semantic signals under `SourceItem.metadata["pallium_semantic_signals"]`
 - `agent_conversation_memory` now applies a cue-free control plane above routing:
@@ -83,7 +91,7 @@
   - live exploratory drift and replay-promotion tooling
 - the developer-work confidence harness should be read by hard-gate fields first, not by aggregate scenario-success counts alone
 - replay is now a real tooling surface, but replay coverage is still materially smaller than the authored confidence packs
-- test suite: 631 passed, 5 skipped
+- test suite: 541 passed, 5 skipped
 - semantic extraction fixture set: 58 items (12 decisions, 14 investigations, 20 boundary-null, 13 signal cases)
 
 ## Configuration Note

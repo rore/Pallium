@@ -103,6 +103,7 @@ class QueryRequest(BaseModel):
     artifact_kind: ArtifactKind | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
+    actor_ref: str | None = None
     container_visibility: VisibilityKind | VisibilityContextModel | None = None
     visibility_context: VisibilityContextModel | None = None
     runtime_context: RuntimeContextModel | None = None
@@ -175,6 +176,7 @@ class QueryTraceFiltersResponse(BaseModel):
     artifact_kind: ArtifactKind | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
+    actor_ref: str | None = None
 
 
 class RetrievalTraceHitResponse(BaseModel):
@@ -270,6 +272,7 @@ class ItemAndQueryRequest(BaseModel):
     visibility_context: VisibilityContextModel | None = None
     query_text: str | None = None
     query_limit: int = Field(default=5, ge=1, le=50)
+    query_actor_ref: str | None = None
     runtime_context: RuntimeContextModel | None = None
 
     def container_visibility_kind(self) -> str | None:

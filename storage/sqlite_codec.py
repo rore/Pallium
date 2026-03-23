@@ -92,6 +92,7 @@ class SQLiteCodecMixin:
             envelope=SQLiteCodecMixin._load_memory_envelope(record.envelope_json),
             container_visibility=record.container_visibility or "private",
             container_ref=record.container_ref,
+            actor_ref=record.actor_ref,
             freshness_at=SQLiteCodecMixin._normalize_datetime(record.freshness_at),
             created_at=SQLiteCodecMixin._normalize_datetime(record.created_at) or utc_now(),
         )

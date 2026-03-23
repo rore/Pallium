@@ -166,6 +166,11 @@ Additional filters:
 - `source_type` — filter by upstream system
 - `role` — filter by `"user"` or `"assistant"`
 - `artifact_kind` — filter by evidence shape
+- `actor_ref` — filter by actor identity. When provided, only returns memories
+  whose `actor_ref` matches or is null (shared). When omitted, no actor
+  filtering is applied. See
+  [privacy-and-visibility.md](privacy-and-visibility.md#actor-scoping) for
+  details.
 - `runtime_context` — optional runtime hints (see
   [Common Shapes](#runtime_context))
 
@@ -264,7 +269,7 @@ Each result in `results[]`:
 - `score` — retrieval score (integer, higher is better)
 - `type` — memory type for `memory_hit` results: `"decision"`,
   `"investigation_outcome"`, `"thread_summary"`, `"task_checkpoint"`,
-  `"interest"`, `"pattern_memory"`, `"continuity_memory"`, or `"discussion_summary"`
+  `"interest"`, `"constraint_memory"`, `"pattern_memory"`, `"continuity_memory"`, or `"discussion_summary"`
 - `memory_object_id` — ID of the memory object (for `memory_hit`)
 - `source_item_id` — ID of the source item (for `source_hit`)
 - `excerpt` — text excerpt (for `source_hit`)

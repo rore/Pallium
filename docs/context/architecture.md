@@ -101,6 +101,7 @@ Implemented semantic behavior now includes:
   - `task_checkpoint`
 - item-level typed memory for:
   - `interest`
+  - `constraint_memory`
 - fallback `discussion_summary` for non-typed extraction results
 - prompt provenance attached to LLM-derived annotations and memory objects
 - internal-only item semantic signals now extracted in the same item-level LLM call and persisted under `SourceItem.metadata["pallium_semantic_signals"]` for later higher-level synthesis
@@ -225,6 +226,14 @@ The public `/query` contract now reflects that package-owned decision point. Cal
 For resumed-work queries, that same package-owned path adds explicit usefulness and freshness shaping for `task_checkpoint` plus adjacent evidence. Sharp checkpoints that preserve blocker, next step, evidence, and freshness can win cleanly, while thin or stale checkpoints can be demoted beneath fresher explicit source state without moving policy back into downstream agents.
 
 `agent_conversation_memory` is now the first scope-aware package. It requires consumer-supplied `visibility_context` on ingest and query, preserves visibility on direct and higher-level memory, excludes missing-visibility evidence from promotion and normal retrieval, and relies on the core/capability layer for exact-match-only aggregation and consolidation.
+
+Actor scoping extends the visibility model with per-memory attribution:
+
+- personal memory types (`interest`, `constraint_memory`) are only created in private containers; in shared containers they fall through to `discussion_summary`
+- `constraint_memory` has a role guard — only user messages can create it (same pattern as `interest`)
+- `actor_ref` on `MemoryObject` tracks who the memory is about, not who created it; set from source item in private containers, null in shared containers
+- thread-level memories (`thread_summary`, `task_checkpoint`) always have `actor_ref = null` regardless of container type
+- query-time actor filtering prevents personal memories from being injected into other users' contexts; shared memories (`actor_ref = null`) always pass the filter
 
 ## Future Operational Scale
 
