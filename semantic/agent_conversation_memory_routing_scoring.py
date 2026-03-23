@@ -618,6 +618,7 @@ def _score_routed_candidate(
         "packaging_reasons": [],
         "work_signal_types": (),
         "work_usefulness_score": 0,
+        "lexical_score": item.lexical_score,
     }
 
 def _locality_adjustment(

@@ -126,6 +126,8 @@ ROUTING_LAYER_WEIGHTS = {
 
 HIGHER_LEVEL_RETRIEVAL_FLOOR = 40
 
+INJECTION_RETRIEVAL_RELEVANCE_FLOOR = 2
+
 ROUTING_SAFE_FALLBACK_LAYERS = {
     "answer_continuity": ("lower_level_memory", "source_evidence"),
     "broad_recall": ("task_checkpoint", "thread_summary", "lower_level_memory", "source_evidence"),

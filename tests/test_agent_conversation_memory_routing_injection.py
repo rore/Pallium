@@ -1620,3 +1620,194 @@ def test_same_thread_batch_reminder_lately_prefers_structured_carry_forward_over
     assert 'inventory batch digest' in rendered_blocks or 'last confirmed batch' in rendered_blocks
     assert 'remind me what we had about the batch digests lately' not in rendered_blocks
     assert 'good afternoon' not in rendered_blocks
+
+
+# ---------------------------------------------------------------------------
+# Retrieval relevance floor tests
+# ---------------------------------------------------------------------------
+
+def _build_floor_test_retrieval_result(
+    *,
+    score: int = 14,
+    retrieval_source: str | None = None,
+    lexical_score: int | None = None,
+    memory_type: str = 'thread_summary',
+    payload: dict | None = None,
+) -> RetrievalQueryResult:
+    """Build a minimal retrieval result for floor-check testing."""
+    if payload is None:
+        payload = {'summary': 'User discussed vector databases and expressed interest in ChromaDB.'}
+    return RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id=f'floor-test-{memory_type}-1',
+                type=memory_type,
+                payload=payload,
+                score=score,
+                evidence=[],
+                container_ref='chat:floor-test',
+                thread_ref='chat:floor-test:thread-A',
+                retrieval_source=retrieval_source,
+                lexical_score=lexical_score,
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='test query',
+            query_tokens=('test', 'query'),
+            limit=4,
+            filters=QueryFilters(container_ref='chat:floor-test', thread_ref='chat:floor-test:thread-B'),
+            stages=(),
+        ),
+    )
+
+
+def _run_floor_test(
+    retrieval_result: RetrievalQueryResult,
+    query_text: str = 'test query',
+):
+    """Run routing and return the outcome."""
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:floor-test',
+        thread_ref='chat:floor-test:thread-B',
+    )
+    return plugin.route_query_results(
+        text=query_text,
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        include_trace=True,
+    )
+
+
+def test_retrieval_relevance_floor_suppresses_vector_only_candidates() -> None:
+    """Composite retrieval with vector-only hits (no lexical match) should suppress injection."""
+    result = _build_floor_test_retrieval_result(
+        score=9,
+        retrieval_source='vector',
+        lexical_score=None,
+    )
+    outcome = _run_floor_test(result, query_text="let's talk about something new")
+    assert outcome.should_inject is False
+    assert outcome.decision_reason == 'low_retrieval_relevance'
+
+
+def test_retrieval_relevance_floor_suppresses_low_lexical_score() -> None:
+    """Composite retrieval with low lexical_score (common word only) should suppress."""
+    result = _build_floor_test_retrieval_result(
+        score=19,
+        retrieval_source='both',
+        lexical_score=1,
+    )
+    outcome = _run_floor_test(result, query_text='how about politics?')
+    assert outcome.should_inject is False
+    assert outcome.decision_reason == 'low_retrieval_relevance'
+
+
+def test_retrieval_relevance_floor_passes_high_lexical_score() -> None:
+    """Composite retrieval with high lexical_score (domain word match) should inject."""
+    result = _build_floor_test_retrieval_result(
+        score=19,
+        retrieval_source='both',
+        lexical_score=4,
+    )
+    outcome = _run_floor_test(result, query_text='what did we discuss about vector databases?')
+    assert outcome.should_inject is True
+    assert outcome.decision_reason != 'low_retrieval_relevance'
+
+
+def test_retrieval_relevance_floor_passes_at_boundary() -> None:
+    """lexical_score exactly at the floor (2) should pass."""
+    result = _build_floor_test_retrieval_result(
+        score=19,
+        retrieval_source='both',
+        lexical_score=2,
+    )
+    outcome = _run_floor_test(result, query_text='what about vector databases?')
+    assert outcome.should_inject is True
+    assert outcome.decision_reason != 'low_retrieval_relevance'
+
+
+def test_retrieval_relevance_floor_passes_lexical_only_retrieval() -> None:
+    """Lexical-only retrieval (retrieval_source=None) should always pass the floor."""
+    result = _build_floor_test_retrieval_result(
+        score=1,
+        retrieval_source=None,
+        lexical_score=None,
+    )
+    outcome = _run_floor_test(result)
+    # Floor does not activate for lexical-only retrieval
+    assert outcome.decision_reason != 'low_retrieval_relevance'
+
+
+def test_retrieval_relevance_floor_mixed_candidates_one_passes() -> None:
+    """If at least one candidate passes the floor, injection proceeds."""
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:floor-test',
+        thread_ref='chat:floor-test:thread-B',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='floor-mix-1',
+                type='thread_summary',
+                payload={'summary': 'User discussed vector databases and expressed interest in ChromaDB.'},
+                score=9,
+                evidence=[],
+                container_ref='chat:floor-test',
+                thread_ref='chat:floor-test:thread-A',
+                retrieval_source='vector',
+                lexical_score=None,
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='floor-mix-2',
+                type='interest',
+                payload={'summary': 'Interest in ChromaDB for vector database experiments.'},
+                score=19,
+                evidence=[],
+                container_ref='chat:floor-test',
+                thread_ref='chat:floor-test:thread-A',
+                retrieval_source='both',
+                lexical_score=3,
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='what about chromadb?',
+            query_tokens=('chromadb',),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+    outcome = plugin.route_query_results(
+        text='what about chromadb?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        include_trace=True,
+    )
+    assert outcome.should_inject is True
+    assert outcome.decision_reason != 'low_retrieval_relevance'
+
+
+def test_retrieval_relevance_floor_trace_shows_reason() -> None:
+    """The injection decision trace should include the floor reason."""
+    result = _build_floor_test_retrieval_result(
+        score=9,
+        retrieval_source='vector',
+        lexical_score=None,
+    )
+    outcome = _run_floor_test(result, query_text="let's talk about something new")
+    injection_decision = outcome.trace.routing.get('injection_decision', {})
+    assert injection_decision.get('decision_reason') == 'low_retrieval_relevance'
+    assert injection_decision.get('retrieval_relevance_floor_reason') == 'no_candidate_above_floor'
