@@ -560,6 +560,7 @@ def test_single_item_thread_skips_aggregation_second_item_triggers_it(monkeypatc
     assert response.status_code == 200
     storage = client.app.state.pallium_service._storage
     thread_items = storage.list_source_items_for_thread(container_ref, thread_ref)
+    assert len(thread_items) == 1
     all_memory = [
         memory
         for item in thread_items
@@ -583,6 +584,7 @@ def test_single_item_thread_skips_aggregation_second_item_triggers_it(monkeypatc
     )
     assert response.status_code == 200
     thread_items = storage.list_source_items_for_thread(container_ref, thread_ref)
+    assert len(thread_items) == 2
     all_memory = [
         memory
         for item in thread_items
