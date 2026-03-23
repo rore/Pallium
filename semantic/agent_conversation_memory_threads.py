@@ -270,6 +270,71 @@ THREAD_SUMMARY_WITH_CHECKPOINT_SYSTEM_PROMPT = (
     "For task_checkpoint retrieval_context: write one short search-friendly context line (12-30 words) that helps this checkpoint match later queries, or null when the checkpoint summary already has enough search cues. Do not restate the checkpoint summary."
 )
 
+def _finalize_memory_builder(
+    *,
+    memory_object: MemoryObject,
+    container_ref: str | None,
+    thread_ref: str | None,
+    producer_kind: str,
+    producer_schema_id: str,
+    producer_schema_version: str,
+    prompt_variant: str,
+    subjects: list,
+    index_source: str,
+    text_view_name: str,
+    retrieval_context: str | None,
+    plugin_name: str,
+    llm_metadata=None,
+) -> tuple[MemoryObject, list]:
+    """Shared tail for memory builders: envelope, indexing, enrichment, vector embedding."""
+    memory_object = replace(
+        memory_object,
+        envelope=_build_memory_envelope(
+            kind=_memory_kind_for_type(memory_object.type),
+            container_ref=container_ref,
+            thread_ref=thread_ref,
+            confidence=_memory_confidence_for_type(memory_object.type),
+            producer_kind=producer_kind,
+            producer_schema_id=producer_schema_id,
+            producer_schema_version=producer_schema_version,
+            prompt_variant=prompt_variant,
+            kind_basis="inherited_from_children" if subjects else "type_map",
+            subjects=subjects,
+        ),
+    )
+    index_entry = build_index_entry(
+        target_kind="memory_object",
+        target_id=memory_object.id,
+        index_type="lexical",
+        text_view=normalize_for_index(index_source),
+        text_view_name=text_view_name,
+    )
+    memory_object, enrichment_index_entry = _apply_inline_enrichment(
+        memory_object=memory_object,
+        retrieval_context=retrieval_context,
+        plugin_name=plugin_name,
+        prompt_variant=prompt_variant,
+        llm_metadata=llm_metadata,
+    )
+    index_entries = [index_entry]
+    if enrichment_index_entry is not None:
+        index_entries.append(enrichment_index_entry)
+    embedding_text = build_embedding_text(memory_object)
+    if embedding_text is not None:
+        index_entries.append(
+            build_index_entry(
+                target_kind="memory_object",
+                target_id=memory_object.id,
+                index_type=VECTOR_INDEX_TYPE,
+                text_view=embedding_text,
+                text_view_name=f"{text_view_name}.embedding",
+                provider_name=VECTOR_EMBEDDING_PROVIDER_NAME,
+                provider_version=VECTOR_EMBEDDING_PROVIDER_VERSION,
+            )
+        )
+    return memory_object, index_entries
+
+
 def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_name: str, thread_summary_schema_id: str, task_checkpoint_schema_id: str, aggregate: ThreadAggregate, conclusions: list[MemoryObject]) -> ProcessResult:
         carried_conclusions = sorted(
             [
@@ -354,21 +419,6 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
             container_ref=aggregate.container_ref,
             freshness_at=aggregate.latest_occurred_at,
         )
-        thread_summary_memory = replace(
-            thread_summary_memory,
-            envelope=_build_memory_envelope(
-                kind=_memory_kind_for_type(thread_summary_memory.type),
-                container_ref=aggregate.container_ref,
-                thread_ref=aggregate.thread_ref,
-                confidence=_memory_confidence_for_type(thread_summary_memory.type),
-                producer_kind="thread_aggregation",
-                producer_schema_id=THREAD_SUMMARY_PROMPT_SCHEMA_ID,
-                producer_schema_version=THREAD_SUMMARY_PROMPT_SCHEMA_VERSION,
-                prompt_variant=prompt_variant,
-                kind_basis="inherited_from_children" if thread_subjects else "type_map",
-                subjects=thread_subjects,
-            ),
-        )
         relations = [
             Relation(
                 from_kind="memory_object",
@@ -396,37 +446,22 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 *[item["text"] for item in selected_work_artifacts if item.get("text")],
             ]
         )
-        thread_summary_index_entry = build_index_entry(
-            target_kind="memory_object",
-            target_id=thread_summary_memory.id,
-            index_type="lexical",
-            text_view=normalize_for_index(index_source),
-            text_view_name=THREAD_SUMMARY_TEXT_VIEW,
-        )
-        thread_summary_memory, thread_summary_enrichment_index_entry = _apply_inline_enrichment(
+        thread_summary_memory, index_entries = _finalize_memory_builder(
             memory_object=thread_summary_memory,
+            container_ref=aggregate.container_ref,
+            thread_ref=aggregate.thread_ref,
+            producer_kind="thread_aggregation",
+            producer_schema_id=THREAD_SUMMARY_PROMPT_SCHEMA_ID,
+            producer_schema_version=THREAD_SUMMARY_PROMPT_SCHEMA_VERSION,
+            prompt_variant=prompt_variant,
+            subjects=thread_subjects,
+            index_source=index_source,
+            text_view_name=THREAD_SUMMARY_TEXT_VIEW,
             retrieval_context=str(response.parsed_json.get("retrieval_context") or "").strip() or None,
             plugin_name=plugin_name,
-            prompt_variant=prompt_variant,
             llm_metadata=response.metadata,
         )
         memory_objects = [thread_summary_memory]
-        index_entries = [thread_summary_index_entry]
-        if thread_summary_enrichment_index_entry is not None:
-            index_entries.append(thread_summary_enrichment_index_entry)
-        thread_summary_embedding_text = build_embedding_text(thread_summary_memory)
-        if thread_summary_embedding_text is not None:
-            index_entries.append(
-                build_index_entry(
-                    target_kind="memory_object",
-                    target_id=thread_summary_memory.id,
-                    index_type=VECTOR_INDEX_TYPE,
-                    text_view=thread_summary_embedding_text,
-                    text_view_name=f"{THREAD_SUMMARY_TEXT_VIEW}.embedding",
-                    provider_name=VECTOR_EMBEDDING_PROVIDER_NAME,
-                    provider_version=VECTOR_EMBEDDING_PROVIDER_VERSION,
-                )
-            )
 
         if use_merged_call:
             checkpoint_parsed = response.parsed_json.get("task_checkpoint", {})
@@ -710,57 +745,27 @@ def build_pattern_memory(*, provider: LLMProvider, prompt_variant: str, plugin_n
             container_ref=group.container_ref,
             freshness_at=group.latest_occurred_at,
         )
-        memory_object = replace(
-            memory_object,
-            envelope=_build_memory_envelope(
-                kind=_memory_kind_for_type(memory_object.type),
-                container_ref=group.container_ref,
-                thread_ref=group.thread_ref,
-                confidence=_memory_confidence_for_type(memory_object.type),
-                producer_kind="consolidation",
-                producer_schema_id=PATTERN_MEMORY_PROMPT_SCHEMA_ID,
-                producer_schema_version=PATTERN_MEMORY_PROMPT_SCHEMA_VERSION,
-                prompt_variant=prompt_variant,
-                kind_basis="inherited_from_children" if consolidated_subjects else "type_map",
-                subjects=consolidated_subjects,
-            ),
-        )
         index_source = " ".join(
             [
                 parsed_summary.strip(),
                 *[conclusion["text"] for conclusion in conclusion_payload if conclusion.get("text")],
             ]
         )
-        index_entry = build_index_entry(
-            target_kind="memory_object",
-            target_id=memory_object.id,
-            index_type="lexical",
-            text_view=normalize_for_index(index_source),
-            text_view_name=PATTERN_MEMORY_TEXT_VIEW,
-        )
-        memory_object, enrichment_index_entry = _apply_inline_enrichment(
+        memory_object, index_entries = _finalize_memory_builder(
             memory_object=memory_object,
+            container_ref=group.container_ref,
+            thread_ref=group.thread_ref,
+            producer_kind="consolidation",
+            producer_schema_id=PATTERN_MEMORY_PROMPT_SCHEMA_ID,
+            producer_schema_version=PATTERN_MEMORY_PROMPT_SCHEMA_VERSION,
+            prompt_variant=prompt_variant,
+            subjects=consolidated_subjects,
+            index_source=index_source,
+            text_view_name=PATTERN_MEMORY_TEXT_VIEW,
             retrieval_context=str(response.parsed_json.get("retrieval_context") or "").strip() or None,
             plugin_name=plugin_name,
-            prompt_variant=prompt_variant,
             llm_metadata=response.metadata,
         )
-        index_entries = [index_entry]
-        if enrichment_index_entry is not None:
-            index_entries.append(enrichment_index_entry)
-        pattern_embedding_text = build_embedding_text(memory_object)
-        if pattern_embedding_text is not None:
-            index_entries.append(
-                build_index_entry(
-                    target_kind="memory_object",
-                    target_id=memory_object.id,
-                    index_type=VECTOR_INDEX_TYPE,
-                    text_view=pattern_embedding_text,
-                    text_view_name=f"{PATTERN_MEMORY_TEXT_VIEW}.embedding",
-                    provider_name=VECTOR_EMBEDDING_PROVIDER_NAME,
-                    provider_version=VECTOR_EMBEDDING_PROVIDER_VERSION,
-                )
-            )
         return ProcessResult(
             annotations=[],
             memory_objects=[memory_object],
@@ -837,21 +842,6 @@ def build_continuity_memory(*, provider: LLMProvider, prompt_variant: str, plugi
             container_ref=group.container_ref,
             freshness_at=group.latest_occurred_at,
         )
-        memory_object = replace(
-            memory_object,
-            envelope=_build_memory_envelope(
-                kind=_memory_kind_for_type(memory_object.type),
-                container_ref=group.container_ref,
-                thread_ref=group.thread_ref,
-                confidence=_memory_confidence_for_type(memory_object.type),
-                producer_kind="consolidation",
-                producer_schema_id=CONTINUITY_MEMORY_PROMPT_SCHEMA_ID,
-                producer_schema_version=CONTINUITY_MEMORY_PROMPT_SCHEMA_VERSION,
-                prompt_variant=prompt_variant,
-                kind_basis="inherited_from_children" if consolidated_subjects else "type_map",
-                subjects=consolidated_subjects,
-            ),
-        )
         index_source = " ".join(
             [
                 parsed_summary.strip(),
@@ -860,36 +850,21 @@ def build_continuity_memory(*, provider: LLMProvider, prompt_variant: str, plugi
                 *[conclusion["text"] for conclusion in conclusion_payload if conclusion.get("text")],
             ]
         )
-        index_entry = build_index_entry(
-            target_kind="memory_object",
-            target_id=memory_object.id,
-            index_type="lexical",
-            text_view=normalize_for_index(index_source),
-            text_view_name=CONTINUITY_MEMORY_TEXT_VIEW,
-        )
-        memory_object, enrichment_index_entry = _apply_inline_enrichment(
+        memory_object, index_entries = _finalize_memory_builder(
             memory_object=memory_object,
+            container_ref=group.container_ref,
+            thread_ref=group.thread_ref,
+            producer_kind="consolidation",
+            producer_schema_id=CONTINUITY_MEMORY_PROMPT_SCHEMA_ID,
+            producer_schema_version=CONTINUITY_MEMORY_PROMPT_SCHEMA_VERSION,
+            prompt_variant=prompt_variant,
+            subjects=consolidated_subjects,
+            index_source=index_source,
+            text_view_name=CONTINUITY_MEMORY_TEXT_VIEW,
             retrieval_context=str(response.parsed_json.get("retrieval_context") or "").strip() or None,
             plugin_name=plugin_name,
-            prompt_variant=prompt_variant,
             llm_metadata=response.metadata,
         )
-        index_entries = [index_entry]
-        if enrichment_index_entry is not None:
-            index_entries.append(enrichment_index_entry)
-        continuity_embedding_text = build_embedding_text(memory_object)
-        if continuity_embedding_text is not None:
-            index_entries.append(
-                build_index_entry(
-                    target_kind="memory_object",
-                    target_id=memory_object.id,
-                    index_type=VECTOR_INDEX_TYPE,
-                    text_view=continuity_embedding_text,
-                    text_view_name=f"{CONTINUITY_MEMORY_TEXT_VIEW}.embedding",
-                    provider_name=VECTOR_EMBEDDING_PROVIDER_NAME,
-                    provider_version=VECTOR_EMBEDDING_PROVIDER_VERSION,
-                )
-            )
         return ProcessResult(
             annotations=[],
             memory_objects=[memory_object],
