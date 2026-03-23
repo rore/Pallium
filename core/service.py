@@ -176,20 +176,25 @@ class PalliumService:
         self._vector_index = vector_index
         self._logger = logging.getLogger(__name__)
 
-    def _embed_vector_entries(self, result: ProcessResult) -> None:
-        """Embed vector index entries after SQLite commit.
+    def _embed_vector_entries(self, result: ProcessResult) -> bool:
+        """Add vector index entries to the in-memory index after SQLite commit.
 
         Filters committed index entries for index_type="vector", embeds them
-        via the embedding provider, and adds them to the vector index.
+        via the embedding provider, and adds them to the in-memory vector index.
+        Does NOT save the index to disk -- the caller is responsible for calling
+        _save_vector_index() once all embedding work for the current processing
+        cycle is complete.
         If either embedding_provider or vector_index is None, this is a no-op.
-        If embedding fails, the error is logged and execution continues â€”
+        If embedding fails, the error is logged and execution continues --
         reconciliation catches gaps.
+
+        Returns True if any vectors were added to the in-memory index.
         """
         if self._embedding_provider is None or self._vector_index is None:
-            return
+            return False
         vector_entries = [e for e in result.index_entries if e.index_type == VECTOR_INDEX_TYPE]
         if not vector_entries:
-            return
+            return False
         try:
             texts = [entry.text_view for entry in vector_entries]
             vectors = self._embedding_provider.embed(texts)
@@ -200,9 +205,23 @@ class PalliumService:
                     provider_name=self._embedding_provider.model_name(),
                     provider_version=f"dim={self._embedding_provider.dimensions()}",
                 )
-            self._vector_index.save()
+            return True
         except Exception:
             self._logger.warning("Vector embedding failed after commit; reconciliation will catch gaps", exc_info=True)
+            return False
+
+    def _save_vector_index(self) -> None:
+        """Flush the in-memory vector index to disk.
+
+        No-op when vector_index is None.  Failures are logged and swallowed --
+        reconciliation via rebuild-vector-index recovers missing vectors.
+        """
+        if self._vector_index is None:
+            return
+        try:
+            self._vector_index.save()
+        except Exception:
+            self._logger.warning("Vector index save failed; reconciliation will catch gaps", exc_info=True)
 
     def ingest_item(
         self,
@@ -542,7 +561,7 @@ class PalliumService:
                 result=direct_result,
                 thread_rebuild_scope=thread_rebuild_scope,
             )
-            self._embed_vector_entries(direct_result)
+            vectors_added = self._embed_vector_entries(direct_result)
             memory_provenance = _build_memory_provenance(
                 direct_result,
                 default_source_item_id=source_item.id,
@@ -588,9 +607,12 @@ class PalliumService:
             try:
                 vectors = self._embedding_provider.embed([source_vector_entry.text_view])
                 self._vector_index.add(source_vector_entry.id, vectors[0])
-                self._vector_index.save()
+                vectors_added = True
             except Exception:
                 self._logger.warning("Source item vector embedding failed", exc_info=True)
+
+        if vectors_added:
+            self._save_vector_index()
 
         if thread_rebuild_scope is None:
             return
@@ -1029,6 +1051,7 @@ class PalliumService:
                     claimed_at=current_lease.processing_claimed_at,
                 )
                 self._embed_vector_entries(thread_result)
+                self._save_vector_index()
             else:
                 has_pending = self._storage.complete_thread_processing_scope(
                     scope_key=current_lease.scope_key,
