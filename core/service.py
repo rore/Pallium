@@ -397,7 +397,6 @@ class PalliumService:
             source_item,
             max_attempts=max_attempts,
             worker_id=worker_id,
-            lease_seconds=lease_seconds,
         )
         return self.get_item_processing(source_item.id)
 
@@ -448,7 +447,6 @@ class PalliumService:
         *,
         max_attempts: int,
         worker_id: str | None = None,
-        lease_seconds: int = DEFAULT_PROCESSING_LEASE_SECONDS,
     ) -> None:
         worker_label = worker_id or source_item.processing_claimed_by or "source-item-worker"
         plugin_name = source_item.use_case or self._default_use_case
@@ -614,17 +612,6 @@ class PalliumService:
         if vectors_added:
             self._save_vector_index()
 
-        if thread_rebuild_scope is None:
-            return
-
-        lease = self._storage.claim_thread_processing_scope(
-            scope=thread_rebuild_scope,
-            worker_id=worker_label,
-            lease_seconds=lease_seconds,
-        )
-        if lease is None:
-            return
-        self._process_thread_rebuild_lease(lease, worker_id=worker_label, lease_seconds=lease_seconds)
     def _build_ingest_result(self, source_item: SourceItem) -> IngestResult:
         processing = self._build_processing_result(source_item)
         return IngestResult(

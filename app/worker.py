@@ -14,6 +14,8 @@ from core.contracts import ItemProcessingResult
 from storage.base import ThreadProcessingLease
 from core.service import DEFAULT_PROCESSING_LEASE_SECONDS, DEFAULT_PROCESSING_MAX_ATTEMPTS
 
+MAX_REBUILD_WAIT_SECONDS = 5.0
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run Pallium async ingest worker")
@@ -36,15 +38,30 @@ def run_worker(
     sleep_fn=time.sleep,
     should_stop: Callable[[], bool] | None = None,
     install_signal_handlers: bool | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> int:
     parsed = build_parser().parse_args(args)
     service = build_service(config)
     worker_id = parsed.worker_id or default_worker_id()
+    last_rebuild_check = clock()
+
+    def _stopping() -> bool:
+        return stop.requested or (should_stop is not None and should_stop())
+
+    def _try_thread_rebuild() -> bool:
+        thread_lease = service.process_next_thread_rebuild(
+            worker_id=worker_id,
+            lease_seconds=parsed.lease_seconds,
+        )
+        if thread_lease is not None:
+            _log_thread_rebuild(worker_id, thread_lease)
+            return True
+        return False
 
     with graceful_stop(install=install_signal_handlers) as stop:
         try:
             while True:
-                if stop.requested or (should_stop is not None and should_stop()):
+                if _stopping():
                     return 0
                 result = service.process_next_source_item(
                     worker_id=worker_id,
@@ -53,19 +70,18 @@ def run_worker(
                 )
                 if result is not None:
                     _log_result(worker_id, result)
-                    if parsed.once or stop.requested or (should_stop is not None and should_stop()):
+                    if parsed.once or _stopping():
+                        return 0
+                    if clock() - last_rebuild_check >= MAX_REBUILD_WAIT_SECONDS:
+                        _try_thread_rebuild()
+                        last_rebuild_check = clock()
+                    continue
+                if _try_thread_rebuild():
+                    last_rebuild_check = clock()
+                    if parsed.once or _stopping():
                         return 0
                     continue
-                thread_lease = service.process_next_thread_rebuild(
-                    worker_id=worker_id,
-                    lease_seconds=parsed.lease_seconds,
-                )
-                if thread_lease is not None:
-                    _log_thread_rebuild(worker_id, thread_lease)
-                    if parsed.once or stop.requested or (should_stop is not None and should_stop()):
-                        return 0
-                    continue
-                if parsed.once or stop.requested or (should_stop is not None and should_stop()):
+                if parsed.once or _stopping():
                     return 0
                 sleep_fn(parsed.poll_interval_seconds)
         except KeyboardInterrupt:
