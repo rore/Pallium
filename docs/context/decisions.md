@@ -289,6 +289,38 @@ Why:
 - keeps the model simple: one nullable field plus container-driven rules, no taxonomy matrices or scope enums
 - `constraint_memory` gets the same role guard as `interest` — only user messages can create it
 
+### 2026-03-23 - IDF-weighted lexical scoring
+
+Lexical search uses inverse document frequency (IDF) weighting instead of raw
+token overlap count. Common words that appear in most documents score near zero;
+rare domain-specific words score high. Language-agnostic — no stopword lists,
+corpus statistics determine what's common.
+
+Why:
+
+- raw token count gave equal weight to "the" and "weather", causing off-topic
+  injection (weather query matching vector DB memories on shared function words)
+- IDF is the established solution — used in BM25, TF-IDF, and all major search engines
+- language-agnostic approach avoids maintaining stopword lists per language
+- zero additional I/O — IDF computed inline during the existing full-scan
+- when retrieval moves to SQLite FTS5 or PostgreSQL, native BM25/ranking replaces this
+
+### 2026-03-23 - Interest memory kind
+
+`interest` captures specific-but-uncommitted user interest — stronger than
+`discussion_summary`, weaker than `task_checkpoint`. Created when the LLM judges
+that a specific subject is present and the speaker expressed meaningful
+future-oriented interest without a concrete commitment.
+
+Why:
+
+- user-stated interest ("Chroma sounds interesting, I should check it sometime")
+  was falling through to generic `discussion_summary` with no special weight
+- cross-thread recall queries ("what was the db I wanted to check?") couldn't
+  surface the interest because it was buried among other summaries
+- user-only role guard prevents assistant responses from creating interest
+- suppressed in shared containers (limited/public) per container-driven scoping
+
 ## Open
 
 ### Ingestion policy

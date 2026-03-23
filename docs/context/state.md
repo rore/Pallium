@@ -77,6 +77,26 @@
   - `SourceItem` embedding is plugin-owned via a package method on the semantic plugin boundary
   - production `/query` path activates hybrid retrieval by default
   - retrieval trace continues to show per-result origin (lexical, vector, or fused)
+- IDF-weighted lexical scoring is shipped:
+  - lexical search uses inverse document frequency weighting instead of raw token count
+  - common words that appear in most documents score near zero; rare domain words score high
+  - language-agnostic — no stopword lists, the corpus statistics determine what's common
+  - prevents off-topic injection (e.g., weather query matching vector DB memories on shared function words)
+- `interest` memory kind is shipped:
+  - captures specific-but-uncommitted user interest (stronger than discussion_summary, weaker than task_checkpoint)
+  - user-only role guard — assistant messages cannot create interest
+  - suppressed in shared containers (limited/public) — falls through to discussion_summary
+  - per-item extraction with `interest_text` signal, also detected at thread aggregation level
+- processing pipeline latency optimizations are shipped:
+  - worker poll interval reduced from 1.0s to 0.2s
+  - thread rebuild decoupled from item processing with max-wait timer (2s default)
+  - thread summary + task checkpoint combined into single LLM call
+  - vector index batch saves — one save per processing cycle instead of per-item
+  - thread rebuild storage queries batched from O(N) to O(1)
+- routing module structural refactoring is shipped:
+  - `agent_conversation_memory_routing.py` (~168KB) decomposed into 6 focused modules
+  - extracted: routing_constants, routing_signals, routing_trace, routing_policy, routing_scoring, routing_selection
+  - orchestrator remains as thin coordination layer with re-exports for backward compatibility
 
 ## Verification Notes
 
@@ -91,7 +111,7 @@
   - live exploratory drift and replay-promotion tooling
 - the developer-work confidence harness should be read by hard-gate fields first, not by aggregate scenario-success counts alone
 - replay is now a real tooling surface, but replay coverage is still materially smaller than the authored confidence packs
-- test suite: 541 passed, 5 skipped
+- test suite: 606 passed, 5 skipped
 - semantic extraction fixture set: 58 items (12 decisions, 14 investigations, 20 boundary-null, 13 signal cases)
 
 ## Configuration Note

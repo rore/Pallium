@@ -1,7 +1,4 @@
 # Next
-- add-interest-memory-kind
-- add-idf-weighted-lexical-scoring
-- add-actor-scoped-memory-and-container-visibility-rules
 - investigate-thread-level-interest-and-threadless-aggregation
 - investigate-lexical-retrieval-scaling
 
@@ -16,6 +13,8 @@
 - idea-optional-reranker-support
 
 # Done
+- add-idf-weighted-lexical-scoring
+- add-interest-memory-kind
 - add-actor-scoped-memory-and-container-visibility-rules
 - add-language-agnostic-query-signals-and-typed-constraint-state
 - add-structural-query-lane-narrowing-before-intent-tiebreak
