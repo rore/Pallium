@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SCENARIO_FILE = Path("evals/generated_exploratory/scenarios/seed_invariant_scenarios.json")
 DEFAULT_OUTPUT_DIR = Path("evals/generated_exploratory/output")
+DEFAULT_CACHE_DIR = Path(".local/llm-cache")
 DEFAULT_TIERS = ["P0", "P1"]
 
 
@@ -66,11 +67,20 @@ def main() -> int:
     )
     parser.add_argument(
         "--cache-dir", type=Path, default=None,
-        help="Directory for LLM response cache. Caches drain-time LLM calls (write_extraction, thread_rebuild) to skip network on repeat runs.",
+        help=f"Directory for LLM response cache. Defaults to {DEFAULT_CACHE_DIR} if it exists. Use --no-cache to disable.",
+    )
+    parser.add_argument(
+        "--no-cache", action="store_true",
+        help="Disable LLM response cache even if the default cache directory exists.",
     )
     args = parser.parse_args()
 
     tiers = args.tier or DEFAULT_TIERS
+
+    # Resolve cache dir: explicit flag > --no-cache > default if exists.
+    cache_dir = args.cache_dir
+    if cache_dir is None and not args.no_cache and DEFAULT_CACHE_DIR.exists():
+        cache_dir = DEFAULT_CACHE_DIR
 
     run_dir = run_invariant_evaluation(
         scenario_file=args.scenario_file,
@@ -80,7 +90,7 @@ def main() -> int:
         run_name=args.run_name,
         composite_retrieval=args.composite_retrieval,
         max_workers=args.workers,
-        cache_dir=args.cache_dir,
+        cache_dir=cache_dir,
     )
     print(run_dir)
     return 0
