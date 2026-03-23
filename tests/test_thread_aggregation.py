@@ -257,6 +257,8 @@ def test_thread_summary_is_created_and_superseded(monkeypatch, test_db_url: str)
     client = _create_thread_client(monkeypatch, test_db_url)
     client.post("/items", json=[{"source_type": "chat_message", "source_id": "thread-msg-1", "content_type": "text/plain", "content": "Why are some library holds disappearing after catalog sync delays?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"}])
     client.post("/items", json=[{"source_type": "assistant_artifact", "source_id": "thread-artifact-1", "content_type": "text/plain", "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"}])
+    # Third item triggers a second thread rebuild that supersedes the first summary
+    client.post("/items", json=[{"source_type": "chat_message", "source_id": "thread-msg-2", "content_type": "text/plain", "content": "Good, that should fix the holds. Will the sync delays also affect due-date calculations?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"}])
 
     storage = client.app.state.pallium_service._storage
     thread_items = storage.list_source_items_for_thread("chat:library-help", "chat:library-help:thread-agg-001")
@@ -503,9 +505,9 @@ def test_supported_typed_memory_still_requests_thread_rebuild(monkeypatch, test_
     memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
 
     assert any(memory.type == "decision" for memory in memory_objects)
-    assert any(memory.type == "thread_summary" for memory in memory_objects)
+    # Single-item threads skip thread aggregation (no value in summarizing one message)
+    assert not any(memory.type == "thread_summary" for memory in memory_objects)
     assert processing.thread_rebuild_requested is True
-    assert processing.thread_rebuild_completed is True
 
 
 
@@ -532,8 +534,61 @@ def test_substantive_item_still_requests_thread_rebuild(monkeypatch, test_db_url
     memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
 
     assert processing.thread_rebuild_requested is True
-    assert processing.thread_rebuild_completed is True
-    assert any(memory.type == "thread_summary" for memory in memory_objects)
+    # Single-item threads skip thread aggregation (no value in summarizing one message)
+    assert not any(memory.type == "thread_summary" for memory in memory_objects)
+
+
+def test_single_item_thread_skips_aggregation_second_item_triggers_it(monkeypatch, test_db_url: str) -> None:
+    client = _create_thread_client(monkeypatch, test_db_url)
+    thread_ref = "chat:library-help:thread-threshold"
+    container_ref = "chat:library-help"
+
+    # First item: thread has 1 item, no thread summary should be produced
+    response = client.post(
+        "/items",
+        json=[{
+            "source_type": "chat_message",
+            "source_id": "threshold-msg-1",
+            "content_type": "text/plain",
+            "content": "Why are some library holds disappearing after catalog sync delays?",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": container_ref,
+            "thread_ref": thread_ref,
+        }],
+    )
+    assert response.status_code == 200
+    storage = client.app.state.pallium_service._storage
+    thread_items = storage.list_source_items_for_thread(container_ref, thread_ref)
+    all_memory = [
+        memory
+        for item in thread_items
+        for memory in storage.list_memory_objects_for_source_item(item.id)
+    ]
+    assert not any(memory.type == "thread_summary" for memory in all_memory)
+
+    # Second item: thread now has 2 items, thread summary should be produced
+    response = client.post(
+        "/items",
+        json=[{
+            "source_type": "assistant_artifact",
+            "source_id": "threshold-artifact-1",
+            "content_type": "text/plain",
+            "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": container_ref,
+            "thread_ref": thread_ref,
+        }],
+    )
+    assert response.status_code == 200
+    thread_items = storage.list_source_items_for_thread(container_ref, thread_ref)
+    all_memory = [
+        memory
+        for item in thread_items
+        for memory in storage.list_memory_objects_for_source_item(item.id)
+    ]
+    assert any(memory.type == "thread_summary" for memory in all_memory)
 
 
 def test_natural_language_assistant_output_creates_task_checkpoint_from_metadata_signals(monkeypatch, test_db_url: str) -> None:

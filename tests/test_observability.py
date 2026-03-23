@@ -56,6 +56,20 @@ def test_thread_rebuild_completion_is_reported_in_processing_status(test_db_url:
         plugins={"blocking_thread_lease": plugin},
         default_use_case="blocking_thread_lease",
     )
+    # Thread needs >= 2 items for aggregation to fire
+    service.ingest_item(
+        source_type="chat_message",
+        source_id="thread-observability-0",
+        content_type="text/plain",
+        content="Why are holds disappearing after catalog sync delays?",
+        metadata=None,
+        use_case="blocking_thread_lease",
+        artifact_kind="message",
+        role="user",
+        container_ref="chat:library-help",
+        thread_ref="chat:library-help:thread-observability",
+        container_visibility="public",
+    )
     ingest = service.ingest_item(
         source_type="assistant_artifact",
         source_id="thread-observability-1",

@@ -290,7 +290,7 @@ class ThreadRebuilder:
                 for item in thread_items
                 if visibility_matches_exact(item.container_visibility, thread_scope.container_visibility)
             ]
-        if not thread_items:
+        if len(thread_items) < 2:
             return None, {}, []
 
         memory_by_source = self._storage.list_memory_objects_for_source_items(

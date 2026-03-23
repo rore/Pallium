@@ -129,6 +129,7 @@ def test_missing_ingest_visibility_uses_private_default(monkeypatch, test_db_url
 
 def test_thread_aggregation_stays_within_exact_visibility_context(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
+        # Each visibility group needs >= 2 items for thread aggregation
         client.post(
             "/items",
             json=[{
@@ -141,6 +142,34 @@ def test_thread_aggregation_stays_within_exact_visibility_context(monkeypatch, t
                 "container_ref": "chat:privacy",
                 "thread_ref": "chat:privacy:mixed-thread",
                 "container_visibility": "public",
+            }],
+        )
+        client.post(
+            "/items",
+            json=[{
+                "source_type": "assistant_artifact",
+                "source_id": "thread-public-artifact",
+                "content_type": "text/plain",
+                "content": "Investigation found: duplicate holds happen because catalog sync delays cause stale hold records.",
+                "artifact_kind": "assistant_output",
+                "role": "assistant",
+                "container_ref": "chat:privacy",
+                "thread_ref": "chat:privacy:mixed-thread",
+                "container_visibility": "public",
+            }],
+        )
+        client.post(
+            "/items",
+            json=[{
+                "source_type": "chat_message",
+                "source_id": "thread-limited-msg",
+                "content_type": "text/plain",
+                "content": "What about the reservation ordering impact?",
+                "artifact_kind": "message",
+                "role": "user",
+                "container_ref": "chat:privacy",
+                "thread_ref": "chat:privacy:mixed-thread",
+                "container_visibility": "limited",
             }],
         )
         client.post(

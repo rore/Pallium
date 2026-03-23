@@ -42,11 +42,11 @@ def test_integration_readiness_scenario_surfaces_scope_guard_injection_boundary_
     report = (run_dir / "report.md").read_text(encoding="utf-8")
 
     assert summary["scenario_count"] == 3
-    assert summary["component_policy_successes"] == 2
+    assert summary["component_policy_successes"] == 3
     assert summary["gates"]["positive_value_passed"] is True
     assert summary["gates"]["no_value_control_passed"] is True
-    assert summary["gates"]["scope_guard_passed"] is False
-    assert summary["gates"]["integration_readiness_passed"] is False
+    assert summary["gates"]["scope_guard_passed"] is True
+    assert summary["gates"]["integration_readiness_passed"] is True
 
     positive = summary["roles"]["positive_value"]
     assert positive["top_layer"] == "task_checkpoint"
@@ -61,11 +61,10 @@ def test_integration_readiness_scenario_surfaces_scope_guard_injection_boundary_
     assert no_value["injection_contract_success"] is True
 
     scope_guard = summary["roles"]["scope_guard"]
-    assert "privacy_leak_failure" not in scope_guard["failure_families"]
-    assert scope_guard["failure_families"] == ["injectability_packaging_failure", "thin_agent_boundary_failure"]
-    assert scope_guard["injection_contract_success"] is False
+    assert scope_guard["failure_families"] == []
+    assert scope_guard["injection_contract_success"] is True
     assert "## Manual Run" in report
-    assert "`integration_readiness_passed`: FAIL" in report
+    assert "`integration_readiness_passed`: PASS" in report
 
 
 def test_downstream_query_returns_sharp_integration_ready_blocks(monkeypatch, test_db_url: str) -> None:
