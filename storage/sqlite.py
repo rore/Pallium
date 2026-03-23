@@ -189,6 +189,34 @@ class SQLiteStorageProvider(
             ).all()
         return [self._to_memory_object(record) for record in records]
 
+    def list_memory_objects_for_source_items(self, source_item_ids: list[str]) -> dict[str, list[MemoryObject]]:
+        if not source_item_ids:
+            return {}
+        with self._session_factory() as session:
+            relation_records = session.scalars(
+                select(RelationRecord).where(
+                    RelationRecord.relation_type == "supported_by",
+                    RelationRecord.to_kind == "source_item",
+                    RelationRecord.to_id.in_(source_item_ids),
+                    RelationRecord.from_kind == "memory_object",
+                )
+            ).all()
+            source_to_memory_ids: dict[str, list[str]] = {}
+            all_memory_ids: set[str] = set()
+            for rel in relation_records:
+                source_to_memory_ids.setdefault(rel.to_id, []).append(rel.from_id)
+                all_memory_ids.add(rel.from_id)
+            if not all_memory_ids:
+                return {sid: [] for sid in source_item_ids}
+            memory_records = session.scalars(
+                select(MemoryObjectRecord).where(MemoryObjectRecord.id.in_(list(all_memory_ids)))
+            ).all()
+            memory_by_id = {record.id: self._to_memory_object(record) for record in memory_records}
+        result: dict[str, list[MemoryObject]] = {}
+        for sid in source_item_ids:
+            result[sid] = [memory_by_id[mid] for mid in source_to_memory_ids.get(sid, []) if mid in memory_by_id]
+        return result
+
     def create_relation(self, relation: Relation) -> None:
         record = RelationRecord(
             id=relation.id,

@@ -1084,9 +1084,12 @@ class PalliumService:
         if not thread_items:
             return None, {}, []
 
-        active_thread_memory_ids = self._find_active_thread_memory_ids(thread_items)
+        memory_by_source = self._storage.list_memory_objects_for_source_items(
+            [item.id for item in thread_items],
+        )
+        active_thread_memory_ids = self._find_active_thread_memory_ids(thread_items, memory_by_source)
         aggregate = build_thread_aggregate(thread_items)
-        conclusions = self._collect_thread_conclusions(thread_items)
+        conclusions = self._collect_thread_conclusions(thread_items, memory_by_source)
         thread_result = plugin.build_thread_summary(aggregate, conclusions)
         reconcile_process_result = getattr(plugin, "reconcile_process_result", None)
         if callable(reconcile_process_result) and thread_result is not None:
@@ -1109,11 +1112,12 @@ class PalliumService:
     def _find_active_thread_memory_ids(
         self,
         thread_items: list[SourceItem],
+        memory_by_source: dict[str, list[MemoryObject]],
     ) -> dict[tuple[str, str], list[str]]:
         seen: set[str] = set()
         ids: dict[tuple[str, str], list[str]] = {}
         for source_item in thread_items:
-            for memory_object in self._storage.list_memory_objects_for_source_item(source_item.id):
+            for memory_object in memory_by_source.get(source_item.id, []):
                 if memory_object.lifecycle != "active":
                     continue
                 if memory_object.id in seen:
@@ -1125,11 +1129,11 @@ class PalliumService:
     def _collect_thread_conclusions(
         self,
         thread_items: list[SourceItem],
+        memory_by_source: dict[str, list[MemoryObject]],
     ) -> list[MemoryObject]:
         conclusions: dict[str, MemoryObject] = {}
         for source_item in thread_items:
-            memory_objects = self._storage.list_memory_objects_for_source_item(source_item.id)
-            for memory_object in memory_objects:
+            for memory_object in memory_by_source.get(source_item.id, []):
                 if memory_object.lifecycle != "active":
                     continue
                 if memory_object.type not in THREAD_CONCLUSION_TYPES:

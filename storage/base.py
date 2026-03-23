@@ -369,6 +369,17 @@ class StorageProvider(ABC):
     def list_memory_objects_for_source_item(self, source_item_id: str) -> list[MemoryObject]:
         raise NotImplementedError
 
+    def list_memory_objects_for_source_items(self, source_item_ids: list[str]) -> dict[str, list[MemoryObject]]:
+        """Batch variant: returns {source_item_id: [MemoryObject, ...]} for all given IDs.
+
+        Default implementation calls the per-item method in a loop.
+        Backends may override with a single-query implementation.
+        """
+        result: dict[str, list[MemoryObject]] = {}
+        for sid in source_item_ids:
+            result[sid] = self.list_memory_objects_for_source_item(sid)
+        return result
+
     @abstractmethod
     def create_relation(self, relation: Relation) -> None:
         raise NotImplementedError
