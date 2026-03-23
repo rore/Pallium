@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 
 from capabilities.consolidation import ConsolidationGroup, ConsolidationPolicy
 from capabilities.thread_aggregation import ThreadAggregate
-from core.contracts import ProcessResult
+from core.contracts import MemoryRetentionPolicy, ProcessResult
 from core.models import MemoryObject, SourceItem
 
 
@@ -18,6 +18,12 @@ class SemanticPlugin(ABC):
     def source_item_embedding_text(self, source_item: SourceItem) -> str | None:
         """Return embedding text for this source item, or None to skip.
         Default: no source item embedding. Package overrides to select."""
+        return None
+
+    @property
+    def memory_retention_policy(self) -> MemoryRetentionPolicy | None:
+        """Return retention classification for this package's memory types.
+        Default: None (no package-specific retention policy declared)."""
         return None
 
     @abstractmethod

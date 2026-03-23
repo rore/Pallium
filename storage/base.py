@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 
-from core.contracts import ProcessResult
+from core.contracts import MemoryRetentionPolicy, ProcessResult
 from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
 from core.visibility import VisibilityExclusion
 
@@ -326,6 +326,7 @@ class StorageProvider(ABC):
         lease: RetentionLease | None = None,
         lease_seconds: int | None = None,
         lease_now: datetime | None = None,
+        retention_policy: MemoryRetentionPolicy | None = None,
     ) -> RetentionRunStats:
         raise NotImplementedError
 

@@ -9,9 +9,6 @@ SEMANTIC_SIGNAL_METADATA_KEY = "pallium_semantic_signals"
 
 
 RETENTION_MAINTENANCE_KEY = "retention_compaction"
-DURABLE_MEMORY_TYPES = frozenset({"decision", "investigation_outcome"})
-FRESH_WORKING_MEMORY_TYPES = frozenset({"thread_summary", "task_checkpoint", "continuity_memory", "pattern_memory"})
-ORPHAN_DELETE_MEMORY_TYPES = frozenset({"discussion_summary"})
 
 SUPERSEDED_MEMORY_TTL = timedelta(days=7)
 WORKING_MEMORY_TTL = timedelta(days=30)

@@ -131,6 +131,14 @@ class QueryResult:
     injectable_blocks: list[InjectableBlock] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class MemoryRetentionPolicy:
+    """Plugin-declared retention classification for memory types."""
+    durable_types: frozenset[str] = frozenset()
+    working_types: frozenset[str] = frozenset()
+    orphan_delete_types: frozenset[str] = frozenset()
+
+
 def build_source_item(
     source_type: str,
     source_id: str,

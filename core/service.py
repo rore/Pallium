@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from capabilities.consolidation import ConsolidationCapability, ConsolidationRunGroupResult, ConsolidationRunResult
 from capabilities.thread_aggregation import build_thread_aggregate
-from core.contracts import IngestResult, ItemProcessingResult, PackageQueryOutcome, ProcessResult, QueryResult, build_source_item, resolve_query_filters
+from core.contracts import IngestResult, ItemProcessingResult, MemoryRetentionPolicy, PackageQueryOutcome, ProcessResult, QueryResult, build_source_item, resolve_query_filters
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, VECTOR_INDEX_TYPE, build_index_entry
 from core.models import MemoryObject, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace, Relation, SourceItem, utc_now
 from core.observability import IntegrationDebugLogger, OBSERVABILITY_METADATA_KEY
@@ -168,6 +168,17 @@ class PalliumService:
         self._embedding_provider = embedding_provider
         self._vector_index = vector_index
         self._logger = logging.getLogger(__name__)
+
+        merged_retention = MemoryRetentionPolicy()
+        for plugin in self._semantic_plugins.values():
+            plugin_policy = plugin.memory_retention_policy
+            if plugin_policy is not None:
+                merged_retention = MemoryRetentionPolicy(
+                    durable_types=merged_retention.durable_types | plugin_policy.durable_types,
+                    working_types=merged_retention.working_types | plugin_policy.working_types,
+                    orphan_delete_types=merged_retention.orphan_delete_types | plugin_policy.orphan_delete_types,
+                )
+        self._retention_policy = merged_retention
 
     def _embed_vector_entries(self, result: ProcessResult) -> bool:
         """Add vector index entries to the in-memory index after SQLite commit.
@@ -341,6 +352,7 @@ class PalliumService:
                 lease=lease,
                 lease_seconds=resolved_lease_seconds,
                 lease_now=lease.claimed_at if now is not None else None,
+                retention_policy=self._retention_policy,
             )
             completed = self._storage.complete_retention_pass(
                 worker_id=worker_id,
