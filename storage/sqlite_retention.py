@@ -5,13 +5,11 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from core.contracts import MemoryRetentionPolicy
 from core.models import utc_now
 from core.observability import OBSERVABILITY_METADATA_KEY
 from core.retention import (
     DEBUG_METADATA_TTL,
-    DURABLE_MEMORY_TYPES,
-    FRESH_WORKING_MEMORY_TYPES,
-    ORPHAN_DELETE_MEMORY_TYPES,
     RETENTION_MAINTENANCE_KEY,
     SUPERSEDED_MEMORY_TTL,
     WORKING_MEMORY_TTL,
@@ -148,7 +146,12 @@ class SQLiteRetentionMixin:
         lease: RetentionLease | None = None,
         lease_seconds: int | None = None,
         lease_now: datetime | None = None,
+        retention_policy: MemoryRetentionPolicy | None = None,
     ) -> RetentionRunStats:
+        durable_types = retention_policy.durable_types if retention_policy else frozenset()
+        working_types = retention_policy.working_types if retention_policy else frozenset()
+        orphan_delete_types = retention_policy.orphan_delete_types if retention_policy else frozenset()
+
         normalized_now = self._normalize_datetime(now) or now
         remaining = max(0, batch_size)
         stats = RetentionRunStats()
@@ -172,6 +175,7 @@ class SQLiteRetentionMixin:
             chunk_stats = self._run_stale_working_memory_retention_chunk(
                 now=normalized_now,
                 limit=min(remaining, self._RETENTION_LEASE_RENEWAL_BATCH),
+                working_types=working_types,
             )
             stats = self._merge_retention_stats(stats, chunk_stats)
             deleted_count = chunk_stats.deleted_memory_objects
@@ -189,6 +193,9 @@ class SQLiteRetentionMixin:
                     now=normalized_now,
                     delete_limit=chunk_limit,
                     scan_limit=scan_limit,
+                    durable_types=durable_types,
+                    working_types=working_types,
+                    orphan_delete_types=orphan_delete_types,
                 )
                 stats = self._merge_retention_stats(stats, chunk_stats)
                 remaining = max(0, remaining - chunk_stats.deleted_source_items)
@@ -237,6 +244,7 @@ class SQLiteRetentionMixin:
         *,
         now: datetime,
         limit: int,
+        working_types: frozenset[str],
     ) -> RetentionRunStats:
         if limit <= 0:
             return RetentionRunStats()
@@ -247,7 +255,7 @@ class SQLiteRetentionMixin:
                 select(MemoryObjectRecord)
                 .where(
                     MemoryObjectRecord.lifecycle == "active",
-                    MemoryObjectRecord.type.in_(tuple(FRESH_WORKING_MEMORY_TYPES)),
+                    MemoryObjectRecord.type.in_(tuple(working_types)),
                 )
                 .order_by(
                     func.coalesce(MemoryObjectRecord.freshness_at, MemoryObjectRecord.created_at).asc(),
@@ -274,6 +282,9 @@ class SQLiteRetentionMixin:
         now: datetime,
         delete_limit: int,
         scan_limit: int,
+        durable_types: frozenset[str],
+        working_types: frozenset[str],
+        orphan_delete_types: frozenset[str],
     ) -> tuple[RetentionRunStats, int]:
         if delete_limit <= 0 or scan_limit <= 0:
             return RetentionRunStats(), 0
@@ -294,12 +305,12 @@ class SQLiteRetentionMixin:
                     if deleted_sources >= delete_limit:
                         break
                     continue
-                if self._source_item_is_protected(session, record.id, now=now):
+                if self._source_item_is_protected(session, record.id, now=now, durable_types=durable_types, working_types=working_types):
                     stats = self._merge_retention_stats(stats, RetentionRunStats(skipped_protected_source_items=1))
                     if deleted_sources >= delete_limit:
                         break
                     continue
-                stats = self._merge_retention_stats(stats, self._delete_source_item_cascade_in_session(session, record.id))
+                stats = self._merge_retention_stats(stats, self._delete_source_item_cascade_in_session(session, record.id, durable_types=durable_types, working_types=working_types, orphan_delete_types=orphan_delete_types))
                 deleted_sources += 1
                 if deleted_sources >= delete_limit:
                     break
@@ -442,7 +453,6 @@ class SQLiteRetentionMixin:
         with self._session_factory.begin() as session:
             records = session.scalars(
                 select(MemoryObjectRecord).where(
-                    MemoryObjectRecord.type.in_(tuple(FRESH_WORKING_MEMORY_TYPES)),
                     MemoryObjectRecord.freshness_at.is_(None),
                 )
             ).all()
@@ -541,7 +551,15 @@ class SQLiteRetentionMixin:
         lease_expires_at = self._normalize_datetime(record.processing_lease_expires_at)
         return bool(record.processing_claimed_by) and lease_expires_at is not None and lease_expires_at > now
 
-    def _source_item_is_protected(self, session: Session, source_item_id: str, *, now: datetime) -> bool:
+    def _source_item_is_protected(
+        self,
+        session: Session,
+        source_item_id: str,
+        *,
+        now: datetime,
+        durable_types: frozenset[str],
+        working_types: frozenset[str],
+    ) -> bool:
         relations = session.scalars(
             select(RelationRecord).where(
                 RelationRecord.to_kind == "source_item",
@@ -554,14 +572,22 @@ class SQLiteRetentionMixin:
             memory_record = session.get(MemoryObjectRecord, relation.from_id)
             if memory_record is None or memory_record.lifecycle != "active":
                 continue
-            if memory_record.type in DURABLE_MEMORY_TYPES:
+            if memory_record.type in durable_types:
                 return True
             freshness_at = self._resolve_memory_object_freshness_in_session(session, memory_record)
-            if memory_record.type in FRESH_WORKING_MEMORY_TYPES and freshness_at is not None and freshness_at > now - WORKING_MEMORY_TTL:
+            if memory_record.type in working_types and freshness_at is not None and freshness_at > now - WORKING_MEMORY_TTL:
                 return True
         return False
 
-    def _delete_source_item_cascade_in_session(self, session: Session, source_item_id: str) -> RetentionRunStats:
+    def _delete_source_item_cascade_in_session(
+        self,
+        session: Session,
+        source_item_id: str,
+        *,
+        durable_types: frozenset[str],
+        working_types: frozenset[str],
+        orphan_delete_types: frozenset[str],
+    ) -> RetentionRunStats:
         relation_records = session.scalars(
             select(RelationRecord).where(
                 or_(
@@ -598,14 +624,22 @@ class SQLiteRetentionMixin:
             deleted_index_entries=len(source_index_records),
         )
         for memory_object_id in affected_memory_ids:
-            stats = self._merge_retention_stats(stats, self._delete_orphan_memory_object_if_needed_in_session(session, memory_object_id))
+            stats = self._merge_retention_stats(stats, self._delete_orphan_memory_object_if_needed_in_session(session, memory_object_id, durable_types=durable_types, working_types=working_types, orphan_delete_types=orphan_delete_types))
         return stats
 
-    def _delete_orphan_memory_object_if_needed_in_session(self, session: Session, memory_object_id: str) -> RetentionRunStats:
+    def _delete_orphan_memory_object_if_needed_in_session(
+        self,
+        session: Session,
+        memory_object_id: str,
+        *,
+        durable_types: frozenset[str],
+        working_types: frozenset[str],
+        orphan_delete_types: frozenset[str],
+    ) -> RetentionRunStats:
         memory_record = session.get(MemoryObjectRecord, memory_object_id)
         if memory_record is None:
             return RetentionRunStats()
-        if memory_record.type in DURABLE_MEMORY_TYPES or memory_record.type in FRESH_WORKING_MEMORY_TYPES:
+        if memory_record.type in durable_types or memory_record.type in working_types:
             return RetentionRunStats()
         remaining_support = session.scalar(
             select(RelationRecord.id)
@@ -619,7 +653,7 @@ class SQLiteRetentionMixin:
         )
         if remaining_support is not None:
             return RetentionRunStats()
-        if memory_record.type not in ORPHAN_DELETE_MEMORY_TYPES and memory_record.lifecycle == "active":
+        if memory_record.type not in orphan_delete_types and memory_record.lifecycle == "active":
             return RetentionRunStats()
         return self._delete_memory_object_cascade_in_session(session, memory_object_id)
 

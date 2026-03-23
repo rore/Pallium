@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from capabilities.consolidation import ConsolidationCapability, ConsolidationRunGroupResult, ConsolidationRunResult
 from capabilities.thread_aggregation import build_thread_aggregate
-from core.contracts import IngestResult, ItemProcessingResult, PackageQueryOutcome, ProcessResult, QueryResult, build_source_item, resolve_query_filters
+from core.contracts import IngestResult, ItemProcessingResult, MemoryRetentionPolicy, PackageQueryOutcome, ProcessResult, QueryResult, build_source_item, resolve_query_filters
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, VECTOR_INDEX_TYPE, build_index_entry
 from core.models import MemoryObject, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace, Relation, SourceItem, utc_now
 from core.observability import IntegrationDebugLogger, OBSERVABILITY_METADATA_KEY
@@ -26,8 +26,6 @@ from storage.vector_index import VectorIndex
 
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
-THREAD_CONCLUSION_TYPES = {"decision", "investigation_outcome"}
-THREAD_SUMMARY_TYPE = "thread_summary"
 DEFAULT_PROCESSING_LEASE_SECONDS = 15 * 60
 DEFAULT_PROCESSING_MAX_ATTEMPTS = 3
 DEFAULT_RETRY_BACKOFF_SECONDS = 5
@@ -135,15 +133,9 @@ def _classify_failure(error: Exception, *, phase: str) -> str:
 def _preferred_active_summary_ref(memory_objects: list[MemoryObject]) -> dict[str, str] | None:
     if not memory_objects:
         return None
-    priority = {
-        THREAD_SUMMARY_TYPE: 0,
-        "task_checkpoint": 1,
-        "continuity_memory": 2,
-        "pattern_memory": 3,
-    }
     preferred = min(
         memory_objects,
-        key=lambda item: (priority.get(item.type, 10), item.created_at, item.id),
+        key=lambda item: (item.created_at, item.id),
     )
     return {"kind": preferred.type, "id": preferred.id}
 
@@ -175,6 +167,17 @@ class PalliumService:
         self._embedding_provider = embedding_provider
         self._vector_index = vector_index
         self._logger = logging.getLogger(__name__)
+
+        merged_retention = MemoryRetentionPolicy()
+        for plugin in self._semantic_plugins.values():
+            plugin_policy = plugin.memory_retention_policy
+            if plugin_policy is not None:
+                merged_retention = MemoryRetentionPolicy(
+                    durable_types=merged_retention.durable_types | plugin_policy.durable_types,
+                    working_types=merged_retention.working_types | plugin_policy.working_types,
+                    orphan_delete_types=merged_retention.orphan_delete_types | plugin_policy.orphan_delete_types,
+                )
+        self._retention_policy = merged_retention
 
     def _embed_vector_entries(self, result: ProcessResult) -> bool:
         """Add vector index entries to the in-memory index after SQLite commit.
@@ -348,6 +351,7 @@ class PalliumService:
                 lease=lease,
                 lease_seconds=resolved_lease_seconds,
                 lease_now=lease.claimed_at if now is not None else None,
+                retention_policy=self._retention_policy,
             )
             completed = self._storage.complete_retention_pass(
                 worker_id=worker_id,
@@ -1092,7 +1096,7 @@ class PalliumService:
         )
         active_thread_memory_ids = self._find_active_thread_memory_ids(thread_items, memory_by_source)
         aggregate = build_thread_aggregate(thread_items)
-        conclusions = self._collect_thread_conclusions(thread_items, memory_by_source)
+        conclusions = self._collect_thread_conclusions(thread_items, memory_by_source, conclusion_types=plugin.thread_conclusion_types)
         thread_result = plugin.build_thread_summary(aggregate, conclusions)
         reconcile_process_result = getattr(plugin, "reconcile_process_result", None)
         if callable(reconcile_process_result) and thread_result is not None:
@@ -1133,13 +1137,17 @@ class PalliumService:
         self,
         thread_items: list[SourceItem],
         memory_by_source: dict[str, list[MemoryObject]],
+        *,
+        conclusion_types: frozenset[str] = frozenset(),
     ) -> list[MemoryObject]:
         conclusions: dict[str, MemoryObject] = {}
+        if not conclusion_types:
+            return []
         for source_item in thread_items:
             for memory_object in memory_by_source.get(source_item.id, []):
                 if memory_object.lifecycle != "active":
                     continue
-                if memory_object.type not in THREAD_CONCLUSION_TYPES:
+                if memory_object.type not in conclusion_types:
                     continue
                 conclusions[memory_object.id] = memory_object
         return list(conclusions.values())

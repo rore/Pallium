@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from capabilities.consolidation import ConsolidationGroup, ConsolidationPolicy
 from capabilities.thread_aggregation import ThreadAggregate
-from core.contracts import PackageQueryOutcome, ProcessResult
+from core.contracts import MemoryRetentionPolicy, PackageQueryOutcome, ProcessResult
 from core.models import MemoryObject, QueryFilters, QueryRuntimeContext, SourceItem
 from providers.llm.base import LLMProvider
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
@@ -51,8 +51,20 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         return 'agent_conversation_memory.thread_summary'
 
     @property
+    def thread_conclusion_types(self) -> frozenset[str]:
+        return frozenset({"decision", "investigation_outcome"})
+
+    @property
     def consolidation_policy(self) -> ConsolidationPolicy | None:
         return self._consolidation_config
+
+    @property
+    def memory_retention_policy(self) -> MemoryRetentionPolicy:
+        return MemoryRetentionPolicy(
+            durable_types=frozenset({"decision", "investigation_outcome"}),
+            working_types=frozenset({"thread_summary", "task_checkpoint", "continuity_memory", "pattern_memory"}),
+            orphan_delete_types=frozenset({"discussion_summary"}),
+        )
 
     @property
     def pattern_memory_schema_id(self) -> str:

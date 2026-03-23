@@ -9,7 +9,7 @@ from core.models import Annotation, MemoryObject, MemorySubjectAnchor, Relation,
 from semantic.agent_conversation_memory_embedding import VECTOR_EMBEDDING_PROVIDER_NAME, VECTOR_EMBEDDING_PROVIDER_VERSION, build_embedding_text
 
 
-SEMANTIC_SIGNAL_METADATA_KEY = "pallium_semantic_signals"
+from core.retention import SEMANTIC_SIGNAL_METADATA_KEY  # noqa: F401 — re-export for backward compatibility
 
 
 SENTENCE_PATTERN = re.compile(r"(?<=[.!?])\s+")

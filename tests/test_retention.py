@@ -11,6 +11,7 @@ from app.config import AppConfig, RetentionConfig
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import _vector_index_path_for_sqlite
 from app.main import create_app
+from core.contracts import MemoryRetentionPolicy
 from core.models import IndexEntry, MemoryObject, Relation, SourceItem
 from core.service import PalliumService
 from retrieval.lexical import LexicalRetrievalProvider
@@ -19,6 +20,12 @@ from storage.sqlite import MaintenanceStateRecord, SQLiteStorageProvider
 
 
 UTC = timezone.utc
+
+_TEST_RETENTION_POLICY = MemoryRetentionPolicy(
+    durable_types=frozenset({"decision", "investigation_outcome"}),
+    working_types=frozenset({"thread_summary", "task_checkpoint", "continuity_memory", "pattern_memory"}),
+    orphan_delete_types=frozenset({"discussion_summary"}),
+)
 
 
 def _make_source(
@@ -130,7 +137,7 @@ def test_working_memory_uses_freshness_instead_of_raw_source_age(test_db_url: st
         source_items=[old_source],
     )
 
-    stats = storage.run_retention_pass(now=now, batch_size=10)
+    stats = storage.run_retention_pass(now=now, batch_size=10, retention_policy=_TEST_RETENTION_POLICY)
 
     assert stats.deleted_memory_objects == 0
     assert storage.get_memory_object(memory.id).freshness_at == now - timedelta(days=5)
@@ -153,14 +160,14 @@ def test_stale_working_memory_is_deleted_and_sources_delete_on_later_pass(test_d
         source_items=[source_item],
     )
 
-    first_stats = storage.run_retention_pass(now=now, batch_size=1)
+    first_stats = storage.run_retention_pass(now=now, batch_size=1, retention_policy=_TEST_RETENTION_POLICY)
 
     assert first_stats.deleted_memory_objects == 1
     with pytest.raises(KeyError):
         storage.get_memory_object(memory.id)
     assert storage.get_source_item(source_item.id).id == source_item.id
 
-    second_stats = storage.run_retention_pass(now=now, batch_size=10)
+    second_stats = storage.run_retention_pass(now=now, batch_size=10, retention_policy=_TEST_RETENTION_POLICY)
 
     assert second_stats.deleted_source_items == 1
     with pytest.raises(KeyError):
@@ -186,7 +193,7 @@ def test_durable_memory_protects_supporting_source_items(test_db_url: str) -> No
         source_items=[source_item],
     )
 
-    stats = storage.run_retention_pass(now=now, batch_size=10)
+    stats = storage.run_retention_pass(now=now, batch_size=10, retention_policy=_TEST_RETENTION_POLICY)
 
     assert stats.deleted_source_items == 0
     assert stats.skipped_protected_source_items == 1
@@ -222,7 +229,7 @@ def test_low_value_meta_rows_age_out_and_retained_rows_strip_debug_metadata(test
         source_items=[retained],
     )
 
-    stats = storage.run_retention_pass(now=now, batch_size=20)
+    stats = storage.run_retention_pass(now=now, batch_size=20, retention_policy=_TEST_RETENTION_POLICY)
 
     assert stats.deleted_source_items == 1
     assert stats.stripped_debug_metadata == 1
@@ -284,6 +291,7 @@ class LeaseLostBeforeCompletionStorage(SQLiteStorageProvider):
         lease=None,
         lease_seconds: int | None = None,
         lease_now: datetime | None = None,
+        retention_policy=None,
     ):
         stats = super().run_retention_pass(
             now=now,
@@ -291,6 +299,7 @@ class LeaseLostBeforeCompletionStorage(SQLiteStorageProvider):
             lease=lease,
             lease_seconds=lease_seconds,
             lease_now=lease_now,
+            retention_policy=retention_policy,
         )
         with self._session_factory.begin() as session:
             record = session.get(MaintenanceStateRecord, "retention_compaction")
@@ -325,19 +334,19 @@ def test_upgrade_backfill_resolves_null_freshness_and_keeps_fresh_working_memory
     upgraded_memory = upgraded_storage.get_memory_object(memory.id)
     assert upgraded_memory.freshness_at == now - timedelta(days=5)
 
-    protect_stats = upgraded_storage.run_retention_pass(now=now, batch_size=10)
+    protect_stats = upgraded_storage.run_retention_pass(now=now, batch_size=10, retention_policy=_TEST_RETENTION_POLICY)
     assert protect_stats.deleted_memory_objects == 0
     assert protect_stats.deleted_source_items == 0
     assert upgraded_storage.get_source_item(protected_source.id).id == protected_source.id
 
     stale_now = now + timedelta(days=31)
-    stale_stats = upgraded_storage.run_retention_pass(now=stale_now, batch_size=1)
+    stale_stats = upgraded_storage.run_retention_pass(now=stale_now, batch_size=1, retention_policy=_TEST_RETENTION_POLICY)
     assert stale_stats.deleted_memory_objects == 1
     with pytest.raises(KeyError):
         upgraded_storage.get_memory_object(memory.id)
     assert upgraded_storage.get_source_item(protected_source.id).id == protected_source.id
 
-    source_cleanup_stats = upgraded_storage.run_retention_pass(now=stale_now, batch_size=10)
+    source_cleanup_stats = upgraded_storage.run_retention_pass(now=stale_now, batch_size=10, retention_policy=_TEST_RETENTION_POLICY)
     assert source_cleanup_stats.deleted_source_items == 1
     with pytest.raises(KeyError):
         upgraded_storage.get_source_item(protected_source.id)
@@ -365,7 +374,7 @@ def test_source_retention_progresses_past_old_protected_prefix(test_db_url: str)
         _make_source(storage, source_id="later-deletable-2", occurred_at=now - timedelta(days=59)),
     ]
 
-    pass_stats = [storage.run_retention_pass(now=now, batch_size=1) for _ in range(4)]
+    pass_stats = [storage.run_retention_pass(now=now, batch_size=1, retention_policy=_TEST_RETENTION_POLICY) for _ in range(4)]
 
     assert sum(stat.deleted_source_items for stat in pass_stats) == 2
     for source_item in deletable_sources:
