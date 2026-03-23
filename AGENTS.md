@@ -32,3 +32,11 @@ Add `import pytest` if not already present. The `slow` marker is registered in `
 
 Test vector index — the shared test helpers (`build_llm_test_config` in `tests/config_helpers.py`, the `client` fixture in `tests/conftest.py`) use `VectorIndexConfig(enabled=False)` by default. Do not change this. Tests that specifically exercise vector retrieval, embedding, or composite retrieval must create their own `AppConfig` with an explicit `VectorIndexConfig(enabled=True, index_path=...)`. This keeps the default test run fast (~20s) by avoiding ONNX model inference and usearch index creation in tests that don't need them.
 
+Exploratory QA — `evals/generated_exploratory/` contains taxonomy-driven invariant testing. Three tiers:
+
+- **P0** (~15-25 authored scenarios): correctness invariants (scope, visibility, actor, role). Run on demand, must pass.
+- **P1** (~50-100 authored scenarios): quality invariants (routing, injection, greeting suppression). Run nightly/pre-release.
+- **P2** (hundreds+, LLM-generated): coverage expansion. Run on-demand for exploration, never in a build pipeline.
+
+Do not add generated (P2) scenarios to `pytest` or any CI pipeline. The fast test suite (`tests/test_invariant_runner.py`, `tests/test_taxonomy.py`) validates invariant logic against synthetic payloads only. Full pipeline runs go through the CLI runner. Confirmed bugs from any tier get promoted into the P0/P1 set with authored expectations. See `docs/context/decisions.md` for the full rationale.
+

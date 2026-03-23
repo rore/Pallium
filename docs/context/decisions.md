@@ -245,6 +245,35 @@ English phrase matching. ~40 English constants eliminated. Scoring formula
 simplified from 7 to 5 components. Three routing lanes remain:
 `work_resumption`, `evidence_trace`, `residual_recall`.
 
+### 2026-03-23 - Three-tier exploratory QA with invariant-driven evaluation
+
+Automated exploratory QA uses taxonomy-driven scenario generation evaluated by
+universal invariants (not hand-authored expected outcomes). Three tiers control
+when scenarios run:
+
+- **P0** (correctness gate, ~15-25 scenarios): scope violations, actor leaks,
+  visibility bugs, role attribution. Run on demand before merging. Must pass.
+- **P1** (quality gate, ~50-100 scenarios): off-topic injection, routing errors,
+  greeting suppression, IDF discrimination. Run nightly or pre-release.
+- **P2** (coverage expansion, hundreds+): LLM-generated scenarios from taxonomy
+  dimension pairs. Run on-demand for exploration. Never in a build pipeline.
+
+Confirmed bug from any tier gets promoted into the P0/P1 regression set with
+authored expectations. The corpus grows at the regression layer, not the build
+layer. Generated scenarios are gitignored; seed and promoted scenarios are
+committed.
+
+Infrastructure: `evals/generated_exploratory/` (invariants, runner, taxonomy,
+seed scenarios). 13 invariants (INV-01 through INV-13). Runner supports
+multi-step scenarios (ingest → drain → query → check invariants per step).
+
+Why:
+
+- manual exploratory testing found 12 bugs in 3 sessions but doesn't scale
+- invariants catch bugs without per-scenario expected outcomes
+- tier separation keeps fast tests fast and exploration unbounded
+- promotion pipeline converts discovery into durable regression protection
+
 ### 2026-03-23 - Container-driven actor scoping
 
 Container type drives memory scoping, not memory type detection or content
