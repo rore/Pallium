@@ -122,11 +122,17 @@ def completion_candidates(text: str) -> list[str]:
         return [command for command in COMMAND_COMPLETIONS if command.startswith(current)]
 
     command = parts[0].lower()
-    # /channel <name> <visibility>: show example names first, then visibility
+    # /channel <name> <visibility>: show history + examples for name, visibility for second arg
     if command == "/channel":
         arg_count = len(parts) - 1 if stripped.endswith(" ") else len(parts) - 2
         if arg_count == 0:
-            candidates = ["general", "team-backend", "my-notes"]
+            try:
+                from app.agent_simulation_channels import get_channel_history
+                history = get_channel_history()
+            except Exception:
+                history = []
+            defaults = ["general", "team-backend", "my-notes"]
+            candidates = history + [d for d in defaults if d not in history]
         else:
             candidates = ["public", "limited", "private"]
         if stripped.endswith(" "):

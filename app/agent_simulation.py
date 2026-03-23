@@ -66,6 +66,7 @@ class AgentSimulationApp:
         self._ref_factory = ref_factory
         self._session = create_default_session(base_url=http_client.base_url, mode="chat", model=self._model.resolution().to_dict())
         self._mode = "chat"
+        self._restore_last_channel()
 
     @property
     def session(self) -> HarnessSession:
@@ -512,7 +513,17 @@ class AgentSimulationApp:
         defaults.thread_ref = self._ref_factory("thread")
         defaults.set_runtime_context("turn_kind", "new_thread", manual=False)
         defaults.set_runtime_context("session_has_sufficient_local_context", False, manual=False)
+        from app.agent_simulation_channels import record_channel
+        record_channel(name, visibility)
         self._write_scope()
+
+    def _restore_last_channel(self) -> None:
+        from app.agent_simulation_channels import get_last_channel
+        last = get_last_channel()
+        if last:
+            defaults = self._session.defaults
+            defaults.container_ref = f"simulation:channel:{last['name']}"
+            defaults.set_container_visibility(last['visibility'])
 
     def _apply_inferred_same_thread_defaults(self) -> None:
         defaults = self._session.defaults
