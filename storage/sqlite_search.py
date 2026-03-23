@@ -59,13 +59,19 @@ class SQLiteSearchMixin:
                     doc_freq[qt] = doc_freq.get(qt, 0) + 1
 
         corpus_size = len(filtered)
+        # Use effective_corpus_size >= 3 so the IDF formula produces meaningful
+        # discrimination even with very small corpora.  With corpus=1, every
+        # term has df=1 and IDF≈0 — mathematically correct but practically
+        # useless.  A floor of 3 gives single-term matches score≈1 and
+        # two-term matches score≈2, which is exactly the relevance floor.
+        effective_corpus = max(corpus_size, 3)
 
         for record, text_tokens in filtered:
             matched_tokens = tuple(sorted(unique_tokens.intersection(text_tokens)))
             if not matched_tokens:
                 continue
             idf_sum = sum(
-                math.log(1.0 + (corpus_size - doc_freq.get(t, 0) + 0.5) / (doc_freq.get(t, 0) + 0.5))
+                math.log(1.0 + (effective_corpus - doc_freq.get(t, 0) + 0.5) / (doc_freq.get(t, 0) + 0.5))
                 for t in matched_tokens
             )
             score = max(round(idf_sum * _IDF_SCORE_SCALE), 1)
