@@ -47,6 +47,42 @@ from other containers.
 The caller sends `container_ref` and `container_visibility` on ingest and
 query. Pallium applies the filtering rules.
 
+## Actor Scoping
+
+Container visibility controls where memory is accessible. The `actor_ref` field
+controls who a memory is about.
+
+The design principle: separate where the memory is stored from who the memory is
+about.
+
+`actor_ref` is a nullable string on `MemoryObject`. It is set from the source
+item's `actor_ref` in private containers and is always `null` in shared
+containers. Thread-level memories (`thread_summary`, `task_checkpoint`) always
+have `actor_ref = null` because they describe the conversation, not an
+individual.
+
+Query-time filtering applies two filters in sequence:
+
+1. **Container visibility** — scopes results by container access
+2. **Actor scoping** — if the query provides `actor_ref` and the memory
+   has a non-null `actor_ref`, they must match. Shared memories
+   (`actor_ref = null`) always pass. Queries without `actor_ref` skip actor
+   filtering entirely.
+
+Personal memory types (`interest`, `constraint_memory`) are not created in
+shared containers (`limited` or `public`). They fall through to
+`discussion_summary`. This means personal statements in shared channels become
+shared evidence, not personal memories that could be injected into another
+user's context.
+
+| Container type | Memory created | actor_ref |
+|----------------|----------------|-----------|
+| private | all types | speaker from source item |
+| limited / public | interest and constraint suppressed | null (shared) |
+
+This keeps the model simple: container type drives the rules, not content
+analysis or memory type detection.
+
 ## Fail-Closed Behavior
 
 For `agent_conversation_memory`, retrieval is fail closed.
@@ -108,5 +144,7 @@ The current model does not yet ship:
 - explicit shared-memory publication across broader visibilities
 - cross-container shared memory
 - generalized visibility narrowing or intersection logic
+- organization-level memory scoping
+- consent models for cross-user memory sharing
 
 Those are later design steps, not hidden behavior in the current package.

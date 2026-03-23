@@ -31,16 +31,16 @@ def test_process_item_emits_typed_constraint_memory() -> None:
     )
     result = plugin.process_item(
         SourceItem(
-            source_type='assistant_output',
+            source_type='chat_message',
             source_id='constraint-source-1',
             content_type='text/plain',
             content='Do not use the operations portal for the inventory batch digest.',
-            artifact_kind='assistant_output',
-            role='assistant',
+            artifact_kind='message',
+            role='user',
             container_ref='chat:library-help',
             thread_ref='chat:library-help:thread-constraint',
             occurred_at=datetime(2026, 3, 11, 12, 10, tzinfo=timezone.utc),
-            container_visibility="public",
+            container_visibility="private",
         )
     )
 

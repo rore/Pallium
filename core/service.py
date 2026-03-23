@@ -680,6 +680,7 @@ class PalliumService:
         artifact_kind: str | None = None,
         container_ref: str | None = None,
         thread_ref: str | None = None,
+        actor_ref: str | None = None,
         container_visibility: str | None = None,
         runtime_context: QueryRuntimeContext | None = None,
         include_trace: bool = False,
@@ -690,6 +691,7 @@ class PalliumService:
             artifact_kind=artifact_kind,
             container_ref=container_ref,
             thread_ref=thread_ref,
+            actor_ref=actor_ref,
             runtime_context=runtime_context,
         )
         requested_filters = filter_resolution.requested_filters

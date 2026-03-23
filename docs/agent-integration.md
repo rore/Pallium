@@ -131,6 +131,9 @@ Useful query filters:
 
 - `container_ref`
 - `thread_ref`
+- `actor_ref` — pass the current user's identity to scope results to their
+  personal memories plus shared evidence. When omitted, no actor filtering is
+  applied.
 - `artifact_kind`
 - `role`
 - `source_type`
@@ -231,6 +234,30 @@ The current package is optimizing for a few concrete jobs:
 
 The implementation uses multiple memory kinds internally to serve those jobs,
 but the integration loop does not require you to think in those terms first.
+
+## Container Visibility and Actor Scoping
+
+Set `container_visibility` based on the communication context:
+
+- **DM / 1:1 conversation** — `"private"`. All memory types are created.
+  Memories carry `actor_ref` from the source item.
+- **Team channel / group chat** — `"limited"`. Personal memory types (`interest`,
+  `constraint_memory`) are suppressed and fall through to `discussion_summary`.
+  All memories have `actor_ref = null`.
+- **Public channel / broadcast** — `"public"`. Same suppression rules as
+  `"limited"`.
+
+When to pass `actor_ref` in queries:
+
+- Always pass it when querying on behalf of a specific user. This ensures the
+  user sees their own personal memories from private containers plus shared
+  evidence from any accessible container.
+- Omit it for system-level or admin queries where actor scoping is not needed.
+- Omit it when the integration does not track actor identity.
+
+The runtime should send `actor_ref` on ingest (identifying the speaker) and on
+query (identifying the querying user). Pallium uses these to set and filter
+memory attribution.
 
 ## Integration Checklist
 

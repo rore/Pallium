@@ -50,6 +50,7 @@ jobs:
 | Thread orientation | `thread_summary` | "Discussed migration strategy, agreed on staged rollout" |
 | Resumed-work state | `task_checkpoint` | "Blocked on API rate limit, next: implement backoff" |
 | Expressed interest | `interest` | "Chroma sounds interesting, should check it some time" |
+| Stated constraint | `constraint_memory` | "Must stay on Python 3.12 for compatibility" |
 | Cross-thread carry-forward | `continuity_memory` | Same question answered consistently across threads |
 | Recurring patterns | `pattern_memory` | Repeated architectural preference across conversations |
 
@@ -59,6 +60,37 @@ Every memory object stays linked to its supporting source evidence. Query
 results can include both `memory_hit` (derived context) and `source_hit`
 (supporting evidence), so the agent can orient quickly and still ground its
 answers.
+
+## Memory Scoping
+
+Not all memory types are created in all contexts. Container visibility drives
+which memory types are promoted and whether memories carry actor attribution.
+
+**Private containers** (`container_visibility = "private"`):
+
+All memory types are available. Memories carry `actor_ref` set to the speaker
+from the source item. Everything in a private container is personal to the
+container owner.
+
+**Shared containers** (`container_visibility = "limited"` or `"public"`):
+
+Personal memory types — `interest` and `constraint_memory` — are not created.
+They fall through to `discussion_summary`, preserving the statement as shared
+evidence rather than personal memory. All memories in shared containers have
+`actor_ref = null`.
+
+This means a user saying "Chroma sounds interesting" in a team channel produces
+a shared `discussion_summary`, not a personal `interest` memory that could leak
+into another user's recall.
+
+**Thread aggregation** always produces shared memories (`actor_ref = null`)
+regardless of container type. Thread summaries and task checkpoints describe the
+conversation, not an individual. In private containers, container-level
+visibility still restricts access.
+
+The `actor_ref` field on memory objects tracks who the memory is about, not who
+created it. Query-time actor filtering uses this field to prevent personal
+memories from being injected into other users' contexts.
 
 ## How Memory Changes Over Time
 

@@ -478,6 +478,7 @@ class SQLiteQueueMixin:
                     lifecycle=memory_object.lifecycle,
                     container_visibility=memory_object.container_visibility,
                     container_ref=memory_object.container_ref,
+                    actor_ref=memory_object.actor_ref,
                     freshness_at=self._normalize_datetime(memory_object.freshness_at) or memory_object.created_at,
                     created_at=memory_object.created_at,
                 )

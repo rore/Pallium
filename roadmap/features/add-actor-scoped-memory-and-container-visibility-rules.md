@@ -1,7 +1,7 @@
 ---
 id: add-actor-scoped-memory-and-container-visibility-rules
 title: Add actor-scoped memory and container-driven visibility rules
-status: not-started
+status: done
 priority: high
 commitment: committed
 milestone: Next
