@@ -1,0 +1,7 @@
+# Generated scenario batches (P2 tier, not committed)
+scenarios/batch_*.json
+scenarios/high_risk_*.json
+scenarios/test_*.json
+
+# Runner output
+output/
