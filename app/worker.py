@@ -18,7 +18,7 @@ from core.service import DEFAULT_PROCESSING_LEASE_SECONDS, DEFAULT_PROCESSING_MA
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run Pallium async ingest worker")
     parser.add_argument("--worker-id", default=None)
-    parser.add_argument("--poll-interval-seconds", type=float, default=1.0)
+    parser.add_argument("--poll-interval-seconds", type=float, default=0.2)
     parser.add_argument("--lease-seconds", type=int, default=DEFAULT_PROCESSING_LEASE_SECONDS)
     parser.add_argument("--max-attempts", type=int, default=DEFAULT_PROCESSING_MAX_ATTEMPTS)
     parser.add_argument("--once", action="store_true")
