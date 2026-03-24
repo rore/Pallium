@@ -319,7 +319,7 @@
     ],
     "expected_dimensions": {
       "task_orientation": [
-        "catalog sync retry"
+        "catalog sync"
       ],
       "blocker_state": [
         "401",
@@ -758,7 +758,7 @@
         "task_checkpoint"
       ],
       "freshness": [
-        "current blocker is 429"
+        "429"
       ]
     },
     "retrieval_signals": {
