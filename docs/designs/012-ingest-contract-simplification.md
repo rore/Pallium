@@ -68,9 +68,9 @@ Mapping to Slack:
 Retrieval behavior:
 
 - `public` items are visible to queries from any container.
-- `limited` and `private` items are visible only to queries from the same
+- `container` and `private` items are visible only to queries from the same
   container.
-- The label difference between `limited` and `private` is descriptive. It may
+- The label difference between `container` and `private` is descriptive. It may
   matter later for consolidation or sharing policy, but retrieval treats them
   the same today.
 

@@ -53,11 +53,11 @@ What to inspect in `/query/debug`:
 
 What it proves:
 - a public query can use public rollout memory
-- a public query must not leak limited-scope rollout state even when it is topically similar and sharper
+- a public query must not leak container-scope rollout state even when it is topically similar and sharper
 
 What to inspect in `/query/debug`:
 - top result should stay on the public rollout conclusion
-- limited-scope blocker details must not appear in results
+- container-scope blocker details must not appear in results
 - visibility trace may report exclusions, but it must not expose hidden candidate ids or hidden context details
 
 ## Suggested Manual Flow

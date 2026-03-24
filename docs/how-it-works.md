@@ -133,7 +133,7 @@ Locality is not privacy. `container_ref` identifies where an item belongs, and
 
 - `public` — shared memories (`actor_ref = null`) visible from any container;
   personal memories (`actor_ref` set) visible only from their own container
-- `limited` — visible only within the same container (e.g. a private channel)
+- `container` — visible only within the same container (e.g. a private channel)
 - `private` — visible only within the same container (e.g. a DM)
 
 Visibility is enforced before ranking. Derivation preserves scope by exact

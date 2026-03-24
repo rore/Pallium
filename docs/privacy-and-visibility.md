@@ -40,7 +40,7 @@ from other containers.
 ## Retrieval Rules
 
 - query from container X sees:
-  - all `limited` and `private` items where `container_ref` matches X
+  - all `container` and `private` items where `container_ref` matches X
   - all `public` shared items from any container (`actor_ref = null`)
   - `public` personal items (`actor_ref` set) only if `container_ref` matches X
 - query without `container_ref` sees only `public` items
@@ -77,7 +77,7 @@ Query-time filtering applies two filters in sequence:
    filtering entirely.
 
 Personal memory types (`interest`, `constraint_memory`) are not created in
-shared containers (`limited` or `public`). They fall through to
+shared containers (`container` or `public`). They fall through to
 `discussion_summary`. This means personal statements in shared channels become
 shared evidence, not personal memories that could be injected into another
 user's context.
@@ -85,7 +85,7 @@ user's context.
 | Container type | Memory created | actor_ref |
 |----------------|----------------|-----------|
 | private | all types | speaker from source item |
-| limited / public | interest and constraint suppressed | null (shared) |
+| container / public | interest and constraint suppressed | null (shared) |
 
 This keeps the model simple: container type drives the rules, not content
 analysis or memory type detection.

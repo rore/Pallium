@@ -13,7 +13,7 @@ Enforce actor attribution and container-driven memory scoping so that personal s
 
 ## Problem
 
-In a public or limited (team) channel, multiple users post messages. When user A says "Chroma sounds interesting, I should check it", Pallium creates an `interest` memory with `visibility=public` and no actor scoping. When user B queries, they see user A's interest injected as generic "user expressed interest in Chroma" — as if it's their own.
+In a public or container (team) channel, multiple users post messages. When user A says "Chroma sounds interesting, I should check it", Pallium creates an `interest` memory with `visibility=public` and no actor scoping. When user B queries, they see user A's interest injected as generic "user expressed interest in Chroma" — as if it's their own.
 
 Observed in chat-lite testing: starting a new container still showed memories from the old session because both used public visibility and there's no actor filtering.
 
@@ -65,7 +65,7 @@ Two filters applied in sequence:
 
 **Filter 1 — Container visibility (already exists):**
 - `private` → only visible within same container_ref
-- `limited` → only visible within same container_ref
+- `container` → only visible within same container_ref
 - `public` → visible from any container_ref
 
 **Filter 2 — Actor scoping (new):**
@@ -162,7 +162,7 @@ Add optional `actor_ref` field to the query request schema. Pass through to Quer
 ### 10. Documentation updates
 
 **`docs/how-it-works.md`** — Add section on memory scoping:
-- Explain private vs limited vs public container behavior
+- Explain private vs container vs public container behavior
 - Explain that personal memory types (interest, constraint) are only created in private containers
 - Explain that shared containers produce shared evidence only
 
@@ -206,7 +206,7 @@ Add optional `actor_ref` field to the query request schema. Pass through to Quer
 ## Done When
 
 1. `constraint_memory` has role guard — assistant messages cannot create it
-2. `interest` and `constraint_memory` are not created in limited/public containers
+2. `interest` and `constraint_memory` are not created in container/public containers
 3. `actor_ref` field exists on MemoryObject and is set correctly per container visibility
 4. `actor_ref` filtering works at query time for both lexical and vector retrieval
 5. Query API accepts optional `actor_ref`
