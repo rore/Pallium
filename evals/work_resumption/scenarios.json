@@ -194,7 +194,7 @@
     ],
     "expected_dimensions": {
       "task_orientation": [
-        "duplicate-hold debugging",
+        "duplicate holds",
         "delayed sync workers"
       ],
       "key_findings": [
@@ -209,8 +209,7 @@
         "compare cache invalidation between delayed and immediate sync workers"
       ],
       "evidence": [
-        "task_checkpoint",
-        "investigation_outcome"
+        "task_checkpoint"
       ]
     },
     "retrieval_signals": {
@@ -574,7 +573,7 @@
       ],
       "key_findings": [
         "keep the use_item_event_time flag off",
-        "branch kiosk fallback is still missing"
+        "branch kiosk fallback missing"
       ],
       "preserved_progress": [
         "admin toggle wiring is ready"
@@ -590,7 +589,7 @@
     },
     "retrieval_signals": {
       "key_findings": [
-        "branch kiosk fallback is still missing"
+        "branch kiosk fallback missing"
       ],
       "preserved_progress": [
         "admin toggle wiring is ready"
@@ -751,7 +750,7 @@
         "batch 418"
       ],
       "next_step_guidance": [
-        "wait 15 minutes",
+        "15 minute",
         "resume from batch 418"
       ],
       "evidence": [
@@ -771,7 +770,7 @@
         "batch 418"
       ],
       "next_step_guidance": [
-        "wait 15 minutes",
+        "15 minute",
         "resume from batch 418"
       ]
     },
@@ -1239,15 +1238,15 @@
     ],
     "expected_dimensions": {
       "key_findings": [
-        "branch kiosk fallback is still missing"
+        "branch kiosk fallback missing"
       ],
       "evidence": [
-        "branch kiosk fallback is still missing"
+        "branch kiosk fallback missing"
       ]
     },
     "retrieval_signals": {
       "evidence": [
-        "branch kiosk fallback is still missing"
+        "branch kiosk fallback missing"
       ]
     },
     "must_preserve": [
@@ -1350,7 +1349,7 @@
         "LIB-241 rollout"
       ],
       "key_findings": [
-        "keep the LIB-241 rollout paused",
+        "LIB-241 rollout paused",
         "retry-path coverage"
       ],
       "evidence": [
@@ -1362,7 +1361,7 @@
         "LIB-241 rollout"
       ],
       "key_findings": [
-        "keep the LIB-241 rollout paused",
+        "LIB-241 rollout paused",
         "retry-path coverage"
       ]
     },
