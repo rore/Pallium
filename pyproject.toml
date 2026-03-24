@@ -9,6 +9,12 @@ description = "Generic memory engine for agents."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
+authors = [
+    { name = "Rotem Hermon", email = "rotem.hermon@gmail.com" },
+]
+
+[project.urls]
+Repository = "https://github.com/rore/Pallium"
 dependencies = [
     "fastapi>=0.115,<1.0",
     "httpx>=0.28,<1.0",
