@@ -967,3 +967,100 @@ def test_exact_fact_with_last_session_not_misrouted_to_broad_recall() -> None:
             f"{outcome.trace.routing['query_intent']!r} — "
             "envelope-first routing: empty candidates always yield default recall mode"
         )
+
+
+# ---------------------------------------------------------------------------
+# Multi-user recall: shared container candidates with cross-user evidence
+# ---------------------------------------------------------------------------
+
+
+def test_multi_user_recall_routes_shared_decisions_from_different_threads(monkeypatch, test_db_url: str) -> None:
+    """Cross-thread recall in a shared container: decisions from two users' threads
+    should both be retrievable and routable when querying as either user."""
+    with _build_client(monkeypatch, test_db_url) as client:
+        # User A: catalog sync discussion
+        for payload in (
+            {
+                'source_type': 'chat_message',
+                'source_id': 'mu-recall-alice-msg-1',
+                'content_type': 'text/plain',
+                'content': 'The catalog sync retry is queued again.',
+                'artifact_kind': 'message',
+                'role': 'user',
+                'actor_ref': 'user:branch-librarian',
+                'container_ref': 'chat:library-help',
+                'thread_ref': 'chat:library-help:thread-mu-recall-alice',
+                'visibility': 'public',
+                'occurred_at': '2026-03-11T09:59:00Z',
+            },
+            {
+                'source_type': 'assistant_artifact',
+                'source_id': 'mu-recall-alice-asst-1',
+                'content_type': 'text/plain',
+                'content': 'Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.',
+                'artifact_kind': 'assistant_output',
+                'role': 'assistant',
+                'container_ref': 'chat:library-help',
+                'thread_ref': 'chat:library-help:thread-mu-recall-alice',
+                'visibility': 'public',
+                'occurred_at': '2026-03-11T10:00:00Z',
+            },
+        ):
+            response = client.post('/items', json=[payload])
+            assert response.status_code == 200
+        client.app.state.pallium_service.drain_processing_queue(worker_id='routing-test')
+
+        # User B: overdue notices discussion
+        for payload in (
+            {
+                'source_type': 'chat_message',
+                'source_id': 'mu-recall-bob-msg-1',
+                'content_type': 'text/plain',
+                'content': 'We need to batch overdue notice processing.',
+                'artifact_kind': 'message',
+                'role': 'user',
+                'actor_ref': 'user:catalog-admin',
+                'container_ref': 'chat:library-help',
+                'thread_ref': 'chat:library-help:thread-mu-recall-bob',
+                'visibility': 'public',
+                'occurred_at': '2026-03-11T10:01:00Z',
+            },
+            {
+                'source_type': 'assistant_artifact',
+                'source_id': 'mu-recall-bob-asst-1',
+                'content_type': 'text/plain',
+                'content': 'Decision: use 30-minute batches for overdue notice processing to avoid staff inbox spam.',
+                'artifact_kind': 'assistant_output',
+                'role': 'assistant',
+                'container_ref': 'chat:library-help',
+                'thread_ref': 'chat:library-help:thread-mu-recall-bob',
+                'visibility': 'public',
+                'occurred_at': '2026-03-11T10:02:00Z',
+            },
+        ):
+            response = client.post('/items', json=[payload])
+            assert response.status_code == 200
+        client.app.state.pallium_service.drain_processing_queue(worker_id='routing-test')
+
+        # Query as user A about reservation ordering
+        payload = _run_debug_query(
+            client,
+            {
+                'text': 'What decisions have been made about ordering and notices?',
+                'limit': 6,
+                'container_ref': 'chat:library-help',
+                'actor_ref': 'user:branch-librarian',
+            },
+        )
+        routing = payload['trace']['routing']
+
+        assert routing['query_intent'] in ('broad_recall', 'precise_fact')
+        assert payload['results'], 'Expected results from shared multi-user container'
+        # Verify at least one decision is in the results
+        memory_hits = [r for r in payload['results'] if r['result_kind'] == 'memory_hit']
+        assert memory_hits, 'Expected memory hits from shared decisions'
+        memory_types = {r['type'] for r in memory_hits}
+        assert memory_types & {'decision', 'thread_summary', 'investigation_outcome'}, (
+            f'Expected meaningful memory types in recall, got: {memory_types}'
+        )
+

@@ -801,5 +801,304 @@
         }
       }
     ]
+  },
+  {
+    "scenario_id": "p0-multi-user-shared-container-no-leak",
+    "description": "In a public container, user A's interest-like statement must not create personal memory visible to user B.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"actor_count": "multi_user", "visibility": "public"},
+      "invariant_assertions": ["INV-11", "INV-12"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "user_a_expresses_interest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "mu-noleak-001-msg-1",
+            "content_type": "text/plain",
+            "content": "I think we should look into a new barcode scanner for the circulation desk. The current one misreads older catalog labels.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-team",
+            "thread_ref": "chat:library-team:thread-noleak-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/mu-noleak-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "user_b_queries",
+        "action": "query",
+        "query": {
+          "text": "What equipment changes have been discussed for the circulation desk?",
+          "limit": 6,
+          "container_ref": "chat:library-team",
+          "actor_ref": "user:catalog-admin",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-11", "INV-12"]
+      }
+    ]
+  },
+  {
+    "scenario_id": "p0-multi-user-thread-summary-shared",
+    "description": "Two users contribute to the same thread; the resulting thread summary must have actor_ref=null.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"actor_count": "multi_user", "visibility": "container"},
+      "invariant_assertions": ["INV-07", "INV-13"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "multi_user_thread_discussion",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "mu-ts-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Why are some reservation holds disappearing after catalog sync delays?",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-team",
+            "thread_ref": "chat:library-team:thread-ts-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/mu-ts-001-msg-1",
+            "occurred_at": "2026-03-20T09:00:00Z",
+            "visibility": "container"
+          },
+          {
+            "source_type": "chat_message",
+            "source_id": "mu-ts-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-team",
+            "thread_ref": "chat:library-team:thread-ts-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://seed/mu-ts-001-msg-2",
+            "occurred_at": "2026-03-20T09:01:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_thread_summary",
+        "action": "query",
+        "query": {
+          "text": "What was decided about reservation ordering?",
+          "limit": 6,
+          "container_ref": "chat:library-team",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-13"]
+      }
+    ]
+  },
+  {
+    "scenario_id": "p1-multi-user-cross-thread-recall",
+    "description": "User A discusses in thread 1, user B in thread 2; user A queries from thread 3 and recalls memories from both threads.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"actor_count": "multi_user", "thread_relation": "cross_thread"},
+      "invariant_assertions": ["INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "thread_1_user_a",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "mu-xthread-001-msg-1",
+            "content_type": "text/plain",
+            "content": "The catalog sync retry hit a 401 because the service token expired after refreshing 312 reservation records.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-shared",
+            "thread_ref": "chat:catalog-shared:thread-xthread-1",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/mu-xthread-001-msg-1",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "visibility": "container"
+          },
+          {
+            "source_type": "assistant_artifact",
+            "source_id": "mu-xthread-001-asst-1",
+            "content_type": "text/plain",
+            "content": "Blocked: catalog API returned 401 because the service token expired.",
+            "artifact_kind": "tool_use_summary",
+            "role": "assistant",
+            "container_ref": "chat:catalog-shared",
+            "thread_ref": "chat:catalog-shared:thread-xthread-1",
+            "source_ref": "memory://seed/mu-xthread-001-asst-1",
+            "occurred_at": "2026-03-20T10:01:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "thread_2_user_b",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "mu-xthread-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-shared",
+            "thread_ref": "chat:catalog-shared:thread-xthread-2",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://seed/mu-xthread-001-msg-2",
+            "occurred_at": "2026-03-20T10:02:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "user_a_queries_thread_3",
+        "action": "query",
+        "query": {
+          "text": "What do we know about catalog sync issues and reservation ordering?",
+          "limit": 6,
+          "container_ref": "chat:catalog-shared",
+          "thread_ref": "chat:catalog-shared:thread-xthread-3",
+          "actor_ref": "user:branch-librarian",
+          "visibility": "container"
+        },
+        "soft_expectations": {
+          "must_include": ["reservation", "ordering"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "p1-multi-user-topic-isolation",
+    "description": "User A and user B discuss different topics in the same container; querying about A's topic should not inject B's topic.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"actor_count": "multi_user", "topic_pattern": "switch"},
+      "invariant_assertions": ["INV-03"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "user_a_discusses_sync",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "mu-topic-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: the catalog sync retry should resume from batch 313 after the service token is refreshed.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-team",
+            "thread_ref": "chat:library-team:thread-topic-sync",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/mu-topic-001-msg-1",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "user_b_discusses_notices",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "mu-topic-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Decision: overdue notices should go out in 30-minute batches to avoid staff inbox spam.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-team",
+            "thread_ref": "chat:library-team:thread-topic-notices",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://seed/mu-topic-001-msg-2",
+            "occurred_at": "2026-03-20T10:01:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "user_a_queries_sync_topic",
+        "action": "query",
+        "query": {
+          "text": "What was decided about the catalog sync retry?",
+          "limit": 6,
+          "container_ref": "chat:library-team",
+          "actor_ref": "user:branch-librarian",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-03"],
+        "soft_expectations": {
+          "must_not_include": ["overdue", "inbox", "spam", "notices"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "p1-multi-user-shared-decision-visible-to-all",
+    "description": "User A posts a decision in a public container; user B queries and sees the decision.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"actor_count": "multi_user", "visibility": "public"},
+      "invariant_assertions": ["INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "user_a_posts_decision",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "mu-visible-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: use item event time for reservation ordering to prevent duplicate holds after catalog sync delays.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-shared",
+            "thread_ref": "chat:catalog-shared:thread-visible-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/mu-visible-001-msg-1",
+            "occurred_at": "2026-03-20T11:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "user_b_queries",
+        "action": "query",
+        "query": {
+          "text": "What was decided about reservation ordering?",
+          "limit": 6,
+          "container_ref": "chat:catalog-shared",
+          "actor_ref": "user:catalog-admin",
+          "visibility": "public"
+        },
+        "soft_expectations": {
+          "must_include": ["reservation", "ordering", "event time"]
+        }
+      }
+    ]
   }
 ]

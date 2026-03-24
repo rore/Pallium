@@ -739,3 +739,138 @@ def test_normalize_does_not_strip_single_fragment_current_state() -> None:
 
     # Single fragment — return value must not be empty (the whole state is the only content).
     assert normalized.strip() != ""
+
+
+# ---------------------------------------------------------------------------
+# Multi-user thread aggregation: actor_ref must be null on thread-level memory
+# ---------------------------------------------------------------------------
+
+
+def test_thread_summary_null_actor_ref_after_multi_actor_thread(monkeypatch, test_db_url: str) -> None:
+    """Thread summary from a multi-actor thread must have actor_ref=None."""
+    client = _create_thread_client(monkeypatch, test_db_url)
+    thread_ref = "chat:library-team:thread-multi-actor-summary"
+    container_ref = "chat:library-team"
+
+    for payload in (
+        {
+            "source_type": "chat_message",
+            "source_id": "multi-actor-msg-1",
+            "content_type": "text/plain",
+            "content": "Why are some library holds disappearing after catalog sync delays?",
+            "artifact_kind": "message",
+            "role": "user",
+            "actor_ref": "user:branch-librarian",
+            "container_ref": container_ref,
+            "thread_ref": thread_ref,
+            "visibility": "container",
+            "occurred_at": "2026-03-23T10:00:00Z",
+        },
+        {
+            "source_type": "chat_message",
+            "source_id": "multi-actor-msg-2",
+            "content_type": "text/plain",
+            "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.",
+            "artifact_kind": "message",
+            "role": "user",
+            "actor_ref": "user:catalog-admin",
+            "container_ref": container_ref,
+            "thread_ref": thread_ref,
+            "visibility": "container",
+            "occurred_at": "2026-03-23T10:01:00Z",
+        },
+    ):
+        client.post("/items", json=[payload])
+
+    storage = client.app.state.pallium_service._storage
+    thread_items = storage.list_source_items_for_thread(container_ref, thread_ref)
+    thread_summaries = [
+        memory
+        for item in thread_items
+        for memory in storage.list_memory_objects_for_source_item(item.id)
+        if memory.type == "thread_summary" and memory.lifecycle == "active"
+    ]
+    assert thread_summaries, "Expected at least one active thread_summary"
+    for summary in thread_summaries:
+        assert summary.actor_ref is None, (
+            f"Thread summary from multi-actor thread should have actor_ref=None, "
+            f"got actor_ref={summary.actor_ref}"
+        )
+
+
+def test_task_checkpoint_null_actor_ref_in_multi_actor_thread(monkeypatch, test_db_url: str) -> None:
+    """Task checkpoint from a multi-actor thread must have actor_ref=None."""
+    client = _create_thread_client(monkeypatch, test_db_url)
+    thread_ref = "chat:library-team:thread-multi-actor-checkpoint"
+    container_ref = "chat:library-team"
+
+    for payload in (
+        {
+            "source_type": "chat_message",
+            "source_id": "multi-actor-cp-msg-1",
+            "content_type": "text/plain",
+            "content": "The catalog sync retry is queued again.",
+            "artifact_kind": "message",
+            "role": "user",
+            "actor_ref": "user:branch-librarian",
+            "container_ref": container_ref,
+            "thread_ref": thread_ref,
+            "visibility": "container",
+            "occurred_at": "2026-03-11T09:59:00Z",
+        },
+        {
+            "source_type": "assistant_artifact",
+            "source_id": "multi-actor-cp-artifact-1",
+            "content_type": "text/plain",
+            "content": "Partial progress: refreshed 312 reservation records before the catalog sync tool failed.",
+            "artifact_kind": "tool_use_summary",
+            "role": "assistant",
+            "actor_ref": "user:catalog-admin",
+            "container_ref": container_ref,
+            "thread_ref": thread_ref,
+            "visibility": "container",
+            "occurred_at": "2026-03-11T10:00:00Z",
+        },
+        {
+            "source_type": "assistant_artifact",
+            "source_id": "multi-actor-cp-artifact-2",
+            "content_type": "text/plain",
+            "content": "Blocked: catalog API returned 401 because the service token expired.",
+            "artifact_kind": "tool_use_summary",
+            "role": "assistant",
+            "actor_ref": "user:catalog-admin",
+            "container_ref": container_ref,
+            "thread_ref": thread_ref,
+            "visibility": "container",
+            "occurred_at": "2026-03-11T10:01:00Z",
+        },
+        {
+            "source_type": "assistant_artifact",
+            "source_id": "multi-actor-cp-artifact-3",
+            "content_type": "text/plain",
+            "content": "Next step: refresh the catalog service token and rerun the sync from batch 313.",
+            "artifact_kind": "todo_snapshot",
+            "role": "assistant",
+            "actor_ref": "user:catalog-admin",
+            "container_ref": container_ref,
+            "thread_ref": thread_ref,
+            "visibility": "container",
+            "occurred_at": "2026-03-11T10:02:00Z",
+        },
+    ):
+        client.post("/items", json=[payload])
+
+    storage = client.app.state.pallium_service._storage
+    thread_items = storage.list_source_items_for_thread(container_ref, thread_ref)
+    checkpoints = [
+        memory
+        for item in thread_items
+        for memory in storage.list_memory_objects_for_source_item(item.id)
+        if memory.type == "task_checkpoint" and memory.lifecycle == "active"
+    ]
+    assert checkpoints, "Expected at least one active task_checkpoint"
+    for checkpoint in checkpoints:
+        assert checkpoint.actor_ref is None, (
+            f"Task checkpoint from multi-actor thread should have actor_ref=None, "
+            f"got actor_ref={checkpoint.actor_ref}"
+        )

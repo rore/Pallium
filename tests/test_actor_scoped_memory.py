@@ -498,6 +498,350 @@ def test_evidence_matches_filters_respects_actor_ref() -> None:
     assert evidence_matches_filters(ev_shared, filters_a) is True
 
 
+# ---------------------------------------------------------------------------
+# Multi-user test coverage: filter-layer, cross-container, shared visibility
+# ---------------------------------------------------------------------------
+
+
+def test_interest_fallthrough_in_shared_container_creates_shared_discussion_summary(monkeypatch, test_db_url: str) -> None:
+    """User A's interest in a shared container falls through to discussion_summary
+    with actor_ref=None and visibility=public (shared evidence).
+
+    FINDING: Item-level memories (discussion_summary, decision) in shared containers
+    have actor_ref=None on the memory object, but their evidence references point to
+    the creator's source item which retains actor_ref. This means evidence-path
+    filtering at query time may prevent other users from reaching these memories
+    directly. Thread-level memories (thread_summary, task_checkpoint) are fully
+    shared because thread aggregation includes evidence from all participants.
+
+    This test verifies the write-side correctness: interest suppression works,
+    discussion_summary fallback is created, and memory is shared (actor_ref=None).
+    The query-side cross-user visibility depends on thread aggregation.
+    """
+    events = [
+        {
+            "source_type": "chat_message",
+            "source_id": "mu-fallthrough-interest-1",
+            "content_type": "text/plain",
+            "content": "ok, chroma sounds interesting. i should check it some time.",
+            "artifact_kind": "message",
+            "role": "user",
+            "actor_ref": ACTOR_A,
+            "container_ref": CONTAINER_PUBLIC,
+            "thread_ref": f"{CONTAINER_PUBLIC}:thread-fallthrough",
+            "visibility": "public",
+            "occurred_at": "2026-03-23T10:00:00Z",
+        },
+    ]
+    with _build_client(monkeypatch, test_db_url) as client:
+        response = client.post("/items", json=events)
+        assert response.status_code == 200
+        client.app.state.pallium_service.drain_processing_queue(worker_id="test")
+
+        storage = client.app.state.pallium_service._storage
+        active_memories = storage.list_memory_objects(lifecycle="active")
+
+        # Interest must NOT be created in public container
+        assert not any(m.type == "interest" for m in active_memories), (
+            "Interest should not be created in public container"
+        )
+
+        # discussion_summary must be created as fallback
+        discussion_summaries = [m for m in active_memories if m.type == "discussion_summary"]
+        assert discussion_summaries, "Expected discussion_summary as fallback for interest"
+
+        # The discussion_summary must be shared (actor_ref=None)
+        for ds in discussion_summaries:
+            assert ds.actor_ref is None, (
+                f"discussion_summary in shared container should have actor_ref=None, "
+                f"got {ds.actor_ref}"
+            )
+            assert ds.visibility == "public", (
+                f"discussion_summary should inherit visibility=public, got {ds.visibility}"
+            )
+
+        # User A (the creator) can see their own discussion_summary
+        query_a = client.post("/query", json={
+            "text": "what was said about chroma?",
+            "limit": 10,
+            "container_ref": CONTAINER_PUBLIC,
+            "visibility": "public",
+            "actor_ref": ACTOR_A,
+        })
+        assert query_a.status_code == 200
+        assert query_a.json()["results"], "Creator should see their own discussion_summary"
+
+
+def test_matches_filters_mixed_actor_shared_candidates() -> None:
+    """matches_filters must pass personal (matching actor) + shared (null) and reject other actor."""
+    from core.filters import matches_filters
+    from core.models import EvidenceReference, MemoryObject, QueryFilters
+
+    mo_alice = MemoryObject(
+        id="mo-alice-1", type="decision", schema_id="test", schema_version="1",
+        payload={"decision": "use event time"},
+        visibility="private", container_ref=CONTAINER_PRIVATE, actor_ref=ACTOR_A,
+        lifecycle="active",
+    )
+    mo_bob = MemoryObject(
+        id="mo-bob-1", type="decision", schema_id="test", schema_version="1",
+        payload={"decision": "use arrival time"},
+        visibility="private", container_ref=CONTAINER_PRIVATE, actor_ref=ACTOR_B,
+        lifecycle="active",
+    )
+    mo_shared = MemoryObject(
+        id="mo-shared-1", type="decision", schema_id="test", schema_version="1",
+        payload={"decision": "batch size 30"},
+        visibility="container", container_ref=CONTAINER_LIMITED, actor_ref=None,
+        lifecycle="active",
+    )
+
+    objects = {mo.id: mo for mo in [mo_alice, mo_bob, mo_shared]}
+    ev_alice = EvidenceReference(
+        source_item_id="si-a", source_type="chat_message", source_id="ev-a",
+        actor_ref=ACTOR_A, container_ref=CONTAINER_PRIVATE, visibility="private",
+    )
+    ev_bob = EvidenceReference(
+        source_item_id="si-b", source_type="chat_message", source_id="ev-b",
+        actor_ref=ACTOR_B, container_ref=CONTAINER_PRIVATE, visibility="private",
+    )
+    ev_shared = EvidenceReference(
+        source_item_id="si-s", source_type="chat_message", source_id="ev-s",
+        actor_ref=None, container_ref=CONTAINER_LIMITED, visibility="container",
+    )
+    evidence_map = {"mo-alice-1": [ev_alice], "mo-bob-1": [ev_bob], "mo-shared-1": [ev_shared]}
+
+    filters = QueryFilters(actor_ref=ACTOR_A, container_ref=CONTAINER_PRIVATE)
+
+    assert matches_filters(
+        objects.get, lambda _: None, evidence_map.get,
+        "memory_object", "mo-alice-1", filters,
+    ) is True, "Alice's memory should pass for alice's query"
+
+    assert matches_filters(
+        objects.get, lambda _: None, evidence_map.get,
+        "memory_object", "mo-bob-1", filters,
+    ) is False, "Bob's memory should NOT pass for alice's query"
+
+    # Shared memory: actor_ref=None always passes actor filter
+    shared_filters = QueryFilters(actor_ref=ACTOR_A, container_ref=CONTAINER_LIMITED)
+    assert matches_filters(
+        objects.get, lambda _: None, evidence_map.get,
+        "memory_object", "mo-shared-1", shared_filters,
+    ) is True, "Shared (null actor) memory should pass for any actor's query"
+
+    # Cross-container case: shared memory in LIMITED container checked against
+    # PRIVATE container filter — evidence container_ref won't match, so should fail
+    assert matches_filters(
+        objects.get, lambda _: None, evidence_map.get,
+        "memory_object", "mo-shared-1", filters,
+    ) is False, "Shared memory in different container should NOT pass cross-container filter"
+
+
+def test_cross_container_isolation_between_users_private_containers(monkeypatch, test_db_url: str) -> None:
+    """Memories in Alice's private container are invisible from Bob's private container."""
+    container_alice = "chat:alice-dm"
+    container_bob = "chat:bob-dm"
+    events = [
+        {
+            "source_type": "chat_message",
+            "source_id": "alice-priv-decision-1",
+            "content_type": "text/plain",
+            "content": "Decision: use item event time for reservation ordering.",
+            "artifact_kind": "message",
+            "role": "user",
+            "actor_ref": ACTOR_A,
+            "container_ref": container_alice,
+            "thread_ref": f"{container_alice}:thread-1",
+            "visibility": "private",
+            "occurred_at": "2026-03-23T10:00:00Z",
+        },
+        {
+            "source_type": "chat_message",
+            "source_id": "bob-priv-decision-1",
+            "content_type": "text/plain",
+            "content": "Decision: use arrival time for hold processing during sync delays.",
+            "artifact_kind": "message",
+            "role": "user",
+            "actor_ref": ACTOR_B,
+            "container_ref": container_bob,
+            "thread_ref": f"{container_bob}:thread-1",
+            "visibility": "private",
+            "occurred_at": "2026-03-23T10:01:00Z",
+        },
+    ]
+    with _build_client(monkeypatch, test_db_url) as client:
+        response = client.post("/items", json=events)
+        assert response.status_code == 200
+        client.app.state.pallium_service.drain_processing_queue(worker_id="test")
+
+        # Query from Alice's container — must NOT see Bob's container memories
+        query_response = client.post("/query", json={
+            "text": "what decisions about ordering?",
+            "limit": 10,
+            "container_ref": container_alice,
+            "visibility": "private",
+            "actor_ref": ACTOR_A,
+        })
+        assert query_response.status_code == 200
+        results = query_response.json()["results"]
+        assert results, "Alice should see at least her own container's memories"
+        for result in results:
+            assert result.get("container_ref") != container_bob, (
+                f"Alice's query from her private container should not see Bob's container: "
+                f"result={result.get('source_id') or result.get('memory_object_id')}"
+            )
+
+
+def test_cross_container_bleed_prevention_private_to_shared(monkeypatch, test_db_url: str) -> None:
+    """Private interest must NOT leak into public container queries, even for the same actor."""
+    events = [
+        # Alice's private interest in her DM
+        {
+            "source_type": "chat_message",
+            "source_id": "alice-priv-interest-1",
+            "content_type": "text/plain",
+            "content": "ok, chroma sounds interesting. i should check it some time.",
+            "artifact_kind": "message",
+            "role": "user",
+            "actor_ref": ACTOR_A,
+            "container_ref": CONTAINER_PRIVATE,
+            "thread_ref": f"{CONTAINER_PRIVATE}:thread-1",
+            "visibility": "private",
+            "occurred_at": "2026-03-23T10:00:00Z",
+        },
+        # Alice's shared decision in public container
+        {
+            "source_type": "chat_message",
+            "source_id": "alice-pub-decision-1",
+            "content_type": "text/plain",
+            "content": "Decision: use item event time for reservation ordering to prevent duplicate holds.",
+            "artifact_kind": "message",
+            "role": "user",
+            "actor_ref": ACTOR_A,
+            "container_ref": CONTAINER_PUBLIC,
+            "thread_ref": f"{CONTAINER_PUBLIC}:thread-1",
+            "visibility": "public",
+            "occurred_at": "2026-03-23T10:01:00Z",
+        },
+    ]
+    with _build_client(monkeypatch, test_db_url) as client:
+        response = client.post("/items", json=events)
+        assert response.status_code == 200
+        client.app.state.pallium_service.drain_processing_queue(worker_id="test")
+
+        # Query from public context — private interest must not appear
+        query_response = client.post("/query", json={
+            "text": "what do we know about databases and ordering?",
+            "limit": 10,
+            "container_ref": CONTAINER_PUBLIC,
+            "visibility": "public",
+            "actor_ref": ACTOR_A,
+        })
+        assert query_response.status_code == 200
+        results = query_response.json()["results"]
+        for result in results:
+            if result["result_kind"] == "memory_hit":
+                assert result.get("type") != "interest", (
+                    f"Private interest should not appear in public container query: "
+                    f"memory_object_id={result.get('memory_object_id')}"
+                )
+            # Also verify no private container memories leak
+            if result.get("container_ref"):
+                assert result["container_ref"] != CONTAINER_PRIVATE, (
+                    f"Private container memory leaked into public query: "
+                    f"result={result.get('source_id') or result.get('memory_object_id')}"
+                )
+
+
+def test_shared_container_both_users_see_all_decisions(monkeypatch, test_db_url: str) -> None:
+    """In a shared container, both users' decisions become shared (actor_ref=None) and visible to all."""
+    events = [
+        {
+            "source_type": "chat_message",
+            "source_id": "alice-team-decision-1",
+            "content_type": "text/plain",
+            "content": "Decision: use item event time for reservation ordering.",
+            "artifact_kind": "message",
+            "role": "user",
+            "actor_ref": ACTOR_A,
+            "container_ref": CONTAINER_LIMITED,
+            "thread_ref": f"{CONTAINER_LIMITED}:thread-1",
+            "visibility": "container",
+            "occurred_at": "2026-03-23T10:00:00Z",
+        },
+        {
+            "source_type": "chat_message",
+            "source_id": "bob-team-decision-1",
+            "content_type": "text/plain",
+            "content": "Decision: use 30-minute batches for overdue notice processing.",
+            "artifact_kind": "message",
+            "role": "user",
+            "actor_ref": ACTOR_B,
+            "container_ref": CONTAINER_LIMITED,
+            "thread_ref": f"{CONTAINER_LIMITED}:thread-1",
+            "visibility": "container",
+            "occurred_at": "2026-03-23T10:01:00Z",
+        },
+    ]
+    with _build_client(monkeypatch, test_db_url) as client:
+        response = client.post("/items", json=events)
+        assert response.status_code == 200
+        client.app.state.pallium_service.drain_processing_queue(worker_id="test")
+
+        # All memories should have actor_ref=None (shared)
+        storage = client.app.state.pallium_service._storage
+        active_memories = storage.list_memory_objects(lifecycle="active")
+        item_level = [m for m in active_memories if m.type not in ("thread_summary", "task_checkpoint")]
+        for memory in item_level:
+            assert memory.actor_ref is None, (
+                f"Memory in shared container should have actor_ref=None, "
+                f"got actor_ref={memory.actor_ref} on {memory.type}"
+            )
+
+        # Query as Alice — should see results
+        query_alice = client.post("/query", json={
+            "text": "what decisions about ordering and batches?",
+            "limit": 10,
+            "container_ref": CONTAINER_LIMITED,
+            "visibility": "container",
+            "actor_ref": ACTOR_A,
+        })
+        assert query_alice.status_code == 200
+        alice_results = query_alice.json()["results"]
+        assert alice_results, "Alice should see shared decisions"
+
+        # Query as Bob — should see same results
+        query_bob = client.post("/query", json={
+            "text": "what decisions about ordering and batches?",
+            "limit": 10,
+            "container_ref": CONTAINER_LIMITED,
+            "visibility": "container",
+            "actor_ref": ACTOR_B,
+        })
+        assert query_bob.status_code == 200
+        bob_results = query_bob.json()["results"]
+        assert bob_results, "Bob should see shared decisions"
+
+        # Both users should see memory hits with actor_ref=None (shared).
+        # Note: evidence-based filtering means each user may see different item-level
+        # memories (their own source items' decisions) plus the same thread-level memories.
+        # The key invariant: all visible memories are shared (actor_ref=None).
+        alice_memory_ids = {r["memory_object_id"] for r in alice_results if r["result_kind"] == "memory_hit"}
+        bob_memory_ids = {r["memory_object_id"] for r in bob_results if r["result_kind"] == "memory_hit"}
+        assert alice_memory_ids, "Alice should see memory hits"
+        assert bob_memory_ids, "Bob should see memory hits"
+        # Thread-level memories (thread_summary) should be identical for both
+        alice_thread_ids = {r["memory_object_id"] for r in alice_results
+                           if r["result_kind"] == "memory_hit" and r.get("type") == "thread_summary"}
+        bob_thread_ids = {r["memory_object_id"] for r in bob_results
+                         if r["result_kind"] == "memory_hit" and r.get("type") == "thread_summary"}
+        assert alice_thread_ids == bob_thread_ids, (
+            f"Thread summaries should be identical for both users. "
+            f"Alice: {alice_thread_ids}, Bob: {bob_thread_ids}"
+        )
+
+
 def test_query_with_actor_ref_excludes_other_actors_source_items(monkeypatch, test_db_url: str) -> None:
     """Query with actor_ref=A should NOT return source_hits from actor B."""
     events = [

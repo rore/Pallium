@@ -2001,3 +2001,212 @@ def test_ontopic_injects_decision_with_strong_score() -> None:
         f"decision_reason={outcome.decision_reason}"
     )
 
+
+# ---------------------------------------------------------------------------
+# Multi-user routing: shared container candidates with mixed actor evidence
+# ---------------------------------------------------------------------------
+
+
+def test_multi_user_shared_candidates_all_inject_correctly() -> None:
+    """In a shared container, candidates from different users (all actor_ref=None)
+    should route and inject normally — routing must not suppress shared evidence."""
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-team',
+        thread_ref='chat:library-team:thread-mu-injection',
+        actor_ref='user:branch-librarian',
+    )
+    # Two decisions from different users, both shared (actor_ref=None on memory)
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-alice-shared',
+                type='decision',
+                payload={'decision': 'use item event time for reservation ordering'},
+                freshness_at=datetime(2026, 3, 12, 10, 0, tzinfo=timezone.utc),
+                score=19,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='src-alice-1',
+                        source_type='chat_message',
+                        source_id='alice-msg-1',
+                        occurred_at=datetime(2026, 3, 12, 10, 0, tzinfo=timezone.utc),
+                        container_ref='chat:library-team',
+                        thread_ref='chat:library-team:thread-history-1',
+                        artifact_kind='message',
+                    ),
+                ],
+                container_ref='chat:library-team',
+                thread_ref='chat:library-team:thread-history-1',
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-bob-shared',
+                type='decision',
+                payload={'decision': 'use 30-minute batches for overdue notice processing'},
+                freshness_at=datetime(2026, 3, 12, 11, 0, tzinfo=timezone.utc),
+                score=17,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='src-bob-1',
+                        source_type='chat_message',
+                        source_id='bob-msg-1',
+                        occurred_at=datetime(2026, 3, 12, 11, 0, tzinfo=timezone.utc),
+                        container_ref='chat:library-team',
+                        thread_ref='chat:library-team:thread-history-2',
+                        artifact_kind='message',
+                    ),
+                ],
+                container_ref='chat:library-team',
+                thread_ref='chat:library-team:thread-history-2',
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='summary-team-thread',
+                type='thread_summary',
+                payload={
+                    'summary': 'The team discussed reservation ordering and overdue notice batching.',
+                },
+                freshness_at=datetime(2026, 3, 12, 11, 0, tzinfo=timezone.utc),
+                score=15,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='src-alice-1',
+                        source_type='chat_message',
+                        source_id='alice-msg-1',
+                        occurred_at=datetime(2026, 3, 12, 10, 0, tzinfo=timezone.utc),
+                        container_ref='chat:library-team',
+                        thread_ref='chat:library-team:thread-history-1',
+                        artifact_kind='message',
+                    ),
+                ],
+                container_ref='chat:library-team',
+                thread_ref='chat:library-team:thread-history-1',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What decisions have we made about ordering and notices?',
+            query_tokens=('decisions', 'ordering', 'notices'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What decisions have we made about ordering and notices?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.should_inject is True, (
+        f"Shared multi-user candidates should inject. decision_reason={outcome.decision_reason}"
+    )
+    assert outcome.injectable_blocks, "Expected injectable blocks from shared candidates"
+    # Both decisions should be reachable — routing must not filter by actor
+    injected_ids = {block.result_id for block in outcome.injectable_blocks}
+    assert 'memory_object:decision-alice-shared' in injected_ids or 'memory_object:decision-bob-shared' in injected_ids, (
+        f"At least one shared decision should be injected. Got: {injected_ids}"
+    )
+
+
+def test_multi_user_shared_thread_summary_and_checkpoint_inject_together() -> None:
+    """Thread summary + task checkpoint from multi-user thread should both be injectable."""
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-team',
+        thread_ref='chat:library-team:thread-mu-recall',
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='checkpoint-multi-user',
+                type='task_checkpoint',
+                payload={
+                    'summary': 'Catalog sync retry paused after service-token expiry.',
+                    'task': 'Resume the catalog sync retry.',
+                    'current_state': 'Refreshed 312 reservation records before the token expired.',
+                    'key_findings': ['service token expired during batch 312'],
+                    'blocker_state': 'Catalog API returned 401.',
+                    'next_step': 'Refresh the catalog service token and rerun from batch 313.',
+                    'evidence': ['Partial progress: 312 records refreshed.'],
+                    'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=18,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='src-team-1',
+                        source_type='assistant_artifact',
+                        source_id='team-artifact-1',
+                        occurred_at=datetime(2026, 3, 11, 10, 1, tzinfo=timezone.utc),
+                        container_ref='chat:library-team',
+                        thread_ref='chat:library-team:thread-history',
+                        artifact_kind='tool_use_summary',
+                    ),
+                ],
+                container_ref='chat:library-team',
+                thread_ref='chat:library-team:thread-history',
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='summary-multi-user',
+                type='thread_summary',
+                payload={
+                    'summary': 'The catalog sync retry hit a 401 after 312 records. Next step is to refresh the token and resume from batch 313.',
+                },
+                freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+                score=15,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='src-team-1',
+                        source_type='assistant_artifact',
+                        source_id='team-artifact-1',
+                        occurred_at=datetime(2026, 3, 11, 10, 1, tzinfo=timezone.utc),
+                        container_ref='chat:library-team',
+                        thread_ref='chat:library-team:thread-history',
+                        artifact_kind='tool_use_summary',
+                    ),
+                ],
+                container_ref='chat:library-team',
+                thread_ref='chat:library-team:thread-history',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What is the status of the catalog sync retry?',
+            query_tokens=('status', 'catalog', 'sync', 'retry'),
+            limit=4,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What is the status of the catalog sync retry?',
+        requested_limit=4,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.should_inject is True, (
+        f"Multi-user thread-level memories should inject. decision_reason={outcome.decision_reason}"
+    )
+    assert outcome.injectable_blocks, "Expected injectable blocks"
+    injected_types = {block.memory_type for block in outcome.injectable_blocks}
+    assert injected_types & {'task_checkpoint', 'thread_summary'}, (
+        f"Thread-level memories from multi-user thread should be injectable. Got types: {injected_types}"
+    )
+
