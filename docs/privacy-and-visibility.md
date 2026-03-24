@@ -4,7 +4,7 @@ This document explains the current privacy model for Pallium's
 `agent_conversation_memory` package.
 
 The main point is simple: `container_ref` is the scope boundary, and
-`container_visibility` controls who can see items across containers.
+`visibility` controls who can see items across containers.
 
 ## One Concrete Scenario
 
@@ -17,16 +17,16 @@ Imagine two private channels discussing the same incident.
 If you only relied on `thread_ref` or lexical similarity, it would be easy to
 leak the wrong memory across scopes.
 
-Pallium avoids that by enforcing `container_visibility` before ranking. A query
+Pallium avoids that by enforcing `visibility` before ranking. A query
 from one container only sees items from that container plus public items from
 other containers.
 
 ## Container Visibility
 
-Every item has a `container_visibility` value:
+Every item has a `visibility` value:
 
 - `"public"` — visible to queries from any container
-- `"limited"` — visible only to queries from the same `container_ref`
+- `"container"` — visible only to queries from the same `container_ref`
   (group context such as a private channel)
 - `"private"` — visible only to queries from the same `container_ref`
   (personal context such as a DM)
@@ -34,7 +34,7 @@ Every item has a `container_visibility` value:
 Default: `"private"`.
 
 `container_ref` is the scope identity. Items in the same `container_ref` can
-see each other. `container_visibility` controls whether items can also be seen
+see each other. `visibility` controls whether items can also be seen
 from other containers.
 
 ## Retrieval Rules
@@ -51,7 +51,7 @@ user's personal interest from a public channel appearing in a different
 session's context. Shared knowledge like decisions and thread summaries
 (`actor_ref = null`) flows freely across containers when public.
 
-The caller sends `container_ref` and `container_visibility` on ingest and
+The caller sends `container_ref` and `visibility` on ingest and
 query. Pallium applies the filtering rules.
 
 ## Actor Scoping
@@ -122,14 +122,14 @@ topic.
 
 Pallium owns:
 
-- the `container_visibility` contract
+- the `visibility` contract
 - retrieval enforcement before ranking
 - visibility preservation through derivation
 - visibility exclusion trace on the debug path
 
 Your application owns:
 
-- deciding what `container_visibility` a new item belongs to
+- deciding what `visibility` a new item belongs to
 - sending `container_ref` on ingest and query
 - any user or tenant authorization outside Pallium
 
@@ -139,7 +139,7 @@ that enforces the visibility boundary you provide.
 ## Practical Integration Rules
 
 - always send `container_ref` with `agent_conversation_memory`
-- use `container_visibility` to distinguish public channels, private channels,
+- use `visibility` to distinguish public channels, private channels,
   and DMs
 - use `POST /query/debug` when results are missing and you need to see
   visibility exclusions

@@ -25,7 +25,7 @@ def _make_user_item(content: str, source_id: str) -> SourceItem:
         container_ref="chat:constraint-eval",
         thread_ref="chat:constraint-eval:t1",
         occurred_at=datetime(2026, 3, 23, 10, 0, tzinfo=timezone.utc),
-        container_visibility="private",
+        visibility="private",
     )
 
 

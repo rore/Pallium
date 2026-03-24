@@ -71,7 +71,7 @@
       "text": "Where did things end up with that?",
       "limit": 4,
       "container_ref": "chat:library-help",
-      "container_visibility": "public"
+      "visibility": "public"
     },
     "expected_vector_recall": true,
     "expected_lexical_recall": false,
@@ -148,7 +148,7 @@
       "text": "How did it turn out?",
       "limit": 4,
       "container_ref": "chat:library-help",
-      "container_visibility": "public"
+      "visibility": "public"
     },
     "expected_vector_recall": true,
     "expected_lexical_recall": false,
@@ -240,7 +240,7 @@
       "text": "Any takeaways worth noting?",
       "limit": 4,
       "container_ref": "chat:library-help",
-      "container_visibility": "public"
+      "visibility": "public"
     },
     "expected_vector_recall": true,
     "expected_lexical_recall": false,
@@ -317,7 +317,7 @@
       "text": "What approach did we settle on?",
       "limit": 4,
       "container_ref": "chat:library-help",
-      "container_visibility": "public"
+      "visibility": "public"
     },
     "expected_vector_recall": true,
     "expected_lexical_recall": false,
@@ -378,7 +378,7 @@
       "text": "What actually mattered there?",
       "limit": 4,
       "container_ref": "chat:library-help",
-      "container_visibility": "public"
+      "visibility": "public"
     },
     "expected_vector_recall": true,
     "expected_lexical_recall": false,

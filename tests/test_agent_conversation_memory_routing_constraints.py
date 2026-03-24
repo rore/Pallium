@@ -40,7 +40,7 @@ def test_process_item_emits_typed_constraint_memory() -> None:
             container_ref='chat:library-help',
             thread_ref='chat:library-help:thread-constraint',
             occurred_at=datetime(2026, 3, 11, 12, 10, tzinfo=timezone.utc),
-            container_visibility="private",
+            visibility="private",
         )
     )
 

@@ -31,7 +31,7 @@ THREAD_A_EVENTS = [
         'role': 'user',
         'container_ref': CONTAINER_REF,
         'thread_ref': THREAD_A,
-        'container_visibility': 'private',
+        'visibility': 'private',
         'occurred_at': '2026-03-20T18:00:00Z',
     },
     {
@@ -47,7 +47,7 @@ THREAD_A_EVENTS = [
         'role': 'assistant',
         'container_ref': CONTAINER_REF,
         'thread_ref': THREAD_A,
-        'container_visibility': 'private',
+        'visibility': 'private',
         'occurred_at': '2026-03-20T18:00:30Z',
     },
     {
@@ -59,7 +59,7 @@ THREAD_A_EVENTS = [
         'role': 'user',
         'container_ref': CONTAINER_REF,
         'thread_ref': THREAD_A,
-        'container_visibility': 'private',
+        'visibility': 'private',
         'occurred_at': '2026-03-20T18:01:00Z',
     },
     {
@@ -71,7 +71,7 @@ THREAD_A_EVENTS = [
         'role': 'assistant',
         'container_ref': CONTAINER_REF,
         'thread_ref': THREAD_A,
-        'container_visibility': 'private',
+        'visibility': 'private',
         'occurred_at': '2026-03-20T18:01:30Z',
     },
 ]

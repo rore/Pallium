@@ -415,7 +415,7 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 "latest_occurred_at": aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else None,
                 "semantic_provenance": semantic_provenance,
             },
-            container_visibility=aggregate.container_visibility,
+            visibility=aggregate.visibility,
             container_ref=aggregate.container_ref,
             freshness_at=aggregate.latest_occurred_at,
         )
@@ -622,7 +622,7 @@ def _build_task_checkpoint_from_parsed(
                     "prompt_schema_version": TASK_CHECKPOINT_PROMPT_SCHEMA_VERSION,
                 },
             },
-            container_visibility=aggregate.container_visibility,
+            visibility=aggregate.visibility,
             container_ref=aggregate.container_ref,
             freshness_at=aggregate.latest_occurred_at,
         )
@@ -741,7 +741,7 @@ def build_pattern_memory(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 "semantic_provenance": semantic_provenance,
                 "consolidation_provenance": consolidation_provenance,
             },
-            container_visibility=group.container_visibility,
+            visibility=group.visibility,
             container_ref=group.container_ref,
             freshness_at=group.latest_occurred_at,
         )
@@ -838,7 +838,7 @@ def build_continuity_memory(*, provider: LLMProvider, prompt_variant: str, plugi
                     "prompt_variant": prompt_variant,
                 },
             },
-            container_visibility=group.container_visibility,
+            visibility=group.visibility,
             container_ref=group.container_ref,
             freshness_at=group.latest_occurred_at,
         )

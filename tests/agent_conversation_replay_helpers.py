@@ -32,13 +32,13 @@ def _agent_conversation_client(monkeypatch, test_db_url: str, *, auto_drain_item
 
     def post_with_public_visibility(url: str, *args, **kwargs):
         payload = kwargs.get("json")
-        if isinstance(payload, dict) and url in {"/items", "/query", "/query/debug"} and "container_visibility" not in payload:
+        if isinstance(payload, dict) and url in {"/items", "/query", "/query/debug"} and "visibility" not in payload:
             payload = dict(payload)
-            payload["container_visibility"] = "public"
+            payload["visibility"] = "public"
             kwargs["json"] = payload
         elif isinstance(payload, list) and url == "/items":
             payload = [
-                {**item, "container_visibility": "public"} if isinstance(item, dict) and "container_visibility" not in item else item
+                {**item, "visibility": "public"} if isinstance(item, dict) and "visibility" not in item else item
                 for item in payload
             ]
             kwargs["json"] = payload
@@ -63,7 +63,7 @@ def _render_injected_text(payload: dict[str, object]) -> str:
 
 def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]:
     container_ref = "chat:workspace:local-memory"
-    container_visibility = _replay_visibility_context()
+    visibility = _replay_visibility()
     threads = {
         "constraint": "chat:workspace:local-memory:thread-batch-constraint",
         "auth_retry_old": "chat:workspace:local-memory:thread-batch-auth-retry-old",
@@ -87,7 +87,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
             "container_ref": container_ref,
             "thread_ref": threads["constraint"],
             "occurred_at": "2026-03-11T10:00:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -99,7 +99,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
             "container_ref": container_ref,
             "thread_ref": threads["constraint"],
             "occurred_at": "2026-03-11T10:01:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "chat_message",
@@ -111,7 +111,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
             "container_ref": container_ref,
             "thread_ref": threads["constraint"],
             "occurred_at": "2026-03-11T10:01:30Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -123,7 +123,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
             "container_ref": container_ref,
             "thread_ref": threads["constraint"],
             "occurred_at": "2026-03-11T10:02:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "chat_message",
@@ -135,7 +135,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
             "container_ref": container_ref,
             "thread_ref": threads["auth_retry_old"],
             "occurred_at": "2026-03-11T11:00:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -147,7 +147,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
             "container_ref": container_ref,
             "thread_ref": threads["auth_retry_old"],
             "occurred_at": "2026-03-11T11:00:30Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -159,7 +159,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
             "container_ref": container_ref,
             "thread_ref": threads["auth_retry_old"],
             "occurred_at": "2026-03-11T11:01:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -171,7 +171,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
             "container_ref": container_ref,
             "thread_ref": threads["auth_retry_old"],
             "occurred_at": "2026-03-11T11:02:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "chat_message",
@@ -183,7 +183,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
             "container_ref": container_ref,
             "thread_ref": threads["auth_retry_new"],
             "occurred_at": "2026-03-11T12:00:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -195,7 +195,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
             "container_ref": container_ref,
             "thread_ref": threads["auth_retry_new"],
             "occurred_at": "2026-03-11T12:00:30Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -207,7 +207,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
             "container_ref": container_ref,
             "thread_ref": threads["auth_retry_new"],
             "occurred_at": "2026-03-11T12:01:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -219,7 +219,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
             "container_ref": container_ref,
             "thread_ref": threads["auth_retry_new"],
             "occurred_at": "2026-03-11T12:02:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "chat_message",
@@ -231,7 +231,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
             "container_ref": container_ref,
             "thread_ref": threads["same_thread"],
             "occurred_at": "2026-03-11T13:00:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -243,7 +243,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
             "container_ref": container_ref,
             "thread_ref": threads["same_thread"],
             "occurred_at": "2026-03-11T13:00:10Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "chat_message",
@@ -255,7 +255,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
             "container_ref": container_ref,
             "thread_ref": threads["same_thread"],
             "occurred_at": "2026-03-11T13:00:20Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
     )
     for payload in payloads:
@@ -273,7 +273,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
 
     return {
         "container_ref": container_ref,
-        "container_visibility": container_visibility,
+        "visibility": visibility,
         "threads": threads,
         "sessions": sessions,
         "thread_memory_ids": thread_memory_ids,
@@ -283,7 +283,7 @@ def _seed_batch_digest_polluted_history(client: TestClient) -> dict[str, object]
 def _seed_short_noun_isolation_history(client: TestClient) -> dict[str, object]:
     scenario = _seed_batch_digest_polluted_history(client)
     container_ref = scenario["container_ref"]
-    container_visibility = scenario["container_visibility"]
+    visibility = scenario["visibility"]
     threads = dict(scenario["threads"])
     sessions = dict(scenario["sessions"])
     threads.update(
@@ -314,7 +314,7 @@ def _seed_short_noun_isolation_history(client: TestClient) -> dict[str, object]:
             "container_ref": container_ref,
             "thread_ref": threads["noise"],
             "occurred_at": "2026-03-11T08:55:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -326,7 +326,7 @@ def _seed_short_noun_isolation_history(client: TestClient) -> dict[str, object]:
             "container_ref": container_ref,
             "thread_ref": threads["noise"],
             "occurred_at": "2026-03-11T08:56:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "chat_message",
@@ -338,7 +338,7 @@ def _seed_short_noun_isolation_history(client: TestClient) -> dict[str, object]:
             "container_ref": container_ref,
             "thread_ref": threads["reserve"],
             "occurred_at": "2026-03-11T12:30:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -350,7 +350,7 @@ def _seed_short_noun_isolation_history(client: TestClient) -> dict[str, object]:
             "container_ref": container_ref,
             "thread_ref": threads["reserve"],
             "occurred_at": "2026-03-11T12:31:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -362,7 +362,7 @@ def _seed_short_noun_isolation_history(client: TestClient) -> dict[str, object]:
             "container_ref": container_ref,
             "thread_ref": threads["reserve"],
             "occurred_at": "2026-03-11T12:35:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "chat_message",
@@ -374,7 +374,7 @@ def _seed_short_noun_isolation_history(client: TestClient) -> dict[str, object]:
             "container_ref": container_ref,
             "thread_ref": threads["same_thread_x"],
             "occurred_at": "2026-03-11T13:00:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -386,7 +386,7 @@ def _seed_short_noun_isolation_history(client: TestClient) -> dict[str, object]:
             "container_ref": container_ref,
             "thread_ref": threads["same_thread_x"],
             "occurred_at": "2026-03-11T13:00:10Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "chat_message",
@@ -398,7 +398,7 @@ def _seed_short_noun_isolation_history(client: TestClient) -> dict[str, object]:
             "container_ref": container_ref,
             "thread_ref": threads["same_thread_y"],
             "occurred_at": "2026-03-11T13:05:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
     )
     for payload in payloads:
@@ -415,8 +415,8 @@ def _seed_short_noun_isolation_history(client: TestClient) -> dict[str, object]:
     return scenario
 
 
-def _replay_visibility_context() -> str:
-    return "limited"
+def _replay_visibility() -> str:
+    return "container"
 
 
 def _collect_thread_memory_ids(

@@ -66,13 +66,13 @@ answers.
 Not all memory types are created in all contexts. Container visibility drives
 which memory types are promoted and whether memories carry actor attribution.
 
-**Private containers** (`container_visibility = "private"`):
+**Private containers** (`visibility = "private"`):
 
 All memory types are available. Memories carry `actor_ref` set to the speaker
 from the source item. Everything in a private container is personal to the
 container owner.
 
-**Shared containers** (`container_visibility = "limited"` or `"public"`):
+**Shared containers** (`visibility = "container"` or `"public"`):
 
 Personal memory types — `interest` and `constraint_memory` — are not created.
 They fall through to `discussion_summary`, preserving the statement as shared
@@ -129,7 +129,7 @@ decisions, visibility exclusions, and injection reasoning.
 ## Privacy Model
 
 Locality is not privacy. `container_ref` identifies where an item belongs, and
-`container_visibility` controls who can see it across containers.
+`visibility` controls who can see it across containers.
 
 - `public` — shared memories (`actor_ref = null`) visible from any container;
   personal memories (`actor_ref` set) visible only from their own container

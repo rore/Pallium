@@ -35,7 +35,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         thread_ref="thread-a",
         actor_ref="slack:U123",
         source_ref="https://example.test/thread-1",
-        container_visibility="limited",
+        visibility="container",
     )
     storage.create_source_item(source_item)
 
@@ -53,7 +53,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         schema_id="demo.investigation_outcome",
         schema_version="v1",
         payload={"investigation_outcome": "arrival-time ordering missed hold updates during sync delays"},
-        container_visibility="limited",
+        visibility="container",
         envelope=MemoryEnvelope(
             schema_id="core.memory_envelope",
             schema_version="v1",
@@ -81,7 +81,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         schema_id="demo.discussion_summary",
         schema_version="v1",
         payload={"summary": "We discussed reservation ordering."},
-        container_visibility="limited",
+        visibility="container",
     )
     storage.create_memory_object(legacy_memory_object)
 
@@ -120,7 +120,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     assert loaded_source.id == source_item.id
     assert loaded_source.thread_ref == "thread-a"
     assert loaded_source.artifact_kind == "message"
-    assert loaded_source.container_visibility == "limited"
+    assert loaded_source.visibility == "container"
     assert storage.get_annotation(annotation.id).id == annotation.id
     loaded_memory = storage.get_memory_object(memory_object.id)
     assert loaded_memory.lifecycle == "active"
@@ -156,7 +156,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     )
     assert public_hits.hits == []
     assert public_hits.visibility_exclusions
-    assert public_hits.visibility_exclusions[0].reason == "query_container_visibility_excludes_candidate"
+    assert public_hits.visibility_exclusions[0].reason == "query_visibility_excludes_candidate"
 
     storage.update_memory_object_lifecycle(memory_object.id, "superseded")
     assert storage.get_memory_object(memory_object.id).lifecycle == "superseded"
@@ -182,7 +182,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     assert evidence[0].source_item_id == source_item.id
     assert evidence[0].thread_ref == "thread-a"
     assert evidence[0].source_ref == "https://example.test/thread-1"
-    assert evidence[0].container_visibility == "limited"
+    assert evidence[0].visibility == "container"
 
 
 def test_idf_weighted_scoring_downweights_common_tokens(test_db_url: str) -> None:
@@ -211,7 +211,7 @@ def test_idf_weighted_scoring_downweights_common_tokens(test_db_url: str) -> Non
             source_id=f"idf-common-{i}",
             content_type="text/plain",
             content=text,
-            container_visibility="public",
+            visibility="public",
         )
         storage.create_source_item(si)
         storage.create_index_entry(IndexEntry(
@@ -226,7 +226,7 @@ def test_idf_weighted_scoring_downweights_common_tokens(test_db_url: str) -> Non
         source_id="idf-domain-1",
         content_type="text/plain",
         content=domain_text,
-        container_visibility="public",
+        visibility="public",
     )
     storage.create_source_item(domain_si)
     storage.create_index_entry(IndexEntry(
@@ -423,7 +423,7 @@ def test_duplicate_source_type_source_id_raises_integrity_error(test_db_url: str
         source_id="dup-1",
         content_type="text/plain",
         content="First item.",
-        container_visibility="public",
+        visibility="public",
     )
     storage.create_source_item(item_a)
 
@@ -432,7 +432,7 @@ def test_duplicate_source_type_source_id_raises_integrity_error(test_db_url: str
         source_id="dup-1",
         content_type="text/plain",
         content="Duplicate item.",
-        container_visibility="public",
+        visibility="public",
     )
     with pytest.raises(IntegrityError):
         storage.create_source_item(item_b)

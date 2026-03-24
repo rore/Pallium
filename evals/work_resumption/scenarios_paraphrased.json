@@ -1287,7 +1287,7 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-11-artifact-1",
         "occurred_at": "2026-03-11T19:00:00Z",
-        "container_visibility": "public",
+        "visibility": "public",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1304,7 +1304,7 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-11-artifact-2",
         "occurred_at": "2026-03-11T19:01:00Z",
-        "container_visibility": "limited",
+        "visibility": "container",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1321,7 +1321,7 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-11-artifact-3",
         "occurred_at": "2026-03-11T19:02:00Z",
-        "container_visibility": "limited",
+        "visibility": "container",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1338,7 +1338,7 @@
       "text": "What's the public word on where LIB-241 rollout stands?",
       "limit": 6,
       "container_ref": "chat:rollout",
-      "container_visibility": "public"
+      "visibility": "public"
     },
     "target_question": "What's the public word on where LIB-241 rollout stands?",
     "should_memory_help": true,
@@ -1410,7 +1410,7 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-12-artifact-1",
         "occurred_at": "2026-03-11T20:00:00Z",
-        "container_visibility": "public",
+        "visibility": "public",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1427,7 +1427,7 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-12-artifact-2",
         "occurred_at": "2026-03-11T20:01:00Z",
-        "container_visibility": "limited",
+        "visibility": "container",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1444,7 +1444,7 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-12-artifact-3",
         "occurred_at": "2026-03-11T20:02:00Z",
-        "container_visibility": "limited",
+        "visibility": "container",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1461,7 +1461,7 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-12-artifact-4",
         "occurred_at": "2026-03-11T20:03:00Z",
-        "container_visibility": "limited",
+        "visibility": "container",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1478,7 +1478,7 @@
       "text": "In the alpha channel, what's holding up LIB-241 and what's our next move?",
       "limit": 6,
       "container_ref": "chat:rollout",
-      "container_visibility": "limited"
+      "visibility": "container"
     },
     "target_question": "In the alpha channel, what's holding up LIB-241 and what's our next move?",
     "should_memory_help": true,
@@ -1556,7 +1556,7 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-13-artifact-1",
         "occurred_at": "2026-03-11T21:00:00Z",
-        "container_visibility": "public",
+        "visibility": "public",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1573,7 +1573,7 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-13-artifact-2",
         "occurred_at": "2026-03-11T21:01:00Z",
-        "container_visibility": "private",
+        "visibility": "private",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1590,7 +1590,7 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-13-artifact-3",
         "occurred_at": "2026-03-11T21:02:00Z",
-        "container_visibility": "private",
+        "visibility": "private",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1607,7 +1607,7 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://wr/thread-13-artifact-4",
         "occurred_at": "2026-03-11T21:03:00Z",
-        "container_visibility": "limited",
+        "visibility": "container",
         "metadata": {
           "topic": "lib241_rollout"
         }
@@ -1624,7 +1624,7 @@
       "text": "On my personal rollout checklist, what's still stuck and what should I do?",
       "limit": 6,
       "container_ref": "chat:rollout",
-      "container_visibility": "private"
+      "visibility": "private"
     },
     "target_question": "On my personal rollout checklist, what's still stuck and what should I do?",
     "should_memory_help": true,

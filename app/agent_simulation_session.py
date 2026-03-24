@@ -13,7 +13,7 @@ DEFAULT_SESSION_DIR = Path('.local/harness-sessions')
 LOCAL_THREAD_CONTEXT_MAX_MESSAGES = 4
 LOCAL_THREAD_CONTEXT_MAX_CHARS = 1200
 RUNTIME_CONTEXT_OVERRIDE_KEYS = ('turn_kind', 'session_has_sufficient_local_context')
-VISIBILITY_KINDS = {'public', 'limited', 'private'}
+VISIBILITY_KINDS = {'public', 'container', 'private'}
 
 
 def utc_now() -> datetime:
@@ -28,7 +28,7 @@ def new_ref(prefix: str) -> str:
 class ScopeDefaults:
     container_ref: str | None
     thread_ref: str | None
-    container_visibility: str
+    visibility: str
     runtime_context: dict[str, Any] = field(default_factory=dict)
     runtime_context_overrides: dict[str, bool] = field(default_factory=dict)
 
@@ -52,21 +52,21 @@ class ScopeDefaults:
         return cls(
             container_ref=payload.get('container_ref'),
             thread_ref=payload.get('thread_ref'),
-            container_visibility=_normalize_visibility_kind(
-                payload.get('container_visibility', payload.get('visibility_context'))
+            visibility=_normalize_visibility_kind(
+                payload.get('visibility')
             ),
             runtime_context=runtime_context,
             runtime_context_overrides=normalized_overrides,
         )
 
     def visibility_context(self) -> dict[str, Any]:
-        return {'kind': self.container_visibility, 'id': None}
+        return {'kind': self.visibility, 'id': None}
 
-    def container_visibility_kind(self) -> str:
-        return self.container_visibility
+    def visibility_kind(self) -> str:
+        return self.visibility
 
-    def set_container_visibility(self, kind: str, scope_id: str | None = None) -> None:
-        self.container_visibility = _normalize_visibility_kind(kind)
+    def set_visibility(self, kind: str, scope_id: str | None = None) -> None:
+        self.visibility = _normalize_visibility_kind(kind)
 
     def set_runtime_context(self, key: str, value: Any, *, manual: bool) -> None:
         self.runtime_context[key] = value
@@ -147,7 +147,7 @@ def create_default_session(*, base_url: str, mode: str, model: dict[str, Any] | 
     defaults = ScopeDefaults(
         container_ref=f'simulation:{session_id}',
         thread_ref=new_ref('thread'),
-        container_visibility='public',
+        visibility='public',
         runtime_context={
             'turn_kind': None,
             'session_has_sufficient_local_context': None,

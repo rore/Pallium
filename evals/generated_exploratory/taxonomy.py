@@ -14,7 +14,7 @@ DIMENSIONS: dict[str, list[str]] = {
     "actor_count": ["single_user", "multi_user"],
     "thread_relation": ["same_thread", "cross_thread", "cross_session"],
     "container_relation": ["same_container", "different_container"],
-    "visibility": ["private", "limited", "public"],
+    "visibility": ["private", "container", "public"],
     "topic_pattern": ["single", "switch", "mixed", "return_to_prior"],
     "query_intent": ["forward", "backward_recall", "summary", "ambiguous"],
     "source_role": ["user", "assistant", "quoted_user"],

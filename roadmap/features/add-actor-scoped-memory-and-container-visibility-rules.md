@@ -13,7 +13,7 @@ Enforce actor attribution and container-driven memory scoping so that personal s
 
 ## Problem
 
-In a public or limited (team) channel, multiple users post messages. When user A says "Chroma sounds interesting, I should check it", Pallium creates an `interest` memory with `container_visibility=public` and no actor scoping. When user B queries, they see user A's interest injected as generic "user expressed interest in Chroma" — as if it's their own.
+In a public or limited (team) channel, multiple users post messages. When user A says "Chroma sounds interesting, I should check it", Pallium creates an `interest` memory with `visibility=public` and no actor scoping. When user B queries, they see user A's interest injected as generic "user expressed interest in Chroma" — as if it's their own.
 
 Observed in chat-lite testing: starting a new container still showed memories from the old session because both used public visibility and there's no actor filtering.
 
@@ -46,11 +46,11 @@ These restrict which source roles can produce which memory types (enforced in `s
 
 Add `actor_ref` field to MemoryObject (nullable). Set based on container visibility at creation time:
 
-**Private container (`container_visibility = 'private'`):**
+**Private container (`visibility = 'private'`):**
 - All memory types: `actor_ref` = source item's `actor_ref` (the speaker)
 - Everything is personal to the container owner
 
-**Shared containers (`container_visibility = 'limited'` or `'public'`):**
+**Shared containers (`visibility = 'container'` or `'public'`):**
 - `interest` → **not created**. Falls through to `discussion_summary`. Rationale: interest is inherently personal ("I want to check X"). In shared contexts, this becomes shared evidence ("User mentioned interest in X") via discussion_summary.
 - `constraint_memory` → **not created**. Falls through to `discussion_summary`. Same rationale: personal requirements vs team constraints are ambiguous, safer to treat as shared evidence.
 - `decision` → created, `actor_ref = null`. Decisions in shared channels are team decisions, not personal.
@@ -80,7 +80,7 @@ Two filters applied in sequence:
 | Private container (your DM) | All your personal memories (actor_ref = you) from this container |
 | Limited container (team channel) | Shared evidence only (actor_ref = null). No personal interest/constraint types exist here. |
 | Public container | Shared evidence only (actor_ref = null). No personal interest/constraint types exist here. |
-| Cross-container (new session) | Public shared evidence (actor_ref = null, container_visibility = public). No personal memories from other containers. |
+| Cross-container (new session) | Public shared evidence (actor_ref = null, visibility = public). No personal memories from other containers. |
 
 ### Thread aggregation behavior
 
@@ -110,14 +110,14 @@ if source_item.role and source_item.role.lower() != "user":
 
 **b. Container-driven interest/constraint suppression:**
 ```
-if source_item.container_visibility in ('limited', 'public'):
+if source_item.visibility in ('container', 'public'):
     # Do not create interest or constraint_memory
     # Fall through to discussion_summary
 ```
 
 **c. Actor_ref propagation:**
 ```
-if source_item.container_visibility == 'private':
+if source_item.visibility == 'private':
     actor_ref = source_item.actor_ref  # personal memory
 else:
     actor_ref = None  # shared evidence

@@ -87,13 +87,13 @@ def test_downstream_query_returns_sharp_integration_ready_blocks(monkeypatch, te
 
     def post_with_public_visibility(url: str, *args, **kwargs):
         payload = kwargs.get("json")
-        if isinstance(payload, dict) and url in {"/items", "/query", "/query/debug"} and "container_visibility" not in payload:
+        if isinstance(payload, dict) and url in {"/items", "/query", "/query/debug"} and "visibility" not in payload:
             payload = dict(payload)
-            payload["container_visibility"] = "public"
+            payload["visibility"] = "public"
             kwargs["json"] = payload
         elif isinstance(payload, list) and url == "/items":
             payload = [
-                {**item, "container_visibility": "public"} if isinstance(item, dict) and "container_visibility" not in item else item
+                {**item, "visibility": "public"} if isinstance(item, dict) and "visibility" not in item else item
                 for item in payload
             ]
             kwargs["json"] = payload

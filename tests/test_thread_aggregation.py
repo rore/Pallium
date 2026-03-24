@@ -222,13 +222,13 @@ def _create_thread_client(monkeypatch, test_db_url: str) -> TestClient:
 
     def post_with_public_visibility(url: str, *args, **kwargs):
         payload = kwargs.get("json")
-        if isinstance(payload, dict) and url in {"/items", "/query", "/query/debug"} and "container_visibility" not in payload:
+        if isinstance(payload, dict) and url in {"/items", "/query", "/query/debug"} and "visibility" not in payload:
             payload = dict(payload)
-            payload["container_visibility"] = "public"
+            payload["visibility"] = "public"
             kwargs["json"] = payload
         elif isinstance(payload, list) and url == "/items":
             payload = [
-                {**item, "container_visibility": "public"} if isinstance(item, dict) and "container_visibility" not in item else item
+                {**item, "visibility": "public"} if isinstance(item, dict) and "visibility" not in item else item
                 for item in payload
             ]
             kwargs["json"] = payload
@@ -245,10 +245,10 @@ def _write_public_visibility_scenario(target_path: Path, source_path: Path) -> P
     scenarios = json.loads(source_path.read_text(encoding="utf-8"))
     for scenario in scenarios:
         for event in scenario.get("prior_events", []):
-            event.setdefault("container_visibility", "public")
+            event.setdefault("visibility", "public")
         current_query = scenario.get("current_query")
         if isinstance(current_query, dict):
-            current_query.setdefault("container_visibility", "public")
+            current_query.setdefault("visibility", "public")
     target_path.write_text(json.dumps(scenarios), encoding="utf-8")
     return target_path
 

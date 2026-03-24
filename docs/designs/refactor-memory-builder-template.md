@@ -39,7 +39,7 @@ These steps are structurally identical across all four builders and only differ 
 | LLM invocation | `provider.generate_json(system_prompt=..., user_prompt=..., schema_description=...)` |
 | Summary validation | `parsed_summary = response.parsed_json.get("summary")` + non-empty guard + `.strip()` |
 | Semantic provenance dict | `{"semantic_plugin": plugin_name, "prompt_variant": prompt_variant}` (pattern/continuity also add consolidation provenance) |
-| MemoryObject construction | `MemoryObject(type=..., schema_id=..., schema_version="v1", payload=..., container_visibility=..., container_ref=..., freshness_at=...)` |
+| MemoryObject construction | `MemoryObject(type=..., schema_id=..., schema_version="v1", payload=..., visibility=..., container_ref=..., freshness_at=...)` |
 | Envelope attachment | `replace(memory_object, envelope=_build_memory_envelope(kind=..., container_ref=..., thread_ref=..., confidence=..., producer_kind=..., producer_schema_id=..., producer_schema_version=..., prompt_variant=..., kind_basis=..., subjects=...))` |
 | Lexical index entry | `build_index_entry(target_kind="memory_object", target_id=..., index_type="lexical", text_view=normalize_for_index(index_source), text_view_name=...)` |
 | Inline enrichment | `_apply_inline_enrichment(memory_object=..., retrieval_context=..., plugin_name=..., prompt_variant=..., llm_metadata=response.metadata)` |

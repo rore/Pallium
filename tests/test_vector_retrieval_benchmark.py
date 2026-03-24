@@ -45,7 +45,7 @@ REQUIRED_QUERY_FIELDS = {
     "text",
     "limit",
     "container_ref",
-    "container_visibility",
+    "visibility",
 }
 
 REQUIRED_PRIOR_EVENT_FIELDS = {

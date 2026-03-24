@@ -33,7 +33,7 @@ def build_evidence(source_item: SourceItem) -> EvidenceReference:
         thread_ref=source_item.thread_ref,
         source_ref=source_item.source_ref,
         artifact_kind=source_item.artifact_kind,
-        container_visibility=source_item.container_visibility,
+        visibility=source_item.visibility,
     )
 
 

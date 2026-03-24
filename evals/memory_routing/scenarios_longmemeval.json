@@ -405,7 +405,7 @@
       "text": "What was the first issue I had with my new car after its first service?",
       "limit": 4,
       "container_ref": "chat:longmemeval-gpt4_2655b836",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -702,7 +702,7 @@
       "text": "Which event did I attend first, the 'Effective Time Management' workshop or the 'Data Analysis using Python' webinar?",
       "limit": 4,
       "container_ref": "chat:longmemeval-gpt4_2487a7cb",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -1000,7 +1000,7 @@
       "text": "Which vehicle did I take care of first in February, the bike or the car?",
       "limit": 4,
       "container_ref": "chat:longmemeval-gpt4_76048e76",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -1296,7 +1296,7 @@
       "text": "Which device did I got first, the Samsung Galaxy S22 or the Dell XPS 13?",
       "limit": 4,
       "container_ref": "chat:longmemeval-gpt4_2312f94c",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -1537,7 +1537,7 @@
       "text": "Which seeds were started first, the tomatoes or the marigolds?",
       "limit": 4,
       "container_ref": "chat:longmemeval-gpt4_385a5000",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -1833,7 +1833,7 @@
       "text": "How many days before the team meeting I was preparing for did I attend the workshop on 'Effective Communication in the Workplace'?",
       "limit": 4,
       "container_ref": "chat:longmemeval-0bb5a684",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -2129,7 +2129,7 @@
       "text": "How many days did it take for me to find a house I loved after starting to work with Rachel?",
       "limit": 4,
       "container_ref": "chat:longmemeval-2c63a862",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -2403,7 +2403,7 @@
       "text": "How many days had passed between the Sunday mass at St. Mary's Church and the Ash Wednesday service at the cathedral?",
       "limit": 4,
       "container_ref": "chat:longmemeval-08f4fc43",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -2699,7 +2699,7 @@
       "text": "Which event happened first, the purchase of the coffee maker or the malfunction of the stand mixer?",
       "limit": 4,
       "container_ref": "chat:longmemeval-gpt4_0b2f1d21",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -2996,7 +2996,7 @@
       "text": "Which book did I finish reading first, 'The Hate U Give' or 'The Nightingale'?",
       "limit": 4,
       "container_ref": "chat:longmemeval-gpt4_2d58bcd6",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -3292,7 +3292,7 @@
       "text": "Which trip did I take first, the one to Europe with family or the solo trip to Thailand?",
       "limit": 4,
       "container_ref": "chat:longmemeval-gpt4_8c8961ae",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -3589,7 +3589,7 @@
       "text": "Which task did I complete first, fixing the fence or purchasing three cows from Peter?",
       "limit": 4,
       "container_ref": "chat:longmemeval-gpt4_70e84552_abs",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -3883,7 +3883,7 @@
       "text": "When did I book the Airbnb in Sacramento?",
       "limit": 4,
       "container_ref": "chat:longmemeval-982b5123_abs",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -4155,7 +4155,7 @@
       "text": "Which project did I start first, the Ferrari model or the Porsche 991 Turbo S model?",
       "limit": 4,
       "container_ref": "chat:longmemeval-gpt4_c27434e8_abs",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -4559,7 +4559,7 @@
       "text": "How many items of clothing do I need to pick up or return from a store?",
       "limit": 4,
       "container_ref": "chat:longmemeval-0a995998",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -4987,7 +4987,7 @@
       "text": "How many days did I spend on camping trips in the United States this year?",
       "limit": 4,
       "container_ref": "chat:longmemeval-b5ef892d",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -5283,7 +5283,7 @@
       "text": "How many weeks did it take me to watch all the Marvel Cinematic Universe movies and the main Star Wars films?",
       "limit": 4,
       "container_ref": "chat:longmemeval-e831120c",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -5711,7 +5711,7 @@
       "text": "How many plants did I acquire in the last month?",
       "limit": 4,
       "container_ref": "chat:longmemeval-3a704032",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -6227,7 +6227,7 @@
       "text": "How many projects have I led or am currently leading?",
       "limit": 4,
       "container_ref": "chat:longmemeval-6d550036",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -6765,7 +6765,7 @@
       "text": "How many model kits have I worked on or bought?",
       "limit": 4,
       "container_ref": "chat:longmemeval-gpt4_59c863d7",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -7304,7 +7304,7 @@
       "text": "How much total money have I spent on bike-related expenses since the start of the year?",
       "limit": 4,
       "container_ref": "chat:longmemeval-gpt4_d84a3211",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -7732,7 +7732,7 @@
       "text": "How many different doctors did I visit?",
       "limit": 4,
       "container_ref": "chat:longmemeval-gpt4_f2262a51",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -8161,7 +8161,7 @@
       "text": "How many movie festivals that I attended?",
       "limit": 4,
       "container_ref": "chat:longmemeval-gpt4_a56e767c",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -8722,7 +8722,7 @@
       "text": "How many times did I bake egg tarts in the past two weeks?",
       "limit": 4,
       "container_ref": "chat:longmemeval-88432d0a_abs",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -9016,7 +9016,7 @@
       "text": "How many fish are there in my 30-gallon tank?",
       "limit": 4,
       "container_ref": "chat:longmemeval-eeda8a6d_abs",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -9310,7 +9310,7 @@
       "text": "How many days did it take for my iPad case to arrive after I bought it?",
       "limit": 4,
       "container_ref": "chat:longmemeval-60bf93ed_abs",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -9604,7 +9604,7 @@
       "text": "What was my personal best time in the charity 5K run?",
       "limit": 4,
       "container_ref": "chat:longmemeval-6a1eabeb",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -9901,7 +9901,7 @@
       "text": "Where did Rachel move to after her recent relocation?",
       "limit": 4,
       "container_ref": "chat:longmemeval-830ce83f",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -10197,7 +10197,7 @@
       "text": "What was the amount I was pre-approved for when I got my mortgage from Wells Fargo?",
       "limit": 4,
       "container_ref": "chat:longmemeval-852ce960",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -10493,7 +10493,7 @@
       "text": "How often do I attend yoga classes to help with my anxiety?",
       "limit": 4,
       "container_ref": "chat:longmemeval-945e3d21",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -10790,7 +10790,7 @@
       "text": "Is my mom using the same grocery list method as me?",
       "limit": 4,
       "container_ref": "chat:longmemeval-d7c942c3",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -11086,7 +11086,7 @@
       "text": "How many Korean restaurants have I tried in my city?",
       "limit": 4,
       "container_ref": "chat:longmemeval-6aeb4375",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -11382,7 +11382,7 @@
       "text": "Where did I go on my most recent family trip?",
       "limit": 4,
       "container_ref": "chat:longmemeval-9ea5eabc",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -11678,7 +11678,7 @@
       "text": "How many hours have I spent on my abstract ocean sculpture?",
       "limit": 4,
       "container_ref": "chat:longmemeval-71315a70",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -11975,7 +11975,7 @@
       "text": "What day of the week do I take a cocktail-making class?",
       "limit": 4,
       "container_ref": "chat:longmemeval-ce6d2d27",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -12271,7 +12271,7 @@
       "text": "How many Italian restaurants have I tried in my city?",
       "limit": 4,
       "container_ref": "chat:longmemeval-6aeb4375_abs",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -12565,7 +12565,7 @@
       "text": "How many engineers do I lead when I just started my new role as Software Engineer Manager?",
       "limit": 4,
       "container_ref": "chat:longmemeval-031748ae_abs",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -12859,7 +12859,7 @@
       "text": "How often do I see Dr. Johnson?",
       "limit": 4,
       "container_ref": "chat:longmemeval-2698e78f_abs",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -13043,7 +13043,7 @@
       "text": "I'm checking our previous chat about the shift rotation sheet for GM social media agents. Can you remind me what was the rotation for Admon on a Sunday?",
       "limit": 4,
       "container_ref": "chat:longmemeval-7161e7e2",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -13232,7 +13232,7 @@
       "text": "I'm planning to visit Bandung again and I was wondering if you could remind me of the name of that restaurant in Cihampelas Walk that serves a great Nasi Goreng?",
       "limit": 4,
       "container_ref": "chat:longmemeval-c4f10528",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -13418,7 +13418,7 @@
       "text": "I'm planning to revisit Orlando. I was wondering if you could remind me of that unique dessert shop with the giant milkshakes we talked about last time?",
       "limit": 4,
       "container_ref": "chat:longmemeval-e9327a54",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -13539,7 +13539,7 @@
       "text": "Can you remind me of the name of the romantic Italian restaurant in Rome you recommended for dinner?",
       "limit": 4,
       "container_ref": "chat:longmemeval-4c36ccef",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -13593,7 +13593,7 @@
       "text": "I'm going back to our previous conversation about the children's book on dinosaurs. Can you remind me what color was the scaly body of the Plesiosaur in the image?",
       "limit": 4,
       "container_ref": "chat:longmemeval-89527b6b",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -13714,7 +13714,7 @@
       "text": "I remember you told me about the refining processes at CITGO's three refineries earlier. Can you remind me what kind of processes are used at the Lake Charles Refinery?",
       "limit": 4,
       "container_ref": "chat:longmemeval-6ae235be",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -14011,7 +14011,7 @@
       "text": "How long have I been working before I started my current job at Google?",
       "limit": 4,
       "container_ref": "chat:longmemeval-gpt4_93159ced_abs",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false
@@ -14305,7 +14305,7 @@
       "text": "How many days before I bought my iPad did I attend the Holiday Market?",
       "limit": 4,
       "container_ref": "chat:longmemeval-c8090214_abs",
-      "container_visibility": "public",
+      "visibility": "public",
       "runtime_context": {
         "turn_kind": "new_thread",
         "session_has_sufficient_local_context": false

@@ -46,7 +46,7 @@ def test_assistant_response_does_not_produce_constraint_memory(monkeypatch, test
             "role": "assistant",
             "container_ref": CONTAINER_PRIVATE,
             "thread_ref": THREAD_A,
-            "container_visibility": "private",
+            "visibility": "private",
             "occurred_at": "2026-03-23T10:00:00Z",
         },
     ]
@@ -81,7 +81,7 @@ def test_interest_not_created_in_public_container(monkeypatch, test_db_url: str)
             "role": "user",
             "container_ref": CONTAINER_PUBLIC,
             "thread_ref": THREAD_A,
-            "container_visibility": "public",
+            "visibility": "public",
             "occurred_at": "2026-03-23T10:01:00Z",
         },
     ]
@@ -117,7 +117,7 @@ def test_interest_created_in_private_container(monkeypatch, test_db_url: str) ->
             "role": "user",
             "container_ref": CONTAINER_PRIVATE,
             "thread_ref": THREAD_A,
-            "container_visibility": "private",
+            "visibility": "private",
             "occurred_at": "2026-03-23T10:01:00Z",
         },
     ]
@@ -147,7 +147,7 @@ def test_interest_not_created_in_limited_container(monkeypatch, test_db_url: str
             "role": "user",
             "container_ref": CONTAINER_LIMITED,
             "thread_ref": THREAD_A,
-            "container_visibility": "limited",
+            "visibility": "container",
             "occurred_at": "2026-03-23T10:01:00Z",
         },
     ]
@@ -183,7 +183,7 @@ def test_actor_ref_set_on_memory_from_private_container(monkeypatch, test_db_url
             "actor_ref": ACTOR_A,
             "container_ref": CONTAINER_PRIVATE,
             "thread_ref": THREAD_A,
-            "container_visibility": "private",
+            "visibility": "private",
             "occurred_at": "2026-03-23T10:02:00Z",
         },
     ]
@@ -227,7 +227,7 @@ def test_actor_ref_null_on_memory_from_public_container(monkeypatch, test_db_url
             "actor_ref": ACTOR_A,
             "container_ref": CONTAINER_PUBLIC,
             "thread_ref": THREAD_A,
-            "container_visibility": "public",
+            "visibility": "public",
             "occurred_at": "2026-03-23T10:02:00Z",
         },
     ]
@@ -264,7 +264,7 @@ def test_actor_ref_null_on_assistant_memory(monkeypatch, test_db_url: str) -> No
             "actor_ref": "agent:assistant-1",
             "container_ref": CONTAINER_PRIVATE,
             "thread_ref": THREAD_A,
-            "container_visibility": "private",
+            "visibility": "private",
             "occurred_at": "2026-03-23T10:03:00Z",
         },
     ]
@@ -302,7 +302,7 @@ def test_query_with_actor_ref_sees_own_and_shared_memories(monkeypatch, test_db_
             "actor_ref": ACTOR_A,
             "container_ref": CONTAINER_PRIVATE,
             "thread_ref": THREAD_A,
-            "container_visibility": "private",
+            "visibility": "private",
             "occurred_at": "2026-03-23T10:04:00Z",
         },
         {
@@ -315,7 +315,7 @@ def test_query_with_actor_ref_sees_own_and_shared_memories(monkeypatch, test_db_
             "actor_ref": ACTOR_A,
             "container_ref": CONTAINER_PUBLIC,
             "thread_ref": THREAD_A,
-            "container_visibility": "public",
+            "visibility": "public",
             "occurred_at": "2026-03-23T10:05:00Z",
         },
     ]
@@ -329,7 +329,7 @@ def test_query_with_actor_ref_sees_own_and_shared_memories(monkeypatch, test_db_
             "text": "what decisions have been made about ordering?",
             "limit": 10,
             "container_ref": CONTAINER_PRIVATE,
-            "container_visibility": "private",
+            "visibility": "private",
             "actor_ref": ACTOR_A,
         })
         assert query_response.status_code == 200
@@ -348,7 +348,7 @@ def test_query_with_actor_ref_excludes_other_actors_memories(monkeypatch, test_d
             "actor_ref": ACTOR_A,
             "container_ref": CONTAINER_PRIVATE,
             "thread_ref": THREAD_A,
-            "container_visibility": "private",
+            "visibility": "private",
             "occurred_at": "2026-03-23T10:06:00Z",
         },
         {
@@ -361,7 +361,7 @@ def test_query_with_actor_ref_excludes_other_actors_memories(monkeypatch, test_d
             "actor_ref": ACTOR_B,
             "container_ref": CONTAINER_PRIVATE,
             "thread_ref": THREAD_A,
-            "container_visibility": "private",
+            "visibility": "private",
             "occurred_at": "2026-03-23T10:07:00Z",
         },
     ]
@@ -384,7 +384,7 @@ def test_query_with_actor_ref_excludes_other_actors_memories(monkeypatch, test_d
             "text": "what databases was I interested in?",
             "limit": 10,
             "container_ref": CONTAINER_PRIVATE,
-            "container_visibility": "private",
+            "visibility": "private",
             "actor_ref": ACTOR_A,
         })
         assert query_response.status_code == 200
@@ -409,7 +409,7 @@ def test_query_without_actor_ref_sees_everything(monkeypatch, test_db_url: str) 
             "actor_ref": ACTOR_A,
             "container_ref": CONTAINER_PRIVATE,
             "thread_ref": THREAD_A,
-            "container_visibility": "private",
+            "visibility": "private",
             "occurred_at": "2026-03-23T10:08:00Z",
         },
     ]
@@ -423,7 +423,7 @@ def test_query_without_actor_ref_sees_everything(monkeypatch, test_db_url: str) 
             "text": "what decisions have been made?",
             "limit": 10,
             "container_ref": CONTAINER_PRIVATE,
-            "container_visibility": "private",
+            "visibility": "private",
         })
         assert query_response.status_code == 200
         results = query_response.json()["results"]
@@ -443,17 +443,17 @@ def test_source_item_matches_filters_respects_actor_ref() -> None:
     item_a = SourceItem(
         source_type="chat_message", source_id="si-a", content_type="text/plain",
         content="hello", actor_ref=ACTOR_A, container_ref=CONTAINER_PRIVATE,
-        container_visibility="private",
+        visibility="private",
     )
     item_b = SourceItem(
         source_type="chat_message", source_id="si-b", content_type="text/plain",
         content="hello", actor_ref=ACTOR_B, container_ref=CONTAINER_PRIVATE,
-        container_visibility="private",
+        visibility="private",
     )
     item_shared = SourceItem(
         source_type="chat_message", source_id="si-shared", content_type="text/plain",
         content="hello", actor_ref=None, container_ref=CONTAINER_PRIVATE,
-        container_visibility="private",
+        visibility="private",
     )
 
     filters_a = QueryFilters(actor_ref=ACTOR_A, container_ref=CONTAINER_PRIVATE)
@@ -478,17 +478,17 @@ def test_evidence_matches_filters_respects_actor_ref() -> None:
     ev_a = EvidenceReference(
         source_item_id="si-a", source_type="chat_message", source_id="ev-a",
         actor_ref=ACTOR_A, container_ref=CONTAINER_PRIVATE,
-        container_visibility="private",
+        visibility="private",
     )
     ev_b = EvidenceReference(
         source_item_id="si-b", source_type="chat_message", source_id="ev-b",
         actor_ref=ACTOR_B, container_ref=CONTAINER_PRIVATE,
-        container_visibility="private",
+        visibility="private",
     )
     ev_shared = EvidenceReference(
         source_item_id="si-s", source_type="chat_message", source_id="ev-s",
         actor_ref=None, container_ref=CONTAINER_PRIVATE,
-        container_visibility="private",
+        visibility="private",
     )
 
     filters_a = QueryFilters(actor_ref=ACTOR_A, container_ref=CONTAINER_PRIVATE)
@@ -511,7 +511,7 @@ def test_query_with_actor_ref_excludes_other_actors_source_items(monkeypatch, te
             "actor_ref": ACTOR_A,
             "container_ref": CONTAINER_PRIVATE,
             "thread_ref": THREAD_A,
-            "container_visibility": "private",
+            "visibility": "private",
             "occurred_at": "2026-03-23T10:10:00Z",
         },
         {
@@ -524,7 +524,7 @@ def test_query_with_actor_ref_excludes_other_actors_source_items(monkeypatch, te
             "actor_ref": ACTOR_B,
             "container_ref": CONTAINER_PRIVATE,
             "thread_ref": THREAD_A,
-            "container_visibility": "private",
+            "visibility": "private",
             "occurred_at": "2026-03-23T10:11:00Z",
         },
     ]
@@ -538,7 +538,7 @@ def test_query_with_actor_ref_excludes_other_actors_source_items(monkeypatch, te
             "text": "what decisions about ordering?",
             "limit": 10,
             "container_ref": CONTAINER_PRIVATE,
-            "container_visibility": "private",
+            "visibility": "private",
             "actor_ref": ACTOR_A,
         })
         assert query_response.status_code == 200

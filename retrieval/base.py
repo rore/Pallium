@@ -20,7 +20,7 @@ class RetrievalProvider(ABC):
         limit: int,
         filters: QueryFilters | None = None,
         *,
-        container_visibility: str | None = None,
+        visibility: str | None = None,
         query_container_ref: str | None = None,
         include_trace: bool = False,
         require_visibility: bool = False,

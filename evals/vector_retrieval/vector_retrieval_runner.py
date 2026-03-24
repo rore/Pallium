@@ -157,7 +157,7 @@ def _parse_occurred_at(raw: str | None) -> datetime | None:
     return datetime.fromisoformat(raw.replace("Z", "+00:00"))
 
 
-def _parse_container_visibility(raw: dict[str, Any] | str | None) -> str:
+def _parse_visibility(raw: dict[str, Any] | str | None) -> str:
     if raw is None:
         return "public"
     if isinstance(raw, str):
@@ -184,8 +184,8 @@ def _setup_storage_for_scenario(
     """
     source_item_ids: list[str] = []
     for event in scenario["prior_events"]:
-        container_vis = _parse_container_visibility(
-            event.get("container_visibility") or event.get("visibility_context")
+        container_vis = _parse_visibility(
+            event.get("visibility")
         )
         si = SourceItem(
             source_type=event["source_type"],
@@ -200,7 +200,7 @@ def _setup_storage_for_scenario(
             thread_ref=event.get("thread_ref"),
             source_ref=event.get("source_ref"),
             artifact_kind=event.get("artifact_kind"),
-            container_visibility=container_vis,
+            visibility=container_vis,
         )
         storage.create_source_item(si)
         source_item_ids.append(si.id)
@@ -213,7 +213,7 @@ def _setup_storage_for_scenario(
             schema_id="vector_retrieval_benchmark",
             schema_version="1",
             payload=mo_spec["payload"],
-            container_visibility="public",
+            visibility="public",
         )
         storage.create_memory_object(mo)
         memory_object_ids.append(mo.id)
@@ -349,7 +349,7 @@ def run_scenario(
     query = scenario["current_query"]
     query_text = query["text"]
     query_limit = query.get("limit", 4)
-    container_vis = _parse_container_visibility(query.get("container_visibility") or query.get("visibility_context"))
+    container_vis = _parse_visibility(query.get("visibility"))
     container_ref = query.get("container_ref")
     filters = QueryFilters(container_ref=container_ref) if container_ref else None
 
@@ -357,14 +357,14 @@ def run_scenario(
         query_text,
         query_limit,
         filters=filters,
-        container_visibility=container_vis,
+        visibility=container_vis,
         include_trace=True,
     )
     vector_result = vector_provider.query(
         query_text,
         query_limit,
         filters=filters,
-        container_visibility=container_vis,
+        visibility=container_vis,
         include_trace=True,
     )
 

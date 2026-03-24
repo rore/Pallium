@@ -497,8 +497,8 @@ def _format_memory_results(results: list[dict[str, Any]]) -> str:
 
 def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
     updated = dict(payload)
-    if "container_visibility" not in updated or updated["container_visibility"] is None:
-        updated["container_visibility"] = "public"
+    if "visibility" not in updated or updated["visibility"] is None:
+        updated["visibility"] = "public"
     return updated
 
 

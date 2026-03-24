@@ -318,7 +318,7 @@ def transform_question(q: dict[str, Any]) -> dict[str, Any]:
             "text": q["question"],
             "limit": 4,
             "container_ref": f"chat:longmemeval-{qid}",
-            "visibility_context": {"kind": "public"},
+            "visibility": "public",
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,

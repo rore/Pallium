@@ -26,7 +26,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:00:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           },
           {
             "source_type": "chat_message",
@@ -40,7 +40,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:05:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           }
         ]
       },
@@ -51,7 +51,7 @@
           "text": "how is the weather today?",
           "limit": 5,
           "container_ref": "chat:library-catalog",
-          "container_visibility": "public"
+          "visibility": "public"
         }
       }
     ]
@@ -83,7 +83,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:00:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           }
         ]
       },
@@ -94,7 +94,7 @@
           "text": "what do you think about the latest political developments?",
           "limit": 5,
           "container_ref": "chat:library-system",
-          "container_visibility": "public"
+          "visibility": "public"
         }
       }
     ]
@@ -126,7 +126,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:00:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           }
         ]
       },
@@ -137,7 +137,7 @@
           "text": "did you watch the game last night?",
           "limit": 5,
           "container_ref": "chat:library-catalog",
-          "container_visibility": "public"
+          "visibility": "public"
         }
       }
     ]
@@ -169,7 +169,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:00:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           }
         ]
       },
@@ -180,7 +180,7 @@
           "text": "what's a good restaurant nearby?",
           "limit": 5,
           "container_ref": "chat:library-ops",
-          "container_visibility": "public"
+          "visibility": "public"
         }
       }
     ]
@@ -212,7 +212,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:00:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           }
         ]
       },
@@ -223,7 +223,7 @@
           "text": "I really need to hit the books tonight",
           "limit": 5,
           "container_ref": "chat:library-books",
-          "container_visibility": "public"
+          "visibility": "public"
         }
       }
     ]
@@ -255,7 +255,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:00:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           }
         ]
       },
@@ -266,7 +266,7 @@
           "text": "just trying to break the ice here",
           "limit": 5,
           "container_ref": "chat:library-programs",
-          "container_visibility": "public"
+          "visibility": "public"
         }
       }
     ]
@@ -298,7 +298,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:00:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           }
         ]
       },
@@ -309,7 +309,7 @@
           "text": "what is 5 plus 3?",
           "limit": 5,
           "container_ref": "chat:library-budget",
-          "container_visibility": "public"
+          "visibility": "public"
         }
       }
     ]
@@ -341,7 +341,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:00:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           }
         ]
       },
@@ -352,7 +352,7 @@
           "text": "what time is it?",
           "limit": 5,
           "container_ref": "chat:library-ops",
-          "container_visibility": "public"
+          "visibility": "public"
         }
       }
     ]
@@ -384,7 +384,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:00:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           }
         ]
       },
@@ -395,7 +395,7 @@
           "text": "interesting",
           "limit": 5,
           "container_ref": "chat:library-workflow",
-          "container_visibility": "public"
+          "visibility": "public"
         }
       }
     ]
@@ -427,7 +427,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:00:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           }
         ]
       },
@@ -438,7 +438,7 @@
           "text": "ok thanks",
           "limit": 5,
           "container_ref": "chat:library-data",
-          "container_visibility": "public"
+          "visibility": "public"
         }
       }
     ]
@@ -470,7 +470,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:00:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           }
         ]
       },
@@ -481,7 +481,7 @@
           "text": "let's talk about something completely different",
           "limit": 5,
           "container_ref": "chat:library-migration",
-          "container_visibility": "public"
+          "visibility": "public"
         }
       }
     ]
@@ -513,7 +513,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:00:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           }
         ]
       },
@@ -524,7 +524,7 @@
           "text": "any plans for the weekend?",
           "limit": 5,
           "container_ref": "chat:library-ill",
-          "container_visibility": "public"
+          "visibility": "public"
         }
       }
     ]
@@ -556,7 +556,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:00:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           }
         ]
       },
@@ -567,7 +567,7 @@
           "text": "what kind of music do you like?",
           "limit": 5,
           "container_ref": "chat:library-archive",
-          "container_visibility": "public"
+          "visibility": "public"
         }
       }
     ]
@@ -599,7 +599,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:00:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           }
         ]
       },
@@ -610,7 +610,7 @@
           "text": "is it going to rain tomorrow?",
           "limit": 5,
           "container_ref": "chat:library-ops",
-          "container_visibility": "public"
+          "visibility": "public"
         }
       }
     ]
@@ -642,7 +642,7 @@
             "actor_ref": "agent:assistant-1",
             "source_ref": "calibration",
             "occurred_at": "2026-03-20T10:00:00Z",
-            "container_visibility": "public"
+            "visibility": "public"
           }
         ]
       },
@@ -653,7 +653,7 @@
           "text": "what is the meaning of life?",
           "limit": 5,
           "container_ref": "chat:library-admin",
-          "container_visibility": "public"
+          "visibility": "public"
         }
       }
     ]

@@ -157,7 +157,7 @@ def _run_scenario(*, scenario: dict[str, Any], config: AppConfig) -> dict[str, A
 
 def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
     updated = dict(payload)
-    updated.setdefault("container_visibility", "public")
+    updated.setdefault("visibility", "public")
     return updated
 
 

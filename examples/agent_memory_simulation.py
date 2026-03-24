@@ -6,7 +6,7 @@ import urllib.request
 
 
 BASE_URL = "http://127.0.0.1:8000"
-CONTAINER_VISIBILITY = "limited"
+CONTAINER_VISIBILITY = "container"
 THREAD_REF = "chat:library-help:1730000000.000100"
 
 SAMPLE_ITEMS = [
@@ -22,7 +22,7 @@ SAMPLE_ITEMS = [
         "thread_ref": THREAD_REF,
         "actor_ref": "chat:user-123",
         "source_ref": "https://example.test/chat/thread-001-msg-1",
-        "container_visibility": CONTAINER_VISIBILITY,
+        "visibility": CONTAINER_VISIBILITY,
     },
     {
         "source_type": "tool_summary",
@@ -36,7 +36,7 @@ SAMPLE_ITEMS = [
         "thread_ref": THREAD_REF,
         "actor_ref": "agent:assistant",
         "source_ref": "https://example.test/chat/artifact-001",
-        "container_visibility": CONTAINER_VISIBILITY,
+        "visibility": CONTAINER_VISIBILITY,
     },
     {
         "source_type": "assistant_artifact",
@@ -50,7 +50,7 @@ SAMPLE_ITEMS = [
         "thread_ref": THREAD_REF,
         "actor_ref": "agent:assistant",
         "source_ref": "https://example.test/chat/artifact-002",
-        "container_visibility": CONTAINER_VISIBILITY,
+        "visibility": CONTAINER_VISIBILITY,
     },
     {
         "source_type": "assistant_artifact",
@@ -64,7 +64,7 @@ SAMPLE_ITEMS = [
         "thread_ref": THREAD_REF,
         "actor_ref": "agent:assistant",
         "source_ref": "https://example.test/chat/artifact-003",
-        "container_visibility": CONTAINER_VISIBILITY,
+        "visibility": CONTAINER_VISIBILITY,
     },
 ]
 
@@ -85,7 +85,7 @@ def _scoped_query_payload(text: str) -> dict:
         "text": text,
         "limit": 6,
         "thread_ref": THREAD_REF,
-        "container_visibility": CONTAINER_VISIBILITY,
+        "visibility": CONTAINER_VISIBILITY,
     }
 
 

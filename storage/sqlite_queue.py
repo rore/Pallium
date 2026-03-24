@@ -407,7 +407,7 @@ class SQLiteQueueMixin:
                 use_case=record.use_case,
                 container_ref=record.container_ref,
                 thread_ref=record.thread_ref,
-                container_visibility=record.container_visibility or "private",
+                visibility=record.visibility or "private",
                 processing_claimed_by=record.processing_claimed_by,
                 processing_claimed_at=self._normalize_datetime(record.processing_claimed_at),
                 processing_lease_expires_at=self._normalize_datetime(record.processing_lease_expires_at),
@@ -476,7 +476,7 @@ class SQLiteQueueMixin:
                     payload_json=self._dumps(memory_object.payload) or "{}",
                     envelope_json=self._dump_memory_envelope(memory_object.envelope),
                     lifecycle=memory_object.lifecycle,
-                    container_visibility=memory_object.container_visibility,
+                    visibility=memory_object.visibility,
                     container_ref=memory_object.container_ref,
                     actor_ref=memory_object.actor_ref,
                     freshness_at=self._normalize_datetime(memory_object.freshness_at) or memory_object.created_at,
@@ -553,7 +553,7 @@ class SQLiteQueueMixin:
                 )
             ).all()
             for item_record in thread_item_records:
-                if not visibility_matches_exact(item_record.container_visibility, hint.container_visibility):
+                if not visibility_matches_exact(item_record.visibility, hint.visibility):
                     continue
                 relation_records = session.scalars(
                     select(RelationRecord).where(
@@ -575,7 +575,7 @@ class SQLiteQueueMixin:
                         continue
                     if candidate.lifecycle != "active" or candidate.type != hint.memory_type:
                         continue
-                    if not visibility_matches_exact(candidate.container_visibility, hint.container_visibility):
+                    if not visibility_matches_exact(candidate.visibility, hint.visibility):
                         continue
                     candidate_key = str(candidate.payload.get("canonical_key") or "").strip()
                     if candidate_key != hint.canonical_key:
@@ -627,7 +627,7 @@ class SQLiteQueueMixin:
                     use_case=scope.use_case,
                     container_ref=scope.container_ref,
                     thread_ref=scope.thread_ref,
-                    container_visibility=scope.container_visibility,
+                    visibility=scope.visibility,
                     requested_at=requested_at,
                     processing_claimed_by=None,
                     processing_claimed_at=None,
@@ -668,7 +668,7 @@ class SQLiteQueueMixin:
             return "retry_backoff_active"
         if record.use_case not in known_use_cases:
             return "unknown_use_case"
-        if record.use_case in scoped_use_cases and not record.container_visibility:
+        if record.use_case in scoped_use_cases and not record.visibility:
             return "missing_visibility_for_scoped_use_case"
         return None
 

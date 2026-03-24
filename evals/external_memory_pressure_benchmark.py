@@ -315,7 +315,7 @@ def _build_report(*, summary: dict[str, Any], results: list[dict[str, Any]]) -> 
 
 def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
     updated = dict(payload)
-    updated.setdefault("container_visibility", "public")
+    updated.setdefault("visibility", "public")
     return updated
 
 

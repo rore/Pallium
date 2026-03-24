@@ -49,7 +49,7 @@ just-ingested message won't appear in query results — processing is async.
 | Channel ID | `container_ref` | `"slack:channel:C04ABC123"` |
 | DM channel | `container_ref` | `"slack:dm:D01XYZ789"` |
 | Thread timestamp | `thread_ref` | `"slack:thread:C04ABC123:1700000001.000100"` |
-| Channel type | `container_visibility` | `"public"`, `"limited"`, or `"private"` |
+| Channel type | `visibility` | `"public"`, `"container"`, or `"private"` |
 | Message timestamp | `source_id` | `"slack-message:C04ABC123:1700000001.000100"` |
 | User ID | `actor_ref` | `"slack:user:U01XYZ789"` |
 | Bot/agent ID | `agent_ref` | `"slack-bot:B04DEF456"` |
@@ -61,7 +61,7 @@ identified by the `ts` of the first message: replies carry `thread_ts`
 pointing back to it. This is why `ts` works well as both `source_id` and
 `thread_ref` — it's stable and unique.
 
-`container_ref` groups related conversations. `container_visibility` controls
+`container_ref` groups related conversations. `visibility` controls
 who can see the memory — a private channel's memory never leaks into queries
 from a different context.
 
@@ -119,7 +119,7 @@ async def ingest_and_query(client: PalliumClient, event: dict) -> dict | None:
         "artifact_kind": "message",
         "container_ref": container_ref(channel, event["user"], is_dm(event)),
         "thread_ref": f"slack:thread:{channel}:{thread_ts}",
-        "container_visibility": channel_visibility(event),
+        "visibility": channel_visibility(event),
         "actor_ref": f"slack:user:{event['user']}",
     })
 ```
@@ -185,7 +185,7 @@ async def ingest_assistant_artifacts(
         "role": "assistant",
         "container_ref": container_ref(channel, event["user"], is_dm(event)),
         "thread_ref": f"slack:thread:{channel}:{thread_ts}",
-        "container_visibility": channel_visibility(event),
+        "visibility": channel_visibility(event),
         "agent_ref": f"slack-bot:{BOT_ID}",
     }
 
@@ -238,7 +238,7 @@ def channel_visibility(event: dict) -> str:
         return "private"
     if is_public_channel(event):
         return "public"
-    return "limited"  # private channels
+    return "container"  # private channels
 ```
 
 ## What You Don't Need to Do
@@ -260,7 +260,7 @@ When results are wrong, use the debug endpoint:
 result = await client.query_debug({
     "text": user_text,
     "container_ref": container_ref(channel, user, dm),
-    "container_visibility": channel_visibility(event),
+    "visibility": channel_visibility(event),
 })
 
 # result["trace"] shows retrieval matches, visibility exclusions,

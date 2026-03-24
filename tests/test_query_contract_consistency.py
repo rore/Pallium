@@ -17,7 +17,7 @@ def _evidence(*, source_item_id: str = 'source-1', source_id: str = 'artifact-1'
         'thread_ref': 'chat:library-help:thread-1',
         'source_ref': None,
         'artifact_kind': 'assistant_output',
-        "container_visibility": "public",
+        "visibility": "public",
     }
 
 

@@ -640,7 +640,7 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
     client = _agent_conversation_client(monkeypatch, test_db_url)
     scenario = _seed_short_noun_isolation_history(client)
     container_ref = scenario["container_ref"]
-    container_visibility = scenario["container_visibility"]
+    visibility = scenario["visibility"]
 
     query_payloads = (
         {
@@ -648,7 +648,7 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
             "limit": 12,
             "container_ref": container_ref,
             "thread_ref": "chat:workspace:local-memory:diag-good-afternnon-fresh",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
             "runtime_context": {
                 "turn_kind": "new_thread",
                 "session_has_sufficient_local_context": False,
@@ -659,7 +659,7 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
             "limit": 12,
             "container_ref": container_ref,
             "thread_ref": scenario["threads"]["same_thread_x"],
-            "container_visibility": container_visibility,
+            "visibility": visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
@@ -670,7 +670,7 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
             "limit": 12,
             "container_ref": container_ref,
             "thread_ref": scenario["threads"]["same_thread_x"],
-            "container_visibility": container_visibility,
+            "visibility": visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
@@ -681,7 +681,7 @@ def test_query_and_debug_short_noun_isolation_replay_match_injection_contract(mo
             "limit": 12,
             "container_ref": container_ref,
             "thread_ref": scenario["threads"]["same_thread_y"],
-            "container_visibility": container_visibility,
+            "visibility": visibility,
             "runtime_context": {
                 "turn_kind": "same_thread_continuation",
                 "session_has_sufficient_local_context": True,
@@ -842,7 +842,7 @@ def test_item_and_query_returns_source_item_id_and_query_result(client) -> None:
         "role": "user",
         "container_ref": "room:test",
         "thread_ref": "thread-iaq-1",
-        "container_visibility": "public",
+        "visibility": "public",
     })
     assert response.status_code == 200
     data = response.json()
@@ -859,7 +859,7 @@ def test_item_and_query_uses_content_as_default_query_text(client) -> None:
         "source_id": "iaq-test-2",
         "content_type": "text/plain",
         "content": "What is the status of the migration?",
-        "container_visibility": "public",
+        "visibility": "public",
     })
     assert response.status_code == 200
     data = response.json()
@@ -874,7 +874,7 @@ def test_item_and_query_query_text_overrides_content(client) -> None:
         "content_type": "text/plain",
         "content": "User asked about the ordering decision in the catalog sync channel.",
         "query_text": "Why did we choose event time?",
-        "container_visibility": "public",
+        "visibility": "public",
     })
     assert response.status_code == 200
 
@@ -885,7 +885,7 @@ def test_item_and_query_debug_returns_trace(client) -> None:
         "source_id": "iaq-debug-1",
         "content_type": "text/plain",
         "content": "What was the investigation outcome?",
-        "container_visibility": "public",
+        "visibility": "public",
     })
     assert response.status_code == 200
     data = response.json()

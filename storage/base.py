@@ -36,7 +36,7 @@ class ThreadProcessingScope:
     use_case: str
     container_ref: str
     thread_ref: str
-    container_visibility: str = "private"
+    visibility: str = "private"
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,7 @@ class ThreadProcessingLease:
     use_case: str
     container_ref: str
     thread_ref: str
-    container_visibility: str = "private"
+    visibility: str = "private"
     requested_at: datetime | None = None
     processing_claimed_by: str | None = None
     processing_claimed_at: datetime | None = None
@@ -57,7 +57,7 @@ class ThreadProcessingLease:
             use_case=self.use_case,
             container_ref=self.container_ref,
             thread_ref=self.thread_ref,
-            container_visibility=self.container_visibility,
+            visibility=self.visibility,
         )
 
 
@@ -94,7 +94,7 @@ class LeasedThreadScopeInfo:
     use_case: str
     container_ref: str
     thread_ref: str
-    container_visibility: str = "private"
+    visibility: str = "private"
     processing_claimed_by: str | None = None
     processing_claimed_at: datetime | None = None
     processing_lease_expires_at: datetime | None = None

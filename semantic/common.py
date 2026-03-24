@@ -236,9 +236,9 @@ def _resolve_actor_ref(source_item: SourceItem) -> str | None:
     """Determine actor_ref for a memory created from a source item.
 
     Private containers: propagate the speaker's actor_ref (personal memory).
-    Shared containers (limited/public): null (shared evidence).
+    Shared containers (container/public): null (shared evidence).
     """
-    if source_item.container_visibility == "private":
+    if source_item.visibility == "private":
         return source_item.actor_ref
     return None
 
@@ -312,7 +312,7 @@ def build_process_result(
                     "source_id": source_item.source_id,
                     **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
                 },
-                container_visibility=source_item.container_visibility,
+                visibility=source_item.visibility,
                 container_ref=source_item.container_ref,
                 actor_ref=_resolve_actor_ref(source_item),
             )
@@ -370,7 +370,7 @@ def build_process_result(
                     "source_id": source_item.source_id,
                     **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
                 },
-                container_visibility=source_item.container_visibility,
+                visibility=source_item.visibility,
                 container_ref=source_item.container_ref,
                 actor_ref=_resolve_actor_ref(source_item),
             )
@@ -389,7 +389,7 @@ def build_process_result(
         )
     elif extraction.candidate_type == "interest" and extraction.interest_text and (
         not source_item.role or source_item.role.lower() == "user"
-    ) and source_item.container_visibility not in ("limited", "public"):
+    ) and source_item.visibility not in ("container", "public"):
         memory_objects.append(
             MemoryObject(
                 type="interest",
@@ -402,7 +402,7 @@ def build_process_result(
                     "source_id": source_item.source_id,
                     **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
                 },
-                container_visibility=source_item.container_visibility,
+                visibility=source_item.visibility,
                 container_ref=source_item.container_ref,
                 actor_ref=_resolve_actor_ref(source_item),
             )
@@ -427,7 +427,7 @@ def build_process_result(
                     "source_id": source_item.source_id,
                     **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
                 },
-                container_visibility=source_item.container_visibility,
+                visibility=source_item.visibility,
                 container_ref=source_item.container_ref,
                 actor_ref=_resolve_actor_ref(source_item),
             )

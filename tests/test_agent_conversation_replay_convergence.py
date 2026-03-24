@@ -15,7 +15,7 @@ def test_batch_digest_recall_converges_from_pending_source_evidence_to_structure
     client = _agent_conversation_client(monkeypatch, test_db_url, auto_drain_items=False)
     container_ref = "chat:workspace:local-memory"
     thread_ref = "chat:workspace:local-memory:thread-pending-convergence"
-    container_visibility = "public"
+    visibility = "public"
 
     payloads = (
         {
@@ -28,7 +28,7 @@ def test_batch_digest_recall_converges_from_pending_source_evidence_to_structure
             "container_ref": container_ref,
             "thread_ref": thread_ref,
             "occurred_at": "2026-03-11T10:00:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -40,7 +40,7 @@ def test_batch_digest_recall_converges_from_pending_source_evidence_to_structure
             "container_ref": container_ref,
             "thread_ref": thread_ref,
             "occurred_at": "2026-03-11T10:01:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "chat_message",
@@ -52,7 +52,7 @@ def test_batch_digest_recall_converges_from_pending_source_evidence_to_structure
             "container_ref": container_ref,
             "thread_ref": thread_ref,
             "occurred_at": "2026-03-11T10:01:30Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
         {
             "source_type": "assistant_artifact",
@@ -64,7 +64,7 @@ def test_batch_digest_recall_converges_from_pending_source_evidence_to_structure
             "container_ref": container_ref,
             "thread_ref": thread_ref,
             "occurred_at": "2026-03-11T10:02:00Z",
-            "container_visibility": container_visibility,
+            "visibility": visibility,
         },
     )
     for payload in payloads:
@@ -77,7 +77,7 @@ def test_batch_digest_recall_converges_from_pending_source_evidence_to_structure
         "limit": 12,
         "container_ref": container_ref,
         "thread_ref": "chat:workspace:local-memory:thread-pending-query",
-        "container_visibility": container_visibility,
+        "visibility": visibility,
         "runtime_context": {
             "turn_kind": "new_thread",
             "session_has_sufficient_local_context": False,

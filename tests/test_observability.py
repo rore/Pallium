@@ -68,7 +68,7 @@ def test_thread_rebuild_completion_is_reported_in_processing_status(test_db_url:
         role="user",
         container_ref="chat:library-help",
         thread_ref="chat:library-help:thread-observability",
-        container_visibility="public",
+        visibility="public",
     )
     ingest = service.ingest_item(
         source_type="assistant_artifact",
@@ -81,7 +81,7 @@ def test_thread_rebuild_completion_is_reported_in_processing_status(test_db_url:
         role="assistant",
         container_ref="chat:library-help",
         thread_ref="chat:library-help:thread-observability",
-        container_visibility="public",
+        visibility="public",
     )
     plugin.allow_first_build_finish.set()
     service.drain_processing_queue(worker_id="thread-observability")
@@ -149,7 +149,7 @@ def test_query_debug_includes_candidate_flow_and_result_summary(client, drain_qu
             "content": "Decision: use item event time ordering so reservation updates are applied deterministically.",
             "artifact_kind": "assistant_output",
             "role": "assistant",
-            "container_visibility": "public",
+            "visibility": "public",
         }],
     )
     drain_queue(client)

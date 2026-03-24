@@ -63,7 +63,7 @@ Use the same shape on ingest and query:
 ```json
 {
   "visibility_context": {
-    "kind": "public" | "limited" | "user",
+    "kind": "public" | "container" | "user",
     "id": "..." | null
   }
 }
@@ -262,7 +262,7 @@ This model fits the expected downstream shape cleanly:
 - public team conversation:
   - `visibility_context = { "kind": "public", "id": null }`
 - private team channel or group:
-  - `visibility_context = { "kind": "limited", "id": "channel-123" }`
+  - `visibility_context = { "kind": "container", "id": "channel-123" }`
 - user-private interaction:
   - `visibility_context = { "kind": "user", "id": "user-456" }`
 
