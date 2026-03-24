@@ -61,8 +61,8 @@ def _build_scenario_from_result(
     }
     if query_request.get("container_ref"):
         current_query["container_ref"] = query_request["container_ref"]
-    if query_request.get("visibility_context"):
-        current_query["visibility_context"] = query_request["visibility_context"]
+    if query_request.get("visibility"):
+        current_query["visibility"] = query_request["visibility"]
 
     if expected_value is None:
         ev = "__FILL_IN__"

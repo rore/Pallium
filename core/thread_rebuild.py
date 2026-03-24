@@ -169,7 +169,7 @@ class ThreadRebuilder:
                 "use_case": plugin_name,
                 "container_ref": source_item.container_ref,
                 "thread_ref": source_item.thread_ref,
-                "container_visibility": source_item.container_visibility,
+                "visibility": source_item.visibility,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -179,7 +179,7 @@ class ThreadRebuilder:
             use_case=plugin_name,
             container_ref=source_item.container_ref,
             thread_ref=source_item.thread_ref,
-            container_visibility=source_item.container_visibility,
+            visibility=source_item.visibility,
         )
 
     def _process_thread_rebuild_lease(
@@ -230,8 +230,8 @@ class ThreadRebuilder:
                 self._observability.emit(
                     "thread_rebuild_outcome",
                     thread_ref=current_lease.thread_ref,
-                    visibility_scope=visibility_label(current_lease.container_visibility),
-                    container_visibility=current_lease.container_visibility,
+                    visibility_scope=visibility_label(current_lease.visibility),
+                    visibility=current_lease.visibility,
                     processing_status="failed",
                     failure_category=classify_failure(exc, phase="thread_rebuild"),
                     error=truncate_processing_error(exc),
@@ -288,7 +288,7 @@ class ThreadRebuilder:
             thread_items = [
                 item
                 for item in thread_items
-                if visibility_matches_exact(item.container_visibility, thread_scope.container_visibility)
+                if visibility_matches_exact(item.visibility, thread_scope.visibility)
             ]
         if len(thread_items) < 2:
             return None, {}, thread_items
@@ -306,7 +306,7 @@ class ThreadRebuilder:
                 thread_result,
                 storage=self._storage,
                 container_ref=thread_scope.container_ref,
-                container_visibility=thread_scope.container_visibility,
+                visibility=thread_scope.visibility,
             )
         supersede_plan: dict[str, list[str]] = {}
         for memory_object in thread_result.memory_objects:
@@ -367,8 +367,8 @@ class ThreadRebuilder:
         self._observability.emit(
             "thread_rebuild_outcome",
             thread_ref=lease.thread_ref,
-            visibility_scope=visibility_label(lease.container_visibility),
-            container_visibility=lease.container_visibility,
+            visibility_scope=visibility_label(lease.visibility),
+            visibility=lease.visibility,
             input_item_count_considered=len(thread_items),
             created_or_updated_memory_kinds=created_memory_kinds,
             superseded_memory_ids=[superseded_id for superseded_id, _replacement_id in supersession_pairs],

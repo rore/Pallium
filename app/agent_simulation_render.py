@@ -8,7 +8,7 @@ MAX_PREVIEW = 120
 
 def render_scope(defaults: dict[str, Any]) -> list[str]:
     runtime = defaults.get("runtime_context") or {}
-    vis = defaults.get("container_visibility") or "private"
+    vis = defaults.get("visibility") or "private"
     vis_label = vis.get("kind", "public") if isinstance(vis, dict) else str(vis)
     return [
         f"container_ref: {defaults.get('container_ref') or '-'} ({vis_label})",

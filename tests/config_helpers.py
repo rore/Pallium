@@ -93,7 +93,7 @@ def build_agent_conversation_client(
     """Build a TestClient for agent_conversation_memory tests.
 
     Patches the LLM provider, creates a TestClient, and wraps ``post``
-    to auto-inject ``container_visibility: "public"`` on /items, /query,
+    to auto-inject ``visibility: "public"`` on /items, /query,
     and /query/debug endpoints.
 
     Parameters
@@ -128,14 +128,14 @@ def build_agent_conversation_client(
 
     def post_with_public_visibility(url: str, *args, **kwargs):
         payload = kwargs.get("json")
-        if isinstance(payload, dict) and url in {"/items", "/query", "/query/debug"} and "container_visibility" not in payload:
+        if isinstance(payload, dict) and url in {"/items", "/query", "/query/debug"} and "visibility" not in payload:
             payload = dict(payload)
-            payload["container_visibility"] = "public"
+            payload["visibility"] = "public"
             kwargs["json"] = payload
         elif isinstance(payload, list) and url == "/items":
             kwargs["json"] = [
-                {**item, "container_visibility": "public"}
-                if isinstance(item, dict) and "container_visibility" not in item
+                {**item, "visibility": "public"}
+                if isinstance(item, dict) and "visibility" not in item
                 else item
                 for item in payload
             ]

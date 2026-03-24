@@ -35,7 +35,7 @@ class TestDeriveInvariants:
         assert "INV-11" in ids
 
     def test_limited_triggers_personal_memory_check(self):
-        ids = derive_invariants({"visibility": "limited"})
+        ids = derive_invariants({"visibility": "container"})
         assert "INV-11" in ids
 
     def test_private_does_not_trigger_personal_memory_check(self):
@@ -61,7 +61,7 @@ class TestDeriveInvariants:
     def test_combined_cell(self):
         ids = derive_invariants({
             "container_relation": "different_container",
-            "visibility": "limited",
+            "visibility": "container",
             "actor_count": "multi_user",
         })
         assert "INV-01" in ids

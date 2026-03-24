@@ -44,7 +44,7 @@ class TestINV01CrossContainerLeak:
     def test_pass_same_container(self):
         scenario = {"current_query": {"container_ref": "chat:A"}}
         debug = {**_EMPTY_DEBUG, "results": [
-            {"result_id": "r1", "container_ref": "chat:A", "result_kind": "memory_hit", "container_visibility": "private"},
+            {"result_id": "r1", "container_ref": "chat:A", "result_kind": "memory_hit", "visibility": "private"},
         ]}
         result = check_no_cross_container_leak(scenario, _EMPTY_QUERY, debug)
         assert result.passed
@@ -52,7 +52,7 @@ class TestINV01CrossContainerLeak:
     def test_fail_different_container_non_public(self):
         scenario = {"current_query": {"container_ref": "chat:A"}}
         debug = {**_EMPTY_DEBUG, "results": [
-            {"result_id": "r1", "container_ref": "chat:B", "result_kind": "memory_hit", "container_visibility": "private"},
+            {"result_id": "r1", "container_ref": "chat:B", "result_kind": "memory_hit", "visibility": "private"},
         ]}
         result = check_no_cross_container_leak(scenario, _EMPTY_QUERY, debug)
         assert not result.passed
@@ -62,7 +62,7 @@ class TestINV01CrossContainerLeak:
         """Public items are visible to all containers — not a leak."""
         scenario = {"current_query": {"container_ref": "chat:A"}}
         debug = {**_EMPTY_DEBUG, "results": [
-            {"result_id": "r1", "container_ref": "chat:B", "result_kind": "memory_hit", "container_visibility": "public"},
+            {"result_id": "r1", "container_ref": "chat:B", "result_kind": "memory_hit", "visibility": "public"},
         ]}
         result = check_no_cross_container_leak(scenario, _EMPTY_QUERY, debug)
         assert result.passed
@@ -158,17 +158,17 @@ class TestINV03OffTopicInjection:
 class TestINV04VisibilityViolation:
     def test_pass_public_results_visible_to_all(self):
         """Public results are exempt from container-scoping per core/filters.py."""
-        scenario = {"current_query": {"container_ref": "chat:A", "container_visibility": "private"}}
+        scenario = {"current_query": {"container_ref": "chat:A", "visibility": "private"}}
         debug = {**_EMPTY_DEBUG, "results": [
-            {"result_id": "r1", "container_ref": "chat:B", "container_visibility": "public"},
+            {"result_id": "r1", "container_ref": "chat:B", "visibility": "public"},
         ]}
         result = check_no_visibility_violation(scenario, _EMPTY_QUERY, debug)
         assert result.passed
 
     def test_fail_private_from_wrong_container(self):
-        scenario = {"current_query": {"container_ref": "chat:A", "container_visibility": "private"}}
+        scenario = {"current_query": {"container_ref": "chat:A", "visibility": "private"}}
         debug = {**_EMPTY_DEBUG, "results": [
-            {"result_id": "r1", "container_ref": "chat:B", "container_visibility": "private"},
+            {"result_id": "r1", "container_ref": "chat:B", "visibility": "private"},
         ]}
         result = check_no_visibility_violation(scenario, _EMPTY_QUERY, debug)
         assert not result.passed
@@ -295,33 +295,33 @@ class TestINV10IdfDiscrimination:
 
 class TestINV11NoPersonalMemoryInSharedContainer:
     def test_not_applicable_for_private(self):
-        scenario = {"current_query": {"text": "test", "container_ref": "c", "container_visibility": "private"}}
+        scenario = {"current_query": {"text": "test", "container_ref": "c", "visibility": "private"}}
         result = check_no_personal_memory_in_shared_container(scenario, _EMPTY_QUERY, _EMPTY_DEBUG)
         assert result.passed
         assert "not applicable" in result.details
 
     def test_pass_no_personal_types_in_public(self):
-        scenario = {"current_query": {"text": "test", "container_ref": "c", "container_visibility": "public"}}
+        scenario = {"current_query": {"text": "test", "container_ref": "c", "visibility": "public"}}
         debug = {**_EMPTY_DEBUG, "results": [
-            {"result_kind": "memory_hit", "type": "discussion_summary", "container_visibility": "public"},
-            {"result_kind": "memory_hit", "type": "decision", "container_visibility": "public"},
+            {"result_kind": "memory_hit", "type": "discussion_summary", "visibility": "public"},
+            {"result_kind": "memory_hit", "type": "decision", "visibility": "public"},
         ]}
         result = check_no_personal_memory_in_shared_container(scenario, _EMPTY_QUERY, debug)
         assert result.passed
 
     def test_fail_interest_in_public(self):
-        scenario = {"current_query": {"text": "test", "container_ref": "c", "container_visibility": "public"}}
+        scenario = {"current_query": {"text": "test", "container_ref": "c", "visibility": "public"}}
         debug = {**_EMPTY_DEBUG, "results": [
-            {"result_kind": "memory_hit", "type": "interest", "result_id": "r1", "container_visibility": "public"},
+            {"result_kind": "memory_hit", "type": "interest", "result_id": "r1", "visibility": "public"},
         ]}
         result = check_no_personal_memory_in_shared_container(scenario, _EMPTY_QUERY, debug)
         assert not result.passed
         assert "interest" in result.details.lower() or "personal" in result.details.lower()
 
     def test_fail_constraint_in_limited(self):
-        scenario = {"current_query": {"text": "test", "container_ref": "c", "container_visibility": "limited"}}
+        scenario = {"current_query": {"text": "test", "container_ref": "c", "visibility": "container"}}
         debug = {**_EMPTY_DEBUG, "results": [
-            {"result_kind": "memory_hit", "type": "constraint_memory", "result_id": "r1", "container_visibility": "limited"},
+            {"result_kind": "memory_hit", "type": "constraint_memory", "result_id": "r1", "visibility": "container"},
         ]}
         result = check_no_personal_memory_in_shared_container(scenario, _EMPTY_QUERY, debug)
         assert not result.passed

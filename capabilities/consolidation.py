@@ -65,7 +65,7 @@ class ConsolidationCandidate:
     container_ref: str | None
     thread_ref: str | None
     latest_occurred_at: datetime
-    container_visibility: str = "private"
+    visibility: str = "private"
 
 
 @dataclass(frozen=True)
@@ -77,7 +77,7 @@ class ConsolidationGroup:
     container_ref: str | None
     thread_ref: str | None
     latest_occurred_at: datetime
-    container_visibility: str = "private"
+    visibility: str = "private"
     merge_rationale: dict[str, object] = field(default_factory=dict)
 
     @property
@@ -153,17 +153,17 @@ class ThreadLocalCarryForwardStrategy(ConsolidationStrategy):
         for candidate in candidates:
             if not candidate.thread_ref:
                 continue
-            key = (candidate.container_ref, candidate.thread_ref, candidate.container_visibility)
+            key = (candidate.container_ref, candidate.thread_ref, candidate.visibility)
             grouped.setdefault(key, []).append(candidate)
 
         groups: list[ConsolidationGroup] = []
-        for (container_ref, thread_ref, container_visibility), members in grouped.items():
+        for (container_ref, thread_ref, visibility), members in grouped.items():
             ordered = _sort_candidates(members)
             if not _group_has_pattern_signal(ordered):
                 continue
             selected = tuple(ordered[: policy.max_group_size])
             latest = max(candidate.latest_occurred_at for candidate in selected)
-            group_key = f"{self.name}:{visibility_label(container_visibility)}:{container_ref or 'none'}:{thread_ref or 'none'}"
+            group_key = f"{self.name}:{visibility_label(visibility)}:{container_ref or 'none'}:{thread_ref or 'none'}"
             groups.append(
                 ConsolidationGroup(
                     strategy_name=self.name,
@@ -173,12 +173,12 @@ class ThreadLocalCarryForwardStrategy(ConsolidationStrategy):
                     container_ref=container_ref,
                     thread_ref=thread_ref,
                     latest_occurred_at=latest,
-                    container_visibility=container_visibility,
+                    visibility=visibility,
                     merge_rationale={
                         "grouping_mode": "same_thread",
                         "container_ref": container_ref,
                         "thread_ref": thread_ref,
-                        "container_visibility": visibility_label(container_visibility),
+                        "visibility": visibility_label(visibility),
                         "candidate_types": [candidate.memory_object.type for candidate in selected],
                         "pattern_signal": "thread_local_pattern_signal",
                     },
@@ -207,7 +207,7 @@ class ContainerTopicWindowStrategy(ConsolidationStrategy):
                     continue
                 if policy.same_container_required and candidate.container_ref != anchor.container_ref:
                     continue
-                if not visibility_matches_exact(candidate.container_visibility, anchor.container_visibility):
+                if not visibility_matches_exact(candidate.visibility, anchor.visibility):
                     continue
                 if _hours_between(anchor.latest_occurred_at, candidate.latest_occurred_at) > policy.time_window_hours:
                     continue
@@ -229,7 +229,7 @@ class ContainerTopicWindowStrategy(ConsolidationStrategy):
                 consumed.add(member.memory_object.id)
             latest = max(candidate.latest_occurred_at for candidate in ordered)
             group_key = (
-                f"{self.name}:{visibility_label(ordered[0].container_visibility)}:"
+                f"{self.name}:{visibility_label(ordered[0].visibility)}:"
                 f"{ordered[0].container_ref or 'none'}:{'|'.join(sorted(candidate.memory_object.id for candidate in ordered))}"
             )
             groups.append(
@@ -241,11 +241,11 @@ class ContainerTopicWindowStrategy(ConsolidationStrategy):
                     container_ref=ordered[0].container_ref,
                     thread_ref=None,
                     latest_occurred_at=latest,
-                    container_visibility=ordered[0].container_visibility,
+                    visibility=ordered[0].visibility,
                     merge_rationale={
                         "grouping_mode": "container_topic_window",
                         "anchor_memory_id": anchor.memory_object.id,
-                        "container_visibility": visibility_label(ordered[0].container_visibility),
+                        "visibility": visibility_label(ordered[0].visibility),
                         "grouped_thread_refs": sorted({candidate.thread_ref for candidate in ordered if candidate.thread_ref}),
                         "overlap_scores": overlap_scores,
                         "time_window_hours": policy.time_window_hours,
@@ -276,7 +276,7 @@ class ThreadSummaryAnchoredStrategy(ConsolidationStrategy):
             for candidate in _sort_candidates(typed):
                 if candidate.container_ref != anchor.container_ref and policy.same_container_required:
                     continue
-                if not visibility_matches_exact(candidate.container_visibility, anchor.container_visibility):
+                if not visibility_matches_exact(candidate.visibility, anchor.visibility):
                     continue
                 if _hours_between(anchor.latest_occurred_at, candidate.latest_occurred_at) > policy.time_window_hours:
                     continue
@@ -294,7 +294,7 @@ class ThreadSummaryAnchoredStrategy(ConsolidationStrategy):
             ordered = tuple(_sort_candidates(members))
             latest = max(candidate.latest_occurred_at for candidate in ordered)
             group_key = (
-                f"{self.name}:{visibility_label(anchor.container_visibility)}:"
+                f"{self.name}:{visibility_label(anchor.visibility)}:"
                 f"{anchor.container_ref or 'none'}:{anchor.memory_object.id}"
             )
             groups.append(
@@ -306,12 +306,12 @@ class ThreadSummaryAnchoredStrategy(ConsolidationStrategy):
                     container_ref=anchor.container_ref,
                     thread_ref=anchor.thread_ref,
                     latest_occurred_at=latest,
-                    container_visibility=anchor.container_visibility,
+                    visibility=anchor.visibility,
                     merge_rationale={
                         "grouping_mode": "thread_summary_anchored",
                         "anchor_memory_id": anchor.memory_object.id,
                         "anchor_thread_ref": anchor.thread_ref,
-                        "container_visibility": visibility_label(anchor.container_visibility),
+                        "visibility": visibility_label(anchor.visibility),
                         "attached_candidate_ids": [candidate.memory_object.id for candidate in ordered if candidate.memory_object.id != anchor.memory_object.id],
                         "overlap_scores": overlap_scores,
                         "lexical_overlap_threshold": policy.lexical_overlap_threshold,
@@ -352,7 +352,7 @@ class ConsolidationCapability:
             self._build_candidate(storage, memory_object)
             for memory_object in memory_objects
             if plugin.supports_consolidation(memory_object)
-            and (not requires_visibility_context or memory_object.container_visibility != "private")
+            and (not requires_visibility_context or memory_object.visibility != "private")
         ]
         candidates = [candidate for candidate in candidates if candidate is not None]
         return strategy.select_candidates(candidates, policy)
@@ -376,7 +376,7 @@ class ConsolidationCapability:
 
     def _build_candidate(self, storage: StorageProvider, memory_object: MemoryObject) -> ConsolidationCandidate | None:
         evidence = tuple(storage.get_evidence_for_memory_object(memory_object.id))
-        if not _visibility_is_compatible(memory_object.container_visibility, evidence):
+        if not _visibility_is_compatible(memory_object.visibility, evidence):
             return None
         container_ref = _derive_container_ref(memory_object, evidence)
         thread_ref = _derive_thread_ref(memory_object, evidence)
@@ -393,7 +393,7 @@ class ConsolidationCapability:
             container_ref=container_ref,
             thread_ref=thread_ref,
             latest_occurred_at=latest_occurred_at,
-            container_visibility=memory_object.container_visibility,
+            visibility=memory_object.visibility,
         )
 
 
@@ -491,11 +491,11 @@ def _tokenize(text: str) -> list[str]:
 
 
 def _visibility_is_compatible(
-    memory_container_visibility: str,
+    memory_visibility: str,
     evidence: tuple[EvidenceReference, ...],
 ) -> bool:
     return all(
-        visibility_matches_exact(item.container_visibility, memory_container_visibility)
+        visibility_matches_exact(item.visibility, memory_visibility)
         for item in evidence
     )
 

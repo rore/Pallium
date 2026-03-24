@@ -156,7 +156,7 @@ class ConsolidationRunner:
         ):
             if memory_object.schema_id != created_memory_object.schema_id:
                 continue
-            if not visibility_matches_exact(memory_object.container_visibility, created_memory_object.container_visibility):
+            if not visibility_matches_exact(memory_object.visibility, created_memory_object.visibility):
                 continue
             provenance = memory_object.payload.get("consolidation_provenance", {})
             if provenance.get("strategy_name") != group.strategy_name:

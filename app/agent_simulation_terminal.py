@@ -134,7 +134,7 @@ def completion_candidates(text: str) -> list[str]:
             defaults = ["general", "team-backend", "my-notes"]
             candidates = history + [d for d in defaults if d not in history]
         else:
-            candidates = ["public", "limited", "private"]
+            candidates = ["public", "container", "private"]
         if stripped.endswith(" "):
             return candidates
         return [c for c in candidates if c.startswith(current)]

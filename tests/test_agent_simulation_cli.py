@@ -124,7 +124,7 @@ def test_new_session_defaults_start_with_neutral_runtime_context(tmp_path) -> No
 
 
 def test_scope_turn_local_context_and_mode_commands_update_session_defaults(tmp_path) -> None:
-    app, _io = _build_app(tmp_path, ["container-1", "thread-1", "limited"])
+    app, _io = _build_app(tmp_path, ["container-1", "thread-1", "container"])
 
     assert app._handle_command("/scope") is True
     assert app._handle_command("/turn resumed_session") is True
@@ -135,7 +135,7 @@ def test_scope_turn_local_context_and_mode_commands_update_session_defaults(tmp_
     defaults = app.session.defaults
     assert defaults.container_ref == "container-1"
     assert defaults.thread_ref == "thread-1"
-    assert defaults.container_visibility == "limited" or (isinstance(defaults.container_visibility, dict) and defaults.container_visibility.get("kind") == "limited")
+    assert defaults.visibility == "container" or (isinstance(defaults.visibility, dict) and defaults.visibility.get("kind") == "container")
     assert defaults.runtime_context["turn_kind"] == "resumed_session"
     assert defaults.runtime_context["session_has_sufficient_local_context"] is True
     assert app.session.mode == "manual"

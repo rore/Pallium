@@ -395,7 +395,7 @@ class AgentSimulationApp:
             "role": role,
             "container_ref": self._session.defaults.container_ref,
             "thread_ref": self._session.defaults.thread_ref,
-            "container_visibility": self._session.defaults.container_visibility_kind(),
+            "visibility": self._session.defaults.visibility_kind(),
         }
         return {key: value for key, value in payload.items() if value is not None}
 
@@ -405,7 +405,7 @@ class AgentSimulationApp:
             "limit": 5,
             "container_ref": self._session.defaults.container_ref,
             "thread_ref": self._session.defaults.thread_ref,
-            "container_visibility": self._session.defaults.container_visibility_kind(),
+            "visibility": self._session.defaults.visibility_kind(),
         }
         runtime_context = self._runtime_context_payload()
         if runtime_context is not None:
@@ -430,14 +430,14 @@ class AgentSimulationApp:
         defaults = self._session.defaults
         container_ref = self._prompt_optional(f"container_ref [{defaults.container_ref}]: ") or defaults.container_ref
         thread_ref = self._prompt_optional(f"thread_ref [{defaults.thread_ref}]: ") or defaults.thread_ref
-        current_kind = defaults.container_visibility_kind()
-        visibility_kind = self._prompt_optional(f"container_visibility [{current_kind}]: ") or current_kind
+        current_kind = defaults.visibility_kind()
+        visibility_kind = self._prompt_optional(f"visibility [{current_kind}]: ") or current_kind
         if visibility_kind not in VISIBILITY_KINDS:
             self._write_warning(f"Unsupported container visibility: {visibility_kind}")
             return
         defaults.container_ref = container_ref
         defaults.thread_ref = thread_ref
-        defaults.set_container_visibility(visibility_kind)
+        defaults.set_visibility(visibility_kind)
         self._write_scope()
     def _set_turn_kind(self, value: str | None) -> None:
         if value is None:
@@ -499,17 +499,17 @@ class AgentSimulationApp:
     def _switch_channel(self, args: list[str]) -> None:
         if not args:
             defaults = self._session.defaults
-            kind = defaults.container_visibility_kind()
+            kind = defaults.visibility_kind()
             self._write_system(f"channel: {defaults.container_ref} ({kind})")
             return
         name = args[0]
         visibility = args[1] if len(args) > 1 else "public"
         if visibility not in VISIBILITY_KINDS:
-            self._write_warning(f"Unknown visibility: {visibility}. Use: public, limited, private")
+            self._write_warning(f"Unknown visibility: {visibility}. Use: public, container, private")
             return
         defaults = self._session.defaults
         defaults.container_ref = f"simulation:channel:{name}"
-        defaults.set_container_visibility(visibility)
+        defaults.set_visibility(visibility)
         defaults.thread_ref = self._ref_factory("thread")
         defaults.set_runtime_context("turn_kind", "new_thread", manual=False)
         defaults.set_runtime_context("session_has_sufficient_local_context", False, manual=False)
@@ -523,7 +523,7 @@ class AgentSimulationApp:
         if last:
             defaults = self._session.defaults
             defaults.container_ref = f"simulation:channel:{last['name']}"
-            defaults.set_container_visibility(last['visibility'])
+            defaults.set_visibility(last['visibility'])
 
     def _apply_inferred_same_thread_defaults(self) -> None:
         defaults = self._session.defaults

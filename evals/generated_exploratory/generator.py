@@ -137,8 +137,8 @@ Return a JSON object like {{"scenarios": [...]}} containing {count} scenario(s).
 - "steps": array of ingest and query steps as shown in the example
 
 Important structural rules:
-- Every ingest event needs: source_type, source_id, content_type ("text/plain"), content, artifact_kind ("message" or "assistant_output"), role ("user" or "assistant"), container_ref, thread_ref, actor_ref, source_ref, occurred_at, container_visibility
-- Every query step needs: text, limit (6), container_ref, container_visibility
+- Every ingest event needs: source_type, source_id, content_type ("text/plain"), content, artifact_kind ("message" or "assistant_output"), role ("user" or "assistant"), container_ref, thread_ref, actor_ref, source_ref, occurred_at, visibility
+- Every query step needs: text, limit (6), container_ref, visibility
 - Each scenario must have at least one ingest step and one query step
 - The query step must test whether the ingested memory is correctly handled given the taxonomy cell dimensions"""
 
@@ -154,9 +154,9 @@ _DIMENSION_GUIDANCE: dict[str, dict[str, str]] = {
         "different_container": "Ingest in container-A, query from container-B.",
     },
     "visibility": {
-        "private": 'All container_visibility values are "private".',
-        "limited": 'All container_visibility values are "limited".',
-        "public": 'All container_visibility values are "public".',
+        "private": 'All visibility values are "private".',
+        "container": 'All visibility values are "container".',
+        "public": 'All visibility values are "public".',
     },
     "actor_count": {
         "single_user": "Only one user actor (plus optionally agent:assistant).",
@@ -229,7 +229,7 @@ _FORMAT_EXAMPLE = json.dumps([
                         "actor_ref": "user:branch-librarian",
                         "source_ref": "memory://gen/gen-example-msg-1",
                         "occurred_at": "2026-03-20T08:00:00Z",
-                        "container_visibility": "public",
+                        "visibility": "public",
                     }
                 ],
             },
@@ -241,7 +241,7 @@ _FORMAT_EXAMPLE = json.dumps([
                     "limit": 6,
                     "container_ref": "chat:library-downtown",
                     "thread_ref": "chat:library-downtown:thread-002",
-                    "container_visibility": "public",
+                    "visibility": "public",
                 },
             },
         ],

@@ -56,7 +56,7 @@ class QueryExecutor:
         container_ref: str | None = None,
         thread_ref: str | None = None,
         actor_ref: str | None = None,
-        container_visibility: str | None = None,
+        visibility: str | None = None,
         runtime_context: QueryRuntimeContext | None = None,
         include_trace: bool = False,
     ) -> QueryResult:
@@ -72,7 +72,7 @@ class QueryExecutor:
         requested_filters = filter_resolution.requested_filters
         effective_filters = filter_resolution.effective_filters
         plugin = self._semantic_plugins[self._default_use_case]
-        if plugin.requires_visibility_context and (container_ref is None or container_visibility is None):
+        if plugin.requires_visibility_context and (container_ref is None or visibility is None):
             trace = None
             if include_trace:
                 trace = QueryTrace(
@@ -85,7 +85,7 @@ class QueryExecutor:
                     filter_scope_reason=filter_resolution.filter_scope_reason,
                     stages=tuple(),
                     visibility=QueryVisibilityTrace(
-                        query_container_visibility=container_visibility,
+                        query_visibility=visibility,
                         query_container_ref=container_ref,
                         fail_closed_reason="query_visibility_context_required",
                     ),
@@ -107,7 +107,7 @@ class QueryExecutor:
             text=text,
             limit=retrieval_limit,
             filters=effective_filters,
-            container_visibility=container_visibility if plugin.requires_visibility_context else None,
+            visibility=visibility if plugin.requires_visibility_context else None,
             query_container_ref=container_ref if plugin.requires_visibility_context else None,
             include_trace=include_trace,
             require_visibility=plugin.requires_visibility_context,
@@ -132,7 +132,7 @@ class QueryExecutor:
                 include_trace=include_trace,
                 debug_candidate_loader=self._make_debug_candidate_loader(
                     filters=effective_filters,
-                    container_visibility=container_visibility if plugin.requires_visibility_context else None,
+                    visibility=visibility if plugin.requires_visibility_context else None,
                     query_container_ref=container_ref if plugin.requires_visibility_context else None,
                     require_visibility=plugin.requires_visibility_context,
                 ),
@@ -164,7 +164,7 @@ class QueryExecutor:
         self,
         *,
         filters: QueryFilters | None,
-        container_visibility: str | None,
+        visibility: str | None,
         query_container_ref: str | None,
         require_visibility: bool = False,
     ):
@@ -176,7 +176,7 @@ class QueryExecutor:
         def load_candidates(*, memory_types: list[str] | None = None) -> list[QueryResultItem]:
             results: list[QueryResultItem] = []
             for memory_object in self._storage.list_memory_objects(memory_types=memory_types, lifecycle="active"):
-                if require_visibility and not is_visible(memory_object.container_visibility, memory_object.container_ref, query_container_ref, getattr(memory_object, 'actor_ref', None)):
+                if require_visibility and not is_visible(memory_object.visibility, memory_object.container_ref, query_container_ref, getattr(memory_object, 'actor_ref', None)):
                     continue
                 evidence = self._storage.get_evidence_for_memory_object(memory_object.id)
                 if filters is not None and not any(self._evidence_matches_filters(item, filters) for item in evidence):
@@ -191,7 +191,7 @@ class QueryExecutor:
                         envelope=memory_object.envelope,
                         score=0,
                         evidence=evidence,
-                        container_visibility=memory_object.container_visibility,
+                        visibility=memory_object.visibility,
                     )
                 )
             return results

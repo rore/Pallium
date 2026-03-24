@@ -50,7 +50,7 @@ Implemented storage and retrieval behavior:
 - optional retrieval trace on the debug query path, including matched tokens, candidate-flow counts, selected text views, routed exclusion reasons, result-origin summaries, and per-result retrieval origin (lexical, vector, or fused)
 - package-owned candidate-aware routed reranking on top of retrieval results for `agent_conversation_memory`, with explicit safer-layer fallback exposed through the existing debug trace path
 - evidence resolution from memory objects back to source items
-- generic `visibility_context` plumbing on `SourceItem`, `MemoryObject`, and query requests, with fail-closed retrieval enforcement for scope-aware packages before ranking and visibility exclusion trace on the debug path
+- generic `visibility` plumbing on `SourceItem`, `MemoryObject`, and query requests, with fail-closed retrieval enforcement for scope-aware packages before ranking and visibility exclusion trace on the debug path
 - explicit local integration-debug logging for processing outcomes, failures, memory provenance, and thread rebuild results, gated behind config rather than always-on logging
 
 ## Hybrid Retrieval Architecture
@@ -225,7 +225,7 @@ The public `/query` contract now reflects that package-owned decision point. Cal
 
 For resumed-work queries, that same package-owned path adds explicit usefulness and freshness shaping for `task_checkpoint` plus adjacent evidence. Sharp checkpoints that preserve blocker, next step, evidence, and freshness can win cleanly, while thin or stale checkpoints can be demoted beneath fresher explicit source state without moving policy back into downstream agents.
 
-`agent_conversation_memory` is now the first scope-aware package. It requires consumer-supplied `visibility_context` on ingest and query, preserves visibility on direct and higher-level memory, excludes missing-visibility evidence from promotion and normal retrieval, and relies on the core/capability layer for exact-match-only aggregation and consolidation.
+`agent_conversation_memory` is now the first scope-aware package. It requires consumer-supplied `visibility` on ingest and query, preserves visibility on direct and higher-level memory, excludes missing-visibility evidence from promotion and normal retrieval, and relies on the core/capability layer for exact-match-only aggregation and consolidation.
 
 Actor scoping extends the visibility model with per-memory attribution:
 

@@ -52,7 +52,7 @@ class BlockingThreadAggregationPlugin(ThreadAggregationSemanticPlugin):
             schema_id='blocking_thread_lease.decision',
             schema_version='v1',
             payload={'decision': source_item.content, 'source_item_id': source_item.id},
-            container_visibility=source_item.container_visibility,
+            visibility=source_item.visibility,
         )
         return ProcessResult(
             annotations=[],
@@ -70,7 +70,7 @@ class BlockingThreadAggregationPlugin(ThreadAggregationSemanticPlugin):
         )
 
     def supports_thread_aggregation(self, source_item) -> bool:
-        return bool(source_item.container_ref and source_item.thread_ref and source_item.container_visibility is not None)
+        return bool(source_item.container_ref and source_item.thread_ref and source_item.visibility is not None)
 
     def build_thread_summary(self, aggregate, conclusions):
         with self._build_lock:
@@ -90,7 +90,7 @@ class BlockingThreadAggregationPlugin(ThreadAggregationSemanticPlugin):
                 'source_item_ids': list(aggregate.source_item_ids),
                 'summary': f'{len(aggregate.source_item_ids)} items in thread scope',
             },
-            container_visibility=aggregate.container_visibility,
+            visibility=aggregate.visibility,
         )
         task_checkpoint = MemoryObject(
             type='task_checkpoint',
@@ -109,7 +109,7 @@ class BlockingThreadAggregationPlugin(ThreadAggregationSemanticPlugin):
                 'evidence': list(aggregate.source_item_ids),
                 'freshness_signal': 'synthetic',
             },
-            container_visibility=aggregate.container_visibility,
+            visibility=aggregate.visibility,
         )
         relations = [
             Relation(
@@ -475,7 +475,7 @@ def test_thread_processing_lease_is_single_winner_and_expired_lease_is_reclaimab
         use_case='blocking_thread_lease',
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-same-scope',
-        container_visibility="public",
+        visibility="public",
     )
     storage.create_source_item(source_item)
     scope = ThreadProcessingScope(
@@ -483,7 +483,7 @@ def test_thread_processing_lease_is_single_winner_and_expired_lease_is_reclaimab
         use_case='blocking_thread_lease',
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-same-scope',
-        container_visibility="public",
+        visibility="public",
     )
     storage.commit_processed_source_item(
         source_item_id=source_item.id,
@@ -526,7 +526,7 @@ def test_two_workers_same_thread_leave_single_active_thread_memory_after_deferre
         role='assistant',
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-concurrency',
-        container_visibility="public",
+        visibility="public",
     )
     second_ingest = service.ingest_item(
         source_type='assistant_artifact',
@@ -539,7 +539,7 @@ def test_two_workers_same_thread_leave_single_active_thread_memory_after_deferre
         role='assistant',
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-concurrency',
-        container_visibility="public",
+        visibility="public",
     )
 
     # Process both items -- thread rebuild is decoupled, so items complete
@@ -607,7 +607,7 @@ def test_thread_rebuild_loop_exits_after_max_iterations(test_db_url: str) -> Non
         metadata=None,
         container_ref='chat:iteration-limit',
         thread_ref='chat:iteration-limit:thread-1',
-        container_visibility="public",
+        visibility="public",
         use_case='always_pending',
     )
     storage.create_source_item(source_item)

@@ -164,7 +164,7 @@ The runtime should send:
 - current user text
 - refs and visibility:
   - `container_ref`
-  - `container_visibility`
+  - `visibility`
   - `thread_ref`
 
 Optional advanced hints:
@@ -237,15 +237,15 @@ but the integration loop does not require you to think in those terms first.
 
 ## Container Visibility and Actor Scoping
 
-Set `container_visibility` based on the communication context:
+Set `visibility` based on the communication context:
 
 - **DM / 1:1 conversation** — `"private"`. All memory types are created.
   Memories carry `actor_ref` from the source item.
-- **Team channel / group chat** — `"limited"`. Personal memory types (`interest`,
+- **Team channel / group chat** — `"container"`. Personal memory types (`interest`,
   `constraint_memory`) are suppressed and fall through to `discussion_summary`.
   All memories have `actor_ref = null`.
 - **Public channel / broadcast** — `"public"`. Same suppression rules as
-  `"limited"`.
+  `"container"`.
 
 When to pass `actor_ref` in queries:
 

@@ -44,7 +44,7 @@ class SourceItem:
     thread_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: str | None = None
-    container_visibility: str = "private"
+    visibility: str = "private"
     use_case: str | None = None
     processing_status: str = "pending"
     processing_attempts: int = 0
@@ -115,7 +115,7 @@ class MemoryObject:
     schema_version: str
     payload: dict[str, Any]
     lifecycle: str = "active"
-    container_visibility: str = "private"
+    visibility: str = "private"
     container_ref: str | None = None
     actor_ref: str | None = None
     freshness_at: datetime | None = None
@@ -159,7 +159,7 @@ class EvidenceReference:
     thread_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: str | None = None
-    container_visibility: str = "private"
+    visibility: str = "private"
 
 
 @dataclass(frozen=True)
@@ -204,7 +204,7 @@ class QueryResultItem:
     thread_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: str | None = None
-    container_visibility: str = "private"
+    visibility: str = "private"
     retrieval_source: str | None = None
     lexical_score: int | None = None
     vector_score: int | None = None

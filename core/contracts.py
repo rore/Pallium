@@ -24,7 +24,7 @@ class SupersessionHint:
     canonical_key: str
     container_ref: str | None
     thread_ref: str | None
-    container_visibility: str = "private"
+    visibility: str = "private"
 
 
 @dataclass(frozen=True)
@@ -153,7 +153,7 @@ def build_source_item(
     thread_ref: str | None = None,
     source_ref: str | None = None,
     artifact_kind: str | None = None,
-    container_visibility: str = "private",
+    visibility: str = "private",
     use_case: str | None = None,
     processing_status: str = "pending",
     processing_attempts: int = 0,
@@ -178,7 +178,7 @@ def build_source_item(
         thread_ref=thread_ref,
         source_ref=source_ref,
         artifact_kind=artifact_kind,
-        container_visibility=container_visibility,
+        visibility=visibility,
         use_case=use_case,
         processing_status=processing_status,
         processing_attempts=processing_attempts,

@@ -108,7 +108,7 @@ def _append_typed_constraint_memory_objects(
         return result
     if source_item.role and source_item.role.lower() != "user":
         return result
-    if source_item.container_visibility in ("limited", "public"):
+    if source_item.visibility in ("container", "public"):
         return result
     semantic_provenance = _semantic_provenance_from_process_result(result)
     producer_schema_id = str(semantic_provenance.get("prompt_schema_id") or CONSTRAINT_MEMORY_SCHEMA_ID)
@@ -132,7 +132,7 @@ def _append_typed_constraint_memory_objects(
             schema_id=CONSTRAINT_MEMORY_SCHEMA_ID,
             schema_version=CONSTRAINT_MEMORY_SCHEMA_VERSION,
             payload=payload,
-            container_visibility=source_item.container_visibility,
+            visibility=source_item.visibility,
             container_ref=source_item.container_ref,
             actor_ref=_resolve_actor_ref(source_item),
             freshness_at=source_item.occurred_at,
@@ -235,7 +235,7 @@ def build_supersession_hints(source_item: SourceItem, result: ProcessResult) -> 
                 canonical_key=canonical_key,
                 container_ref=source_item.container_ref,
                 thread_ref=source_item.thread_ref,
-                container_visibility=source_item.container_visibility,
+                visibility=source_item.visibility,
             )
         )
     return hints

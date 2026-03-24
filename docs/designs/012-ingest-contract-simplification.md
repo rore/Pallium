@@ -34,14 +34,14 @@ Removal scope:
 - passthrough in retrieval, storage, consolidation
 - SourceItem and MemoryObject storage columns (migration: drop or ignore)
 
-### Replace `visibility_context` with `container_visibility`
+### Replace `visibility_context` with `visibility`
 
 Current model:
 
 ```json
 {
   "visibility_context": {
-    "kind": "limited",
+    "kind": "container",
     "id": "channel:C04ABC123"
   }
 }
@@ -51,18 +51,18 @@ New model:
 
 ```json
 {
-  "container_visibility": "limited"
+  "visibility": "container"
 }
 ```
 
-Values: `"public"` | `"limited"` | `"private"`. Default: `"private"`.
+Values: `"public"` | `"container"` | `"private"`. Default: `"private"`.
 
 Mapping to Slack:
 
-| Context | `container_ref` | `container_visibility` |
+| Context | `container_ref` | `visibility` |
 |---|---|---|
 | Public channel | `"channel:C04ABC123"` | `"public"` |
-| Private channel | `"channel:C07XYZ456"` | `"limited"` |
+| Private channel | `"channel:C07XYZ456"` | `"container"` |
 | DM with agent | `"channel:D09USER789"` | `"private"` |
 
 Retrieval behavior:
@@ -112,7 +112,7 @@ Required:
 Optional:
 
 - `container_ref`
-- `container_visibility` (default: `"private"`)
+- `visibility` (default: `"private"`)
 - `thread_ref`
 - `actor_ref`
 - `agent_ref`
@@ -131,7 +131,7 @@ Required:
 Optional:
 
 - `container_ref`
-- `container_visibility`
+- `visibility`
 - `thread_ref`
 - `limit`
 - `source_type`
@@ -146,7 +146,7 @@ consumers yet. Options:
 
 - **Clean break**: change the contract, update all code, update all tests. No
   backward compatibility layer.
-- **Transitional**: accept both `visibility_context` and `container_visibility`
+- **Transitional**: accept both `visibility_context` and `visibility`
   for one release, warn on the old shape, then remove.
 
 Recommendation: clean break. We're early enough.

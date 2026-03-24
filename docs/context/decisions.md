@@ -278,7 +278,7 @@ Why:
 
 Container type drives memory scoping, not memory type detection or content
 analysis. Personal memory types (`interest`, `constraint_memory`) are suppressed
-in shared containers (`limited`, `public`) and fall through to
+in shared containers (`container`, `public`) and fall through to
 `discussion_summary`. `actor_ref` is propagated from source item only in private
 containers; shared containers always produce `actor_ref = null`.
 
@@ -325,7 +325,7 @@ Why:
 - cross-thread recall queries ("what was the db I wanted to check?") couldn't
   surface the interest because it was buried among other summaries
 - user-only role guard prevents assistant responses from creating interest
-- suppressed in shared containers (limited/public) per container-driven scoping
+- suppressed in shared containers (container/public) per container-driven scoping
 
 ## Open
 

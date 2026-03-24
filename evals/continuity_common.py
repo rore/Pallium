@@ -248,7 +248,7 @@ def _normalize_evidence_reference_for_contract(item: dict[str, Any]) -> dict[str
         "thread_ref": _normalize_contract_scalar(item.get("thread_ref") if isinstance(item, dict) else None),
         "source_ref": _normalize_contract_scalar(item.get("source_ref") if isinstance(item, dict) else None),
         "artifact_kind": _normalize_contract_scalar(item.get("artifact_kind") if isinstance(item, dict) else None),
-        "container_visibility": _normalize_contract_scalar(item.get("container_visibility") if isinstance(item, dict) else None),
+        "visibility": _normalize_contract_scalar(item.get("visibility") if isinstance(item, dict) else None),
     }
 
 

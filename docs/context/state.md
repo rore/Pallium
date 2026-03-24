@@ -24,7 +24,7 @@
 - normal local runtime goes through `python -m app.run ... --processors N`
 - debug queue health exists at `GET /debug/queue/health`
 - query/debug exposes retrieval trace plus package-owned routing and injection trace
-- generic `visibility_context` exists on ingest, storage, query, evidence, and debug trace for privacy-aware scope enforcement
+- generic `visibility` field exists on ingest, storage, query, evidence, and debug trace for privacy-aware scope enforcement
 - promoted memory currently includes:
   - `decision`
   - `investigation_outcome`
@@ -37,7 +37,7 @@
   - fallback `discussion_summary`
 - actor-scoped memory and container-driven visibility rules are shipped:
   - `actor_ref` field on MemoryObject tracks who a memory is personal to
-  - personal memory types (interest, constraint_memory) are suppressed in shared containers (limited/public), falling through to discussion_summary
+  - personal memory types (interest, constraint_memory) are suppressed in shared containers (container/public), falling through to discussion_summary
   - constraint_memory has a role guard — assistant messages cannot create it
   - query-time actor filtering via optional `actor_ref` on QueryFilters and query API
   - thread-level memories (thread_summary, task_checkpoint) always have actor_ref=null (shared)
@@ -85,7 +85,7 @@
 - `interest` memory kind is shipped:
   - captures specific-but-uncommitted user interest (stronger than discussion_summary, weaker than task_checkpoint)
   - user-only role guard — assistant messages cannot create interest
-  - suppressed in shared containers (limited/public) — falls through to discussion_summary
+  - suppressed in shared containers (container/public) — falls through to discussion_summary
   - per-item extraction with `interest_text` signal, also detected at thread aggregation level
 - processing pipeline latency optimizations are shipped:
   - worker poll interval reduced from 1.0s to 0.2s
@@ -111,7 +111,7 @@
   - live exploratory drift and replay-promotion tooling
 - the developer-work confidence harness should be read by hard-gate fields first, not by aggregate scenario-success counts alone
 - replay is now a real tooling surface, but replay coverage is still materially smaller than the authored confidence packs
-- test suite: 606 passed, 5 skipped
+- test suite: 699 passed, 5 skipped
 - semantic extraction fixture set: 58 items (12 decisions, 14 investigations, 20 boundary-null, 13 signal cases)
 
 ## Configuration Note

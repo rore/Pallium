@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 
-ContainerVisibility = Literal["public", "limited", "private"]
+Visibility = Literal["public", "container", "private"]
 
 
 @dataclass(frozen=True)
@@ -15,7 +15,7 @@ class VisibilityExclusion:
 
 @dataclass(frozen=True)
 class QueryVisibilityTrace:
-    query_container_visibility: str | None
+    query_visibility: str | None
     query_container_ref: str | None
     excluded_candidates: tuple[VisibilityExclusion, ...] = ()
     fail_closed_reason: str | None = None
@@ -42,5 +42,5 @@ def visibility_matches_exact(left: str | None, right: str | None) -> bool:
     return left == right
 
 
-def visibility_label(container_visibility: str | None) -> str:
-    return container_visibility or "missing"
+def visibility_label(visibility: str | None) -> str:
+    return visibility or "missing"

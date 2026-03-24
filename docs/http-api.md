@@ -60,8 +60,8 @@ Recommended fields for `agent_conversation_memory`:
 
 - `container_ref` — which container this item belongs to (e.g. a channel ID
   or room ID). Used for scoping, thread grouping, and visibility enforcement
-- `container_visibility` — who can see this item: `"public"`, `"limited"`, or
-  `"private"`. Default: `"private"`. See [Common Shapes](#container_visibility)
+- `visibility` — who can see this item: `"public"`, `"container"`, or
+  `"private"`. Default: `"private"`. See [Common Shapes](#visibility)
 - `thread_ref` — which conversation thread within the container
 - `role` — who produced this: `"user"` or `"assistant"`
 - `artifact_kind` — optional hint about the evidence shape (see below)
@@ -96,7 +96,7 @@ Recommended example for `agent_conversation_memory`:
   "artifact_kind": "assistant_output",
   "role": "assistant",
   "container_ref": "channel:C04ABC123",
-  "container_visibility": "limited",
+  "visibility": "container",
   "thread_ref": "thread:1700000001"
 }]
 ```
@@ -157,7 +157,7 @@ Required fields:
 Recommended fields:
 
 - `container_ref` — scope the query to this container
-- `container_visibility` — visibility boundary for the query
+- `visibility` — visibility boundary for the query
 - `thread_ref` — current thread within the container
 
 Additional filters:
@@ -188,7 +188,7 @@ Recommended example:
 {
   "text": "Why did we choose event timestamps?",
   "container_ref": "channel:C04ABC123",
-  "container_visibility": "limited",
+  "visibility": "container",
   "thread_ref": "thread:1700000001"
 }
 ```
@@ -233,7 +233,7 @@ Response:
       "excerpt": null,
       "container_ref": "channel:C04ABC123",
       "thread_ref": "thread:1700000001",
-      "container_visibility": "limited",
+      "visibility": "container",
       "retrieval_source": "lexical",
       "evidence": [
         {
@@ -242,7 +242,7 @@ Response:
           "source_id": "msg-001",
           "role": "assistant",
           "container_ref": "channel:C04ABC123",
-          "container_visibility": "limited"
+          "visibility": "container"
         }
       ]
     }
@@ -273,7 +273,7 @@ Each result in `results[]`:
 - `memory_object_id` — ID of the memory object (for `memory_hit`)
 - `source_item_id` — ID of the source item (for `source_hit`)
 - `excerpt` — text excerpt (for `source_hit`)
-- `container_ref`, `thread_ref`, `container_visibility` — context refs
+- `container_ref`, `thread_ref`, `visibility` — context refs
 - `retrieval_source` — `"lexical"`, `"vector"`, or `"fused"` (when hybrid
   retrieval is enabled)
 - `evidence` — supporting evidence refs (for `memory_hit` results)
@@ -325,7 +325,7 @@ Example:
   "artifact_kind": "message",
   "container_ref": "slack:channel:C04ABC123",
   "thread_ref": "slack:thread:C04ABC123:1700000001.000100",
-  "container_visibility": "limited",
+  "visibility": "container",
   "actor_ref": "slack:user:U01XYZ789"
 }
 ```
@@ -369,12 +369,12 @@ or benchmark setup checks.
 
 ## Common Shapes
 
-### container_visibility
+### visibility
 
 A simple string field:
 
 - `"public"` — visible to queries from any container
-- `"limited"` — visible only within the same `container_ref` (group context)
+- `"container"` — visible only within the same `container_ref` (group context)
 - `"private"` — visible only within the same `container_ref` (personal context)
 
 Default: `"private"`.

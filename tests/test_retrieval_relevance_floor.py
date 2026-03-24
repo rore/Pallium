@@ -64,7 +64,7 @@ def _build_vector_mock(storage: SQLiteStorageProvider, *, vector_score: int = 80
                     evidence=[],
                     container_ref=mo.container_ref,
                     actor_ref=mo.actor_ref,
-                    container_visibility=mo.container_visibility or "private",
+                    visibility=mo.visibility or "private",
                 )
             )
         # Also return source items (which carry the actual domain text)
@@ -85,7 +85,7 @@ def _build_vector_mock(storage: SQLiteStorageProvider, *, vector_score: int = 80
                         container_ref=rec.container_ref,
                         role=rec.role,
                         artifact_kind=rec.artifact_kind,
-                        container_visibility=rec.container_visibility or "private",
+                        visibility=rec.visibility or "private",
                     )
                 )
         return RetrievalQueryResult(results=items[:limit], trace=None)
@@ -126,7 +126,7 @@ def _ingest_vector_db_conversation(service: PalliumService) -> None:
         role="user",
         container_ref=CONTAINER_REF,
         thread_ref=THREAD_A,
-        container_visibility="private",
+        visibility="private",
     )
     service.ingest_item(
         source_type="assistant_artifact",
@@ -142,7 +142,7 @@ def _ingest_vector_db_conversation(service: PalliumService) -> None:
         role="assistant",
         container_ref=CONTAINER_REF,
         thread_ref=THREAD_A,
-        container_visibility="private",
+        visibility="private",
     )
     service.ingest_item(
         source_type="chat_message",
@@ -155,7 +155,7 @@ def _ingest_vector_db_conversation(service: PalliumService) -> None:
         role="user",
         container_ref=CONTAINER_REF,
         thread_ref=THREAD_A,
-        container_visibility="private",
+        visibility="private",
     )
     service.drain_processing_queue()
 
@@ -193,7 +193,7 @@ class TestRetrievalRelevanceFloorIntegration:
             limit=6,
             container_ref=CONTAINER_REF,
             thread_ref=THREAD_B,
-            container_visibility="private",
+            visibility="private",
             include_trace=True,
         )
         assert result.should_inject is False
@@ -215,7 +215,7 @@ class TestRetrievalRelevanceFloorIntegration:
             text="what did we discuss about vector databases?",
             limit=6,
             container_ref=CONTAINER_REF,
-            container_visibility="private",
+            visibility="private",
             include_trace=True,
         )
         assert result.decision_reason != "low_justification_score", (
@@ -237,7 +237,7 @@ class TestRetrievalRelevanceFloorIntegration:
             limit=6,
             container_ref=CONTAINER_REF,
             thread_ref=THREAD_B,
-            container_visibility="private",
+            visibility="private",
             include_trace=True,
         )
         assert result.should_inject is False
@@ -252,7 +252,7 @@ class TestRetrievalRelevanceFloorIntegration:
             text="vector databases chromadb",
             limit=6,
             container_ref=CONTAINER_REF,
-            container_visibility="private",
+            visibility="private",
             include_trace=True,
         )
         sources = {item.retrieval_source for item in result.results}
@@ -270,7 +270,7 @@ class TestRetrievalRelevanceFloorIntegration:
             text="vector databases chromadb",
             limit=6,
             container_ref=CONTAINER_REF,
-            container_visibility="private",
+            visibility="private",
             include_trace=True,
         )
         lexical_matched = [
@@ -322,7 +322,7 @@ class TestRelevanceFloorLexicalOnly:
             text="Is it going to rain tomorrow?",
             limit=6,
             container_ref=CONTAINER_REF,
-            container_visibility="private",
+            visibility="private",
             include_trace=True,
         )
         assert result.should_inject is False, (
@@ -339,7 +339,7 @@ class TestRelevanceFloorLexicalOnly:
             text="what vector databases did we discuss?",
             limit=6,
             container_ref=CONTAINER_REF,
-            container_visibility="private",
+            visibility="private",
             include_trace=True,
         )
         assert result.decision_reason != "low_justification_score", (
@@ -359,7 +359,7 @@ class TestRelevanceFloorLexicalOnly:
             text="what did we say about vector databases?",
             limit=6,
             container_ref=CONTAINER_REF,
-            container_visibility="private",
+            visibility="private",
             include_trace=True,
         )
         # The floor should pass because on-topic candidates exist.

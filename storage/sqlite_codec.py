@@ -55,7 +55,7 @@ class SQLiteCodecMixin:
             thread_ref=record.thread_ref,
             source_ref=record.source_ref,
             artifact_kind=record.artifact_kind,
-            container_visibility=record.container_visibility or "private",
+            visibility=record.visibility or "private",
             use_case=record.use_case,
             processing_status=record.processing_status or "pending",
             processing_attempts=record.processing_attempts or 0,
@@ -90,7 +90,7 @@ class SQLiteCodecMixin:
             payload=SQLiteCodecMixin._loads(record.payload_json),
             lifecycle=record.lifecycle or "active",
             envelope=SQLiteCodecMixin._load_memory_envelope(record.envelope_json),
-            container_visibility=record.container_visibility or "private",
+            visibility=record.visibility or "private",
             container_ref=record.container_ref,
             actor_ref=record.actor_ref,
             freshness_at=SQLiteCodecMixin._normalize_datetime(record.freshness_at),
@@ -135,7 +135,7 @@ class SQLiteCodecMixin:
             thread_ref=record.thread_ref,
             source_ref=record.source_ref,
             artifact_kind=record.artifact_kind,
-            container_visibility=record.container_visibility or "private",
+            visibility=record.visibility or "private",
         )
 
     @staticmethod
@@ -150,7 +150,7 @@ class SQLiteCodecMixin:
             use_case=record.use_case,
             container_ref=record.container_ref,
             thread_ref=record.thread_ref,
-            container_visibility=record.container_visibility or "private",
+            visibility=record.visibility or "private",
             requested_at=requested_at,
             processing_claimed_by=record.processing_claimed_by,
             processing_claimed_at=claimed_at,

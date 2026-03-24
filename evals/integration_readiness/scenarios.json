@@ -260,7 +260,7 @@
                                  "actor_ref":  "agent:assistant",
                                  "source_ref":  "memory://wr/thread-11-artifact-1",
                                  "occurred_at":  "2026-03-11T19:00:00Z",
-                                 "container_visibility": "public",
+                                 "visibility": "public",
                                  "metadata":  {
                                                   "topic":  "lib241_rollout"
                                               }
@@ -277,7 +277,7 @@
                                  "actor_ref":  "agent:assistant",
                                  "source_ref":  "memory://wr/thread-11-artifact-2",
                                  "occurred_at":  "2026-03-11T19:01:00Z",
-                                 "container_visibility": "limited",
+                                 "visibility": "container",
                                  "metadata":  {
                                                   "topic":  "lib241_rollout"
                                               }
@@ -294,7 +294,7 @@
                                  "actor_ref":  "agent:assistant",
                                  "source_ref":  "memory://wr/thread-11-artifact-3",
                                  "occurred_at":  "2026-03-11T19:02:00Z",
-                                 "container_visibility": "limited",
+                                 "visibility": "container",
                                  "metadata":  {
                                                   "topic":  "lib241_rollout"
                                               }
@@ -311,7 +311,7 @@
                               "text":  "What public conclusion did we already make about the LIB-241 rollout?",
                               "limit":  6,
                               "container_ref":  "chat:rollout",
-                              "container_visibility": "public"
+                              "visibility": "public"
                           },
         "target_question":  "What public conclusion did we already make about the LIB-241 rollout?",
         "should_memory_help":  true,

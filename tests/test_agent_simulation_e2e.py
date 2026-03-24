@@ -117,7 +117,7 @@ def _build_harness(
     )
     harness.session.defaults.container_ref = container_ref
     harness.session.defaults.thread_ref = thread_ref
-    harness.session.defaults.container_visibility = "public"
+    harness.session.defaults.visibility = "public"
     harness.session.defaults.set_runtime_context("turn_kind", turn_kind, manual=True)
     harness.session.defaults.set_runtime_context("session_has_sufficient_local_context", session_has_sufficient_local_context, manual=True)
     return harness, model
@@ -139,7 +139,7 @@ def test_chat_mode_uses_real_items_and_query_debug_contract(monkeypatch, test_db
                 "role": "assistant",
                 "container_ref": "chat:ops",
                 "thread_ref": "chat:ops:history",
-                "container_visibility": "public",
+                "visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -150,7 +150,7 @@ def test_chat_mode_uses_real_items_and_query_debug_contract(monkeypatch, test_db
                 "role": "assistant",
                 "container_ref": "chat:ops",
                 "thread_ref": "chat:ops:history",
-                "container_visibility": "public",
+                "visibility": "public",
             },
         ],
     )
@@ -224,7 +224,7 @@ def test_chat_mode_prefers_prior_decision_for_indirect_resource_recall(monkeypat
                 "role": "assistant",
                 "container_ref": "chat:capacity",
                 "thread_ref": "chat:capacity:history",
-                "container_visibility": "public",
+                "visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -235,7 +235,7 @@ def test_chat_mode_prefers_prior_decision_for_indirect_resource_recall(monkeypat
                 "role": "assistant",
                 "container_ref": "chat:capacity",
                 "thread_ref": "chat:capacity:history",
-                "container_visibility": "public",
+                "visibility": "public",
             },
         ],
     )
@@ -281,7 +281,7 @@ def test_chat_mode_keeps_task_checkpoint_for_messy_resumed_work_prompt(monkeypat
                 "role": "assistant",
                 "container_ref": "chat:sync",
                 "thread_ref": "chat:sync:history",
-                "container_visibility": "public",
+                "visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -292,7 +292,7 @@ def test_chat_mode_keeps_task_checkpoint_for_messy_resumed_work_prompt(monkeypat
                 "role": "assistant",
                 "container_ref": "chat:sync",
                 "thread_ref": "chat:sync:history",
-                "container_visibility": "public",
+                "visibility": "public",
             },
         ],
     )
@@ -335,7 +335,7 @@ def test_chat_mode_uses_task_checkpoint_for_natural_language_resumed_work_histor
                 "role": "assistant",
                 "container_ref": "chat:sync-natural",
                 "thread_ref": "chat:sync-natural:history",
-                "container_visibility": "public",
+                "visibility": "public",
             },
         ],
     )
@@ -377,7 +377,7 @@ def test_chat_mode_uses_pattern_memory_after_consolidation_for_broad_recall(monk
                 "role": "user",
                 "container_ref": "chat:grocery-pattern",
                 "thread_ref": "chat:grocery-pattern:one",
-                "container_visibility": "public",
+                "visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -388,7 +388,7 @@ def test_chat_mode_uses_pattern_memory_after_consolidation_for_broad_recall(monk
                 "role": "assistant",
                 "container_ref": "chat:grocery-pattern",
                 "thread_ref": "chat:grocery-pattern:one",
-                "container_visibility": "public",
+                "visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -399,7 +399,7 @@ def test_chat_mode_uses_pattern_memory_after_consolidation_for_broad_recall(monk
                 "role": "assistant",
                 "container_ref": "chat:grocery-pattern",
                 "thread_ref": "chat:grocery-pattern:one",
-                "container_visibility": "public",
+                "visibility": "public",
             },
             {
                 "source_type": "chat_message",
@@ -410,7 +410,7 @@ def test_chat_mode_uses_pattern_memory_after_consolidation_for_broad_recall(monk
                 "role": "user",
                 "container_ref": "chat:grocery-pattern",
                 "thread_ref": "chat:grocery-pattern:two",
-                "container_visibility": "public",
+                "visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -421,7 +421,7 @@ def test_chat_mode_uses_pattern_memory_after_consolidation_for_broad_recall(monk
                 "role": "assistant",
                 "container_ref": "chat:grocery-pattern",
                 "thread_ref": "chat:grocery-pattern:two",
-                "container_visibility": "public",
+                "visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -432,7 +432,7 @@ def test_chat_mode_uses_pattern_memory_after_consolidation_for_broad_recall(monk
                 "role": "assistant",
                 "container_ref": "chat:grocery-pattern",
                 "thread_ref": "chat:grocery-pattern:two",
-                "container_visibility": "public",
+                "visibility": "public",
             },
         ],
     )
@@ -479,7 +479,7 @@ def test_greeting_exchange_does_not_inject_source_evidence(monkeypatch, test_db_
                 "role": "user",
                 "container_ref": "chat:greeting",
                 "thread_ref": "chat:greeting:thread1",
-                "container_visibility": "public",
+                "visibility": "public",
             },
             {
                 "source_type": "assistant_artifact",
@@ -490,7 +490,7 @@ def test_greeting_exchange_does_not_inject_source_evidence(monkeypatch, test_db_
                 "role": "assistant",
                 "container_ref": "chat:greeting",
                 "thread_ref": "chat:greeting:thread1",
-                "container_visibility": "public",
+                "visibility": "public",
             },
         ],
     )
@@ -543,7 +543,7 @@ def test_same_thread_confirmation_does_not_inject_source_evidence(monkeypatch, t
                 "role": "assistant",
                 "container_ref": "chat:export-confirm",
                 "thread_ref": "chat:export-confirm:thread1",
-                "container_visibility": "public",
+                "visibility": "public",
             },
         ],
     )
@@ -612,7 +612,7 @@ def test_fresh_thread_recalls_export_cap_fact_natural_language(monkeypatch, test
                 "role": "user",
                 "container_ref": "chat:export-natural",
                 "thread_ref": "chat:export-natural:thread1",
-                "container_visibility": "public",
+                "visibility": "public",
             },
         ],
     )
@@ -662,7 +662,7 @@ def test_fresh_thread_recalls_export_cap_fact_prefixed_control(monkeypatch, test
                 "role": "assistant",
                 "container_ref": "chat:export-prefixed",
                 "thread_ref": "chat:export-prefixed:thread1",
-                "container_visibility": "public",
+                "visibility": "public",
             },
         ],
     )
@@ -733,7 +733,7 @@ def test_chat_mode_keeps_cross_thread_memory_separate_from_local_thread_context(
                 "role": "assistant",
                 "container_ref": "chat:local-vs-memory",
                 "thread_ref": "chat:local-vs-memory:history",
-                "container_visibility": "public",
+                "visibility": "public",
             },
         ],
     )

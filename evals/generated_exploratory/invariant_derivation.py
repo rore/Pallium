@@ -20,7 +20,7 @@ _CONDITIONAL: list[tuple[str, str, list[str]]] = [
     # (dimension, level, invariant_ids)
     ("container_relation", "different_container", ["INV-01", "INV-04"]),
     ("visibility", "private", ["INV-04"]),
-    ("visibility", "limited", ["INV-04", "INV-11"]),
+    ("visibility", "container", ["INV-04", "INV-11"]),
     ("visibility", "public", ["INV-04", "INV-11"]),
     ("source_role", "assistant", ["INV-02"]),
     ("query_intent", "backward_recall", ["INV-05"]),

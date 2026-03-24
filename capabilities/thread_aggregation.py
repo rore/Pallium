@@ -15,7 +15,7 @@ class ThreadAggregate:
     source_item_ids: list[str]
     latest_occurred_at: datetime | None
     aggregate_text: str
-    container_visibility: str = "private"
+    visibility: str = "private"
 
 
 def build_thread_aggregate(source_items: list[SourceItem]) -> ThreadAggregate:
@@ -34,10 +34,10 @@ def build_thread_aggregate(source_items: list[SourceItem]) -> ThreadAggregate:
     if not first.container_ref or not first.thread_ref:
         raise ValueError("Thread aggregation requires container_ref and thread_ref")
     if any(
-        not visibility_matches_exact(item.container_visibility, first.container_visibility)
+        not visibility_matches_exact(item.visibility, first.visibility)
         for item in ordered_items[1:]
     ):
-        raise ValueError("Thread aggregation requires exact container_visibility match")
+        raise ValueError("Thread aggregation requires exact visibility match")
 
     latest_item = ordered_items[-1]
     aggregate_text = "\n".join(
@@ -53,5 +53,5 @@ def build_thread_aggregate(source_items: list[SourceItem]) -> ThreadAggregate:
         source_item_ids=[item.id for item in ordered_items],
         latest_occurred_at=latest_item.occurred_at or latest_item.created_at,
         aggregate_text=aggregate_text,
-        container_visibility=first.container_visibility,
+        visibility=first.visibility,
     )

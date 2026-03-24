@@ -184,7 +184,7 @@ class ItemProcessor:
                     direct_result,
                     storage=self._storage,
                     container_ref=source_item.container_ref,
-                    container_visibility=source_item.container_visibility,
+                    visibility=source_item.visibility,
                 )
             thread_rebuild_scope = None
             if direct_result.thread_rebuild_requested:

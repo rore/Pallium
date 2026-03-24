@@ -87,7 +87,7 @@ class SQLiteSearchMixin:
                     reason = (
                         "candidate_visibility_missing"
                         if candidate_visibility is None
-                        else "query_container_visibility_excludes_candidate"
+                        else "query_visibility_excludes_candidate"
                     )
                     exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue

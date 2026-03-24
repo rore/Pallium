@@ -30,7 +30,7 @@ curl -X POST http://localhost:8000/items -H 'Content-Type: application/json' -d 
   "artifact_kind": "assistant_output",
   "role": "assistant",
   "container_ref": "channel:catalog-sync",
-  "container_visibility": "limited",
+  "visibility": "container",
   "thread_ref": "thread-17"
 }]'
 ```
@@ -41,7 +41,7 @@ Later, ask why:
 curl -X POST http://localhost:8000/query -H 'Content-Type: application/json' -d '{
   "text": "Why did we choose event time for reservation ordering?",
   "container_ref": "channel:catalog-sync",
-  "container_visibility": "limited"
+  "visibility": "container"
 }'
 ```
 
@@ -65,7 +65,7 @@ Pallium returns:
       "type": "decision",
       "score": 850,
       "container_ref": "channel:catalog-sync",
-      "container_visibility": "limited",
+      "visibility": "container",
       "retrieval_source": "lexical"
     }
   ]

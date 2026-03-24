@@ -78,7 +78,7 @@ def test_session_store_roundtrip_preserves_metadata_and_events(tmp_path) -> None
         defaults=ScopeDefaults(
             container_ref="container-1",
             thread_ref="thread-1",
-            container_visibility="limited",
+            visibility="container",
             runtime_context={"turn_kind": "new_thread", "session_has_sufficient_local_context": False},
             runtime_context_overrides={"turn_kind": True},
         ),
@@ -91,7 +91,7 @@ def test_session_store_roundtrip_preserves_metadata_and_events(tmp_path) -> None
 
     assert loaded.session_id == "session-1"
     assert loaded.debug_enabled is True
-    assert loaded.defaults.container_visibility_kind() == "limited"
+    assert loaded.defaults.visibility_kind() == "container"
     assert loaded.defaults.runtime_context_overrides == {"turn_kind": True}
     assert loaded.events[0]["user_message"] == "hello"
 
@@ -157,7 +157,7 @@ def test_replay_reruns_saved_chat_turns_with_rewritten_refs_and_reports_diff(tmp
         defaults=ScopeDefaults(
             container_ref="container-1",
             thread_ref="thread-1",
-            container_visibility = "public",
+            visibility = "public",
             runtime_context={"turn_kind": "same_thread_continuation", "session_has_sufficient_local_context": None},
         ),
         model={"provider_name": "fake", "model": "fake-model"},
@@ -166,15 +166,15 @@ def test_replay_reruns_saved_chat_turns_with_rewritten_refs_and_reports_diff(tmp
                 "event_type": "chat_turn",
                 "user_message": "hello",
                 "user_item": {
-                    "request": {"source_id": "msg-1", "source_type": "chat_message", "content_type": "text/plain", "content": "hello", "thread_ref": "thread-1", "container_ref": "container-1", "artifact_kind": "message", "role": "user", "container_visibility": "public"},
+                    "request": {"source_id": "msg-1", "source_type": "chat_message", "content_type": "text/plain", "content": "hello", "thread_ref": "thread-1", "container_ref": "container-1", "artifact_kind": "message", "role": "user", "visibility": "public"},
                     "response": {"source_item_id": "msg-1"},
                 },
                 "query_debug": {
-                    "request": {"text": "hello", "thread_ref": "thread-1", "container_ref": "container-1", "container_visibility": "public"},
+                    "request": {"text": "hello", "thread_ref": "thread-1", "container_ref": "container-1", "visibility": "public"},
                     "response": {"results": [], "should_inject": True, "decision_reason": "carry_forward_available", "injectable_blocks": [{"text": "recorded block"}], "trace": {"routing": {"selected_layer": "decision", "query_intent": "recurring_question"}}},
                 },
                 "assistant": {
-                    "request": {"source_id": "assistant-1", "source_type": "assistant_artifact", "content_type": "text/plain", "content": "saved answer", "thread_ref": "thread-1", "container_ref": "container-1", "artifact_kind": "assistant_output", "role": "assistant", "container_visibility": "public"},
+                    "request": {"source_id": "assistant-1", "source_type": "assistant_artifact", "content_type": "text/plain", "content": "saved answer", "thread_ref": "thread-1", "container_ref": "container-1", "artifact_kind": "assistant_output", "role": "assistant", "visibility": "public"},
                     "response": {"source_item_id": "assistant-1"},
                 },
             }
@@ -210,14 +210,14 @@ def test_replay_reports_diff_for_saved_manual_query_events(tmp_path) -> None:
         defaults=ScopeDefaults(
             container_ref="container-1",
             thread_ref="thread-1",
-            container_visibility = "public",
+            visibility = "public",
             runtime_context={"turn_kind": None, "session_has_sufficient_local_context": None},
         ),
         model={"provider_name": "fake", "model": "fake-model"},
         events=[
             {
                 "event_type": "manual_query",
-                "request": {"text": "hello", "thread_ref": "thread-1", "container_ref": "container-1", "container_visibility": "public"},
+                "request": {"text": "hello", "thread_ref": "thread-1", "container_ref": "container-1", "visibility": "public"},
                 "response": {"results": [{"result_kind": "memory_hit", "type": "decision", "payload": {"summary": "recorded query result"}}], "should_inject": True, "decision_reason": "carry_forward_available", "injectable_blocks": [{"text": "recorded block"}]},
             }
         ],

@@ -117,7 +117,7 @@ class PalliumService:
         thread_ref: str | None = None,
         source_ref: str | None = None,
         artifact_kind: str | None = None,
-        container_visibility: str | None = None,
+        visibility: str | None = None,
     ) -> IngestResult:
         existing_source_item = self._storage.find_source_item(source_type=source_type, source_id=source_id)
         if existing_source_item is not None:
@@ -127,7 +127,7 @@ class PalliumService:
         plugin = self._semantic_plugins[plugin_name]
         processing_status = "pending"
         processing_error = None
-        if plugin.requires_visibility_context and (container_ref is None or container_visibility is None):
+        if plugin.requires_visibility_context and (container_ref is None or visibility is None):
             processing_status = "skipped"
             processing_error = "visibility_context_required"
 
@@ -145,7 +145,7 @@ class PalliumService:
             thread_ref=thread_ref,
             source_ref=source_ref,
             artifact_kind=artifact_kind,
-            container_visibility=container_visibility,
+            visibility=visibility,
             use_case=plugin_name,
             processing_status=processing_status,
             processing_error=processing_error,
@@ -385,7 +385,7 @@ class PalliumService:
         container_ref: str | None = None,
         thread_ref: str | None = None,
         actor_ref: str | None = None,
-        container_visibility: str | None = None,
+        visibility: str | None = None,
         runtime_context: QueryRuntimeContext | None = None,
         include_trace: bool = False,
     ) -> QueryResult:
@@ -398,7 +398,7 @@ class PalliumService:
             container_ref=container_ref,
             thread_ref=thread_ref,
             actor_ref=actor_ref,
-            container_visibility=container_visibility,
+            visibility=visibility,
             runtime_context=runtime_context,
             include_trace=include_trace,
         )

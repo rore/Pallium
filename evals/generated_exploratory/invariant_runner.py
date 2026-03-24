@@ -474,9 +474,9 @@ def _post_query_debug(client: TestClient, query_request: dict[str, Any]) -> dict
 
 
 def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
-    """Ensure container_visibility is set (default: public)."""
+    """Ensure visibility is set (default: public)."""
     updated = dict(payload)
-    updated.setdefault("container_visibility", "public")
+    updated.setdefault("visibility", "public")
     return updated
 
 

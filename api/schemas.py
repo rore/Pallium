@@ -5,20 +5,21 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from core.visibility import Visibility
+
 
 ArtifactKind = Literal["message", "assistant_output", "tool_use_summary", "todo_snapshot", "notification"]
 ProcessingStatus = Literal["pending", "processing", "completed", "skipped", "failed"]
 TurnKind = Literal["new_thread", "same_thread", "same_thread_continuation", "resumed_session", "new_session"]
-VisibilityKind = Literal["public", "limited", "private"]
 
 
 class VisibilityContextModel(BaseModel):
-    kind: VisibilityKind
+    kind: Visibility
     id: str | None = None
 
     @model_validator(mode="after")
     def normalize_scope_id(self) -> VisibilityContextModel:
-        if self.kind != "limited":
+        if self.kind != "container":
             self.id = None
         return self
 
@@ -43,14 +44,12 @@ class ItemCreateRequest(BaseModel):
     thread_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: ArtifactKind | None = None
-    container_visibility: VisibilityKind | VisibilityContextModel | None = None
-    visibility_context: VisibilityContextModel | None = None
+    visibility: Visibility | VisibilityContextModel | None = None
 
-    def container_visibility_kind(self) -> str | None:
-        value = self.visibility_context or self.container_visibility
-        if isinstance(value, VisibilityContextModel):
-            return value.kind
-        return value
+    def visibility_kind(self) -> str | None:
+        if isinstance(self.visibility, VisibilityContextModel):
+            return self.visibility.kind
+        return self.visibility
 
 
 class ItemCreateResponse(BaseModel):
@@ -104,15 +103,13 @@ class QueryRequest(BaseModel):
     container_ref: str | None = None
     thread_ref: str | None = None
     actor_ref: str | None = None
-    container_visibility: VisibilityKind | VisibilityContextModel | None = None
-    visibility_context: VisibilityContextModel | None = None
+    visibility: Visibility | VisibilityContextModel | None = None
     runtime_context: RuntimeContextModel | None = None
 
-    def container_visibility_kind(self) -> str | None:
-        value = self.visibility_context or self.container_visibility
-        if isinstance(value, VisibilityContextModel):
-            return value.kind
-        return value
+    def visibility_kind(self) -> str | None:
+        if isinstance(self.visibility, VisibilityContextModel):
+            return self.visibility.kind
+        return self.visibility
 
 
 class EvidenceResponse(BaseModel):
@@ -127,7 +124,7 @@ class EvidenceResponse(BaseModel):
     thread_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: ArtifactKind | None = None
-    container_visibility: str = "private"
+    visibility: str = "private"
 
 
 class QueryResultResponse(BaseModel):
@@ -150,7 +147,7 @@ class QueryResultResponse(BaseModel):
     thread_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: ArtifactKind | None = None
-    container_visibility: str = "private"
+    visibility: str = "private"
     retrieval_source: str | None = None
 
 
@@ -206,7 +203,7 @@ class QueryTraceVisibilityExclusionResponse(BaseModel):
 
 
 class QueryTraceVisibilityResponse(BaseModel):
-    query_container_visibility: str | None = None
+    query_visibility: str | None = None
     query_container_ref: str | None = None
     excluded_candidates: list[QueryTraceVisibilityExclusionResponse] = Field(default_factory=list)
     fail_closed_reason: str | None = None
@@ -268,18 +265,16 @@ class ItemAndQueryRequest(BaseModel):
     thread_ref: str | None = None
     source_ref: str | None = None
     artifact_kind: ArtifactKind | None = None
-    container_visibility: VisibilityKind | VisibilityContextModel | None = None
-    visibility_context: VisibilityContextModel | None = None
+    visibility: Visibility | VisibilityContextModel | None = None
     query_text: str | None = None
     query_limit: int = Field(default=5, ge=1, le=50)
     query_actor_ref: str | None = None
     runtime_context: RuntimeContextModel | None = None
 
-    def container_visibility_kind(self) -> str | None:
-        value = self.visibility_context or self.container_visibility
-        if isinstance(value, VisibilityContextModel):
-            return value.kind
-        return value
+    def visibility_kind(self) -> str | None:
+        if isinstance(self.visibility, VisibilityContextModel):
+            return self.visibility.kind
+        return self.visibility
 
 
 class ItemAndQueryResponse(BaseModel):
@@ -317,7 +312,7 @@ class LeasedThreadScopeResponse(BaseModel):
     use_case: str
     container_ref: str
     thread_ref: str
-    container_visibility: str = "private"
+    visibility: str = "private"
     processing_claimed_by: str | None = None
     processing_claimed_at: datetime | None = None
     processing_lease_expires_at: datetime | None = None

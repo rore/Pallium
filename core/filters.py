@@ -14,7 +14,7 @@ def source_item_matches_filters(source_item: SourceItem, filters: QueryFilters) 
         return False
     if filters.artifact_kind is not None and source_item.artifact_kind != filters.artifact_kind:
         return False
-    if filters.container_ref is not None and source_item.container_visibility != "public" and source_item.container_ref != filters.container_ref:
+    if filters.container_ref is not None and source_item.visibility != "public" and source_item.container_ref != filters.container_ref:
         return False
     if filters.thread_ref is not None and source_item.thread_ref != filters.thread_ref:
         return False
@@ -31,7 +31,7 @@ def evidence_matches_filters(evidence: EvidenceReference, filters: QueryFilters)
         return False
     if filters.artifact_kind is not None and evidence.artifact_kind != filters.artifact_kind:
         return False
-    if filters.container_ref is not None and evidence.container_visibility != "public" and evidence.container_ref != filters.container_ref:
+    if filters.container_ref is not None and evidence.visibility != "public" and evidence.container_ref != filters.container_ref:
         return False
     if filters.thread_ref is not None and evidence.thread_ref != filters.thread_ref:
         return False
@@ -81,14 +81,14 @@ def target_visibility_and_container(
     target_kind: str,
     target_id: str,
 ) -> tuple[str | None, str | None, str | None]:
-    """Return (container_visibility, container_ref, actor_ref) for a retrieval target."""
+    """Return (visibility, container_ref, actor_ref) for a retrieval target."""
     if target_kind == "source_item":
         item = get_source_item(target_id)
-        return item.container_visibility, item.container_ref, getattr(item, 'actor_ref', None)
+        return item.visibility, item.container_ref, getattr(item, 'actor_ref', None)
     if target_kind == "memory_object":
         mo = get_memory_object(target_id)
         container_ref = mo.container_ref
         if container_ref is None and mo.envelope is not None:
             container_ref = mo.envelope.scope.container_ref
-        return mo.container_visibility, container_ref, getattr(mo, 'actor_ref', None)
+        return mo.visibility, container_ref, getattr(mo, 'actor_ref', None)
     return None, None, None

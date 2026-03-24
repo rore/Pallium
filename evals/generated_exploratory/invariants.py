@@ -142,14 +142,14 @@ def check_no_cross_container_leak(
     leaked = []
     for result in debug_payload.get("results", []):
         # Public results are visible to all containers — not a leak.
-        if result.get("container_visibility") == "public":
+        if result.get("visibility") == "public":
             continue
         result_container = result.get("container_ref")
         if result_container and result_container != query_container:
             leaked.append({
                 "result_id": result.get("result_id"),
                 "result_container": result_container,
-                "result_visibility": result.get("container_visibility"),
+                "result_visibility": result.get("visibility"),
             })
 
     if leaked:
@@ -283,7 +283,7 @@ def check_no_visibility_violation(
 
     violations = []
     for result in debug_payload.get("results", []):
-        result_vis = result.get("container_visibility")
+        result_vis = result.get("visibility")
         # Public results are visible to all — this matches core/filters.py.
         if result_vis == "public":
             continue
@@ -548,7 +548,7 @@ def check_idf_discrimination(
 # ---------------------------------------------------------------------------
 
 # Memory types that are inherently personal and should only exist in private
-# containers. In shared containers (limited/public) they fall through to
+# containers. In shared containers (container/public) they fall through to
 # discussion_summary. See add-actor-scoped-memory-and-container-visibility-rules.
 _PERSONAL_MEMORY_TYPES = frozenset({"interest", "constraint_memory"})
 
@@ -558,7 +558,7 @@ def check_no_personal_memory_in_shared_container(
     query_payload: dict[str, Any],
     debug_payload: dict[str, Any],
 ) -> InvariantResult:
-    """Personal memory types must not exist in shared (limited/public) containers.
+    """Personal memory types must not exist in shared (container/public) containers.
 
     Interest and constraint_memory are inherently personal. In shared containers
     they should fall through to discussion_summary at write time. If they appear
@@ -581,7 +581,7 @@ def check_no_personal_memory_in_shared_container(
             violations.append({
                 "result_id": result.get("result_id"),
                 "memory_type": memory_type,
-                "container_visibility": result.get("container_visibility"),
+                "visibility": result.get("visibility"),
             })
 
     if violations:
@@ -788,13 +788,13 @@ def _nested_get(d: dict[str, Any], *keys: str) -> Any:
 
 
 def _query_visibility(scenario: dict[str, Any], debug_payload: dict[str, Any]) -> str | None:
-    """Extract container_visibility from scenario query."""
+    """Extract visibility from scenario query."""
     cq = scenario.get("current_query") or {}
-    if cq.get("container_visibility"):
-        return cq["container_visibility"]
+    if cq.get("visibility"):
+        return cq["visibility"]
     for step in reversed(scenario.get("steps") or []):
         if step.get("action") == "query":
-            return (step.get("query") or {}).get("container_visibility")
+            return (step.get("query") or {}).get("visibility")
     return None
 
 
