@@ -181,9 +181,15 @@ def _candidate_locality_compatible_for_packaging(
     candidate_thread_refs = set(_candidate_thread_refs(candidate_item))
     if query_filters is not None and query_filters.thread_ref:
         return query_filters.thread_ref in primary_thread_refs and query_filters.thread_ref in candidate_thread_refs
-    if primary_thread_refs and candidate_thread_refs and primary_thread_refs.intersection(candidate_thread_refs):
-        return True
+    # When both items have thread context, require thread overlap.
+    # Different threads in the same container are different conversations —
+    # a source evidence item from thread B should not be packaged alongside
+    # a task_checkpoint from thread A even if they share a container.
+    if primary_thread_refs and candidate_thread_refs:
+        return bool(primary_thread_refs.intersection(candidate_thread_refs))
 
+    # Fall back to container overlap only when one or both items lack thread
+    # context (e.g., consolidation-produced memory that spans threads).
     primary_container_refs = set(_candidate_container_refs(primary_item))
     candidate_container_refs = set(_candidate_container_refs(candidate_item))
     if query_filters is not None and query_filters.container_ref:
