@@ -572,6 +572,55 @@ def test_interest_fallthrough_in_shared_container_creates_shared_discussion_summ
         assert query_a.json()["results"], "Creator should see their own discussion_summary"
 
 
+def test_shared_memory_visible_to_other_user_through_evidence_path(monkeypatch, test_db_url: str) -> None:
+    """Shared memory (actor_ref=None) must be reachable by any user, even when
+    evidence retains the creator's actor_ref. Regression test for evidence-path
+    actor isolation bug where evidence_matches_filters blocked cross-user access."""
+    events = [
+        {
+            "source_type": "chat_message",
+            "source_id": "mu-evidence-path-1",
+            "content_type": "text/plain",
+            "content": "Decision: use item event time for reservation ordering.",
+            "artifact_kind": "message",
+            "role": "user",
+            "actor_ref": ACTOR_A,
+            "container_ref": CONTAINER_LIMITED,
+            "thread_ref": f"{CONTAINER_LIMITED}:thread-evidence-path",
+            "visibility": "container",
+            "occurred_at": "2026-03-23T10:00:00Z",
+        },
+    ]
+    with _build_client(monkeypatch, test_db_url) as client:
+        response = client.post("/items", json=events)
+        assert response.status_code == 200
+        client.app.state.pallium_service.drain_processing_queue(worker_id="test")
+
+        # Verify memory is shared
+        storage = client.app.state.pallium_service._storage
+        active_memories = storage.list_memory_objects(lifecycle="active")
+        item_memories = [m for m in active_memories if m.type not in ("thread_summary", "task_checkpoint")]
+        assert item_memories, "Expected at least one item-level memory"
+        for m in item_memories:
+            assert m.actor_ref is None, f"Shared container memory should have actor_ref=None, got {m.actor_ref}"
+
+        # User B queries — should see the shared decision
+        query_b = client.post("/query", json={
+            "text": "what decisions about reservation ordering?",
+            "limit": 10,
+            "container_ref": CONTAINER_LIMITED,
+            "visibility": "container",
+            "actor_ref": ACTOR_B,
+        })
+        assert query_b.status_code == 200
+        results_b = query_b.json()["results"]
+        memory_hits_b = [r for r in results_b if r["result_kind"] == "memory_hit"]
+        assert memory_hits_b, (
+            "User B should see shared decisions created by user A. "
+            "If empty, evidence-path actor filtering is blocking cross-user access."
+        )
+
+
 def test_matches_filters_mixed_actor_shared_candidates() -> None:
     """matches_filters must pass personal (matching actor) + shared (null) and reject other actor."""
     from core.filters import matches_filters

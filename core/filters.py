@@ -71,6 +71,12 @@ def matches_filters(
     if target_kind == "memory_object":
         evidence = get_evidence_for_memory_object(target_id)
         memory_filters = replace(filters, thread_ref=None) if filters.thread_ref is not None else filters
+        # Shared memories (actor_ref=None) passed the actor check above.
+        # Don't re-apply actor filtering on their evidence path — the evidence
+        # retains the creator's actor_ref, which would block other users from
+        # reaching shared memories through standard retrieval.
+        if memory_object.actor_ref is None and memory_filters.actor_ref is not None:
+            memory_filters = replace(memory_filters, actor_ref=None)
         return any(evidence_matches_filters(item, memory_filters) for item in evidence)
     return True
 
