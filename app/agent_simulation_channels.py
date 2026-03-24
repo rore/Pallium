@@ -21,10 +21,23 @@ def _save(data: dict[str, Any]) -> None:
     _PREFS_FILE.write_text(json.dumps(data, indent=2), encoding='utf-8')
 
 
+_VISIBILITY_MIGRATION = {'limited': 'container'}
+
+
+def _migrate_visibility(value: str | None) -> str | None:
+    """Migrate renamed visibility values from old prefs files."""
+    if value is None:
+        return None
+    return _VISIBILITY_MIGRATION.get(value, value)
+
+
 def get_last_channel() -> dict[str, str] | None:
     """Return {'name': str, 'visibility': str} or None."""
     data = _load()
-    return data.get('last_channel')
+    last = data.get('last_channel')
+    if last and 'visibility' in last:
+        last['visibility'] = _migrate_visibility(last['visibility']) or last['visibility']
+    return last
 
 
 def get_channel_history() -> list[str]:
@@ -36,7 +49,14 @@ def get_channel_history() -> list[str]:
 def get_channel_visibility(name: str) -> str | None:
     """Return the last-used visibility for a channel name, or None."""
     data = _load()
-    return data.get('channel_visibilities', {}).get(name)
+    vis = data.get('channel_visibilities', {}).get(name)
+    if vis is not None:
+        return _migrate_visibility(vis)
+    # Fall back to last_channel if channel_visibilities doesn't have this name
+    last = data.get('last_channel')
+    if last and last.get('name') == name:
+        return _migrate_visibility(last.get('visibility'))
+    return None
 
 
 def record_channel(name: str, visibility: str) -> None:
