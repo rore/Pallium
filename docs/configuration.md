@@ -2,7 +2,24 @@
 
 This page explains Pallium's local configuration surface today.
 
-Use it when you need to:
+## Quick Reference
+
+| What | Where | Key fields |
+|------|-------|------------|
+| LLM provider | `[llm_providers.<name>]` in TOML | `kind`, `base_url`, `api_key_env` |
+| Semantic package | `[semantic_packages.<name>]` in TOML | `llm_provider`, `model` |
+| Model roles | `[semantic_packages.<name>.model_roles]` | `write_extraction`, `thread_aggregation`, `consolidation`, `query_ambiguity_resolution` |
+| Secrets | `.env.local` | `ANTHROPIC_API_KEY`, `PALLIUM_OPENAI_API_KEY` |
+| Storage | `[storage]` in TOML | `backend`, `sqlite_url` |
+| Vector index | `[vector_index]` in TOML | `enabled`, `min_similarity` |
+| Debug logs | `[observability]` in TOML | `integration_debug = true` |
+
+Minimum to activate the live LLM path: set `llm_provider` and `model` on a
+semantic package, and provide the API key in `.env.local`.
+
+---
+
+Use this page when you need to:
 
 - wire a live LLM provider
 - override prompt variants or model roles

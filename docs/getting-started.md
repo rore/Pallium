@@ -77,7 +77,18 @@ Useful commands:
 
 ## 4. What to Look For
 
-You should see:
+A good session looks like this:
+
+1. You ask a question — Pallium ingests it and returns `should_inject: false`
+   (no prior memory yet)
+2. The agent answers — the reply is stored as evidence
+3. You start a new thread (`/new`) and ask a related question — Pallium returns
+   `should_inject: true` with a compact memory card carrying forward the
+   decision or finding from the earlier thread
+4. The debug trace shows why: which retrieval method found the match, what
+   routing lane selected it, and why injection was approved
+
+Specifically, you should see:
 
 - user and assistant turns ingested through `POST /items`
 - `should_inject` and `decision_reason` on each query

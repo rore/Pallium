@@ -68,6 +68,16 @@ containers. Thread-level memories (`thread_summary`, `task_checkpoint`) always
 have `actor_ref = null` because they describe the conversation, not an
 individual.
 
+**Example:** Alice and Bob both use a shared agent. Alice asks the agent in a DM
+to remember she prefers dark mode. Bob asks in a different DM about display
+settings. Alice's `interest` memory has `actor_ref = "alice"` and
+`visibility = "private"` in her DM container. When Bob queries from his DM
+container, Alice's preference is invisible — it fails both the container
+visibility check and the actor scoping check. If they both work in a shared
+channel and Alice mentions her preference there, it becomes a
+`discussion_summary` (not an `interest`) with `actor_ref = null`, visible to
+everyone in that channel.
+
 Query-time filtering applies two filters in sequence:
 
 1. **Container visibility** — scopes results by container access
