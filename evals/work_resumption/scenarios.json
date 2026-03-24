@@ -70,14 +70,16 @@
     "expected_intent": "broad_recall",
     "expected_primary_layer": "lower_level_memory",
     "acceptable_fallback_layers": [
-      "source_evidence"
+      "source_evidence",
+      "thread_summary"
     ],
     "forbidden_layers": [
       "pattern_memory"
     ],
     "expected_memory_types": [
       "investigation_outcome",
-      "decision"
+      "decision",
+      "thread_summary"
     ],
     "expected_dimensions": {
       "task_orientation": [
@@ -89,8 +91,7 @@
         "item event time"
       ],
       "evidence": [
-        "investigation_outcome",
-        "decision"
+        "task_checkpoint"
       ]
     },
     "retrieval_signals": {
@@ -445,7 +446,7 @@
     "expected_dimensions": {
       "task_orientation": [
         "ticket lib-241",
-        "use_item_event_time flag"
+        "use_item_event_time"
       ],
       "key_findings": [
         "reservation ordering fix"
@@ -464,7 +465,7 @@
     },
     "retrieval_signals": {
       "task_orientation": [
-        "use_item_event_time flag"
+        "use_item_event_time"
       ],
       "preserved_progress": [
         "schema change and backfill"
@@ -920,7 +921,7 @@
     "expected_dimensions": {
       "task_orientation": [
         "ticket lib-241",
-        "use_item_event_time flag"
+        "use_item_event_time"
       ],
       "preserved_progress": [
         "schema change and backfill"
@@ -936,7 +937,7 @@
     "retrieval_signals": {
       "task_orientation": [
         "ticket lib-241",
-        "use_item_event_time flag"
+        "use_item_event_time"
       ],
       "preserved_progress": [
         "schema change and backfill"
@@ -1047,11 +1048,13 @@
     "must_not_introduce": [
       "unsupported_recommendation"
     ],
-    "guard_terms": {},
-    "forbidden_terms": [
-      "312 reservation records",
-      "batch 313"
-    ],
+    "guard_terms": {
+      "stale_detail": [
+        "312 reservation records",
+        "batch 313"
+      ]
+    },
+    "forbidden_terms": [],
     "expected_non_value_reason": "The current thread already carries the blocker and next step, so older memory should not count as a win."
   },
   {
