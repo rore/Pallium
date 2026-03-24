@@ -100,6 +100,15 @@ walkthrough.
 
 ## How It Works
 
+```mermaid
+flowchart LR
+    A[Agent] -->|POST /item-and-query| P[Pallium]
+    P -->|background| W[Extract & Embed]
+    W -->|decisions, findings,\ncheckpoints| M[(Memory + Index)]
+    M -->|hybrid retrieval| P
+    P -->|should_inject\ninjectable_blocks| A
+```
+
 1. **Ingest** — selected evidence goes in via `POST /items` (not everything, just high-value events)
 2. **Process** — background workers extract structured memory (decisions, findings, checkpoints) and embed for retrieval
 3. **Query** — `POST /query` retrieves compact memory + source evidence, scoped by visibility, with an injection decision
@@ -129,6 +138,7 @@ Not a fit:
 ## Documentation
 
 - [Getting Started](docs/getting-started.md) — local setup to first query
+- [Demo Session](examples/demo-session.md) — complete walkthrough with real API requests, memory creation, cross-thread recall, and debug trace
 - [How It Works](docs/how-it-works.md) — architecture, memory model, retrieval
 - [HTTP API](docs/http-api.md) — endpoints, request/response shapes, examples
 - [Configuration](docs/configuration.md) — providers, packages, tuning knobs

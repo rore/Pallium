@@ -126,6 +126,42 @@ for a small set of genuinely ambiguous cases.
 `POST /query/debug` exposes the full trace: retrieval matches, routing
 decisions, visibility exclusions, and injection reasoning.
 
+## When Pallium Returns Nothing
+
+Pallium is designed to abstain rather than inject noise. These are the cases
+where it returns `should_inject: false`:
+
+| Reason | `decision_reason` | What happened |
+|--------|-------------------|---------------|
+| Low-value query | `low_value_query` | Greetings, acknowledgements, or meta-conversation that won't benefit from memory |
+| Same-thread context | `same_thread_context_sufficient` | The agent already has the relevant context in its current conversation — injection would be redundant |
+| No relevant memory | `no_relevant_memory` | Retrieval ran but nothing matched well enough to surface |
+| Lane ambiguity | `lane_ambiguity` | The query didn't clearly map to a retrieval strategy and Pallium chose silence over a guess |
+| No lane eligible | `no_lane_eligible` | No structural lane (work resumption, evidence trace, residual recall) matched the query shape |
+
+This matters because memory systems fail more by false positives than by
+missing features. Injecting stale, irrelevant, or redundant context is worse
+than returning nothing — it wastes tokens and can mislead the agent.
+
+Use `POST /query/debug` to see exactly why Pallium abstained. The trace shows
+which candidates were retrieved, which were excluded by visibility or routing,
+and which decision path was taken.
+
+## Known Limitations
+
+Current areas under active hardening:
+
+- **Thread-level interest extraction** — per-item extraction can lose subject
+  context when interest spans multiple messages. Under investigation.
+- **Lexical retrieval scaling** — the current full-scan approach works well for
+  small-to-medium corpora but won't scale to very large stores without
+  additional indexing.
+- **Semantic gap** — extracted `decision_evidence_text` is not yet validated
+  against source content. The evidence link exists but fidelity isn't checked.
+- **Higher-level consolidation** — `pattern_memory` and `continuity_memory`
+  are promising but not yet fully product-proven. Grouping and candidate
+  selection need further hardening.
+
 ## Privacy Model
 
 Locality is not privacy. `container_ref` identifies where an item belongs, and
