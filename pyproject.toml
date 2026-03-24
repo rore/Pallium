@@ -13,8 +13,6 @@ authors = [
     { name = "Rotem Hermon", email = "rotem.hermon@gmail.com" },
 ]
 
-[project.urls]
-Repository = "https://github.com/rore/Pallium"
 dependencies = [
     "fastapi>=0.115,<1.0",
     "httpx>=0.28,<1.0",
@@ -23,6 +21,9 @@ dependencies = [
     "uvicorn>=0.34,<1.0",
     "prompt_toolkit>=3.0,<4.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/rore/Pallium"
 
 [project.optional-dependencies]
 vector = [
