@@ -99,6 +99,14 @@ class PalliumClient:
                 logging.warning("Pallium ingest failed: HTTP %s", r.status)
                 return []
             return await r.json()
+
+    async def query_debug(self, payload: dict) -> dict | None:
+        """Query with full retrieval and routing trace."""
+        session = await self._ensure_session()
+        async with session.post(f"{self._base_url}/query/debug", json=payload) as r:
+            if r.status != 200:
+                return None
+            return await r.json()
 ```
 
 ## Step 1: Ingest + Query in One Call
