@@ -1,0 +1,1617 @@
+[
+  {
+    "scenario_id": "gen-digital-archives-interest",
+    "description": "Branch librarian expresses interest in digital archives program, then catalog admin queries for staff interests.",
+    "steps": [
+      {
+        "step_id": "interest_expression",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-digital-archives-msg-1",
+            "content_type": "text/plain",
+            "content": "The National Digital Archive consortium sounds interesting, I should check if we can join for our local history collection digitization project.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-westside",
+            "thread_ref": "chat:library-westside:thread-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://gen/gen-digital-archives-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "interest_query",
+        "action": "query",
+        "query": {
+          "text": "What digitization programs has the branch staff shown interest in?",
+          "limit": 6,
+          "container_ref": "chat:library-westside",
+          "thread_ref": "chat:library-westside:thread-002",
+          "visibility": "private"
+        },
+        "actor_ref": "user:catalog-admin",
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "memory_type_target": "interest"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-interlibrary-workshop-interest",
+    "description": "Patron services staff expresses interest in ILL workshop, then branch librarian queries about training opportunities.",
+    "steps": [
+      {
+        "step_id": "workshop_interest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-interlibrary-msg-1",
+            "content_type": "text/plain",
+            "content": "That OCLC interlibrary loan automation workshop sounds interesting, I should check the registration deadline for the May session.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-central",
+            "thread_ref": "chat:library-central:thread-003",
+            "actor_ref": "user:patron-services",
+            "source_ref": "memory://gen/gen-interlibrary-msg-1",
+            "occurred_at": "2026-03-20T08:02:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "training_query",
+        "action": "query",
+        "query": {
+          "text": "What professional development workshops have staff expressed interest in?",
+          "limit": 6,
+          "container_ref": "chat:library-central",
+          "thread_ref": "chat:library-central:thread-004",
+          "visibility": "private"
+        },
+        "actor_ref": "user:branch-librarian",
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "memory_type_target": "interest"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-patron-analytics-interest",
+    "description": "Catalog admin expresses interest in circulation analytics, then patron services queries about system improvements.",
+    "steps": [
+      {
+        "step_id": "analytics_interest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-patron-analytics-msg-1",
+            "content_type": "text/plain",
+            "content": "The new patron behavior analytics in Sierra version 6.2 sounds interesting, I should check how it handles overdue prediction modeling.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-systems",
+            "thread_ref": "chat:catalog-systems:thread-005",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://gen/gen-patron-analytics-msg-1",
+            "occurred_at": "2026-03-20T08:05:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "system_improvements_query",
+        "action": "query",
+        "query": {
+          "text": "What catalog system features have administrators shown interest in evaluating?",
+          "limit": 6,
+          "container_ref": "chat:catalog-systems",
+          "thread_ref": "chat:catalog-systems:thread-006",
+          "visibility": "private"
+        },
+        "actor_ref": "user:patron-services",
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "memory_type_target": "interest"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-mobile-checkout-interest",
+    "description": "Branch librarian expresses interest in mobile checkout system, then catalog admin queries about technology interests.",
+    "steps": [
+      {
+        "step_id": "mobile_interest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-mobile-checkout-msg-1",
+            "content_type": "text/plain",
+            "content": "The mobile checkout stations from Tech Logic sound interesting, I should check their integration with our current hold management system.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-northbranch",
+            "thread_ref": "chat:library-northbranch:thread-007",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://gen/gen-mobile-checkout-msg-1",
+            "occurred_at": "2026-03-20T08:07:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "technology_query",
+        "action": "query",
+        "query": {
+          "text": "What new checkout technologies have branch staff expressed interest in?",
+          "limit": 6,
+          "container_ref": "chat:library-northbranch",
+          "thread_ref": "chat:library-northbranch:thread-008",
+          "visibility": "private"
+        },
+        "actor_ref": "user:catalog-admin",
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "memory_type_target": "interest"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-collection-analysis-interest",
+    "description": "Patron services expresses interest in collection weeding tools, then branch librarian queries about collection management interests.",
+    "steps": [
+      {
+        "step_id": "weeding_interest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-collection-analysis-msg-1",
+            "content_type": "text/plain",
+            "content": "The CollectionHQ weeding analysis tool sounds interesting, I should check how it handles circulation data from our last three fiscal years.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-management",
+            "thread_ref": "chat:catalog-management:thread-009",
+            "actor_ref": "user:patron-services",
+            "source_ref": "memory://gen/gen-collection-analysis-msg-1",
+            "occurred_at": "2026-03-20T08:10:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "collection_management_query",
+        "action": "query",
+        "query": {
+          "text": "What collection development tools have staff shown interest in exploring?",
+          "limit": 6,
+          "container_ref": "chat:catalog-management",
+          "thread_ref": "chat:catalog-management:thread-010",
+          "visibility": "private"
+        },
+        "actor_ref": "user:branch-librarian",
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "memory_type_target": "interest"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-overdue-investigation-cross-user",
+    "description": "Investigation outcome from catalog admin should be retrievable by branch librarian in different thread.",
+    "steps": [
+      {
+        "step_id": "investigation_ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-overdue-investigation-msg-1",
+            "content_type": "text/plain",
+            "content": "Investigation found that the overdue notice batch job failures are caused by database connection timeout during peak patron activity between 6-8 PM.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-systems",
+            "thread_ref": "chat:catalog-systems:thread-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://gen/gen-overdue-investigation-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "cross_user_query",
+        "action": "query",
+        "query": {
+          "text": "What caused the overdue notice failures?",
+          "limit": 6,
+          "container_ref": "chat:catalog-systems",
+          "thread_ref": "chat:catalog-systems:thread-002",
+          "actor_ref": "user:branch-librarian",
+          "visibility": "public"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "memory_type_target": "investigation_outcome"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-holds-queue-investigation-recall",
+    "description": "Hold queue investigation findings from patron services should be accessible to catalog admin.",
+    "steps": [
+      {
+        "step_id": "holds_investigation_ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-holds-queue-msg-1",
+            "content_type": "text/plain",
+            "content": "Investigation found that duplicate hold requests in the queue are caused by the mobile app sending multiple API calls when patrons experience network timeouts during submission.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-central",
+            "thread_ref": "chat:library-central:thread-003",
+            "actor_ref": "user:patron-services",
+            "source_ref": "memory://gen/gen-holds-queue-msg-1",
+            "occurred_at": "2026-03-20T08:03:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "admin_retrieval_query",
+        "action": "query",
+        "query": {
+          "text": "What's causing the duplicate holds issue?",
+          "limit": 6,
+          "container_ref": "chat:library-central",
+          "thread_ref": "chat:library-central:thread-004",
+          "actor_ref": "user:catalog-admin",
+          "visibility": "public"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "memory_type_target": "investigation_outcome"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-interlibrary-loan-investigation-access",
+    "description": "Branch librarian investigation results should be queryable by patron services staff.",
+    "steps": [
+      {
+        "step_id": "ill_investigation_ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-ill-investigation-msg-1",
+            "content_type": "text/plain",
+            "content": "Investigation found that interlibrary loan request delays are caused by the OCLC WorldCat authentication token expiring every 2 hours instead of the expected 24-hour renewal cycle.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-interlibrary",
+            "thread_ref": "chat:catalog-interlibrary:thread-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://gen/gen-ill-investigation-msg-1",
+            "occurred_at": "2026-03-20T08:07:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "patron_services_query",
+        "action": "query",
+        "query": {
+          "text": "Why are interlibrary loan requests taking so long?",
+          "limit": 6,
+          "container_ref": "chat:catalog-interlibrary",
+          "thread_ref": "chat:catalog-interlibrary:thread-002",
+          "actor_ref": "user:patron-services",
+          "visibility": "public"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "memory_type_target": "investigation_outcome"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-catalog-sync-investigation-cross-branch",
+    "description": "Catalog sync investigation outcome should transfer between different branch contexts.",
+    "steps": [
+      {
+        "step_id": "sync_investigation_ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-catalog-sync-msg-1",
+            "content_type": "text/plain",
+            "content": "Investigation found that the nightly catalog synchronization failures are caused by memory allocation errors when processing large MARC record batches exceeding 500MB during the 2 AM update window.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-westside",
+            "thread_ref": "chat:library-westside:thread-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://gen/gen-catalog-sync-msg-1",
+            "occurred_at": "2026-03-20T08:12:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "branch_librarian_query",
+        "action": "query",
+        "query": {
+          "text": "What's causing the catalog sync problems?",
+          "limit": 6,
+          "container_ref": "chat:library-westside",
+          "thread_ref": "chat:library-westside:thread-003",
+          "actor_ref": "user:branch-librarian",
+          "visibility": "public"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "memory_type_target": "investigation_outcome"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-patron-account-investigation-handoff",
+    "description": "Patron account investigation findings should be accessible across different user roles.",
+    "steps": [
+      {
+        "step_id": "account_investigation_ingest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-patron-account-msg-1",
+            "content_type": "text/plain",
+            "content": "Investigation found that patron account lockouts after failed login attempts are caused by the session cleanup script incorrectly flagging legitimate users as potential security threats when they use public WiFi with rotating IP addresses.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-downtown",
+            "thread_ref": "chat:library-downtown:thread-005",
+            "actor_ref": "user:patron-services",
+            "source_ref": "memory://gen/gen-patron-account-msg-1",
+            "occurred_at": "2026-03-20T08:15:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "catalog_admin_query",
+        "action": "query",
+        "query": {
+          "text": "What's causing patron accounts to get locked out?",
+          "limit": 6,
+          "container_ref": "chat:library-downtown",
+          "thread_ref": "chat:library-downtown:thread-006",
+          "actor_ref": "user:catalog-admin",
+          "visibility": "public"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "memory_type_target": "investigation_outcome"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-catalog-sync-policy",
+    "description": "Catalog admin's sync policy decision should be retrievable by branch librarian in different thread.",
+    "steps": [
+      {
+        "step_id": "setup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-catalog-sync-policy-msg-1",
+            "content_type": "text/plain",
+            "content": "Policy decision: Catalog sync will run every 15 minutes during peak hours (9am-7pm) to minimize hold queue disruptions. Off-peak sync runs hourly.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-operations",
+            "thread_ref": "chat:catalog-operations:thread-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://gen/gen-catalog-sync-policy-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_query",
+        "action": "query",
+        "query": {
+          "text": "What's our current catalog sync schedule policy?",
+          "limit": 6,
+          "container_ref": "chat:catalog-operations",
+          "thread_ref": "chat:catalog-operations:thread-002",
+          "visibility": "public",
+          "actor_ref": "user:branch-librarian"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "injection_outcome": "inject",
+        "thread_relation": "cross_thread"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-overdue-notice-config",
+    "description": "Branch librarian's overdue notice configuration should be accessible to patron services in new thread.",
+    "steps": [
+      {
+        "step_id": "setup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-overdue-notice-config-msg-1",
+            "content_type": "text/plain",
+            "content": "Updated overdue notice configuration: First notice at 3 days, second at 10 days, final at 21 days. Email template includes branch contact info and renewal link.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-northside",
+            "thread_ref": "chat:library-northside:thread-003",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://gen/gen-overdue-notice-config-msg-1",
+            "occurred_at": "2026-03-20T08:03:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_query",
+        "action": "query",
+        "query": {
+          "text": "What are the current overdue notice timing intervals?",
+          "limit": 6,
+          "container_ref": "chat:library-northside",
+          "thread_ref": "chat:library-northside:thread-004",
+          "visibility": "public",
+          "actor_ref": "user:patron-services"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "injection_outcome": "inject",
+        "thread_relation": "cross_thread"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-interlibrary-loan-limits",
+    "description": "Patron services staff's ILL policy update should be queryable by catalog admin in separate thread.",
+    "steps": [
+      {
+        "step_id": "setup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-interlibrary-loan-limits-msg-1",
+            "content_type": "text/plain",
+            "content": "New interlibrary loan limits effective April 1st: Maximum 5 concurrent requests per patron, 3-week loan period for books, 1-week for DVDs. Graduate students get 10 concurrent requests.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-services",
+            "thread_ref": "chat:catalog-services:thread-005",
+            "actor_ref": "user:patron-services",
+            "source_ref": "memory://gen/gen-interlibrary-loan-limits-msg-1",
+            "occurred_at": "2026-03-20T08:07:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_query",
+        "action": "query",
+        "query": {
+          "text": "What are the new ILL request limits and loan periods?",
+          "limit": 6,
+          "container_ref": "chat:catalog-services",
+          "thread_ref": "chat:catalog-services:thread-006",
+          "visibility": "public",
+          "actor_ref": "user:catalog-admin"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "injection_outcome": "inject",
+        "thread_relation": "cross_thread"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-hold-queue-investigation",
+    "description": "Catalog admin's hold queue bug investigation findings should be retrievable by branch librarian in different thread.",
+    "steps": [
+      {
+        "step_id": "setup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-hold-queue-investigation-msg-1",
+            "content_type": "text/plain",
+            "content": "Hold queue bug investigation complete: Issue was duplicate ISBN entries causing holds to stick in 'pending' status. Fixed by adding UNIQUE constraint on ISBN+branch_id. Affected 847 holds have been reprocessed.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-maintenance",
+            "thread_ref": "chat:catalog-maintenance:thread-007",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://gen/gen-hold-queue-investigation-msg-1",
+            "occurred_at": "2026-03-20T08:12:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_query",
+        "action": "query",
+        "query": {
+          "text": "What was causing the hold queue pending status bug?",
+          "limit": 6,
+          "container_ref": "chat:catalog-maintenance",
+          "thread_ref": "chat:catalog-maintenance:thread-008",
+          "visibility": "public",
+          "actor_ref": "user:branch-librarian"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "injection_outcome": "inject",
+        "thread_relation": "cross_thread"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-branch-closure-procedure",
+    "description": "Branch librarian's emergency closure procedure should be accessible to patron services in new thread.",
+    "steps": [
+      {
+        "step_id": "setup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-branch-closure-procedure-msg-1",
+            "content_type": "text/plain",
+            "content": "Emergency closure procedure documented: 1) Update website banner within 30 minutes, 2) Send automated patron notifications for affected holds/reservations, 3) Redirect holds to nearest branch (Westside covers Central, Downtown covers Riverside), 4) Post social media updates every 4 hours until reopening.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-central",
+            "thread_ref": "chat:library-central:thread-009",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://gen/gen-branch-closure-procedure-msg-1",
+            "occurred_at": "2026-03-20T08:15:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_query",
+        "action": "query",
+        "query": {
+          "text": "What's the procedure for emergency branch closures?",
+          "limit": 6,
+          "container_ref": "chat:library-central",
+          "thread_ref": "chat:library-central:thread-010",
+          "visibility": "public",
+          "actor_ref": "user:patron-services"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "injection_outcome": "inject",
+        "thread_relation": "cross_thread"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-private-branch-coordination",
+    "description": "Tests private memory recall between different branch staff coordinating on system maintenance.",
+    "steps": [
+      {
+        "step_id": "setup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-private-branch-coordination-msg-1",
+            "content_type": "text/plain",
+            "content": "Internal issue: Catalog server experiencing 2-second delays during peak hours. Planning maintenance window for Saturday 3-5 AM to upgrade database indices.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-central",
+            "thread_ref": "chat:library-central:thread-maint-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://gen/gen-private-branch-coordination-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_query",
+        "action": "query",
+        "query": {
+          "text": "What was the planned maintenance window for the catalog server?",
+          "limit": 6,
+          "container_ref": "chat:library-central",
+          "thread_ref": "chat:library-central:thread-staff-002",
+          "actor_ref": "user:branch-librarian",
+          "visibility": "private"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-04",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "visibility": "private"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-04",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-private-patron-investigation",
+    "description": "Tests private memory recall between staff investigating a patron account issue.",
+    "steps": [
+      {
+        "step_id": "setup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-private-patron-investigation-msg-1",
+            "content_type": "text/plain",
+            "content": "Confidential: Patron ID 4782 has 12 overdue items totaling $47.60 in fees. Account flagged for collection review due to non-response to 3 email notices.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-westside",
+            "thread_ref": "chat:library-westside:thread-collections-001",
+            "actor_ref": "user:patron-services",
+            "source_ref": "memory://gen/gen-private-patron-investigation-msg-1",
+            "occurred_at": "2026-03-20T08:03:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_query",
+        "action": "query",
+        "query": {
+          "text": "What is the status of patron ID 4782's overdue fees?",
+          "limit": 6,
+          "container_ref": "chat:library-westside",
+          "thread_ref": "chat:library-westside:thread-accounts-002",
+          "actor_ref": "user:branch-librarian",
+          "visibility": "private"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-04",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "visibility": "private"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-04",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-private-vendor-negotiations",
+    "description": "Tests private memory recall between staff discussing confidential vendor contract details.",
+    "steps": [
+      {
+        "step_id": "setup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-private-vendor-negotiations-msg-1",
+            "content_type": "text/plain",
+            "content": "Confidential contract update: Midwest Book Distributors offering 18% bulk discount if we commit to $85K annual minimum. Current vendor only gives 12% at $95K threshold.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-acquisitions",
+            "thread_ref": "chat:catalog-acquisitions:thread-contracts-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://gen/gen-private-vendor-negotiations-msg-1",
+            "occurred_at": "2026-03-20T08:07:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_query",
+        "action": "query",
+        "query": {
+          "text": "What discount terms did Midwest Book Distributors propose?",
+          "limit": 6,
+          "container_ref": "chat:catalog-acquisitions",
+          "thread_ref": "chat:catalog-acquisitions:thread-budget-002",
+          "actor_ref": "user:branch-librarian",
+          "visibility": "private"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-04",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "visibility": "private"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-04",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-private-security-incident",
+    "description": "Tests private memory recall between staff handling a security incident investigation.",
+    "steps": [
+      {
+        "step_id": "setup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-private-security-incident-msg-1",
+            "content_type": "text/plain",
+            "content": "Security alert: Unauthorized access attempt on catalog admin account detected from IP 192.168.45.23 at 2:14 AM. Failed 6 login attempts before lockout. Reviewing access logs for pattern analysis.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-central",
+            "thread_ref": "chat:library-central:thread-security-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://gen/gen-private-security-incident-msg-1",
+            "occurred_at": "2026-03-20T08:12:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_query",
+        "action": "query",
+        "query": {
+          "text": "What details do we have about the recent catalog admin security incident?",
+          "limit": 6,
+          "container_ref": "chat:library-central",
+          "thread_ref": "chat:library-central:thread-it-support-002",
+          "actor_ref": "user:branch-librarian",
+          "visibility": "private"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-04",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "visibility": "private"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-04",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-private-budget-planning",
+    "description": "Tests private memory recall between staff discussing confidential budget allocation decisions.",
+    "steps": [
+      {
+        "step_id": "setup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-private-budget-planning-msg-1",
+            "content_type": "text/plain",
+            "content": "Internal budget discussion: Proposing to reallocate $28K from digital media budget to staff overtime fund. Children's programming showing 31% attendance increase, need coverage for weekend events.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-eastside",
+            "thread_ref": "chat:library-eastside:thread-budget-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://gen/gen-private-budget-planning-msg-1",
+            "occurred_at": "2026-03-20T08:16:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_query",
+        "action": "query",
+        "query": {
+          "text": "What was the proposed budget reallocation for children's programming support?",
+          "limit": 6,
+          "container_ref": "chat:library-eastside",
+          "thread_ref": "chat:library-eastside:thread-staffing-002",
+          "actor_ref": "user:patron-services",
+          "visibility": "private"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-04",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "visibility": "private"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-04",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-branch-vendor-constraint",
+    "description": "Branch librarian sets vendor constraint, catalog admin queries for procurement guidance from different thread.",
+    "steps": [
+      {
+        "step_id": "setup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-branch-vendor-constraint-msg-1",
+            "content_type": "text/plain",
+            "content": "Constraint: Do not use Midwest Library Supply for rush orders, only use Baker & Taylor Express for urgent patron requests due to their 48-hour delivery guarantee.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-central",
+            "thread_ref": "chat:library-central:thread-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://gen/gen-branch-vendor-constraint-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_query",
+        "action": "query",
+        "actor_ref": "user:catalog-admin",
+        "query": {
+          "text": "Which vendor should I use for emergency book orders that need to arrive within 2 days?",
+          "limit": 6,
+          "container_ref": "chat:library-central",
+          "thread_ref": "chat:library-central:thread-002",
+          "visibility": "private"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "memory_type_target": "constraint_memory"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-overdue-notice-protocol",
+    "description": "Patron services sets notice format constraint, branch librarian queries about communication procedures.",
+    "steps": [
+      {
+        "step_id": "setup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-overdue-notice-protocol-msg-1",
+            "content_type": "text/plain",
+            "content": "Constraint: Do not send automated overdue notices for items under $15 replacement cost, only send notices for books valued at $15 or higher to reduce patron complaint volume.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-westside",
+            "thread_ref": "chat:library-westside:thread-003",
+            "actor_ref": "user:patron-services",
+            "source_ref": "memory://gen/gen-overdue-notice-protocol-msg-1",
+            "occurred_at": "2026-03-20T08:05:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_query",
+        "action": "query",
+        "actor_ref": "user:branch-librarian",
+        "query": {
+          "text": "What's our policy on sending overdue notices for paperback novels and magazines?",
+          "limit": 6,
+          "container_ref": "chat:library-westside",
+          "thread_ref": "chat:library-westside:thread-004",
+          "visibility": "private"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "memory_type_target": "constraint_memory"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-catalog-sync-timing",
+    "description": "Catalog admin sets sync timing constraint, branch librarian queries about system maintenance windows.",
+    "steps": [
+      {
+        "step_id": "setup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-catalog-sync-timing-msg-1",
+            "content_type": "text/plain",
+            "content": "Constraint: Do not schedule catalog synchronization during peak checkout hours (10 AM - 12 PM weekdays), only run sync processes between 2 AM - 6 AM to avoid patron service disruptions.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-maintenance",
+            "thread_ref": "chat:catalog-maintenance:thread-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://gen/gen-catalog-sync-timing-msg-1",
+            "occurred_at": "2026-03-20T08:10:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_query",
+        "action": "query",
+        "actor_ref": "user:branch-librarian",
+        "query": {
+          "text": "When can I schedule the quarterly database update without affecting morning rush?",
+          "limit": 6,
+          "container_ref": "chat:catalog-maintenance",
+          "thread_ref": "chat:catalog-maintenance:thread-002",
+          "visibility": "private"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "memory_type_target": "constraint_memory"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-interlibrary-loan-routing",
+    "description": "Branch librarian sets ILL routing constraint, patron services queries about request handling procedures.",
+    "steps": [
+      {
+        "step_id": "setup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-interlibrary-loan-routing-msg-1",
+            "content_type": "text/plain",
+            "content": "Constraint: Do not route interlibrary loan requests to universities during finals weeks (December and May), only use public library networks during those periods to ensure faster turnaround times.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-northbranch",
+            "thread_ref": "chat:library-northbranch:thread-005",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://gen/gen-interlibrary-loan-routing-msg-1",
+            "occurred_at": "2026-03-20T08:15:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_query",
+        "action": "query",
+        "actor_ref": "user:patron-services",
+        "query": {
+          "text": "A patron needs a research book in early December - where should I send the ILL request?",
+          "limit": 6,
+          "container_ref": "chat:library-northbranch",
+          "thread_ref": "chat:library-northbranch:thread-006",
+          "visibility": "private"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "memory_type_target": "constraint_memory"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  },
+  {
+    "scenario_id": "gen-hold-pickup-location",
+    "description": "Patron services sets hold location constraint, catalog admin queries about system configuration.",
+    "steps": [
+      {
+        "step_id": "setup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "gen-hold-pickup-location-msg-1",
+            "content_type": "text/plain",
+            "content": "Constraint: Do not allow hold pickups at the downtown branch on Sundays due to limited staffing, only permit Sunday pickups at the main library and eastside branch locations.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-eastside",
+            "thread_ref": "chat:library-eastside:thread-007",
+            "actor_ref": "user:patron-services",
+            "source_ref": "memory://gen/gen-hold-pickup-location-msg-1",
+            "occurred_at": "2026-03-20T08:20:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_query",
+        "action": "query",
+        "actor_ref": "user:catalog-admin",
+        "query": {
+          "text": "Which branches should be available in the hold pickup dropdown for weekend service?",
+          "limit": 6,
+          "container_ref": "chat:library-eastside",
+          "thread_ref": "chat:library-eastside:thread-008",
+          "visibility": "private"
+        },
+        "invariant_assertions": [
+          "INV-03",
+          "INV-06",
+          "INV-07",
+          "INV-09",
+          "INV-12",
+          "INV-13"
+        ]
+      }
+    ],
+    "_generation_metadata": {
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "memory_type_target": "constraint_memory"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-06",
+        "INV-07",
+        "INV-09",
+        "INV-12",
+        "INV-13"
+      ],
+      "priority_tier": "P0",
+      "tier_reason": "generated_unreviewed",
+      "review_status": "generated",
+      "batch_id": "2a0a6cb569b3"
+    }
+  }
+]
