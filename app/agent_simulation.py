@@ -503,7 +503,11 @@ class AgentSimulationApp:
             self._write_system(f"channel: {defaults.container_ref} ({kind})")
             return
         name = args[0]
-        visibility = args[1] if len(args) > 1 else "public"
+        if len(args) > 1:
+            visibility = args[1]
+        else:
+            from app.agent_simulation_channels import get_channel_visibility
+            visibility = get_channel_visibility(name) or "public"
         if visibility not in VISIBILITY_KINDS:
             self._write_warning(f"Unknown visibility: {visibility}. Use: public, container, private")
             return

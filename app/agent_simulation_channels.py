@@ -33,10 +33,19 @@ def get_channel_history() -> list[str]:
     return data.get('channel_history', [])
 
 
+def get_channel_visibility(name: str) -> str | None:
+    """Return the last-used visibility for a channel name, or None."""
+    data = _load()
+    return data.get('channel_visibilities', {}).get(name)
+
+
 def record_channel(name: str, visibility: str) -> None:
-    """Record a channel switch: update last_channel and history."""
+    """Record a channel switch: update last_channel, history, and per-channel visibility."""
     data = _load()
     data['last_channel'] = {'name': name, 'visibility': visibility}
+    visibilities: dict[str, str] = data.get('channel_visibilities', {})
+    visibilities[name] = visibility
+    data['channel_visibilities'] = visibilities
     history: list[str] = data.get('channel_history', [])
     if name in history:
         history.remove(name)
