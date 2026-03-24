@@ -1866,3 +1866,138 @@ def test_vector_cosine_escape_hatch_trace_shows_reason() -> None:
     injection_decision = outcome.trace.routing.get('injection_decision', {})
     assert 'justification_reason' in injection_decision
     assert 'gate4' in injection_decision.get('justification_reason', '')
+
+
+# ---------------------------------------------------------------------------
+# Off-topic injection suppression tests
+# ---------------------------------------------------------------------------
+# These test the core problem: memory objects (thread_summary, interest, decision)
+# should NOT be injected when the query is off-topic.  In composite retrieval mode,
+# max_lexical_score=1 (single bridging word) is below the justification threshold.
+# In lexical-only mode, score=1 cannot be distinguished from legitimate cross-thread
+# recall and passes through — off-topic suppression requires composite retrieval.
+
+
+def test_offtopic_weather_suppresses_thread_summary() -> None:
+    """Off-topic 'weather' query with score=1 thread_summary in composite mode must NOT inject.
+
+    In lexical-only mode, score=1 cannot be distinguished from legitimate cross-thread
+    recall and passes through.  In composite mode, max_lexical_score=1 is below the
+    moderate_retrieval_score threshold (2), so the justification suppresses.
+    """
+    result = _build_floor_test_retrieval_result(
+        score=1, memory_type='thread_summary',
+        retrieval_source='both', lexical_score=1, vector_score=500,
+    )
+    outcome = _run_floor_test(result, query_text="how is the weather today?")
+    assert outcome.should_inject is False, (
+        f"Off-topic weather query should suppress thread_summary injection in composite mode. "
+        f"decision_reason={outcome.decision_reason}"
+    )
+
+
+def test_offtopic_politics_suppresses_interest() -> None:
+    """Off-topic 'politics' query with score=1 interest in composite mode must NOT inject."""
+    result = _build_floor_test_retrieval_result(
+        score=1, memory_type='interest',
+        payload={'summary': 'User expressed interest in SQLite databases for library systems.'},
+        retrieval_source='both', lexical_score=1, vector_score=480,
+    )
+    outcome = _run_floor_test(result, query_text="what about politics?")
+    assert outcome.should_inject is False, (
+        f"Off-topic politics query should suppress interest injection in composite mode. "
+        f"decision_reason={outcome.decision_reason}"
+    )
+
+
+def test_offtopic_idiom_suppresses_decision() -> None:
+    """Idiom 'under the weather' with score=1 decision in composite mode must NOT inject."""
+    result = _build_floor_test_retrieval_result(
+        score=1, memory_type='decision',
+        payload={'decision': 'Use SQLite for catalog indexing.', 'rationale': 'Branch library has under 50k items.'},
+        retrieval_source='both', lexical_score=1, vector_score=500,
+    )
+    outcome = _run_floor_test(result, query_text="i'm a bit under the weather")
+    assert outcome.should_inject is False, (
+        f"Off-topic idiom should suppress decision injection in composite mode. "
+        f"decision_reason={outcome.decision_reason}"
+    )
+
+
+def test_offtopic_zero_overlap_suppresses_thread_summary() -> None:
+    """Zero-overlap query with thread_summary must NOT inject (any retrieval mode)."""
+    result = _build_floor_test_retrieval_result(score=0, memory_type='thread_summary')
+    outcome = _run_floor_test(result, query_text="let's talk about something new")
+    assert outcome.should_inject is False, (
+        f"Zero-overlap query should suppress injection. "
+        f"decision_reason={outcome.decision_reason}"
+    )
+
+
+def test_ontopic_recall_injects_thread_summary() -> None:
+    """On-topic query with score=3 thread_summary MUST inject."""
+    result = _build_floor_test_retrieval_result(score=3, memory_type='thread_summary')
+    outcome = _run_floor_test(result, query_text="what did we discuss about the catalog?")
+    assert outcome.should_inject is True, (
+        f"On-topic recall query should inject thread_summary. "
+        f"decision_reason={outcome.decision_reason}"
+    )
+
+
+def test_vague_recall_injects_checkpoint_with_work_signals() -> None:
+    """Vague query with score=1 task_checkpoint + work signals MUST inject."""
+    result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='offtopic-checkpoint-1',
+                type='task_checkpoint',
+                payload={
+                    'task': 'Process catalog records batch 417',
+                    'current_state': 'Blocked on missing ISBN data for 12 items',
+                    'blocker_state': 'Missing ISBN data for items 4201-4212',
+                    'next_step': 'Contact publisher for missing ISBNs',
+                    'selected_work_artifacts': ['batch_id: 417', 'status: blocked'],
+                    'freshness_signal': 'in_progress',
+                },
+                score=1,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='src-checkpoint-1',
+                        source_type='chat_message',
+                        source_id='msg-checkpoint-1',
+                        container_ref='chat:offtopic-test',
+                        thread_ref='chat:offtopic-test:thread-A',
+                    ),
+                ],
+                container_ref='chat:offtopic-test',
+                thread_ref='chat:offtopic-test:thread-A',
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='test query',
+            query_tokens=('test', 'query'),
+            limit=4,
+            filters=QueryFilters(container_ref='chat:offtopic-test'),
+            stages=(),
+        ),
+    )
+    outcome = _run_floor_test(result, query_text="what should I do next?")
+    assert outcome.should_inject is True, (
+        f"Vague recall with task_checkpoint + work signals should inject. "
+        f"decision_reason={outcome.decision_reason}"
+    )
+
+
+def test_ontopic_injects_decision_with_strong_score() -> None:
+    """On-topic query with high score decision MUST inject."""
+    result = _build_floor_test_retrieval_result(
+        score=5, memory_type='decision',
+        payload={'decision': 'Use SQLite for catalog indexing.', 'rationale': 'Branch library has under 50k items.'},
+    )
+    outcome = _run_floor_test(result, query_text="what did we decide about catalog indexing?")
+    assert outcome.should_inject is True, (
+        f"On-topic decision query should inject. "
+        f"decision_reason={outcome.decision_reason}"
+    )
+

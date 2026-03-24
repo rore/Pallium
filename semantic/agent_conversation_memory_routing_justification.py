@@ -343,9 +343,10 @@ def justify_injection_rules(
     # Gate 1b: Moderate retrieval quality (IDF floor replacement)
     # The check varies by retrieval mode to match the signal semantics.
     #
-    # Lexical-only: IDF score >= 1 is sufficient.  The scoring pipeline IS the
-    #   quality signal and IDF scores are compressed in small corpora.  Off-topic
-    #   suppression relies on score=0 (zero overlap).
+    # Lexical-only: score >= 2 always passes (meaningful multi-token overlap).
+    #   score = 1 (single bridging word) also passes — these cannot be
+    #   distinguished from legitimate cross-thread recall at the signal level.
+    #   Off-topic suppression for score=1 requires composite retrieval mode.
     #
     # Composite: check max_lexical_score against the IDF threshold.  Lexical
     #   overlap is the primary evidence of topical relevance.  Vector-only
