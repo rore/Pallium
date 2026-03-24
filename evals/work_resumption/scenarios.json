@@ -203,7 +203,7 @@
       ],
       "preserved_progress": [
         "local replay confirmed the bug",
-        "narrowed it to cache invalidation"
+        "cache invalidation"
       ],
       "next_step_guidance": [
         "compare cache invalidation between delayed and immediate sync workers"
@@ -220,7 +220,7 @@
       ],
       "preserved_progress": [
         "local replay confirmed the bug",
-        "narrowed it to cache invalidation"
+        "cache invalidation"
       ],
       "next_step_guidance": [
         "compare cache invalidation between delayed and immediate sync workers"
@@ -326,7 +326,7 @@
         "service token expired"
       ],
       "preserved_progress": [
-        "refreshed 312 reservation records",
+        "312 reservation records",
         "batch 313"
       ],
       "next_step_guidance": [
@@ -343,7 +343,7 @@
         "service token expired"
       ],
       "preserved_progress": [
-        "refreshed 312 reservation records",
+        "312 reservation records",
         "batch 313"
       ],
       "next_step_guidance": [
@@ -452,7 +452,7 @@
         "reservation ordering fix"
       ],
       "preserved_progress": [
-        "schema change and backfill done"
+        "schema change and backfill"
       ],
       "next_step_guidance": [
         "wire the admin toggle",
@@ -468,7 +468,7 @@
         "use_item_event_time flag"
       ],
       "preserved_progress": [
-        "schema change and backfill done"
+        "schema change and backfill"
       ],
       "next_step_guidance": [
         "wire the admin toggle",
@@ -580,7 +580,7 @@
         "admin toggle wiring is ready"
       ],
       "next_step_guidance": [
-        "add the branch kiosk fallback coverage",
+        "branch kiosk fallback coverage",
         "re-request review"
       ],
       "evidence": [
@@ -596,7 +596,7 @@
         "admin toggle wiring is ready"
       ],
       "next_step_guidance": [
-        "add the branch kiosk fallback coverage",
+        "branch kiosk fallback coverage",
         "re-request review"
       ]
     },
@@ -748,7 +748,7 @@
       ],
       "preserved_progress": [
         "token is refreshed",
-        "resumed from batch 313"
+        "batch 418"
       ],
       "next_step_guidance": [
         "wait 15 minutes",
@@ -768,7 +768,7 @@
       ],
       "preserved_progress": [
         "token is refreshed",
-        "resumed from batch 313"
+        "batch 418"
       ],
       "next_step_guidance": [
         "wait 15 minutes",
@@ -924,7 +924,7 @@
         "use_item_event_time flag"
       ],
       "preserved_progress": [
-        "schema change and backfill done"
+        "schema change and backfill"
       ],
       "next_step_guidance": [
         "wire the admin toggle",
@@ -940,7 +940,7 @@
         "use_item_event_time flag"
       ],
       "preserved_progress": [
-        "schema change and backfill done"
+        "schema change and backfill"
       ],
       "next_step_guidance": [
         "wire the admin toggle",
@@ -1138,7 +1138,7 @@
         "branch kiosk fallback"
       ],
       "next_step_guidance": [
-        "add the branch kiosk fallback coverage",
+        "branch kiosk fallback coverage",
         "review again"
       ]
     },
