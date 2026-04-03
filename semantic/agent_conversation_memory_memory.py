@@ -104,71 +104,7 @@ def _append_typed_constraint_memory_objects(
     source_item: SourceItem,
     extraction: SemanticExtraction,
 ) -> ProcessResult:
-    if not extraction.constraint_candidates:
-        return result
-    if source_item.role and source_item.role.lower() != "user":
-        return result
-    if source_item.visibility in ("container", "public"):
-        return result
-    semantic_provenance = _semantic_provenance_from_process_result(result)
-    producer_schema_id = str(semantic_provenance.get("prompt_schema_id") or CONSTRAINT_MEMORY_SCHEMA_ID)
-    producer_schema_version = str(semantic_provenance.get("prompt_schema_version") or CONSTRAINT_MEMORY_SCHEMA_VERSION)
-    prompt_variant = semantic_provenance.get("prompt_variant") if isinstance(semantic_provenance.get("prompt_variant"), str) else None
-    memory_objects = list(result.memory_objects)
-    relations = list(result.relations)
-    index_entries = list(result.index_entries)
-    for candidate in extraction.constraint_candidates:
-        constraint_text = candidate.constraint_text.strip()
-        envelope_subjects = _merge_subject_anchors(extraction.subject_hints)
-        payload = {
-            "summary": constraint_text,
-            "constraint_text": constraint_text,
-            "container_ref": source_item.container_ref,
-            "thread_ref": source_item.thread_ref,
-            "semantic_provenance": dict(semantic_provenance),
-        }
-        memory_object = MemoryObject(
-            type=CONSTRAINT_MEMORY_TYPE,
-            schema_id=CONSTRAINT_MEMORY_SCHEMA_ID,
-            schema_version=CONSTRAINT_MEMORY_SCHEMA_VERSION,
-            payload=payload,
-            visibility=source_item.visibility,
-            container_ref=source_item.container_ref,
-            actor_ref=_resolve_actor_ref(source_item),
-            freshness_at=source_item.occurred_at,
-            envelope=_build_memory_envelope(
-                kind="constraint",
-                container_ref=source_item.container_ref,
-                thread_ref=source_item.thread_ref,
-                confidence="medium",
-                producer_kind="item_extraction",
-                producer_schema_id=producer_schema_id,
-                producer_schema_version=producer_schema_version,
-                prompt_variant=prompt_variant,
-                kind_basis="constraint_candidate",
-                subjects=envelope_subjects,
-            ),
-        )
-        memory_objects.append(memory_object)
-        relations.append(
-            Relation(
-                from_kind="memory_object",
-                from_id=memory_object.id,
-                relation_type="supported_by",
-                to_kind="source_item",
-                to_id=source_item.id,
-            )
-        )
-        index_entries.append(
-            build_index_entry(
-                target_kind="memory_object",
-                target_id=memory_object.id,
-                index_type="lexical",
-                text_view=normalize_for_index(constraint_text),
-                text_view_name="memory_object.constraint_memory_context",
-            )
-        )
-    return replace(result, memory_objects=memory_objects, relations=relations, index_entries=index_entries)
+    return result
 
 def _apply_direct_memory_envelopes(
     result: ProcessResult,

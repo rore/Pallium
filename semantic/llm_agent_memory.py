@@ -8,7 +8,7 @@ from core.contracts import ProcessResult
 from core.models import MemorySubjectAnchor, SourceItem
 from providers.llm.base import LLMJsonResponse, LLMProvider
 from semantic.base import SemanticPlugin
-from semantic.common import ConstraintCandidate, SemanticExtraction, build_process_result
+from semantic.common import SemanticExtraction, build_process_result
 from semantic.prompt_variant_metrics import prompt_text_metrics
 from semantic.prompt_provenance import build_prompt_provenance
 from semantic.prompt_roles import get_prompt_role_contract
@@ -104,7 +104,6 @@ Populate only when the source explicitly states them:
 - constraint_text: a definitive operational constraint — the speaker commits to a requirement, prohibition, or hard rule. Hedged or tentative language ("I think", "maybe", "probably", "leaning towards", "not sure") is not a constraint.
 - is_low_value_meta: true only for non-durable orchestration chatter: no-op completion/status messages, greeting/pleasantry chatter ("hello", "thanks", "good morning"), heartbeat/monitoring noise ("still alive", "healthcheck"), and generic capability boilerplate ("I can help with...", "capabilities:"). When true, all signal fields must be null/[].
 - subject_hints: explicit workstream|component|surface only. Return [] if not safely explicit.
-- constraint_candidates: only use_surface|use_source|perform_step with prohibit|prefer|require. Return [] if unsafe or hedged.
 
 Prefer null or [] over weak, speculative, or inferred values.
 
@@ -123,7 +122,7 @@ Typed memory requires explicit proof phrases quoted in the evidence field:
 
 Fill only decision fields for decision, only investigation fields for investigation_outcome. Never promote needs, proposals, preferences, symptoms, or monitoring notes.
 
-Optional signals (only when explicitly stated): is_low_value_meta (true for no-op completions, greetings, heartbeats, capability boilerplate), constraint_text (definitive commitment only — hedged or tentative language is not a constraint), next_step_text (concrete action, not clarifying question), blocker_text, progress_text (substantive work, not boilerplate), key_finding_text (durable conclusion only), subject_hints (workstream|component|surface, else []), constraint_candidates (use_surface|use_source|perform_step + prohibit|prefer|require, else []; must be definitive, not hedged).
+Optional signals (only when explicitly stated): is_low_value_meta (true for no-op completions, greetings, heartbeats, capability boilerplate), constraint_text (definitive commitment only — hedged or tentative language is not a constraint), next_step_text (concrete action, not clarifying question), blocker_text, progress_text (substantive work, not boilerplate), key_finding_text (durable conclusion only), subject_hints (workstream|component|surface, else []).
 
 If is_low_value_meta is true, all signals must be null/[]. Prefer null over weak inference.""",
     "strict_typed_memory_v7_claude_clean": """You extract reusable knowledge and work-state signals from one technical source item. Return exactly one JSON object and no extra prose.
@@ -150,9 +149,8 @@ Populate only when the source explicitly states them:
 - constraint_text: a stated operational constraint.
 - is_low_value_meta: true only for content with no durable information — no-op completions ("No message needed"), greetings ("hello", "good morning"), heartbeat/monitoring noise ("still alive", "healthcheck"), and generic capability boilerplate ("I can help with..."). When true, all signal fields must be null/[].
 - subject_hints: list of topic tags with kind (workstream, component, or surface) and value. Return [] unless the source explicitly names one.
-- constraint_candidates: normalized constraint objects. Return [] unless all required fields can be filled safely.
 
-constraint_text and constraint_candidates require a definitive commitment — the speaker clearly states a requirement, prohibition, or hard rule. Hedged or tentative language ("I think", "maybe", "probably", "leaning towards", "not sure") is not a constraint; leave null/[].
+constraint_text requires a definitive commitment — the speaker clearly states a requirement, prohibition, or hard rule. Hedged or tentative language ("I think", "maybe", "probably", "leaning towards", "not sure") is not a constraint; leave null.
 
 Prefer null or [] over guessed or weakly inferred values.
 
@@ -254,7 +252,6 @@ SCHEMA_DESCRIPTION = json.dumps(
         "progress_text": "string or null",
         "key_finding_text": "string or null",
         "subject_hints": "array of {kind: workstream|component|surface, value: string} or null",
-        "constraint_candidates": "array of {primary_scope_anchor: {kind: workstream|component|surface, value: string}, target_anchor: {kind: workstream|component|surface, value: string}, action_class: use_surface|use_source|perform_step, polarity: prohibit|prefer|require, confidence: high|medium|low|unknown, constraint_text: string} or null",
     },
     indent=2,
 )
@@ -397,7 +394,6 @@ def _normalize_extraction(payload: dict[str, Any]) -> SemanticExtraction:
     progress_text = _normalize_optional_string(payload.get("progress_text"), field_name="progress_text")
     key_finding_text = _normalize_optional_string(payload.get("key_finding_text"), field_name="key_finding_text")
     subject_hints = _normalize_subject_hints(payload.get("subject_hints"))
-    constraint_candidates = _normalize_constraint_candidates(payload.get("constraint_candidates"))
 
     if candidate_type is not None:
         candidate_type = candidate_type.lower()
@@ -420,28 +416,7 @@ def _normalize_extraction(payload: dict[str, Any]) -> SemanticExtraction:
         progress_text=progress_text,
         key_finding_text=key_finding_text,
         subject_hints=subject_hints,
-        constraint_candidates=constraint_candidates,
     )
-
-
-def _normalize_constraint_candidates(value: Any) -> tuple[ConstraintCandidate, ...]:
-    if value is None or value == "unknown":
-        return ()
-    if not isinstance(value, list):
-        return ()
-    normalized: list[ConstraintCandidate] = []
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        constraint_text = str(item.get("constraint_text") or "").strip()
-        if not constraint_text or constraint_text.lower() == "unknown":
-            continue
-        normalized.append(
-            ConstraintCandidate(
-                constraint_text=constraint_text,
-            )
-        )
-    return tuple(normalized)
 
 
 def _normalize_subject_anchor(value: Any) -> MemorySubjectAnchor | None:

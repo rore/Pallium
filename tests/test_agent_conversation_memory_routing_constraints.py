@@ -2,54 +2,6 @@ from __future__ import annotations
 
 from tests.agent_conversation_memory_routing_helpers import *
 
-def test_process_item_emits_typed_constraint_memory() -> None:
-    plugin = AgentConversationMemoryPlugin(
-        provider=_FixedLLMProvider(
-            {
-                'summary': 'Constraint reminder',
-                'candidate_type': None,
-                'decision_text': None,
-                'decision_evidence_text': None,
-                'investigation_text': None,
-                'investigation_evidence_text': None,
-                'rationale_text': None,
-                'is_low_value_meta': False,
-                'constraint_text': 'Do not use the operations portal for the inventory batch digest.',
-                'next_step_text': None,
-                'blocker_text': None,
-                'progress_text': None,
-                'key_finding_text': None,
-                'subject_hints': [{'kind': 'workstream', 'value': 'inventory batch digest'}],
-                'constraint_candidates': [
-                    {
-                        'constraint_text': 'Do not use the operations portal for the inventory batch digest.',
-                    }
-                ],
-            }
-        ),
-        prompt_variant='strict_typed_memory_v4_evidence_guarded',
-    )
-    result = plugin.process_item(
-        SourceItem(
-            source_type='chat_message',
-            source_id='constraint-source-1',
-            content_type='text/plain',
-            content='Do not use the operations portal for the inventory batch digest.',
-            artifact_kind='message',
-            role='user',
-            container_ref='chat:library-help',
-            thread_ref='chat:library-help:thread-constraint',
-            occurred_at=datetime(2026, 3, 11, 12, 10, tzinfo=timezone.utc),
-            visibility="private",
-        )
-    )
-
-    constraint_memory = next(memory for memory in result.memory_objects if memory.type == 'constraint_memory')
-    assert constraint_memory.schema_id == 'agent_conversation_memory.constraint_memory'
-    assert constraint_memory.payload['constraint_text'] == 'Do not use the operations portal for the inventory batch digest.'
-    assert constraint_memory.envelope is not None
-    assert constraint_memory.envelope.kind == 'constraint'
-
 def test_fresh_thread_constraint_recall_prefers_structured_memory_over_raw_source() -> None:
     plugin = AgentConversationMemoryPlugin(
         provider=TieredMemorySemanticProvider(),

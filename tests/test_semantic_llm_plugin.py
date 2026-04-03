@@ -67,7 +67,7 @@ def test_grounded_investigation_evidence_tolerates_whitespace_normalization() ->
     )
     assert has_grounded_investigation_evidence(source, "Investigation found that arrival-time ordering missed hold updates.") is True
 from providers.llm.base import LLMCallMetadata, LLMJsonResponse, LLMProviderError
-from semantic.common import ConstraintCandidate, SEMANTIC_SIGNAL_METADATA_KEY
+from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin, build_analysis_request
 from semantic.prompt_roles import get_prompt_role_contract
 
@@ -225,100 +225,6 @@ def test_llm_plugin_preserves_valid_subject_hints_and_ignores_invalid_entries() 
     )
 
 
-def test_llm_plugin_preserves_valid_constraint_candidates_and_ignores_invalid_entries() -> None:
-    plugin = LLMAgentMemoryPlugin(
-        provider=StubLLMProvider(
-            response=LLMJsonResponse(
-                raw_text='{"summary":"Constraint note","candidate_type":null,"decision_text":null,"decision_evidence_text":null,"investigation_text":null,"investigation_evidence_text":null,"rationale_text":null,"is_low_value_meta":false,"constraint_text":"Do not use the operations portal for the inventory batch digest.","next_step_text":null,"blocker_text":null,"progress_text":null,"key_finding_text":null,"constraint_candidates":[{"primary_scope_anchor":{"kind":"workstream","value":"inventory batch digest"},"target_anchor":{"kind":"surface","value":"operations portal"},"action_class":"use_surface","polarity":"prohibit","confidence":"high","constraint_text":"Do not use the operations portal for the inventory batch digest."},{"primary_scope_anchor":{"kind":"bad_kind","value":"ignored"},"target_anchor":{"kind":"surface","value":"local browser"},"action_class":"use_surface","polarity":"prohibit","confidence":"high","constraint_text":"ignored"},{"primary_scope_anchor":{"kind":"workstream","value":"inventory batch digest"},"target_anchor":{"kind":"surface","value":"unknown"},"action_class":"use_surface","polarity":"prohibit","confidence":"high","constraint_text":"ignored"},{"primary_scope_anchor":{"kind":"workstream","value":"inventory batch digest"},"target_anchor":{"kind":"surface","value":"local browser"},"action_class":"invalid_action","polarity":"prohibit","confidence":"high","constraint_text":"ignored"},{"primary_scope_anchor":{"kind":"workstream","value":"inventory batch digest"},"target_anchor":{"kind":"surface","value":"local browser"},"action_class":"use_surface","polarity":"prohibit","confidence":"bad","constraint_text":"Do not open a local browser."}]}',
-                metadata=LLMCallMetadata(provider_name="stub_provider", provider_kind="stub_kind", model="stub-model"),
-                parsed_json={
-                    "summary": "Constraint note",
-                    "candidate_type": None,
-                    "decision_text": None,
-                    "decision_evidence_text": None,
-                    "investigation_text": None,
-                    "investigation_evidence_text": None,
-                    "rationale_text": None,
-                    "is_low_value_meta": False,
-                    "constraint_text": "Do not use the operations portal for the inventory batch digest.",
-                    "next_step_text": None,
-                    "blocker_text": None,
-                    "progress_text": None,
-                    "key_finding_text": None,
-                    "constraint_candidates": [
-                        {
-                            "primary_scope_anchor": {"kind": "workstream", "value": "inventory batch digest"},
-                            "target_anchor": {"kind": "surface", "value": "operations portal"},
-                            "action_class": "use_surface",
-                            "polarity": "prohibit",
-                            "confidence": "high",
-                            "constraint_text": "Do not use the operations portal for the inventory batch digest.",
-                        },
-                        {
-                            "primary_scope_anchor": {"kind": "bad_kind", "value": "ignored"},
-                            "target_anchor": {"kind": "surface", "value": "local browser"},
-                            "action_class": "use_surface",
-                            "polarity": "prohibit",
-                            "confidence": "high",
-                            "constraint_text": "ignored",
-                        },
-                        {
-                            "primary_scope_anchor": {"kind": "workstream", "value": "inventory batch digest"},
-                            "target_anchor": {"kind": "surface", "value": "unknown"},
-                            "action_class": "use_surface",
-                            "polarity": "prohibit",
-                            "confidence": "high",
-                            "constraint_text": "ignored",
-                        },
-                        {
-                            "primary_scope_anchor": {"kind": "workstream", "value": "inventory batch digest"},
-                            "target_anchor": {"kind": "surface", "value": "local browser"},
-                            "action_class": "invalid_action",
-                            "polarity": "prohibit",
-                            "confidence": "high",
-                            "constraint_text": "ignored",
-                        },
-                        {
-                            "primary_scope_anchor": {"kind": "workstream", "value": "inventory batch digest"},
-                            "target_anchor": {"kind": "surface", "value": "local browser"},
-                            "action_class": "use_surface",
-                            "polarity": "prohibit",
-                            "confidence": "bad",
-                            "constraint_text": "Do not open a local browser.",
-                        },
-                    ],
-                },
-            )
-        )
-    )
-    source_item = SourceItem(
-        source_type="assistant_output",
-        source_id="constraint-candidates-123",
-        content_type="text/plain",
-        content="Do not use the operations portal for the inventory batch digest, and do not open a local browser.",
-        artifact_kind="assistant_output",
-        role="assistant",
-    )
-
-    trace = plugin.analyze_item(source_item)
-
-    assert trace.extraction.constraint_candidates == (
-        ConstraintCandidate(
-            constraint_text="Do not use the operations portal for the inventory batch digest.",
-        ),
-        ConstraintCandidate(
-            constraint_text="ignored",
-        ),
-        ConstraintCandidate(
-            constraint_text="ignored",
-        ),
-        ConstraintCandidate(
-            constraint_text="ignored",
-        ),
-        ConstraintCandidate(
-            constraint_text="Do not open a local browser.",
-        ),
-    )
 
 
 
