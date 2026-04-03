@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from core.models import MemoryEnvelopeConfidence, MemorySubjectAnchor, SourceItem
-from semantic.common import ConstraintCandidate, normalize_for_index
+from semantic.common import normalize_for_index
 
 SUBJECT_HINT_METADATA_KEY = "pallium_subject_hints"
 
@@ -14,10 +14,6 @@ CONSTRAINT_MEMORY_SCHEMA_ID = "agent_conversation_memory.constraint_memory"
 CONSTRAINT_MEMORY_SCHEMA_VERSION = "v1"
 
 CONSTRAINT_ALLOWED_ANCHOR_KINDS = {"workstream", "component", "surface"}
-
-CONSTRAINT_CONFIDENCES = {"high", "medium", "low", "unknown"}
-
-CONSTRAINT_HARD_POLARITIES = {"prohibit", "require"}
 
 CONSTRAINT_TOOL_MARKERS = (
     "browser",
@@ -116,19 +112,6 @@ def _anchor_display_value(value: str) -> str:
 def _anchor_key(subject: MemorySubjectAnchor) -> str:
     return f"{subject.kind}:{_anchor_display_value(subject.value)}"
 
-def _constraint_supersession_identity(primary_scope_anchor: MemorySubjectAnchor, target_anchor: MemorySubjectAnchor, action_class: str) -> str:
-    return "|".join((_anchor_key(primary_scope_anchor), _anchor_key(target_anchor), action_class))
-
-def _constraint_compatibility_domain(primary_scope_anchor: MemorySubjectAnchor, action_class: str) -> str:
-    return "|".join((_anchor_key(primary_scope_anchor), action_class))
-
-def _constraint_strength_for_polarity(polarity: str) -> str:
-    return "hard" if polarity in CONSTRAINT_HARD_POLARITIES else "soft"
-
-def _constraint_confidence_from_candidate(candidate: ConstraintCandidate) -> MemoryEnvelopeConfidence:
-    confidence = str(candidate.confidence or "unknown").strip().lower()
-    return confidence if confidence in CONSTRAINT_CONFIDENCES else "unknown"
-
 def _merge_subject_anchors(*groups: Iterable[MemorySubjectAnchor]) -> list[MemorySubjectAnchor]:
     merged: list[MemorySubjectAnchor] = []
     seen: set[tuple[str, str]] = set()
@@ -166,10 +149,3 @@ def _subject_anchors_from_source_items(source_items: Iterable[SourceItem]) -> li
 
 def _subject_anchors_from_memory_objects(memory_objects) -> list[MemorySubjectAnchor]:
     return _merge_subject_anchors(*(memory_object.envelope.subjects for memory_object in memory_objects if memory_object.envelope is not None))
-
-def _constraint_summary_text(candidate: ConstraintCandidate) -> str:
-    if candidate.polarity == "prohibit":
-        return f"Constraint: do not use {candidate.target_anchor.value}."
-    if candidate.polarity == "require":
-        return f"Constraint: require {candidate.target_anchor.value} for {candidate.primary_scope_anchor.value}."
-    return f"Constraint: prefer {candidate.target_anchor.value} for {candidate.primary_scope_anchor.value}."
