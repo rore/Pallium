@@ -39,6 +39,7 @@
   - `actor_ref` field on MemoryObject tracks who a memory is personal to
   - personal memory types (interest, constraint_memory) are suppressed in shared containers (container/public), falling through to discussion_summary
   - constraint_memory has a role guard — assistant messages cannot create it
+  - constraint_memory is now created directly from `constraint_text` — the structured `constraint_candidates` extraction path has been removed; natural-language constraints are reliably promoted
   - query-time actor filtering via optional `actor_ref` on QueryFilters and query API
   - thread-level memories (thread_summary, task_checkpoint) always have actor_ref=null (shared)
   - backward compatible — queries without actor_ref work as before
@@ -112,7 +113,7 @@
   - live exploratory drift and replay-promotion tooling
 - the developer-work confidence harness should be read by hard-gate fields first, not by aggregate scenario-success counts alone
 - replay is now a real tooling surface, but replay coverage is still materially smaller than the authored confidence packs
-- test suite: 732 passed, 5 skipped
+- test suite: 758 passed, 5 skipped
 - semantic extraction fixture set: 58 items (12 decisions, 14 investigations, 20 boundary-null, 13 signal cases)
 
 ## Configuration Note
