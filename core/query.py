@@ -1,23 +1,17 @@
 from __future__ import annotations
 
-import re
 from collections import Counter
 from dataclasses import replace
 from typing import Any
 
 from core.contracts import PackageQueryOutcome, QueryResult, resolve_query_filters
+from core.filters import matches_filters
 from core.models import QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace
 from core.visibility import QueryVisibilityTrace, is_visible
 from retrieval.base import RetrievalProvider
+from retrieval.lexical import tokenize_query
 from semantic.base import SemanticPlugin
 from storage.base import StorageProvider
-
-
-TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
-
-
-def _query_tokens(text: str) -> tuple[str, ...]:
-    return tuple(sorted(set(TOKEN_PATTERN.findall(text.lower()))))
 
 
 def _build_query_result_summary(results: list[Any]) -> dict[str, Any]:
@@ -77,7 +71,7 @@ class QueryExecutor:
             if include_trace:
                 trace = QueryTrace(
                     query_text=text,
-                    query_tokens=_query_tokens(text),
+                    query_tokens=tokenize_query(text),
                     limit=limit,
                     filters=effective_filters,
                     requested_filters=requested_filters,
@@ -178,9 +172,22 @@ class QueryExecutor:
             for memory_object in self._storage.list_memory_objects(memory_types=memory_types, lifecycle="active"):
                 if require_visibility and not is_visible(memory_object.visibility, memory_object.container_ref, query_container_ref, getattr(memory_object, 'actor_ref', None)):
                     continue
-                evidence = self._storage.get_evidence_for_memory_object(memory_object.id)
-                if filters is not None and not any(self._evidence_matches_filters(item, filters) for item in evidence):
+                # Use the canonical matches_filters to stay consistent with
+                # the retrieval path (handles lifecycle, thread_ref relaxation,
+                # public visibility exception, and shared-memory actor_ref
+                # relaxation).  The lifecycle="active" pre-filter above makes
+                # the lifecycle re-check inside matches_filters redundant but
+                # harmless — this only runs on /query/debug.
+                if not matches_filters(
+                    self._storage.get_memory_object,
+                    self._storage.get_source_item,
+                    self._storage.get_evidence_for_memory_object,
+                    "memory_object",
+                    memory_object.id,
+                    filters,
+                ):
                     continue
+                evidence = self._storage.get_evidence_for_memory_object(memory_object.id)
                 results.append(
                     QueryResultItem(
                         result_kind="memory_hit",
@@ -197,17 +204,3 @@ class QueryExecutor:
             return results
 
         return load_candidates
-
-    @staticmethod
-    def _evidence_matches_filters(evidence, filters: QueryFilters) -> bool:
-        if filters.source_type is not None and evidence.source_type != filters.source_type:
-            return False
-        if filters.role is not None and evidence.role != filters.role:
-            return False
-        if filters.artifact_kind is not None and evidence.artifact_kind != filters.artifact_kind:
-            return False
-        if filters.container_ref is not None and evidence.container_ref != filters.container_ref:
-            return False
-        if filters.thread_ref is not None and evidence.thread_ref != filters.thread_ref:
-            return False
-        return True

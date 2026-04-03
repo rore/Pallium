@@ -37,9 +37,17 @@ def _token_variants(token: str) -> tuple[str, ...]:
         variants.append(token[:-3] + "y")
     elif len(token) > 5 and token.endswith("es") and not token.endswith(("ses", "xes", "zes")):
         variants.append(token[:-2])
-    elif len(token) > 4 and token.endswith("s") and not token.endswith(("ss", "us", "is")):
+    elif len(token) > 4 and token.endswith("s") and not token.endswith(("ss", "us", "is", "ses", "xes", "zes")):
         variants.append(token[:-1])
     return tuple(dict.fromkeys(variants))
+
+
+def tokenize_query(text: str) -> tuple[str, ...]:
+    """Tokenize and expand query text for lexical matching.
+
+    Returns sorted, deduplicated tokens including plural-stem variants.
+    """
+    return tuple(sorted(set(_tokenize(text))))
 
 
 class LexicalRetrievalProvider(RetrievalProvider):
@@ -57,7 +65,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
         include_trace: bool = False,
         require_visibility: bool = False,
     ) -> RetrievalQueryResult:
-        tokens = sorted(set(_tokenize(text)))
+        tokens = list(tokenize_query(text))
         if require_visibility and query_container_ref is None and visibility != "public":
             trace = None
             if include_trace:

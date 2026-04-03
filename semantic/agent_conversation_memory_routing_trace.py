@@ -448,7 +448,7 @@ def _build_sharp_candidate_diagnostics(
                     "selected_for_injection": False,
                     "loss_stage": "retrieval",
                     "loss_reason_code": "not_retrieved",
-                    "loss_reason": "Sharp candidate was in scope but not retrieved lexically.",
+                    "loss_reason": "Sharp candidate was in scope but not returned by retrieval (lexical + vector).",
                     "retrieved": False,
                     "lexical_rank": None,
                     "routing_rank": None,
