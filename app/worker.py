@@ -89,10 +89,18 @@ def run_worker(
 
 
 def _log_result(worker_id: str, result: ItemProcessingResult) -> None:
-    emit_runtime_log(
-        "processor",
-        f"worker_id={worker_id} source_item={result.source_item_id} status={result.processing_status} attempts={result.processing_attempts}",
+    message = (
+        f"worker_id={worker_id} source_item={result.source_item_id} "
+        f"status={result.processing_status} attempts={result.processing_attempts}"
     )
+    if result.failure_category:
+        message = f"{message} failure_category={result.failure_category}"
+    if result.processing_error:
+        compact_error = " ".join(result.processing_error.split())
+        if len(compact_error) > 300:
+            compact_error = f"{compact_error[:297]}..."
+        message = f"{message} processing_error={compact_error}"
+    emit_runtime_log("processor", message)
 
 def _log_thread_rebuild(worker_id: str, lease: ThreadProcessingLease) -> None:
     emit_runtime_log(

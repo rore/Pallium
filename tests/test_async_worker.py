@@ -630,3 +630,38 @@ def test_thread_rebuild_loop_exits_after_max_iterations(test_db_url: str) -> Non
         service._process_thread_rebuild_lease(lease, worker_id='iteration-test', lease_seconds=300)
 
     assert iteration_count[0] <= service._MAX_THREAD_REBUILD_ITERATIONS
+
+
+def test_run_worker_logs_failure_details(monkeypatch, test_db_url: str, capsys) -> None:
+    service = _build_service(
+        test_db_url,
+        plugins={"always_fail": AlwaysFailPlugin()},
+        default_use_case="always_fail",
+    )
+    ingest = service.ingest_item(
+        source_type="decision_note",
+        source_id="worker-log-fail-1",
+        content_type="text/plain",
+        content="Decision: fail once for logging coverage.",
+        metadata=None,
+        use_case="always_fail",
+    )
+    assert ingest.processing_status == "pending"
+
+    monkeypatch.setattr("app.worker.build_service", lambda config: service)
+
+    exit_code = run_worker(
+        ["--once", "--worker-id", "worker-log-test", "--max-attempts", "1"],
+        config=AppConfig(
+            storage_backend="sqlite",
+            sqlite_url=test_db_url,
+            default_use_case="always_fail",
+            vector_index=VectorIndexConfig(enabled=False),
+        ),
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "status=failed" in output
+    assert "failure_category=" in output
+    assert "processing_error=boom" in output

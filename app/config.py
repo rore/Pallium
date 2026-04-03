@@ -36,6 +36,7 @@ class LLMProviderConfig:
     base_url: str
     api_key: str | None = None
     api_key_env: str | None = None
+    api_key_file: str | None = None
     timeout_seconds: float = 30.0
     retry_policy: LLMRetryPolicy = field(default_factory=LLMRetryPolicy)
     auth_style: str = "native"  # "native" (provider default) or "bearer" (Authorization: Bearer)
@@ -410,9 +411,12 @@ def _build_provider_configs(config_data: dict[str, Any], env_values: dict[str, s
             "base_url": current.base_url,
             "api_key": current.api_key,
             "api_key_env": current.api_key_env,
+            "api_key_file": current.api_key_file,
             "timeout_seconds": current.timeout_seconds,
             "retry_policy": current.retry_policy,
             "auth_style": current.auth_style,
+            "max_tokens": current.max_tokens,
+            "aicore": current.aicore,
         }
         if field_name == "kind":
             updated["kind"] = env_value
@@ -423,6 +427,9 @@ def _build_provider_configs(config_data: dict[str, Any], env_values: dict[str, s
         elif field_name == "api_key_env":
             updated["api_key_env"] = env_value
             updated["api_key"] = env_values.get(env_value, updated["api_key"])
+        elif field_name == "api_key_file":
+            updated["api_key_file"] = env_value
+            updated["api_key"] = _load_secret_file(env_value) or updated["api_key"]
         elif field_name == "timeout_seconds":
             updated["timeout_seconds"] = float(env_value)
         elif field_name == "auth_style":
@@ -444,9 +451,12 @@ def _build_provider_configs(config_data: dict[str, Any], env_values: dict[str, s
 
 def _provider_from_raw(name: str, raw_value: dict[str, Any], env_values: dict[str, str]) -> LLMProviderConfig:
     api_key_env = _as_optional_string(raw_value.get("api_key_env"))
+    api_key_file = _as_optional_string(raw_value.get("api_key_file"))
     api_key = _as_optional_string(raw_value.get("api_key"))
     if api_key_env and api_key_env in env_values:
         api_key = env_values[api_key_env]
+    elif api_key_file:
+        api_key = _load_secret_file(api_key_file) or api_key
 
     kind = _as_string(raw_value.get("kind"))
 
@@ -488,6 +498,7 @@ def _provider_from_raw(name: str, raw_value: dict[str, Any], env_values: dict[st
         base_url=base_url,
         api_key=api_key,
         api_key_env=api_key_env,
+        api_key_file=api_key_file,
         timeout_seconds=float(raw_value.get("timeout_seconds", 30.0)),
         retry_policy=LLMRetryPolicy(
             max_attempts=int(raw_value.get("max_attempts", 3)),
@@ -710,6 +721,13 @@ def _as_optional_string(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _load_secret_file(path_value: str) -> str | None:
+    try:
+        return Path(path_value).expanduser().read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
 
 
 def _update_retry_policy(policy: LLMRetryPolicy, **updates: Any) -> LLMRetryPolicy:

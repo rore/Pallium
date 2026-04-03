@@ -59,6 +59,7 @@ filterwarnings = [
 [tool.setuptools]
 packages = [
     "app",
+    "capabilities",
     "api",
     "core",
     "evals",

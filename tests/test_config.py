@@ -556,3 +556,45 @@ def test_model_roles_env_override(monkeypatch, tmp_path: Path) -> None:
     package = config.package_config("agent_conversation_memory")
 
     assert package.model_roles["write_extraction"] == "gpt-5-mini"
+
+
+def test_provider_api_key_file_from_toml(monkeypatch, tmp_path: Path) -> None:
+    api_key_file = tmp_path / "hai_api_key"
+    api_key_file.write_text("pelican-managed-key\n", encoding="utf-8")
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        f"""
+        default_use_case = "demo_agent_memory"
+
+        [llm_providers.hai_anthropic]
+        kind = "anthropic_claude"
+        base_url = "http://localhost:6655/anthropic/v1"
+        api_key_file = "{api_key_file.as_posix()}"
+        auth_style = "bearer"
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+
+    config = AppConfig.from_env()
+
+    provider = config.provider_config("hai_anthropic")
+    assert provider.api_key_file == api_key_file.as_posix()
+    assert provider.api_key == "pelican-managed-key"
+
+
+def test_provider_api_key_file_env_override(monkeypatch, tmp_path: Path) -> None:
+    api_key_file = tmp_path / "hai_api_key"
+    api_key_file.write_text("env-file-key", encoding="utf-8")
+
+    monkeypatch.setenv("PALLIUM_PROVIDER__HAI_ANTHROPIC__KIND", "anthropic_claude")
+    monkeypatch.setenv("PALLIUM_PROVIDER__HAI_ANTHROPIC__BASE_URL", "http://localhost:6655/anthropic/v1")
+    monkeypatch.setenv("PALLIUM_PROVIDER__HAI_ANTHROPIC__API_KEY_FILE", str(api_key_file))
+    monkeypatch.setenv("PALLIUM_PROVIDER__HAI_ANTHROPIC__AUTH_STYLE", "bearer")
+
+    config = AppConfig.from_env()
+
+    provider = config.provider_config("hai_anthropic")
+    assert provider.api_key_file == str(api_key_file)
+    assert provider.api_key == "env-file-key"

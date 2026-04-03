@@ -1,4 +1,4 @@
-ï»¿# Configuration
+# Configuration
 
 This page explains Pallium's local configuration surface today.
 
@@ -6,10 +6,10 @@ This page explains Pallium's local configuration surface today.
 
 | What | Where | Key fields |
 |------|-------|------------|
-| LLM provider | `[llm_providers.<name>]` in TOML | `kind`, `base_url`, `api_key_env` |
+| LLM provider | `[llm_providers.<name>]` in TOML | `kind`, `base_url`, `api_key_env`, `api_key_file` |
 | Semantic package | `[semantic_packages.<name>]` in TOML | `llm_provider`, `model` |
 | Model roles | `[semantic_packages.<name>.model_roles]` | `write_extraction`, `thread_aggregation`, `consolidation`, `query_ambiguity_resolution` |
-| Secrets | `.env.local` | `ANTHROPIC_API_KEY`, `PALLIUM_OPENAI_API_KEY` |
+| Secrets | `.env.local`, alternate env file, or provider key file | `ANTHROPIC_API_KEY`, `PALLIUM_OPENAI_API_KEY`, `api_key_file` |
 | Storage | `[storage]` in TOML | `backend`, `sqlite_url` |
 | Vector index | `[vector_index]` in TOML | `enabled`, `min_similarity` |
 | Debug logs | `[observability]` in TOML | `integration_debug = true` |
@@ -102,7 +102,7 @@ ANTHROPIC_API_KEY=your-key
 ```
 
 That is enough to run the full semantic path. Prompt variants, model roles,
-embedding, and vector retrieval all have working defaults â€” hybrid retrieval
+embedding, and vector retrieval all have working defaults — hybrid retrieval
 is enabled out of the box with a local ONNX embedding provider.
 
 ## TOML Structure
@@ -190,8 +190,9 @@ Supported fields today:
 - `base_url`
 - `api_key`
 - `api_key_env`
+- `api_key_file` - read the bearer/native auth token from a local secret file
 - `timeout_seconds`
-- `auth_style` â€” `"native"` (default) or `"bearer"` (for proxy endpoints)
+- `auth_style` — `"native"` (default) or `"bearer"` (for proxy endpoints)
 - retry policy:
   - `max_attempts`
   - `base_backoff_ms`
@@ -206,6 +207,7 @@ PALLIUM_PROVIDER__OPENAI__KIND=openai_compatible
 PALLIUM_PROVIDER__OPENAI__BASE_URL=https://api.openai.com/v1
 PALLIUM_PROVIDER__OPENAI__TIMEOUT_SECONDS=30
 PALLIUM_PROVIDER__OPENAI__AUTH_STYLE=bearer
+PALLIUM_PROVIDER__OPENAI__API_KEY_FILE=/absolute/path/to/api-key-file
 ```
 
 ## Semantic Packages
@@ -299,16 +301,16 @@ Resolution order is:
 
 Available roles:
 
-- `write_extraction` â€” per-item memory extraction (quality-critical, use strongest model)
-- `thread_aggregation` â€” thread summary + task checkpoint (simpler schemas, code has fallback defaults)
-- `consolidation` â€” pattern and continuity memory (simplest schemas)
-- `query_ambiguity_resolution` â€” resolver on query hot path (speed-critical, simple A/B decision)
+- `write_extraction` — per-item memory extraction (quality-critical, use strongest model)
+- `thread_aggregation` — thread summary + task checkpoint (simpler schemas, code has fallback defaults)
+- `consolidation` — pattern and continuity memory (simplest schemas)
+- `query_ambiguity_resolution` — resolver on query hot path (speed-critical, simple A/B decision)
 
 Benchmarked recommendation (Anthropic Claude):
 
 | Role | Model class | Rationale |
 |---|---|---|
-| `write_extraction` | Sonnet (default) | 14-field schema with strict evidence rules. Quality-sensitive â€” needs the strongest model. |
+| `write_extraction` | Sonnet (default) | 14-field schema with strict evidence rules. Quality-sensitive — needs the strongest model. |
 | `thread_aggregation` | Haiku | Simpler schema, code has fallback defaults. Benchmarked: 11/11 routing, 100% work resumption contract. |
 | `consolidation` | Haiku | Simplest schemas. Same benchmark results as thread_aggregation. |
 | `query_ambiguity_resolution` | Haiku | Hot path (800ms timeout), simple A/B decision. Speed matters more than depth. |
@@ -347,10 +349,10 @@ model = "BAAI/bge-small-en-v1.5"
 
 Supported fields today:
 
-- `kind` â€” `"onnx"` or `"fastembed"` (fastembed requires Python 3.12/3.13; onnx works on all supported versions)
-- `model` â€” HuggingFace model name
-- `dimensions` â€” optional override (auto-detected from model)
-- `cache_dir` â€” optional model cache directory (default: HuggingFace global cache)
+- `kind` — `"onnx"` or `"fastembed"` (fastembed requires Python 3.12/3.13; onnx works on all supported versions)
+- `model` — HuggingFace model name
+- `dimensions` — optional override (auto-detected from model)
+- `cache_dir` — optional model cache directory (default: HuggingFace global cache)
 
 ## Vector Index
 
@@ -388,10 +390,10 @@ enabled = false
 
 Supported fields today:
 
-- `enabled` â€” `true` or `false` (default: `true`)
-- `index_path` â€” file path for the usearch index (default: `./pallium_vector.index`)
-- `embedding_provider` â€” references an `[embedding_providers.<name>]` block (default: `"onnx"`)
-- `min_similarity` â€” minimum cosine similarity threshold (default: `0.55`)
+- `enabled` — `true` or `false` (default: `true`)
+- `index_path` — file path for the usearch index (default: `./pallium_vector.index`)
+- `embedding_provider` — references an `[embedding_providers.<name>]` block (default: `"onnx"`)
+- `min_similarity` — minimum cosine similarity threshold (default: `0.55`)
 
 Env overrides:
 
@@ -411,7 +413,7 @@ The following defaults apply when fields are omitted:
   `"strict_typed_memory_v6_work_state_examples"`
 - `agent_conversation_memory.resolver_enabled` defaults to `true`
 - `agent_conversation_memory.resolver_timeout_ms` defaults to `800`
-- `model_roles` defaults to empty â€” all roles use the package `model`
+- `model_roles` defaults to empty — all roles use the package `model`
 - `vector_index.enabled` defaults to `true`
 - `vector_index.embedding_provider` defaults to `"onnx"`
 - `vector_index.index_path` defaults to `"./pallium_vector.index"`
@@ -523,6 +525,24 @@ model = "claude-sonnet-4-6"
 thread_aggregation = "claude-haiku-4-5"
 consolidation = "claude-haiku-4-5"
 query_ambiguity_resolution = "claude-haiku-4-5"
+```
+
+### Use a Pelican-managed local HAI proxy from WSL
+
+Pelican persists the active Hyperspace API key in
+`/home/rotem/dev/workspace/services/pelican/.pelican/hyperspace_api_key`.
+
+Use a dedicated env file for that flow so your normal `.env.local` stays
+untouched:
+
+```dotenv
+PALLIUM_PROVIDER__HAI_ANTHROPIC__API_KEY_FILE=/home/rotem/dev/workspace/services/pelican/.pelican/hyperspace_api_key
+```
+
+Run Pallium with:
+
+```bash
+PALLIUM_ENV_FILE=.env.pelican-wsl python -m app.run --host 127.0.0.1 --port 8000 --processors 2
 ```
 
 ### Use Anthropic via a proxy with Bearer auth

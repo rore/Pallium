@@ -116,6 +116,10 @@ UNRESOLVED_SUMMARY_MARKERS = (
     "no replies yet",
     "nothing else in thread",
     "single user message",
+    # LLM-generated empty-thread phrasing: "No prior context, artifacts, or conclusions were provided"
+    # and "No response, artifacts, or conclusions were provided in the thread."
+    "no prior context",
+    "artifacts, or conclusions were provided",
 )
 
 PATTERN_MEMORY_PROMPT_SCHEMA_ID = "pattern_memory_extraction"
