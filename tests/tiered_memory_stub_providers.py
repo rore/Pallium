@@ -392,7 +392,6 @@ def _build_item_extraction_payload(user_prompt: str) -> dict[str, object]:
             'rationale_text': None,
             'is_low_value_meta': False,
             'constraint_text': content_line,
-            'constraint_candidates': [{'constraint_text': content_line}],
             'next_step_text': None,
             'blocker_text': None,
             'progress_text': None,
