@@ -11,6 +11,7 @@ class TieredMemorySemanticProvider:
             summary_payload = _build_thread_summary_payload(user_prompt)
             checkpoint_payload = _build_task_checkpoint_payload(user_prompt)
             merged = dict(summary_payload)
+            merged.setdefault('content_quality', 'substantive')
             merged['task_checkpoint'] = checkpoint_payload
             return LLMJsonResponse(raw_text=json.dumps(merged), parsed_json=merged)
         if 'freshness_signal' in schema_description:
@@ -21,6 +22,7 @@ class TieredMemorySemanticProvider:
             payload = _build_pattern_payload(user_prompt)
         elif 'Thread items:' in user_prompt:
             payload = _build_thread_summary_payload(user_prompt)
+            payload.setdefault('content_quality', 'substantive')
         else:
             payload = _build_item_extraction_payload(user_prompt)
         return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
@@ -459,7 +461,7 @@ def _build_thread_summary_payload(user_prompt: str) -> dict[str, str]:
         return {
             'summary': 'The thread decided to send overdue notices in 30-minute batches to avoid staff inbox spam.'
         }
-    return {'summary': 'Unresolved.'}
+    return {'summary': 'Unresolved.', 'content_quality': 'unresolved'}
 
 
 def _build_task_checkpoint_payload(user_prompt: str) -> dict[str, object]:

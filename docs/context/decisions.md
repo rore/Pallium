@@ -346,3 +346,26 @@ Need a clearer generic lifecycle model that eventually covers:
 
 Need to define how far the query API should evolve toward structured filters,
 retrieval intent, and result-type-specific controls.
+
+### 2026-04-03 - LLM self-classification for thread summary content_quality
+
+Thread summary `content_quality` (substantive / query_only / unresolved / weak) is
+now classified by the LLM via a schema field in the same JSON call that produces
+the summary, rather than by post-hoc English substring matching against marker
+lists. The structural shortcut (conclusions or work artifacts present → substantive)
+and the `WEAK_THREAD_SUMMARY_TEXT` guard remain as deterministic checks that run
+before the LLM classification.
+
+Schema versions bumped: `thread_summary_extraction` v3 → v4,
+`thread_summary_with_checkpoint_extraction` v1 → v2.
+
+Why:
+
+- the marker-based approach required a code patch each time the LLM generated a
+  new phrasing for "this thread has no resolved information"
+- this is the same brittleness the cue-free control plane (2026-03-22) eliminated
+  from the routing layer, now extended to write time
+- LLM self-classification of its own output in the same call is reliable with
+  explicit enum descriptions (unlike cross-call inference)
+- backward compatible: old memories without the field → None → not rejected by
+  routing; falls through to support grade qualification

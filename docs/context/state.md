@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-03-23
+2026-04-03
 
 ## Repo Snapshot
 
@@ -53,6 +53,7 @@
   - scoring formula simplified from 7 to 5 components
   - constraint compatibility engine removed (~1000 lines) — constraint memories route through `residual_recall`
   - ~40 English cue constants eliminated from the control plane
+- thread summary `content_quality` is now LLM self-classified via a schema field (v4) rather than post-hoc English marker matching; `QUERY_ONLY_SUMMARY_MARKERS` and `UNRESOLVED_SUMMARY_MARKERS` removed from production
   - ordinary queries stay on the deterministic hot path with selective `query_ambiguity_resolution` only for bounded unresolved ambiguity
 - role-specific prompt governance is live for:
   - `write_extraction`
@@ -111,7 +112,7 @@
   - live exploratory drift and replay-promotion tooling
 - the developer-work confidence harness should be read by hard-gate fields first, not by aggregate scenario-success counts alone
 - replay is now a real tooling surface, but replay coverage is still materially smaller than the authored confidence packs
-- test suite: 699 passed, 5 skipped
+- test suite: 732 passed, 5 skipped
 - semantic extraction fixture set: 58 items (12 decisions, 14 investigations, 20 boundary-null, 13 signal cases)
 
 ## Configuration Note

@@ -21,9 +21,9 @@ from semantic.prompt_provenance import build_prompt_provenance
 
 THREAD_SUMMARY_PROMPT_SCHEMA_ID = "thread_summary_extraction"
 
-THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v3"
+THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v4"
 
-THREAD_SUMMARY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "retrieval_context": "string or null"}, indent=2)
+THREAD_SUMMARY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "content_quality": "string", "retrieval_context": "string or null"}, indent=2)
 
 THREAD_SUMMARY_SYSTEM_PROMPT = (
     "Summarize one agent-mediated conversation thread for future recall. "
@@ -33,6 +33,11 @@ THREAD_SUMMARY_SYSTEM_PROMPT = (
     "Do not infer causes, recommendations, next steps, risks, or unresolved conclusions that are not stated. "
     "Only say the thread is unresolved when the supplied content truly lacks any resolved conclusion, durable constraint, progress state, blocker, or supported next step. "
     "Keep the summary concise: at most two sentences and roughly 60 words. "
+    "For content_quality, classify the summary you wrote: "
+    '"substantive" when the thread contains resolved conclusions, durable findings, constraints, progress state, or work artifacts worth recalling; '
+    '"query_only" when the thread contains only a user question or request with no substantive response — an assistant reply that merely acknowledges or promises to investigate does not count as a substantive response; '
+    '"unresolved" when the thread has substantive back-and-forth discussion but no resolved conclusions, decisions, or durable findings; '
+    '"weak" when the thread is a greeting, phatic exchange, sign-off, or otherwise carries no recallable information. '
     "For retrieval_context: write one short search-friendly context line (12-30 words) that helps this record match later queries, "
     "or null when the summary already has enough search cues. Do not restate the summary."
 )
@@ -98,45 +103,39 @@ IMPLICIT_NEXT_STEP_MARKERS = (
 
 WEAK_THREAD_SUMMARY_TEXT = {"unresolved", "still unresolved", "unknown", "no safe summary"}
 
-QUERY_ONLY_SUMMARY_MARKERS = (
-    "contains only this question",
-    "contains only the question",
-    "contains only this request",
-    "contains only the request",
-    "only this question",
-    "only this request",
-)
-
-UNRESOLVED_SUMMARY_MARKERS = (
-    "no resolved information",
-    "no resolved details",
-    "no resolved state",
-    "no resolved context",
-    "no answer yet",
-    "no replies yet",
-    "nothing else in thread",
-    "single user message",
-    # LLM-generated empty-thread phrasing: "No prior context, artifacts, or conclusions were provided"
-    # and "No response, artifacts, or conclusions were provided in the thread."
-    "no prior context",
-    "artifacts, or conclusions were provided",
-)
+# Historical reference: these marker lists were used for write-time content_quality
+# classification before LLM self-classification was added (v4). They document what
+# "query_only" and "unresolved" summaries look like in LLM output.
+#
+# query_only examples: "contains only this question", "only this request"
+# unresolved examples: "no resolved information", "no answer yet", "single user message",
+#   "no prior context", "artifacts, or conclusions were provided"
 
 PATTERN_MEMORY_PROMPT_SCHEMA_ID = "pattern_memory_extraction"
 
 PATTERN_MEMORY_PROMPT_SCHEMA_VERSION = "v2"
 
 
+_VALID_CONTENT_QUALITY = {"substantive", "query_only", "unresolved", "weak"}
+
+
 def _compute_thread_summary_content_quality(
     summary: str,
     conclusions: list[object],
     work_artifacts: list[object],
+    *,
+    llm_content_quality: str | None = None,
 ) -> str:
     """Classify thread summary quality at write time.
 
     Returns one of: "substantive", "query_only", "unresolved", "weak".
-    Uses the same English markers that routing previously applied at query time,
-    but evaluated once during thread summary building.
+
+    Priority order:
+    1. Structural shortcut: conclusions or work_artifacts present → "substantive".
+    2. Empty summary → "weak".
+    3. Weak-text guard: summary text in WEAK_THREAD_SUMMARY_TEXT → "weak".
+    4. LLM self-classification (if valid enum value).
+    5. Fallback: "substantive".
     """
     if conclusions or work_artifacts:
         return "substantive"
@@ -145,10 +144,9 @@ def _compute_thread_summary_content_quality(
         return "weak"
     if lowered in WEAK_THREAD_SUMMARY_TEXT:
         return "weak"
-    if any(marker in lowered for marker in QUERY_ONLY_SUMMARY_MARKERS):
-        return "query_only"
-    if any(marker in lowered for marker in UNRESOLVED_SUMMARY_MARKERS):
-        return "unresolved"
+    normalized = llm_content_quality.lower().strip() if isinstance(llm_content_quality, str) else None
+    if normalized in _VALID_CONTENT_QUALITY:
+        return normalized
     return "substantive"
 
 PATTERN_MEMORY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "pattern_label": "string", "retrieval_context": "string or null"}, indent=2)
@@ -237,11 +235,12 @@ TASK_CHECKPOINT_TEXT_VIEW = "memory_object.task_checkpoint_context"
 
 THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_ID = "thread_summary_with_checkpoint_extraction"
 
-THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v1"
+THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v2"
 
 THREAD_SUMMARY_WITH_CHECKPOINT_SCHEMA_DESCRIPTION = json.dumps(
     {
         "summary": "string",
+        "content_quality": "string",
         "retrieval_context": "string or null",
         "task_checkpoint": {
             "summary": "string",
@@ -267,6 +266,11 @@ THREAD_SUMMARY_WITH_CHECKPOINT_SYSTEM_PROMPT = (
     "Do not infer causes, recommendations, next steps, risks, or unresolved conclusions that are not stated. "
     "Only say the thread is unresolved when the supplied content truly lacks any resolved conclusion, durable constraint, progress state, blocker, or supported next step. "
     "For the top-level summary: keep it concise, at most two sentences and roughly 60 words. "
+    "For the top-level content_quality, classify the summary you wrote: "
+    '"substantive" when the thread contains resolved conclusions, durable findings, constraints, progress state, or work artifacts worth recalling; '
+    '"query_only" when the thread contains only a user question or request with no substantive response — an assistant reply that merely acknowledges or promises to investigate does not count as a substantive response; '
+    '"unresolved" when the thread has substantive back-and-forth discussion but no resolved conclusions, decisions, or durable findings; '
+    '"weak" when the thread is a greeting, phatic exchange, sign-off, or otherwise carries no recallable information. '
     "For the top-level retrieval_context: write one short search-friendly context line (12-30 words) that helps the summary match later queries, or null when the summary already has enough search cues. Do not restate the summary. "
     "For the task_checkpoint section: capture the task, the current state, key findings, blocker or failed-attempt state when present, the next supported step when present, and a concise freshness signal. "
     "Do not turn the checkpoint into a workflow graph, transcript replay, or speculative recommendation. "
@@ -396,6 +400,8 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
             ],
             selected_work_artifacts=selected_work_artifacts,
         )
+        raw_llm_content_quality = response.parsed_json.get("content_quality")
+        llm_content_quality = raw_llm_content_quality if isinstance(raw_llm_content_quality, str) else None
 
         semantic_provenance = {
             "semantic_plugin": plugin_name,
@@ -415,7 +421,7 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 "summary": summary,
                 "conclusions": conclusion_payload,
                 "selected_work_artifacts": selected_work_artifacts,
-                "content_quality": _compute_thread_summary_content_quality(summary, conclusion_payload, selected_work_artifacts),
+                "content_quality": _compute_thread_summary_content_quality(summary, conclusion_payload, selected_work_artifacts, llm_content_quality=llm_content_quality),
                 "latest_occurred_at": aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else None,
                 "semantic_provenance": semantic_provenance,
             },

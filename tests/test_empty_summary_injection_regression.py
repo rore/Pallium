@@ -1,14 +1,12 @@
 """Regression tests for empty same-thread summaries blocking external carry-forward injection.
 
-Root cause (fixed): _compute_thread_summary_content_quality() classified LLM-generated
-"No prior context, artifacts, or conclusions were provided" and
-"No response, artifacts, or conclusions were provided in the thread" summaries as
-"substantive" because UNRESOLVED_SUMMARY_MARKERS lacked those phrases.
-As a result, same-thread suppression treated them as qualifying local state,
-blocking injection of useful prior-thread memories.
+Original root cause: _compute_thread_summary_content_quality() classified LLM-generated
+"No prior context, artifacts, or conclusions were provided" summaries as "substantive"
+because UNRESOLVED_SUMMARY_MARKERS lacked those phrases. Same-thread suppression
+treated them as qualifying local state, blocking injection of useful prior-thread memories.
 
-Fix: added "no prior context" and "artifacts, or conclusions were provided" to
-UNRESOLVED_SUMMARY_MARKERS in agent_conversation_memory_threads.py.
+Current approach: content_quality is LLM self-classified via a schema field (v4).
+The marker-based approach was replaced to avoid brittleness from LLM phrasing changes.
 """
 from __future__ import annotations
 
@@ -21,30 +19,32 @@ from semantic.agent_conversation_memory_threads import _compute_thread_summary_c
 # ---------------------------------------------------------------------------
 
 def test_empty_no_prior_context_summary_classified_as_unresolved() -> None:
-    """LLM-phrased 'no prior context' summary must not be classified as substantive."""
+    """LLM-classified 'unresolved' summary must be correctly passed through."""
     result = _compute_thread_summary_content_quality(
         "User requested a reminder about recent index rebuild work. "
         "No prior context, artifacts, or conclusions were provided in this thread.",
         [],
         [],
+        llm_content_quality="unresolved",
     )
     assert result == "unresolved", (
         f"Expected 'unresolved', got {result!r}. "
-        "This text was previously misclassified as 'substantive', causing same-thread over-suppression."
+        "LLM self-classification should be trusted for non-substantive summaries."
     )
 
 
 def test_empty_no_response_provided_summary_classified_as_unresolved() -> None:
-    """LLM-phrased 'no response...were provided' summary must not be classified as substantive."""
+    """LLM-classified 'unresolved' summary must be correctly passed through."""
     result = _compute_thread_summary_content_quality(
         "User asked about the latest status of the index rebuild. "
         "No response, artifacts, or conclusions were provided in the thread.",
         [],
         [],
+        llm_content_quality="unresolved",
     )
     assert result == "unresolved", (
         f"Expected 'unresolved', got {result!r}. "
-        "This text was previously misclassified as 'substantive', causing same-thread over-suppression."
+        "LLM self-classification should be trusted for non-substantive summaries."
     )
 
 
@@ -59,6 +59,87 @@ def test_substantive_summary_still_classified_correctly() -> None:
     assert result == "substantive", (
         f"Expected 'substantive' for a real summary, got {result!r}."
     )
+
+
+# ---------------------------------------------------------------------------
+# LLM self-classification parameter tests
+# ---------------------------------------------------------------------------
+
+def test_llm_content_quality_unresolved_is_trusted() -> None:
+    """When the LLM classifies as unresolved, trust its judgment."""
+    result = _compute_thread_summary_content_quality(
+        "User asked about the rebuild status but discussion produced no resolution.",
+        [],
+        [],
+        llm_content_quality="unresolved",
+    )
+    assert result == "unresolved"
+
+
+def test_llm_content_quality_query_only_is_trusted() -> None:
+    """When the LLM classifies as query_only, trust its judgment."""
+    result = _compute_thread_summary_content_quality(
+        "User asked about catalog sync.",
+        [],
+        [],
+        llm_content_quality="query_only",
+    )
+    assert result == "query_only"
+
+
+def test_llm_content_quality_absent_falls_back_to_substantive() -> None:
+    """When llm_content_quality is None (old code path), default to substantive for non-matching text."""
+    result = _compute_thread_summary_content_quality(
+        "User asked about catalog sync.",
+        [],
+        [],
+        llm_content_quality=None,
+    )
+    assert result == "substantive"
+
+
+def test_llm_content_quality_invalid_value_treated_as_absent() -> None:
+    """Invalid enum values are normalized to None, falling back to substantive."""
+    result = _compute_thread_summary_content_quality(
+        "User asked about catalog sync.",
+        [],
+        [],
+        llm_content_quality="excellent",
+    )
+    assert result == "substantive"
+
+
+def test_structural_shortcut_overrides_llm_weak() -> None:
+    """Structural shortcut (conclusions present) takes priority over LLM classification."""
+    result = _compute_thread_summary_content_quality(
+        "Some summary text.",
+        [{"type": "decision", "text": "Use item event time."}],
+        [],
+        llm_content_quality="weak",
+    )
+    assert result == "substantive"
+
+
+def test_empty_summary_overrides_llm_substantive() -> None:
+    """Empty summary check takes priority over LLM claiming substantive."""
+    result = _compute_thread_summary_content_quality(
+        "",
+        [],
+        [],
+        llm_content_quality="substantive",
+    )
+    assert result == "weak"
+
+
+def test_weak_text_overrides_llm_substantive() -> None:
+    """WEAK_THREAD_SUMMARY_TEXT membership takes priority over LLM classification."""
+    result = _compute_thread_summary_content_quality(
+        "unresolved",
+        [],
+        [],
+        llm_content_quality="substantive",
+    )
+    assert result == "weak"
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +201,7 @@ def test_same_thread_no_prior_context_summary_does_not_suppress_prior_thread_che
         type="thread_summary",
         payload={
             "summary": _EMPTY_SUMMARY_B,
-            "content_quality": _compute_thread_summary_content_quality(_EMPTY_SUMMARY_B, [], []),
+            "content_quality": "unresolved",
             "conclusions": [],
             "selected_work_artifacts": [],
         },
@@ -233,7 +314,7 @@ def test_same_thread_no_response_provided_summary_does_not_suppress_prior_thread
         type="thread_summary",
         payload={
             "summary": _EMPTY_SUMMARY_C,
-            "content_quality": _compute_thread_summary_content_quality(_EMPTY_SUMMARY_C, [], []),
+            "content_quality": "unresolved",
             "conclusions": [],
             "selected_work_artifacts": [],
         },

@@ -1,0 +1,95 @@
+{
+  "description": "Thread summary content_quality LLM self-classification eval fixture. Each item provides thread material as input and the expected content_quality classification.",
+  "items": [
+    {
+      "id": "substantive-decision-001",
+      "expected_content_quality": "substantive",
+      "thread_material": "user/message: We need to decide on the reservation ordering approach.\nassistant/assistant_output: Investigation found that arrival-time ordering caused duplicate holds during catalog sync delays. Decision: use item event time for reservation ordering to avoid stale hold state."
+    },
+    {
+      "id": "substantive-progress-002",
+      "expected_content_quality": "substantive",
+      "thread_material": "user/message: What is the status of the catalog sync retry?\nassistant/assistant_output: The token refresh worked and the sync got through batch 417. The retry window was exhausted after batch 417, so we need to wait 15 minutes and resume from batch 418."
+    },
+    {
+      "id": "substantive-constraint-003",
+      "expected_content_quality": "substantive",
+      "thread_material": "user/message: Resume the catalog sync retry but do not sign in to the admin portal or open a local browser.\nassistant/assistant_output: Understood. I will refresh the catalog service token using the CLI and rerun the sync from batch 313 without using the admin portal or browser authentication."
+    },
+    {
+      "id": "substantive-finding-004",
+      "expected_content_quality": "substantive",
+      "thread_material": "user/message: Can you investigate why duplicate holds keep appearing?\nassistant/assistant_output: Investigation found that duplicate holds only reproduce on delayed sync workers when the reservation cache is warm. The root cause is cache invalidation on delayed sync workers. Next step: compare cache invalidation between delayed and immediate sync workers."
+    },
+    {
+      "id": "substantive-blocker-005",
+      "expected_content_quality": "substantive",
+      "thread_material": "user/message: Resume the batch digest work.\nassistant/assistant_output: The batch digest is prepared for the staged segments. Blocker: the operator restriction forbids control-panel sign-in and browser sign-in during this batch digest work. Next step: refresh the local digest token and rerun the batch digest from the last confirmed segment."
+    },
+    {
+      "id": "query-only-001",
+      "expected_content_quality": "query_only",
+      "thread_material": "user/message: What do we know about the latest catalog sync retry?"
+    },
+    {
+      "id": "query-only-002",
+      "expected_content_quality": "query_only",
+      "thread_material": "user/message: Can you remind me what we decided about reservation ordering?"
+    },
+    {
+      "id": "query-only-003",
+      "expected_content_quality": "query_only",
+      "thread_material": "user/message: What was the outcome of the duplicate hold investigation?"
+    },
+    {
+      "id": "query-only-004",
+      "expected_content_quality": "query_only",
+      "thread_material": "user/message: Where are we with the notification digest fix?"
+    },
+    {
+      "id": "query-only-005",
+      "expected_content_quality": "query_only",
+      "thread_material": "user/message: What is the status of the branch kiosk fallback coverage?"
+    },
+    {
+      "id": "unresolved-001",
+      "expected_content_quality": "unresolved",
+      "thread_material": "user/message: We should look into the overdue notice batching approach. The current nightly job is causing inbox spam.\nassistant/assistant_output: I looked at the notification pipeline and the nightly job sends all overdue notices at once, which explains the spam. There are a few batching strategies we could use — time-window batches, priority-based grouping, or rate limiting — but I have not evaluated the tradeoffs yet so I do not have a recommendation."
+    },
+    {
+      "id": "unresolved-002",
+      "expected_content_quality": "unresolved",
+      "thread_material": "user/message: The catalog sync is failing again with timeout errors on the staging environment.\nassistant/assistant_output: I checked the logs and found timeout errors starting around 14:00 UTC. The connection pool metrics show elevated wait times but I have not been able to identify the root cause yet. There are a few possible explanations we should investigate further."
+    },
+    {
+      "id": "unresolved-003",
+      "expected_content_quality": "unresolved",
+      "thread_material": "user/message: I think we should change the reservation ordering.\nassistant/assistant_output: That is worth considering. There are a few options we could look at. What specific problems are you seeing with the current ordering?"
+    },
+    {
+      "id": "unresolved-004",
+      "expected_content_quality": "unresolved",
+      "thread_material": "user/message: The hold queue seems to have duplicates again after the last sync.\nassistant/assistant_output: I looked at the hold queue and confirmed there are 7 duplicate entries from the 14:30 sync window. The timestamps suggest they came from two overlapping sync workers, but I have not confirmed whether the root cause is a race condition or a cache invalidation issue. We need more data before we can narrow it down."
+    },
+    {
+      "id": "unresolved-005",
+      "expected_content_quality": "unresolved",
+      "thread_material": "user/message: Can we look at the retry logic for the batch digest? The current backoff seems too aggressive.\nassistant/assistant_output: I reviewed the retry configuration and the backoff multiplier is set to 3x which does seem aggressive for this workload. There are a couple of options — we could lower the multiplier or switch to a fixed delay — but I have not tested either approach yet so I cannot recommend one over the other at this point."
+    },
+    {
+      "id": "weak-greeting-001",
+      "expected_content_quality": "weak",
+      "thread_material": "user/message: Hi there, just checking in."
+    },
+    {
+      "id": "weak-empty-002",
+      "expected_content_quality": "weak",
+      "thread_material": "user/message: Hello\nassistant/assistant_output: Hello! How can I help you today?"
+    },
+    {
+      "id": "weak-meta-003",
+      "expected_content_quality": "weak",
+      "thread_material": "user/message: Thanks, that is all for now.\nassistant/assistant_output: You are welcome. Let me know if you need anything else."
+    }
+  ]
+}
