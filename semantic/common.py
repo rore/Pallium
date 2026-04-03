@@ -51,11 +51,6 @@ INVESTIGATION_ARTIFACT_KINDS = {"assistant_output", "tool_use_summary"}
 
 
 @dataclass(frozen=True)
-class ConstraintCandidate:
-    constraint_text: str
-
-
-@dataclass(frozen=True)
 class SemanticExtraction:
     summary: str
     candidate_type: str | None = None
@@ -73,7 +68,6 @@ class SemanticExtraction:
     progress_text: str | None = None
     key_finding_text: str | None = None
     subject_hints: tuple[MemorySubjectAnchor, ...] = field(default_factory=tuple)
-    constraint_candidates: tuple[ConstraintCandidate, ...] = field(default_factory=tuple)
 
 
 def summarize_content(content: str) -> str:
