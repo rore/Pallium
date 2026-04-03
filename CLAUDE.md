@@ -6,34 +6,29 @@ Pallium — local-first memory sidecar for AI agents. Python 3.12+, FastAPI, SQL
 
 ## Execution Discipline
 
-Every non-trivial change (3+ steps, behavior risk, refactor) must follow this loop:
-
-1. **Plan** — write a checkable execution plan before coding
-2. **Review your plan** — check it yourself as the architect: smallest change? preserves contracts? fits boundaries?
-3. **Ensure regression coverage** — if the code you're changing lacks tests, add them first and commit separately
-4. **Execute** — implement the minimal change
-5. **Review your implementation** — review your own diff for correctness, edge cases, unnecessary complexity. Use a subagent for large changes.
-6. **Verify** — run tests. Prefer evidence over reasoning from inspection.
-7. **Close** — summarize what changed, what was verified, residual risk.
-
-If an assumption breaks mid-execution, stop and re-plan. Full details: `tools/execution-loop/SKILL.md`.
+Follow `tools/execution-loop/SKILL.md` for any non-trivial change (3+ steps, behavior risk, refactor).
 
 ## Required Reading
 
-Before any work, read and follow:
+Always read before any work:
 
-- `AGENTS.md` — repo-level non-negotiables, skill routing, and delegation rules
-- `tools/execution-loop/SKILL.md` — execution workflow (full details of the loop above)
-- `tools/pallium-architect-review/SKILL.md` — architect review workflow (use when reviewing, shaping, or coordinating work)
-- `tools/minimap/SKILL.md` — roadmap file conventions (use when touching `roadmap/`)
+- `AGENTS.md` — repo-level non-negotiables and delegation rules
+- `tools/execution-loop/SKILL.md` — execution workflow
+
+Read on demand:
+
+- `tools/pallium-architect-review/SKILL.md` — when reviewing, shaping, or coordinating work
+- `tools/minimap/SKILL.md` — when touching `roadmap/` files
 
 ## Context Sources
 
-- `docs/context/architecture.md` — stable architecture truths
-- `docs/context/decisions.md` — accepted decisions
-- `docs/context/state.md` — current repo state
-- `docs/context/lessons.md` — problem-solution pairs
-- `roadmap/board.md` — current queue and priorities
+Read when needed, not upfront:
+
+- `docs/context/architecture.md` — when checking implementation details or boundary questions
+- `docs/context/decisions.md` — when verifying a specific accepted decision or rationale
+- `docs/context/state.md` — when checking current test/pipeline state
+- `docs/context/lessons.md` — when debugging a problem that might have a known solution
+- `roadmap/board.md` — when doing roadmap or prioritization work
 
 ## Commands
 

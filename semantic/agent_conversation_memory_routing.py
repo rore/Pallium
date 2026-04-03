@@ -399,6 +399,7 @@ def route_query_results(
             injectable_blocks=injection_blocks,
             decision_reason=str(injection_summary["decision_reason"]),
             query_text=text,
+            retrieved_result_ids={_routing_result_id(item) for item in retrieval_result.results},
             debug_candidate_loader=debug_candidate_loader if include_trace else None,
             candidate_injection_eligibility_fn=_candidate_is_injection_eligible,
         )

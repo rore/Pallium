@@ -374,6 +374,7 @@ def _build_sharp_candidate_diagnostics(
     injectable_blocks: list[InjectableBlock],
     decision_reason: str,
     query_text: str,
+    retrieved_result_ids: set[str] | None = None,
     debug_candidate_loader=None,
     candidate_injection_eligibility_fn: Callable[..., bool] | None = None,
 ) -> list[dict[str, object]]:
@@ -437,6 +438,7 @@ def _build_sharp_candidate_diagnostics(
             if item.type not in SHARP_DIAGNOSTIC_MEMORY_TYPES:
                 continue
             result_id = str(item.result_id)
+            dropped_by_prefilter = retrieved_result_ids is not None and result_id in retrieved_result_ids
             diagnostics.setdefault(
                 result_id,
                 {
@@ -446,10 +448,14 @@ def _build_sharp_candidate_diagnostics(
                     "score": 0,
                     "injection_eligible": True,
                     "selected_for_injection": False,
-                    "loss_stage": "retrieval",
-                    "loss_reason_code": "not_retrieved",
-                    "loss_reason": "Sharp candidate was in scope but not returned by retrieval (lexical + vector).",
-                    "retrieved": False,
+                    "loss_stage": "routing" if dropped_by_prefilter else "retrieval",
+                    "loss_reason_code": "dropped_by_routing_prefilter" if dropped_by_prefilter else "not_retrieved",
+                    "loss_reason": (
+                        "Sharp candidate was retrieved but excluded by a routing prefilter (kind or anchor)."
+                        if dropped_by_prefilter
+                        else "Sharp candidate was in scope but not returned by retrieval (lexical + vector)."
+                    ),
+                    "retrieved": dropped_by_prefilter,
                     "lexical_rank": None,
                     "routing_rank": None,
                 },

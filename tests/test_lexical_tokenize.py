@@ -16,7 +16,7 @@ from core.models import (
     Relation,
     SourceItem,
 )
-from retrieval.lexical import _token_variants, tokenize_query, LexicalRetrievalProvider
+from retrieval.lexical import TOKEN_PATTERN, _token_variants, tokenize_query, LexicalRetrievalProvider
 from storage.sqlite import SQLiteStorageProvider
 
 
@@ -247,3 +247,145 @@ class TestPluralRetrievalIntegration:
         assert len(result.results) >= 1
         found_ids = [r.memory_object_id for r in result.results]
         assert memory_object.id in found_ids
+
+
+# ---------------------------------------------------------------------------
+# Failure reproduction tests
+# ---------------------------------------------------------------------------
+
+class TestFailureReproduction:
+    """Reproduce the original retrieval failure: a query using a plural form
+    missed a memory whose indexed text contained only the singular form.
+
+    Root cause: before _token_variants (pre-2026-03-12), _tokenize() was a
+    bare TOKEN_PATTERN.findall() call — no expansion.  A query token
+    "reservations" never matched an indexed token "reservation" because the
+    token set intersection was empty.
+
+    These tests pin both sides of that boundary:
+      - bare_tokens_miss: shows the failure mechanism directly at the storage
+        layer — searching with only the plural token returns no hits.
+      - expanded_tokens_hit: shows the fix — including the expanded singular
+        token in the search returns the entry.
+      - retrieval_provider_finds_it: confirms the full LexicalRetrievalProvider
+        path (which uses tokenize_query) correctly finds the entry.
+    """
+
+    def _setup_singular_entry(self, storage: SQLiteStorageProvider) -> str:
+        """Create a memory object + index entry with singular noun. Returns memory id."""
+        source_item = SourceItem(
+            source_type="chat_message",
+            source_id="repro-msg-1",
+            content_type="text/plain",
+            content="The reservation system was updated.",
+            artifact_kind="message",
+            role="user",
+            container_ref="test:container",
+            thread_ref="test:thread",
+            visibility="container",
+        )
+        storage.create_source_item(source_item)
+
+        memory_object = MemoryObject(
+            type="decision",
+            schema_id="test.decision",
+            schema_version="v1",
+            payload={"decision": "use the reservation format"},
+            visibility="container",
+            container_ref="test:container",
+        )
+        storage.create_memory_object(memory_object)
+
+        storage.create_relation(Relation(
+            from_kind="memory_object",
+            from_id=memory_object.id,
+            relation_type="supported_by",
+            to_kind="source_item",
+            to_id=source_item.id,
+        ))
+
+        index_entry = IndexEntry(
+            target_kind="memory_object",
+            target_id=memory_object.id,
+            index_type="lexical",
+            text_view="use the reservation format for catalog sync",
+            text_view_name="memory_object.decision_context",
+            provider_name="builtin",
+            provider_version="v1",
+        )
+        storage.create_index_entry(index_entry)
+        return memory_object.id
+
+    def test_bare_tokens_miss(self, test_db_url: str):
+        """Reproduce the original failure: searching with only the plural token
+        "reservations" finds nothing because the index has "reservation" (singular).
+
+        This is what the pre-_token_variants code did — bare TOKEN_PATTERN.findall
+        without expansion — and is why the live failure occurred.
+        """
+        storage = SQLiteStorageProvider(test_db_url)
+        self._setup_singular_entry(storage)
+
+        # Simulate pre-_token_variants: only the literal plural token, no expansion.
+        bare_plural_tokens = TOKEN_PATTERN.findall("about reservations")
+        assert bare_plural_tokens == ["about", "reservations"]
+
+        hits = storage.search_index_entries(
+            tokens=bare_plural_tokens,
+            limit=10,
+            query_container_ref="test:container",
+        ).hits
+
+        # "reservation" is in the index; "reservations" is not.
+        # Without expansion the intersection is empty → no hit on domain word.
+        matched_token_sets = [set(h.matched_tokens) for h in hits]
+        assert not any("reservation" in mt for mt in matched_token_sets), (
+            "Expected: bare plural-only search misses the singular index entry. "
+            "If this assertion fails, the indexed text itself contains 'reservations'."
+        )
+
+    def test_expanded_tokens_hit(self, test_db_url: str):
+        """Show the fix at the storage layer: include the expanded singular token
+        "reservation" alongside "reservations" and the entry IS found.
+
+        This is what _token_variants produces — the singular stem is added to
+        the token set — so the intersection with the index entry is non-empty.
+        """
+        storage = SQLiteStorageProvider(test_db_url)
+        memory_id = self._setup_singular_entry(storage)
+
+        # Simulate post-_token_variants: expand "reservations" → add "reservation"
+        assert _token_variants("reservations") == ("reservations", "reservation")
+        expanded_tokens = ["about", "reservation", "reservations"]
+
+        hits = storage.search_index_entries(
+            tokens=expanded_tokens,
+            limit=10,
+            query_container_ref="test:container",
+        ).hits
+
+        found_ids = [h.target_id for h in hits]
+        assert memory_id in found_ids, (
+            "Expected: expanded tokens including singular form finds the index entry."
+        )
+        # Confirm "reservation" was the matched token, not "reservations"
+        target_hit = next(h for h in hits if h.target_id == memory_id)
+        assert "reservation" in target_hit.matched_tokens
+
+    def test_retrieval_provider_finds_it(self, test_db_url: str):
+        """Full-pipeline confirmation: LexicalRetrievalProvider (which calls
+        tokenize_query internally) finds the singular-indexed entry when queried
+        with the plural form. This is the end-to-end regression gate.
+        """
+        storage = SQLiteStorageProvider(test_db_url)
+        memory_id = self._setup_singular_entry(storage)
+
+        provider = LexicalRetrievalProvider(storage)
+        result = provider.query(
+            "about reservations",
+            limit=10,
+            query_container_ref="test:container",
+        )
+
+        found_ids = [r.memory_object_id for r in result.results]
+        assert memory_id in found_ids
