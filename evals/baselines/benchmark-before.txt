@@ -1,0 +1,12 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.12, pytest-8.4.2, pluggy-1.6.0 -- C:\Dev\rore\Pallium\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Dev\rore\Pallium\.claude\worktrees\routing-simplification
+configfile: pyproject.toml
+plugins: anyio-4.12.1, xdist-3.8.0
+created: 4/4 workers
+4 workers [0 items]
+
+scheduling tests via LoadScheduling
+
+============================ no tests ran in 2.82s ============================
