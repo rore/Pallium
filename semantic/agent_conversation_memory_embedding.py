@@ -11,6 +11,7 @@ EMBEDDABLE_MEMORY_TYPES = {
     "task_checkpoint",
     "pattern_memory",
     "continuity_memory",
+    "constraint_memory",
 }
 
 # Placeholder constants — replaced with real provider values in Part 6.
@@ -38,6 +39,7 @@ def build_embedding_text(memory_object: MemoryObject) -> str | None:
         "task_checkpoint": _build_task_checkpoint_text,
         "pattern_memory": _build_pattern_memory_text,
         "continuity_memory": _build_continuity_memory_text,
+        "constraint_memory": _build_constraint_memory_text,
     }
     builder = builders.get(memory_type)
     if builder is None:
@@ -146,6 +148,18 @@ def _build_continuity_memory_text(payload: dict) -> str:
         parts.append(f"Answer: {answer}")
     summary = payload.get("summary")
     if summary:
+        parts.append(summary)
+    return " ".join(parts) if parts else ""
+
+
+def _build_constraint_memory_text(payload: dict) -> str:
+    """Constraint memory: constraint_text + summary (when different)."""
+    parts: list[str] = []
+    constraint_text = payload.get("constraint_text")
+    if constraint_text:
+        parts.append(f"Constraint: {constraint_text}")
+    summary = payload.get("summary")
+    if summary and summary != constraint_text:
         parts.append(summary)
     return " ".join(parts) if parts else ""
 

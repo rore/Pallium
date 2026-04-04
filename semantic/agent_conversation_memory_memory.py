@@ -4,9 +4,10 @@ from dataclasses import replace
 from typing import Iterable
 
 from core.contracts import ProcessResult, SupersessionHint
-from core.indexing import build_index_entry
+from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
 from core.models import MemoryEnvelope, MemoryEnvelopeConfidence, MemoryEnvelopeDerivation, MemoryEnvelopeKind, MemoryEnvelopeScope, MemoryObject, MemorySubjectAnchor, Relation, SourceItem
 from semantic.common import SemanticExtraction, normalize_for_index, _resolve_actor_ref
+from semantic.agent_conversation_memory_embedding import VECTOR_EMBEDDING_PROVIDER_NAME, VECTOR_EMBEDDING_PROVIDER_VERSION, build_embedding_text
 from semantic.agent_conversation_memory_constraints import (
     CONSTRAINT_MEMORY_SCHEMA_ID,
     CONSTRAINT_MEMORY_SCHEMA_VERSION,
@@ -157,16 +158,41 @@ def _append_typed_constraint_memory_objects(
                 to_id=source_item.id,
             )
         ],
-        index_entries=list(result.index_entries) + [
+        index_entries=list(result.index_entries) + _build_constraint_index_entries(
+            memory_object=memory_object,
+            constraint_text=constraint_text,
+        ),
+    )
+
+
+def _build_constraint_index_entries(
+    *,
+    memory_object: MemoryObject,
+    constraint_text: str,
+) -> list:
+    entries = [
+        build_index_entry(
+            target_kind="memory_object",
+            target_id=memory_object.id,
+            index_type="lexical",
+            text_view=normalize_for_index(constraint_text),
+            text_view_name="memory_object.constraint_memory_context",
+        )
+    ]
+    embedding_text = build_embedding_text(memory_object)
+    if embedding_text is not None:
+        entries.append(
             build_index_entry(
                 target_kind="memory_object",
                 target_id=memory_object.id,
-                index_type="lexical",
-                text_view=normalize_for_index(constraint_text),
-                text_view_name="memory_object.constraint_memory_context",
+                index_type=VECTOR_INDEX_TYPE,
+                text_view=embedding_text,
+                text_view_name="memory_object.constraint_memory_context.embedding",
+                provider_name=VECTOR_EMBEDDING_PROVIDER_NAME,
+                provider_version=VECTOR_EMBEDDING_PROVIDER_VERSION,
             )
-        ],
-    )
+        )
+    return entries
 
 def _apply_direct_memory_envelopes(
     result: ProcessResult,
