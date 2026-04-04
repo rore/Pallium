@@ -369,3 +369,58 @@ Why:
   explicit enum descriptions (unlike cross-call inference)
 - backward compatible: old memories without the field → None → not rejected by
   routing; falls through to support grade qualification
+
+### 2026-03-24 - Visibility value renamed from "limited" to "container"
+
+The visibility enum value `"limited"` was renamed to `"container"` and the field
+`container_visibility` was renamed to `visibility`. The `Visibility` type alias is
+now unified in `core/visibility.py`. The legacy `visibility_context` field was
+removed from API schemas.
+
+Why:
+
+- `"limited"` was ambiguous — it described a restriction, not a scope; `"container"`
+  explains what it means (visible within this single container only)
+- `container_visibility` was tautological; `visibility` is the correct generic name
+- breaking change — existing DBs must be rebuilt after applying
+
+### 2026-03-24 - Constraint memory unified on constraint_text; structured path removed
+
+The `constraint_candidates` structured extraction path (ConstraintCandidate dataclass,
+output schema field, parser, downstream constants) was fully removed.
+`constraint_memory` is now created directly from the `constraint_text` signal,
+mirroring the `interest_text` path. Dead constraint constants and functions in
+`agent_conversation_memory_constraints` were also deleted.
+
+Why:
+
+- the structured candidates path added complexity without improving recall quality
+- `constraint_text` natural-language extraction proved reliable enough that the
+  structured intermediate step was wasted work
+- keeps constraint memory creation symmetric with interest memory creation
+
+### 2026-04-04 - Anchor prefilter layered defense over binary exclusion
+
+The anchor prefilter's single binary gate (conflicting → hard-excluded) is replaced
+with a three-tier defense:
+
+1. **Demotion** — `anchored_conflicting` candidates enter the `insufficient` fallback
+   bucket (`insufficient_retained_demoted`) instead of being hard-excluded. They
+   survive via the fallback path when no aligned candidates exist.
+2. **Tier penalty** — `ANCHOR_SECONDARY_TIER_PENALTY = 120` (== `ROUTING_FOCUS_BOOST`)
+   is deducted from `base_routing_score` for all secondary-tier candidates after
+   anchor_prefilter_states are merged. This guarantees aligned always outranks
+   secondary even when secondary receives maximum focus boost.
+3. **Secondary retention** — when aligned candidates exist, insufficient and legacy
+   candidates enter `retained_memory_ids` as `secondary_tier` and fill result slots
+   not consumed by aligned. `fallback_mode = "aligned_with_secondary"` is set when
+   secondary candidates are present.
+
+Why:
+
+- the binary gate caused hard-miss results when the LLM made an extraction error and
+  classified a relevant memory as conflicting instead of aligned
+- secondary-tier retention lets correctly-relevant but under-extracted memories
+  surface in remaining result slots without displacing aligned winners
+- the penalty invariant (`penalty >= focus_boost`) is tested explicitly so the
+  ranking guarantee is verifiable, not just assumed

@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-04-03
+2026-04-04
 
 ## Repo Snapshot
 
@@ -35,11 +35,13 @@
   - `continuity_memory`
   - `constraint_memory`
   - fallback `discussion_summary`
+- visibility terminology: `"limited"` renamed to `"container"` (visible within this single container); `container_visibility` field renamed to `visibility`; breaking change — requires fresh DB after applying
 - actor-scoped memory and container-driven visibility rules are shipped:
   - `actor_ref` field on MemoryObject tracks who a memory is personal to
   - personal memory types (interest, constraint_memory) are suppressed in shared containers (container/public), falling through to discussion_summary
   - constraint_memory has a role guard — assistant messages cannot create it
-  - constraint_memory is now created directly from `constraint_text` — the structured `constraint_candidates` extraction path has been removed; natural-language constraints are reliably promoted
+  - constraint_memory is now created directly from `constraint_text` — the structured `constraint_candidates` extraction path has been fully removed (ConstraintCandidate dataclass, prompts, output schema, parser, and downstream constants all deleted); natural-language constraints are reliably promoted
+  - shared memory is visible to other users via evidence-path actor filter; multi-user test coverage added across all test layers
   - query-time actor filtering via optional `actor_ref` on QueryFilters and query API
   - thread-level memories (thread_summary, task_checkpoint) always have actor_ref=null (shared)
   - backward compatible — queries without actor_ref work as before
@@ -54,7 +56,7 @@
   - scoring formula simplified from 7 to 5 components
   - constraint compatibility engine removed (~1000 lines) — constraint memories route through `residual_recall`
   - ~40 English cue constants eliminated from the control plane
-- thread summary `content_quality` is now LLM self-classified via a schema field (v4) rather than post-hoc English marker matching; `QUERY_ONLY_SUMMARY_MARKERS` and `UNRESOLVED_SUMMARY_MARKERS` removed from production
+- thread summary `content_quality` is now LLM self-classified via a schema field (v4/v2) rather than post-hoc English substring matching against marker lists; `QUERY_ONLY_SUMMARY_MARKERS` and `UNRESOLVED_SUMMARY_MARKERS` removed from production; schema versions: `thread_summary_extraction` v3→v4, `thread_summary_with_checkpoint_extraction` v1→v2
   - ordinary queries stay on the deterministic hot path with selective `query_ambiguity_resolution` only for bounded unresolved ambiguity
 - role-specific prompt governance is live for:
   - `write_extraction`
@@ -99,6 +101,13 @@
   - `agent_conversation_memory_routing.py` (~168KB) decomposed into 6 focused modules
   - extracted: routing_constants, routing_signals, routing_trace, routing_policy, routing_scoring, routing_selection
   - orchestrator remains as thin coordination layer with re-exports for backward compatibility
+- anchor prefilter layered defense is shipped:
+  - three-tier behavior replaces the original binary exclusion gate: aligned primary / secondary tier / no-anchor legacy fallback
+  - `anchored_conflicting` candidates are demoted to the insufficient fallback bucket (`insufficient_retained_demoted`) instead of being hard-excluded; when aligned candidates exist they are retained as secondary tier, when no aligned candidates exist they surface via the existing insufficient fallback path
+  - `ANCHOR_SECONDARY_TIER_PENALTY = 120` (== `ROUTING_FOCUS_BOOST`) deducted from `base_routing_score` for all secondary-tier candidates, guaranteeing aligned always outranks secondary even at max focus boost
+  - when aligned candidates exist, insufficient and legacy candidates enter `retained_memory_ids` as `secondary_tier` and fill remaining result slots not consumed by aligned
+  - `fallback_mode = "aligned_with_secondary"` and `secondary_tier_count` exposed in anchor_prefilter trace; `anchor_tier_penalty` exposed per-candidate in routing trace
+- query tokenization is now unified: `tokenize_query` from `retrieval/lexical.py` is the single implementation; duplicate `_query_tokens` in `core/query.py` removed; debug query filter matching unified on canonical `matches_filters` (corrects lifecycle, thread_ref relaxation, and actor_ref handling on the debug path)
 
 ## Verification Notes
 
@@ -113,8 +122,12 @@
   - live exploratory drift and replay-promotion tooling
 - the developer-work confidence harness should be read by hard-gate fields first, not by aggregate scenario-success counts alone
 - replay is now a real tooling surface, but replay coverage is still materially smaller than the authored confidence packs
-- test suite: 758 passed, 5 skipped
+- test suite: 780 passed, 5 skipped
 - semantic extraction fixture set: 58 items (12 decisions, 14 investigations, 20 boundary-null, 13 signal cases)
+- subject_hints eval surface is shipped:
+  - ground-truth fixture: 33 items across 7 pattern classes (harder modifiers, gerunds, hard negatives)
+  - `strict_typed_memory_v7_claude_structured_v2` registered alongside base variant for comparative runs
+  - runner with scoring logic and unit tests in `evals/subject_hints/`
 
 ## Configuration Note
 
@@ -126,6 +139,7 @@
   - role-specific prompt overrides
   - role-specific model overrides (`model_roles`)
   - provider auth style (`auth_style` for proxy-compatible headers)
+  - `api_key_file` for loading API keys from a file path instead of inline value
   - resolver toggles and timeout
   - observability and retention
 - the reference for the shipped config surface is now `docs/configuration.md`
