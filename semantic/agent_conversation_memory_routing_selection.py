@@ -626,22 +626,32 @@ def _candidate_qualifies_as_same_thread_local_state(
     return False, "non_local_state_candidate"
 
 def _candidate_display_text(item: QueryResultItem) -> str:
-    """Extract the text that would be shown in an injectable block."""
+    """Extract the text that would be shown in an injectable block.
+
+    Falls through multiple fields to find the most representative text.
+    For memory hits: payload summary/type-specific fields, then excerpt.
+    For source hits: excerpt directly.
+    """
     if getattr(item, "result_kind", None) == "source_hit":
         return str(getattr(item, "excerpt", "") or "")
-    # Memory hit: use summary or type-specific payload field
+    # Memory hit: try payload fields, then excerpt (from text view)
     payload = getattr(item, "payload", None) or {}
-    return str(
+    text = str(
         payload.get("summary")
+        or payload.get("decision")
         or payload.get("decision_text")
+        or payload.get("investigation_outcome")
         or payload.get("investigation_summary")
         or payload.get("carry_forward_answer")
         or payload.get("constraint_text")
         or payload.get("interest_text")
         or payload.get("pattern_label")
-        or getattr(item, "excerpt", "")
         or ""
     )
+    # If payload fields are all empty, fall back to excerpt (always populated for indexed items)
+    if not text.strip():
+        text = str(getattr(item, "excerpt", "") or "")
+    return text
 
 
 def _candidate_is_injection_eligible(
@@ -659,7 +669,9 @@ def _candidate_is_injection_eligible(
     item_raw = candidate.get("item")
     if item_raw is not None:
         candidate_text = _candidate_display_text(item_raw)
-        if candidate_text and not has_content_overlap(query_text, candidate_text):
+        if not has_content_overlap(query_text, candidate_text):
+            # No content word overlap — block injection.
+            # When candidate_text is empty, this also blocks (no text = no evidence of relevance).
             return False
     item = candidate["item"]
     assert isinstance(item, QueryResultItem)
