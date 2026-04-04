@@ -40,8 +40,8 @@ def should_allow_injection(
     """Set-level gate: should we inject anything at all?
 
     Requires minimum lexical signal somewhere in the candidate set.
-    Type-aware: if the set contains high-value structured memory with any
-    lexical signal, injection is allowed (per-candidate check handles filtering).
+    Type-aware: high-value structured memory with evidence support gets
+    a lower lexical bar.
     """
     if not candidates:
         return False
@@ -59,8 +59,8 @@ def should_allow_injection(
         # Condition 1: meaningful lexical overlap
         if best_lexical >= thresholds.set_lexical_threshold:
             return True
-        # Condition 2: strong vector match WITH some lexical signal
-        if best_vector >= thresholds.set_vector_high and best_lexical >= thresholds.set_lexical_low:
+        # Condition 2: strong vector match WITH meaningful lexical signal
+        if best_vector >= thresholds.set_vector_high and best_lexical >= thresholds.set_lexical_threshold:
             return True
         # Condition 3: strong vector match when no lexical scoring was available
         if best_vector >= thresholds.candidate_vector_override and not has_any_lexical:
@@ -122,5 +122,27 @@ def _has_high_value_memory(candidates: list[dict]) -> bool:
         if getattr(item, "result_kind", None) == "source_hit":
             continue
         if getattr(item, "type", None) in HIGH_VALUE_MEMORY_TYPES:
+            return True
+    return False
+
+
+def _has_supported_high_value_memory(candidates: list[dict]) -> bool:
+    """Check if any candidate is a high-value memory with evidence support.
+
+    Requires support_grade >= "supported" — this means the memory has
+    structural evidence backing (evidence count, thread/container match,
+    payload completeness). Off-topic high-value memories in a mismatched
+    candidate set typically have weak support.
+    """
+    for c in candidates:
+        item = c.get("item")
+        if item is None:
+            continue
+        if getattr(item, "result_kind", None) == "source_hit":
+            continue
+        if getattr(item, "type", None) not in HIGH_VALUE_MEMORY_TYPES:
+            continue
+        support = str(c.get("support_grade", "weak"))
+        if support in ("supported", "strong"):
             return True
     return False
