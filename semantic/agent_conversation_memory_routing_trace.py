@@ -396,7 +396,7 @@ def _build_sharp_candidate_diagnostics(
         if candidate_injection_eligibility_fn is not None:
             injection_eligible = candidate_injection_eligibility_fn(
                 candidate,
-                intent="investigative_conclusion",
+                intent="structured_recall",
                 query_text=query_text,
                 allow_discussion_fallback=False,
                 allow_source_companion=False,

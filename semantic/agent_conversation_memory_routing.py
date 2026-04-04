@@ -283,7 +283,7 @@ def route_query_results(
             else:
                 # Pure recall — use recall mode from candidate evidence
                 recall_mode = _select_recall_mode(candidate_evidence)
-                _mode_weights = RECALL_MODE_WEIGHTS.get(recall_mode, ROUTING_LAYER_WEIGHTS["broad_recall"])
+                _mode_weights = RECALL_MODE_WEIGHTS.get(recall_mode, ROUTING_LAYER_WEIGHTS["recall"])
                 _layer_weights = {intent_name: _mode_weights for intent_name in ROUTING_LAYER_WEIGHTS}
                 # Map recall mode to compatible intent for downstream scoring/shaping.
                 # Note: this means modes influence some downstream gates (envelope filtering,
@@ -292,12 +292,12 @@ def route_query_results(
                 # The mode selector is conservative (only fires for dominant single-type
                 # candidate sets), so the risk of wrong gate activation is bounded.
                 _mode_intent_map = {
-                    "default": "broad_recall",
-                    "continuity_preference": "answer_continuity",
-                    "sharp_fact_preference": "broad_recall",
-                    "investigation_preference": "broad_recall",
+                    "default": "recall",
+                    "continuity_preference": "recall",
+                    "sharp_fact_preference": "recall",
+                    "investigation_preference": "recall",
                 }
-                intent = _mode_intent_map.get(recall_mode, "broad_recall")
+                intent = _mode_intent_map.get(recall_mode, "recall")
                 policy_ctx = PolicySelectedContext(
                     query_policy_family=envelope_policy,
                     allowed_query_intents=frozenset({intent}),

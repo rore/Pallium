@@ -41,7 +41,7 @@ def _select_final_candidates(
     summary = dict(packaging_summary or {})
     if not ranked_candidates:
         return ranked_candidates[:requested_limit], summary or None
-    if intent in {"broad_recall", "answer_continuity"}:
+    if intent in {"recall"}:
         return _select_compatible_recall_candidates(
             ranked_candidates=ranked_candidates,
             requested_limit=requested_limit,
@@ -675,9 +675,9 @@ def _source_candidate_is_primary_injection_eligible(candidate: dict[str, object]
         if _source_excerpt_disclaims_exact_evidence(excerpt):
             return False
         return True
-    if intent == "investigative_conclusion":
+    if intent == "structured_recall":
         return True
-    return intent == "precise_fact" and _source_candidate_has_quote_grade_support(candidate, query_text=query_text)
+    return False
 
 def _source_candidate_is_companion_injection_eligible(intent: str) -> bool:
     return intent == "work_resumption"

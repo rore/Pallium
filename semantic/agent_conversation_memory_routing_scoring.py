@@ -118,11 +118,11 @@ def _infer_query_intent(
         ),
         reverse=True,
     )
-    selected_family = ranked_families[0] if ranked_families else "broad_recall"
+    selected_family = ranked_families[0] if ranked_families else "recall"
     runner_up_family = ranked_families[1] if len(ranked_families) > 1 else None
     return {
         "selected_family": selected_family,
-        "text_hint_family": "broad_recall",
+        "text_hint_family": "recall",
         "runner_up_family": runner_up_family,
         "query_shape_tags": query_shape_tags,
         "matched_cues": {},
@@ -137,12 +137,10 @@ def _query_family_query_shape_score(
     runtime_context: QueryRuntimeContext | None,
 ) -> tuple[int, list[str]]:
     weights = {
-        "answer_continuity": {"carry_forward": 28, "history_lookup": 8, "constraint_recall": 18},
-        "broad_recall": {"history_lookup": 22, "big_picture": 52, "constraint_recall": 28, "carry_forward": 12},
+        "recall": {"carry_forward": 12, "history_lookup": 22, "big_picture": 52, "constraint_recall": 28},
+        "structured_recall": {"analysis_request": 30, "history_lookup": 10, "precise_lookup": 18},
         "work_resumption": {"resume_state": 34, "carry_forward": 8},
-        "precise_fact": {"precise_lookup": 18},
         "evidence_trace": {"evidence_request": 44},
-        "investigative_conclusion": {"analysis_request": 30, "history_lookup": 10},
     }
     score = 0
     reasons: list[str] = []
@@ -153,7 +151,7 @@ def _query_family_query_shape_score(
     if runtime_context is not None and family == "work_resumption" and runtime_context.turn_kind == "resumed_session":
         score += 12
         reasons.append("resumed_session_runtime")
-    if runtime_context is not None and family == "answer_continuity" and runtime_context.turn_kind in {"same_thread", "same_thread_continuation"}:
+    if runtime_context is not None and family == "recall" and runtime_context.turn_kind in {"same_thread", "same_thread_continuation"}:
         score += 10
         reasons.append("same_thread_runtime")
     return score, reasons
@@ -413,28 +411,7 @@ def _query_family_candidate_score(
     score = 0
     reasons: list[str] = []
 
-    if family == "answer_continuity":
-        if continuity_support:
-            score += (continuity_support // 2) + (continuity_same_thread_hits * 14)
-            reasons.append("continuity_memory_support")
-        if fresh_thread_cross_thread_recall and structured_recall_support >= supported_floor:
-            score += min(structured_recall_support // 2, 52)
-            reasons.append("fresh_thread_structured_memory_support")
-        if fresh_thread_cross_thread_recall and constraint_recall and structured_summary_support >= supported_floor:
-            score += min(structured_summary_support // 3, 28)
-            reasons.append("constraint_carry_forward_support")
-        if top_layer == "continuity_memory":
-            score += 10
-            reasons.append("continuity_memory_won_candidate_competition")
-        if continuity_support < supported_floor and structured_recall_support < supported_floor:
-            score -= 12
-            reasons.append("weak_continuity_support")
-        if "evidence_request" in query_shape_tags and source_support >= supported_floor:
-            score -= 54
-            reasons.append("evidence_request_outweighs_continuity")
-        return score, reasons
-
-    if family == "broad_recall":
+    if family == "recall":
         if pattern_support:
             score += pattern_support + (min(pattern_count, 2) * 10)
             reasons.append("pattern_memory_support")
@@ -470,7 +447,7 @@ def _query_family_candidate_score(
             reasons.append("sharp_lower_level_outweighs_weak_pattern_memory")
         if "evidence_request" in query_shape_tags and source_support >= supported_floor:
             score -= 84
-            reasons.append("evidence_request_outweighs_broad_recall")
+            reasons.append("evidence_request_outweighs_recall")
         return score, reasons
 
     if family == "work_resumption":
@@ -501,30 +478,6 @@ def _query_family_candidate_score(
         if fresh_thread_cross_thread_recall and "history_lookup" in query_shape_tags and "resume_state" not in query_shape_tags:
             score -= 56
             reasons.append("history_lookup_outweighs_resume_state")
-        return score, reasons
-
-    if family == "precise_fact":
-        if sharp_lower_level_support:
-            score += (sharp_lower_level_support // 2) + (sharp_lower_level_same_thread_hits * 8)
-            reasons.append("sharp_lower_level_support")
-        if source_support:
-            score += min(source_support, 36)
-            reasons.append("source_evidence_fallback")
-        if top_layer in {"decision", "investigation_outcome", "lower_level_memory"}:
-            score += 8
-            reasons.append("sharp_lower_level_won_candidate_competition")
-        if sharp_lower_level_support < supported_floor:
-            score -= 12
-            reasons.append("weak_precise_fact_support")
-        if "big_picture" in query_shape_tags:
-            score -= 48
-            reasons.append("pattern_memory_points_to_broad_recall")
-        if history_recall_with_relevant_carry_forward:
-            score -= 74
-            reasons.append("carry_forward_history_outweighs_precise_lookup")
-        if fresh_thread_cross_thread_recall and "history_lookup" in query_shape_tags and structured_recall_support >= supported_floor:
-            score -= 56
-            reasons.append("history_lookup_outweighs_precise_lookup")
         return score, reasons
 
     if family == "evidence_trace":
@@ -686,7 +639,7 @@ def _locality_adjustment(
     Replaces the former topic-overlap-gated continuity compatibility
     adjustment.  Uses only structural thread/container affinity, no tokens.
 
-    The same-container bonus (+20) is gated on answer_continuity intent to
+    The same-container bonus (+20) is gated on recall intent to
     avoid boosting cross-topic carry-forward when the query isn't a repeated
     question.
     """
@@ -694,7 +647,7 @@ def _locality_adjustment(
         return 0
     if same_thread:
         return 60
-    if same_container and intent == "answer_continuity":
+    if same_container and intent == "recall":
         return 20
     if same_container:
         return 0
@@ -703,13 +656,13 @@ def _locality_adjustment(
 def _specificity_bonus(item: QueryResultItem, intent: str) -> int:
     bonus = 0
     if item.result_kind == "memory_hit" and item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
-        if intent == "investigative_conclusion":
+        if intent == "structured_recall":
             bonus += 48 if item.type == "investigation_outcome" else 40
-        elif intent in {"precise_fact", "evidence_trace"}:
+        elif intent in {"structured_recall", "evidence_trace"}:
             bonus += 25 if item.type == "decision" else 23
         else:
             bonus += 10
-    if item.result_kind == "memory_hit" and item.type in ROUTING_SUMMARY_TYPES and intent in {"precise_fact", "evidence_trace", "investigative_conclusion"}:
+    if item.result_kind == "memory_hit" and item.type in ROUTING_SUMMARY_TYPES and intent in {"structured_recall", "evidence_trace"}:
         bonus -= 20
     if item.result_kind == "memory_hit" and item.type == "thread_summary" and intent == "work_resumption":
         if _memory_hit_has_selected_work_artifacts(item):
@@ -717,21 +670,21 @@ def _specificity_bonus(item: QueryResultItem, intent: str) -> int:
     if item.result_kind == "memory_hit" and item.type == "task_checkpoint":
         if intent == "work_resumption":
             bonus += 28
-        elif intent in {"precise_fact", "evidence_trace", "investigative_conclusion"}:
+        elif intent in {"structured_recall", "evidence_trace"}:
             bonus -= 18
-    if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "answer_continuity":
+    if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "recall":
         bonus += 13
-    if item.result_kind == "memory_hit" and item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES and intent == "broad_recall":
+    if item.result_kind == "memory_hit" and item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES and intent == "recall":
         bonus += 43 if item.type == "decision" else 38
-    if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "broad_recall":
+    if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "recall":
         bonus -= 23
-    if item.result_kind == "memory_hit" and item.type == "pattern_memory" and intent == "broad_recall":
+    if item.result_kind == "memory_hit" and item.type == "pattern_memory" and intent == "recall":
         bonus += 13
     if item.result_kind == "source_hit" and intent == "evidence_trace":
         bonus += 15 if item.artifact_kind == "assistant_output" else 5
     if item.result_kind == "source_hit" and intent == "work_resumption":
         bonus += 23 if (item.artifact_kind or "") in SELECTED_WORK_ARTIFACT_KINDS else 10
-    if item.result_kind == "source_hit" and intent == "investigative_conclusion":
+    if item.result_kind == "source_hit" and intent == "structured_recall":
         bonus += 3 if item.artifact_kind == "assistant_output" else 1
     return bonus
 
@@ -910,7 +863,7 @@ def _fresh_session_component(
 # ---------------------------------------------------------------------------
 
 def _apply_same_kind_freshness_shaping(scored_candidates: list[dict[str, object]], *, intent: str) -> None:
-    if intent not in {"investigative_conclusion", "precise_fact", "broad_recall"}:
+    if intent not in {"structured_recall", "recall"}:
         return
     for memory_type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
         typed_candidates = [candidate for candidate in scored_candidates if getattr(candidate["item"], "type", None) == memory_type]
@@ -929,7 +882,7 @@ def _apply_same_kind_freshness_shaping(scored_candidates: list[dict[str, object]
         for index, candidate in enumerate(typed_candidates):
             freshness_delta = 0
             if index == 0:
-                freshness_delta += 42 if intent == "investigative_conclusion" else 24
+                freshness_delta += 42 if intent == "structured_recall" else 24
                 if candidate.get("same_thread"):
                     freshness_delta += 16
             else:
@@ -960,7 +913,7 @@ def _apply_fresh_thread_structured_recall_preference(
     candidate_signals: dict[str, object],
     runtime_context: QueryRuntimeContext | None,
 ) -> None:
-    if intent not in {"broad_recall", "answer_continuity", "work_resumption", "precise_fact"}:
+    if intent not in {"recall", "work_resumption", "structured_recall"}:
         return
     if not _runtime_context_prefers_cross_thread_recall(runtime_context):
         return
@@ -1059,7 +1012,7 @@ def _apply_recall_source_noise_suppression(
     query_filters: QueryFilters | None,
     runtime_context: QueryRuntimeContext | None,
 ) -> None:
-    if intent not in {"broad_recall", "answer_continuity"}:
+    if intent not in {"recall"}:
         return
     for candidate in scored_candidates:
         item = candidate["item"]
@@ -1127,7 +1080,7 @@ def _apply_recall_structured_summary_suppression(
     query_filters: QueryFilters | None,
     runtime_context: QueryRuntimeContext | None,
 ) -> None:
-    if intent not in {"broad_recall", "answer_continuity"}:
+    if intent not in {"recall"}:
         return
     for candidate in scored_candidates:
         item = candidate["item"]
@@ -1351,7 +1304,7 @@ def _select_routing_focus(
     best_fallback_layer = None
     best_fallback_summary = None
     if fallback_candidates:
-        if intent == "broad_recall":
+        if intent == "recall":
             structured_fallback = [
                 (layer, summary)
                 for layer, summary in fallback_candidates
@@ -1406,7 +1359,7 @@ def _select_routing_focus(
         fallback_support = int(best_fallback_summary.get("best_support_score", 0))
         fallback_grade = str(best_fallback_summary.get("best_support_grade", "weak"))
         if (
-            intent in {"answer_continuity", "work_resumption"}
+            intent in {"recall", "work_resumption"}
             and primary_grade == "weak"
             and fallback_grade == "strong"
             and fallback_support >= primary_support + _margin
@@ -1415,7 +1368,7 @@ def _select_routing_focus(
             applied = True
             reason_code = "weak_higher_level_support"
             reason = "Higher-level memory was retrieved, but its candidate support was materially weaker than a strongly supported safer layer."
-        elif intent not in {"answer_continuity", "work_resumption"} and primary_grade == "weak" and fallback_grade in {"supported", "strong"}:
+        elif intent not in {"recall", "work_resumption"} and primary_grade == "weak" and fallback_grade in {"supported", "strong"}:
             selected_layer = best_fallback_layer
             applied = True
             reason_code = "weak_higher_level_support"

@@ -307,20 +307,20 @@ def _build_latest_vs_resume_pair(
         {
             "option_id": "A",
             "query_policy_family": option_a_family,
-            "allowed_query_intents": list({"work_resumption"} if option_a_family == "resume_work" else {"broad_recall"}),
+            "allowed_query_intents": list({"work_resumption"} if option_a_family == "resume_work" else {"recall"}),
             "score": resume_work_score if option_a_family == "resume_work" else latest_status_score,
         },
         {
             "option_id": "B",
             "query_policy_family": option_b_family,
-            "allowed_query_intents": list({"work_resumption"} if option_b_family == "resume_work" else {"broad_recall"}),
+            "allowed_query_intents": list({"work_resumption"} if option_b_family == "resume_work" else {"recall"}),
             "score": resume_work_score if option_b_family == "resume_work" else latest_status_score,
         },
     ]
 
     # Phase 3: always use option A (deterministic). Phase 4 will add resolver here.
     selected_family = option_a_family
-    allowed_intents = frozenset({"work_resumption"}) if selected_family == "resume_work" else frozenset({"broad_recall"})
+    allowed_intents = frozenset({"work_resumption"}) if selected_family == "resume_work" else frozenset({"recall"})
 
     return PolicySelectedContext(
         query_policy_family=selected_family,

@@ -14,8 +14,6 @@ SUPPRESSION_SCORE_PENALTY = 50  # modest penalty as defense-in-depth
 
 RECALL_INTENTS = frozenset({
     "recall", "structured_recall",
-    # Legacy names during migration:
-    "broad_recall", "answer_continuity", "precise_fact", "investigative_conclusion",
 })
 
 WEAK_SUMMARY_QUALITIES = frozenset({"query_only", "weak", "unresolved"})

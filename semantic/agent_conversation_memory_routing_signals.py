@@ -510,7 +510,7 @@ def _check_evidence_trace_override(
         runtime_context=runtime_context,
         resolver_config=resolver_config,
         option_a={"query_policy_family": "evidence_trace", "allowed_query_intents": ["evidence_trace"], "score": 0},
-        option_b={"query_policy_family": "recall_fact", "allowed_query_intents": ["broad_recall"], "score": 0},
+        option_b={"query_policy_family": "recall_fact", "allowed_query_intents": ["recall"], "score": 0},
     )
     if selected:
         return QuerySignalEnvelope(
