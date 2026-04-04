@@ -153,7 +153,14 @@ def _build_continuity_memory_text(payload: dict) -> str:
 
 
 def _build_constraint_memory_text(payload: dict) -> str:
-    """Constraint memory: constraint_text + summary (when different)."""
+    """Constraint memory: constraint_text + evidence_context for semantic breadth.
+
+    Constraints have narrow formal text ("No GPL dependencies permitted").
+    Including the source evidence context ("keep that in mind when picking
+    dependencies") gives the embedding broader vocabulary coverage so the
+    constraint is retrievable for semantically adjacent queries (e.g.,
+    "What library should we use?").
+    """
     parts: list[str] = []
     constraint_text = payload.get("constraint_text")
     if constraint_text:
@@ -161,6 +168,9 @@ def _build_constraint_memory_text(payload: dict) -> str:
     summary = payload.get("summary")
     if summary and summary != constraint_text:
         parts.append(summary)
+    evidence_context = payload.get("evidence_context")
+    if evidence_context and evidence_context != constraint_text:
+        parts.append(f"Context: {evidence_context}")
     return " ".join(parts) if parts else ""
 
 

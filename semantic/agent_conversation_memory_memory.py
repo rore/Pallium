@@ -120,6 +120,7 @@ def _append_typed_constraint_memory_objects(
     payload = {
         "summary": constraint_text,
         "constraint_text": constraint_text,
+        "evidence_context": source_item.content,
         "container_ref": source_item.container_ref,
         "thread_ref": source_item.thread_ref,
         "semantic_provenance": dict(semantic_provenance),
