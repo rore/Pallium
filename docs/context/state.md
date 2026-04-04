@@ -108,6 +108,12 @@
   - when aligned candidates exist, insufficient and legacy candidates enter `retained_memory_ids` as `secondary_tier` and fill remaining result slots not consumed by aligned
   - `fallback_mode = "aligned_with_secondary"` and `secondary_tier_count` exposed in anchor_prefilter trace; `anchor_tier_penalty` exposed per-candidate in routing trace
 - query tokenization is now unified: `tokenize_query` from `retrieval/lexical.py` is the single implementation; duplicate `_query_tokens` in `core/query.py` removed; debug query filter matching unified on canonical `matches_filters` (corrects lifecycle, thread_ref relaxation, and actor_ref handling on the debug path)
+- vector index self-healing is shipped:
+  - source item vector embedding runs regardless of LLM outcome (survives extraction failures)
+  - startup count mismatch logs a warning and continues with reduced recall instead of disabling vector
+  - worker-integrated bidirectional reconciliation: embeds SQLite entries missing from usearch (batch-bounded), removes stale usearch entries missing from SQLite
+  - reconciliation runs as idle-time worker duty alongside source item processing and thread rebuilds
+  - `rebuild-vector-index` CLI command remains available for manual recovery
 
 ## Verification Notes
 
