@@ -150,3 +150,7 @@ class VectorIndex:
     def dimensions(self) -> int:
         """Return the dimensionality of the vectors in this index."""
         return self._dimensions
+
+    def known_entry_ids(self) -> frozenset[str]:
+        """Return the set of entry IDs currently in the index."""
+        return frozenset(self._id_to_key.keys())

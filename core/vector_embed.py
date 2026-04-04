@@ -137,3 +137,51 @@ class VectorEmbedder:
             self._vector_index.save()
         except Exception:
             self._logger.warning("Vector index save failed; reconciliation will catch gaps", exc_info=True)
+
+    def reconcile(self, batch_size: int = 50) -> int:
+        """Find and fix mismatches between SQLite vector entries and usearch index.
+
+        Forward direction: embed SQLite entries missing from usearch (batch-bounded).
+        Reverse direction: remove usearch entries missing from SQLite (unbounded, cheap).
+        Returns total number of entries changed (embedded + removed).
+        """
+        if self._embedding_provider is None or self._vector_index is None:
+            return 0
+        try:
+            sqlite_count = self._storage.count_index_entries_by_type("vector")
+            index_count = self._vector_index.entry_count()
+            if sqlite_count == index_count:
+                return 0
+
+            sqlite_entries = self._storage.list_index_entries_by_type("vector")
+            sqlite_ids = {e.id for e in sqlite_entries}
+            usearch_ids = self._vector_index.known_entry_ids()
+
+            total_changed = 0
+
+            # Reverse: remove stale usearch entries (cheap, no batching)
+            stale_ids = usearch_ids - sqlite_ids
+            for entry_id in stale_ids:
+                try:
+                    self._vector_index.remove(entry_id)
+                    total_changed += 1
+                except KeyError:
+                    pass
+
+            # Forward: embed missing entries (batch-bounded)
+            missing_entries = [e for e in sqlite_entries if e.id not in usearch_ids]
+            batch = missing_entries[:batch_size]
+            if batch:
+                texts = [e.text_view for e in batch]
+                vectors = self._embedding_provider.embed(texts)
+                for entry, vector in zip(batch, vectors):
+                    self._vector_index.add(entry.id, vector)
+                    total_changed += 1
+
+            if total_changed > 0:
+                self._vector_index.save()
+
+            return total_changed
+        except Exception:
+            self._logger.warning("Vector reconciliation failed; will retry next cycle", exc_info=True)
+            return 0

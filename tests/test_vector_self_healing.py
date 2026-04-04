@@ -114,3 +114,133 @@ def test_source_vector_embedded_even_when_llm_fails(test_db_url: str, tmp_path: 
     assert vector_index.entry_count() == 1, (
         "Source vector must be in usearch even when LLM fails"
     )
+
+
+@requires_usearch
+def test_vector_index_known_entry_ids(tmp_path: Path) -> None:
+    index_path = tmp_path / "ids.index"
+    vi = VectorIndex.create_empty(index_path, dimensions=4, model_name="test-model")
+    assert vi.known_entry_ids() == frozenset()
+
+    vi.add("entry-a", [0.1, 0.2, 0.3, 0.4])
+    vi.add("entry-b", [0.5, 0.6, 0.7, 0.8])
+    assert vi.known_entry_ids() == frozenset({"entry-a", "entry-b"})
+
+    vi.remove("entry-a")
+    assert vi.known_entry_ids() == frozenset({"entry-b"})
+
+
+@requires_usearch
+def test_reconcile_forward_embeds_missing_entries(test_db_url: str, tmp_path: Path) -> None:
+    """Entries in SQLite but not in usearch are embedded by reconciliation."""
+    storage = SQLiteStorageProvider(test_db_url)
+    embedding_provider = StubEmbeddingProvider()
+    index_path = tmp_path / "reconcile.index"
+    vector_index = VectorIndex.create_empty(index_path, dimensions=4, model_name="test-model")
+
+    vector_embedder = VectorEmbedder(storage, embedding_provider, vector_index)
+
+    # Create a vector index entry in SQLite only (simulating an orphan)
+    from core.indexing import build_index_entry
+    orphan_entry = build_index_entry(
+        target_kind="source_item",
+        target_id="orphan-source-1",
+        index_type="vector",
+        text_view="Some text that should be embedded",
+        text_view_name="source_content.embedding",
+    )
+    storage.create_index_entry(orphan_entry)
+
+    assert storage.count_index_entries_by_type("vector") == 1
+    assert vector_index.entry_count() == 0
+
+    reconciled = vector_embedder.reconcile(batch_size=50)
+
+    assert reconciled == 1
+    assert vector_index.entry_count() == 1
+    assert orphan_entry.id in vector_index.known_entry_ids()
+
+
+@requires_usearch
+def test_reconcile_reverse_removes_stale_entries(test_db_url: str, tmp_path: Path) -> None:
+    """Entries in usearch but not in SQLite are removed by reconciliation."""
+    storage = SQLiteStorageProvider(test_db_url)
+    embedding_provider = StubEmbeddingProvider()
+    index_path = tmp_path / "reconcile.index"
+    vector_index = VectorIndex.create_empty(index_path, dimensions=4, model_name="test-model")
+
+    vector_embedder = VectorEmbedder(storage, embedding_provider, vector_index)
+
+    # Add an entry to usearch only (simulating retention deleting the SQLite row)
+    vector_index.add("stale-entry-1", [0.1, 0.2, 0.3, 0.4])
+    assert vector_index.entry_count() == 1
+    assert storage.count_index_entries_by_type("vector") == 0
+
+    reconciled = vector_embedder.reconcile(batch_size=50)
+
+    assert reconciled == 1
+    assert vector_index.entry_count() == 0
+
+
+@requires_usearch
+def test_reconcile_noop_when_counts_match(test_db_url: str, tmp_path: Path) -> None:
+    """When SQLite and usearch counts match, reconciliation is a no-op."""
+    storage = SQLiteStorageProvider(test_db_url)
+    embedding_provider = StubEmbeddingProvider()
+    index_path = tmp_path / "reconcile.index"
+    vector_index = VectorIndex.create_empty(index_path, dimensions=4, model_name="test-model")
+
+    vector_embedder = VectorEmbedder(storage, embedding_provider, vector_index)
+
+    # Both empty — counts match
+    reconciled = vector_embedder.reconcile(batch_size=50)
+    assert reconciled == 0
+
+
+@requires_usearch
+def test_reconcile_forward_respects_batch_size(test_db_url: str, tmp_path: Path) -> None:
+    """Forward reconciliation embeds at most batch_size entries per call."""
+    storage = SQLiteStorageProvider(test_db_url)
+    embedding_provider = StubEmbeddingProvider()
+    index_path = tmp_path / "reconcile.index"
+    vector_index = VectorIndex.create_empty(index_path, dimensions=4, model_name="test-model")
+
+    vector_embedder = VectorEmbedder(storage, embedding_provider, vector_index)
+
+    # Create 5 orphan entries in SQLite
+    from core.indexing import build_index_entry
+    for i in range(5):
+        entry = build_index_entry(
+            target_kind="source_item",
+            target_id=f"batch-source-{i}",
+            index_type="vector",
+            text_view=f"Text for batch entry {i}",
+            text_view_name="source_content.embedding",
+        )
+        storage.create_index_entry(entry)
+
+    assert storage.count_index_entries_by_type("vector") == 5
+    assert vector_index.entry_count() == 0
+
+    # Reconcile with batch_size=2 — should embed exactly 2
+    reconciled = vector_embedder.reconcile(batch_size=2)
+    assert reconciled == 2
+    assert vector_index.entry_count() == 2
+
+    # Second call embeds 2 more
+    reconciled = vector_embedder.reconcile(batch_size=2)
+    assert reconciled == 2
+    assert vector_index.entry_count() == 4
+
+    # Third call embeds the last 1
+    reconciled = vector_embedder.reconcile(batch_size=2)
+    assert reconciled == 1
+    assert vector_index.entry_count() == 5
+
+
+@requires_usearch
+def test_reconcile_noop_when_disabled(test_db_url: str) -> None:
+    """Reconciliation returns 0 when embedding_provider or vector_index is None."""
+    storage = SQLiteStorageProvider(test_db_url)
+    embedder_no_provider = VectorEmbedder(storage, None, None)
+    assert embedder_no_provider.reconcile(batch_size=50) == 0
