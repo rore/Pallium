@@ -19,28 +19,6 @@ from semantic.agent_conversation_memory_routing_constants import (
 )
 
 
-def _build_kind_prefilter_trace_entry(
-    item: QueryResultItem,
-    *,
-    status: str,
-    reason_code: str | None = None,
-    reason: str | None = None,
-) -> dict[str, object]:
-    entry = {
-        "result_id": _routing_result_id(item),
-        "result_kind": item.result_kind,
-        "memory_type": item.type,
-        "candidate_envelope_kind": item.envelope.kind if item.envelope is not None else None,
-        "status": status,
-    }
-    if item.envelope is not None:
-        entry["candidate_subjects"] = _serialize_subject_anchors(item.envelope.subjects)
-        entry["envelope_confidence"] = item.envelope.confidence
-    if reason_code is not None:
-        entry["reason_code"] = reason_code
-        entry["reason"] = reason
-    return entry
-
 def _build_anchor_prefilter_trace_entry(
     item: QueryResultItem,
     *,
@@ -238,6 +216,7 @@ def _build_routing_trace(
     final_intent_used: bool = True,
     signal_envelope: QuerySignalEnvelope | None = None,
     recall_mode: str = "default",
+    relevance_floor: dict[str, object] | None = None,
 ) -> dict[str, object]:
     selected_results = [_build_routing_trace_entry(candidate) for candidate in final_candidates]
     demoted_higher_level_hits = [
@@ -275,6 +254,7 @@ def _build_routing_trace(
         "candidate_summary": layer_summary,
         "kind_prefilter": kind_prefilter_summary,
         "anchor_prefilter": anchor_prefilter_summary,
+        "relevance_floor": relevance_floor,
         "selected_results": selected_results,
         "excluded_high_scoring_candidates": excluded_high_scoring_candidates,
         "demoted_higher_level_hits": demoted_higher_level_hits,
@@ -359,6 +339,11 @@ def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object
     if candidate.get("excluded_reason_code"):
         entry["excluded_reason_code"] = candidate["excluded_reason_code"]
         entry["excluded_reason"] = candidate.get("excluded_reason")
+    if candidate.get("quality_score") is not None:
+        entry["quality_score"] = candidate["quality_score"]
+    if candidate.get("freshness_rank_in_type") is not None:
+        entry["freshness_rank_in_type"] = candidate["freshness_rank_in_type"]
+    entry["suppressed"] = candidate.get("suppressed", False)
     strategy_name = candidate["strategy_name"]
     if strategy_name is not None:
         entry["strategy_name"] = strategy_name

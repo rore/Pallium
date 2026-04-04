@@ -6,6 +6,7 @@ from semantic.agent_conversation_memory_anchors import (
     _classify_memory_candidate_anchor_state,
     _infer_selected_query_anchor,
     _serialize_subject_anchor,
+    _serialize_subject_anchors,
 )
 from semantic.agent_conversation_memory_routing_constants import (
     ANCHOR_SECONDARY_TIER_PENALTY,
@@ -23,7 +24,6 @@ from semantic.agent_conversation_memory_routing_constants import (
     _routing_result_id,
 )
 from semantic.agent_conversation_memory_routing_trace import (
-    _build_kind_prefilter_trace_entry,
     _build_lane_narrowing_trace,
     _build_routing_trace,
     _build_sharp_candidate_diagnostics,
@@ -463,6 +463,10 @@ def route_query_results(
                     final_intent_used=final_intent_used,
                     signal_envelope=signal_envelope,
                     recall_mode=recall_mode,
+                    relevance_floor={
+                        "filtered_count": floor_result.filtered_count,
+                        "filtered_score_ranges": floor_result.filtered_score_ranges,
+                    } if floor_result.filtered_count > 0 else None,
                 ),
             )
 
@@ -474,6 +478,29 @@ def route_query_results(
             injectable_blocks=injection_blocks,
             sharp_candidate_diagnostics=sharp_candidate_diagnostics,
         )
+
+def _build_kind_prefilter_trace_entry(
+    item: QueryResultItem,
+    *,
+    status: str,
+    reason_code: str | None = None,
+    reason: str | None = None,
+) -> dict[str, object]:
+    entry: dict[str, object] = {
+        "result_id": _routing_result_id(item),
+        "result_kind": item.result_kind,
+        "memory_type": item.type,
+        "candidate_envelope_kind": item.envelope.kind if item.envelope is not None else None,
+        "status": status,
+    }
+    if item.envelope is not None:
+        entry["candidate_subjects"] = _serialize_subject_anchors(item.envelope.subjects)
+        entry["envelope_confidence"] = item.envelope.confidence
+    if reason_code is not None:
+        entry["reason_code"] = reason_code
+        entry["reason"] = reason
+    return entry
+
 
 def _kind_prefilter_candidates(
     candidates: list[QueryResultItem],
