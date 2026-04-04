@@ -27,6 +27,8 @@ from semantic.agent_conversation_memory_routing_constants import (
     ROUTING_SAFE_FALLBACK_LAYERS,
     ROUTING_SUMMARY_TYPES,
     ROUTING_SUPPORT_THRESHOLD,
+    STRUCTURED_LAYERS,
+    POLICY_WORK_STATE_USEFULNESS_THRESHOLD,
     WORK_RESUMPTION_FRESHNESS_MARGIN_SECONDS,
     WORK_RESUMPTION_FRESH_STATE_BONUS,
     WORK_RESUMPTION_STALE_SOURCE_PENALTY,
@@ -870,7 +872,7 @@ def _usefulness_adjustment(candidate: dict, intent: str) -> int:
     # Thin checkpoint penalty (few work signals)
     if layer == "task_checkpoint":
         usefulness = int(candidate.get("work_usefulness_score", 0))
-        if usefulness < 24:  # POLICY_WORK_STATE_USEFULNESS_THRESHOLD
+        if usefulness < POLICY_WORK_STATE_USEFULNESS_THRESHOLD:
             adjustment -= WORK_RESUMPTION_THIN_CHECKPOINT_PENALTY_V2
     # Stale source evidence penalty (smaller)
     if layer == "source_evidence" and candidate.get("work_resumption_stale"):
@@ -881,12 +883,6 @@ def _usefulness_adjustment(candidate: dict, intent: str) -> int:
 # Fresh session preference: carry forward from _apply_fresh_thread_structured_recall_preference
 FRESH_SESSION_SOURCE_PENALTY = -80  # was -120, reduced because quality score now differentiates better
 FRESH_SESSION_STRUCTURED_BONUS = 26
-
-STRUCTURED_LAYERS = frozenset({
-    "decision", "investigation_outcome", "task_checkpoint",
-    "pattern_memory", "continuity_memory", "interest", "constraint_memory",
-    "thread_summary", "discussion_summary",
-})
 
 def _fresh_session_component(
     runtime_context, layer: str, structured_dominates: bool,

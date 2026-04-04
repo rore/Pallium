@@ -96,6 +96,12 @@ ROUTING_LOWER_LEVEL_EXACT_TYPES = {"decision", "investigation_outcome"}
 
 ROUTING_SUMMARY_TYPES = {"thread_summary", "discussion_summary"}
 
+STRUCTURED_LAYERS = frozenset({
+    "decision", "investigation_outcome", "task_checkpoint",
+    "pattern_memory", "continuity_memory", "interest", CONSTRAINT_MEMORY_TYPE,
+    "thread_summary", "discussion_summary",
+})
+
 ROUTING_PREFERRED_LAYERS = {
     "answer_continuity": ("continuity_memory", "investigation_outcome", "decision", "source_evidence", "task_checkpoint", "pattern_memory", "interest", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE),
     "broad_recall": ("pattern_memory", "investigation_outcome", "decision", "continuity_memory", "task_checkpoint", "source_evidence", "interest", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE),

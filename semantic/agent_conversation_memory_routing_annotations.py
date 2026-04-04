@@ -9,14 +9,9 @@ from datetime import datetime
 
 from semantic.agent_conversation_memory_routing_constants import (
     ROUTING_SUPPORT_THRESHOLD,
+    STRUCTURED_LAYERS,
     WORK_RESUMPTION_FRESHNESS_MARGIN_SECONDS,
 )
-
-STRUCTURED_LAYERS = frozenset({
-    "decision", "investigation_outcome", "task_checkpoint",
-    "pattern_memory", "continuity_memory", "interest", "constraint_memory",
-    "thread_summary", "discussion_summary",
-})
 
 
 def _ts_value(c: dict) -> float:
