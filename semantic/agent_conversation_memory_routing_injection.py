@@ -11,8 +11,8 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class InjectionThresholds:
     """All injection check thresholds. Swappable for testing."""
-    set_lexical_threshold: int = 2      # min IDF for set-level gate
-    set_vector_high: int = 700          # cosine*1000 for strong vector match
+    set_lexical_threshold: int = 2      # min IDF for set-level gate (at least one shared content word)
+    set_vector_high: int = 750          # cosine*1000 for strong vector match (condition 2 + condition 3)
     set_lexical_low: int = 1            # min lexical for vector+lexical condition
     candidate_lexical_floor: int = 1    # per-candidate min lexical
     candidate_vector_override: int = 800  # per-candidate strong vector override
@@ -54,15 +54,16 @@ def should_allow_injection(
         if best_vector >= thresholds.set_vector_high and best_lexical >= thresholds.set_lexical_low:
             return True
         # Condition 3: strong vector match when no lexical scoring was available
-        if best_vector >= thresholds.set_vector_high and not has_any_lexical:
+        # Use candidate_vector_override (800) as higher bar since there's no lexical confirmation
+        if best_vector >= thresholds.candidate_vector_override and not has_any_lexical:
             return True
         return False
 
-    # Fallback: use retrieval_score (IDF-based) when composite scores are absent.
-    # Use a lower threshold (candidate_lexical_floor) since lexical-only retrieval
-    # produces lower absolute scores than composite retrieval.
+    # Fallback: when composite scores are absent, use retrieval_score as a proxy.
+    # A score of 0 means the item wasn't retrieved through any scored path —
+    # no basis for injection confidence.
     best_retrieval = max(int(c.get("retrieval_score", 0) or 0) for c in candidates)
-    return best_retrieval >= thresholds.candidate_lexical_floor
+    return best_retrieval > 0
 
 
 def candidate_injection_eligible(
@@ -85,11 +86,11 @@ def candidate_injection_eligible(
             return True
         if vec >= thresholds.candidate_vector_override:
             return True
-        # When lexical scoring is absent, a strong vector match alone is sufficient
+        # When lexical scoring is absent for this candidate, a strong vector match suffices
         if raw_lex is None and vec >= thresholds.set_vector_high:
             return True
         return False
 
-    # Fallback: use retrieval_score when composite scores are absent
-    retrieval = int(candidate.get("retrieval_score", 0) or 0)
-    return retrieval >= thresholds.candidate_lexical_floor
+    # No composite scores on this candidate — can't verify lexical grounding per-candidate.
+    # Defer to the set-level gate which already checked the full candidate set.
+    return True

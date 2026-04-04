@@ -1732,7 +1732,7 @@ def test_retrieval_relevance_floor_passes_high_lexical_score() -> None:
 
 
 def test_retrieval_relevance_floor_passes_at_boundary() -> None:
-    """lexical_score exactly at the floor (2) should pass."""
+    """lexical_score exactly at the injection threshold (2) should pass."""
     result = _build_floor_test_retrieval_result(
         score=19,
         retrieval_source='both',
@@ -1832,19 +1832,19 @@ def test_vector_cosine_escape_hatch_passes_high_similarity() -> None:
         score=9,
         retrieval_source='vector',
         lexical_score=None,
-        vector_score=750,  # cosine 0.75 — above VECTOR_SIMILARITY_INJECTION_FLOOR (700)
+        vector_score=810,  # cosine 0.81 — above candidate_vector_override (800)
     )
     outcome = _run_floor_test(result, query_text='what approach for tracking changes?')
     assert outcome.decision_reason != 'low_injection_confidence'
 
 
 def test_vector_cosine_escape_hatch_at_boundary() -> None:
-    """Vector-only match exactly at the cosine floor (700) should pass."""
+    """Vector-only match exactly at the cosine override (800) should pass."""
     result = _build_floor_test_retrieval_result(
         score=9,
         retrieval_source='vector',
         lexical_score=None,
-        vector_score=700,
+        vector_score=800,
     )
     outcome = _run_floor_test(result, query_text='what approach for tracking changes?')
     assert outcome.decision_reason != 'low_injection_confidence'
@@ -1856,7 +1856,7 @@ def test_vector_cosine_escape_hatch_suppresses_below_boundary() -> None:
         score=9,
         retrieval_source='vector',
         lexical_score=None,
-        vector_score=699,
+        vector_score=640,
     )
     outcome = _run_floor_test(result, query_text="let's talk about something new")
     assert outcome.should_inject is False
