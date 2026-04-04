@@ -137,7 +137,7 @@ def _ingest_resumption_work(client: TestClient, *, thread_ref: str) -> None:
         assert response.status_code == 200
     client.app.state.pallium_service.drain_processing_queue(worker_id='routing-test')
 
-def _inventory_batch_constraint_checkpoint_result(*, memory_object_id: str = 'checkpoint-batch-constraint', score: int = 16, envelope: MemoryEnvelope | None = None) -> QueryResultItem:
+def _inventory_batch_constraint_checkpoint_result(*, memory_object_id: str = 'checkpoint-batch-constraint', score: int = 16, lexical_score: int | None = None, envelope: MemoryEnvelope | None = None) -> QueryResultItem:
     return QueryResultItem(
         result_kind='memory_hit',
         memory_object_id=memory_object_id,
@@ -161,13 +161,14 @@ def _inventory_batch_constraint_checkpoint_result(*, memory_object_id: str = 'ch
         },
         freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
         score=score,
+        lexical_score=lexical_score,
         evidence=[],
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:thread-a',
         envelope=envelope,
     )
 
-def _inventory_batch_constraint_summary_result(*, memory_object_id: str = 'summary-batch-constraint', score: int = 15, envelope: MemoryEnvelope | None = None) -> QueryResultItem:
+def _inventory_batch_constraint_summary_result(*, memory_object_id: str = 'summary-batch-constraint', score: int = 15, lexical_score: int | None = None, envelope: MemoryEnvelope | None = None) -> QueryResultItem:
     return QueryResultItem(
         result_kind='memory_hit',
         memory_object_id=memory_object_id,
@@ -182,6 +183,7 @@ def _inventory_batch_constraint_summary_result(*, memory_object_id: str = 'summa
         },
         freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
         score=score,
+        lexical_score=lexical_score,
         evidence=[],
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:thread-a',
@@ -257,7 +259,7 @@ def _inventory_batch_typed_constraint_result(*, memory_object_id: str = 'constra
         envelope=_memory_envelope('constraint', confidence='high', subjects=[scope_anchor, target_anchor]),
     )
 
-def _wallet_snapshot_checkpoint_result(*, memory_object_id: str = 'checkpoint-wallet-snapshot', score: int = 16) -> QueryResultItem:
+def _wallet_snapshot_checkpoint_result(*, memory_object_id: str = 'checkpoint-wallet-snapshot', score: int = 16, lexical_score: int | None = None) -> QueryResultItem:
     return QueryResultItem(
         result_kind='memory_hit',
         memory_object_id=memory_object_id,
@@ -280,12 +282,13 @@ def _wallet_snapshot_checkpoint_result(*, memory_object_id: str = 'checkpoint-wa
         },
         freshness_at=datetime(2026, 3, 11, 12, 35, tzinfo=timezone.utc),
         score=score,
+        lexical_score=lexical_score,
         evidence=[],
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:thread-wallet',
     )
 
-def _wallet_snapshot_summary_result(*, memory_object_id: str = 'summary-wallet-snapshot', score: int = 15) -> QueryResultItem:
+def _wallet_snapshot_summary_result(*, memory_object_id: str = 'summary-wallet-snapshot', score: int = 15, lexical_score: int | None = None) -> QueryResultItem:
     return QueryResultItem(
         result_kind='memory_hit',
         memory_object_id=memory_object_id,
@@ -300,6 +303,7 @@ def _wallet_snapshot_summary_result(*, memory_object_id: str = 'summary-wallet-s
         },
         freshness_at=datetime(2026, 3, 11, 12, 35, tzinfo=timezone.utc),
         score=score,
+        lexical_score=lexical_score,
         evidence=[],
         container_ref='slack:channel:CLOCAL001',
         thread_ref='slack:thread:CLOCAL001:thread-wallet',

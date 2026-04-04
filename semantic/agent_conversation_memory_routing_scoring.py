@@ -15,6 +15,7 @@ from semantic.agent_conversation_memory_routing_constants import (
     ANCHOR_SECONDARY_TIER_PENALTY,
     HIGHER_LEVEL_RETRIEVAL_FLOOR,
     LEXICAL_NORM_SCALE,
+    QUALITY_WEIGHT,
     ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY,
     ROUTING_FALLBACK_MARGIN,
     ROUTING_FAMILY_INFERENCE_PRIORITY,
@@ -600,19 +601,25 @@ def _score_routed_candidate(
         query_filters=query_filters,
     )
     _weights = layer_weights or ROUTING_LAYER_WEIGHTS
+    quality_score = _compute_quality_score(
+        int(item.lexical_score or 0),
+        int(item.vector_score or 0),
+    )
     base_routing_score = (
         _weights[intent][layer]
-        + (retrieval_score * 10)
+        + int(quality_score * QUALITY_WEIGHT)
         + _specificity_bonus(item, intent)
         + evidence_shape_score
         + _higher_level_retrieval_floor_adjustment(layer, retrieval_score)
         + _locality_adjustment(intent=intent, layer=layer, same_thread=same_thread, same_container=same_container)
     )
     support_grade = _routing_support_grade(evidence_shape_score, support_threshold=support_threshold)
-    quality_score = _compute_quality_score(
-        int(item.lexical_score or 0),
-        int(item.vector_score or 0),
-    )
+    # Compute work resumption signals unconditionally (was previously in _apply_work_resumption_packaging)
+    _signal_types = _work_resumption_signal_types(item)
+    _usefulness, _ = _work_resumption_usefulness_score(item, _signal_types)
+    # Compute freshness_timestamp ISO string unconditionally
+    _freshness_ts_value = _candidate_freshness_timestamp(item)
+    _freshness_ts = _freshness_ts_value.isoformat() if isinstance(_freshness_ts_value, datetime) else None
     return {
         "item": item,
         "layer": layer,
@@ -631,12 +638,13 @@ def _score_routed_candidate(
         "evidence_count": len(item.evidence),
         "same_thread": same_thread,
         "same_container": same_container,
-        "freshness_timestamp_value": _candidate_freshness_timestamp(item),
-        "freshness_timestamp": None,
+        "freshness_timestamp_value": _freshness_ts_value,
+        "freshness_timestamp": _freshness_ts,
         "packaging_adjustment": 0,
         "packaging_reasons": [],
-        "work_signal_types": (),
-        "work_usefulness_score": 0,
+        "anchor_tier_penalty": 0,
+        "work_signal_types": _signal_types,
+        "work_usefulness_score": _usefulness,
         "lexical_score": item.lexical_score,
         "vector_score": item.vector_score,
         "quality_score": quality_score,

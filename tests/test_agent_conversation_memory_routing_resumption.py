@@ -149,8 +149,10 @@ def test_work_resumption_demotes_thin_checkpoint_when_fresher_source_state_is_sh
     assert any(item.result_kind == 'memory_hit' and item.type == 'task_checkpoint' for item in results)
     assert trace is not None
     assert trace.routing is not None
-    assert trace.routing['packaging']['demoted_task_checkpoint']['result_id'] == 'memory_object:checkpoint-thin'
-    assert 'thin_checkpoint' in trace.routing['packaging']['demoted_task_checkpoint']['packaging_reasons']
+    # Work resumption packaging removed (Task 9); thin_checkpoint demotion returns in Task 9b.
+    # Verify that the checkpoint is still present in results (work signals are computed in scoring now).
+    checkpoint_result = next(r for r in results if r.result_kind == 'memory_hit' and r.type == 'task_checkpoint')
+    assert checkpoint_result.memory_object_id == 'checkpoint-thin'
 
 def test_vague_resumed_session_prompt_uses_checkpoint_shape_without_resume_cues() -> None:
     plugin = AgentConversationMemoryPlugin(
@@ -597,17 +599,9 @@ def test_work_resumption_stale_checkpoint_penalized_when_fresher_cross_thread_ch
 
     assert outcome.should_inject is True
     result_ids = [r.memory_object_id for r in outcome.results if r.result_kind == 'memory_hit']
-    assert 'checkpoint-fresh-thread-006b' in result_ids, (
-        f"fresh checkpoint missing from results: {result_ids}"
-    )
-    # Fresh checkpoint must rank first
-    assert result_ids[0] == 'checkpoint-fresh-thread-006b', (
-        f"fresh checkpoint must be top-ranked; got order: {result_ids}"
-    )
-    # Stale checkpoint payload must not appear in injected text
-    injected_text = ' '.join(
-        block.text for block in (outcome.injectable_blocks or [])
-    ).lower()
-    assert '401' not in injected_text or 'batch 418' in injected_text, (
-        "stale 401 blocker must not dominate injection when fresh 429 state exists"
-    )
+    # Work resumption freshness adjustment removed (Task 9); stale penalty returns in Task 9b.
+    # Without the freshness penalty, both checkpoints score identically (same score, same type).
+    # Selection picks only one checkpoint (work_resumption selects top checkpoint + adjacent evidence).
+    # Without freshness shaping, input order determines which checkpoint wins.
+    assert len(result_ids) == 1
+    assert result_ids[0] in {'checkpoint-stale-thread-006a', 'checkpoint-fresh-thread-006b'}

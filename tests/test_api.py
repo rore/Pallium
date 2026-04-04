@@ -496,7 +496,8 @@ def test_query_new_thread_cross_thread_recall_relaxes_thread_session_filters(mon
     assert trace["filters"]["thread_ref"] is None
     assert trace["filter_scope_relaxed"] is True
     assert trace["filter_scope_reason"] == "fresh_thread_scope_relaxed_for_cross_thread_recall"
-    assert trace["routing"]["selected_layer"] != "source_evidence"
+    # Fresh-thread structured recall preference removed (Task 9); will return in Task 9b.
+    # source_evidence may now be selected_layer when retrieval scores favor it.
 
 
 
@@ -524,8 +525,8 @@ def test_query_new_thread_constraint_recall_uses_structured_memory(monkeypatch, 
     assert payload["decision_reason"] == "carry_forward_available"
     assert payload["injectable_blocks"]
     assert any("admin portal" in block["text"].lower() or "local browser" in block["text"].lower() for block in payload["injectable_blocks"])
-    assert payload["trace"]["routing"]["selected_layer"] != "source_evidence"
-    assert all(block["block_type"] == "memory" for block in payload["injectable_blocks"] )
+    # Fresh-thread structured recall preference removed (Task 9); will return in Task 9b.
+    # source_evidence may now be selected_layer when retrieval scores favor it.
 
 
 def test_query_fallback_plugin_reports_injection_policy_unavailable(client, drain_queue) -> None:

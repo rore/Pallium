@@ -90,8 +90,10 @@ def test_fresh_thread_constraint_recall_prefers_structured_memory_over_raw_sourc
 
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
-    assert outcome.trace.routing['selected_layer'] != 'source_evidence'
-    assert outcome.results[0].result_kind == 'memory_hit'
+    # Fresh-thread structured recall preference removed (Task 9); will return in Task 9b.
+    # Without the shaping stage, source_evidence may win when retrieval scores favor it.
+    # Assert that results are non-empty and constraint content is present in injectable blocks.
+    assert outcome.results
     assert any('admin portal' in block.text.lower() or 'local browser' in block.text.lower() for block in outcome.injectable_blocks)
     assert all(block.block_type == 'memory' for block in outcome.injectable_blocks)
 
@@ -284,9 +286,9 @@ def test_multi_token_wallet_recall_excludes_unrelated_batch_checkpoint() -> None
     )
     retrieval_result = RetrievalQueryResult(
         results=[
-            _wallet_snapshot_checkpoint_result(score=18),
-            _wallet_snapshot_summary_result(score=17),
-            _inventory_batch_constraint_checkpoint_result(score=8),
+            _wallet_snapshot_checkpoint_result(score=18, lexical_score=5),
+            _wallet_snapshot_summary_result(score=17, lexical_score=5),
+            _inventory_batch_constraint_checkpoint_result(score=8, lexical_score=2),
             _inventory_batch_constraint_summary_result(score=7),
         ],
         trace=QueryTrace(

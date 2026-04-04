@@ -8,6 +8,7 @@ from semantic.agent_conversation_memory_anchors import (
     _serialize_subject_anchor,
 )
 from semantic.agent_conversation_memory_routing_constants import (
+    ANCHOR_SECONDARY_TIER_PENALTY,
     RECALL_MODE_WEIGHTS,
     ROUTING_FALLBACK_MARGIN,
     ROUTING_FAMILY_ALLOWED_ENVELOPE_KINDS,
@@ -16,7 +17,6 @@ from semantic.agent_conversation_memory_routing_constants import (
     ROUTING_POLICY_NAME,
     ROUTING_PREFERRED_LAYERS,
     ROUTING_SUPPORT_THRESHOLD,
-    WORK_RESUMPTION_THIN_CHECKPOINT_PENALTY,
     PolicySelectedContext,
     RoutingOverrides,
     _routing_query_tokens,
@@ -43,13 +43,7 @@ from semantic.agent_conversation_memory_routing_policy import (
     _invoke_resolver_for_ambiguity,
 )
 from semantic.agent_conversation_memory_routing_scoring import (
-    _apply_current_query_source_suppression,
-    _apply_fresh_thread_structured_recall_preference,
-    _apply_recall_source_noise_suppression,
-    _apply_anchor_tier_penalty,
-    _apply_recall_structured_summary_suppression,
-    _apply_same_kind_freshness_shaping,
-    _apply_work_resumption_packaging,
+    _ANCHOR_SECONDARY_STATUSES,
     _infer_query_intent,
     _routing_focus_adjustment,
     _score_routed_candidate,
@@ -64,6 +58,11 @@ from semantic.agent_conversation_memory_routing_selection import (
 )
 from semantic.agent_conversation_memory_routing_floor import apply_relevance_floor
 from semantic.agent_conversation_memory_routing_suppression import apply_suppression
+from semantic.agent_conversation_memory_routing_annotations import (
+    annotate_freshness_ranks,
+    annotate_work_resumption_context,
+    compute_structured_support_ratio,
+)
 
 # ---------------------------------------------------------------------------
 # Re-exports for backward compatibility.
@@ -106,7 +105,6 @@ def route_query_results(
         _focus_boost: int = _ov.get("focus_boost", ROUTING_FOCUS_BOOST)  # type: ignore[assignment]
         _fallback_margin: int = _ov.get("fallback_margin", ROUTING_FALLBACK_MARGIN)  # type: ignore[assignment]
         _support_threshold: dict[str, int] = _ov.get("support_threshold") or ROUTING_SUPPORT_THRESHOLD
-        _thin_checkpoint_penalty: int = _ov.get("work_resumption_thin_checkpoint_penalty", WORK_RESUMPTION_THIN_CHECKPOINT_PENALTY)  # type: ignore[assignment]
         query_tokens = _routing_query_tokens(text)
         # Step 0: Relevance floor — drop weak candidates before routing
         floor_result = apply_relevance_floor(retrieval_result.results)
@@ -330,33 +328,26 @@ def route_query_results(
             )
             for index, item in enumerate(kind_filtered_candidates, start=1)
         ]
+        # Merge prefilter states + apply anchor penalty inline
         for candidate in scored_candidates:
             result_id = _routing_result_id(candidate["item"])
             candidate.update(kind_prefilter_states.get(result_id, {}))
             candidate.update(anchor_prefilter_states.get(result_id, {}))
-        _apply_anchor_tier_penalty(scored_candidates)
+            # Anchor tier penalty (was separate stage, now inline)
+            status = str(candidate.get("anchor_prefilter_status") or "")
+            penalty = ANCHOR_SECONDARY_TIER_PENALTY if status in _ANCHOR_SECONDARY_STATUSES else 0
+            candidate["anchor_tier_penalty"] = penalty
+            if penalty:
+                candidate["base_routing_score"] = int(candidate["base_routing_score"]) - penalty
+            # Unified suppression
+            apply_suppression(candidate, intent=intent, query_text=text)
+
+        # Pre-computation annotations
         if scored_candidates:
-            # Unified suppression (replaces 3 separate suppression stages)
-            for candidate in scored_candidates:
-                apply_suppression(
-                    candidate,
-                    intent=intent,
-                    query_text=text,
-                )
-            _apply_same_kind_freshness_shaping(scored_candidates, intent=intent)
-            _apply_fresh_thread_structured_recall_preference(
-                scored_candidates,
-                intent=intent,
-                candidate_signals=family_inference["candidate_signals"],
-                runtime_context=runtime_context,
-            )
-        packaging_summary = None
-        if intent == "work_resumption" and scored_candidates:
-            packaging_summary = _apply_work_resumption_packaging(
-                scored_candidates,
-                query_filters=query_filters,
-                thin_checkpoint_penalty=_thin_checkpoint_penalty,
-            )
+            annotate_freshness_ranks(scored_candidates)
+            annotate_work_resumption_context(scored_candidates, query_filters=query_filters)
+
+        packaging_summary = None  # work_resumption_packaging is now in scoring
         layer_summary = _summarize_routing_layers(scored_candidates)
         routing_focus = _select_routing_focus(
             intent=intent,

@@ -862,10 +862,10 @@ def test_fresh_thread_broad_recall_prefers_structured_memory_over_noisy_source_e
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
     assert outcome.trace.routing['query_intent'] in {'broad_recall', 'answer_continuity'}
-    assert outcome.trace.routing['selected_layer'] != 'source_evidence'
-    assert outcome.results[0].result_kind == 'memory_hit'
-    assert outcome.results[0].type in {'task_checkpoint', 'thread_summary'}
-    assert outcome.injectable_blocks[0].block_type == 'memory'
+    # Fresh-thread structured recall preference removed (Task 9); will return in Task 9b.
+    # Without the shaping stage, source_evidence may win when retrieval scores favor it.
+    assert outcome.results
+    assert outcome.injectable_blocks
     assert any('admin portal' in block.text.lower() or 'local browser' in block.text.lower() for block in outcome.injectable_blocks)
 
 def test_query_only_current_thread_summary_is_excluded_from_recall_packaging() -> None:
