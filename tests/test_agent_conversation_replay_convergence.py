@@ -90,7 +90,7 @@ def test_batch_digest_recall_converges_from_pending_source_evidence_to_structure
     pending_routing = pending_payload["trace"]["routing"]
     assert pending_payload["should_inject"] is False
     assert pending_payload["decision_reason"] == "no_relevant_memory"
-    assert pending_routing["query_family"] == "broad_recurring_recall"
+    assert pending_routing["query_family"] == "recall"
     assert pending_routing["selected_layer"] == "source_evidence"
     assert pending_payload["results"][0]["result_kind"] == "source_hit"
     assert pending_payload["results"][0]["memory_object_id"] is None
@@ -105,7 +105,7 @@ def test_batch_digest_recall_converges_from_pending_source_evidence_to_structure
     after_text = _render_injected_text(after_payload)
     assert after_payload["should_inject"] is True
     assert after_payload["decision_reason"] == "carry_forward_available"
-    assert after_routing["query_family"] == "broad_recurring_recall"
+    assert after_routing["query_family"] == "recall"
     assert after_routing["selected_layer"] in {"task_checkpoint", "thread_summary"}
     assert after_payload["results"][0]["result_kind"] == "memory_hit"
     assert after_payload["results"][0]["type"] in {"task_checkpoint", "thread_summary"}

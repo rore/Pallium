@@ -191,10 +191,10 @@ def test_downstream_query_returns_sharp_integration_ready_blocks(monkeypatch, te
     assert debug_response.status_code == 200
     routing = debug_response.json()["trace"]["routing"]
     family_inference = routing["family_inference"]
-    assert routing["query_intent"] in {"investigative_conclusion", "broad_recall"}  # envelope-first: recall mode from candidate evidence
+    assert routing["query_intent"] in {"structured_recall", "recall"}  # envelope-first: recall mode from candidate evidence
     assert family_inference["candidate_signals"]["sharp_lower_level_in_scope"] is True
     assert (
-        family_inference["family_scores"]["investigative_conclusion"]["candidate_score"]
-        > family_inference["family_scores"]["broad_recall"]["candidate_score"]
+        family_inference["family_scores"]["structured_recall"]["candidate_score"]
+        > family_inference["family_scores"]["recall"]["candidate_score"]
     )
 

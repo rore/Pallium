@@ -86,13 +86,13 @@ def test_public_corpus_benchmark_reports_success_and_failure_families(monkeypatc
     assert recall['primary_lane'] == 'realism'
     assert recall['scored_lanes'] == ['contract', 'trace', 'usefulness', 'realism', 'operational']
     assert recall['top_layer'] in {'lower_level_memory', 'source_evidence', 'continuity_memory'}  # envelope-first
-    assert recall['routing_intent'] in {'precise_fact', 'broad_recall', 'answer_continuity'}  # envelope-first
+    assert recall['routing_intent'] in {'structured_recall', 'recall'}  # envelope-first
     assert recall['query_family_match'] is True
     assert recall['injection_contract']['contract_success'] is True
 
     evidence = by_id['wildchat-feed-ratio-evidence-follow-up']
     assert evidence['top_layer'] in {'source_evidence', 'continuity_memory', 'lower_level_memory'}  # envelope-first
-    assert evidence['routing_intent'] in {'evidence_trace', 'broad_recall', 'answer_continuity'}  # envelope-first
+    assert evidence['routing_intent'] in {'evidence_trace', 'recall'}  # envelope-first
     assert evidence['should_inject'] is True
     assert evidence['decision_reason'] == 'carry_forward_available'
     # envelope-first routing: evidence_trace may not route correctly with stub classifier
@@ -116,13 +116,13 @@ def test_public_corpus_benchmark_reports_success_and_failure_families(monkeypatc
 
     grocery = by_id['wildchat-grocery-pattern-recall']
     assert grocery['top_layer'] == 'pattern_memory'
-    assert grocery['routing_intent'] == 'broad_recall'
+    assert grocery['routing_intent'] == 'recall'
     assert grocery['failure_families'] == []
 
     grocery_big_picture = by_id['wildchat-grocery-big-picture-paraphrase']
     # cue-free: scoring changes may cause routing/packaging failures for paraphrased queries
     grocery_family_inference = grocery_big_picture['query_trace']['routing']['family_inference']
-    assert grocery_family_inference['selected_family'] in {'broad_recall', 'investigative_conclusion'}
+    assert grocery_family_inference['selected_family'] in {'recall', 'structured_recall'}
 
     rewrite_no_value = by_id['wildchat-rewrite-no-value-guard']
     assert rewrite_no_value['winner'] != 'memory_backed'
@@ -133,7 +133,7 @@ def test_public_corpus_benchmark_reports_success_and_failure_families(monkeypatc
     branch_resume = by_id['wildchat-branch-kiosk-resumption']
     # cue-free: work_resumption requires resumed_session context; without it, routes as broad_recall
     assert branch_resume['top_layer'] in {'task_checkpoint', 'source_evidence', 'thread_summary'}
-    assert branch_resume['routing_intent'] in {'work_resumption', 'broad_recall'}
+    assert branch_resume['routing_intent'] in {'work_resumption', 'recall'}
     assert branch_resume['stale_guard_success'] in {True, False}  # depends on routing intent
 
     branch_no_value = by_id['wildchat-branch-kiosk-no-value-guard']

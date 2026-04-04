@@ -447,7 +447,7 @@ def test_same_thread_trivial_local_context_allows_cross_thread_carry_forward() -
     assert outcome.should_inject is True
     assert outcome.decision_reason == 'carry_forward_available'
     assert outcome.trace.routing['selected_layer'] != 'source_evidence'
-    assert outcome.trace.routing['query_family'] == 'broad_recurring_recall'
+    assert outcome.trace.routing['query_family'] == 'recall'
     assert any(block.memory_type == 'task_checkpoint' for block in outcome.injectable_blocks)
     assert outcome.trace.routing['injection_decision']['same_thread_context_evaluation']['reason_code'] == 'insufficient_same_thread_local_state'
     excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
@@ -651,7 +651,7 @@ def test_same_thread_user_status_update_does_not_block_broad_recall_carry_forwar
     assert outcome.trace.routing is not None
     assert outcome.should_inject is True
     assert outcome.decision_reason == 'carry_forward_available'
-    assert outcome.trace.routing['query_family'] == 'broad_recurring_recall'
+    assert outcome.trace.routing['query_family'] == 'recall'
     same_thread_context = outcome.trace.routing['injection_decision']['same_thread_context_evaluation']
     assert same_thread_context['reason_code'] == 'insufficient_same_thread_local_state'
     assert 'source_item:same-thread-user-status' not in same_thread_context['qualifying_result_ids']
@@ -861,7 +861,7 @@ def test_fresh_thread_broad_recall_prefers_structured_memory_over_noisy_source_e
 
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
-    assert outcome.trace.routing['query_intent'] in {'broad_recall', 'answer_continuity'}
+    assert outcome.trace.routing['query_intent'] in {'recall'}
     # Fresh-thread structured recall preference removed (Task 9); will return in Task 9b.
     # Without the shaping stage, source_evidence may win when retrieval scores favor it.
     assert outcome.results
@@ -1018,7 +1018,7 @@ def test_fresh_thread_evidence_trace_still_allows_source_evidence() -> None:
     # Without legacy English cues, evidence_trace intent is no longer detected
     # from query text alone. The query routes as broad_recall, but source evidence
     # may still be selected and injectable based on candidate scoring.
-    assert outcome.trace.routing['query_intent'] in ('evidence_trace', 'broad_recall', 'precise_fact')
+    assert outcome.trace.routing['query_intent'] in ('evidence_trace', 'recall', 'structured_recall')
     assert outcome.should_inject is True
     assert outcome.injectable_blocks
 
@@ -1094,7 +1094,7 @@ def test_precise_fact_quote_grade_recall_allows_supported_source_evidence() -> N
     assert outcome.trace.routing is not None
     # envelope-first routing: recall mode from candidate evidence, not English text.
     # Source injection deferred for recall modes — source evidence not primary-injectable.
-    assert outcome.trace.routing['query_intent'] in {'precise_fact', 'broad_recall'}
+    assert outcome.trace.routing['query_intent'] in {'structured_recall', 'recall'}
     # Source may or may not be injectable depending on recall mode
     assert outcome.results[0].source_item_id == 'source-evidence-log'
 
@@ -1170,7 +1170,7 @@ def test_precise_fact_quote_grade_recall_keeps_weak_source_evidence_non_injectab
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
     # envelope-first routing: recall mode from candidate evidence
-    assert outcome.trace.routing['query_intent'] in {'precise_fact', 'broad_recall'}
+    assert outcome.trace.routing['query_intent'] in {'structured_recall', 'recall'}
     # Weak source evidence: should not be injectable regardless of mode
     assert outcome.injectable_blocks == []
 
@@ -1351,8 +1351,8 @@ def test_same_thread_batch_reminder_after_trivial_greetings_uses_carry_forward_m
     assert outcome.should_inject is True
     assert outcome.decision_reason == 'carry_forward_available'
     assert outcome.decision_reason != 'same_thread_context_sufficient'
-    assert outcome.trace.routing['query_intent'] == 'broad_recall'
-    assert outcome.trace.routing['query_family'] == 'broad_recurring_recall'
+    assert outcome.trace.routing['query_intent'] == 'recall'
+    assert outcome.trace.routing['query_family'] == 'recall'
     assert outcome.trace.routing['selected_layer'] != 'source_evidence'
     assert same_thread['reason_code'] == 'insufficient_same_thread_local_state'
     assert any(block.memory_type in {'task_checkpoint', 'thread_summary'} for block in outcome.injectable_blocks)
@@ -1425,8 +1425,8 @@ def test_fresh_thread_batch_reminder_prefers_structured_carry_forward_over_sourc
     rendered_blocks = ' '.join(block.text.lower() for block in outcome.injectable_blocks)
     assert outcome.should_inject is True
     assert outcome.decision_reason == 'carry_forward_available'
-    assert outcome.trace.routing['query_intent'] == 'broad_recall'
-    assert outcome.trace.routing['query_family'] == 'broad_recurring_recall'
+    assert outcome.trace.routing['query_intent'] == 'recall'
+    assert outcome.trace.routing['query_family'] == 'new_thread_continuation'
     assert outcome.trace.routing['selected_layer'] != 'source_evidence'
     assert all(block.block_type == 'memory' for block in outcome.injectable_blocks)
     assert any(block.memory_type in {'task_checkpoint', 'thread_summary'} for block in outcome.injectable_blocks)
@@ -1612,8 +1612,8 @@ def test_same_thread_batch_reminder_lately_prefers_structured_carry_forward_over
     assert outcome.should_inject is True
     assert outcome.decision_reason == 'carry_forward_available'
     assert outcome.decision_reason != 'same_thread_context_sufficient'
-    assert outcome.trace.routing['query_intent'] == 'broad_recall'
-    assert outcome.trace.routing['query_family'] == 'broad_recurring_recall'
+    assert outcome.trace.routing['query_intent'] == 'recall'
+    assert outcome.trace.routing['query_family'] == 'recall'
     assert outcome.trace.routing['selected_layer'] != 'source_evidence'
     assert all(block.block_type == 'memory' for block in outcome.injectable_blocks)
     assert same_thread['reason_code'] == 'insufficient_same_thread_local_state'

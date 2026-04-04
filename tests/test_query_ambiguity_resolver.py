@@ -86,7 +86,7 @@ def test_build_resolver_packet_structure() -> None:
         {"result_id": "r3", "layer": "source_evidence", "memory_type": "source_hit", "support_score": 40, "summary": "source C"},
     ]
     option_a = {"query_policy_family": "resume_work", "allowed_query_intents": ["work_resumption"], "score": 50}
-    option_b = {"query_policy_family": "latest_status", "allowed_query_intents": ["broad_recall"], "score": 45}
+    option_b = {"query_policy_family": "latest_status", "allowed_query_intents": ["recall"], "score": 45}
 
     packet = build_resolver_packet(
         query_text="What's the latest?",
@@ -161,7 +161,7 @@ def test_evidence_pair_packet_construction() -> None:
         turn_kind=None,
         ambiguity_pair_type="evidence_trace_vs_recall",
         option_a={"query_policy_family": "evidence_trace", "allowed_query_intents": ["evidence_trace"], "score": 0},
-        option_b={"query_policy_family": "recall_fact", "allowed_query_intents": ["broad_recall"], "score": 0},
+        option_b={"query_policy_family": "recall_fact", "allowed_query_intents": ["recall"], "score": 0},
         candidates=[],
     )
     assert packet.ambiguity_pair_type == "evidence_trace_vs_recall"
@@ -180,7 +180,7 @@ def test_resolve_evidence_pair_falls_back_without_provider() -> None:
         turn_kind=None,
         ambiguity_pair_type="evidence_trace_vs_recall",
         option_a={"query_policy_family": "evidence_trace", "allowed_query_intents": ["evidence_trace"], "score": 0},
-        option_b={"query_policy_family": "recall_fact", "allowed_query_intents": ["broad_recall"], "score": 0},
+        option_b={"query_policy_family": "recall_fact", "allowed_query_intents": ["recall"], "score": 0},
         candidates=[],
     )
     result = resolve_query_ambiguity(

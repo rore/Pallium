@@ -254,7 +254,7 @@ def test_chat_mode_prefers_prior_decision_for_indirect_resource_recall(monkeypat
 
     assert query_response["should_inject"] is True
     assert query_response["decision_reason"] == "carry_forward_available"
-    assert routing["query_intent"] in {"precise_fact", "broad_recall"}  # envelope-first
+    assert routing["query_intent"] in {"structured_recall", "recall"}  # envelope-first
     assert routing["selected_layer"] in {"decision", "pattern_memory", "thread_summary", "lower_level_memory"}  # envelope-first
     assert query_response["results"][0]["result_kind"] == "memory_hit"
     assert query_response["results"][0]["type"] in {"decision", "investigation_outcome"}  # envelope-first
@@ -314,7 +314,7 @@ def test_chat_mode_keeps_task_checkpoint_for_messy_resumed_work_prompt(monkeypat
     # Without legacy English cues, work_resumption intent requires resumed_session
     # context. Without it, the query routes as broad_recall. The task checkpoint
     # may still appear in results but is not guaranteed to be the injected block.
-    assert routing["query_intent"] in ("work_resumption", "broad_recall")
+    assert routing["query_intent"] in ("work_resumption", "recall")
     assert query_response["injectable_blocks"]
     assert all(block["block_type"] == "memory" for block in query_response["injectable_blocks"])
     assert model.calls[0]["injectable_blocks"] == query_response["injectable_blocks"]
@@ -357,7 +357,7 @@ def test_chat_mode_uses_task_checkpoint_for_natural_language_resumed_work_histor
     # Without legacy English cues, work_resumption intent requires resumed_session
     # context. Without it, the query routes as broad_recall. The task checkpoint
     # may still appear in results but is not guaranteed to be the injected block.
-    assert routing["query_intent"] in ("work_resumption", "broad_recall")
+    assert routing["query_intent"] in ("work_resumption", "recall")
     assert query_response["injectable_blocks"]
     assert model.calls[0]["injectable_blocks"] == query_response["injectable_blocks"]
 
@@ -684,7 +684,7 @@ def test_fresh_thread_recalls_export_cap_fact_prefixed_control(monkeypatch, test
     assert query_response["should_inject"] is True, (
         f"Expected injection, got decision_reason={query_response.get('decision_reason')!r}"
     )
-    assert routing["query_intent"] in {"precise_fact", "broad_recall"}  # envelope-first: recall mode from candidate evidence
+    assert routing["query_intent"] in {"structured_recall", "recall"}  # envelope-first: recall mode from candidate evidence
     assert routing["selected_layer"] in {"decision", "pattern_memory", "lower_level_memory"}, (
         f"Expected recall layer, got {routing['selected_layer']!r}"
     )

@@ -128,10 +128,10 @@ def test_passthrough_policy_appears_in_trace() -> None:
 def test_policy_selected_context_dataclass_is_frozen() -> None:
     ctx = PolicySelectedContext(
         query_policy_family="recall_fact",
-        allowed_query_intents=frozenset({"broad_recall", "precise_fact"}),
+        allowed_query_intents=frozenset({"recall", "structured_recall"}),
     )
     assert ctx.query_policy_family == "recall_fact"
-    assert ctx.allowed_query_intents == frozenset({"broad_recall", "precise_fact"})
+    assert ctx.allowed_query_intents == frozenset({"recall", "structured_recall"})
     assert ctx.resolver_invoked is False
 
     try:
@@ -210,7 +210,7 @@ def test_classify_recall_fact_for_resumed_session_without_work_intent() -> None:
         "Have we already answered why overdue notices are batched?",
         query_shape_tags=["carry_forward"],
         runtime_context=ctx,
-        initial_intent="answer_continuity",
+        initial_intent="recall",
     ) == "recall_fact"
 
 
@@ -294,9 +294,9 @@ def test_noise_query_returns_empty_results() -> None:
 
 def test_intent_restriction_preserves_allowed_intent() -> None:
     family_inference = {
-        "selected_family": "broad_recall",
+        "selected_family": "recall",
         "family_scores": {
-            "broad_recall": {"total": 100},
+            "recall": {"total": 100},
             "work_resumption": {"total": 50},
         },
     }
@@ -304,7 +304,7 @@ def test_intent_restriction_preserves_allowed_intent() -> None:
         query_policy_family="recall_fact",
         allowed_query_intents=QUERY_POLICY_FAMILY_ALLOWED_INTENTS["recall_fact"],
     )
-    assert _apply_policy_intent_restriction(family_inference, ctx) == "broad_recall"
+    assert _apply_policy_intent_restriction(family_inference, ctx) == "recall"
 
 
 def test_intent_restriction_overrides_to_best_allowed() -> None:
@@ -312,24 +312,22 @@ def test_intent_restriction_overrides_to_best_allowed() -> None:
         "selected_family": "work_resumption",
         "family_scores": {
             "work_resumption": {"total": 120},
-            "broad_recall": {"total": 80},
+            "recall": {"total": 80},
         },
     }
     ctx = PolicySelectedContext(
         query_policy_family="latest_status",
-        allowed_query_intents=frozenset({"broad_recall"}),
+        allowed_query_intents=frozenset({"recall"}),
     )
-    # work_resumption is not in allowed intents, so overrides to broad_recall
-    assert _apply_policy_intent_restriction(family_inference, ctx) == "broad_recall"
+    # work_resumption is not in allowed intents, so overrides to recall
+    assert _apply_policy_intent_restriction(family_inference, ctx) == "recall"
 
 
 def test_recall_fact_allows_all_standard_intents() -> None:
     allowed = QUERY_POLICY_FAMILY_ALLOWED_INTENTS["recall_fact"]
-    assert "answer_continuity" in allowed
-    assert "broad_recall" in allowed
-    assert "precise_fact" in allowed
+    assert "recall" in allowed
+    assert "structured_recall" in allowed
     assert "evidence_trace" in allowed
-    assert "investigative_conclusion" in allowed
     assert "work_resumption" not in allowed
 
 
@@ -373,14 +371,12 @@ def test_anchor_filtered_constraint_does_not_inflate_ambiguity_score() -> None:
 
     # The ambiguity builder should see no constraint support and not create a pair
     family_inference = {
-        "selected_family": "broad_recall",
+        "selected_family": "recall",
         "query_shape_tags": ["constraint_recall"],
         "family_scores": {
-            "broad_recall": {"total": 80},
-            "answer_continuity": {"total": 40},
-            "precise_fact": {"total": 30},
+            "recall": {"total": 80},
+            "structured_recall": {"total": 30},
             "evidence_trace": {"total": 20},
-            "investigative_conclusion": {"total": 10},
         },
     }
     policy_ctx, options = _build_ambiguity_options(

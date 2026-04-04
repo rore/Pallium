@@ -314,7 +314,7 @@ def test_multi_token_wallet_recall_excludes_unrelated_batch_checkpoint() -> None
     rendered_blocks = ' '.join(block.text.lower() for block in outcome.injectable_blocks)
     assert outcome.should_inject is True
     assert outcome.decision_reason != 'same_thread_context_sufficient'
-    assert outcome.trace.routing['query_family'] == 'broad_recurring_recall'
+    assert outcome.trace.routing['query_family'] == 'recall'
     assert outcome.trace.routing['selected_layer'] != 'source_evidence'
     assert 'wallet reserve snapshot' in rendered_blocks
     # Wallet checkpoint must rank first (highest retrieval score + evidence shape)

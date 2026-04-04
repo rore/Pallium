@@ -396,5 +396,5 @@ def test_broad_recall_query_unaffected_by_lane_narrowing():
     lane_trace = outcome.trace.routing.get('lane_narrowing', {})
     assert lane_trace.get('selection_mode') == 'residual_fallthrough'
     assert outcome.trace.routing.get('query_intent') in (
-        'broad_recall', 'precise_fact', 'answer_continuity', 'investigative_conclusion',
+        'recall', 'structured_recall',
     )

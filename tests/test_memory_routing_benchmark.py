@@ -78,20 +78,20 @@ def test_memory_routing_benchmark_captures_expected_layer_choices_and_new_verdic
     assert broad['primary_lane'] == 'trace'
     assert broad['scored_lanes'] == ['contract', 'trace']
     assert broad['top_layer'] in {'pattern_memory', 'lower_level_memory'}  # envelope-first: recall mode may change top layer
-    assert broad['routing_intent'] in {'broad_recall', 'precise_fact'}  # recall mode from candidate evidence
-    assert broad['query_family'] in {'broad_recurring_recall', 'precise_fact'}  # envelope-first
+    assert broad['routing_intent'] in {'recall', 'structured_recall'}  # recall mode from candidate evidence
+    assert broad['query_family'] in {'recall', 'structured_recall'}  # envelope-first
     assert broad['should_inject'] is True
     assert broad['injection_contract']['contract_success'] in {True, False}  # envelope-first: may change injection behavior
 
     repeated = results['answer-continuity-repeat']
     assert repeated['top_layer'] in {'continuity_memory', 'lower_level_memory'}  # RRF fusion may reorder
-    assert repeated['query_family'] in {'resumed_session_continuation', 'broad_recurring_recall'}  # envelope-first
+    assert repeated['query_family'] in {'resumed_session_continuation', 'recall'}  # envelope-first
     assert repeated['query_contract_consistent'] is True
     assert repeated['query_contract_mismatch_fields'] == []
 
     verdict = results['investigative-conclusion-verdict']
-    assert verdict['routing_intent'] in {'investigative_conclusion', 'broad_recall'}  # envelope-first
-    assert verdict['query_family'] in {'investigative_conclusion', 'broad_recall', 'broad_recurring_recall'}  # envelope-first
+    assert verdict['routing_intent'] in {'structured_recall', 'recall'}  # envelope-first
+    assert verdict['query_family'] in {'structured_recall', 'recall'}  # envelope-first
     assert verdict['top_layer'] == 'lower_level_memory'
     assert verdict['top_memory_type'] == 'investigation_outcome'
     assert verdict['injection_contract']['contract_success'] is True
@@ -123,8 +123,8 @@ def test_memory_routing_benchmark_closes_false_merge_guard_routing_gap(monkeypat
     assert challenge['policy_success'] in {True, False}  # envelope-first
     assert challenge['query_contract_consistent'] is True
     assert challenge['injection_contract']['contract_success'] in {True, False}  # envelope-first
-    assert challenge['routing_intent'] in {'evidence_trace', 'broad_recall', 'investigative_conclusion'}  # cue-free: evidence_trace not Tier 1 detectable
-    assert challenge['query_trace']['routing']['family_inference']['selected_family'] in {'evidence_trace', 'investigative_conclusion', 'broad_recall'}  # cue-free
+    assert challenge['routing_intent'] in {'evidence_trace', 'recall', 'structured_recall'}  # cue-free: evidence_trace not Tier 1 detectable
+    assert challenge['query_trace']['routing']['family_inference']['selected_family'] in {'evidence_trace', 'structured_recall', 'recall'}  # cue-free
 
     assert fallback_case['top_layer'] == 'lower_level_memory'
     assert fallback_case['query_contract_consistent'] is True
@@ -132,16 +132,16 @@ def test_memory_routing_benchmark_closes_false_merge_guard_routing_gap(monkeypat
     assert fallback_case['policy_success'] is True
     assert fallback_case['intent_match'] is True
     assert fallback_case['query_family_match'] is True
-    assert fallback_case['routing_intent'] == 'broad_recall'
-    assert fallback_case['query_family'] == 'broad_recurring_recall'
-    assert fallback_case['expected_query_family'] == 'broad_recurring_recall'
+    assert fallback_case['routing_intent'] == 'recall'
+    assert fallback_case['query_family'] == 'recall'
+    assert fallback_case['expected_query_family'] == 'recall'
     family_inference = fallback_case['query_trace']['routing']['family_inference']
-    assert family_inference['selected_family'] in {'broad_recall', 'investigative_conclusion'}  # cue-free: family inference from candidate evidence
+    assert family_inference['selected_family'] in {'recall', 'structured_recall'}  # cue-free: family inference from candidate evidence
     assert family_inference['candidate_signals']['relevant_cross_thread_continuity_in_scope'] in {True, False}  # cue-free: content_overlap_tokens removed
     if family_inference['candidate_signals']['relevant_cross_thread_continuity_in_scope']:
         assert family_inference['candidate_signals']['relevant_cross_thread_continuity'] is not None
         assert len(family_inference['candidate_signals']['continuity_topic_alignment_tokens']) >= 2
-        assert 'cross_thread_carry_forward_support' in family_inference['family_scores']['broad_recall']['reasons']
+        assert 'cross_thread_carry_forward_support' in family_inference['family_scores']['recall']['reasons']
     # cue-free: carry_forward_history scoring depends on cross-thread continuity detection (content_overlap removed)
-    precise_fact_reasons = family_inference['family_scores']['precise_fact']['reasons']
-    assert 'carry_forward_history_outweighs_precise_lookup' in precise_fact_reasons or 'sharp_lower_level_support' in precise_fact_reasons
+    structured_recall_reasons = family_inference['family_scores']['structured_recall']['reasons']
+    assert 'sharp_lower_level_support' in structured_recall_reasons or 'weak_investigative_support' in structured_recall_reasons

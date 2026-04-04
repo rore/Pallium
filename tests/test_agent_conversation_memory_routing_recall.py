@@ -23,7 +23,7 @@ def test_broad_recall_routes_pattern_memory_first(monkeypatch, test_db_url: str)
         # envelope-first routing: recall mode from candidate evidence, not English text.
         # envelope-first: sharp_fact_preference maps to broad_recall intent (modes don't activate
         # finding-only gate). pattern_memory may now appear in results since summary kind is allowed.
-        assert routing['query_intent'] in {'broad_recall', 'precise_fact'}
+        assert routing['query_intent'] in {'recall', 'structured_recall'}
         assert routing['preferred_layers'][0] in {'pattern_memory', 'decision'}
         assert payload['results'][0]['result_kind'] == 'memory_hit'
 
@@ -41,7 +41,7 @@ def test_repeated_answer_routes_continuity_memory_first(monkeypatch, test_db_url
         # envelope-first routing: recall mode from candidate evidence, not English text.
         # Mixed candidates -> default recall mode -> broad_recall.
         # With RRF fusion, result ordering may vary; assert routing correctness not rank.
-        assert routing['query_intent'] == 'broad_recall'
+        assert routing['query_intent'] == 'recall'
         assert routing['preferred_layers'][0] == 'pattern_memory'
         assert payload['results'][0]['result_kind'] == 'memory_hit'
         result_types = [r['type'] for r in payload['results']]
@@ -64,7 +64,7 @@ def test_precise_fact_routes_sharp_decision_ahead_of_higher_level_memory(monkeyp
         # investigation_outcome has higher broad_recall layer weight (330) than decision (310).
         # With quality_score * QUALITY_WEIGHT (capped at 100), the layer weight difference
         # dominates over retrieval-score differences, so investigation_outcome wins.
-        assert routing['query_intent'] == 'broad_recall'
+        assert routing['query_intent'] == 'recall'
         assert routing['preferred_layers'][0] == 'pattern_memory'
         assert payload['results'][0]['result_kind'] == 'memory_hit'
         assert payload['results'][0]['type'] in ('decision', 'investigation_outcome')
@@ -90,7 +90,7 @@ def test_evidence_trace_routes_source_evidence_first(monkeypatch, test_db_url: s
         # is not detected from the envelope. Falls through to recall mode from candidates.
         # With broad_recall, source_evidence weight (120) is lower than investigation_outcome (330),
         # so memory hits rank above source hits.
-        assert routing['query_intent'] == 'broad_recall'
+        assert routing['query_intent'] == 'recall'
         assert routing['preferred_layers'][0] == 'pattern_memory'
         assert payload['results'][0]['result_kind'] == 'memory_hit'
         assert payload['results'][0]['type'] in {'investigation_outcome', 'decision'}
@@ -194,7 +194,7 @@ def test_evidence_trace_with_task_checkpoint_still_prefers_source_evidence(monke
         # is not detected from the envelope. Falls through to recall mode from candidates.
         # With broad_recall, source_evidence weight (120) is lower than memory types,
         # but source hits still appear in results alongside any memory hits.
-        assert routing['query_intent'] == 'broad_recall'
+        assert routing['query_intent'] == 'recall'
         assert routing['preferred_layers'][0] == 'pattern_memory'
         assert payload['results'][0]['result_kind'] == 'source_hit'
         assert any(
@@ -222,15 +222,15 @@ def test_broad_recall_history_query_prefers_carry_forward_conclusion_shape(monke
         family_inference = routing['family_inference']
         candidate_signals = family_inference['candidate_signals']
 
-        assert routing['query_intent'] == 'broad_recall'
-        assert routing['query_family'] == 'broad_recurring_recall'
+        assert routing['query_intent'] == 'recall'
+        assert routing['query_family'] == 'recall'
         assert payload['results'][0]['type'] in {'decision', 'investigation_outcome'}
         # envelope-first routing: query_shape_tags are empty (English cues removed),
         # so selected_family is driven by candidate scores alone.
         # investigative_conclusion wins from sharp_lower_level candidate support
         # when no big_picture or history_lookup shape tag boosts broad_recall.
-        assert family_inference['selected_family'] in {'broad_recall', 'investigative_conclusion'}
-        assert family_inference['text_hint_family'] == 'broad_recall'
+        assert family_inference['selected_family'] in {'recall', 'structured_recall'}
+        assert family_inference['text_hint_family'] == 'recall'
         # Content overlap scoring was removed — continuity detection is no longer
         # available through token overlap. Cross-thread continuity signals are always
         # empty in cue-free mode.
@@ -239,8 +239,8 @@ def test_broad_recall_history_query_prefers_carry_forward_conclusion_shape(monke
         if candidate_signals.get('relevant_cross_thread_continuity_in_scope'):
             assert candidate_signals['relevant_cross_thread_continuity'] is not None
             assert len(candidate_signals['continuity_topic_alignment_tokens']) >= 2
-            assert 'cross_thread_carry_forward_support' in family_inference['family_scores']['broad_recall']['reasons']
-            assert 'carry_forward_history_outweighs_precise_lookup' in family_inference['family_scores']['precise_fact']['reasons']
+            assert 'cross_thread_carry_forward_support' in family_inference['family_scores']['recall']['reasons']
+            assert 'carry_forward_history_outweighs_precise_lookup' in family_inference['family_scores']['structured_recall']['reasons']
 
 def test_off_topic_cross_thread_continuity_does_not_boost_broad_recall() -> None:
     plugin = AgentConversationMemoryPlugin(
@@ -329,8 +329,8 @@ def test_off_topic_cross_thread_continuity_does_not_boost_broad_recall() -> None
     assert candidate_signals['relevant_cross_thread_continuity_in_scope'] is False
     assert candidate_signals['relevant_cross_thread_continuity'] is None
     assert candidate_signals['continuity_topic_alignment_tokens'] == []
-    assert 'cross_thread_carry_forward_support' not in family_inference['family_scores']['broad_recall']['reasons']
-    assert 'carry_forward_history_outweighs_precise_lookup' not in family_inference['family_scores']['precise_fact']['reasons']
+    assert 'cross_thread_carry_forward_support' not in family_inference['family_scores']['recall']['reasons']
+    assert 'carry_forward_history_outweighs_precise_lookup' not in family_inference['family_scores']['structured_recall']['reasons']
 
 def test_mixed_continuity_candidates_still_detect_relevant_carry_forward() -> None:
     plugin = AgentConversationMemoryPlugin(
@@ -443,9 +443,9 @@ def test_mixed_continuity_candidates_still_detect_relevant_carry_forward() -> No
     assert candidate_signals['continuity_topic_alignment_tokens'] == []
     # Without carry_forward support, selected_family may shift from broad_recall.
     # answer_continuity can win when strong continuity_memory candidates are present.
-    assert family_inference['selected_family'] in {'broad_recall', 'investigative_conclusion', 'answer_continuity'}
-    assert 'cross_thread_carry_forward_support' not in family_inference['family_scores']['broad_recall']['reasons']
-    assert 'carry_forward_history_outweighs_precise_lookup' not in family_inference['family_scores']['precise_fact']['reasons']
+    assert family_inference['selected_family'] in {'recall', 'structured_recall'}
+    assert 'cross_thread_carry_forward_support' not in family_inference['family_scores']['recall']['reasons']
+    assert 'carry_forward_history_outweighs_precise_lookup' not in family_inference['family_scores']['structured_recall']['reasons']
 
 def test_broad_recall_filters_unrelated_continuity_memory(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
@@ -466,7 +466,7 @@ def test_broad_recall_filters_unrelated_continuity_memory(monkeypatch, test_db_u
         routing = payload['trace']['routing']
         rendered_results = json.dumps(payload['results']).lower()
 
-        assert routing['query_intent'] == 'broad_recall'
+        assert routing['query_intent'] == 'recall'
         # Score range compression (quality_score * 100 vs retrieval_score * 10) reduces
         # retrieval-score differentiation. Unrelated same-layer items may appear when
         # layer weights dominate over quality gaps. Freshness shaping (Task 9b) will
@@ -495,7 +495,7 @@ def test_investigative_conclusion_prefers_sharp_conclusions_over_generic_summari
         # Mixed candidates -> default recall mode -> broad_recall.
         # Sharp conclusions (decision, investigation_outcome) still rank above summaries
         # because broad_recall weights favor them (310, 330) over thread_summary (130).
-        assert routing['query_intent'] == 'broad_recall'
+        assert routing['query_intent'] == 'recall'
         assert routing['preferred_layers'][:3] == ['pattern_memory', 'investigation_outcome', 'decision']
         assert payload['results'][0]['result_kind'] == 'memory_hit'
         assert payload['results'][0]['type'] in {'investigation_outcome', 'decision'}
@@ -629,10 +629,10 @@ def test_indirect_investigative_prompt_uses_sharp_conclusion_shape(monkeypatch, 
         # Mixed candidates -> default recall mode -> broad_recall.
         # query_shape_tags are empty in cue-free mode (English cues removed).
         # sharp_lower_level signals are still detected from candidate evidence.
-        assert routing['query_intent'] == 'broad_recall'
+        assert routing['query_intent'] == 'recall'
         assert family_inference['query_shape_tags'] == []
         assert family_inference['candidate_signals']['sharp_lower_level_in_scope'] is True
-        assert 'sharp_lower_level_support' in family_inference['family_scores']['investigative_conclusion']['reasons']
+        assert 'sharp_lower_level_support' in family_inference['family_scores']['structured_recall']['reasons']
 
 def test_routing_trace_exposes_candidate_aware_family_scorecard(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
@@ -654,15 +654,15 @@ def test_routing_trace_exposes_candidate_aware_family_scorecard(monkeypatch, tes
 
         # envelope-first routing: query_shape_tags are empty (English cues removed).
         # selected_family may differ from broad_recall because shape bonuses are absent.
-        assert family_inference['selected_family'] in {'broad_recall', 'investigative_conclusion'}
-        assert family_inference['text_hint_family'] == 'broad_recall'
+        assert family_inference['selected_family'] in {'recall', 'structured_recall'}
+        assert family_inference['text_hint_family'] == 'recall'
         # big_picture tag no longer populated (English cue classification removed)
         assert family_inference['query_shape_tags'] == []
         assert family_inference['candidate_signals']['top_layers']
-        assert family_inference['family_scores']['broad_recall']['candidate_score'] > 0
+        assert family_inference['family_scores']['recall']['candidate_score'] > 0
         assert (
-            family_inference['family_scores']['broad_recall']['total']
-            > family_inference['family_scores']['precise_fact']['total']
+            family_inference['family_scores']['recall']['total']
+            > family_inference['family_scores']['structured_recall']['total']
         )
 
 def test_workstream_anchor_prefilter_excludes_same_surface_off_topic_memory() -> None:
@@ -839,8 +839,8 @@ def test_discussion_topic_query_classifies_as_broad_recall() -> None:
 
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
-    assert outcome.trace.routing['query_intent'] == 'broad_recall', (
-        f"Expected broad_recall but got {outcome.trace.routing['query_intent']!r} — "
+    assert outcome.trace.routing['query_intent'] == 'recall', (
+        f"Expected recall but got {outcome.trace.routing['query_intent']!r} — "
         "BROAD_RECALL_CUES may be missing discussion/topic phrases"
     )
 
@@ -888,8 +888,8 @@ def test_discussion_summary_candidate_selected_via_broad_recall_routing() -> Non
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
     routing = outcome.trace.routing
-    assert routing['query_intent'] == 'broad_recall', (
-        f"Expected broad_recall intent, got {routing['query_intent']!r}"
+    assert routing['query_intent'] == 'recall', (
+        f"Expected recall intent, got {routing['query_intent']!r}"
     )
     selected_ids = [r.memory_object_id for r in outcome.results if r.result_kind == 'memory_hit']
     assert 'summary-file-size-limit' in selected_ids, (
@@ -930,8 +930,8 @@ def test_precise_fact_routing_not_regressed_by_discussion_cues() -> None:
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
     # envelope-first routing: no candidates -> default recall mode -> broad_recall
-    assert outcome.trace.routing['query_intent'] == 'broad_recall', (
-        f"Expected broad_recall but got {outcome.trace.routing['query_intent']!r} — "
+    assert outcome.trace.routing['query_intent'] == 'recall', (
+        f"Expected recall but got {outcome.trace.routing['query_intent']!r} — "
         "envelope-first routing: empty candidates always yield default recall mode"
     )
 
@@ -970,8 +970,8 @@ def test_exact_fact_with_last_session_not_misrouted_to_broad_recall() -> None:
         assert outcome.trace is not None
         assert outcome.trace.routing is not None
         # envelope-first routing: no candidates -> default recall mode -> broad_recall
-        assert outcome.trace.routing['query_intent'] == 'broad_recall', (
-            f"Query {query_text!r} expected broad_recall but got "
+        assert outcome.trace.routing['query_intent'] == 'recall', (
+            f"Query {query_text!r} expected recall but got "
             f"{outcome.trace.routing['query_intent']!r} — "
             "envelope-first routing: empty candidates always yield default recall mode"
         )
@@ -1062,7 +1062,7 @@ def test_multi_user_recall_routes_shared_decisions_from_different_threads(monkey
         )
         routing = payload['trace']['routing']
 
-        assert routing['query_intent'] in ('broad_recall', 'precise_fact')
+        assert routing['query_intent'] in ('recall', 'structured_recall')
         assert payload['results'], 'Expected results from shared multi-user container'
         # Verify at least one decision is in the results
         memory_hits = [r for r in payload['results'] if r['result_kind'] == 'memory_hit']

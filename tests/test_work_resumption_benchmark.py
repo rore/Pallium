@@ -320,7 +320,7 @@ def test_work_resumption_benchmark_captures_successes_and_attributed_packaging_f
 
     evidence_followup = results["resume-exact-evidence-for-review-blocker"]
     assert evidence_followup["winner"] == "memory_backed"
-    assert evidence_followup["routing_intent"] in {"evidence_trace", "broad_recall", "investigative_conclusion"}  # cue-free: evidence_trace not Tier 1 detectable
+    assert evidence_followup["routing_intent"] in {"evidence_trace", "recall", "structured_recall"}  # cue-free: evidence_trace not Tier 1 detectable
     assert evidence_followup["should_inject"] is True
     # cue-free: injection contract may fail when evidence_trace routes as broad_recall
     assert evidence_followup["injection_contract"]["contract_success"] in {True, False}
