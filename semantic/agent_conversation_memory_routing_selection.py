@@ -333,7 +333,7 @@ def _build_injectable_blocks(
     if _INJECTION_VERBOSE:
         block_summaries = []
         for b in blocks:
-            block_summaries.append(f"{b.result_id[:30]} type={b.label}")
+            block_summaries.append(f"{b.result_id[:30]} type={b.block_type}")
         _injection_verbose(
             f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
             f"should_inject={bool(blocks)} reason={'carry_forward_available' if blocks else 'no_relevant_memory'} "

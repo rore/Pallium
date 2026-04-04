@@ -180,11 +180,18 @@ def route_query_results(
                 sharp_candidate_diagnostics=[],
             )
         # Step 3b: Evidence trace detection (deterministic, no LLM)
-        # Only override when source hits overwhelmingly dominate the candidate set.
-        # Threshold 0.75 avoids false positives in mixed recall scenarios where
-        # memory objects are present alongside source evidence.
+        # Only override when source hits overwhelmingly dominate the candidate set
+        # AND at least one source hit has vector confirmation (retrieval_source
+        # includes vector). Without vector confirmation, source-dominant sets are
+        # likely lexical noise (e.g., stop-word overlap on off-topic queries).
         source_ratio = float(candidate_evidence.get("source_hit_ratio", 0))
+        _any_source_has_vector = any(
+            item.result_kind == "source_hit"
+            and getattr(item, "retrieval_source", None) in ("vector", "both")
+            for item in anchor_prefiltered_candidates
+        )
         if (source_ratio >= 0.75
+            and _any_source_has_vector
             and not signal_envelope.resume_state
             and not signal_envelope.low_value
             and not signal_envelope.evidence_request):
@@ -311,6 +318,19 @@ def route_query_results(
                     allowed_query_intents=frozenset({intent}),
                 )
                 final_intent_used = False
+        # Verbose routing context for injection debugging
+        from semantic.agent_conversation_memory_routing_injection import _VERBOSE as _INJ_VERBOSE, _verbose as _inj_verbose
+        if _INJ_VERBOSE:
+            _lane_mode = lane_result.selection_mode
+            _lane_intent = lane_result.mapped_intent
+            _env_resume = signal_envelope.resume_state
+            _env_evidence = signal_envelope.evidence_request
+            _env_derivation = signal_envelope.derivation_signals
+            _inj_verbose(
+                f"ROUTING query={text[:80]!r} | intent={intent} lane_mode={_lane_mode} "
+                f"lane_intent={_lane_intent} envelope_resume={_env_resume} "
+                f"envelope_evidence={_env_evidence} derivation={_env_derivation}"
+            )
         # Post-routing: run _infer_query_intent() for shaping compatibility
         family_inference = _infer_query_intent(
             text=text,
@@ -401,6 +421,17 @@ def route_query_results(
         )
         for routing_rank, candidate in enumerate(ranked_candidates, start=1):
             candidate["routing_rank"] = routing_rank
+        if _INJ_VERBOSE:
+            _inj_verbose(f"ROUTING query={text[:80]!r} | final_candidates={len(final_candidates)} ranked={len(ranked_candidates)}")
+            for c in final_candidates[:6]:
+                item = c["item"]
+                _inj_verbose(
+                    f"  rank={c.get('routing_rank')} id={getattr(item, 'result_id', '?')[:35]} "
+                    f"kind={getattr(item, 'result_kind', '?')} type={getattr(item, 'type', None)} "
+                    f"lex={c.get('lexical_score')} vec={c.get('vector_score')} "
+                    f"src={getattr(item, 'retrieval_source', None)} "
+                    f"score={c.get('routing_score')} suppressed={c.get('suppression_reason_code')}"
+                )
         # Derive envelope-based shape tags for downstream selection (not English-derived)
         _envelope_selection_tags: list[str] = []
         final_candidates, packaging_summary = _select_final_candidates(

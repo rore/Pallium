@@ -415,6 +415,39 @@ def _derive_query_signal_envelope(
         if is_resumed and work_gate:
             signals["resume_state"] = True
             derivation.append("resumed_session_with_evidence")
+        elif is_resumed and not work_gate:
+            # Fallback: resumed session without checkpoint/usefulness evidence.
+            # Accept decisions or investigations as proof of active work context —
+            # "pick up where I left off" should surface the last decision even when
+            # no task_checkpoint was extracted. Uses a lower support threshold than
+            # the general policy gate because the integrating agent has already
+            # signaled resumed_session confidence via turn_kind.
+            #
+            # Only fire when query lacks topical signal (no substantive lexical
+            # overlap with candidates). Queries like "which repo changed and why?"
+            # have specific topic words and should route normally via recall.
+            # Guard: lexical_score=None means non-composite retrieval where we
+            # can't measure overlap — skip fallback to avoid false reclassification.
+            _candidate_lex_scores = [
+                int(getattr(item, "lexical_score", 0) or 0)
+                for item in anchor_prefiltered_candidates
+                if getattr(item, "lexical_score", None) is not None
+            ]
+            _best_candidate_lex = max(_candidate_lex_scores) if _candidate_lex_scores else None
+            _RESUMED_SESSION_SUPPORT_FLOOR = 40
+            _has_supported_sharp = (
+                _best_candidate_lex is not None
+                and _best_candidate_lex < 2
+                and any(
+                    item.result_kind == "memory_hit"
+                    and getattr(item, "type", None) in ("decision", "investigation_outcome")
+                    and _policy_candidate_support_estimate(item, _result_layer(item)) >= _RESUMED_SESSION_SUPPORT_FLOOR
+                    for item in anchor_prefiltered_candidates
+                )
+            )
+            if _has_supported_sharp:
+                signals["resume_state"] = True
+                derivation.append("resumed_session_with_supported_decision")
 
         # evidence_request: NOT derivable from Tier 1 structural signals
 

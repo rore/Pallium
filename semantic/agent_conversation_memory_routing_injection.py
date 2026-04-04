@@ -70,9 +70,20 @@ def should_allow_injection(
     )
 
     if has_any_score:
-        best_lexical = max(int(c.get("lexical_score", 0) or 0) for c in candidates)
+        # Exclude discussion_summary from best_lexical: a discussion_summary's
+        # lexical overlap with the query is circular — it was derived from content
+        # that shares the query's words by construction (e.g., an ingested copy of
+        # the query text gets summarized, producing a summary that echoes the query).
+        # Including it inflates the set-level gate confidence without adding
+        # independent evidence of topical relevance.
+        _non_summary_candidates = [
+            c for c in candidates
+            if getattr(c.get("item"), "type", None) != "discussion_summary"
+        ]
+        _lex_candidates = _non_summary_candidates or candidates
+        best_lexical = max(int(c.get("lexical_score", 0) or 0) for c in _lex_candidates)
         best_vector = max(int(c.get("vector_score", 0) or 0) for c in candidates)
-        has_any_lexical = any(c.get("lexical_score") is not None for c in candidates)
+        has_any_lexical = any(c.get("lexical_score") is not None for c in _lex_candidates)
 
         cond1 = best_lexical >= thresholds.set_lexical_threshold
         cond2 = best_vector >= thresholds.set_vector_high and best_lexical >= thresholds.set_lexical_low
@@ -86,8 +97,17 @@ def should_allow_injection(
             and best_lexical >= thresholds.set_lexical_low
             and best_vector >= thresholds.high_value_vector_floor
         )
+        # Condition 5: work_resumption intent with supported structured memory.
+        # "Pick up where I left off" has no lexical overlap with the actual work
+        # topic — the intent classification itself is the confidence signal.
+        # Requires the routing to have already classified this as work_resumption
+        # (which needs turn_kind=resumed_session + candidate evidence).
+        cond5 = (
+            intent == "work_resumption"
+            and _has_supported_high_value_memory(candidates)
+        )
 
-        result = cond1 or cond2 or cond3 or cond4
+        result = cond1 or cond2 or cond3 or cond4 or cond5
 
         if verbose:
             _verbose(
@@ -95,7 +115,7 @@ def should_allow_injection(
                 f"candidates={len(candidates)} best_lex={best_lexical} best_vec={best_vector} "
                 f"has_any_lex={has_any_lexical} has_hv={_has_high_value_memory(candidates)} "
                 f"has_supported_hv={_has_supported_high_value_memory(candidates)} | "
-                f"cond1={cond1} cond2={cond2} cond3={cond3} cond4={cond4} "
+                f"cond1={cond1} cond2={cond2} cond3={cond3} cond4={cond4} cond5={cond5} "
                 f"-> {'ALLOW' if result else 'BLOCK'}"
             )
             for i, c in enumerate(candidates[:10]):
