@@ -190,6 +190,9 @@ ROUTING_FOCUS_BOOST = 120
 
 ANCHOR_SECONDARY_TIER_PENALTY = 120  # must be >= ROUTING_FOCUS_BOOST; ensures aligned always outranks secondary tier even at max focus boost
 
+LEXICAL_NORM_SCALE = 6  # ~log(400); fixed for IDF-to-[0,1] normalization
+QUALITY_WEIGHT = 100    # multiplier for quality_score in scoring formula (used later in Phase 2)
+
 ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY = 90
 
 

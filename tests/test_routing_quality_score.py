@@ -1,0 +1,14 @@
+"""Tests for quality_score computation from raw retrieval scores."""
+from semantic.agent_conversation_memory_routing_scoring import _compute_quality_score
+
+def test_vector_dominant():
+    assert abs(_compute_quality_score(lexical_score=2, vector_score=800) - 0.8) < 0.01
+
+def test_lexical_dominant():
+    assert abs(_compute_quality_score(lexical_score=5, vector_score=400) - 0.833) < 0.01
+
+def test_clamps_lexical():
+    assert abs(_compute_quality_score(lexical_score=8, vector_score=0) - 1.0) < 0.01
+
+def test_zero_both():
+    assert _compute_quality_score(lexical_score=0, vector_score=0) == 0.0

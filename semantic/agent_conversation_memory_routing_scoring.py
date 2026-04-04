@@ -14,6 +14,7 @@ from semantic.agent_conversation_memory_threads import (
 from semantic.agent_conversation_memory_routing_constants import (
     ANCHOR_SECONDARY_TIER_PENALTY,
     HIGHER_LEVEL_RETRIEVAL_FLOOR,
+    LEXICAL_NORM_SCALE,
     ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY,
     ROUTING_FALLBACK_MARGIN,
     ROUTING_FAMILY_INFERENCE_PRIORITY,
@@ -49,6 +50,20 @@ from semantic.agent_conversation_memory_routing_signals import (
 from semantic.agent_conversation_memory_anchors import (
     _serialize_subject_anchors,
 )
+
+
+# ---------------------------------------------------------------------------
+# Quality score
+# ---------------------------------------------------------------------------
+
+def _compute_quality_score(lexical_score: int, vector_score: int) -> float:
+    """Normalized quality from raw retrieval scores. Returns 0.0-1.0.
+
+    Uses fixed normalization (LEXICAL_NORM_SCALE=6, not result-set-dependent).
+    """
+    lex_norm = min(lexical_score / LEXICAL_NORM_SCALE, 1.0)
+    vec_norm = vector_score / 1000.0
+    return max(lex_norm, vec_norm)
 
 
 # ---------------------------------------------------------------------------
@@ -594,6 +609,10 @@ def _score_routed_candidate(
         + _locality_adjustment(intent=intent, layer=layer, same_thread=same_thread, same_container=same_container)
     )
     support_grade = _routing_support_grade(evidence_shape_score, support_threshold=support_threshold)
+    quality_score = _compute_quality_score(
+        int(item.lexical_score or 0),
+        int(item.vector_score or 0),
+    )
     return {
         "item": item,
         "layer": layer,
@@ -620,6 +639,7 @@ def _score_routed_candidate(
         "work_usefulness_score": 0,
         "lexical_score": item.lexical_score,
         "vector_score": item.vector_score,
+        "quality_score": quality_score,
     }
 
 
