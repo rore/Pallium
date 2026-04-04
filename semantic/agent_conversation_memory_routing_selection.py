@@ -593,7 +593,6 @@ def _candidate_qualifies_as_same_thread_local_state(
     support_grade = str(candidate.get("support_grade") or "weak")
     support_score = int(candidate.get("support_score") or 0)
     work_usefulness = int(candidate.get("work_usefulness_score") or 0)
-    overlap_tokens = list(candidate.get("content_overlap_tokens") or [])
 
     if item.result_kind == "source_hit":
         excerpt = str(item.excerpt or "")
@@ -603,9 +602,6 @@ def _candidate_qualifies_as_same_thread_local_state(
             return False, "query_like_same_thread_source"
         if work_usefulness >= 18:
             return True, ""
-        if support_grade in {"supported", "strong"} and len(overlap_tokens) >= 2:
-            if item.role == "assistant" or intent in {"precise_fact", "evidence_trace", "investigative_conclusion"}:
-                return True, ""
         return False, "weak_same_thread_source"
 
     if item.type in {"task_checkpoint", "decision", "investigation_outcome", CONSTRAINT_MEMORY_TYPE}:
@@ -689,8 +685,6 @@ def _source_candidate_is_companion_injection_eligible(intent: str) -> bool:
 def _source_candidate_has_quote_grade_support(candidate: dict[str, object], *, query_text: str) -> bool:
     if not _query_requests_quote_grade_source(query_text):
         return False
-    overlap_tokens = {str(token) for token in candidate.get("content_overlap_tokens") or []}
-    proof_overlap = overlap_tokens.intersection({"exact", "line", "log", "proof", "quote"})
     item = candidate["item"]
     assert isinstance(item, QueryResultItem)
     excerpt = str(item.excerpt or "")
@@ -701,9 +695,8 @@ def _source_candidate_has_quote_grade_support(candidate: dict[str, object], *, q
         cue in excerpt_lower
         for cue in ("investigation found", "exact log line", "smoking gun", "showed", "proved", "backed")
     )
-    quoted_evidence = (excerpt.count("'") >= 2 or excerpt.count('"') >= 2) and bool(proof_overlap)
     support_grade = str(candidate.get("support_grade") or "weak")
-    return (support_grade in {"supported", "strong"} and proof_like_excerpt) or quoted_evidence
+    return support_grade in {"supported", "strong"} and proof_like_excerpt
 
 
 def _source_excerpt_disclaims_exact_evidence(excerpt: str) -> bool:

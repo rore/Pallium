@@ -47,6 +47,7 @@ from semantic.agent_conversation_memory_routing_scoring import (
     _apply_current_query_source_suppression,
     _apply_fresh_thread_structured_recall_preference,
     _apply_recall_source_noise_suppression,
+    _apply_anchor_tier_penalty,
     _apply_recall_structured_summary_suppression,
     _apply_same_kind_freshness_shaping,
     _apply_work_resumption_packaging,
@@ -302,6 +303,7 @@ def route_query_results(
             result_id = _routing_result_id(candidate["item"])
             candidate.update(kind_prefilter_states.get(result_id, {}))
             candidate.update(anchor_prefilter_states.get(result_id, {}))
+        _apply_anchor_tier_penalty(scored_candidates)
         if scored_candidates:
             _apply_current_query_source_suppression(
                 scored_candidates,
@@ -354,7 +356,6 @@ def route_query_results(
             candidate["reason"] = _routing_reason(
                 intent=intent,
                 layer=str(candidate["layer"]),
-                content_overlap_tokens=list(candidate["content_overlap_tokens"]),
                 support_grade=str(candidate["support_grade"]),
                 routing_focus=routing_focus,
                 packaging_reasons=list(candidate["packaging_reasons"]),

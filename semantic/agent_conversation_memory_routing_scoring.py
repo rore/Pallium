@@ -12,6 +12,7 @@ from semantic.agent_conversation_memory_threads import (
     _parse_string_list,
 )
 from semantic.agent_conversation_memory_routing_constants import (
+    ANCHOR_SECONDARY_TIER_PENALTY,
     HIGHER_LEVEL_RETRIEVAL_FLOOR,
     ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY,
     ROUTING_FALLBACK_MARGIN,
@@ -607,7 +608,6 @@ def _score_routed_candidate(
         "envelope_confidence": item.envelope.confidence if item.envelope is not None else None,
         "reason": "",
         "strategy_name": _routing_strategy_name(item),
-        "content_overlap_tokens": [],
         "topic_overlap_tokens": [],
         "evidence_count": len(item.evidence),
         "same_thread": same_thread,
@@ -621,6 +621,27 @@ def _score_routed_candidate(
         "lexical_score": item.lexical_score,
         "vector_score": item.vector_score,
     }
+
+_ANCHOR_SECONDARY_STATUSES = frozenset({
+    "insufficient_retained",
+    "legacy_fallback_retained",
+    "insufficient_retained_demoted",
+    "secondary_tier",
+})
+
+def _apply_anchor_tier_penalty(scored_candidates: list[dict[str, object]]) -> None:
+    """Deduct ANCHOR_SECONDARY_TIER_PENALTY from base_routing_score for secondary-tier candidates.
+
+    Must be called after anchor_prefilter_states are merged into scored_candidates
+    (i.e., after the candidate.update(anchor_prefilter_states...) loop in route_query_results).
+    Sets anchor_tier_penalty on every candidate dict (0 for aligned/unclassified, penalty for secondary).
+    """
+    for candidate in scored_candidates:
+        status = str(candidate.get("anchor_prefilter_status") or "")
+        penalty = ANCHOR_SECONDARY_TIER_PENALTY if status in _ANCHOR_SECONDARY_STATUSES else 0
+        candidate["anchor_tier_penalty"] = penalty
+        if penalty:
+            candidate["base_routing_score"] = int(candidate["base_routing_score"]) - penalty
 
 def _locality_adjustment(
     *,

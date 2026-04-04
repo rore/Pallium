@@ -188,6 +188,8 @@ ROUTING_FALLBACK_MARGIN = 35
 
 ROUTING_FOCUS_BOOST = 120
 
+ANCHOR_SECONDARY_TIER_PENALTY = 120  # must be >= ROUTING_FOCUS_BOOST; ensures aligned always outranks secondary tier even at max focus boost
+
 ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY = 90
 
 

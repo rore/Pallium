@@ -92,12 +92,11 @@ def _query_family_label(intent: str, *, runtime_context: QueryRuntimeContext | N
 def _routing_reason(
     intent: str,
     layer: str,
-    content_overlap_tokens: list[str],
     support_grade: str,
     routing_focus: dict[str, object],
     packaging_reasons: list[str],
 ) -> str:
-    weak_match_suffix = " Weak higher-level overlap kept it below better-grounded candidates." if not content_overlap_tokens and layer in ROUTING_HIGHER_LEVEL_TYPES else ""
+    weak_match_suffix = " Weak higher-level overlap kept it below better-grounded candidates." if layer in ROUTING_HIGHER_LEVEL_TYPES else ""
     fallback_suffix = _routing_fallback_suffix(
         layer=layer,
         selected_layer=str(routing_focus["selected_layer"]),
@@ -322,9 +321,6 @@ def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object
         "candidate_envelope_kind": candidate.get("envelope_kind"),
         "envelope_confidence": candidate.get("envelope_confidence"),
     }
-    content_overlap_tokens = list(candidate["content_overlap_tokens"])
-    if content_overlap_tokens:
-        entry["content_overlap_terms"] = content_overlap_tokens
     envelope_subjects = list(candidate.get("envelope_subjects") or [])
     if envelope_subjects:
         entry["candidate_subjects"] = envelope_subjects
@@ -335,6 +331,8 @@ def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object
         entry["kind_prefilter_reason"] = candidate.get("kind_prefilter_reason")
     if candidate.get("anchor_prefilter_status"):
         entry["anchor_prefilter_status"] = candidate["anchor_prefilter_status"]
+    if "anchor_tier_penalty" in candidate:
+        entry["anchor_tier_penalty"] = candidate["anchor_tier_penalty"]
     if candidate.get("anchor_prefilter_reason_code"):
         entry["anchor_prefilter_reason_code"] = candidate["anchor_prefilter_reason_code"]
         entry["anchor_prefilter_reason"] = candidate.get("anchor_prefilter_reason")
