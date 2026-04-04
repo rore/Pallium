@@ -11,12 +11,20 @@ failures in eval scenarios.
 """
 from __future__ import annotations
 
-import logging
 import os
+import sys
 from dataclasses import dataclass
 
-_log = logging.getLogger("pallium.routing.injection")
 _VERBOSE = os.environ.get("PALLIUM_INJECTION_VERBOSE", "") == "1"
+
+
+def _verbose(msg: str) -> None:
+    """Write verbose injection debug output to stderr.
+
+    Uses print(stderr) instead of the logging framework to avoid holding
+    file handles that cause SQLite temp-file cleanup failures on Windows.
+    """
+    print(msg, file=sys.stderr, flush=True)
 
 # Memory types that received LLM extraction with validated structure.
 # These get a lower injection bar because the extraction already confirmed relevance.
@@ -46,6 +54,8 @@ def should_allow_injection(
     *,
     thresholds: InjectionThresholds = _DEFAULT_THRESHOLDS,
     verbose: bool = _VERBOSE,
+    query_text: str = "",
+    intent: str = "",
 ) -> bool:
     """Set-level gate: should we inject anything at all?
 
@@ -67,53 +77,48 @@ def should_allow_injection(
         cond1 = best_lexical >= thresholds.set_lexical_threshold
         cond2 = best_vector >= thresholds.set_vector_high and best_lexical >= thresholds.set_lexical_low
         cond3 = best_vector >= thresholds.candidate_vector_override and not has_any_lexical
+        # Condition 4: supported structured memory with lexical + vector confirmation.
+        # Decisions/investigations that passed LLM extraction with evidence backing
+        # deserve a lower bar — but require vector confirmation to avoid off-topic
+        # injection when only incidental lexical overlap exists (e.g., stop words).
+        cond4 = (
+            _has_supported_high_value_memory(candidates)
+            and best_lexical >= thresholds.set_lexical_low
+            and best_vector >= thresholds.high_value_vector_floor
+        )
+
+        result = cond1 or cond2 or cond3 or cond4
 
         if verbose:
-            _log.warning(
-                "SET_GATE: candidates=%d best_lex=%d best_vec=%d has_any_lex=%s "
-                "has_hv=%s has_supported_hv=%s | cond1=%s cond2=%s cond3=%s → %s",
-                len(candidates), best_lexical, best_vector, has_any_lexical,
-                _has_high_value_memory(candidates),
-                _has_supported_high_value_memory(candidates),
-                cond1, cond2, cond3,
-                "ALLOW" if (cond1 or cond2 or cond3) else "BLOCK",
+            _verbose(
+                f"INJECTION query={query_text[:80]!r} intent={intent} | SET_GATE: "
+                f"candidates={len(candidates)} best_lex={best_lexical} best_vec={best_vector} "
+                f"has_any_lex={has_any_lexical} has_hv={_has_high_value_memory(candidates)} "
+                f"has_supported_hv={_has_supported_high_value_memory(candidates)} | "
+                f"cond1={cond1} cond2={cond2} cond3={cond3} cond4={cond4} "
+                f"-> {'ALLOW' if result else 'BLOCK'}"
             )
-            # Log each candidate's scores for analysis
             for i, c in enumerate(candidates[:10]):
                 item = c.get("item")
-                _log.warning(
-                    "  candidate[%d]: id=%s kind=%s type=%s lex=%s vec=%s "
-                    "retrieval_source=%s support=%s routing_score=%s suppressed=%s",
-                    i,
-                    getattr(item, "result_id", "?")[:40] if item else "?",
-                    getattr(item, "result_kind", "?") if item else "?",
-                    getattr(item, "type", None) if item else "?",
-                    c.get("lexical_score"),
-                    c.get("vector_score"),
-                    getattr(item, "retrieval_source", None) if item else None,
-                    c.get("support_grade", "?"),
-                    c.get("routing_score", "?"),
-                    c.get("suppressed", False),
+                _verbose(
+                    f"  [{i}] id={getattr(item, 'result_id', '?')[:40] if item else '?'} "
+                    f"kind={getattr(item, 'result_kind', '?') if item else '?'} "
+                    f"type={getattr(item, 'type', None) if item else '?'} "
+                    f"lex={c.get('lexical_score')} vec={c.get('vector_score')} "
+                    f"src={getattr(item, 'retrieval_source', None) if item else None} "
+                    f"support={c.get('support_grade', '?')} score={c.get('routing_score', '?')}"
                 )
 
-        # Condition 1: meaningful lexical overlap
-        if cond1:
-            return True
-        # Condition 2: strong vector match WITH some lexical signal
-        if cond2:
-            return True
-        # Condition 3: strong vector match when no lexical scoring was available
-        if cond3:
-            return True
-        return False
+        return result
 
     # Fallback: composite scores absent (lexical-only retrieval mode).
     best_retrieval = max(int(c.get("retrieval_score", 0) or 0) for c in candidates)
     result = best_retrieval > 0
     if verbose:
-        _log.warning(
-            "SET_GATE fallback: candidates=%d best_retrieval=%d → %s",
-            len(candidates), best_retrieval, "ALLOW" if result else "BLOCK",
+        _verbose(
+            f"INJECTION query={query_text[:80]!r} intent={intent} | SET_GATE fallback: "
+            f"candidates={len(candidates)} best_retrieval={best_retrieval} "
+            f"-> {'ALLOW' if result else 'BLOCK'}"
         )
     return result
 
@@ -144,12 +149,10 @@ def candidate_injection_eligible(
         if not is_source and item_type in HIGH_VALUE_MEMORY_TYPES:
             eligible = lex >= thresholds.high_value_lexical_floor or vec >= thresholds.high_value_vector_floor
             if verbose:
-                _log.warning(
-                    "  PER_CANDIDATE high_value: id=%s type=%s lex=%d vec=%d "
-                    "→ %s (floor: lex>=%d or vec>=%d)",
-                    item_id, item_type, lex, vec,
-                    "ELIGIBLE" if eligible else "BLOCKED",
-                    thresholds.high_value_lexical_floor, thresholds.high_value_vector_floor,
+                _verbose(
+                    f"  PER_CANDIDATE high_value: id={item_id} type={item_type} "
+                    f"lex={lex} vec={vec} -> {'ELIGIBLE' if eligible else 'BLOCKED'} "
+                    f"(floor: lex>={thresholds.high_value_lexical_floor} or vec>={thresholds.high_value_vector_floor})"
                 )
             return eligible
 
@@ -160,12 +163,10 @@ def candidate_injection_eligible(
             or (raw_lex is None and vec >= thresholds.set_vector_high)
         )
         if verbose:
-            _log.warning(
-                "  PER_CANDIDATE source/other: id=%s kind=%s type=%s lex=%d vec=%d "
-                "→ %s (floor: lex>=%d or vec>=%d)",
-                item_id, item_kind, item_type, lex, vec,
-                "ELIGIBLE" if eligible else "BLOCKED",
-                thresholds.candidate_lexical_floor, thresholds.candidate_vector_override,
+            _verbose(
+                f"  PER_CANDIDATE source/other: id={item_id} kind={item_kind} type={item_type} "
+                f"lex={lex} vec={vec} -> {'ELIGIBLE' if eligible else 'BLOCKED'} "
+                f"(floor: lex>={thresholds.candidate_lexical_floor} or vec>={thresholds.candidate_vector_override})"
             )
         return eligible
 
@@ -173,10 +174,9 @@ def candidate_injection_eligible(
     retrieval = int(candidate.get("retrieval_score", 0) or 0)
     eligible = retrieval > 0
     if verbose:
-        _log.warning(
-            "  PER_CANDIDATE fallback: id=%s kind=%s type=%s retrieval=%d → %s",
-            item_id, item_kind, item_type, retrieval,
-            "ELIGIBLE" if eligible else "BLOCKED",
+        _verbose(
+            f"  PER_CANDIDATE fallback: id={item_id} kind={item_kind} type={item_type} "
+            f"retrieval={retrieval} -> {'ELIGIBLE' if eligible else 'BLOCKED'}"
         )
     return eligible
 

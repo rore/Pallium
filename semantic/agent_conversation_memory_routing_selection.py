@@ -18,6 +18,8 @@ from semantic.agent_conversation_memory_routing_constants import (
 from semantic.agent_conversation_memory_routing_injection import (
     should_allow_injection,
     candidate_injection_eligible,
+    _VERBOSE as _INJECTION_VERBOSE,
+    _verbose as _injection_verbose,
 )
 from semantic.agent_conversation_memory_routing_scoring import (
     _is_current_query_echo,
@@ -234,7 +236,7 @@ def _build_injectable_blocks(
             "same_thread_context_evaluation": same_thread_context,
         }
 
-    if not should_allow_injection(final_candidates):
+    if not should_allow_injection(final_candidates, query_text=query_text, intent=intent):
         return [], {
             "should_inject": False,
             "decision_reason": "low_injection_confidence",
@@ -272,6 +274,11 @@ def _build_injectable_blocks(
     ]
     if not primary_eligible_candidates:
         decision_reason = "only_low_value_candidates" if any(_candidate_is_low_value(candidate) for candidate in final_candidates) else "no_relevant_memory"
+        if _INJECTION_VERBOSE:
+            _injection_verbose(
+                f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: should_inject=False "
+                f"reason={decision_reason} (gate=ALLOW but no eligible candidates after type/intent filter)"
+            )
         return [], {
             "should_inject": False,
             "decision_reason": decision_reason,
@@ -323,6 +330,15 @@ def _build_injectable_blocks(
         )
     eligible_ids = [_routing_result_id(candidate["item"]) for candidate in eligible_candidates]
     dropped_ids = [result_id for result_id in eligible_ids if result_id not in returned_ids]
+    if _INJECTION_VERBOSE:
+        block_summaries = []
+        for b in blocks:
+            block_summaries.append(f"{b.result_id[:30]} type={b.label}")
+        _injection_verbose(
+            f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
+            f"should_inject={bool(blocks)} reason={'carry_forward_available' if blocks else 'no_relevant_memory'} "
+            f"blocks={len(blocks)} [{'; '.join(block_summaries) if block_summaries else 'none'}]"
+        )
     return blocks, {
         "should_inject": bool(blocks),
         "decision_reason": "carry_forward_available" if blocks else "no_relevant_memory",
