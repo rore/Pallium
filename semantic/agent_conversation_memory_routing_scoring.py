@@ -702,35 +702,35 @@ def _specificity_bonus(item: QueryResultItem, intent: str) -> int:
     bonus = 0
     if item.result_kind == "memory_hit" and item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
         if intent == "investigative_conclusion":
-            bonus += 95 if item.type == "investigation_outcome" else 80
+            bonus += 48 if item.type == "investigation_outcome" else 40
         elif intent in {"precise_fact", "evidence_trace"}:
-            bonus += 50 if item.type == "decision" else 45
+            bonus += 25 if item.type == "decision" else 23
         else:
-            bonus += 20
+            bonus += 10
     if item.result_kind == "memory_hit" and item.type in ROUTING_SUMMARY_TYPES and intent in {"precise_fact", "evidence_trace", "investigative_conclusion"}:
-        bonus -= 40
+        bonus -= 20
     if item.result_kind == "memory_hit" and item.type == "thread_summary" and intent == "work_resumption":
         if _memory_hit_has_selected_work_artifacts(item):
-            bonus += 35
+            bonus += 18
     if item.result_kind == "memory_hit" and item.type == "task_checkpoint":
         if intent == "work_resumption":
-            bonus += 55
+            bonus += 28
         elif intent in {"precise_fact", "evidence_trace", "investigative_conclusion"}:
-            bonus -= 35
+            bonus -= 18
     if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "answer_continuity":
-        bonus += 25
+        bonus += 13
     if item.result_kind == "memory_hit" and item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES and intent == "broad_recall":
-        bonus += 85 if item.type == "decision" else 75
+        bonus += 43 if item.type == "decision" else 38
     if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "broad_recall":
-        bonus -= 45
+        bonus -= 23
     if item.result_kind == "memory_hit" and item.type == "pattern_memory" and intent == "broad_recall":
-        bonus += 25
+        bonus += 13
     if item.result_kind == "source_hit" and intent == "evidence_trace":
-        bonus += 30 if item.artifact_kind == "assistant_output" else 10
+        bonus += 15 if item.artifact_kind == "assistant_output" else 5
     if item.result_kind == "source_hit" and intent == "work_resumption":
-        bonus += 45 if (item.artifact_kind or "") in SELECTED_WORK_ARTIFACT_KINDS else 20
+        bonus += 23 if (item.artifact_kind or "") in SELECTED_WORK_ARTIFACT_KINDS else 10
     if item.result_kind == "source_hit" and intent == "investigative_conclusion":
-        bonus += 6 if item.artifact_kind == "assistant_output" else 2
+        bonus += 3 if item.artifact_kind == "assistant_output" else 1
     return bonus
 
 
@@ -738,13 +738,12 @@ def _higher_level_retrieval_floor_adjustment(layer: str, retrieval_score: int) -
     """Penalise higher-level memory whose retrieval score falls below the floor.
 
     Replaces the former token-overlap binary check.  The penalty magnitude
-    (-260) matches the prior broad_recall overlap penalty so ranking behaviour
-    is comparable.
+    (-160) matches the compressed scale so ranking behaviour is comparable.
     """
     if layer not in ROUTING_HIGHER_LEVEL_TYPES:
         return 0
     if retrieval_score < HIGHER_LEVEL_RETRIEVAL_FLOOR:
-        return -260
+        return -160
     return 0
 
 def _candidate_evidence_shape_score(
@@ -815,6 +814,104 @@ def _candidate_evidence_shape_score(
     if isinstance(conclusions, list):
         score += min(len([entry for entry in conclusions if isinstance(entry, dict) and entry.get("text")]), 3) * 8
     return score
+
+
+# ---------------------------------------------------------------------------
+# Scoring components (cross-candidate, applied after annotations)
+# ---------------------------------------------------------------------------
+
+# Freshness shaping: carry forward from _apply_same_kind_freshness_shaping
+FRESHNESS_BONUS_BY_INTENT: dict[str, int] = {
+    "answer_continuity": 0,
+    "broad_recall": 24,
+    "precise_fact": 24,
+    "investigative_conclusion": 42,
+    "work_resumption": 18,
+    "evidence_trace": 0,
+    # Future merged names:
+    "recall": 24,
+    "structured_recall": 42,
+}
+FRESHNESS_DECAY_PER_RANK = 12
+FRESHNESS_MAX_PENALTY = 30
+
+def _freshness_component(freshness_rank: int | None, intent: str) -> int:
+    """Bonus for freshest candidate in type, penalty for stale ones.
+
+    Replaces _apply_same_kind_freshness_shaping.
+    """
+    bonus = FRESHNESS_BONUS_BY_INTENT.get(intent, 0)
+    if bonus == 0 or freshness_rank is None:
+        return 0
+    if freshness_rank == 1:
+        return bonus
+    if freshness_rank == 2:
+        return 0
+    return -min(FRESHNESS_DECAY_PER_RANK * (freshness_rank - 2), FRESHNESS_MAX_PENALTY)
+
+
+# Work resumption staleness: carry forward from _apply_work_resumption_packaging
+WORK_RESUMPTION_STALE_PENALTY = 55
+WORK_RESUMPTION_THIN_CHECKPOINT_PENALTY_V2 = 50
+
+def _usefulness_adjustment(candidate: dict, intent: str) -> int:
+    """Work resumption usefulness + staleness adjustment.
+
+    Replaces the freshness/thin-checkpoint parts of _apply_work_resumption_packaging.
+    The base usefulness score is already computed in _score_routed_candidate.
+    """
+    if intent != "work_resumption":
+        return 0
+    adjustment = 0
+    layer = str(candidate.get("layer", ""))
+    # Stale checkpoint penalty
+    if layer == "task_checkpoint" and candidate.get("work_resumption_stale"):
+        adjustment -= WORK_RESUMPTION_STALE_PENALTY
+    # Thin checkpoint penalty (few work signals)
+    if layer == "task_checkpoint":
+        usefulness = int(candidate.get("work_usefulness_score", 0))
+        if usefulness < 24:  # POLICY_WORK_STATE_USEFULNESS_THRESHOLD
+            adjustment -= WORK_RESUMPTION_THIN_CHECKPOINT_PENALTY_V2
+    # Stale source evidence penalty (smaller)
+    if layer == "source_evidence" and candidate.get("work_resumption_stale"):
+        adjustment -= 28  # WORK_RESUMPTION_STALE_SOURCE_PENALTY
+    return adjustment
+
+
+# Fresh session preference: carry forward from _apply_fresh_thread_structured_recall_preference
+FRESH_SESSION_SOURCE_PENALTY = -80  # was -120, reduced because quality score now differentiates better
+FRESH_SESSION_STRUCTURED_BONUS = 26
+
+STRUCTURED_LAYERS = frozenset({
+    "decision", "investigation_outcome", "task_checkpoint",
+    "pattern_memory", "continuity_memory", "interest", "constraint_memory",
+    "thread_summary", "discussion_summary",
+})
+
+def _fresh_session_component(
+    runtime_context, layer: str, structured_dominates: bool,
+) -> int:
+    """Prefer structured memory over source hits in fresh sessions.
+
+    Replaces _apply_fresh_thread_structured_recall_preference.
+    Fires when turn_kind is new_thread/new_session AND
+    session_has_sufficient_local_context is False AND
+    structured candidates dominate source hits.
+    """
+    if runtime_context is None:
+        return 0
+    turn_kind = getattr(runtime_context, "turn_kind", None)
+    if turn_kind not in ("new_thread", "new_session"):
+        return 0
+    if getattr(runtime_context, "session_has_sufficient_local_context", False):
+        return 0
+    if not structured_dominates:
+        return 0
+    if layer == "source_evidence":
+        return FRESH_SESSION_SOURCE_PENALTY
+    if layer in STRUCTURED_LAYERS:
+        return FRESH_SESSION_STRUCTURED_BONUS
+    return 0
 
 
 # ---------------------------------------------------------------------------

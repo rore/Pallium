@@ -44,11 +44,14 @@ from semantic.agent_conversation_memory_routing_policy import (
 )
 from semantic.agent_conversation_memory_routing_scoring import (
     _ANCHOR_SECONDARY_STATUSES,
+    _fresh_session_component,
+    _freshness_component,
     _infer_query_intent,
     _routing_focus_adjustment,
     _score_routed_candidate,
     _select_routing_focus,
     _summarize_routing_layers,
+    _usefulness_adjustment,
 )
 from semantic.agent_conversation_memory_routing_selection import (
     _annotate_excluded_candidates,
@@ -346,6 +349,19 @@ def route_query_results(
         if scored_candidates:
             annotate_freshness_ranks(scored_candidates)
             annotate_work_resumption_context(scored_candidates, query_filters=query_filters)
+
+            # Second scoring pass: components that need cross-candidate annotations
+            structured_support = compute_structured_support_ratio(scored_candidates)
+            structured_dominates = structured_support["structured_dominates"]
+            for candidate in scored_candidates:
+                adjustment = (
+                    _freshness_component(candidate.get("freshness_rank_in_type"), intent)
+                    + _usefulness_adjustment(candidate, intent)
+                    + _fresh_session_component(runtime_context, str(candidate["layer"]), structured_dominates)
+                )
+                if adjustment:
+                    candidate["base_routing_score"] = int(candidate["base_routing_score"]) + adjustment
+                    candidate["routing_score"] = candidate["base_routing_score"]
 
         packaging_summary = None  # work_resumption_packaging is now in scoring
         layer_summary = _summarize_routing_layers(scored_candidates)

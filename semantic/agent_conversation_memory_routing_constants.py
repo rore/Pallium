@@ -115,12 +115,12 @@ ROUTING_FAMILY_ALLOWED_ENVELOPE_KINDS = {
 }
 
 ROUTING_LAYER_WEIGHTS = {
-    "answer_continuity": {"continuity_memory": 400, CONSTRAINT_MEMORY_TYPE: 360, "investigation_outcome": 320, "decision": 300, "source_evidence": 200, "task_checkpoint": 140, "pattern_memory": 120, "interest": 100, "thread_summary": 100, "discussion_summary": 70, "lower_level_memory": 260},
-    "broad_recall": {CONSTRAINT_MEMORY_TYPE: 430, "pattern_memory": 400, "investigation_outcome": 330, "decision": 310, "continuity_memory": 180, "task_checkpoint": 150, "source_evidence": 120, "interest": 110, "thread_summary": 130, "discussion_summary": 80, "lower_level_memory": 250},
-    "work_resumption": {CONSTRAINT_MEMORY_TYPE: 490, "task_checkpoint": 470, "source_evidence": 390, "investigation_outcome": 300, "decision": 290, "continuity_memory": 180, "pattern_memory": 70, "interest": 100, "thread_summary": 130, "discussion_summary": 70, "lower_level_memory": 250},
-    "precise_fact": {"decision": 440, "investigation_outcome": 430, CONSTRAINT_MEMORY_TYPE: 260, "source_evidence": 320, "interest": 90, "thread_summary": 110, "discussion_summary": 70, "continuity_memory": 140, "task_checkpoint": 110, "pattern_memory": 60, "lower_level_memory": 340},
-    "evidence_trace": {"source_evidence": 460, "investigation_outcome": 380, "decision": 360, CONSTRAINT_MEMORY_TYPE: 110, "interest": 85, "thread_summary": 120, "discussion_summary": 80, "continuity_memory": 120, "task_checkpoint": 90, "pattern_memory": 40, "lower_level_memory": 300},
-    "investigative_conclusion": {"investigation_outcome": 480, "decision": 430, CONSTRAINT_MEMORY_TYPE: 220, "source_evidence": 360, "interest": 110, "thread_summary": 220, "discussion_summary": 120, "continuity_memory": 110, "task_checkpoint": 100, "pattern_memory": 80, "lower_level_memory": 320},
+    "answer_continuity": {"continuity_memory": 200, CONSTRAINT_MEMORY_TYPE: 180, "investigation_outcome": 160, "decision": 150, "source_evidence": 100, "task_checkpoint": 70, "pattern_memory": 60, "interest": 50, "thread_summary": 50, "discussion_summary": 35, "lower_level_memory": 130},
+    "broad_recall": {CONSTRAINT_MEMORY_TYPE: 215, "pattern_memory": 200, "investigation_outcome": 165, "decision": 155, "continuity_memory": 90, "task_checkpoint": 75, "source_evidence": 60, "interest": 55, "thread_summary": 65, "discussion_summary": 40, "lower_level_memory": 125},
+    "work_resumption": {CONSTRAINT_MEMORY_TYPE: 245, "task_checkpoint": 235, "source_evidence": 195, "investigation_outcome": 150, "decision": 145, "continuity_memory": 90, "pattern_memory": 35, "interest": 50, "thread_summary": 65, "discussion_summary": 35, "lower_level_memory": 125},
+    "precise_fact": {"decision": 220, "investigation_outcome": 215, CONSTRAINT_MEMORY_TYPE: 130, "source_evidence": 160, "interest": 45, "thread_summary": 55, "discussion_summary": 35, "continuity_memory": 70, "task_checkpoint": 55, "pattern_memory": 30, "lower_level_memory": 170},
+    "evidence_trace": {"source_evidence": 230, "investigation_outcome": 190, "decision": 180, CONSTRAINT_MEMORY_TYPE: 55, "interest": 43, "thread_summary": 60, "discussion_summary": 40, "continuity_memory": 60, "task_checkpoint": 45, "pattern_memory": 20, "lower_level_memory": 150},
+    "investigative_conclusion": {"investigation_outcome": 240, "decision": 215, CONSTRAINT_MEMORY_TYPE: 110, "source_evidence": 180, "interest": 55, "thread_summary": 110, "discussion_summary": 60, "continuity_memory": 55, "task_checkpoint": 50, "pattern_memory": 40, "lower_level_memory": 160},
 }
 
 
@@ -184,16 +184,16 @@ RECALL_MODE_FRESH_THREAD_PREFERENCE: dict[str, bool] = {
 }
 
 
-ROUTING_FALLBACK_MARGIN = 35
+ROUTING_FALLBACK_MARGIN = 25
 
-ROUTING_FOCUS_BOOST = 120
+ROUTING_FOCUS_BOOST = 80
 
-ANCHOR_SECONDARY_TIER_PENALTY = 120  # must be >= ROUTING_FOCUS_BOOST; ensures aligned always outranks secondary tier even at max focus boost
+ANCHOR_SECONDARY_TIER_PENALTY = 80  # must be >= ROUTING_FOCUS_BOOST; ensures aligned always outranks secondary tier even at max focus boost
 
 LEXICAL_NORM_SCALE = 6  # ~log(400); fixed for IDF-to-[0,1] normalization
-QUALITY_WEIGHT = 100    # multiplier for quality_score in scoring formula (used later in Phase 2)
+QUALITY_WEIGHT = 200    # multiplier for quality_score in scoring formula (used later in Phase 2)
 
-ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY = 90
+ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY = 60
 
 
 SHARP_DIAGNOSTIC_MEMORY_TYPES = {"task_checkpoint", "investigation_outcome", "decision"}
