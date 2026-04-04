@@ -21,8 +21,8 @@ class TestSetLevelGate:
         candidates = [_make_candidate(lexical_score=0, vector_score=600)]
         assert should_allow_injection(candidates) is False
 
-    def test_strong_vector_with_lexical_allows(self):
-        candidates = [_make_candidate(lexical_score=2, vector_score=780)]
+    def test_strong_vector_with_some_lexical_allows(self):
+        candidates = [_make_candidate(lexical_score=1, vector_score=780)]
         assert should_allow_injection(candidates) is True
 
     def test_strong_vector_without_lexical_blocks(self):

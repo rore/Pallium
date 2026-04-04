@@ -59,8 +59,8 @@ def should_allow_injection(
         # Condition 1: meaningful lexical overlap
         if best_lexical >= thresholds.set_lexical_threshold:
             return True
-        # Condition 2: strong vector match WITH meaningful lexical signal
-        if best_vector >= thresholds.set_vector_high and best_lexical >= thresholds.set_lexical_threshold:
+        # Condition 2: strong vector match WITH some lexical signal
+        if best_vector >= thresholds.set_vector_high and best_lexical >= thresholds.set_lexical_low:
             return True
         # Condition 3: strong vector match when no lexical scoring was available
         if best_vector >= thresholds.candidate_vector_override and not has_any_lexical:
