@@ -1,0 +1,1662 @@
+[
+  {
+    "scenario_id": "xc-public-decision-recall-channel-to-channel",
+    "description": "Public decision in one team channel is recalled when a different team channel queries about the same topic. Core team agent cross-container positive recall.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "public", "query_intent": "backward_recall"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "decision_in_channel_a",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-pub-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: we will use arrival-time ordering for reservation queues to avoid skipped holds during catalog sync delays.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-team",
+            "thread_ref": "chat:catalog-team:thread-xc-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/xc-pub-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_channel_b",
+        "action": "query",
+        "query": {
+          "text": "What ordering approach are we using for reservation queues?",
+          "limit": 6,
+          "container_ref": "chat:patron-services",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["arrival-time", "reservation"]
+        },
+        "soft_expectations": {
+          "must_include": ["reservation", "ordering"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "xc-public-decision-recall-channel-to-dm",
+    "description": "Public decision from a team channel is recalled when a developer queries from a private DM context. Team knowledge accessible from personal conversations.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "public_to_private", "query_intent": "backward_recall"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "decision_in_team_channel",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-pub-dm-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: we will freeze all catalog sync deployments next week during the compliance audit window.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-ops",
+            "thread_ref": "chat:library-ops:thread-freeze-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/xc-pub-dm-001-msg-1",
+            "occurred_at": "2026-03-20T09:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_dm",
+        "action": "query",
+        "query": {
+          "text": "When is the deployment freeze for catalog sync?",
+          "limit": 6,
+          "container_ref": "dm:branch-librarian",
+          "visibility": "private"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["freeze", "compliance audit"]
+        },
+        "soft_expectations": {
+          "must_include": ["freeze", "catalog sync"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "xc-public-investigation-recall-cross-channel",
+    "description": "Investigation finding from one team channel surfaces when a related symptom is reported in a different team channel.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "public", "memory_type_target": "investigation_outcome"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "investigation_in_channel_a",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-inv-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Investigation found that the batch catalog sync fails when the staging connection pool exhausts its handles after the nightly maintenance window. Workaround: restart the pool before the sync job.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-ops",
+            "thread_ref": "chat:library-ops:thread-inv-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/xc-inv-001-msg-1",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "symptom_query_from_channel_b",
+        "action": "query",
+        "query": {
+          "text": "The catalog sync job failed again this morning after the maintenance window. Any known issues?",
+          "limit": 6,
+          "container_ref": "chat:catalog-team",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["connection pool"]
+        },
+        "soft_expectations": {
+          "must_include": ["catalog sync", "connection pool"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "xc-public-multi-channel-convergence",
+    "description": "Decisions from two different channels about the same system are both recalled when a third channel queries about it.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "multi_container", "visibility": "public", "query_intent": "backward_recall"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "decision_in_catalog_team",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-multi-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: the new reservation system will use Elasticsearch for search instead of the current full-table scan approach.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-team",
+            "thread_ref": "chat:catalog-team:thread-multi-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/xc-multi-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "decision_in_patron_services",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-multi-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Decision: patron-facing reservation search results must return within 200 milliseconds. If the new search backend can't meet that, we keep the current approach for the patron portal.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:patron-services",
+            "thread_ref": "chat:patron-services:thread-multi-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/xc-multi-001-msg-2",
+            "occurred_at": "2026-03-20T09:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_third_channel",
+        "action": "query",
+        "query": {
+          "text": "What decisions have been made about the reservation search system?",
+          "limit": 6,
+          "container_ref": "chat:library-ops",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["Elasticsearch"]
+        },
+        "soft_expectations": {
+          "must_include": ["reservation", "search"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "xc-public-cross-user-cross-container-recall",
+    "description": "User A posts a public decision in channel X. User B queries from channel Y and recalls it. Cross-user cross-container positive recall.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "public", "actor_count": "multi_user"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07", "INV-12"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "user_a_decision_in_channel_x",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-xu-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: overdue notice batches will run at 6 AM instead of midnight to avoid conflicts with the nightly catalog sync job.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-team",
+            "thread_ref": "chat:catalog-team:thread-xu-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/xc-xu-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "user_b_query_from_channel_y",
+        "action": "query",
+        "query": {
+          "text": "When do overdue notice batches run? I need to schedule around them.",
+          "limit": 6,
+          "container_ref": "chat:patron-services",
+          "actor_ref": "user:branch-librarian",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07", "INV-12"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["6 AM"]
+        },
+        "soft_expectations": {
+          "must_include": ["overdue", "notice"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "xc-public-thread-summary-cross-container",
+    "description": "Multi-turn discussion in one channel produces a thread summary that is recallable from a different channel.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "public", "memory_type_target": "thread_summary"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-13"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "multi_turn_discussion",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-ts-001-msg-1",
+            "content_type": "text/plain",
+            "content": "The interlibrary loan request processing is too slow. Patron complaints are up 40% this quarter.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:patron-services",
+            "thread_ref": "chat:patron-services:thread-ts-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/xc-ts-001-msg-1",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "visibility": "public"
+          },
+          {
+            "source_type": "assistant_artifact",
+            "source_id": "xc-ts-001-asst-1",
+            "content_type": "text/plain",
+            "content": "Investigation found that the bottleneck is the manual approval step. Each request waits an average of 3 days for a librarian to review it. Decision: implement auto-approval for requests under $50 from patrons with no overdue items.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "chat:patron-services",
+            "thread_ref": "chat:patron-services:thread-ts-001",
+            "actor_ref": "agent:assistant",
+            "source_ref": "memory://test/xc-ts-001-asst-1",
+            "occurred_at": "2026-03-20T10:05:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_different_channel",
+        "action": "query",
+        "query": {
+          "text": "What was decided about interlibrary loan processing speed?",
+          "limit": 6,
+          "container_ref": "chat:catalog-team",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-13"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["auto-approval"]
+        },
+        "soft_expectations": {
+          "must_include": ["interlibrary loan"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "xc-private-dm-invisible-from-channel",
+    "description": "Private DM memory must not be visible when querying from a public team channel. Privacy boundary preserved across containers.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "private_to_public"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "private_dm_discussion",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-priv-001-msg-1",
+            "content_type": "text/plain",
+            "content": "I think the new branch manager is making bad decisions about the overdue notice schedule. I want to push back on the midnight batch time but need to find the right moment.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "dm:branch-librarian",
+            "thread_ref": "dm:branch-librarian:thread-priv-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/xc-priv-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_public_channel",
+        "action": "query",
+        "query": {
+          "text": "What concerns have come up about the overdue notice schedule?",
+          "limit": 6,
+          "container_ref": "chat:library-ops",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": false,
+          "forbidden_block_content": ["branch manager", "push back", "bad decisions"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "xc-private-interest-stays-in-dm",
+    "description": "User expresses interest in a private DM. That interest must not surface in any public channel query, even with exact topic match.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "private_to_public", "memory_type_target": "interest"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "interest_in_dm",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-int-001-msg-1",
+            "content_type": "text/plain",
+            "content": "I've been looking at RFID-based shelf inventory scanners. The vendor demo looked promising, I should follow up.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "dm:branch-librarian",
+            "thread_ref": "dm:branch-librarian:thread-int-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/xc-int-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_team_channel",
+        "action": "query",
+        "query": {
+          "text": "Has anyone looked into RFID inventory scanners?",
+          "limit": 6,
+          "container_ref": "chat:catalog-team",
+          "actor_ref": "user:catalog-admin",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": false,
+          "forbidden_block_content": ["RFID", "shelf inventory", "vendor demo"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "xc-same-user-private-public-split",
+    "description": "Same user discusses a topic in both DM (private) and channel (public). Query from a different channel sees only the public channel decision, not the private DM content.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "multi_container", "visibility": "mixed_private_public", "actor_count": "single_user"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "private_dm_concerns",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-split-001-msg-1",
+            "content_type": "text/plain",
+            "content": "I'm worried that switching the overdue notice format from postal to email will upset the older patrons. I want to propose a gradual rollout but I'm not sure the team will agree.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "dm:branch-librarian",
+            "thread_ref": "dm:branch-librarian:thread-split-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/xc-split-001-msg-1",
+            "occurred_at": "2026-03-20T07:00:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "public_channel_decision",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-split-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Decision: we will switch overdue notices from postal mail to email for all patrons under 65. Postal stays for patrons 65 and older. Rollout starts next month.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:patron-services",
+            "thread_ref": "chat:patron-services:thread-split-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/xc-split-001-msg-2",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_different_channel",
+        "action": "query",
+        "query": {
+          "text": "What's the plan for overdue notice delivery format?",
+          "limit": 6,
+          "container_ref": "chat:catalog-team",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["email"],
+          "forbidden_block_content": ["worried", "upset", "not sure the team will agree"]
+        },
+        "soft_expectations": {
+          "must_include": ["overdue", "email"],
+          "must_not_include": ["worried", "upset"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "xc-constraint-in-dm-stays-private",
+    "description": "User states a personal constraint in DM. It must not surface in team channel queries even with topic overlap.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "private_to_public", "memory_type_target": "constraint_memory"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "constraint_in_dm",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-con-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Important: never schedule catalog sync during the 2 AM maintenance window. Last time it caused a full database lock and we lost 4 hours of patron transactions.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "dm:catalog-admin",
+            "thread_ref": "dm:catalog-admin:thread-con-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/xc-con-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_team_channel",
+        "action": "query",
+        "query": {
+          "text": "When should we schedule the catalog sync job?",
+          "limit": 6,
+          "container_ref": "chat:library-ops",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": false,
+          "forbidden_block_content": ["2 AM", "database lock", "patron transactions"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-xc-team-coordination-flow",
+    "description": "Two team channels discuss related aspects of the same system. A third channel query finds decisions from both. Realistic team agent coordination flow.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "multi_container", "visibility": "public", "query_intent": "carry_forward"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "backend_team_decision",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-coord-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: the hold notification system will switch from polling to event-driven. We'll publish hold-status-changed events to a message queue.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-team",
+            "thread_ref": "chat:catalog-team:thread-coord-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/xc-coord-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "patron_team_requirement",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-coord-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Decision: hold notifications to patrons must arrive within 5 minutes of the status change. The current 2-hour polling delay is unacceptable.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:patron-services",
+            "thread_ref": "chat:patron-services:thread-coord-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/xc-coord-001-msg-2",
+            "occurred_at": "2026-03-20T09:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_ops_channel",
+        "action": "query",
+        "query": {
+          "text": "What's the current plan for hold notifications? I need to provision infrastructure.",
+          "limit": 6,
+          "container_ref": "chat:library-ops",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["event-driven"]
+        },
+        "soft_expectations": {
+          "must_include": ["hold notification"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-xc-dm-channel-privacy-boundary",
+    "description": "User investigates privately in DM, then team decides publicly in channel. Query from a different channel sees only the public decision, not the private investigation.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "multi_container", "visibility": "mixed_private_public", "query_intent": "carry_forward"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "private_investigation_in_dm",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-boundary-001-msg-1",
+            "content_type": "text/plain",
+            "content": "I investigated the hold queue failures. The root cause is that the vendor's API rate-limits us at 100 requests per minute, but our batch job sends 500. I think we need to either throttle or switch vendors. The vendor contract expires in 3 months.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "dm:catalog-admin",
+            "thread_ref": "dm:catalog-admin:thread-boundary-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/xc-boundary-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "public_decision_in_channel",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-boundary-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Decision: we will throttle the hold queue batch job to 80 requests per minute to stay within the vendor API rate limit. This fixes the hold queue failures.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-team",
+            "thread_ref": "chat:catalog-team:thread-boundary-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/xc-boundary-001-msg-2",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_patron_services",
+        "action": "query",
+        "query": {
+          "text": "What happened with the hold queue failures? Are they fixed?",
+          "limit": 6,
+          "container_ref": "chat:patron-services",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["throttle", "80 requests"],
+          "forbidden_block_content": ["switch vendors", "contract expires"]
+        },
+        "soft_expectations": {
+          "must_include": ["hold queue", "throttle"],
+          "must_not_include": ["switch vendors", "contract expires"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-xc-decision-revision-across-channels",
+    "description": "Decision made in channel A, revised in channel B. Query from channel C should surface the revised decision.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "multi_container", "visibility": "public", "temporal_pattern": "revision"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "original_decision_channel_a",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-rev-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: patron self-checkout kiosks will run the existing desktop client in kiosk mode. Simplest option and reuses what we have.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-team",
+            "thread_ref": "chat:catalog-team:thread-rev-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/xc-rev-001-msg-1",
+            "occurred_at": "2026-03-18T08:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "revised_decision_channel_b",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-rev-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Actually, we're scrapping the desktop client for kiosks. The patron services team tested it and it crashes on the kiosk hardware. Decision: build a lightweight web-based self-checkout interface instead.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:patron-services",
+            "thread_ref": "chat:patron-services:thread-rev-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/xc-rev-001-msg-2",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_channel_c",
+        "action": "query",
+        "query": {
+          "text": "What's the approach for the self-checkout kiosk software?",
+          "limit": 6,
+          "container_ref": "chat:library-ops",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["web-based"]
+        },
+        "soft_expectations": {
+          "must_include": ["self-checkout", "web"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-xc-work-resumption-from-dm",
+    "description": "Active work discussed in a public team channel. Developer queries from private DM to resume work. Public team context is recalled.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "public_to_private", "query_intent": "work_resumption"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "task_discussion_in_channel",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-resume-001-msg-1",
+            "content_type": "text/plain",
+            "content": "I'm migrating the patron notification templates from the legacy format to the new template engine. Got email and SMS done, still need to do the postal mail and in-app notification templates.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:patron-services",
+            "thread_ref": "chat:patron-services:thread-resume-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/xc-resume-001-msg-1",
+            "occurred_at": "2026-03-20T14:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "dm_query_to_resume",
+        "action": "query",
+        "query": {
+          "text": "Where did I leave off with the notification template migration?",
+          "limit": 6,
+          "container_ref": "dm:branch-librarian",
+          "actor_ref": "user:branch-librarian",
+          "visibility": "private"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["postal mail", "in-app"]
+        },
+        "soft_expectations": {
+          "must_include": ["notification", "template"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-xc-multi-user-handoff",
+    "description": "User A investigates a problem in channel X. User B picks up the work in channel Y and has the investigation context available.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "public", "actor_count": "multi_user", "query_intent": "carry_forward"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07", "INV-12"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "user_a_investigation",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-handoff-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Investigation found that the interlibrary loan batch processor crashes when it encounters a record with a missing ISBN field. The crash happens in the validation step before the request is sent to the partner library.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-team",
+            "thread_ref": "chat:catalog-team:thread-handoff-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/xc-handoff-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "user_b_picks_up",
+        "action": "query",
+        "query": {
+          "text": "I'm picking up the interlibrary loan batch processor fix. What do we know about the crash?",
+          "limit": 6,
+          "container_ref": "chat:patron-services",
+          "actor_ref": "user:branch-librarian",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07", "INV-12"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["missing ISBN", "validation"]
+        },
+        "soft_expectations": {
+          "must_include": ["interlibrary loan", "isbn"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-xc-off-topic-guard-cross-container",
+    "description": "Public memories exist across containers but an off-topic query from a different container must not inject them. Cross-container does not bypass topic relevance.",
+    "expected_status": "known_fail",
+    "expected_status_reason": "Known off-topic injection issue — justification gate passes when technical memories have high routing scores, tracked in routing simplification design",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "public", "topic_pattern": "switch", "injection_outcome": "suppress"},
+      "invariant_assertions": ["INV-03", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_public_decisions",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-offtopic-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: use arrival-time ordering for reservation queues to prevent skipped holds during catalog sync delays.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:catalog-team",
+            "thread_ref": "chat:catalog-team:thread-offtopic-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/xc-offtopic-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "public"
+          },
+          {
+            "source_type": "chat_message",
+            "source_id": "xc-offtopic-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Decision: overdue notice batches will run at 6 AM to avoid conflicts with the nightly sync job.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:patron-services",
+            "thread_ref": "chat:patron-services:thread-offtopic-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/xc-offtopic-001-msg-2",
+            "occurred_at": "2026-03-20T09:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "off_topic_query_from_different_channel",
+        "action": "query",
+        "query": {
+          "text": "Can you draft a welcome message for new library volunteers?",
+          "limit": 6,
+          "container_ref": "chat:library-ops",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-03", "INV-07"],
+        "quality_expectations": {
+          "should_inject": false
+        },
+        "soft_expectations": {
+          "must_not_include": ["reservation", "overdue", "catalog sync", "arrival-time"]
+        }
+      }
+    ]
+  },
+
+  {
+    "scenario_id": "cs-container-scoped-within-container-recall",
+    "description": "Container-scoped decision is recalled within the same container from a different thread. Basic positive container-visibility recall.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "same_container", "visibility": "container", "thread_relation": "cross_thread"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "decision_in_thread_1",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-within-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: the branch reading room will close at 6 PM on weekdays instead of 8 PM to reduce staffing costs during low-traffic hours.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:branch-admin",
+            "thread_ref": "chat:branch-admin:thread-within-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/cs-within-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "recall_from_thread_2",
+        "action": "query",
+        "query": {
+          "text": "What are the new reading room hours?",
+          "limit": 6,
+          "container_ref": "chat:branch-admin",
+          "thread_ref": "chat:branch-admin:thread-within-002",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["6 PM", "reading room"]
+        },
+        "soft_expectations": {
+          "must_include": ["reading room"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cs-container-scoped-cross-user-within-container",
+    "description": "User A posts a container-scoped decision. User B in the same container recalls it. Container visibility enables within-container sharing.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "same_container", "visibility": "container", "actor_count": "multi_user"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07", "INV-12"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "user_a_decision",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-xu-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: the annual book sale will move from the lobby to the community room. The lobby will be used for the new digital resource kiosks.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:branch-admin",
+            "thread_ref": "chat:branch-admin:thread-xu-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/cs-xu-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "user_b_queries",
+        "action": "query",
+        "query": {
+          "text": "Where is the annual book sale happening this year?",
+          "limit": 6,
+          "container_ref": "chat:branch-admin",
+          "actor_ref": "user:catalog-admin",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07", "INV-12"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["community room"]
+        },
+        "soft_expectations": {
+          "must_include": ["book sale", "community room"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cs-container-scoped-isolation-different-container",
+    "description": "Container-scoped decision in container A is invisible from container B. Core container isolation regression test.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "container"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "decision_in_container_a",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-iso-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: the downtown branch will pilot the new self-service return bins starting next month. Budget approved for 3 units.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:branch-downtown",
+            "thread_ref": "chat:branch-downtown:thread-iso-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/cs-iso-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_container_b",
+        "action": "query",
+        "query": {
+          "text": "Are we getting self-service return bins? What was decided?",
+          "limit": 6,
+          "container_ref": "chat:branch-uptown",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": false,
+          "forbidden_block_content": ["downtown", "self-service return", "3 units"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cs-container-scoped-isolation-from-dm",
+    "description": "Container-scoped decision in a team container is invisible from a private DM. Container visibility does not reach private contexts.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "container_to_private"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "decision_in_team_container",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-dm-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: interlibrary loan requests will require manager approval for items over $100. All requests under that threshold are auto-approved.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:branch-admin",
+            "thread_ref": "chat:branch-admin:thread-dm-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/cs-dm-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_dm",
+        "action": "query",
+        "query": {
+          "text": "What's the approval policy for interlibrary loan requests?",
+          "limit": 6,
+          "container_ref": "dm:catalog-admin",
+          "visibility": "private"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": false,
+          "forbidden_block_content": ["manager approval", "$100", "auto-approved"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cs-two-containers-same-topic-isolation",
+    "description": "Two separate containers discuss the same topic with container visibility. Each container's query sees only its own decision, not the other's.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "parallel_containers", "visibility": "container", "topic_pattern": "same_topic"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "decision_in_downtown",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-parallel-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: the summer reading program will run from June 1 to August 15 this year. Theme is ocean exploration.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:branch-downtown",
+            "thread_ref": "chat:branch-downtown:thread-parallel-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/cs-parallel-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "decision_in_uptown",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-parallel-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Decision: the summer reading program will run from June 15 to September 1 this year. Theme is space adventure.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:branch-uptown",
+            "thread_ref": "chat:branch-uptown:thread-parallel-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/cs-parallel-001-msg-2",
+            "occurred_at": "2026-03-20T09:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_downtown",
+        "action": "query",
+        "query": {
+          "text": "What are the dates and theme for the summer reading program?",
+          "limit": 6,
+          "container_ref": "chat:branch-downtown",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["ocean exploration"],
+          "forbidden_block_content": ["space adventure", "September"]
+        },
+        "soft_expectations": {
+          "must_include": ["summer reading", "ocean"],
+          "must_not_include": ["space adventure"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cs-mixed-container-and-public-cross-container-sees-only-public",
+    "description": "Same topic in container A (container-scoped) and container B (public). Query from container C sees only B's public memory, not A's container-scoped one.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "multi_container", "visibility": "mixed_container_public"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "container_scoped_in_a",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-mixed-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: our branch will handle overdue fines by sending a courtesy reminder 3 days before the due date. Internal policy, not patron-facing yet.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:branch-downtown",
+            "thread_ref": "chat:branch-downtown:thread-mixed-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/cs-mixed-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "public_in_b",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-mixed-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Decision: the system-wide overdue fine policy is changing to a flat $1 per day with a $25 cap. This replaces the tiered penalty structure.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-ops",
+            "thread_ref": "chat:library-ops:thread-mixed-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/cs-mixed-001-msg-2",
+            "occurred_at": "2026-03-20T09:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_container_c",
+        "action": "query",
+        "query": {
+          "text": "What is the overdue fine policy?",
+          "limit": 6,
+          "container_ref": "chat:patron-services",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["$1 per day"],
+          "forbidden_block_content": ["courtesy reminder", "3 days before"]
+        },
+        "soft_expectations": {
+          "must_include": ["overdue", "fine"],
+          "must_not_include": ["courtesy reminder", "3 days before"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cs-container-scoped-multi-thread-accumulation",
+    "description": "Multiple decisions across threads within the same container-scoped channel. Query from a new thread in the same container finds all of them.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "same_container", "visibility": "container", "thread_relation": "multi_thread"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "decision_thread_1",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-accum-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: the reference desk will be staffed by two librarians during peak hours instead of one.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:branch-admin",
+            "thread_ref": "chat:branch-admin:thread-accum-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/cs-accum-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "decision_thread_2",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-accum-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Decision: peak hours for reference desk staffing are defined as 10 AM to 2 PM on weekdays and 11 AM to 3 PM on weekends.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:branch-admin",
+            "thread_ref": "chat:branch-admin:thread-accum-002",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/cs-accum-001-msg-2",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_new_thread",
+        "action": "query",
+        "query": {
+          "text": "What's the reference desk staffing plan?",
+          "limit": 6,
+          "container_ref": "chat:branch-admin",
+          "thread_ref": "chat:branch-admin:thread-accum-003",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["two librarians"]
+        },
+        "soft_expectations": {
+          "must_include": ["reference desk", "peak hours"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "cs-container-scoped-investigation-within-container",
+    "description": "Investigation finding in one thread is recalled from a different thread in the same container-scoped channel when a related symptom appears.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "same_container", "visibility": "container", "memory_type_target": "investigation_outcome"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "investigation_finding",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-inv-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Investigation found that the self-checkout scanner fails to read barcodes printed before 2015 because the label adhesive degrades and the contrast drops below the scanner threshold.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:branch-admin",
+            "thread_ref": "chat:branch-admin:thread-inv-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/cs-inv-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "related_symptom_new_thread",
+        "action": "query",
+        "query": {
+          "text": "Patrons are complaining the self-checkout keeps rejecting their books. What's going on with the scanner?",
+          "limit": 6,
+          "container_ref": "chat:branch-admin",
+          "thread_ref": "chat:branch-admin:thread-inv-002",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["barcode", "2015"]
+        },
+        "soft_expectations": {
+          "must_include": ["scanner", "barcode"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-cs-container-to-container-no-crosstalk",
+    "description": "Two containers run independent discussions on the same system. Querying from each container returns only its own context. No cross-container crosstalk.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "parallel_containers", "visibility": "container", "query_intent": "carry_forward"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "downtown_investigation",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-notalk-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Investigation found that the patron notification emails are bouncing because the SMTP relay certificate expired last Tuesday. IT is renewing it tomorrow.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:branch-downtown",
+            "thread_ref": "chat:branch-downtown:thread-notalk-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/cs-notalk-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "uptown_investigation",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-notalk-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Investigation found that our patron notification emails are being flagged as spam by Gmail because the SPF record is missing the new relay IP. Need to update DNS.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:branch-uptown",
+            "thread_ref": "chat:branch-uptown:thread-notalk-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/cs-notalk-001-msg-2",
+            "occurred_at": "2026-03-20T09:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_downtown",
+        "action": "query",
+        "query": {
+          "text": "Why are patron notification emails failing?",
+          "limit": 6,
+          "container_ref": "chat:branch-downtown",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["SMTP", "certificate"],
+          "forbidden_block_content": ["SPF", "DNS", "Gmail"]
+        },
+        "soft_expectations": {
+          "must_include": ["certificate", "relay"],
+          "must_not_include": ["spf", "dns", "gmail"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-cs-user-switches-containers",
+    "description": "User participates in container A (container-scoped) then moves to container B (also container-scoped). Query from B must not recall A's memories even for the same user.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "container", "actor_count": "single_user"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "work_in_container_a",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-switch-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: we will reindex the entire periodical archive using the new classification scheme. Estimated 3 weeks of work starting April 7.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:branch-downtown",
+            "thread_ref": "chat:branch-downtown:thread-switch-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/cs-switch-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_container_b",
+        "action": "query",
+        "query": {
+          "text": "What's the plan for the periodical archive reindexing?",
+          "limit": 6,
+          "container_ref": "chat:branch-uptown",
+          "actor_ref": "user:branch-librarian",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": false,
+          "forbidden_block_content": ["periodical", "classification scheme", "April 7"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-cs-container-scoped-with-public-supplement",
+    "description": "Container A has a container-scoped decision. A related public decision exists elsewhere. Query from container A sees both its own scoped memory and the public one.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "same_and_different", "visibility": "container_plus_public"},
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "public_system_wide_policy",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-supp-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: all branches must complete their annual inventory count by June 30. The central catalog team will provide barcode scanners for branches that need them.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-ops",
+            "thread_ref": "chat:library-ops:thread-supp-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://test/cs-supp-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "container_scoped_local_plan",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-supp-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Decision: our branch will start the inventory count on May 1 and do one floor per week. Children's section first, then reference, then general stacks.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:branch-downtown",
+            "thread_ref": "chat:branch-downtown:thread-supp-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/cs-supp-001-msg-2",
+            "occurred_at": "2026-03-20T10:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_same_container",
+        "action": "query",
+        "query": {
+          "text": "What's our plan for the annual inventory count?",
+          "limit": 6,
+          "container_ref": "chat:branch-downtown",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["May 1"]
+        },
+        "soft_expectations": {
+          "must_include": ["inventory"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-cs-container-scoped-off-topic-within-container",
+    "description": "Container-scoped memories exist but an off-topic query within the same container must not inject them. Container scope does not bypass topic relevance.",
+    "expected_status": "known_fail",
+    "expected_status_reason": "Known off-topic injection issue — justification gate passes when technical memories have high routing scores, tracked in routing simplification design",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "same_container", "visibility": "container", "topic_pattern": "switch", "injection_outcome": "suppress"},
+      "invariant_assertions": ["INV-03", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_container_memories",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "cs-offtopic-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: the periodical archive will switch from monthly to quarterly binding to reduce costs. The bindery contract is renegotiated for quarterly shipments.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:branch-admin",
+            "thread_ref": "chat:branch-admin:thread-offtopic-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://test/cs-offtopic-001-msg-1",
+            "occurred_at": "2026-03-20T08:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "off_topic_query_same_container",
+        "action": "query",
+        "query": {
+          "text": "What kind of cake should we get for the staff appreciation event?",
+          "limit": 6,
+          "container_ref": "chat:branch-admin",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-03", "INV-07"],
+        "quality_expectations": {
+          "should_inject": false
+        },
+        "soft_expectations": {
+          "must_not_include": ["periodical", "binding", "bindery", "quarterly"]
+        }
+      }
+    ]
+  }
+]
