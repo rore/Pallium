@@ -167,14 +167,8 @@ The runtime should send:
   - `visibility`
   - `thread_ref`
 
-Optional advanced hints:
-- `runtime_context` when the runtime genuinely knows a special state, for example:
-  - `turn_kind = resumed_session`
-  - an explicit override that local context is or is not sufficient
-
-Normal agents should not need to send `runtime_context` for ordinary chat flow.
-The structural refs are the primary contract; `runtime_context` is an optional
-mechanical override channel, not a semantic instruction channel.
+Pallium infers session lifecycle state (new thread, continuation, resumed
+session) from its own data. Agents do not need to classify turns.
 
 ## Query Result Contract
 

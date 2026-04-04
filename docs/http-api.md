@@ -171,9 +171,6 @@ Additional filters:
   filtering is applied. See
   [privacy-and-visibility.md](privacy-and-visibility.md#actor-scoping) for
   details.
-- `runtime_context` — optional runtime hints (see
-  [Common Shapes](#runtime_context))
-
 Minimal example:
 
 ```json
@@ -311,7 +308,6 @@ The request body is the same as `POST /items`, plus optional query fields:
 
 - `query_text` — override query text (defaults to `content`)
 - `query_limit` — max results (default: 5, range: 1–50)
-- `runtime_context` — optional runtime hints (same as POST /query)
 
 Example:
 
@@ -378,20 +374,6 @@ A simple string field:
 - `"private"` — visible only within the same `container_ref` (personal context)
 
 Default: `"private"`.
-
-### runtime_context
-
-Current shape:
-
-```json
-{
-  "turn_kind": "new_thread" | "same_thread" | "same_thread_continuation" | "resumed_session" | "new_session",
-  "session_has_sufficient_local_context": true | false | null
-}
-```
-
-This is optional query input. It is for runtime facts, not for telling Pallium
-which memory type should win.
 
 ## Practical Notes
 

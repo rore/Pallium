@@ -253,9 +253,10 @@ def channel_visibility(event: dict) -> str:
 
 - **Don't filter or rerank results** — `should_inject` and
   `injectable_blocks` are the contract.
-- **Don't send `runtime_context`** for normal chat — the structural refs
-  are sufficient. Only send it when you genuinely know the session state
-  (e.g. `turn_kind: "resumed_session"` after a reconnect).
+- **Don't send `runtime_context`** — Pallium infers session lifecycle
+  (new thread, continuation, resumed session) from its own thread state.
+  The structural refs (`container_ref`, `thread_ref`, `visibility`) are
+  sufficient.
 - **Don't send `use_case`** — server-side config selects the semantic package.
 - **Don't ingest everything** — user questions and final assistant answers are
   the high-value inputs. Skip reactions, ephemeral messages, and bot noise.
