@@ -2,20 +2,31 @@
 
 Two levels: set-level gate + per-candidate eligibility.
 Uses InjectionThresholds dataclass for all thresholds.
+Type-aware: structured memory (decisions, investigations, checkpoints) gets
+a lower injection bar than source hits.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+# Memory types that received LLM extraction with validated structure.
+# These get a lower injection bar because the extraction already confirmed relevance.
+HIGH_VALUE_MEMORY_TYPES = frozenset({
+    "decision", "investigation_outcome", "task_checkpoint",
+    "continuity_memory", "pattern_memory", "interest",
+})
+
 
 @dataclass(frozen=True)
 class InjectionThresholds:
     """All injection check thresholds. Swappable for testing."""
-    set_lexical_threshold: int = 2      # min IDF for set-level gate (at least one shared content word)
-    set_vector_high: int = 750          # cosine*1000 for strong vector match (condition 2 + condition 3)
+    set_lexical_threshold: int = 2      # min IDF for set-level gate
+    set_vector_high: int = 750          # cosine*1000 for strong vector match
     set_lexical_low: int = 1            # min lexical for vector+lexical condition
-    candidate_lexical_floor: int = 1    # per-candidate min lexical
-    candidate_vector_override: int = 800  # per-candidate strong vector override
+    candidate_lexical_floor: int = 1    # per-candidate min lexical (source hits)
+    candidate_vector_override: int = 800  # per-candidate strong vector (source hits)
+    high_value_lexical_floor: int = 1   # per-candidate min lexical (structured memory)
+    high_value_vector_floor: int = 650  # per-candidate vector floor (structured memory)
 
 
 _DEFAULT_THRESHOLDS = InjectionThresholds()
@@ -29,10 +40,8 @@ def should_allow_injection(
     """Set-level gate: should we inject anything at all?
 
     Requires minimum lexical signal somewhere in the candidate set.
-    This is the primary off-topic injection guard.
-
-    When composite retrieval scores (lexical_score/vector_score) are absent,
-    falls back to the retrieval_score field set by routing scoring.
+    Type-aware: if the set contains high-value structured memory with any
+    lexical signal, injection is allowed (per-candidate check handles filtering).
     """
     if not candidates:
         return False
@@ -54,15 +63,12 @@ def should_allow_injection(
         if best_vector >= thresholds.set_vector_high and best_lexical >= thresholds.set_lexical_low:
             return True
         # Condition 3: strong vector match when no lexical scoring was available
-        # Use candidate_vector_override (800) as higher bar since there's no lexical confirmation
         if best_vector >= thresholds.candidate_vector_override and not has_any_lexical:
             return True
         return False
 
     # Fallback: composite scores absent (lexical-only retrieval mode).
-    # retrieval_score is the raw IDF score from lexical search.
-    # Require at least one matching term (score > 0). In lexical-only mode, score 0
-    # means no words matched at all — certain off-topic.
+    # Require at least one matching term (score > 0).
     best_retrieval = max(int(c.get("retrieval_score", 0) or 0) for c in candidates)
     return best_retrieval > 0
 
@@ -74,8 +80,9 @@ def candidate_injection_eligible(
 ) -> bool:
     """Per-candidate: does this specific candidate have enough grounding to inject?
 
-    When composite retrieval scores (lexical_score/vector_score) are absent,
-    falls back to retrieval_score from the routing scoring pipeline.
+    Type-aware: structured memory (decisions, investigations, checkpoints) gets
+    a lower bar because LLM extraction validated its relevance. Source hits and
+    other types require stronger retrieval signals.
     """
     raw_lex = candidate.get("lexical_score")
     raw_vec = candidate.get("vector_score")
@@ -83,16 +90,37 @@ def candidate_injection_eligible(
     if raw_lex is not None or raw_vec is not None:
         lex = int(raw_lex or 0)
         vec = int(raw_vec or 0)
+        item = candidate.get("item")
+        is_source = getattr(item, "result_kind", None) == "source_hit"
+        item_type = getattr(item, "type", None)
+
+        # Structured memory: lower bar
+        if not is_source and item_type in HIGH_VALUE_MEMORY_TYPES:
+            return lex >= thresholds.high_value_lexical_floor or vec >= thresholds.high_value_vector_floor
+
+        # Source hits and other types: higher bar
         if lex >= thresholds.candidate_lexical_floor:
             return True
         if vec >= thresholds.candidate_vector_override:
             return True
-        # When lexical scoring is absent for this candidate, a strong vector match suffices
+        # When lexical scoring is absent for this candidate, strong vector suffices
         if raw_lex is None and vec >= thresholds.set_vector_high:
             return True
         return False
 
     # No composite scores — lexical-only retrieval mode.
-    # Require non-zero retrieval_score (at least one matching word).
     retrieval = int(candidate.get("retrieval_score", 0) or 0)
     return retrieval > 0
+
+
+def _has_high_value_memory(candidates: list[dict]) -> bool:
+    """Check if any candidate is a high-value structured memory type."""
+    for c in candidates:
+        item = c.get("item")
+        if item is None:
+            continue
+        if getattr(item, "result_kind", None) == "source_hit":
+            continue
+        if getattr(item, "type", None) in HIGH_VALUE_MEMORY_TYPES:
+            return True
+    return False
