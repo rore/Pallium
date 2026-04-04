@@ -19,6 +19,7 @@ from semantic.agent_conversation_memory_routing_injection import (
     should_allow_injection,
     candidate_injection_eligible,
 )
+from semantic.content_tokens import has_content_overlap
 from semantic.agent_conversation_memory_routing_scoring import (
     _is_current_query_echo,
     _summary_low_value_reason,
@@ -624,6 +625,25 @@ def _candidate_qualifies_as_same_thread_local_state(
 
     return False, "non_local_state_candidate"
 
+def _candidate_display_text(item: QueryResultItem) -> str:
+    """Extract the text that would be shown in an injectable block."""
+    if getattr(item, "result_kind", None) == "source_hit":
+        return str(getattr(item, "excerpt", "") or "")
+    # Memory hit: use summary or type-specific payload field
+    payload = getattr(item, "payload", None) or {}
+    return str(
+        payload.get("summary")
+        or payload.get("decision_text")
+        or payload.get("investigation_summary")
+        or payload.get("carry_forward_answer")
+        or payload.get("constraint_text")
+        or payload.get("interest_text")
+        or payload.get("pattern_label")
+        or getattr(item, "excerpt", "")
+        or ""
+    )
+
+
 def _candidate_is_injection_eligible(
     candidate: dict[str, object],
     *,
@@ -635,6 +655,12 @@ def _candidate_is_injection_eligible(
     # Per-candidate lexical grounding check (from simplified injection module)
     if not candidate_injection_eligible(candidate):
         return False
+    # Content word overlap check — aligned with INV-03
+    item_raw = candidate.get("item")
+    if item_raw is not None:
+        candidate_text = _candidate_display_text(item_raw)
+        if candidate_text and not has_content_overlap(query_text, candidate_text):
+            return False
     item = candidate["item"]
     assert isinstance(item, QueryResultItem)
     if _candidate_is_low_value(candidate):

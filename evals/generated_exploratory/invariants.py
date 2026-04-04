@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from semantic.content_tokens import content_tokens as _content_tokens, CONTENT_STOPWORDS as _STOPWORDS
+
 # Greeting / phatic patterns that should never appear in injectable blocks.
 _GREETING_PATTERNS = re.compile(
     r"^(hi|hello|hey|good morning|good afternoon|good evening|howdy|greetings)"
@@ -23,24 +25,6 @@ _GREETING_CONTENT_MAX_WORDS = 8
 # Minimum meaningful content words shared between query and injectable block
 # to consider them topically related (for INV-03).
 _TOPIC_OVERLAP_MIN_TOKENS = 1
-
-# Common stopwords excluded from topic overlap computation.
-_STOPWORDS = frozenset({
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "shall", "can", "must", "need",
-    "i", "me", "my", "we", "us", "our", "you", "your", "he", "she",
-    "it", "they", "them", "their", "its", "his", "her",
-    "in", "on", "at", "to", "for", "of", "with", "by", "from", "up",
-    "about", "into", "through", "during", "before", "after", "above",
-    "below", "between", "out", "off", "over", "under",
-    "and", "but", "or", "nor", "not", "so", "yet", "both", "either",
-    "neither", "each", "every", "all", "any", "few", "more", "most",
-    "other", "some", "such", "no", "only", "own", "same", "than", "too",
-    "very", "just", "also", "now", "then", "here", "there", "when",
-    "where", "why", "how", "what", "which", "who", "whom", "this",
-    "that", "these", "those", "if", "as",
-})
 
 # Recall signal phrases — queries containing these are backward-looking.
 # Multi-word phrases use substring matching (low false-positive risk).
@@ -67,12 +51,6 @@ class InvariantResult:
     severity: str = "hard"
     details: str | None = None
     evidence: dict[str, Any] = field(default_factory=dict)
-
-
-def _content_tokens(text: str) -> set[str]:
-    """Extract lowercase content words, excluding stopwords."""
-    words = set(re.findall(r"[a-z0-9]+", text.lower()))
-    return words - _STOPWORDS
 
 
 def _topic_overlap(tokens_a: set[str], tokens_b: set[str]) -> set[str]:

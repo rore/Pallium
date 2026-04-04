@@ -512,7 +512,8 @@ def test_same_thread_runtime_context_suppresses_when_no_external_carry_forward_e
 def test_same_thread_answer_bearing_source_no_longer_blocks_injection() -> None:
     """With _assistant_source_is_answer_bearing_local_state removed (cue-free control plane),
     same-thread assistant sources are not automatically treated as qualifying local state.
-    External carry-forward memory (checkpoint from another thread) may still be injected."""
+    External carry-forward memory (checkpoint from another thread) may still be injected
+    when there is content word overlap with the query."""
     plugin = AgentConversationMemoryPlugin(
         provider=TieredMemorySemanticProvider(),
         prompt_variant='strict_typed_memory_v4_evidence_guarded',
@@ -542,12 +543,12 @@ def test_same_thread_answer_bearing_source_no_longer_blocks_injection() -> None:
                 memory_object_id='checkpoint-other-thread',
                 type='task_checkpoint',
                 payload={
-                    'summary': 'Catalog sync retry remains paused after partial progress and a service-token failure.',
+                    'summary': 'Catalog sync retry paused: rewrite the batch manifest and rerun from record 313.',
                     'task': 'Resume the catalog sync retry.',
                     'current_state': 'Refreshed 312 reservation records before the service token expired.',
                     'key_findings': ['Avoid admin portal sign-in and local browser use during the retry.'],
                     'blocker_state': 'The service token expired, and the operator constraint forbids admin portal sign-in or local browser use.',
-                    'next_step': 'Refresh the catalog service token and rerun the sync from batch 313.',
+                    'next_step': 'Rewrite the catalog manifest and rerun the sync from batch 313.',
                     'evidence': ['Constraint: do not sign in to the admin portal or open a local browser.'],
                     'freshness_signal': 'Latest explicit update at 2026-03-11T10:02:00Z.',
                 },
@@ -580,7 +581,8 @@ def test_same_thread_answer_bearing_source_no_longer_blocks_injection() -> None:
     assert outcome.trace.routing is not None
     # With _assistant_source_is_answer_bearing_local_state removed, the same-thread
     # source no longer qualifies as local state, so same_thread_context_sufficient
-    # is no longer the decision reason. Injection proceeds with external carry-forward.
+    # is no longer the decision reason. The checkpoint shares content word overlap
+    # ("rewrite") with the query, so injection proceeds with external carry-forward.
     assert outcome.should_inject is True
 
 def test_same_thread_user_status_update_does_not_block_broad_recall_carry_forward() -> None:
