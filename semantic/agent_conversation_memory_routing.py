@@ -23,7 +23,6 @@ from semantic.agent_conversation_memory_routing_constants import (
     _routing_result_id,
 )
 from semantic.agent_conversation_memory_routing_trace import (
-    _build_anchor_prefilter_trace_entry,
     _build_kind_prefilter_trace_entry,
     _build_lane_narrowing_trace,
     _build_routing_trace,
@@ -569,6 +568,9 @@ def _anchor_prefilter_candidates(
         if secondary:
             summary["fallback_mode"] = "aligned_with_secondary"
             summary["secondary_tier_count"] = len(secondary)
+            # Intentionally overwrites any earlier per-item status (including
+            # insufficient_retained_demoted from Change 1) with secondary_tier
+            # so the tier penalty applies uniformly across the secondary pool.
             for item in secondary:
                 candidate_states[_routing_result_id(item)] = {
                     "anchor_prefilter_status": "secondary_tier",

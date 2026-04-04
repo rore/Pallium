@@ -622,6 +622,7 @@ def _score_routed_candidate(
         "vector_score": item.vector_score,
     }
 
+
 _ANCHOR_SECONDARY_STATUSES = frozenset({
     "insufficient_retained",
     "legacy_fallback_retained",

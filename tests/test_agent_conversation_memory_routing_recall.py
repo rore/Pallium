@@ -1196,3 +1196,10 @@ def test_anchor_prefilter_secondary_absent_when_aligned_fills_limit() -> None:
     assert len(memory_results) == 1
     assert memory_results[0].memory_object_id == 'decision-inventory-aligned'
     assert all(r.memory_object_id != 'decision-legacy-no-anchor' for r in memory_results)
+    # Confirm the secondary candidate entered the pool (scored, penalized) but was
+    # cut by the limit — not dropped before scoring
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    anchor_prefilter = outcome.trace.routing['anchor_prefilter']
+    assert anchor_prefilter['fallback_mode'] == 'aligned_with_secondary'
+    assert anchor_prefilter['secondary_tier_count'] == 1
