@@ -724,12 +724,9 @@ def test_workstream_anchor_prefilter_excludes_same_surface_off_topic_memory() ->
     assert anchor_prefilter['selected_query_anchor_kind'] == 'workstream'
     assert anchor_prefilter['selected_query_anchor'] == {'kind': 'workstream', 'value': 'inventory batch digest'}
     assert anchor_prefilter['fallback_mode'] == 'aligned_only'
-    assert anchor_prefilter['excluded_by_anchor_count'] == 1
-    assert any(
-        item['result_id'] == 'memory_object:decision-wallet-off-topic'
-        and item['reason_code'] == 'anchor_conflict'
-        for item in anchor_prefilter.get('excluded_candidates', [])
-    )
+    assert anchor_prefilter['excluded_by_anchor_count'] == 0
+    assert anchor_prefilter['insufficient_candidate_count'] == 1
+    assert not anchor_prefilter.get('excluded_candidates')
 
 
 def test_component_anchor_prefilter_stays_local_to_component_in_v1() -> None:
@@ -1064,3 +1061,73 @@ def test_multi_user_recall_routes_shared_decisions_from_different_threads(monkey
             f'Expected meaningful memory types in recall, got: {memory_types}'
         )
 
+
+def test_anchor_prefilter_conflicting_demoted_to_insufficient_retained_demoted() -> None:
+    """Change 1: conflicting candidates enter the insufficient fallback bucket and carry
+    the insufficient_retained_demoted status in the per-candidate trace. They are still
+    dropped from results when aligned candidates exist (aligned-wins rule is unchanged).
+    """
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='slack:channel:CLOCAL001')
+    inventory_scope = MemorySubjectAnchor(kind='workstream', value='inventory batch digest')
+    payment_scope = MemorySubjectAnchor(kind='workstream', value='payment processing')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-inventory-aligned',
+                type='decision',
+                payload={
+                    'decision': 'The inventory batch digest should continue on the local digest path.',
+                    'rationale': 'The inventory batch digest already has a confirmed local rerun path.',
+                },
+                score=16,
+                evidence=[],
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:inventory',
+                envelope=_memory_envelope('finding', subjects=[inventory_scope]),
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-payment-conflicting',
+                type='decision',
+                payload={
+                    'decision': 'The payment processing queue should drain before the inventory batch runs.',
+                    'rationale': 'Overlapping writes have caused duplicate entries in prior runs.',
+                },
+                score=14,
+                evidence=[],
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:payments',
+                envelope=_memory_envelope('finding', subjects=[payment_scope]),
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What decisions were made about inventory batch digest?',
+            query_tokens=('what', 'decisions', 'were', 'made', 'about', 'inventory', 'batch', 'digest'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What decisions were made about inventory batch digest?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.trace is not None
+    assert outcome.trace.routing is not None
+    anchor_prefilter = outcome.trace.routing['anchor_prefilter']
+    # Trace-level: conflicting is demoted to insufficient, not hard-excluded
+    assert anchor_prefilter['query_anchor_status'] == 'clear'
+    assert anchor_prefilter['excluded_by_anchor_count'] == 0
+    assert anchor_prefilter['insufficient_candidate_count'] == 1
+    assert not anchor_prefilter.get('excluded_candidates')

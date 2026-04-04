@@ -534,7 +534,6 @@ def _anchor_prefilter_candidates(
     aligned: list[QueryResultItem] = []
     insufficient: list[QueryResultItem] = []
     legacy: list[QueryResultItem] = []
-    conflicting: list[QueryResultItem] = []
     candidate_states: dict[str, dict[str, object]] = {}
     for item in memory_candidates:
         result_id = _routing_result_id(item)
@@ -547,24 +546,19 @@ def _anchor_prefilter_candidates(
                 "anchor_prefilter_reason": "Candidate matched the selected query anchor.",
             }
         elif anchor_state == "anchored_conflicting":
-            conflicting.append(item)
+            insufficient.append(item)
+            candidate_states[result_id] = {
+                "anchor_prefilter_status": "insufficient_retained_demoted",
+                "anchor_prefilter_reason_code": "anchor_conflict_demoted",
+                "anchor_prefilter_reason": "Candidate conflicted with the selected query anchor and was demoted to the insufficient fallback tier.",
+            }
         elif anchor_state == "anchored_insufficient":
             insufficient.append(item)
         else:
             legacy.append(item)
     summary["aligned_candidate_count"] = len(aligned)
     summary["insufficient_candidate_count"] = len(insufficient)
-    summary["excluded_by_anchor_count"] = len(conflicting)
-    if conflicting:
-        summary["excluded_candidates"] = [
-            _build_anchor_prefilter_trace_entry(
-                item,
-                status="conflicting_excluded",
-                reason_code="anchor_conflict",
-                reason="Candidate conflicted with the selected query anchor.",
-            )
-            for item in conflicting[:5]
-        ]
+    summary["excluded_by_anchor_count"] = 0
 
     retained_memory_ids: set[int]
     legacy_retained: list[QueryResultItem] = []

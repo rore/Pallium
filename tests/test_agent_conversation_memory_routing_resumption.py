@@ -492,7 +492,8 @@ def test_work_resumption_anchor_prefilter_excludes_adjacent_workstream_checkpoin
     assert anchor_prefilter['selected_query_anchor_kind'] == 'workstream'
     assert anchor_prefilter['selected_query_anchor'] == {'kind': 'workstream', 'value': 'inventory batch digest'}
     assert anchor_prefilter['fallback_mode'] == 'aligned_only'
-    assert anchor_prefilter['excluded_by_anchor_count'] == 1
+    assert anchor_prefilter['excluded_by_anchor_count'] == 0
+    assert anchor_prefilter['insufficient_candidate_count'] == 1
 
 
 # ---------------------------------------------------------------------------
