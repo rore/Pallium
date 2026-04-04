@@ -32,7 +32,6 @@ from semantic.agent_conversation_memory_routing_trace import (
 )
 from semantic.agent_conversation_memory_routing_signals import (
     _build_policy_evidence,
-    _check_evidence_trace_override,
     _compute_typed_candidate_evidence,
     _derive_query_signal_envelope,
     _policy_family_from_signal_envelope,
@@ -40,7 +39,6 @@ from semantic.agent_conversation_memory_routing_signals import (
 )
 from semantic.agent_conversation_memory_routing_policy import (
     _determine_eligible_lanes,
-    _invoke_resolver_for_ambiguity,
 )
 from semantic.agent_conversation_memory_routing_scoring import (
     _ANCHOR_SECONDARY_STATUSES,
@@ -83,6 +81,7 @@ from semantic.agent_conversation_memory_routing_constants import (  # noqa: F401
     is_query_topic_signal_empty,
 )
 from semantic.agent_conversation_memory_routing_signals import (  # noqa: F401
+    _check_evidence_trace_override,
     _work_state_evidence_gate_passes,
 )
 from semantic.agent_conversation_memory_routing_policy import (  # noqa: F401
@@ -100,7 +99,6 @@ def route_query_results(
     runtime_context: QueryRuntimeContext | None = None,
     include_trace: bool = False,
     debug_candidate_loader=None,
-    resolver_config: dict[str, object] | None = None,
     routing_overrides: RoutingOverrides | None = None,
 ) -> PackageQueryOutcome:
         _ov = routing_overrides or {}
@@ -181,16 +179,26 @@ def route_query_results(
                 injectable_blocks=[],
                 sharp_candidate_diagnostics=[],
             )
-        # Step 3b: Orthogonal evidence_trace override (post-envelope, post-noise)
-        signal_envelope = _check_evidence_trace_override(
-            envelope=signal_envelope,
-            source_ratio=float(candidate_evidence.get("source_hit_ratio", 0)),
-            query_text=text,
-            candidates=anchor_prefiltered_candidates,
-            runtime_context=runtime_context,
-            resolver_config=resolver_config,
-            resolver_fn=_invoke_resolver_for_ambiguity,
-        )
+        # Step 3b: Evidence trace detection (deterministic, no LLM)
+        # Only override when source hits overwhelmingly dominate the candidate set.
+        # Threshold 0.75 avoids false positives in mixed recall scenarios where
+        # memory objects are present alongside source evidence.
+        source_ratio = float(candidate_evidence.get("source_hit_ratio", 0))
+        if (source_ratio >= 0.75
+            and not signal_envelope.resume_state
+            and not signal_envelope.low_value
+            and not signal_envelope.evidence_request):
+            signal_envelope = QuerySignalEnvelope(
+                low_value=signal_envelope.low_value,
+                history_lookup=signal_envelope.history_lookup,
+                latest_status_request=signal_envelope.latest_status_request,
+                resume_state=signal_envelope.resume_state,
+                evidence_request=True,
+                source=signal_envelope.source,
+                confidence=signal_envelope.confidence,
+                semantic_classification_used=False,
+                derivation_signals=signal_envelope.derivation_signals + ("source_ratio_override",),
+            )
         # Step 4: Lane narrowing (consumes envelope via compatible shape tags)
         _envelope_shape_tags: list[str] = []
         if signal_envelope.resume_state:

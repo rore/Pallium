@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-
 from core.models import InjectableBlock, QueryFilters, QueryResultItem, QueryRuntimeContext
 from semantic.common import normalize_for_index
 from semantic.agent_conversation_memory_constraints import (
@@ -17,9 +15,9 @@ from semantic.agent_conversation_memory_routing_constants import (
     _candidate_thread_refs,
     _routing_result_id,
 )
-from semantic.agent_conversation_memory_routing_justification import (
-    compute_injection_signals,
-    justify_injection_rules,
+from semantic.agent_conversation_memory_routing_injection import (
+    should_allow_injection,
+    candidate_injection_eligible,
 )
 from semantic.agent_conversation_memory_routing_scoring import (
     _is_current_query_echo,
@@ -236,15 +234,13 @@ def _build_injectable_blocks(
             "same_thread_context_evaluation": same_thread_context,
         }
 
-    injection_signals = compute_injection_signals(final_candidates)
-    justification = justify_injection_rules(injection_signals)
-    if not justification.justified:
+    if not should_allow_injection(final_candidates):
         return [], {
             "should_inject": False,
-            "decision_reason": "low_justification_score",
-            "justification_reason": justification.reason,
-            "justification_score": justification.score,
-            "justification_signals": asdict(injection_signals),
+            "decision_reason": "low_injection_confidence",
+            "injection_method": "simplified",
+            "best_lexical": max((int(c.get("lexical_score", 0) or 0) for c in final_candidates), default=0),
+            "best_vector": max((int(c.get("vector_score", 0) or 0) for c in final_candidates), default=0),
             "returned_block_ids": [],
             "eligible_result_ids": [],
             "dropped_by_cap_result_ids": [],
@@ -330,9 +326,7 @@ def _build_injectable_blocks(
     return blocks, {
         "should_inject": bool(blocks),
         "decision_reason": "carry_forward_available" if blocks else "no_relevant_memory",
-        "justification_reason": justification.reason,
-        "justification_score": justification.score,
-        "justification_signals": asdict(injection_signals),
+        "injection_method": "simplified",
         "returned_block_ids": returned_ids,
         "eligible_result_ids": eligible_ids,
         "dropped_by_cap_result_ids": dropped_ids,
@@ -638,6 +632,9 @@ def _candidate_is_injection_eligible(
     allow_discussion_fallback: bool,
     allow_source_companion: bool,
 ) -> bool:
+    # Per-candidate lexical grounding check (from simplified injection module)
+    if not candidate_injection_eligible(candidate):
+        return False
     item = candidate["item"]
     assert isinstance(item, QueryResultItem)
     if _candidate_is_low_value(candidate):

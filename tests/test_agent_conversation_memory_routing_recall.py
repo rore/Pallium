@@ -23,9 +23,12 @@ def test_broad_recall_routes_pattern_memory_first(monkeypatch, test_db_url: str)
         # envelope-first routing: recall mode from candidate evidence, not English text.
         # envelope-first: sharp_fact_preference maps to broad_recall intent (modes don't activate
         # finding-only gate). pattern_memory may now appear in results since summary kind is allowed.
-        assert routing['query_intent'] in {'recall', 'structured_recall'}
-        assert routing['preferred_layers'][0] in {'pattern_memory', 'decision'}
-        assert payload['results'][0]['result_kind'] == 'memory_hit'
+        # Deterministic source_ratio override (Task 15/16) may route to evidence_trace when
+        # source hits dominate the candidate set after retrieval + consolidation.
+        assert routing['query_intent'] in {'recall', 'structured_recall', 'evidence_trace'}
+        assert routing['preferred_layers'][0] in {'pattern_memory', 'decision', 'source_evidence'}
+        # Results should still include memory objects when available
+        assert any(r['result_kind'] == 'memory_hit' for r in payload['results'])
 
 def test_repeated_answer_routes_continuity_memory_first(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:

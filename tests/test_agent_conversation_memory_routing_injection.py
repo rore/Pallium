@@ -1093,8 +1093,9 @@ def test_precise_fact_quote_grade_recall_allows_supported_source_evidence() -> N
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
     # envelope-first routing: recall mode from candidate evidence, not English text.
-    # Source injection deferred for recall modes — source evidence not primary-injectable.
-    assert outcome.trace.routing['query_intent'] in {'structured_recall', 'recall'}
+    # Deterministic source_ratio override (Task 15/16) may route to evidence_trace
+    # when source hits dominate the candidate set.
+    assert outcome.trace.routing['query_intent'] in {'structured_recall', 'recall', 'evidence_trace'}
     # Source may or may not be injectable depending on recall mode
     assert outcome.results[0].source_item_id == 'source-evidence-log'
 
@@ -1169,8 +1170,9 @@ def test_precise_fact_quote_grade_recall_keeps_weak_source_evidence_non_injectab
 
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
-    # envelope-first routing: recall mode from candidate evidence
-    assert outcome.trace.routing['query_intent'] in {'structured_recall', 'recall'}
+    # envelope-first routing: deterministic source_ratio override may route to
+    # evidence_trace when source hits dominate the candidate set (Task 15/16).
+    assert outcome.trace.routing['query_intent'] in {'structured_recall', 'recall', 'evidence_trace'}
     # Weak source evidence: should not be injectable regardless of mode
     assert outcome.injectable_blocks == []
 
@@ -1198,6 +1200,7 @@ def test_fresh_thread_greeting_noise_fails_closed_without_memory_injection() -> 
                 artifact_kind='assistant_output',
                 role='assistant',
                 score=18,
+                lexical_score=0,
                 evidence=[],
             ),
             QueryResultItem(
@@ -1212,6 +1215,7 @@ def test_fresh_thread_greeting_noise_fails_closed_without_memory_injection() -> 
                 artifact_kind='message',
                 role='user',
                 score=17,
+                lexical_score=0,
                 evidence=[],
             ),
             QueryResultItem(
@@ -1226,6 +1230,7 @@ def test_fresh_thread_greeting_noise_fails_closed_without_memory_injection() -> 
                 artifact_kind='assistant_output',
                 role='assistant',
                 score=8,
+                lexical_score=0,
                 evidence=[],
             ),
         ],
@@ -1457,6 +1462,7 @@ def test_typo_variant_greeting_fails_closed_without_memory_injection() -> None:
                 artifact_kind='assistant_output',
                 role='assistant',
                 score=18,
+                lexical_score=0,
                 evidence=[],
             ),
             QueryResultItem(
@@ -1471,6 +1477,7 @@ def test_typo_variant_greeting_fails_closed_without_memory_injection() -> None:
                 artifact_kind='message',
                 role='user',
                 score=17,
+                lexical_score=0,
                 evidence=[],
             ),
             QueryResultItem(
@@ -1485,6 +1492,7 @@ def test_typo_variant_greeting_fails_closed_without_memory_injection() -> None:
                 artifact_kind='assistant_output',
                 role='assistant',
                 score=9,
+                lexical_score=0,
                 evidence=[],
             ),
         ],
@@ -1511,9 +1519,9 @@ def test_typo_variant_greeting_fails_closed_without_memory_injection() -> None:
     assert outcome.should_inject is False
     # After removing query-time noise detection (cue-free control plane),
     # greeting-like queries are no longer classified as low_value_query.
-    # The system still correctly refuses injection because the source-only
-    # candidate set has no relevant memory to inject.
-    assert outcome.decision_reason in {'low_value_query', 'no_relevant_memory'}
+    # The simplified injection check (Task 15) rejects with low_injection_confidence
+    # when lexical grounding is absent.
+    assert outcome.decision_reason in {'low_value_query', 'no_relevant_memory', 'low_injection_confidence'}
     assert outcome.injectable_blocks == []
 
 def test_same_thread_batch_reminder_lately_prefers_structured_carry_forward_over_polluted_sources() -> None:
@@ -1696,7 +1704,7 @@ def test_retrieval_relevance_floor_suppresses_vector_only_candidates() -> None:
     )
     outcome = _run_floor_test(result, query_text="let's talk about something new")
     assert outcome.should_inject is False
-    assert outcome.decision_reason == 'low_justification_score'
+    assert outcome.decision_reason == 'low_injection_confidence'
 
 
 def test_retrieval_relevance_floor_suppresses_low_lexical_score() -> None:
@@ -1708,7 +1716,7 @@ def test_retrieval_relevance_floor_suppresses_low_lexical_score() -> None:
     )
     outcome = _run_floor_test(result, query_text='how about politics?')
     assert outcome.should_inject is False
-    assert outcome.decision_reason == 'low_justification_score'
+    assert outcome.decision_reason == 'low_injection_confidence'
 
 
 def test_retrieval_relevance_floor_passes_high_lexical_score() -> None:
@@ -1720,7 +1728,7 @@ def test_retrieval_relevance_floor_passes_high_lexical_score() -> None:
     )
     outcome = _run_floor_test(result, query_text='what did we discuss about vector databases?')
     assert outcome.should_inject is True
-    assert outcome.decision_reason != 'low_justification_score'
+    assert outcome.decision_reason != 'low_injection_confidence'
 
 
 def test_retrieval_relevance_floor_passes_at_boundary() -> None:
@@ -1732,7 +1740,7 @@ def test_retrieval_relevance_floor_passes_at_boundary() -> None:
     )
     outcome = _run_floor_test(result, query_text='what about vector databases?')
     assert outcome.should_inject is True
-    assert outcome.decision_reason != 'low_justification_score'
+    assert outcome.decision_reason != 'low_injection_confidence'
 
 
 def test_retrieval_relevance_floor_passes_lexical_only_retrieval() -> None:
@@ -1744,7 +1752,7 @@ def test_retrieval_relevance_floor_passes_lexical_only_retrieval() -> None:
     )
     outcome = _run_floor_test(result)
     # Floor does not activate for lexical-only retrieval
-    assert outcome.decision_reason != 'low_justification_score'
+    assert outcome.decision_reason != 'low_injection_confidence'
 
 
 def test_retrieval_relevance_floor_mixed_candidates_one_passes() -> None:
@@ -1800,11 +1808,11 @@ def test_retrieval_relevance_floor_mixed_candidates_one_passes() -> None:
         include_trace=True,
     )
     assert outcome.should_inject is True
-    assert outcome.decision_reason != 'low_justification_score'
+    assert outcome.decision_reason != 'low_injection_confidence'
 
 
 def test_retrieval_relevance_floor_trace_shows_reason() -> None:
-    """The injection decision trace should include the justification reason."""
+    """The injection decision trace should include diagnostic fields."""
     result = _build_floor_test_retrieval_result(
         score=9,
         retrieval_source='vector',
@@ -1813,8 +1821,9 @@ def test_retrieval_relevance_floor_trace_shows_reason() -> None:
     )
     outcome = _run_floor_test(result, query_text="let's talk about something new")
     injection_decision = outcome.trace.routing.get('injection_decision', {})
-    assert injection_decision.get('decision_reason') == 'low_justification_score'
-    assert 'justification_reason' in injection_decision
+    assert injection_decision.get('decision_reason') == 'low_injection_confidence'
+    # Simplified injection check (Task 15) provides injection_method and score diagnostics
+    assert 'injection_method' in injection_decision
 
 
 def test_vector_cosine_escape_hatch_passes_high_similarity() -> None:
@@ -1826,7 +1835,7 @@ def test_vector_cosine_escape_hatch_passes_high_similarity() -> None:
         vector_score=750,  # cosine 0.75 — above VECTOR_SIMILARITY_INJECTION_FLOOR (700)
     )
     outcome = _run_floor_test(result, query_text='what approach for tracking changes?')
-    assert outcome.decision_reason != 'low_justification_score'
+    assert outcome.decision_reason != 'low_injection_confidence'
 
 
 def test_vector_cosine_escape_hatch_at_boundary() -> None:
@@ -1838,7 +1847,7 @@ def test_vector_cosine_escape_hatch_at_boundary() -> None:
         vector_score=700,
     )
     outcome = _run_floor_test(result, query_text='what approach for tracking changes?')
-    assert outcome.decision_reason != 'low_justification_score'
+    assert outcome.decision_reason != 'low_injection_confidence'
 
 
 def test_vector_cosine_escape_hatch_suppresses_below_boundary() -> None:
@@ -1851,11 +1860,11 @@ def test_vector_cosine_escape_hatch_suppresses_below_boundary() -> None:
     )
     outcome = _run_floor_test(result, query_text="let's talk about something new")
     assert outcome.should_inject is False
-    assert outcome.decision_reason == 'low_justification_score'
+    assert outcome.decision_reason == 'low_injection_confidence'
 
 
 def test_vector_cosine_escape_hatch_trace_shows_reason() -> None:
-    """When a vector-only match passes via cosine escape hatch, trace shows the justification."""
+    """When a vector-only match passes via cosine escape hatch, trace shows simplified injection method."""
     result = _build_floor_test_retrieval_result(
         score=9,
         retrieval_source='vector',
@@ -1864,8 +1873,8 @@ def test_vector_cosine_escape_hatch_trace_shows_reason() -> None:
     )
     outcome = _run_floor_test(result, query_text='what approach for tracking changes?')
     injection_decision = outcome.trace.routing.get('injection_decision', {})
-    assert 'justification_reason' in injection_decision
-    assert 'gate4' in injection_decision.get('justification_reason', '')
+    # Simplified injection check (Task 15) replaces QPP gate system
+    assert injection_decision.get('injection_method') == 'simplified'
 
 
 # ---------------------------------------------------------------------------
