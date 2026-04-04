@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from datetime import datetime, timezone
+from datetime import datetime
 
 from core.models import QueryFilters, QueryResultItem, QueryRuntimeContext
 from semantic.common import normalize_for_index
@@ -29,15 +29,9 @@ from semantic.agent_conversation_memory_routing_constants import (
     ROUTING_SUPPORT_THRESHOLD,
     STRUCTURED_LAYERS,
     POLICY_WORK_STATE_USEFULNESS_THRESHOLD,
-    WORK_RESUMPTION_FRESHNESS_MARGIN_SECONDS,
-    WORK_RESUMPTION_FRESH_STATE_BONUS,
-    WORK_RESUMPTION_STALE_SOURCE_PENALTY,
-    WORK_RESUMPTION_STALE_STATE_PENALTY,
-    _candidate_container_refs,
     _candidate_freshness_timestamp,
     _candidate_matches_container,
     _candidate_matches_thread,
-    _candidate_thread_refs,
     _result_layer,
     _routing_query_tokens,
     _routing_result_id,
@@ -613,20 +607,6 @@ _ANCHOR_SECONDARY_STATUSES = frozenset({
     "secondary_tier",
 })
 
-def _apply_anchor_tier_penalty(scored_candidates: list[dict[str, object]]) -> None:
-    """Deduct ANCHOR_SECONDARY_TIER_PENALTY from base_routing_score for secondary-tier candidates.
-
-    Must be called after anchor_prefilter_states are merged into scored_candidates
-    (i.e., after the candidate.update(anchor_prefilter_states...) loop in route_query_results).
-    Sets anchor_tier_penalty on every candidate dict (0 for aligned/unclassified, penalty for secondary).
-    """
-    for candidate in scored_candidates:
-        status = str(candidate.get("anchor_prefilter_status") or "")
-        penalty = ANCHOR_SECONDARY_TIER_PENALTY if status in _ANCHOR_SECONDARY_STATUSES else 0
-        candidate["anchor_tier_penalty"] = penalty
-        if penalty:
-            candidate["base_routing_score"] = int(candidate["base_routing_score"]) - penalty
-
 def _locality_adjustment(
     *,
     intent: str,
@@ -858,107 +838,12 @@ def _fresh_session_component(
     return 0
 
 
-# ---------------------------------------------------------------------------
-# Shaping
-# ---------------------------------------------------------------------------
-
-def _apply_same_kind_freshness_shaping(scored_candidates: list[dict[str, object]], *, intent: str) -> None:
-    if intent not in {"structured_recall", "recall"}:
-        return
-    for memory_type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
-        typed_candidates = [candidate for candidate in scored_candidates if getattr(candidate["item"], "type", None) == memory_type]
-        if len(typed_candidates) < 2:
-            continue
-        typed_candidates.sort(
-            key=lambda candidate: (
-                candidate.get("freshness_timestamp_value") is not None,
-                candidate.get("freshness_timestamp_value") or datetime.min.replace(tzinfo=timezone.utc),
-                bool(candidate.get("same_thread")),
-                int(candidate.get("retrieval_score", 0)),
-            ),
-            reverse=True,
-        )
-        freshest = typed_candidates[0].get("freshness_timestamp_value")
-        for index, candidate in enumerate(typed_candidates):
-            freshness_delta = 0
-            if index == 0:
-                freshness_delta += 42 if intent == "structured_recall" else 24
-                if candidate.get("same_thread"):
-                    freshness_delta += 16
-            else:
-                freshness_delta -= min(index * 12, 30)
-                if freshest is not None and candidate.get("freshness_timestamp_value") is not None:
-                    candidate_time = candidate.get("freshness_timestamp_value")
-                    if isinstance(candidate_time, datetime) and freshest > candidate_time:
-                        freshness_delta -= 10
-            candidate["base_routing_score"] = int(candidate["base_routing_score"]) + freshness_delta
-            candidate["support_score"] = max(0, int(candidate["support_score"]) + max(freshness_delta // 2, 0))
-            candidate["support_grade"] = _routing_support_grade(int(candidate["support_score"]))
-            if freshness_delta > 0:
-                candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*candidate["packaging_reasons"], "fresh_same_kind_conclusion"]))
-            elif freshness_delta < 0:
-                candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*candidate["packaging_reasons"], "older_same_kind_conclusion"]))
-
 def _runtime_context_prefers_cross_thread_recall(runtime_context: QueryRuntimeContext | None) -> bool:
     return bool(
         runtime_context is not None
         and runtime_context.turn_kind in {"new_thread", "new_session"}
         and runtime_context.session_has_sufficient_local_context is False
     )
-
-def _apply_fresh_thread_structured_recall_preference(
-    scored_candidates: list[dict[str, object]],
-    *,
-    intent: str,
-    candidate_signals: dict[str, object],
-    runtime_context: QueryRuntimeContext | None,
-) -> None:
-    if intent not in {"recall", "work_resumption", "structured_recall"}:
-        return
-    if not _runtime_context_prefers_cross_thread_recall(runtime_context):
-        return
-
-    structured_support = max(
-        _query_family_layer_metric(candidate_signals, "task_checkpoint", "best_support"),
-        _query_family_layer_metric(candidate_signals, "thread_summary", "best_support"),
-        _query_family_layer_metric(candidate_signals, "discussion_summary", "best_support"),
-        _query_family_layer_metric(candidate_signals, "continuity_memory", "best_support"),
-        _query_family_layer_metric(candidate_signals, "pattern_memory", "best_support"),
-        _query_family_layer_metric(candidate_signals, "decision", "best_support"),
-        _query_family_layer_metric(candidate_signals, "investigation_outcome", "best_support"),
-        _query_family_layer_metric(candidate_signals, "lower_level_memory", "best_support"),
-    )
-    if structured_support < ROUTING_SUPPORT_THRESHOLD["supported"]:
-        return
-
-    structured_layers = {
-        "task_checkpoint",
-        "thread_summary",
-        "discussion_summary",
-        "continuity_memory",
-        "pattern_memory",
-        "decision",
-        "investigation_outcome",
-        "lower_level_memory",
-    }
-    for candidate in scored_candidates:
-        layer = str(candidate["layer"])
-        if layer == "source_evidence":
-            penalty = 120 if int(candidate["support_score"]) <= structured_support + 20 else 80
-            candidate["base_routing_score"] = int(candidate["base_routing_score"]) - penalty
-            candidate["support_score"] = max(0, int(candidate["support_score"]) - max(penalty // 3, 18))
-            candidate["support_grade"] = _routing_support_grade(int(candidate["support_score"]))
-            candidate["packaging_reasons"] = list(
-                OrderedDict.fromkeys([*candidate["packaging_reasons"], "fresh_thread_structured_memory_preferred"])
-            )
-        elif layer in structured_layers and str(candidate["support_grade"]) in {"supported", "strong"}:
-            bonus = 26 if layer in {"task_checkpoint", "decision", "investigation_outcome"} else 18
-            candidate["base_routing_score"] = int(candidate["base_routing_score"]) + bonus
-            candidate["support_score"] = int(candidate["support_score"]) + max(bonus // 2, 8)
-            candidate["support_grade"] = _routing_support_grade(int(candidate["support_score"]))
-            candidate["packaging_reasons"] = list(
-                OrderedDict.fromkeys([*candidate["packaging_reasons"], "fresh_thread_structured_memory_preferred"] )
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -984,60 +869,6 @@ def _source_hit_matches_current_query_text(
     return True
 
 
-def _apply_current_query_source_suppression(
-    scored_candidates: list[dict[str, object]],
-    *,
-    query_text: str,
-    query_filters: QueryFilters | None,
-) -> None:
-    for candidate in scored_candidates:
-        item = candidate["item"]
-        assert isinstance(item, QueryResultItem)
-        if not _source_hit_matches_current_query_text(item, query_text=query_text, query_filters=query_filters):
-            continue
-        penalty = 260
-        candidate["base_routing_score"] = int(candidate["base_routing_score"]) - penalty
-        candidate["support_score"] = 0
-        candidate["support_grade"] = _routing_support_grade(0)
-        candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*candidate["packaging_reasons"], "current_query_source_echo"]))
-        candidate["suppression_reason_code"] = "current_query_source_echo"
-        candidate["suppression_reason"] = "The active user query was excluded from recall evidence so routing does not self-echo the current turn."
-
-
-def _apply_recall_source_noise_suppression(
-    scored_candidates: list[dict[str, object]],
-    *,
-    intent: str,
-    query_text: str,
-    query_filters: QueryFilters | None,
-    runtime_context: QueryRuntimeContext | None,
-) -> None:
-    if intent not in {"recall"}:
-        return
-    for candidate in scored_candidates:
-        item = candidate["item"]
-        assert isinstance(item, QueryResultItem)
-        if item.result_kind != "source_hit":
-            continue
-        if candidate.get("suppression_reason_code") == "current_query_source_echo":
-            continue
-        suppression = _source_noise_suppression_reason(
-            item,
-            query_text=query_text,
-            query_filters=query_filters,
-            runtime_context=runtime_context,
-        )
-        if suppression is None:
-            continue
-        reason_code, reason_text = suppression
-        penalty = 220 if reason_code in {"current_thread_recall_query", "duplicate_recall_query_source"} else 180
-        candidate["base_routing_score"] = int(candidate["base_routing_score"]) - penalty
-        candidate["support_score"] = max(0, int(candidate["support_score"]) - max(penalty // 3, 24))
-        candidate["support_grade"] = _routing_support_grade(int(candidate["support_score"]))
-        candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*candidate["packaging_reasons"], reason_code]))
-        candidate["suppression_reason_code"] = reason_code
-        candidate["suppression_reason"] = reason_text
-
 def _is_current_query_echo(
     item: QueryResultItem,
     *,
@@ -1054,80 +885,6 @@ def _is_current_query_echo(
         return False
     return normalize_for_index(item.excerpt or "") == normalize_for_index(query_text)
 
-def _source_noise_suppression_reason(
-    item: QueryResultItem,
-    *,
-    query_text: str,
-    query_filters: QueryFilters | None,
-    runtime_context: QueryRuntimeContext | None,
-) -> tuple[str, str] | None:
-    excerpt = str(item.excerpt or "").strip()
-    if not excerpt:
-        return None
-    if _is_low_value_meta_text(excerpt):
-        return "low_value_meta_source", "Low-value orchestration source is not useful carry-forward for recall packaging."
-    if _is_current_query_echo(item, query_text=query_text, query_filters=query_filters):
-        if _runtime_context_prefers_cross_thread_recall(runtime_context):
-            return "current_thread_recall_query", "The current fresh-thread query was excluded from cross-thread recall packaging."
-        return "duplicate_recall_query_source", "A duplicate unresolved recall question was excluded from recall packaging."
-    return None
-
-def _apply_recall_structured_summary_suppression(
-    scored_candidates: list[dict[str, object]],
-    *,
-    intent: str,
-    query_text: str,
-    query_filters: QueryFilters | None,
-    runtime_context: QueryRuntimeContext | None,
-) -> None:
-    if intent not in {"recall"}:
-        return
-    for candidate in scored_candidates:
-        item = candidate["item"]
-        assert isinstance(item, QueryResultItem)
-        if item.result_kind != "memory_hit" or item.type not in ROUTING_SUMMARY_TYPES:
-            continue
-        suppression = _structured_summary_suppression_reason(
-            item,
-            query_text=query_text,
-            query_filters=query_filters,
-            runtime_context=runtime_context,
-        )
-        if suppression is None:
-            continue
-        reason_code, reason_text = suppression
-        penalty = 180
-        candidate["base_routing_score"] = int(candidate["base_routing_score"]) - penalty
-        candidate["support_score"] = max(0, int(candidate["support_score"]) - max(penalty // 3, 24))
-        candidate["support_grade"] = _routing_support_grade(int(candidate["support_score"]))
-        candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*candidate["packaging_reasons"], reason_code]))
-        candidate["suppression_reason_code"] = reason_code
-        candidate["suppression_reason"] = reason_text
-
-def _structured_summary_suppression_reason(
-    item: QueryResultItem,
-    *,
-    query_text: str,
-    query_filters: QueryFilters | None,
-    runtime_context: QueryRuntimeContext | None,
-) -> tuple[str, str] | None:
-    if item.type != "thread_summary":
-        return None
-    payload = item.payload or {}
-    summary_text = str(payload.get("summary") or "").strip()
-    rejection = _summary_low_value_reason(
-        item.type,
-        payload,
-        summary_text=summary_text,
-        query_text=query_text,
-    )
-    if rejection is None:
-        return None
-    if _runtime_context_prefers_cross_thread_recall(runtime_context) and query_filters is not None and query_filters.thread_ref and item.thread_ref == query_filters.thread_ref:
-        if rejection[0] == "query_only_thread_summary":
-            return "current_thread_empty_summary", "A current-thread query-only summary was excluded from recall packaging."
-        return "current_thread_unresolved_summary", "A current-thread unresolved summary was excluded from recall packaging."
-    return rejection
 
 def _summary_low_value_reason(
     memory_type: str,
@@ -1146,92 +903,6 @@ def _summary_low_value_reason(
     if content_quality == "weak":
         return "weak_thread_summary", "A weak summary was excluded from recall packaging."
     return None
-
-
-# ---------------------------------------------------------------------------
-# Work resumption packaging
-# ---------------------------------------------------------------------------
-
-def _apply_work_resumption_packaging(
-    scored_candidates: list[dict[str, object]],
-    *,
-    query_filters: QueryFilters | None,
-    thin_checkpoint_penalty: int | None = None,
-) -> dict[str, object]:
-    relevant_candidates = [
-        candidate
-        for candidate in scored_candidates
-        if _candidate_matches_requested_locality(candidate, query_filters)
-    ]
-    freshest_timestamp = max(
-        (
-            timestamp
-            for timestamp in (
-                candidate.get("freshness_timestamp_value")
-                for candidate in relevant_candidates
-            )
-            if isinstance(timestamp, datetime)
-        ),
-        default=None,
-    )
-
-    for candidate in scored_candidates:
-        item = candidate["item"]
-        assert isinstance(item, QueryResultItem)
-        signal_types = _work_resumption_signal_types(item)
-        candidate["work_signal_types"] = signal_types
-        usefulness_score, usefulness_reasons = _work_resumption_usefulness_score(item, signal_types, thin_checkpoint_penalty=thin_checkpoint_penalty)
-        freshness_adjustment, freshness_reasons = _work_resumption_freshness_adjustment(candidate, freshest_timestamp)
-        packaging_adjustment = usefulness_score + freshness_adjustment
-        candidate["work_usefulness_score"] = usefulness_score
-        candidate["packaging_adjustment"] = packaging_adjustment
-        candidate["packaging_reasons"] = list(OrderedDict.fromkeys([*usefulness_reasons, *freshness_reasons]))
-        timestamp = candidate.get("freshness_timestamp_value")
-        candidate["freshness_timestamp"] = timestamp.isoformat() if isinstance(timestamp, datetime) else None
-        candidate["base_routing_score"] = int(candidate["base_routing_score"]) + packaging_adjustment
-        support_adjustment = (usefulness_score // 2) + freshness_adjustment
-        candidate["support_score"] = max(0, int(candidate["support_score"]) + support_adjustment)
-        candidate["support_grade"] = _routing_support_grade(int(candidate["support_score"]))
-
-    return {
-        "mode": "work_resumption_ranking",
-        "freshest_state_timestamp": freshest_timestamp.isoformat() if isinstance(freshest_timestamp, datetime) else None,
-    }
-
-def _candidate_matches_requested_locality(candidate: dict[str, object], query_filters: QueryFilters | None) -> bool:
-    item = candidate["item"]
-    assert isinstance(item, QueryResultItem)
-    if query_filters is not None and query_filters.thread_ref:
-        return query_filters.thread_ref in _candidate_thread_refs(item)
-    if query_filters is not None and query_filters.container_ref:
-        return query_filters.container_ref in _candidate_container_refs(item)
-    return True
-
-def _work_resumption_freshness_adjustment(
-    candidate: dict[str, object],
-    freshest_timestamp: datetime | None,
-) -> tuple[int, list[str]]:
-    timestamp = candidate.get("freshness_timestamp_value")
-    signal_types = set(candidate.get("work_signal_types") or ())
-    if not isinstance(timestamp, datetime):
-        return 0, []
-    if freshest_timestamp is None:
-        if candidate["layer"] == "task_checkpoint" and "freshness" in signal_types:
-            return 8, ["explicit_freshness_signal"]
-        return 0, []
-
-    delta_seconds = (freshest_timestamp - timestamp).total_seconds()
-    if delta_seconds >= WORK_RESUMPTION_FRESHNESS_MARGIN_SECONDS:
-        if candidate["layer"] == "task_checkpoint":
-            return -WORK_RESUMPTION_STALE_STATE_PENALTY, ["stale_against_fresher_state"]
-        if candidate["layer"] == "source_evidence":
-            return -WORK_RESUMPTION_STALE_SOURCE_PENALTY, ["stale_against_fresher_state"]
-        return -(WORK_RESUMPTION_STALE_SOURCE_PENALTY // 2), ["stale_against_fresher_state"]
-    if delta_seconds <= 0 and signal_types.intersection({"blocker", "next_step", "progress_update"}):
-        return WORK_RESUMPTION_FRESH_STATE_BONUS, ["fresh_explicit_state"]
-    if candidate["layer"] == "task_checkpoint" and "freshness" in signal_types:
-        return 8, ["explicit_freshness_signal"]
-    return 0, []
 
 
 # ---------------------------------------------------------------------------
