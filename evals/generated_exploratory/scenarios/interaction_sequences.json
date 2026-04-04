@@ -1,0 +1,580 @@
+[
+  {
+    "scenario_id": "interaction-cross-thread-decision-recall",
+    "description": "Decision made in thread A surfaces when thread B asks a related question in the same container.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"thread_relation": "cross_thread", "query_intent": "carry_forward"},
+      "invariant_assertions": ["INV-01", "INV-04"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "decision_in_thread_alpha",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-001:alpha-1",
+            "content_type": "text/plain",
+            "content": "I've been going back and forth on the analytics DB. DynamoDB is simpler but we really need joins for the reporting queries. Let's go with Postgres.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-001",
+            "thread_ref": "test:thread:001-alpha",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-001-alpha-1",
+            "occurred_at": "2026-04-03T10:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_thread_beta",
+        "action": "query",
+        "query": {
+          "text": "I'm setting up the analytics database — what connection pooling should I use?",
+          "limit": 6,
+          "container_ref": "test:channel:interaction-001",
+          "thread_ref": "test:thread:001-beta",
+          "actor_ref": "test:user:alice",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04"],
+        "quality_expectations": {
+          "should_inject": true,
+          "decision_reason": "carry_forward_available",
+          "required_block_content": ["Postgres"],
+          "required_block_labels": ["Prior Decision"]
+        },
+        "soft_expectations": {
+          "must_include": ["postgres"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-decision-recall-with-stale-history",
+    "description": "Fresh decision surfaces over stale memories from old sessions when querying a related topic cross-thread.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"thread_relation": "cross_thread", "query_intent": "carry_forward", "temporal_pattern": "stale_vs_fresh"},
+      "invariant_assertions": ["INV-01", "INV-03", "INV-04"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "stale_history_thread_old_1",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-002:old1-1",
+            "content_type": "text/plain",
+            "content": "Don't connect to Jira from this environment, the firewall rules block it and we don't want to deal with the VPN setup.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-002",
+            "thread_ref": "test:thread:002-old-1",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-002-old1-1",
+            "occurred_at": "2026-03-28T09:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "stale_history_thread_old_2",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-002:old2-1",
+            "content_type": "text/plain",
+            "content": "We should evaluate all the open source vector database options. ChromaDB, Weaviate, Milvus, Qdrant — let's put together a comparison matrix.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-002",
+            "thread_ref": "test:thread:002-old-2",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-002-old2-1",
+            "occurred_at": "2026-03-28T14:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "fresh_decision_in_alpha",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-002:alpha-1",
+            "content_type": "text/plain",
+            "content": "I've been going back and forth on the analytics DB. DynamoDB is simpler but we really need joins for the reporting queries. Let's go with Postgres.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-002",
+            "thread_ref": "test:thread:002-alpha",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-002-alpha-1",
+            "occurred_at": "2026-04-03T10:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_thread_beta",
+        "action": "query",
+        "query": {
+          "text": "I'm setting up the analytics database — what connection pooling should I use?",
+          "limit": 6,
+          "container_ref": "test:channel:interaction-002",
+          "thread_ref": "test:thread:002-beta",
+          "actor_ref": "test:user:alice",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-03", "INV-04"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["Postgres"],
+          "forbidden_block_content": ["Jira", "jira", "ChromaDB", "vector database"]
+        },
+        "soft_expectations": {
+          "must_include": ["postgres"],
+          "must_not_include": ["jira", "chromadb", "vector database"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-constraint-propagation-adjacent",
+    "description": "Constraint about licensing surfaces for a topically adjacent query about dependency selection.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"thread_relation": "cross_thread", "memory_type_target": "constraint_memory", "topic_proximity": "adjacent"},
+      "invariant_assertions": ["INV-01", "INV-04"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "constraint_in_alpha",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-003:alpha-1",
+            "content_type": "text/plain",
+            "content": "Oh and one thing — legal said no GPL in this project, so keep that in mind when picking dependencies.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-003",
+            "thread_ref": "test:thread:003-alpha",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-003-alpha-1",
+            "occurred_at": "2026-04-03T10:00:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "query_adjacent_topic",
+        "action": "query",
+        "query": {
+          "text": "What Python HTTP client library should we use?",
+          "limit": 6,
+          "container_ref": "test:channel:interaction-003",
+          "thread_ref": "test:thread:003-beta",
+          "actor_ref": "test:user:alice",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["GPL"]
+        },
+        "soft_expectations": {
+          "must_include": ["gpl"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-constraint-propagation-distant",
+    "description": "Constraint about licensing should surface for topically distant query about JSON validation — known to fail because embedding space is too narrow.",
+    "expected_status": "known_fail",
+    "expected_status_reason": "Constraint vector embedding is too narrow for topically distant queries — no semantic bridge between GPL licensing and JSON validation",
+    "_generation_metadata": {
+      "taxonomy_cell": {"thread_relation": "cross_thread", "memory_type_target": "constraint_memory", "topic_proximity": "distant"},
+      "invariant_assertions": ["INV-01", "INV-04"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "constraint_in_alpha",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-004:alpha-1",
+            "content_type": "text/plain",
+            "content": "Oh and one thing — legal said no GPL in this project, so keep that in mind when picking dependencies.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-004",
+            "thread_ref": "test:thread:004-alpha",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-004-alpha-1",
+            "occurred_at": "2026-04-03T10:00:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "query_distant_topic",
+        "action": "query",
+        "query": {
+          "text": "Can you add a JSON schema validator? What options are there?",
+          "limit": 6,
+          "container_ref": "test:channel:interaction-004",
+          "thread_ref": "test:thread:004-beta",
+          "actor_ref": "test:user:alice",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["GPL"]
+        },
+        "soft_expectations": {
+          "must_include": ["gpl"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-same-thread-suppression",
+    "description": "Same-thread continuation with sufficient local context suppresses injection even when relevant memories exist.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"thread_relation": "same_thread", "injection_outcome": "suppress"},
+      "invariant_assertions": ["INV-01", "INV-04"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "conversation_start",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-005:alpha-1",
+            "content_type": "text/plain",
+            "content": "Let's figure out the caching strategy for the product catalog API. Right now every request hits the database.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-005",
+            "thread_ref": "test:thread:005-alpha",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-005-alpha-1",
+            "occurred_at": "2026-04-03T10:00:00Z",
+            "visibility": "container"
+          },
+          {
+            "source_type": "assistant_artifact",
+            "source_id": "test-msg:interaction-005:alpha-2",
+            "content_type": "text/plain",
+            "content": "We could add a Redis cache layer in front of the database. For the product catalog, a TTL of 5 minutes should work since the data changes infrequently.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "test:channel:interaction-005",
+            "thread_ref": "test:thread:005-alpha",
+            "actor_ref": "agent:assistant",
+            "source_ref": "memory://test/interaction-005-alpha-2",
+            "occurred_at": "2026-04-03T10:01:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "conversation_followup",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-005:alpha-3",
+            "content_type": "text/plain",
+            "content": "That makes sense. What about cache invalidation when a product gets updated? We need to make sure stale data doesn't stick around.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-005",
+            "thread_ref": "test:thread:005-alpha",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-005-alpha-3",
+            "occurred_at": "2026-04-03T10:02:00Z",
+            "visibility": "container"
+          },
+          {
+            "source_type": "assistant_artifact",
+            "source_id": "test-msg:interaction-005:alpha-4",
+            "content_type": "text/plain",
+            "content": "For invalidation, we can use a publish-subscribe pattern. When a product is updated, we publish an event and the cache subscriber deletes the stale entry.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "test:channel:interaction-005",
+            "thread_ref": "test:thread:005-alpha",
+            "actor_ref": "agent:assistant",
+            "source_ref": "memory://test/interaction-005-alpha-4",
+            "occurred_at": "2026-04-03T10:03:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "same_thread_continuation_query",
+        "action": "query",
+        "query": {
+          "text": "OK so should we use Redis Cluster or a single node for this?",
+          "limit": 6,
+          "container_ref": "test:channel:interaction-005",
+          "thread_ref": "test:thread:005-alpha",
+          "actor_ref": "test:user:alice",
+          "visibility": "container",
+          "runtime_context": {
+            "turn_kind": "same_thread_continuation",
+            "session_has_sufficient_local_context": true
+          }
+        },
+        "invariant_assertions": ["INV-01", "INV-04"],
+        "quality_expectations": {
+          "should_inject": false,
+          "decision_reason": "same_thread_context_sufficient"
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-off-topic-guard",
+    "description": "Off-topic query about meeting logistics should not inject accumulated technical memories.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "switch", "injection_outcome": "suppress"},
+      "invariant_assertions": ["INV-03"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_postgres_decision",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-006:alpha-1",
+            "content_type": "text/plain",
+            "content": "I've been going back and forth on the analytics DB. DynamoDB is simpler but we really need joins for the reporting queries. Let's go with Postgres.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-006",
+            "thread_ref": "test:thread:006-alpha",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-006-alpha-1",
+            "occurred_at": "2026-04-03T09:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "seed_oom_investigation",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-006:beta-1",
+            "content_type": "text/plain",
+            "content": "Figured it out — the OOM was because SQLAlchemy's connection pool has no cap by default. Once the DB got slow, connections piled up and ate all the memory. Setting max_overflow to 10 fixed it.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-006",
+            "thread_ref": "test:thread:006-beta",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-006-beta-1",
+            "occurred_at": "2026-04-03T11:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "off_topic_query",
+        "action": "query",
+        "query": {
+          "text": "Can you help me draft a meeting agenda for tomorrow's standup?",
+          "limit": 6,
+          "container_ref": "test:channel:interaction-006",
+          "thread_ref": "test:thread:006-gamma",
+          "actor_ref": "test:user:alice",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-03"],
+        "quality_expectations": {
+          "should_inject": false
+        },
+        "soft_expectations": {
+          "must_not_include": ["postgres", "dynamodb", "analytics", "oom", "sqlalchemy", "connection pool"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-investigation-carry-forward",
+    "description": "Investigation finding about OOM root cause surfaces when a related symptom reappears in a new thread.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"thread_relation": "cross_thread", "query_intent": "carry_forward", "memory_type_target": "investigation_outcome"},
+      "invariant_assertions": ["INV-01", "INV-04"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "investigation_finding",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-007:alpha-1",
+            "content_type": "text/plain",
+            "content": "Figured it out — the OOM was because SQLAlchemy's connection pool has no cap by default. Once the DB got slow, connections piled up and ate all the memory. Setting max_overflow to 10 fixed it.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-007",
+            "thread_ref": "test:thread:007-alpha",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-007-alpha-1",
+            "occurred_at": "2026-04-03T10:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "related_symptom_query",
+        "action": "query",
+        "query": {
+          "text": "The API servers are using a ton of memory again, any idea what's going on?",
+          "limit": 6,
+          "container_ref": "test:channel:interaction-007",
+          "thread_ref": "test:thread:007-beta",
+          "actor_ref": "test:user:alice",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_labels": ["Prior Investigation"],
+          "required_block_content": ["connection pool"]
+        },
+        "soft_expectations": {
+          "must_include": ["connection pool", "memory"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-echo-does-not-inflate-injection",
+    "description": "When technical memories exist but the current query is off-topic, the discussion_summary echo of the ingested query text must not inflate justification scores to trigger injection.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"topic_pattern": "switch", "injection_outcome": "suppress", "echo_pattern": "query_self_echo"},
+      "invariant_assertions": ["INV-03"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_postgres_decision",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-008:alpha-1",
+            "content_type": "text/plain",
+            "content": "I've been going back and forth on the analytics DB. DynamoDB is simpler but we really need joins for the reporting queries. Let's go with Postgres.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-008",
+            "thread_ref": "test:thread:008-alpha",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-008-alpha-1",
+            "occurred_at": "2026-04-03T09:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "seed_oom_investigation",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-008:beta-1",
+            "content_type": "text/plain",
+            "content": "Figured it out — the OOM was because SQLAlchemy's connection pool has no cap by default. Once the DB got slow, connections piled up and ate all the memory. Setting max_overflow to 10 fixed it.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-008",
+            "thread_ref": "test:thread:008-beta",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-008-beta-1",
+            "occurred_at": "2026-04-03T11:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "ingest_off_topic_message",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-008:gamma-1",
+            "content_type": "text/plain",
+            "content": "Can you help me draft a meeting agenda for tomorrow's standup?",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-008",
+            "thread_ref": "test:thread:008-gamma",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-008-gamma-1",
+            "occurred_at": "2026-04-03T14:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_same_off_topic_text",
+        "action": "query",
+        "query": {
+          "text": "Can you help me draft a meeting agenda for tomorrow's standup?",
+          "limit": 6,
+          "container_ref": "test:channel:interaction-008",
+          "thread_ref": "test:thread:008-gamma",
+          "actor_ref": "test:user:alice",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-03"],
+        "quality_expectations": {
+          "should_inject": false
+        },
+        "soft_expectations": {
+          "must_not_include": ["postgres", "dynamodb", "analytics", "oom", "sqlalchemy", "connection pool"]
+        }
+      }
+    ]
+  }
+]
