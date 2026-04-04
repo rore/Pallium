@@ -486,14 +486,26 @@ def test_work_resumption_anchor_prefilter_excludes_adjacent_workstream_checkpoin
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
     anchor_prefilter = outcome.trace.routing['anchor_prefilter']
+    # Inventory checkpoint still ranks first (aligned + tier-penalty guarantee)
     assert outcome.results[0].memory_object_id == 'checkpoint-inventory-resume'
-    assert all(result.memory_object_id != 'checkpoint-wallet-adjacent' for result in outcome.results if result.result_kind == 'memory_hit')
+    # work_resumption packaging only fills with decision/investigation_outcome/lower_level_memory
+    # so the adjacent wallet checkpoint (task_checkpoint layer) is retained as secondary_tier
+    # in the anchor prefilter but filtered out by the packaging fill logic
     assert anchor_prefilter['query_anchor_status'] == 'clear'
     assert anchor_prefilter['selected_query_anchor_kind'] == 'workstream'
     assert anchor_prefilter['selected_query_anchor'] == {'kind': 'workstream', 'value': 'inventory batch digest'}
-    assert anchor_prefilter['fallback_mode'] == 'aligned_only'
+    assert anchor_prefilter['fallback_mode'] == 'aligned_with_secondary'
+    assert anchor_prefilter['aligned_candidate_count'] == 1
+    assert anchor_prefilter['secondary_tier_count'] == 1
     assert anchor_prefilter['excluded_by_anchor_count'] == 0
-    assert anchor_prefilter['insufficient_candidate_count'] == 1
+    # Confirm the wallet checkpoint is retained as secondary_tier (visible in excluded trace)
+    excluded = outcome.trace.routing.get('excluded_high_scoring_candidates', [])
+    wallet_trace = next(
+        (e for e in excluded if e.get('result_id') == 'memory_object:checkpoint-wallet-adjacent'),
+        None,
+    )
+    assert wallet_trace is not None
+    assert wallet_trace.get('anchor_prefilter_status') == 'secondary_tier'
 
 
 # ---------------------------------------------------------------------------

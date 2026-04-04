@@ -564,8 +564,19 @@ def _anchor_prefilter_candidates(
     retained_memory_ids: set[int]
     legacy_retained: list[QueryResultItem] = []
     if aligned:
-        retained_memory_ids = {id(item) for item in aligned}
-        summary["fallback_mode"] = "aligned_only"
+        secondary = [*insufficient, *legacy]
+        retained_memory_ids = {id(item) for item in [*aligned, *secondary]}
+        if secondary:
+            summary["fallback_mode"] = "aligned_with_secondary"
+            summary["secondary_tier_count"] = len(secondary)
+            for item in secondary:
+                candidate_states[_routing_result_id(item)] = {
+                    "anchor_prefilter_status": "secondary_tier",
+                    "anchor_prefilter_reason_code": "anchor_secondary_tier",
+                    "anchor_prefilter_reason": "Candidate entered the secondary tier alongside aligned candidates; ranked below aligned via tier penalty.",
+                }
+        else:
+            summary["fallback_mode"] = "aligned_only"
     elif insufficient:
         legacy_retained = legacy
         retained_memory_ids = {id(item) for item in [*insufficient, *legacy_retained]}

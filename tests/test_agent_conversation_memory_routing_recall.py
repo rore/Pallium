@@ -718,14 +718,17 @@ def test_workstream_anchor_prefilter_excludes_same_surface_off_topic_memory() ->
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
     anchor_prefilter = outcome.trace.routing['anchor_prefilter']
+    # Aligned memory still ranks first
     assert outcome.results[0].memory_object_id == 'decision-inventory-aligned'
-    assert all(result.memory_object_id != 'decision-wallet-off-topic' for result in outcome.results if result.result_kind == 'memory_hit')
+    # Previously-conflicting memory is now retained as secondary tier
+    assert any(result.memory_object_id == 'decision-wallet-off-topic' for result in outcome.results if result.result_kind == 'memory_hit')
     assert anchor_prefilter['query_anchor_status'] == 'clear'
     assert anchor_prefilter['selected_query_anchor_kind'] == 'workstream'
     assert anchor_prefilter['selected_query_anchor'] == {'kind': 'workstream', 'value': 'inventory batch digest'}
-    assert anchor_prefilter['fallback_mode'] == 'aligned_only'
+    assert anchor_prefilter['fallback_mode'] == 'aligned_with_secondary'
+    assert anchor_prefilter['aligned_candidate_count'] == 1
+    assert anchor_prefilter['secondary_tier_count'] == 1
     assert anchor_prefilter['excluded_by_anchor_count'] == 0
-    assert anchor_prefilter['insufficient_candidate_count'] == 1
     assert not anchor_prefilter.get('excluded_candidates')
 
 
@@ -1131,3 +1134,65 @@ def test_anchor_prefilter_conflicting_demoted_to_insufficient_retained_demoted()
     assert anchor_prefilter['excluded_by_anchor_count'] == 0
     assert anchor_prefilter['insufficient_candidate_count'] == 1
     assert not anchor_prefilter.get('excluded_candidates')
+
+
+def test_anchor_prefilter_secondary_absent_when_aligned_fills_limit() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='slack:channel:CLOCAL001')
+    inventory_scope = MemorySubjectAnchor(kind='workstream', value='inventory batch digest')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-inventory-aligned',
+                type='decision',
+                payload={
+                    'decision': 'The inventory batch digest should continue on the local digest path.',
+                    'rationale': 'The inventory batch digest already has a confirmed local rerun path.',
+                },
+                score=16,
+                evidence=[],
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:inventory',
+                envelope=_memory_envelope('finding', subjects=[inventory_scope]),
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-legacy-no-anchor',
+                type='decision',
+                payload={
+                    'decision': 'Use event timestamps for ordering to avoid replay collisions.',
+                    'rationale': 'Temporal ordering prevents duplicate entries after sync delays.',
+                },
+                score=14,
+                evidence=[],
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:sync',
+                envelope=None,
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What had we concluded about inventory batch digest?',
+            query_tokens=('what', 'had', 'we', 'concluded', 'about', 'inventory', 'batch', 'digest'),
+            limit=1,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What had we concluded about inventory batch digest?',
+        requested_limit=1,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    memory_results = [r for r in outcome.results if r.result_kind == 'memory_hit']
+    assert len(memory_results) == 1
+    assert memory_results[0].memory_object_id == 'decision-inventory-aligned'
+    assert all(r.memory_object_id != 'decision-legacy-no-anchor' for r in memory_results)
