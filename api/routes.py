@@ -16,6 +16,7 @@ from api.schemas import (
 )
 from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
 from core.service import PalliumService
+from core.turn_inference import resolve_runtime_context
 from core.visibility import QueryVisibilityTrace, VisibilityExclusion
 
 
@@ -349,6 +350,12 @@ def create_router(service: PalliumService) -> APIRouter:
             visibility=request.visibility_kind(),
         )
         query_text = request.query_text or request.content
+        runtime_context = resolve_runtime_context(
+            service._storage,
+            request.thread_ref,
+            _deserialize_runtime_context(request.runtime_context),
+            exclude_item_id=ingest_result.source_item_id,
+        )
         query_result = service.query(
             query_text,
             request.query_limit,
@@ -356,7 +363,7 @@ def create_router(service: PalliumService) -> APIRouter:
             thread_ref=request.thread_ref,
             actor_ref=request.query_actor_ref,
             visibility=request.visibility_kind(),
-            runtime_context=_deserialize_runtime_context(request.runtime_context),
+            runtime_context=runtime_context,
         )
         return ItemAndQueryResponse(
             source_item_id=ingest_result.source_item_id,
@@ -386,6 +393,12 @@ def create_router(service: PalliumService) -> APIRouter:
             visibility=request.visibility_kind(),
         )
         query_text = request.query_text or request.content
+        runtime_context = resolve_runtime_context(
+            service._storage,
+            request.thread_ref,
+            _deserialize_runtime_context(request.runtime_context),
+            exclude_item_id=ingest_result.source_item_id,
+        )
         query_result = service.query(
             query_text,
             request.query_limit,
@@ -393,7 +406,7 @@ def create_router(service: PalliumService) -> APIRouter:
             thread_ref=request.thread_ref,
             actor_ref=request.query_actor_ref,
             visibility=request.visibility_kind(),
-            runtime_context=_deserialize_runtime_context(request.runtime_context),
+            runtime_context=runtime_context,
             include_trace=True,
         )
         if query_result.trace is None:

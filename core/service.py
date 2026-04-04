@@ -17,6 +17,7 @@ from core.processing import (
 )
 from core.query import QueryExecutor
 from core.thread_rebuild import ThreadRebuilder, truncate_processing_error
+from core.turn_inference import resolve_runtime_context
 from core.vector_embed import VectorEmbedder
 from core.models import QueryRuntimeContext, Relation, SourceItem, utc_now
 from core.observability import IntegrationDebugLogger
@@ -389,6 +390,11 @@ class PalliumService:
         runtime_context: QueryRuntimeContext | None = None,
         include_trace: bool = False,
     ) -> QueryResult:
+        runtime_context = resolve_runtime_context(
+            self._storage,
+            thread_ref,
+            runtime_context,
+        )
         return self._query_executor.query(
             text,
             limit,

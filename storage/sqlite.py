@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from core.contracts import ProcessResult
 from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, Relation, SourceItem
+from core.turn_inference import ThreadStats
 from storage.base import StorageProvider
 from storage.sqlite_codec import SQLiteCodecMixin
 from storage.sqlite_queue import SQLiteQueueMixin
@@ -98,6 +99,17 @@ class SQLiteStorageProvider(
                 .order_by(SourceItemRecord.created_at.asc(), SourceItemRecord.id.asc())
             ).all()
         return [self._to_source_item(record) for record in records]
+
+    def get_thread_stats(self, thread_ref: str, *, exclude_item_id: str | None = None) -> ThreadStats:
+        with self._session_factory() as session:
+            query = select(
+                func.count(SourceItemRecord.id),
+                func.max(SourceItemRecord.created_at),
+            ).where(SourceItemRecord.thread_ref == thread_ref)
+            if exclude_item_id is not None:
+                query = query.where(SourceItemRecord.id != exclude_item_id)
+            row = session.execute(query).one()
+            return ThreadStats(item_count=row[0], latest_created_at=row[1])
 
     def create_annotation(self, annotation: Annotation) -> None:
         record = AnnotationRecord(

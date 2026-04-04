@@ -6,6 +6,7 @@ from datetime import datetime
 
 from core.contracts import MemoryRetentionPolicy, ProcessResult
 from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
+from core.turn_inference import ThreadStats
 from core.visibility import VisibilityExclusion
 
 
@@ -336,6 +337,10 @@ class StorageProvider(ABC):
 
     @abstractmethod
     def list_source_items_for_thread(self, container_ref: str, thread_ref: str) -> list[SourceItem]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_thread_stats(self, thread_ref: str, *, exclude_item_id: str | None = None) -> ThreadStats:
         raise NotImplementedError
 
     @abstractmethod
