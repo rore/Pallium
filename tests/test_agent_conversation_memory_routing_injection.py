@@ -1746,9 +1746,9 @@ def test_retrieval_relevance_floor_passes_at_boundary() -> None:
 
 
 def test_retrieval_relevance_floor_passes_lexical_only_retrieval() -> None:
-    """Lexical-only retrieval (retrieval_source=None) should always pass the floor."""
+    """Lexical-only retrieval with any IDF match passes injection check."""
     result = _build_floor_test_retrieval_result(
-        score=1,
+        score=1,  # any non-zero IDF score passes in lexical-only mode
         retrieval_source=None,
         lexical_score=None,
     )
@@ -1964,7 +1964,6 @@ def test_vague_recall_injects_checkpoint_with_work_signals() -> None:
                 memory_object_id='offtopic-checkpoint-1',
                 type='task_checkpoint',
                 payload={
-                    'summary': 'Catalog records batch 417 is blocked on missing ISBN data; next step is to contact the publisher.',
                     'task': 'Process catalog records batch 417',
                     'current_state': 'Blocked on missing ISBN data for 12 items',
                     'blocker_state': 'Missing ISBN data for items 4201-4212',

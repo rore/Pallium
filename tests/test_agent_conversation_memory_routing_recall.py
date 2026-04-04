@@ -556,8 +556,8 @@ def test_fresher_same_kind_conclusion_ranks_above_older_one() -> None:
             ),
         ],
         trace=QueryTrace(
-            query_text='What had we concluded about reservation ordering?',
-            query_tokens=('concluded', 'reservation', 'ordering'),
+            query_text='What had we concluded about duplicate holds?',
+            query_tokens=('concluded', 'duplicate', 'holds'),
             limit=4,
             filters=QueryFilters(container_ref='chat:library-help', thread_ref='chat:library-help:thread-freshness'),
             stages=(),
@@ -565,7 +565,7 @@ def test_fresher_same_kind_conclusion_ranks_above_older_one() -> None:
     )
 
     outcome = plugin.route_query_results(
-        text='What had we concluded about reservation ordering?',
+        text='What had we concluded about duplicate holds?',
         requested_limit=4,
         retrieval_result=retrieval_result,
         query_filters=QueryFilters(container_ref='chat:library-help', thread_ref='chat:library-help:thread-freshness'),

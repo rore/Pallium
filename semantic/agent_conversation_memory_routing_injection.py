@@ -59,9 +59,10 @@ def should_allow_injection(
             return True
         return False
 
-    # Fallback: when composite scores are absent, use retrieval_score as a proxy.
-    # A score of 0 means the item wasn't retrieved through any scored path —
-    # no basis for injection confidence.
+    # Fallback: composite scores absent (lexical-only retrieval mode).
+    # retrieval_score is the raw IDF score from lexical search.
+    # Require at least one matching term (score > 0). In lexical-only mode, score 0
+    # means no words matched at all — certain off-topic.
     best_retrieval = max(int(c.get("retrieval_score", 0) or 0) for c in candidates)
     return best_retrieval > 0
 
@@ -91,6 +92,7 @@ def candidate_injection_eligible(
             return True
         return False
 
-    # No composite scores on this candidate — can't verify lexical grounding per-candidate.
-    # Defer to the set-level gate which already checked the full candidate set.
-    return True
+    # No composite scores — lexical-only retrieval mode.
+    # Require non-zero retrieval_score (at least one matching word).
+    retrieval = int(candidate.get("retrieval_score", 0) or 0)
+    return retrieval > 0
