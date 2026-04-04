@@ -179,7 +179,9 @@ cosine similarity). Validated with real BGE-small embeddings.
 
 SourceItem vector embedding is decided by the semantic plugin, not hard-coded in
 core. Decoupled from semantic processing success (persisted before processing,
-survives extraction failures). Policy: messages + assistant outputs >= 40 chars.
+survives extraction failures). The usearch embedding also runs regardless of LLM
+outcome — the source item is vector-searchable even during sustained LLM outages.
+Policy: messages + assistant outputs >= 40 chars.
 
 ### 2026-03-20 - Local-first embedding via ONNX
 

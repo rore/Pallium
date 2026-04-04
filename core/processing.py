@@ -176,6 +176,7 @@ class ItemProcessor:
 
         source_vector_entry = self._vector_embedder.build_source_item_vector_entry(plugin, source_item)
 
+        memory_vectors_added = False
         try:
             direct_result = plugin.process_item(source_item)
             reconcile_process_result = getattr(plugin, "reconcile_process_result", None)
@@ -258,7 +259,6 @@ class ItemProcessor:
                 failure_category=failure_category,
                 error=error,
             )
-            return
 
         source_vector_added = False
         if source_vector_entry is not None:
