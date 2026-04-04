@@ -34,6 +34,120 @@ from evals.generated_exploratory.taxonomy import infer_priority_tier
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Quality expectations evaluator (standalone, testable independently)
+# ---------------------------------------------------------------------------
+
+def evaluate_quality_expectations(
+    expectations: dict[str, Any],
+    query_response: dict[str, Any],
+) -> dict[str, Any]:
+    """Evaluate quality expectations against a query response.
+
+    ``expectations`` is a dict with optional keys:
+      - should_inject (bool): exact match on response should_inject
+      - decision_reason (str): exact match on response decision_reason
+      - required_block_content (list[str]): each must appear in at least one
+        injectable block's text (case-insensitive)
+      - forbidden_block_content (list[str]): none may appear in any injectable
+        block's text (case-insensitive)
+      - required_block_labels (list[str]): each must appear in at least one
+        block's title/label
+      - max_injectable_blocks (int): len(injectable_blocks) must be <= this
+
+    Returns ``{"passed": bool, "checks": [...]}``.
+    """
+    checks: list[dict[str, Any]] = []
+    blocks = query_response.get("injectable_blocks", [])
+    block_texts_lower = [
+        (b.get("text") or "").lower() for b in blocks
+    ]
+    block_labels = [
+        (b.get("title") or b.get("label") or "").lower() for b in blocks
+    ]
+
+    # should_inject
+    if "should_inject" in expectations:
+        expected = expectations["should_inject"]
+        actual = query_response.get("should_inject")
+        checks.append({
+            "field": "should_inject",
+            "expected": expected,
+            "actual": actual,
+            "passed": actual == expected,
+        })
+
+    # decision_reason
+    if "decision_reason" in expectations:
+        expected = expectations["decision_reason"]
+        actual = query_response.get("decision_reason")
+        checks.append({
+            "field": "decision_reason",
+            "expected": expected,
+            "actual": actual,
+            "passed": actual == expected,
+        })
+
+    # required_block_content
+    if "required_block_content" in expectations:
+        required = expectations["required_block_content"]
+        missing = []
+        for term in required:
+            term_lower = term.lower()
+            if not any(term_lower in bt for bt in block_texts_lower):
+                missing.append(term)
+        checks.append({
+            "field": "required_block_content",
+            "expected": required,
+            "missing": missing,
+            "passed": len(missing) == 0,
+        })
+
+    # forbidden_block_content
+    if "forbidden_block_content" in expectations:
+        forbidden = expectations["forbidden_block_content"]
+        found = []
+        for term in forbidden:
+            term_lower = term.lower()
+            if any(term_lower in bt for bt in block_texts_lower):
+                found.append(term)
+        checks.append({
+            "field": "forbidden_block_content",
+            "expected": forbidden,
+            "found": found,
+            "passed": len(found) == 0,
+        })
+
+    # required_block_labels
+    if "required_block_labels" in expectations:
+        required = expectations["required_block_labels"]
+        missing = []
+        for label in required:
+            label_lower = label.lower()
+            if not any(label_lower in bl for bl in block_labels):
+                missing.append(label)
+        checks.append({
+            "field": "required_block_labels",
+            "expected": required,
+            "missing": missing,
+            "passed": len(missing) == 0,
+        })
+
+    # max_injectable_blocks
+    if "max_injectable_blocks" in expectations:
+        max_blocks = expectations["max_injectable_blocks"]
+        actual_count = len(blocks)
+        checks.append({
+            "field": "max_injectable_blocks",
+            "expected": max_blocks,
+            "actual": actual_count,
+            "passed": actual_count <= max_blocks,
+        })
+
+    all_passed = all(c["passed"] for c in checks)
+    return {"passed": all_passed, "checks": checks}
+
+
 DEFAULT_SCENARIO_FILE = Path("evals/generated_exploratory/scenarios/seed_invariant_scenarios.json")
 DEFAULT_OUTPUT_DIR = Path("evals/generated_exploratory/output")
 DEFAULT_CACHE_DIR = Path(".local/llm-cache")
@@ -223,6 +337,22 @@ def _execute_one(
             "runner_error": f"{type(exc).__name__}: {exc}",
         }
     result["priority_tier"] = tier
+
+    # Resolve expected_status: compare actual outcome against expectation.
+    expected_status = scenario.get("expected_status", "pass")
+    actual_passed = result.get("all_passed", False)
+    if expected_status == "known_fail":
+        if actual_passed:
+            result["effective_status"] = "known_fail_unexpected_pass"
+        else:
+            result["effective_status"] = "known_fail_matched"
+    else:
+        # Default: expected_status == "pass" (or absent).
+        result["effective_status"] = "pass" if actual_passed else "fail"
+
+    if scenario.get("expected_status_reason"):
+        result["expected_status_reason"] = scenario["expected_status_reason"]
+
     return result
 
 
@@ -278,7 +408,18 @@ def _run_scenario(
 
     # Detect malformed scenarios that ran no invariants (e.g., only ingest steps).
     has_invariants = len(all_invariant_results) > 0
-    all_passed = has_invariants and len(violated) == 0
+    invariants_passed = has_invariants and len(violated) == 0
+
+    # Aggregate quality expectation results across steps.
+    quality_steps = [
+        sr["quality_expectation_results"]
+        for sr in step_results
+        if sr.get("quality_expectation_results") is not None
+    ]
+    quality_all_passed = all(q["passed"] for q in quality_steps) if quality_steps else True
+
+    # all_passed gates both invariants AND quality expectations.
+    all_passed = invariants_passed and quality_all_passed
 
     meta = scenario.get("_generation_metadata") or {}
     return {
@@ -289,6 +430,7 @@ def _run_scenario(
         "violated_invariants": violated,
         "taxonomy_cell": meta.get("taxonomy_cell"),
         "invariant_count": len(all_invariant_results),
+        "quality_expectations_passed": quality_all_passed,
         # Emit query_contract_consistent so benchmark_architecture._contract_success
         # recognises this result in the CONTRACT lane.
         "query_contract_consistent": all_passed,
@@ -320,10 +462,16 @@ def _run_simple(
         debug_payload,
     )
 
+    quality = None
+    quality_expectations = scenario.get("_generation_metadata", {}).get("quality_expectations")
+    if quality_expectations:
+        quality = evaluate_quality_expectations(quality_expectations, query_payload)
+
     return [{
         "step_id": "query",
         "invariant_results": [asdict(r) for r in results],
         "soft_expectation_results": soft,
+        "quality_expectation_results": quality,
     }]
 
 
@@ -366,10 +514,17 @@ def _run_multi_step(
                 debug_payload,
             )
 
+            quality = None
+            if step.get("quality_expectations"):
+                quality = evaluate_quality_expectations(
+                    step["quality_expectations"], query_payload,
+                )
+
             step_results.append({
                 "step_id": step.get("step_id", f"step_{len(step_results)}"),
                 "invariant_results": [asdict(r) for r in results],
                 "soft_expectation_results": soft,
+                "quality_expectation_results": quality,
             })
 
     return step_results
@@ -551,6 +706,23 @@ def _build_summary(
         if not r["all_passed"]
     ]
 
+    # Quality expectations: count scenarios where invariants passed but
+    # quality expectations failed.
+    quality_misses = sum(
+        1 for r in results
+        if r["all_passed"] and not r.get("quality_expectations_passed", True)
+    )
+
+    # Expected-status counters.
+    known_fail_matched = sum(
+        1 for r in results
+        if r.get("effective_status") == "known_fail_matched"
+    )
+    known_fail_unexpected_pass = sum(
+        1 for r in results
+        if r.get("effective_status") == "known_fail_unexpected_pass"
+    )
+
     return {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -558,6 +730,9 @@ def _build_summary(
         "scenarios_total": total,
         "scenarios_passed": passed,
         "scenarios_violated": violated,
+        "quality_misses": quality_misses,
+        "known_fail_matched": known_fail_matched,
+        "known_fail_unexpected_pass": known_fail_unexpected_pass,
         "by_tier": by_tier,
         "by_invariant": by_invariant,
         "failed_scenarios": failed_scenarios,
