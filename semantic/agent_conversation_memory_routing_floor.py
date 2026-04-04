@@ -36,13 +36,29 @@ def apply_relevance_floor(
     filtered_lexicals: list[int] = []
 
     for item in candidates:
-        vec = int(getattr(item, "vector_score", 0) or 0)
-        lex = int(getattr(item, "lexical_score", 0) or 0)
-        if vec >= thresholds.min_vector or lex >= thresholds.min_lexical:
+        raw_vec = getattr(item, "vector_score", None)
+        raw_lex = getattr(item, "lexical_score", None)
+        # If neither score is available, we have no basis to filter — pass through.
+        if raw_vec is None and raw_lex is None:
             survivors.append(item)
-        else:
+            continue
+        vec = int(raw_vec or 0)
+        lex = int(raw_lex or 0)
+        # A candidate fails the floor only when both measured dimensions are weak.
+        # A None score is treated as "no signal" — not as a failing score.
+        vec_ok = raw_vec is not None and vec >= thresholds.min_vector
+        lex_ok = raw_lex is not None and lex >= thresholds.min_lexical
+        vec_fails = raw_vec is not None and vec < thresholds.min_vector
+        lex_fails = raw_lex is not None and lex < thresholds.min_lexical
+        if vec_ok or lex_ok:
+            survivors.append(item)
+        elif vec_fails and lex_fails:
+            # Both dimensions present and both weak — filter.
             filtered_vectors.append(vec)
             filtered_lexicals.append(lex)
+        else:
+            # Only one dimension present and it's weak — not enough evidence to filter.
+            survivors.append(item)
 
     ranges: dict[str, tuple[int, int]] = {}
     if filtered_vectors:

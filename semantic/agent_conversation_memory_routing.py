@@ -62,6 +62,7 @@ from semantic.agent_conversation_memory_routing_selection import (
     _candidate_is_injection_eligible,
     _select_final_candidates,
 )
+from semantic.agent_conversation_memory_routing_floor import apply_relevance_floor
 
 # ---------------------------------------------------------------------------
 # Re-exports for backward compatibility.
@@ -106,9 +107,39 @@ def route_query_results(
         _support_threshold: dict[str, int] = _ov.get("support_threshold") or ROUTING_SUPPORT_THRESHOLD
         _thin_checkpoint_penalty: int = _ov.get("work_resumption_thin_checkpoint_penalty", WORK_RESUMPTION_THIN_CHECKPOINT_PENALTY)  # type: ignore[assignment]
         query_tokens = _routing_query_tokens(text)
+        # Step 0: Relevance floor — drop weak candidates before routing
+        floor_result = apply_relevance_floor(retrieval_result.results)
+        if not floor_result.survivors and retrieval_result.results:
+            # All candidates filtered — substantive query but nothing matches well
+            empty_trace = None
+            if include_trace and retrieval_result.trace is not None:
+                empty_trace = QueryTrace(
+                    query_text=retrieval_result.trace.query_text,
+                    query_tokens=retrieval_result.trace.query_tokens,
+                    limit=requested_limit,
+                    filters=retrieval_result.trace.filters,
+                    stages=retrieval_result.trace.stages,
+                    visibility=retrieval_result.trace.visibility,
+                    requested_filters=retrieval_result.trace.requested_filters,
+                    filter_scope_relaxed=retrieval_result.trace.filter_scope_relaxed,
+                    filter_scope_reason=retrieval_result.trace.filter_scope_reason,
+                    routing={"policy_name": ROUTING_POLICY_NAME,
+                             "decision_reason": "no_candidates_above_floor",
+                             "floor_filtered_count": floor_result.filtered_count,
+                             "floor_filtered_score_ranges": floor_result.filtered_score_ranges},
+                )
+            return PackageQueryOutcome(
+                results=[],
+                trace=empty_trace,
+                should_inject=False,
+                decision_reason="no_candidates_above_floor",
+                injectable_blocks=[],
+                sharp_candidate_diagnostics=[],
+            )
+        floor_candidates = floor_result.survivors if floor_result.survivors else retrieval_result.results
         # Step 1: Family-independent anchor prefilter
         anchor_prefiltered_candidates, anchor_prefilter_summary, anchor_prefilter_states = _anchor_prefilter_candidates(
-            retrieval_result.results,
+            floor_candidates,
             query_tokens=query_tokens,
         )
         # Step 2: Policy evidence + typed candidate evidence (language-agnostic)
