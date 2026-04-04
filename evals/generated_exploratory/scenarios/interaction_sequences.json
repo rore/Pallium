@@ -580,5 +580,239 @@
         }
       }
     ]
+  },
+  {
+    "scenario_id": "interaction-resumed-session-recall",
+    "description": "After a gap in conversation, resuming work should surface the last active task checkpoint or decision.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"thread_relation": "cross_thread", "query_intent": "work_resumption"},
+      "invariant_assertions": ["INV-01", "INV-04"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "active_work_in_alpha",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-009:alpha-1",
+            "content_type": "text/plain",
+            "content": "I want to move the auth middleware to JWT. I got the token validation extracted into its own module but haven't wired up the refresh flow yet.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-009",
+            "thread_ref": "test:thread:009-alpha",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-009-alpha-1",
+            "occurred_at": "2026-04-03T10:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "resumed_session_query",
+        "action": "query",
+        "query": {
+          "text": "Let's pick up where I left off",
+          "limit": 6,
+          "container_ref": "test:channel:interaction-009",
+          "thread_ref": "test:thread:009-beta",
+          "actor_ref": "test:user:alice",
+          "visibility": "container",
+          "runtime_context": {
+            "turn_kind": "resumed_session",
+            "session_has_sufficient_local_context": false
+          }
+        },
+        "invariant_assertions": ["INV-01", "INV-04"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["JWT", "auth"]
+        },
+        "soft_expectations": {
+          "must_include": ["jwt", "auth"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-decision-revision",
+    "description": "When a decision is revised in a later thread, the revised decision should surface instead of or alongside the original.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"thread_relation": "cross_thread", "query_intent": "carry_forward", "temporal_pattern": "revision"},
+      "invariant_assertions": ["INV-01", "INV-04"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "original_decision",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-010:alpha-1",
+            "content_type": "text/plain",
+            "content": "Let's use Redis for the session store. It's fast and we already have a cluster running.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-010",
+            "thread_ref": "test:thread:010-alpha",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-010-alpha-1",
+            "occurred_at": "2026-04-02T10:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "revised_decision",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-010:beta-1",
+            "content_type": "text/plain",
+            "content": "Actually scratch Redis for sessions, we're going with signed cookies instead. Simpler and no extra infrastructure dependency.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-010",
+            "thread_ref": "test:thread:010-beta",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-010-beta-1",
+            "occurred_at": "2026-04-03T10:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_current_decision",
+        "action": "query",
+        "query": {
+          "text": "How are we handling sessions?",
+          "limit": 6,
+          "container_ref": "test:channel:interaction-010",
+          "thread_ref": "test:thread:010-gamma",
+          "actor_ref": "test:user:alice",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["signed cookies"]
+        },
+        "soft_expectations": {
+          "must_include": ["signed cookies", "session"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-interest-not-decision",
+    "description": "An expressed interest should not be presented as a committed decision when recalled.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"thread_relation": "cross_thread", "memory_type_target": "interest", "scoring_quality": "type_discrimination"},
+      "invariant_assertions": ["INV-01", "INV-04"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "express_interest",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-011:alpha-1",
+            "content_type": "text/plain",
+            "content": "I've been reading about event sourcing, it seems like it could work well for our audit log. Not sure yet though, need to think about it more.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-011",
+            "thread_ref": "test:thread:011-alpha",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-011-alpha-1",
+            "occurred_at": "2026-04-03T10:00:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "query_audit_log_architecture",
+        "action": "query",
+        "query": {
+          "text": "What architecture are we using for the audit log?",
+          "limit": 6,
+          "container_ref": "test:channel:interaction-011",
+          "thread_ref": "test:thread:011-beta",
+          "actor_ref": "test:user:alice",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_labels": ["Interest"],
+          "forbidden_block_content": ["Decision:"]
+        },
+        "soft_expectations": {
+          "must_include": ["event sourcing"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "interaction-container-isolation",
+    "description": "Memories from container A must not appear in container B query results.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "cross_container", "injection_outcome": "suppress"},
+      "invariant_assertions": ["INV-01", "INV-04"],
+      "priority_tier": "P1",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "decision_in_container_a",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:interaction-012:alpha-1",
+            "content_type": "text/plain",
+            "content": "We decided to use Kafka for the event pipeline. The throughput requirements rule out simpler alternatives.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:interaction-012-A",
+            "thread_ref": "test:thread:012-alpha",
+            "actor_ref": "test:user:alice",
+            "source_ref": "memory://test/interaction-012-alpha-1",
+            "occurred_at": "2026-04-03T10:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_container_b",
+        "action": "query",
+        "query": {
+          "text": "What are we using for the event pipeline?",
+          "limit": 6,
+          "container_ref": "test:channel:interaction-012-B",
+          "thread_ref": "test:thread:012-beta",
+          "actor_ref": "test:user:alice",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04"],
+        "quality_expectations": {
+          "should_inject": false,
+          "forbidden_block_content": ["Kafka"]
+        }
+      }
+    ]
   }
 ]
