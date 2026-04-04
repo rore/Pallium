@@ -1127,7 +1127,7 @@ def _default_runtime_context(raw: dict[str, Any], *, should_memory_help: bool) -
             "turn_kind": "same_thread_continuation",
             "session_has_sufficient_local_context": True,
         }
-    if raw.get("expected_intent") in {"broad_recall", "evidence_trace", "investigative_conclusion"}:
+    if raw.get("expected_intent") in {"recall", "evidence_trace", "structured_recall"}:
         return {
             "turn_kind": "new_thread",
             "session_has_sufficient_local_context": False,

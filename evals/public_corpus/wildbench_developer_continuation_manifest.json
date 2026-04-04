@@ -16,7 +16,7 @@
       "description": "A realistic debugging follow-up asks for the earlier resource-cap recommendation again.",
       "scenario_family": "resumed_work_paraphrase",
       "should_memory_help": true,
-      "expected_intent": "precise_fact",
+      "expected_intent": "structured_recall",
       "expected_winning_layer": "lower_level_memory",
       "acceptable_winning_layers": [
         "lower_level_memory",
@@ -41,7 +41,7 @@
       "description": "A resumed-work paraphrase asks for the exact Kubernetes memory change without replaying the whole diagnosis.",
       "scenario_family": "resumed_work_paraphrase",
       "should_memory_help": true,
-      "expected_intent": "precise_fact",
+      "expected_intent": "structured_recall",
       "expected_winning_layer": "lower_level_memory",
       "acceptable_winning_layers": [
         "lower_level_memory",
@@ -64,7 +64,7 @@
       "description": "A paraphrased follow-up asks for the earlier rubric headings again on the same task.",
       "scenario_family": "resumed_work_paraphrase",
       "should_memory_help": true,
-      "expected_intent": "precise_fact",
+      "expected_intent": "structured_recall",
       "expected_winning_layer": "lower_level_memory",
       "acceptable_winning_layers": [
         "lower_level_memory",
@@ -90,7 +90,7 @@
       "description": "A realistic debugging follow-up asks for the exact supporting log line from earlier in the same session.",
       "scenario_family": "exact_evidence_followup",
       "should_memory_help": true,
-      "expected_intent": "precise_fact",
+      "expected_intent": "structured_recall",
       "expected_winning_layer": "source_evidence",
       "acceptable_winning_layers": [
         "source_evidence",
@@ -115,7 +115,7 @@
       "description": "A paraphrased evidence follow-up asks for the exact overlap-proof log line again.",
       "scenario_family": "exact_evidence_followup",
       "should_memory_help": true,
-      "expected_intent": "precise_fact",
+      "expected_intent": "structured_recall",
       "expected_winning_layer": "source_evidence",
       "acceptable_winning_layers": [
         "source_evidence",

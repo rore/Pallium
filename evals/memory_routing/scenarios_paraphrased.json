@@ -100,7 +100,7 @@
         },
         "target_question": "What was the deal with that hold duplication thing after sync?",
         "expected_value": true,
-        "expected_intent": "broad_recall",
+        "expected_intent": "recall",
         "expected_top_layer": "pattern_memory",
         "expected_top_memory_types": [
             "pattern_memory"
@@ -221,7 +221,7 @@
         },
         "target_question": "Any takeaways from the sync duplication work?",
         "expected_value": true,
-        "expected_intent": "broad_recall",
+        "expected_intent": "recall",
         "expected_top_layer": "pattern_memory",
         "expected_top_memory_types": [
             "pattern_memory"
@@ -293,7 +293,7 @@
         },
         "target_question": "Didn't we already go over why notices go out in batches?",
         "expected_value": true,
-        "expected_intent": "answer_continuity",
+        "expected_intent": "recall",
         "expected_top_layer": "continuity_memory",
         "expected_top_memory_types": [
             "continuity_memory"
@@ -364,7 +364,7 @@
         },
         "target_question": "What's the standing answer on notice batching?",
         "expected_value": true,
-        "expected_intent": "answer_continuity",
+        "expected_intent": "recall",
         "expected_top_layer": "continuity_memory",
         "expected_top_memory_types": [
             "continuity_memory"
@@ -451,7 +451,7 @@
         },
         "target_question": "Remind me which ordering we went with for holds?",
         "expected_value": true,
-        "expected_intent": "precise_fact",
+        "expected_intent": "structured_recall",
         "expected_top_layer": "lower_level_memory",
         "expected_top_memory_types": [
             "decision"
@@ -521,7 +521,7 @@
         },
         "target_question": "How often do overdue notices go out again?",
         "expected_value": true,
-        "expected_intent": "precise_fact",
+        "expected_intent": "structured_recall",
         "expected_top_layer": "lower_level_memory",
         "expected_top_memory_types": [
             "decision"
@@ -785,7 +785,7 @@
         },
         "target_question": "What did we land on for the hold sync problem?",
         "expected_value": true,
-        "expected_intent": "investigative_conclusion",
+        "expected_intent": "structured_recall",
         "expected_top_layer": "lower_level_memory",
         "expected_top_memory_types": [
             "investigation_outcome",
@@ -832,7 +832,7 @@
         },
         "target_question": "What's with the 48-hour cutoff on rare books?",
         "expected_value": false,
-        "expected_intent": "broad_recall",
+        "expected_intent": "recall",
         "expected_top_layer": "none",
         "expected_answer_signals": [
             "48-hour cutoff",
@@ -944,7 +944,7 @@
         },
         "target_question": "Remind me what we figured out about the hold duplication after sync delays?",
         "expected_value": true,
-        "expected_intent": "broad_recall",
+        "expected_intent": "recall",
         "expected_top_layer": "lower_level_memory",
         "acceptable_top_layers": [
             "lower_level_memory"

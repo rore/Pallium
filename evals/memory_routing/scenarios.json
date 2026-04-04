@@ -100,7 +100,7 @@
                           },
         "target_question":  "What did we previously conclude about duplicate holds after catalog sync delays?",
         "expected_value":  true,
-        "expected_intent":  "broad_recall",
+        "expected_intent":  "recall",
         "expected_top_layer":  "pattern_memory",
         "expected_top_memory_types":  [
                                           "pattern_memory"
@@ -222,7 +222,7 @@
                           },
         "target_question":  "From the duplicate-hold sync issue, what general lesson should we remember?",
         "expected_value":  true,
-        "expected_intent":  "broad_recall",
+        "expected_intent":  "recall",
         "expected_top_layer":  "pattern_memory",
         "expected_top_memory_types":  [
                                           "pattern_memory"
@@ -295,7 +295,7 @@
                           },
         "target_question":  "Have we already answered why overdue notices are batched?",
         "expected_value":  true,
-        "expected_intent":  "answer_continuity",
+        "expected_intent":  "recall",
         "expected_top_layer":  "continuity_memory",
         "expected_top_memory_types":  [
                                           "continuity_memory"
@@ -367,7 +367,7 @@
                           },
         "target_question":  "What answer should we carry forward for overdue notice batching?",
         "expected_value":  true,
-        "expected_intent":  "answer_continuity",
+        "expected_intent":  "recall",
         "expected_top_layer":  "continuity_memory",
         "expected_top_memory_types":  [
                                           "continuity_memory"
@@ -455,7 +455,7 @@
                           },
         "target_question":  "What ordering did we choose for reservation updates?",
         "expected_value":  true,
-        "expected_intent":  "broad_recall",
+        "expected_intent":  "recall",
         "expected_top_layer":  "lower_level_memory",
         "expected_top_memory_types":  [
                                           "decision"
@@ -526,7 +526,7 @@
                           },
         "target_question":  "What exact batch interval did we choose for overdue notices?",
         "expected_value":  true,
-        "expected_intent":  "broad_recall",
+        "expected_intent":  "recall",
         "expected_top_layer":  "lower_level_memory",
         "expected_top_memory_types":  [
                                           "decision"
@@ -793,7 +793,7 @@
                           },
         "target_question":  "What was our verdict on the duplicate-hold sync problem?",
         "expected_value":  true,
-        "expected_intent":  "broad_recall",
+        "expected_intent":  "recall",
         "expected_top_layer":  "lower_level_memory",
         "expected_top_memory_types":  [
                                           "investigation_outcome",
@@ -843,7 +843,7 @@
                           },
         "target_question":  "Why is the rare-book reservation cutoff 48 hours?",
         "expected_value":  false,
-        "expected_intent":  "broad_recall",
+        "expected_intent":  "recall",
         "expected_top_layer":  "none",
         "expected_answer_signals":  [
                                         "48-hour cutoff",
@@ -958,7 +958,7 @@
                           },
         "target_question":  "What did we previously conclude about duplicate holds after catalog sync delays?",
         "expected_value":  true,
-        "expected_intent":  "broad_recall",
+        "expected_intent":  "recall",
         "expected_top_layer":  "lower_level_memory",
         "acceptable_top_layers":  [
                                       "lower_level_memory"

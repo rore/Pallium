@@ -67,7 +67,7 @@
     },
     "target_question": "What did we previously conclude about the delayed catalog sync investigation?",
     "should_memory_help": true,
-    "expected_intent": "broad_recall",
+    "expected_intent": "recall",
     "expected_primary_layer": "lower_level_memory",
     "acceptable_fallback_layers": [
       "source_evidence",
@@ -1334,7 +1334,7 @@
     },
     "target_question": "What public conclusion did we already make about the LIB-241 rollout?",
     "should_memory_help": true,
-    "expected_intent": "broad_recall",
+    "expected_intent": "recall",
     "expected_primary_layer": "lower_level_memory",
     "acceptable_fallback_layers": [
       "source_evidence"

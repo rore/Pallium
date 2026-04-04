@@ -294,7 +294,7 @@ def _scenario_runtime_context(scenario: dict[str, Any]) -> dict[str, Any]:
             "turn_kind": "same_thread_continuation",
             "session_has_sufficient_local_context": True,
         }
-    if scenario.get("expected_intent") in {"answer_continuity", "work_resumption"}:
+    if scenario.get("expected_intent") in {"recall", "work_resumption"}:
         return {
             "turn_kind": "resumed_session",
             "session_has_sufficient_local_context": False,

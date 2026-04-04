@@ -67,7 +67,7 @@
     },
     "target_question": "Where did we leave off with the sync delay investigation?",
     "should_memory_help": true,
-    "expected_intent": "broad_recall",
+    "expected_intent": "recall",
     "expected_primary_layer": "lower_level_memory",
     "acceptable_fallback_layers": [
       "source_evidence"
@@ -1342,7 +1342,7 @@
     },
     "target_question": "What's the public word on where LIB-241 rollout stands?",
     "should_memory_help": true,
-    "expected_intent": "broad_recall",
+    "expected_intent": "recall",
     "expected_primary_layer": "lower_level_memory",
     "acceptable_fallback_layers": [
       "source_evidence"

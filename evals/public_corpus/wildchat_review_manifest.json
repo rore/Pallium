@@ -16,7 +16,7 @@
       "description": "Later in the same conversation, the user asks for the exact starter feed ratio again.",
       "scenario_family": "resumed_work_paraphrase",
       "should_memory_help": true,
-      "expected_intent": "precise_fact",
+      "expected_intent": "structured_recall",
       "expected_winning_layer": "lower_level_memory",
       "acceptable_winning_layers": [
         "lower_level_memory",
@@ -87,7 +87,7 @@
       "description": "A later session asks whether the handoff template answer was already given before, despite a different same-container blocker thread existing.",
       "scenario_family": "resumed_work_paraphrase",
       "should_memory_help": true,
-      "expected_intent": "answer_continuity",
+      "expected_intent": "recall",
       "expected_winning_layer": "continuity_memory",
       "acceptable_winning_layers": [
         "continuity_memory"
@@ -126,7 +126,7 @@
       "description": "A later session asks for the general lesson across two earlier grocery-planning conversations.",
       "scenario_family": "resumed_work_paraphrase",
       "should_memory_help": true,
-      "expected_intent": "broad_recall",
+      "expected_intent": "recall",
       "expected_winning_layer": "pattern_memory",
       "acceptable_winning_layers": [
         "pattern_memory"
@@ -159,7 +159,7 @@
       "description": "A later session paraphrases the carry-forward need and asks for the old handoff answer without wanting a fresh brainstorm.",
       "scenario_family": "resumed_work_paraphrase",
       "should_memory_help": true,
-      "expected_intent": "answer_continuity",
+      "expected_intent": "recall",
       "expected_winning_layer": "continuity_memory",
       "acceptable_winning_layers": [
         "continuity_memory"
@@ -204,7 +204,7 @@
       "description": "A later session paraphrases the broad recall need and asks for the big picture across earlier grocery-planning discussions.",
       "scenario_family": "resumed_work_paraphrase",
       "should_memory_help": true,
-      "expected_intent": "broad_recall",
+      "expected_intent": "recall",
       "expected_winning_layer": "pattern_memory",
       "acceptable_winning_layers": [
         "pattern_memory"

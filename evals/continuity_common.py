@@ -27,14 +27,12 @@ CONTINUITY_FAILURE_FAMILIES = (
 HIGHER_LEVEL_LAYERS = {"pattern_memory", "continuity_memory", "task_checkpoint"}
 PARAPHRASE_OR_INDIRECT_QUERY_LABELS = {"paraphrase", "indirect", "noisy_indirect"}
 QUERY_FAMILY_VOCABULARY = (
-    "answer_continuity",
-    "broad_recurring_recall",
     "evidence_trace",
-    "investigative_conclusion",
     "new_thread_continuation",
-    "precise_fact",
+    "recall",
     "resumed_session_continuation",
     "same_thread_no_value_continuation",
+    "structured_recall",
     "work_resumption",
 )
 
@@ -103,16 +101,14 @@ def query_family_from_intent(
     session_has_sufficient_local_context = runtime_context.get("session_has_sufficient_local_context")
     if turn_kind == "same_thread_continuation" and session_has_sufficient_local_context is True and should_memory_help is False:
         return "same_thread_no_value_continuation"
-    if intent == "answer_continuity":
+    if intent == "recall":
         if turn_kind == "resumed_session":
             return "resumed_session_continuation"
         if turn_kind in {"new_thread", "new_session"}:
             return "new_thread_continuation"
-        return "answer_continuity"
-    if intent == "broad_recall":
-        return "broad_recurring_recall"
-    if intent == "investigative_conclusion":
-        return "investigative_conclusion"
+        return "recall"
+    if intent == "structured_recall":
+        return "structured_recall"
     if intent == "work_resumption":
         if turn_kind == "resumed_session":
             return "resumed_session_continuation"
