@@ -257,19 +257,17 @@ def build_service(
                     vector_index = None
                     embedding_provider = None
 
-        # 4. Count reconciliation check — must run before building retrieval provider
+        # 4. Count reconciliation check — warn but continue; runtime reconciliation fills gaps
         if vector_index is not None and embedding_provider is not None:
             sqlite_count = storage.count_index_entries_by_type("vector")
             index_count = vector_index.entry_count()
             if sqlite_count != index_count:
-                logger.error(
+                logger.warning(
                     "Vector index count mismatch: SQLite=%d, index=%d. "
-                    "Vector disabled to prevent native crash. Run rebuild-vector-index to fix.",
+                    "Continuing with reduced recall; runtime reconciliation will backfill.",
                     sqlite_count,
                     index_count,
                 )
-                vector_index = None
-                embedding_provider = None
 
         # 5. Build VectorRetrievalProvider
         if vector_index is not None and embedding_provider is not None:

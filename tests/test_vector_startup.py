@@ -423,8 +423,8 @@ class TestModelMismatch:
 
 class TestCountMismatch:
 
-    def test_count_mismatch_logs_error_and_disables_vector(self, tmp_path: Path, monkeypatch, caplog) -> None:
-        """When SQLite and index entry counts differ, an error is logged and vector is disabled."""
+    def test_count_mismatch_logs_warning_and_keeps_vector_enabled(self, tmp_path: Path, monkeypatch, caplog) -> None:
+        """When SQLite and index entry counts differ, a warning is logged but vector stays enabled."""
         from app.config import EmbeddingProviderConfig
         from storage.vector_index import VectorIndex
 
@@ -466,13 +466,14 @@ class TestCountMismatch:
             lambda config: mock_storage,
         )
 
-        with caplog.at_level(logging.ERROR):
+        with caplog.at_level(logging.WARNING):
             service = build_service(config)
 
-        # Vector disabled to prevent native crash
-        assert not isinstance(service._retrieval, CompositeRetrievalProvider)
+        # Vector stays enabled despite mismatch
+        assert isinstance(service._retrieval, CompositeRetrievalProvider)
+        assert service._vector_index is mock_index
+        assert service._embedding_provider is stub_provider
         assert "mismatch" in caplog.text.lower()
-        assert "rebuild-vector-index" in caplog.text.lower()
 
 
 # ---------------------------------------------------------------------------
