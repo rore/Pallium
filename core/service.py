@@ -283,6 +283,10 @@ class PalliumService:
             lease_seconds=lease_seconds,
         )
 
+    def reconcile_vector_index(self) -> int:
+        """Reconcile SQLite ↔ usearch vector index gaps. Returns count of changes."""
+        return self._vector_embedder.reconcile()
+
     def drain_processing_queue(
         self,
         *,

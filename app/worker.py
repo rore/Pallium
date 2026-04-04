@@ -81,6 +81,12 @@ def run_worker(
                     if parsed.once or _stopping():
                         return 0
                     continue
+                reconciled = service.reconcile_vector_index()
+                if reconciled > 0:
+                    _log_reconciliation(worker_id, reconciled)
+                    if parsed.once or _stopping():
+                        return 0
+                    continue
                 if parsed.once or _stopping():
                     return 0
                 sleep_fn(parsed.poll_interval_seconds)
@@ -106,6 +112,12 @@ def _log_thread_rebuild(worker_id: str, lease: ThreadProcessingLease) -> None:
     emit_runtime_log(
         "processor",
         f"worker_id={worker_id} thread_scope={lease.container_ref}:{lease.thread_ref} status=completed",
+    )
+
+def _log_reconciliation(worker_id: str, reconciled: int) -> None:
+    emit_runtime_log(
+        "processor",
+        f"worker_id={worker_id} vector_reconciliation changes={reconciled}",
     )
 
 if __name__ == "__main__":

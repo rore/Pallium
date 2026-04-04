@@ -244,3 +244,80 @@ def test_reconcile_noop_when_disabled(test_db_url: str) -> None:
     storage = SQLiteStorageProvider(test_db_url)
     embedder_no_provider = VectorEmbedder(storage, None, None)
     assert embedder_no_provider.reconcile(batch_size=50) == 0
+
+
+@requires_usearch
+def test_service_reconcile_vector_index_delegates(test_db_url: str, tmp_path: Path) -> None:
+    """PalliumService.reconcile_vector_index() delegates to VectorEmbedder.reconcile()."""
+    from core.service import PalliumService
+    from retrieval.lexical import LexicalRetrievalProvider
+
+    storage = SQLiteStorageProvider(test_db_url)
+    embedding_provider = StubEmbeddingProvider()
+    index_path = tmp_path / "svc.index"
+    vector_index = VectorIndex.create_empty(index_path, dimensions=4, model_name="test-model")
+    retrieval = LexicalRetrievalProvider(storage)
+    plugins = {"demo_agent_memory": DemoAgentMemoryPlugin()}
+
+    service = PalliumService(
+        storage=storage,
+        retrieval=retrieval,
+        semantic_plugins=plugins,
+        default_use_case="demo_agent_memory",
+        embedding_provider=embedding_provider,
+        vector_index=vector_index,
+    )
+
+    # Both empty — should return 0
+    result = service.reconcile_vector_index()
+    assert result == 0
+
+
+def test_worker_loop_calls_reconciliation_when_idle(test_db_url: str, monkeypatch) -> None:
+    """Worker calls reconcile_vector_index when no source items or thread rebuilds pending."""
+    from app.worker import run_worker
+    from app.config import AppConfig
+    from storage.vector_index import VectorIndexConfig
+
+    reconcile_calls = []
+
+    class TrackingService:
+        def __init__(self, real_service):
+            self._real = real_service
+
+        def __getattr__(self, name):
+            if name == "reconcile_vector_index":
+                def tracked():
+                    reconcile_calls.append(1)
+                    return 0
+                return tracked
+            return getattr(self._real, name)
+
+    from core.service import PalliumService
+    from retrieval.lexical import LexicalRetrievalProvider
+
+    storage = SQLiteStorageProvider(test_db_url)
+    retrieval = LexicalRetrievalProvider(storage)
+    plugins = {"demo_agent_memory": DemoAgentMemoryPlugin()}
+    real_service = PalliumService(
+        storage=storage,
+        retrieval=retrieval,
+        semantic_plugins=plugins,
+        default_use_case="demo_agent_memory",
+    )
+
+    tracking_service = TrackingService(real_service)
+
+    monkeypatch.setattr(
+        "app.worker.build_service",
+        lambda config: tracking_service,
+    )
+
+    run_worker(["--once"], config=AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=test_db_url,
+        default_use_case="demo_agent_memory",
+        vector_index=VectorIndexConfig(enabled=False),
+    ))
+
+    assert len(reconcile_calls) >= 1, "Worker should call reconcile_vector_index when idle"
