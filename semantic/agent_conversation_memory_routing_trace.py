@@ -52,7 +52,7 @@ def _query_family_label(intent: str, *, runtime_context: QueryRuntimeContext | N
         should_inject = bool((injection_summary or {}).get("should_inject"))
         if decision_reason == "same_thread_context_sufficient" or not should_inject and decision_reason in {"same_thread_context_sufficient", "no_relevant_memory", "only_low_value_candidates"}:
             return "same_thread_no_value_continuation"
-    if intent == "answer_continuity":
+    if intent == "recall":
         if turn_kind == "resumed_session":
             return "resumed_session_continuation"
         if turn_kind in {"new_thread", "new_session"}:
@@ -62,8 +62,6 @@ def _query_family_label(intent: str, *, runtime_context: QueryRuntimeContext | N
             return "resumed_session_continuation"
         if turn_kind in {"new_thread", "new_session"}:
             return "new_thread_continuation"
-    if intent == "broad_recall":
-        return "broad_recurring_recall"
     return intent
 
 
@@ -84,29 +82,19 @@ def _routing_reason(
         support_grade=support_grade,
     )
     packaging_suffix = _routing_packaging_suffix(packaging_reasons)
-    if intent == "investigative_conclusion":
+    if intent == "structured_recall":
         if layer == "investigation_outcome":
-            return "Investigative wording favors prior resolved findings before broader summaries." + fallback_suffix + packaging_suffix
+            return "Structured recall favors prior resolved findings before broader summaries." + fallback_suffix + packaging_suffix
         if layer == "decision":
             return "A prior decision remains sharp context, but explicit investigation findings outrank it here." + fallback_suffix + packaging_suffix
         if layer == "source_evidence":
-            return "Source evidence stays close behind carried conclusions for investigative questions." + fallback_suffix + packaging_suffix
+            return "Source evidence stays close behind carried conclusions for structured recall questions." + fallback_suffix + packaging_suffix
         if layer == "thread_summary":
-            return "Thread summaries stay available, but investigative queries prefer sharper findings and decisions first." + weak_match_suffix + fallback_suffix + packaging_suffix
-        return "Discussion summaries are last-resort context for investigative questions." + weak_match_suffix + fallback_suffix + packaging_suffix
-    if intent == "answer_continuity":
-        if layer == "continuity_memory":
-            return "Repeated-answer wording favors compact carry-forward memory." + fallback_suffix + packaging_suffix
-        if layer == "task_checkpoint":
-            return "Task checkpoints are narrower than repeated-answer carry-forward memory." + weak_match_suffix + fallback_suffix + packaging_suffix
+            return "Thread summaries stay available, but structured recall prefers sharper findings and decisions first." + weak_match_suffix + fallback_suffix + packaging_suffix
+        return "Discussion summaries are last-resort context for structured recall questions." + weak_match_suffix + fallback_suffix + packaging_suffix
+    if intent == "recall":
         if layer == "pattern_memory":
-            return "Broad pattern memory is demoted because the query is asking whether the answer was already given." + fallback_suffix + packaging_suffix
-        if layer in {"investigation_outcome", "decision", "lower_level_memory"}:
-            return "Exact lower-level memory remains a fallback behind continuity carry-forward." + fallback_suffix + packaging_suffix
-        return "Source evidence remains available, but routing prefers compact carry-forward first." + fallback_suffix + packaging_suffix
-    if intent == "broad_recall":
-        if layer == "pattern_memory":
-            return "Broad recall wording favors higher-level pattern memory." + weak_match_suffix + fallback_suffix + packaging_suffix
+            return "Recall wording favors higher-level pattern memory." + weak_match_suffix + fallback_suffix + packaging_suffix
         if layer == "continuity_memory":
             return "Continuity memory is narrower than the broad prior-conclusion question." + weak_match_suffix + fallback_suffix + packaging_suffix
         if layer == "task_checkpoint":
@@ -124,16 +112,6 @@ def _routing_reason(
         if layer == "continuity_memory":
             return "Continuity memory can help resumed work, but exact blocker and next-step evidence is preferred first." + weak_match_suffix + fallback_suffix + packaging_suffix
         return "Pattern or summary memory is too broad for resume-oriented state carry-forward." + weak_match_suffix + fallback_suffix + packaging_suffix
-    if intent == "precise_fact":
-        if layer in {"investigation_outcome", "decision", "lower_level_memory"}:
-            return "Precise factual wording favors exact lower-level memory over higher-level summaries." + fallback_suffix + packaging_suffix
-        if layer == "source_evidence":
-            return "Source evidence stays near the top for precise factual lookup." + fallback_suffix + packaging_suffix
-        if layer == "task_checkpoint":
-            return "Task checkpoints are demoted because they compress state instead of preserving exact factual detail." + weak_match_suffix + fallback_suffix + packaging_suffix
-        if layer == "continuity_memory":
-            return "Continuity memory is demoted because it can blur exact factual lookup." + weak_match_suffix + fallback_suffix + packaging_suffix
-        return "Higher-level summary memory is demoted because it can blur exact factual lookup." + weak_match_suffix + fallback_suffix + packaging_suffix
     if layer == "source_evidence":
         return "Evidence-trace wording favors raw supporting source evidence." + fallback_suffix + packaging_suffix
     if layer in {"investigation_outcome", "decision", "lower_level_memory"}:
