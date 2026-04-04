@@ -824,15 +824,10 @@ def _candidate_evidence_shape_score(
 
 # Freshness shaping: carry forward from _apply_same_kind_freshness_shaping
 FRESHNESS_BONUS_BY_INTENT: dict[str, int] = {
-    "answer_continuity": 0,
-    "broad_recall": 24,
-    "precise_fact": 24,
-    "investigative_conclusion": 42,
-    "work_resumption": 18,
-    "evidence_trace": 0,
-    # Future merged names:
     "recall": 24,
     "structured_recall": 42,
+    "work_resumption": 18,
+    "evidence_trace": 0,
 }
 FRESHNESS_DECAY_PER_RANK = 12
 FRESHNESS_MAX_PENALTY = 30

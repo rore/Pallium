@@ -103,42 +103,34 @@ STRUCTURED_LAYERS = frozenset({
 })
 
 ROUTING_PREFERRED_LAYERS = {
-    "answer_continuity": ("continuity_memory", "investigation_outcome", "decision", "source_evidence", "task_checkpoint", "pattern_memory", "interest", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE),
-    "broad_recall": ("pattern_memory", "investigation_outcome", "decision", "continuity_memory", "task_checkpoint", "source_evidence", "interest", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE),
+    "recall": ("pattern_memory", "investigation_outcome", "decision", "continuity_memory", "task_checkpoint", "source_evidence", "interest", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE),
+    "structured_recall": ("investigation_outcome", "decision", "source_evidence", "interest", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory", CONSTRAINT_MEMORY_TYPE),
     "work_resumption": ("task_checkpoint", "source_evidence", "investigation_outcome", "decision", "continuity_memory", "pattern_memory", "interest", "thread_summary", "discussion_summary", CONSTRAINT_MEMORY_TYPE),
-    "precise_fact": ("decision", "investigation_outcome", "source_evidence", "interest", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory", CONSTRAINT_MEMORY_TYPE),
     "evidence_trace": ("source_evidence", "investigation_outcome", "decision", "interest", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory"),
-    "investigative_conclusion": ("investigation_outcome", "decision", "source_evidence", "interest", "thread_summary", "discussion_summary", "continuity_memory", "task_checkpoint", "pattern_memory", CONSTRAINT_MEMORY_TYPE),
 }
 
 ROUTING_FAMILY_ALLOWED_ENVELOPE_KINDS = {
-    "answer_continuity": ("constraint", "summary", "finding"),
-    "broad_recall": ("constraint", "summary", "finding"),
+    "recall": ("constraint", "summary", "finding"),
+    "structured_recall": ("constraint", "finding", "summary"),
     "work_resumption": ("episode", "finding", "summary"),
-    "precise_fact": ("finding",),
     "evidence_trace": None,
-    "investigative_conclusion": ("constraint", "finding", "summary"),
 }
 
 ROUTING_LAYER_WEIGHTS = {
-    "answer_continuity": {"continuity_memory": 200, CONSTRAINT_MEMORY_TYPE: 180, "investigation_outcome": 160, "decision": 150, "source_evidence": 100, "task_checkpoint": 70, "pattern_memory": 60, "interest": 50, "thread_summary": 50, "discussion_summary": 35, "lower_level_memory": 130},
-    "broad_recall": {CONSTRAINT_MEMORY_TYPE: 215, "pattern_memory": 200, "investigation_outcome": 165, "decision": 155, "continuity_memory": 90, "task_checkpoint": 75, "source_evidence": 60, "interest": 55, "thread_summary": 65, "discussion_summary": 40, "lower_level_memory": 125},
+    "recall": {CONSTRAINT_MEMORY_TYPE: 200, "pattern_memory": 130, "investigation_outcome": 160, "decision": 150, "continuity_memory": 145, "task_checkpoint": 70, "source_evidence": 80, "interest": 50, "thread_summary": 60, "discussion_summary": 40, "lower_level_memory": 130},
+    "structured_recall": {"investigation_outcome": 230, "decision": 220, CONSTRAINT_MEMORY_TYPE: 120, "source_evidence": 170, "interest": 50, "thread_summary": 80, "discussion_summary": 50, "continuity_memory": 60, "task_checkpoint": 50, "pattern_memory": 35, "lower_level_memory": 165},
     "work_resumption": {CONSTRAINT_MEMORY_TYPE: 245, "task_checkpoint": 235, "source_evidence": 195, "investigation_outcome": 150, "decision": 145, "continuity_memory": 90, "pattern_memory": 35, "interest": 50, "thread_summary": 65, "discussion_summary": 35, "lower_level_memory": 125},
-    "precise_fact": {"decision": 220, "investigation_outcome": 215, CONSTRAINT_MEMORY_TYPE: 130, "source_evidence": 160, "interest": 45, "thread_summary": 55, "discussion_summary": 35, "continuity_memory": 70, "task_checkpoint": 55, "pattern_memory": 30, "lower_level_memory": 170},
     "evidence_trace": {"source_evidence": 230, "investigation_outcome": 190, "decision": 180, CONSTRAINT_MEMORY_TYPE: 55, "interest": 43, "thread_summary": 60, "discussion_summary": 40, "continuity_memory": 60, "task_checkpoint": 45, "pattern_memory": 20, "lower_level_memory": 150},
-    "investigative_conclusion": {"investigation_outcome": 240, "decision": 215, CONSTRAINT_MEMORY_TYPE: 110, "source_evidence": 180, "interest": 55, "thread_summary": 110, "discussion_summary": 60, "continuity_memory": 55, "task_checkpoint": 50, "pattern_memory": 40, "lower_level_memory": 160},
 }
 
 
 HIGHER_LEVEL_RETRIEVAL_FLOOR = 40
 
 ROUTING_SAFE_FALLBACK_LAYERS = {
-    "answer_continuity": ("lower_level_memory", "source_evidence"),
-    "broad_recall": ("task_checkpoint", "thread_summary", "lower_level_memory", "source_evidence"),
+    "recall": ("task_checkpoint", "thread_summary", "lower_level_memory", "source_evidence"),
+    "structured_recall": ("decision", "source_evidence", "thread_summary"),
     "work_resumption": ("source_evidence", "lower_level_memory"),
-    "precise_fact": ("source_evidence",),
     "evidence_trace": ("lower_level_memory",),
-    "investigative_conclusion": ("decision", "source_evidence", "thread_summary"),
 }
 
 ROUTING_SUPPORT_THRESHOLD = {"weak": 0, "supported": 60, "strong": 110}
@@ -146,11 +138,11 @@ ROUTING_SUPPORT_THRESHOLD = {"weak": 0, "supported": 60, "strong": 110}
 # Policy layer constants
 QUERY_POLICY_FAMILY_ALLOWED_INTENTS: dict[str, frozenset[str]] = {
     "noise": frozenset(),
-    "recall_fact": frozenset({"answer_continuity", "broad_recall", "precise_fact", "evidence_trace", "investigative_conclusion"}),
-    "latest_status": frozenset({"broad_recall", "work_resumption"}),
+    "recall_fact": frozenset({"recall", "structured_recall", "evidence_trace"}),
+    "latest_status": frozenset({"recall", "work_resumption"}),
     "resume_work": frozenset({"work_resumption"}),
 }
-LATEST_STATUS_COLLAPSED_INTENTS = frozenset({"broad_recall"})
+LATEST_STATUS_COLLAPSED_INTENTS = frozenset({"recall"})
 POLICY_WORK_STATE_USEFULNESS_THRESHOLD = 24
 POLICY_SUPPORT_THRESHOLD = ROUTING_SUPPORT_THRESHOLD["supported"]
 AMBIGUITY_MARGIN_LATEST_VS_RESUME = 12
@@ -169,10 +161,10 @@ LANE_POLICY_FAMILY_MAPPING: dict[str, str] = {
 
 # Recall mode constants — modes only change weights and shaping, not selection path or gates
 RECALL_MODE_WEIGHTS: dict[str, dict[str, int]] = {
-    "default": ROUTING_LAYER_WEIGHTS["broad_recall"],
-    "continuity_preference": ROUTING_LAYER_WEIGHTS["answer_continuity"],
-    "sharp_fact_preference": ROUTING_LAYER_WEIGHTS["precise_fact"],
-    "investigation_preference": ROUTING_LAYER_WEIGHTS["investigative_conclusion"],
+    "default": ROUTING_LAYER_WEIGHTS["recall"],
+    "continuity_preference": ROUTING_LAYER_WEIGHTS["recall"],
+    "sharp_fact_preference": ROUTING_LAYER_WEIGHTS["structured_recall"],
+    "investigation_preference": ROUTING_LAYER_WEIGHTS["structured_recall"],
 }
 
 RECALL_MODE_FRESHNESS_BONUS: dict[str, int] = {
@@ -223,10 +215,8 @@ WORK_RESUMPTION_SIGNAL_PRIORITY = ("blocker", "next_step", "progress_update")
 ROUTING_FAMILY_INFERENCE_PRIORITY = (
     "work_resumption",
     "evidence_trace",
-    "investigative_conclusion",
-    "answer_continuity",
-    "broad_recall",
-    "precise_fact",
+    "structured_recall",
+    "recall",
 )
 
 
