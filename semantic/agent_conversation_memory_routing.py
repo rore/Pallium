@@ -63,6 +63,7 @@ from semantic.agent_conversation_memory_routing_selection import (
     _select_final_candidates,
 )
 from semantic.agent_conversation_memory_routing_floor import apply_relevance_floor
+from semantic.agent_conversation_memory_routing_suppression import apply_suppression
 
 # ---------------------------------------------------------------------------
 # Re-exports for backward compatibility.
@@ -335,30 +336,18 @@ def route_query_results(
             candidate.update(anchor_prefilter_states.get(result_id, {}))
         _apply_anchor_tier_penalty(scored_candidates)
         if scored_candidates:
-            _apply_current_query_source_suppression(
-                scored_candidates,
-                query_text=text,
-                query_filters=query_filters,
-            )
+            # Unified suppression (replaces 3 separate suppression stages)
+            for candidate in scored_candidates:
+                apply_suppression(
+                    candidate,
+                    intent=intent,
+                    query_text=text,
+                )
             _apply_same_kind_freshness_shaping(scored_candidates, intent=intent)
             _apply_fresh_thread_structured_recall_preference(
                 scored_candidates,
                 intent=intent,
                 candidate_signals=family_inference["candidate_signals"],
-                runtime_context=runtime_context,
-            )
-            _apply_recall_source_noise_suppression(
-                scored_candidates,
-                intent=intent,
-                query_text=text,
-                query_filters=query_filters,
-                runtime_context=runtime_context,
-            )
-            _apply_recall_structured_summary_suppression(
-                scored_candidates,
-                intent=intent,
-                query_text=text,
-                query_filters=query_filters,
                 runtime_context=runtime_context,
             )
         packaging_summary = None

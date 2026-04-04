@@ -451,7 +451,7 @@ def test_same_thread_trivial_local_context_allows_cross_thread_carry_forward() -
     assert any(block.memory_type == 'task_checkpoint' for block in outcome.injectable_blocks)
     assert outcome.trace.routing['injection_decision']['same_thread_context_evaluation']['reason_code'] == 'insufficient_same_thread_local_state'
     excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
-    assert 'unresolved_thread_summary' in excluded
+    assert 'weak_summary' in excluded
     assert all(block.result_id != 'memory_object:thread-summary-trivial-same-thread' for block in outcome.injectable_blocks)
     assert all(block.result_id != 'source_item:same-thread-query' for block in outcome.injectable_blocks)
 
@@ -937,7 +937,7 @@ def test_query_only_current_thread_summary_is_excluded_from_recall_packaging() -
     assert outcome.trace is not None
     assert outcome.trace.routing is not None
     excluded = {item['excluded_reason_code'] for item in outcome.trace.routing['excluded_high_scoring_candidates']}
-    assert 'current_thread_empty_summary' in excluded
+    assert 'weak_summary' in excluded
     assert all(block.result_id != 'memory_object:thread-summary-current-query-only' for block in outcome.injectable_blocks)
 
 def test_fresh_thread_evidence_trace_still_allows_source_evidence() -> None:
