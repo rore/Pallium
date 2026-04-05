@@ -200,9 +200,9 @@ def check_assertions(
         actual = sum(
             1 for stmt in all_statements if keyword.lower() in stmt.lower()
         )
-        passed = actual <= expected_count
+        passed = actual == expected_count
         results.append({
-            "assertion": f"count_containing(\"{keyword}\") <= {expected_count}",
+            "assertion": f"count_containing(\"{keyword}\") == {expected_count}",
             "passed": passed,
             "detail": f"found in {actual} facts",
         })

@@ -15,7 +15,7 @@ from typing import Any
 from capabilities.thread_aggregation import ThreadAggregate
 from core.contracts import ProcessResult
 from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
-from core.models import MemoryObject, MemoryObject, Relation, SourceItem, new_id, utc_now
+from core.models import MemoryObject, Relation, SourceItem, new_id, utc_now
 from core.type_registry import TypeRegistration, TypeRegistry
 from providers.llm.base import LLMProvider, LLMJsonResponse
 from semantic.base import ThreadAggregationSemanticPlugin
