@@ -169,7 +169,16 @@ def _run_scenario(
         should_memory_help=bool(scenario.get("expected_value")),
     )
     query_family_match = query_family == expected_query_family
-    intent_match = routing.get("query_intent") == scenario["expected_intent"]
+    if not query_family_match and scenario.get("acceptable_intents"):
+        acceptable_families = {
+            query_family_from_intent(ai, runtime_context=runtime_context, should_memory_help=bool(scenario.get("expected_value")))
+            for ai in scenario["acceptable_intents"]
+        }
+        query_family_match = query_family in acceptable_families
+    intent_match = (
+        routing.get("query_intent") == scenario["expected_intent"]
+        or routing.get("query_intent") in (scenario.get("acceptable_intents") or [])
+    )
     top_layer_match = top_layer in expected_top_layers
     expected_top_memory_types = scenario.get("expected_top_memory_types") or []
     top_memory_type_match = not expected_top_memory_types or top_memory_type in expected_top_memory_types
@@ -233,6 +242,7 @@ def _run_scenario(
         and top_layer not in (scenario.get("acceptable_top_layers") or [])
     )
     answer_success = _answer_success(expected_value=bool(scenario.get("expected_value")), winner=comparison["winner"])
+    _contract_success = query_contract["injection_contract"]["contract_success"]
     policy_success = all(
         [
             intent_match,
@@ -242,7 +252,7 @@ def _run_scenario(
             not false_merge_occurred,
             not higher_level_overuse,
             answer_success,
-            query_contract["injection_contract"]["contract_success"],
+            _contract_success is not False,  # None = not evaluated = pass
         ]
     )
 

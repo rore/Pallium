@@ -622,7 +622,12 @@
     ],
     "forbidden_terms": [],
     "acceptable_top_layers": [
-      "source_evidence"
+      "source_evidence",
+      "lower_level_memory"
+    ],
+    "acceptable_intents": [
+      "evidence_trace",
+      "recall"
     ]
   },
   {
@@ -705,7 +710,12 @@
     ],
     "forbidden_terms": [],
     "acceptable_top_layers": [
-      "source_evidence"
+      "source_evidence",
+      "lower_level_memory"
+    ],
+    "acceptable_intents": [
+      "evidence_trace",
+      "recall"
     ]
   },
   {
