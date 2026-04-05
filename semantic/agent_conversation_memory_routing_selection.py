@@ -237,6 +237,32 @@ def _build_injectable_blocks(
         }
 
     if not should_allow_injection(final_candidates, query_text=query_text, intent=intent):
+        # Gate blocked — but check for recent constraints that were retrieved.
+        # Constraints are cross-cutting and deserve injection even when the
+        # topical confidence is low, as long as they were actually retrieved
+        # (some similarity exists) and are recent.
+        constraint_supplements = _find_constraint_supplements(
+            ranked_candidates,
+            already_selected_ids=set(),
+        )
+        if constraint_supplements:
+            blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in constraint_supplements]
+            returned_ids = [b.result_id for b in blocks]
+            if _INJECTION_VERBOSE:
+                _injection_verbose(
+                    f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
+                    f"should_inject=True reason=constraint_supplement (gate blocked but recent constraint retrieved)"
+                )
+            return blocks, {
+                "should_inject": True,
+                "decision_reason": "constraint_supplement",
+                "injection_method": "simplified",
+                "returned_block_ids": returned_ids,
+                "eligible_result_ids": returned_ids,
+                "dropped_by_cap_result_ids": [],
+                "cap": 3,
+                "same_thread_context_evaluation": same_thread_context,
+            }
         return [], {
             "should_inject": False,
             "decision_reason": "low_injection_confidence",
@@ -310,6 +336,16 @@ def _build_injectable_blocks(
                 break
             selected_candidates.append(candidate)
             used_result_ids.add(_routing_result_id(candidate["item"]))
+
+    # Constraint supplement: add recent constraint if room permits
+    if len(selected_candidates) < 3:
+        _selected_ids = {_routing_result_id(c["item"]) for c in selected_candidates}
+        constraint_supplements = _find_constraint_supplements(
+            ranked_candidates,
+            already_selected_ids=_selected_ids,
+            max_count=min(_CONSTRAINT_SUPPLEMENT_CAP, 3 - len(selected_candidates)),
+        )
+        selected_candidates.extend(constraint_supplements)
 
     blocks = [_build_injectable_block_from_candidate(candidate, intent=intent) for candidate in selected_candidates]
     returned_ids = [block.result_id for block in blocks]
@@ -791,3 +827,58 @@ def _annotate_excluded_candidates(
         else:
             candidate["excluded_reason_code"] = "lower_routing_score_than_selected_limit"
             candidate["excluded_reason"] = "Candidate remained below the final routed cutoff."
+
+
+# ---------------------------------------------------------------------------
+# Constraint supplement
+# ---------------------------------------------------------------------------
+
+_CONSTRAINT_FRESHNESS_WINDOW_DAYS = 14
+_CONSTRAINT_SUPPLEMENT_CAP = 1
+
+
+def _find_constraint_supplements(
+    ranked_candidates: list[dict[str, object]],
+    *,
+    already_selected_ids: set[str],
+    max_count: int = _CONSTRAINT_SUPPLEMENT_CAP,
+) -> list[dict[str, object]]:
+    """Find recent constraint_memory candidates that were retrieved but not selected.
+
+    Constraints are cross-cutting — they apply by context, not topic. When the
+    normal injection pipeline doesn't select them (e.g., low lexical/vector scores),
+    this supplement adds the most recent retrieved constraints if:
+    - They were actually retrieved (vector/lexical similarity confirmed some relevance)
+    - They are recent (within freshness window)
+    - They are not suppressed
+    - There is room in the injection cap
+
+    Returns at most max_count candidates, most recent first.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=_CONSTRAINT_FRESHNESS_WINDOW_DAYS)
+
+    constraint_candidates = []
+    for candidate in ranked_candidates:
+        item = candidate.get("item")
+        if item is None:
+            continue
+        if getattr(item, "type", None) != CONSTRAINT_MEMORY_TYPE:
+            continue
+        if _routing_result_id(item) in already_selected_ids:
+            continue
+        if candidate.get("suppression_reason_code"):
+            continue
+        freshness = getattr(item, "freshness_at", None)
+        if freshness is not None and freshness < cutoff:
+            continue
+        constraint_candidates.append(candidate)
+
+    # Sort by freshness (most recent first)
+    constraint_candidates.sort(
+        key=lambda c: getattr(c.get("item"), "freshness_at", None) or now,
+        reverse=True,
+    )
+    return constraint_candidates[:max_count]
