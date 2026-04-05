@@ -423,21 +423,31 @@ def _derive_query_signal_envelope(
             # the general policy gate because the integrating agent has already
             # signaled resumed_session confidence via turn_kind.
             #
-            # Only fire when query lacks topical signal (no substantive lexical
-            # overlap with candidates). Queries like "which repo changed and why?"
-            # have specific topic words and should route normally via recall.
-            # Guard: lexical_score=None means non-composite retrieval where we
-            # can't measure overlap — skip fallback to avoid false reclassification.
-            _candidate_lex_scores = [
-                int(getattr(item, "lexical_score", 0) or 0)
+            # Only fire when candidates lack vector confirmation — meaning the
+            # query has no semantic similarity to the retrieved content. This
+            # distinguishes generic resume queries ("pick up where I left off",
+            # vec=0) from topical queries in a resumed session ("what batch
+            # interval did we choose?", vec=800+) that should route via recall.
+            _candidate_vec_scores = [
+                int(getattr(item, "vector_score", 0) or 0)
                 for item in anchor_prefiltered_candidates
-                if getattr(item, "lexical_score", None) is not None
+                if getattr(item, "vector_score", None) is not None
             ]
-            _best_candidate_lex = max(_candidate_lex_scores) if _candidate_lex_scores else None
+            # Check if composite retrieval is active (any candidate has lex or vec set)
+            _has_composite_scores = any(
+                getattr(item, "lexical_score", None) is not None
+                or getattr(item, "vector_score", None) is not None
+                for item in anchor_prefiltered_candidates
+            )
+            # When composite retrieval is active but no candidate has a vector
+            # score, vector search found nothing → no semantic similarity →
+            # treat as generic resume. When composite isn't active (non-composite
+            # retrieval), skip the fallback since we can't assess.
+            _best_candidate_vec = max(_candidate_vec_scores) if _candidate_vec_scores else (0 if _has_composite_scores else None)
             _RESUMED_SESSION_SUPPORT_FLOOR = 40
             _has_supported_sharp = (
-                _best_candidate_lex is not None
-                and _best_candidate_lex < 2
+                _best_candidate_vec is not None
+                and _best_candidate_vec == 0
                 and any(
                     item.result_kind == "memory_hit"
                     and getattr(item, "type", None) in ("decision", "investigation_outcome")
