@@ -109,6 +109,13 @@ SUITE_BENCHMARK_CONFIGS: dict[str, SuiteBenchmarkConfig] = {
         scored_lanes=(BenchmarkLane.CONTRACT,),
         hard_gate_lanes=(BenchmarkLane.CONTRACT,),
     ),
+    "locomo": SuiteBenchmarkConfig(
+        suite_id="locomo",
+        dataset_tier=DatasetTier.CONFIDENCE,
+        primary_lane=BenchmarkLane.USEFULNESS,
+        scored_lanes=(BenchmarkLane.USEFULNESS,),
+        hard_gate_lanes=(),
+    ),
 }
 
 
