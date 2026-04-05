@@ -4,6 +4,7 @@ from capabilities.consolidation import ConsolidationGroup, ConsolidationPolicy
 from capabilities.thread_aggregation import ThreadAggregate
 from core.contracts import MemoryRetentionPolicy, PackageQueryOutcome, ProcessResult
 from core.models import MemoryObject, QueryFilters, QueryRuntimeContext, SourceItem
+from core.type_registry import TypeRegistration, TypeRegistry
 from providers.llm.base import LLMProvider
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin
@@ -160,3 +161,55 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             pattern_memory_schema_id=self.pattern_memory_schema_id,
             group=group,
         )
+
+    def register_routing_types(self, registry: TypeRegistry) -> None:
+        """Register this package's memory types with the core type registry."""
+        _TYPES = [
+            TypeRegistration(
+                type_name="decision", layer_name="decision",
+                weight_by_intent={"recall": 150, "structured_recall": 220, "work_resumption": 145, "evidence_trace": 180},
+                default_weight=150, block_title="Prior Decision", block_text_field="rationale", high_value=True,
+            ),
+            TypeRegistration(
+                type_name="investigation_outcome", layer_name="investigation_outcome",
+                weight_by_intent={"recall": 160, "structured_recall": 230, "work_resumption": 150, "evidence_trace": 190},
+                default_weight=160, block_title="Prior Investigation", block_text_field="summary", high_value=True,
+            ),
+            TypeRegistration(
+                type_name="task_checkpoint", layer_name="task_checkpoint",
+                weight_by_intent={"recall": 70, "structured_recall": 50, "work_resumption": 235, "evidence_trace": 45},
+                default_weight=70, block_title="Task Checkpoint", block_text_field="summary", high_value=True,
+            ),
+            TypeRegistration(
+                type_name="pattern_memory", layer_name="pattern_memory",
+                weight_by_intent={"recall": 130, "structured_recall": 35, "work_resumption": 35, "evidence_trace": 20},
+                default_weight=80, block_title="Pattern Memory", block_text_field="summary", high_value=True,
+            ),
+            TypeRegistration(
+                type_name="continuity_memory", layer_name="continuity_memory",
+                weight_by_intent={"recall": 145, "structured_recall": 60, "work_resumption": 90, "evidence_trace": 60},
+                default_weight=90, block_title="Carry Forward", block_text_field="summary", high_value=True,
+            ),
+            TypeRegistration(
+                type_name="thread_summary", layer_name="thread_summary",
+                weight_by_intent={"recall": 60, "structured_recall": 80, "work_resumption": 65, "evidence_trace": 60},
+                default_weight=60, block_title="Thread Summary", block_text_field="summary", high_value=True,
+            ),
+            TypeRegistration(
+                type_name="discussion_summary", layer_name="discussion_summary",
+                weight_by_intent={"recall": 40, "structured_recall": 50, "work_resumption": 35, "evidence_trace": 40},
+                default_weight=40, block_title="Discussion Summary", block_text_field="summary", high_value=False,
+            ),
+            TypeRegistration(
+                type_name="interest", layer_name="interest",
+                weight_by_intent={"recall": 50, "structured_recall": 50, "work_resumption": 50, "evidence_trace": 43},
+                default_weight=50, block_title="Interest", block_text_field="summary", high_value=True,
+            ),
+            TypeRegistration(
+                type_name="constraint_memory", layer_name="constraint_memory",
+                weight_by_intent={"recall": 200, "structured_recall": 120, "work_resumption": 245, "evidence_trace": 55},
+                default_weight=120, block_title="Active Constraint", block_text_field="constraint", high_value=True,
+            ),
+        ]
+        for t in _TYPES:
+            registry.register(t)

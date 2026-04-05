@@ -87,6 +87,7 @@ Embedding write path:
 Implemented semantic behavior now includes:
 
 - an explicit `agent_conversation_memory` runtime package over the current LLM-backed semantic path
+- a `conversational_knowledge` fact extraction package that extracts atomic facts from threads using the thread rebuild mechanism, runs as a `parallel_processing` package alongside `agent_conversation_memory`
 - deterministic and LLM-backed semantic plugins
 - promoted typed memory for:
   - `decision`
@@ -160,13 +161,15 @@ Core entities:
 - `MemoryObject`
 - `Relation`
 - `IndexEntry`
+- `TypeRegistry` — packages register their memory types at startup; routing reads type metadata (display names, descriptions, categories) from the registry rather than hardcoding type knowledge
 
 Important model properties:
 
 - a source item does not always become memory
 - a source item may produce zero, one, or multiple memory objects over time
-- current async processing assigns exactly one semantic package (`use_case`) per source item; this is a deliberate current limitation, not the intended final multi-package architecture
-- future multi-package support should keep raw source items package-neutral and move queue/processing ownership to per-package records keyed by `(source_item_id, use_case)` through an additive migration: add the new per-package table, backfill current single-package rows, switch worker claims, then retire source-item-level queue ownership later
+- async processing uses a per-package tracking table (`PackageProcessingRecord`) keyed by `(source_item_id, use_case)`, enabling items to be processed by multiple packages independently
+- packages with `parallel_processing = True` process every incoming item; packages without it are assigned via `use_case` matching as before
+- raw source items remain package-neutral; queue/processing ownership lives in the per-package tracking records
 - memory objects are evidence-backed and may point to one or more supporting source items
 - generic visibility is separate from locality metadata; `container_ref`, `thread_ref`, and `session_ref` remain descriptive unless a package explicitly maps them into policy
 - relations stay explicit and boring early on

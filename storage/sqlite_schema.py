@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, text
+from sqlalchemy import Column, DateTime, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import declarative_base
 
 
@@ -106,6 +106,27 @@ class ThreadProcessingLeaseRecord(Base):
     processing_completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class PackageProcessingStatusRecord(Base):
+    __tablename__ = "package_processing_status"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_item_id = Column(String, nullable=False)
+    package_name = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="pending")
+    attempts = Column(Integer, nullable=False, default=0)
+    error = Column(Text, nullable=True)
+    claimed_by = Column(String, nullable=True)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+    lease_expires_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    next_attempt_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("source_item_id", "package_name", name="uq_package_processing_source_package"),
+    )
 
 
 class MaintenanceStateRecord(Base):

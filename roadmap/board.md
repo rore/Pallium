@@ -9,11 +9,12 @@
 
 # Ideas
 - idea-operational-scale-hardening
-- idea-multi-package-source-item-processing
 - idea-optional-reranker-support
 - idea-document-schema-evolution-strategy
 
 # Done
+- add-multi-package-source-item-processing
+- add-conversational-knowledge-fact-extraction-package
 - add-qpp-injection-justification
 - add-idf-weighted-lexical-scoring
 - add-interest-memory-kind

@@ -161,6 +161,17 @@ def _build_plugin_for_package(*, config: AppConfig, package_config: SemanticPack
             providers_by_role=providers_by_role or None,
         )
 
+    if implementation == "conversational_knowledge":
+        if not package_config.llm_provider or not package_config.model:
+            return None
+        provider = build_llm_provider(
+            config,
+            provider_name=package_config.llm_provider,
+            model=package_config.model,
+        )
+        from semantic.conversational_knowledge import ConversationalKnowledgePlugin
+        return ConversationalKnowledgePlugin(provider=provider)
+
     raise ValueError(f"Unsupported semantic package implementation: {implementation}")
 
 
@@ -283,6 +294,14 @@ def build_service(
             vector=vector_retrieval,
         )
 
+    # Build type registry from plugins that support type registration
+    from core.type_registry import TypeRegistry
+    type_registry = TypeRegistry()
+    for plugin in plugins.values():
+        register_routing_types = getattr(plugin, "register_routing_types", None)
+        if callable(register_routing_types):
+            register_routing_types(type_registry)
+
     return PalliumService(
         storage=storage,
         retrieval=retrieval,
@@ -294,6 +313,8 @@ def build_service(
         retention_batch_size=resolved_config.retention.batch_size,
         embedding_provider=embedding_provider,
         vector_index=vector_index,
+        type_registry=type_registry if len(type_registry) > 0 else None,
+        routing_overrides=routing_overrides,
     )
 
 

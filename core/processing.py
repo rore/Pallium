@@ -5,7 +5,7 @@ from datetime import timedelta
 from typing import Any, Callable
 
 from core.contracts import ItemProcessingResult, ProcessResult
-from core.models import SourceItem
+from core.models import SourceItem, utc_now
 from core.observability import IntegrationDebugLogger, OBSERVABILITY_METADATA_KEY
 from core.thread_rebuild import (
     FAILURE_CATEGORY_MISSING_USE_CASE,
@@ -85,6 +85,46 @@ class ItemProcessor:
         lease_seconds: int = DEFAULT_PROCESSING_LEASE_SECONDS,
         max_attempts: int = DEFAULT_PROCESSING_MAX_ATTEMPTS,
     ) -> ItemProcessingResult | None:
+        # Try multi-package task first: process ALL pending packages for one source_item
+        first_task = self._storage.claim_next_package_task(
+            worker_id=worker_id,
+            lease_seconds=lease_seconds,
+            max_attempts=max_attempts,
+        )
+        if first_task is not None:
+            source_item, package_name, package_attempts = first_task
+            source_item_id = source_item.id
+            self._process_source_item(
+                source_item,
+                max_attempts=max_attempts,
+                worker_id=worker_id,
+                package_name=package_name,
+                package_attempts=package_attempts,
+            )
+            # Process remaining packages for the same source_item
+            while True:
+                next_task = self._storage.claim_next_package_task_for_item(
+                    source_item_id=source_item_id,
+                    worker_id=worker_id,
+                    lease_seconds=lease_seconds,
+                    max_attempts=max_attempts,
+                )
+                if next_task is None:
+                    break
+                next_package, next_attempts = next_task
+                # Re-fetch source_item in case metadata changed
+                next_item = self._storage.get_source_item(source_item_id)
+                self._process_source_item(
+                    next_item,
+                    max_attempts=max_attempts,
+                    worker_id=worker_id,
+                    package_name=next_package,
+                    package_attempts=next_attempts,
+                )
+            return self._get_item_processing(source_item_id)
+
+        # Legacy path: claim from source_items table (for items without
+        # package_processing_status rows, e.g. pre-migration data)
         source_item = self._storage.claim_next_source_item(
             worker_id=worker_id,
             lease_seconds=lease_seconds,
@@ -131,10 +171,16 @@ class ItemProcessor:
         *,
         max_attempts: int,
         worker_id: str | None = None,
+        package_name: str | None = None,
+        package_attempts: int | None = None,
     ) -> None:
         worker_label = worker_id or source_item.processing_claimed_by or "source-item-worker"
-        plugin_name = source_item.use_case or self._default_use_case
-        if source_item.use_case is None and not self._default_use_case:
+        # Multi-package path: package_name is explicit; legacy path: read from source_item.use_case
+        plugin_name = package_name or source_item.use_case or self._default_use_case
+        using_package_tracking = package_name is not None
+        # Use package-specific attempt count when available, else source_item's
+        current_attempts = package_attempts if package_attempts is not None else source_item.processing_attempts
+        if source_item.use_case is None and not self._default_use_case and not using_package_tracking:
             failure_category = FAILURE_CATEGORY_MISSING_USE_CASE
             error = "missing_use_case"
             self._storage.fail_source_item_processing(
@@ -151,26 +197,38 @@ class ItemProcessor:
         if plugin is None:
             failure_category = FAILURE_CATEGORY_UNKNOWN_USE_CASE
             error = f"unknown_use_case:{plugin_name}"
-            self._storage.fail_source_item_processing(
-                source_item.id,
-                error=error,
-                next_attempt_at=None,
-                final=True,
-                metadata_updates={OBSERVABILITY_METADATA_KEY: {"failure_category": failure_category}},
-            )
+            if using_package_tracking:
+                self._storage.fail_package_task(
+                    source_item.id, plugin_name,
+                    error=error, next_attempt_at=None, final=True,
+                )
+            else:
+                self._storage.fail_source_item_processing(
+                    source_item.id,
+                    error=error,
+                    next_attempt_at=None,
+                    final=True,
+                    metadata_updates={OBSERVABILITY_METADATA_KEY: {"failure_category": failure_category}},
+                )
             self._emit_processing_failure(source_item, worker_id=worker_label, failure_category=failure_category, error=error)
             return
 
         if plugin.requires_visibility_context and source_item.container_ref is None:
             failure_category = FAILURE_CATEGORY_MISSING_VISIBILITY
             error = "visibility_context_required"
-            self._storage.fail_source_item_processing(
-                source_item.id,
-                error=error,
-                next_attempt_at=None,
-                final=True,
-                metadata_updates={OBSERVABILITY_METADATA_KEY: {"failure_category": failure_category}},
-            )
+            if using_package_tracking:
+                self._storage.fail_package_task(
+                    source_item.id, plugin_name,
+                    error=error, next_attempt_at=None, final=True,
+                )
+            else:
+                self._storage.fail_source_item_processing(
+                    source_item.id,
+                    error=error,
+                    next_attempt_at=None,
+                    final=True,
+                    metadata_updates={OBSERVABILITY_METADATA_KEY: {"failure_category": failure_category}},
+                )
             self._emit_processing_failure(source_item, worker_id=worker_label, failure_category=failure_category, error=error)
             return
 
@@ -194,15 +252,33 @@ class ItemProcessor:
                     plugin=plugin,
                     source_item=source_item,
                 )
+            observability_patch: dict[str, Any] = {
+                "thread_rebuild_completed": False,
+            }
+            if using_package_tracking:
+                # In multi-package mode, accumulate rather than overwrite:
+                # - memory_object_types: extend (each package adds its types)
+                # - thread_rebuild_requested: OR (true if any package requested)
+                # - failure_category: preserve first failure
+                existing_obs = _observability_state(source_item)
+                existing_types = list(existing_obs.get("memory_object_types", []))
+                new_types = [memory_object.type for memory_object in direct_result.memory_objects]
+                observability_patch["memory_object_types"] = existing_types + new_types
+                if thread_rebuild_scope is not None or existing_obs.get("thread_rebuild_requested"):
+                    observability_patch["thread_rebuild_requested"] = True
+                else:
+                    observability_patch["thread_rebuild_requested"] = False
+                if existing_obs.get("thread_rebuild_completed"):
+                    observability_patch["thread_rebuild_completed"] = True
+            else:
+                # Legacy single-package path: overwrite cleanly
+                observability_patch["memory_object_types"] = [memory_object.type for memory_object in direct_result.memory_objects]
+                observability_patch["thread_rebuild_requested"] = thread_rebuild_scope is not None
+                observability_patch["failure_category"] = None
             metadata_updates = with_observability_metadata(
                 direct_result.source_item_metadata_updates,
                 source_item.id,
-                {
-                    "memory_object_types": [memory_object.type for memory_object in direct_result.memory_objects],
-                    "thread_rebuild_requested": thread_rebuild_scope is not None,
-                    "thread_rebuild_completed": False,
-                    "failure_category": None,
-                },
+                observability_patch,
             )
             direct_result = ProcessResult(
                 memory_objects=direct_result.memory_objects,
@@ -212,11 +288,21 @@ class ItemProcessor:
                 thread_rebuild_requested=direct_result.thread_rebuild_requested,
                 supersession_hints=direct_result.supersession_hints,
             )
-            supersession_pairs = self._storage.commit_processed_source_item(
-                source_item_id=source_item.id,
-                result=direct_result,
-                thread_rebuild_scope=thread_rebuild_scope,
-            )
+            if using_package_tracking:
+                # Multi-package path: persist results without marking source_item as completed.
+                # Source_item completion happens when ALL packages are done.
+                supersession_pairs = self._storage.commit_package_process_result(
+                    source_item_id=source_item.id,
+                    result=direct_result,
+                    thread_rebuild_scope=thread_rebuild_scope,
+                )
+                self._storage.complete_package_task(source_item.id, plugin_name)
+            else:
+                supersession_pairs = self._storage.commit_processed_source_item(
+                    source_item_id=source_item.id,
+                    result=direct_result,
+                    thread_rebuild_scope=thread_rebuild_scope,
+                )
             memory_vectors_added = self._vector_embedder.embed_process_result(direct_result)
             memory_provenance = build_memory_provenance(
                 direct_result,
@@ -239,18 +325,34 @@ class ItemProcessor:
         except Exception as exc:
             failure_category = classify_failure(exc, phase="process_item")
             error = truncate_processing_error(exc)
-            final_failure = source_item.processing_attempts >= max_attempts
-            next_attempt_at = None
-            if not final_failure and source_item.processing_claimed_at is not None:
-                backoff_seconds = self._queue_backoff_seconds(source_item.processing_attempts)
-                next_attempt_at = source_item.processing_claimed_at + timedelta(seconds=backoff_seconds)
-            self._storage.fail_source_item_processing(
-                source_item.id,
-                error=error,
-                next_attempt_at=next_attempt_at,
-                final=final_failure,
-                metadata_updates={OBSERVABILITY_METADATA_KEY: {"failure_category": failure_category}},
-            )
+            if using_package_tracking:
+                final_failure = current_attempts >= max_attempts
+                next_attempt_at = None
+                if not final_failure:
+                    backoff_seconds = self._queue_backoff_seconds(current_attempts)
+                    next_attempt_at = utc_now() + timedelta(seconds=backoff_seconds)
+                self._storage.fail_package_task(
+                    source_item.id, plugin_name,
+                    error=error, next_attempt_at=next_attempt_at, final=final_failure,
+                )
+                # Update source_item metadata for observability
+                self._storage.update_source_item_metadata(
+                    source_item.id,
+                    {OBSERVABILITY_METADATA_KEY: {"failure_category": failure_category}},
+                )
+            else:
+                final_failure = current_attempts >= max_attempts
+                next_attempt_at = None
+                if not final_failure and source_item.processing_claimed_at is not None:
+                    backoff_seconds = self._queue_backoff_seconds(current_attempts)
+                    next_attempt_at = source_item.processing_claimed_at + timedelta(seconds=backoff_seconds)
+                self._storage.fail_source_item_processing(
+                    source_item.id,
+                    error=error,
+                    next_attempt_at=next_attempt_at,
+                    final=final_failure,
+                    metadata_updates={OBSERVABILITY_METADATA_KEY: {"failure_category": failure_category}},
+                )
             self._emit_processing_failure(
                 source_item,
                 worker_id=worker_label,

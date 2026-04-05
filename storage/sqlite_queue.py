@@ -23,6 +23,7 @@ from storage.sqlite_schema import (
     IndexEntryRecord,
     MaintenanceStateRecord,
     MemoryObjectRecord,
+    PackageProcessingStatusRecord,
     RelationRecord,
     SourceItemRecord,
     ThreadProcessingLeaseRecord,
@@ -658,4 +659,280 @@ class SQLiteQueueMixin:
         if record.use_case in scoped_use_cases and not record.visibility:
             return "missing_visibility_for_scoped_use_case"
         return None
+
+    # ── Multi-package processing tracking ──────────────────────────────────
+
+    def create_package_processing_records(
+        self,
+        source_item_id: str,
+        package_names: list[str],
+        *,
+        skip_packages: list[str] | None = None,
+    ) -> None:
+        skip_set = set(skip_packages or [])
+        now = utc_now()
+        with self._session_factory.begin() as session:
+            for pkg in package_names:
+                status = "skipped" if pkg in skip_set else "pending"
+                session.add(
+                    PackageProcessingStatusRecord(
+                        source_item_id=source_item_id,
+                        package_name=pkg,
+                        status=status,
+                        attempts=0,
+                        created_at=now,
+                    )
+                )
+
+    def claim_next_package_task(
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+        max_attempts: int,
+        now: datetime | None = None,
+    ) -> tuple[SourceItem, str, int] | None:
+        claimed_at = now or utc_now()
+        lease_expires_at = claimed_at + timedelta(seconds=max(1, lease_seconds))
+        statement = text(
+            """
+            UPDATE package_processing_status
+            SET status = 'processing',
+                attempts = COALESCE(attempts, 0) + 1,
+                claimed_by = :worker_id,
+                claimed_at = :claimed_at,
+                lease_expires_at = :lease_expires_at,
+                next_attempt_at = NULL
+            WHERE id = (
+                SELECT pps.id
+                FROM package_processing_status pps
+                JOIN source_items si ON si.id = pps.source_item_id
+                WHERE (
+                    (pps.status = 'pending'
+                        AND COALESCE(pps.attempts, 0) < :max_attempts
+                        AND (pps.next_attempt_at IS NULL OR pps.next_attempt_at <= :claimed_at))
+                    OR (pps.status = 'failed'
+                        AND COALESCE(pps.attempts, 0) < :max_attempts
+                        AND pps.next_attempt_at IS NOT NULL
+                        AND pps.next_attempt_at <= :claimed_at)
+                    OR (pps.status = 'processing'
+                        AND COALESCE(pps.attempts, 0) < :max_attempts
+                        AND pps.lease_expires_at IS NOT NULL
+                        AND pps.lease_expires_at <= :claimed_at)
+                )
+                ORDER BY si.created_at ASC, si.id ASC, pps.package_name ASC
+                LIMIT 1
+            )
+            RETURNING id, source_item_id, package_name
+            """
+        )
+        with self._session_factory.begin() as session:
+            row = session.execute(
+                statement,
+                {
+                    "worker_id": worker_id,
+                    "claimed_at": claimed_at,
+                    "lease_expires_at": lease_expires_at,
+                    "max_attempts": max_attempts,
+                },
+            ).first()
+            if row is None:
+                return None
+            source_item_id = row[1]
+            package_name = row[2]
+            record = session.get(SourceItemRecord, source_item_id)
+            if record is None:
+                return None
+            # Read back the updated attempts count
+            pps_record = self._find_package_task_record(session, source_item_id, package_name)
+            attempts = pps_record.attempts if pps_record else 1
+            return self._to_source_item(record), package_name, attempts
+
+    def claim_next_package_task_for_item(
+        self,
+        source_item_id: str,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+        max_attempts: int,
+        now: datetime | None = None,
+    ) -> tuple[str, int] | None:
+        """Claim the next pending package for a specific source_item."""
+        claimed_at = now or utc_now()
+        lease_expires_at = claimed_at + timedelta(seconds=max(1, lease_seconds))
+        statement = text(
+            """
+            UPDATE package_processing_status
+            SET status = 'processing',
+                attempts = COALESCE(attempts, 0) + 1,
+                claimed_by = :worker_id,
+                claimed_at = :claimed_at,
+                lease_expires_at = :lease_expires_at,
+                next_attempt_at = NULL
+            WHERE id = (
+                SELECT pps.id
+                FROM package_processing_status pps
+                WHERE pps.source_item_id = :source_item_id
+                  AND (
+                    (pps.status = 'pending'
+                        AND COALESCE(pps.attempts, 0) < :max_attempts
+                        AND (pps.next_attempt_at IS NULL OR pps.next_attempt_at <= :claimed_at))
+                    OR (pps.status = 'failed'
+                        AND COALESCE(pps.attempts, 0) < :max_attempts
+                        AND pps.next_attempt_at IS NOT NULL
+                        AND pps.next_attempt_at <= :claimed_at)
+                    OR (pps.status = 'processing'
+                        AND COALESCE(pps.attempts, 0) < :max_attempts
+                        AND pps.lease_expires_at IS NOT NULL
+                        AND pps.lease_expires_at <= :claimed_at)
+                  )
+                ORDER BY pps.package_name ASC
+                LIMIT 1
+            )
+            RETURNING package_name
+            """
+        )
+        with self._session_factory.begin() as session:
+            row = session.execute(
+                statement,
+                {
+                    "source_item_id": source_item_id,
+                    "worker_id": worker_id,
+                    "claimed_at": claimed_at,
+                    "lease_expires_at": lease_expires_at,
+                    "max_attempts": max_attempts,
+                },
+            ).first()
+            if row is None:
+                return None
+            package_name = row[0]
+            # Read back the updated attempts count
+            pps_record = self._find_package_task_record(session, source_item_id, package_name)
+            attempts = pps_record.attempts if pps_record else 1
+            return package_name, attempts
+
+    def complete_package_task(
+        self,
+        source_item_id: str,
+        package_name: str,
+        *,
+        completed_at: datetime | None = None,
+    ) -> None:
+        finished_at = completed_at or utc_now()
+        with self._session_factory.begin() as session:
+            record = self._find_package_task_record(session, source_item_id, package_name)
+            if record is None:
+                raise KeyError(f"({source_item_id}, {package_name})")
+            record.status = "completed"
+            record.completed_at = finished_at
+            record.error = None
+            record.claimed_by = None
+            record.claimed_at = None
+            record.lease_expires_at = None
+            record.next_attempt_at = None
+            self._sync_source_item_if_all_packages_terminal(session, source_item_id, finished_at)
+
+    def fail_package_task(
+        self,
+        source_item_id: str,
+        package_name: str,
+        *,
+        error: str,
+        next_attempt_at: datetime | None,
+        final: bool,
+    ) -> None:
+        finished_at = utc_now()
+        with self._session_factory.begin() as session:
+            record = self._find_package_task_record(session, source_item_id, package_name)
+            if record is None:
+                raise KeyError(f"({source_item_id}, {package_name})")
+            record.status = "failed" if final else "pending"
+            record.error = error
+            record.claimed_by = None
+            record.claimed_at = None
+            record.lease_expires_at = None
+            record.completed_at = finished_at if final else None
+            record.next_attempt_at = next_attempt_at
+            if final:
+                self._sync_source_item_if_all_packages_terminal(session, source_item_id, finished_at)
+
+    def _sync_source_item_if_all_packages_terminal(
+        self,
+        session: Session,
+        source_item_id: str,
+        finished_at: datetime,
+    ) -> None:
+        """Update source_item processing state when all package tasks are terminal."""
+        all_records = session.scalars(
+            select(PackageProcessingStatusRecord).where(
+                PackageProcessingStatusRecord.source_item_id == source_item_id,
+            )
+        ).all()
+        if not all_records:
+            return
+        all_terminal = all(r.status in ("completed", "skipped", "failed") for r in all_records)
+        if not all_terminal:
+            return
+        source_record = session.get(SourceItemRecord, source_item_id)
+        if source_record is None:
+            return
+        any_failed = any(r.status == "failed" for r in all_records)
+        source_record.processing_status = "failed" if any_failed else "completed"
+        source_record.processing_completed_at = finished_at
+        failed_record = next((r for r in all_records if r.status == "failed"), None)
+        source_record.processing_error = failed_record.error if failed_record else None
+        source_record.processing_claimed_by = None
+        source_record.processing_claimed_at = None
+        source_record.processing_lease_expires_at = None
+        source_record.processing_next_attempt_at = None
+        source_record.processing_attempts = sum(r.attempts for r in all_records)
+
+    def _find_package_task_record(
+        self,
+        session: Session,
+        source_item_id: str,
+        package_name: str,
+    ) -> PackageProcessingStatusRecord | None:
+        return session.scalars(
+            select(PackageProcessingStatusRecord).where(
+                PackageProcessingStatusRecord.source_item_id == source_item_id,
+                PackageProcessingStatusRecord.package_name == package_name,
+            )
+        ).first()
+
+    def commit_package_process_result(
+        self,
+        *,
+        source_item_id: str,
+        result: ProcessResult,
+        thread_rebuild_scope: ThreadProcessingScope | None = None,
+        completed_at: datetime | None = None,
+    ) -> list[tuple[str, str]]:
+        """Commit a process result from multi-package processing.
+
+        Persists memory objects, relations, index entries, and handles supersession
+        and thread rebuild scope — but does NOT modify source_item processing state.
+        """
+        finished_at = completed_at or utc_now()
+        with self._session_factory.begin() as session:
+            self._persist_process_result_in_session(session, result)
+            supersession_pairs = self._resolve_supersession_pairs_in_session(session, result)
+            self._apply_supersession_pairs_in_session(session, supersession_pairs)
+            self._apply_source_item_metadata_updates_in_session(session, result.source_item_metadata_updates)
+            self._refresh_memory_freshness_for_ids_in_session(session, [memory.id for memory in result.memory_objects])
+            if thread_rebuild_scope is not None:
+                self._upsert_thread_processing_scope_in_session(
+                    session,
+                    scope=thread_rebuild_scope,
+                    requested_at=finished_at,
+                )
+            self._after_commit_processed_source_item_persist(
+                session,
+                source_item_id=source_item_id,
+                result=result,
+                supersession_pairs=supersession_pairs,
+            )
+            # NOTE: We intentionally do NOT touch source_item processing state here.
+            # Source_item completion is managed by the caller after all packages are done.
+        return supersession_pairs
 
