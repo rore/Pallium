@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from core.contracts import ProcessResult
@@ -14,6 +15,20 @@ from core.retention import SEMANTIC_SIGNAL_METADATA_KEY  # noqa: F401 — re-exp
 
 SENTENCE_PATTERN = re.compile(r"(?<=[.!?])\s+")
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+
+
+def strip_diacritics(text: str) -> str:
+    """Fold accented characters to ASCII equivalents.
+
+    "décision" → "decision", "über" → "uber", "catálogo" → "catalogo".
+    Non-Latin scripts (Hebrew, CJK, Cyrillic) pass through unchanged and
+    produce zero tokens from TOKEN_PATTERN — which is safe (system abstains).
+    Uses stdlib unicodedata, no external dependencies.
+    """
+    nfkd = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
 DECISION_PATTERNS = (
     re.compile(r"\bdecision:\s*(?P<body>.+)", re.IGNORECASE),
     re.compile(r"\bwe decided(?: to)?\s+(?P<body>.+)", re.IGNORECASE),
@@ -81,7 +96,48 @@ def summarize_content(content: str) -> str:
 
 
 def normalize_for_index(text: str) -> str:
-    return " ".join(TOKEN_PATTERN.findall(text.lower()))
+    return " ".join(TOKEN_PATTERN.findall(strip_diacritics(text).lower()))
+
+
+# Common English function words excluded from content-overlap checks.
+# Lives with the tokenizer it serves — when multi-language support is added,
+# this set changes alongside the tokenizer and embedding model.
+CONTENT_STOPWORDS: frozenset[str] = frozenset({
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "shall", "can", "must", "need",
+    "i", "me", "my", "we", "us", "our", "you", "your", "he", "she",
+    "it", "they", "them", "their", "its", "his", "her",
+    "in", "on", "at", "to", "for", "of", "with", "by", "from", "up",
+    "about", "into", "through", "during", "before", "after", "above",
+    "below", "between", "out", "off", "over", "under",
+    "and", "but", "or", "nor", "not", "so", "yet", "both", "either",
+    "neither", "each", "every", "all", "any", "few", "more", "most",
+    "other", "some", "such", "no", "only", "own", "same", "than", "too",
+    "very", "just", "also", "now", "then", "here", "there", "when",
+    "where", "why", "how", "what", "which", "who", "whom", "this",
+    "that", "these", "those", "if", "as",
+})
+
+
+def content_tokens(text: str) -> set[str]:
+    """Tokenize text and remove stopwords, returning content words only.
+
+    Includes basic plural-stem variants (same rules as lexical retrieval)
+    so that "batches" matches "batch" and vice versa.
+    """
+    raw = set(normalize_for_index(text).split()) - CONTENT_STOPWORDS
+    expanded: set[str] = set()
+    for token in raw:
+        expanded.add(token)
+        # Plural stripping — mirrors retrieval/lexical.py _token_variants
+        if len(token) > 4 and token.endswith("ies"):
+            expanded.add(token[:-3] + "y")
+        elif len(token) > 5 and token.endswith("es") and not token.endswith(("ses", "xes", "zes")):
+            expanded.add(token[:-2])
+        elif len(token) > 4 and token.endswith("s") and not token.endswith(("ss", "us", "is", "ses", "xes", "zes")):
+            expanded.add(token[:-1])
+    return expanded
 
 
 def strip_terminal_punctuation(text: str) -> str:

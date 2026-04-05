@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import logging
+import unicodedata
 
 from sqlalchemy.exc import IntegrityError
 
@@ -30,8 +31,15 @@ from storage.vector_index import VectorIndex
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 
+# Duplicated from semantic/common.strip_diacritics — core layer should not
+# depend on the semantic layer.
+def _strip_diacritics(text: str) -> str:
+    """Fold accented characters to ASCII equivalents before tokenization."""
+    nfkd = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
 def _normalize_for_index(text: str) -> str:
-    return " ".join(TOKEN_PATTERN.findall(text.lower()))
+    return " ".join(TOKEN_PATTERN.findall(_strip_diacritics(text).lower()))
 
 
 class PalliumService:

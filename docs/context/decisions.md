@@ -447,3 +447,25 @@ Why:
 - the transient `SemanticExtraction` (intermediate LLM extraction artifact) is
   preserved — the claim is that *persisted* annotations are unnecessary, not that
   intermediate extraction is unnecessary
+
+### 2026-04-05 - Injection precision principle: wrong memory is worse than no memory
+
+For fact recall, injecting a wrong memory is usually worse than injecting nothing.
+For continuity/work resumption, an incomplete but directionally right memory can
+still be useful, if it is clearly labeled as tentative and backed by evidence.
+Unverified or low-confidence memory must not be injected as authoritative. When
+uncertain, abstain or inject only as tentative evidence.
+
+Why:
+
+- a wrong injected memory can mislead the consuming agent into acting on stale or
+  unrelated context — the agent has no way to know the memory is wrong
+- no memory simply means the agent proceeds without context, which is the baseline
+  — it loses nothing and can still ask the user
+- this asymmetry means injection gates should err on the side of not injecting when
+  the system cannot verify topical relevance
+- for work resumption, directional context (e.g., "you were working on X") has
+  value even if incomplete, but must be clearly scoped and evidence-backed
+- this principle governs trade-offs in injection gate thresholds: when a candidate
+  has retrieval signal (lexical/vector) but no verifiable content-word grounding
+  with the query, the system should abstain rather than inject

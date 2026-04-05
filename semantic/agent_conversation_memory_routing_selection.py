@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.models import InjectableBlock, QueryFilters, QueryResultItem, QueryRuntimeContext
-from semantic.common import normalize_for_index
+from semantic.common import content_tokens, normalize_for_index
 from semantic.agent_conversation_memory_constraints import (
     CONSTRAINT_MEMORY_TYPE,
 )
@@ -676,6 +676,55 @@ def _candidate_qualifies_as_same_thread_local_state(
 
     return False, "non_local_state_candidate"
 
+
+def _candidate_content_surface(item: QueryResultItem) -> str:
+    """Extract the candidate's content surface for overlap checking.
+
+    Lightweight extractor covering the key payload fields across all memory
+    types.  Does NOT duplicate the full block-builder formatting — only needs
+    enough text to check whether query content words appear in the candidate.
+    """
+    if item.result_kind == "source_hit":
+        return str(item.excerpt or "")
+    payload = item.payload or {}
+    return " ".join(filter(None, [
+        str(payload.get("decision") or ""),
+        str(payload.get("investigation_outcome") or ""),
+        str(payload.get("summary") or ""),
+        str(payload.get("carry_forward_answer") or ""),
+        str(payload.get("constraint_text") or ""),
+        str(payload.get("interest_text") or ""),
+        str(payload.get("task") or ""),
+        str(payload.get("current_state") or ""),
+        str(payload.get("blocker_state") or ""),
+        str(payload.get("next_step") or ""),
+        str(payload.get("rationale") or ""),
+    ])).strip()
+
+
+def _candidate_has_content_overlap(
+    item: QueryResultItem,
+    query_text: str,
+    *,
+    query_ct: set[str] | None = None,
+) -> bool:
+    """Check whether a candidate shares at least 1 content word with the query.
+
+    Uses stopword-filtered tokenization so that function words like "to", "at",
+    "the" don't create false overlap.  When neither side has content tokens
+    (e.g., ultra-short query), returns True to avoid over-filtering.
+    """
+    if query_ct is None:
+        query_ct = content_tokens(query_text)
+    if not query_ct:
+        return True  # can't assess — don't filter
+    candidate_text = _candidate_content_surface(item)
+    if not candidate_text:
+        return False
+    candidate_ct = content_tokens(candidate_text)
+    return bool(query_ct & candidate_ct)
+
+
 def _candidate_is_injection_eligible(
     candidate: dict[str, object],
     *,
@@ -693,6 +742,17 @@ def _candidate_is_injection_eligible(
         return False
     if candidate.get("suppression_reason_code"):
         return False
+    # Content-overlap grounding: require at least 1 shared content word
+    # between the query and the candidate's content surface.
+    # Skip for work_resumption — directional context is useful even without
+    # lexical confirmation (per injection precision principle in decisions.md).
+    # Also skip when the query has very few content tokens (<=2) — too vague
+    # to compute meaningful overlap, and vague queries are often resumption-
+    # like ("what should I do next?") where any active memory is useful.
+    if intent != "work_resumption":
+        query_ct = content_tokens(query_text)
+        if len(query_ct) > 2 and not _candidate_has_content_overlap(item, query_text, query_ct=query_ct):
+            return False
     if item.result_kind == "source_hit":
         if normalize_for_index(str(item.excerpt or "")) == normalize_for_index(query_text):
             return False

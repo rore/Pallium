@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from core.models import (
     QueryFilters,
@@ -18,8 +19,16 @@ TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 LEXICAL_STAGE_NAME = "lexical"
 
 
+# Duplicated from semantic/common.strip_diacritics — retrieval layer cannot
+# import from semantic/ to avoid upward coupling.
+def _strip_diacritics(text: str) -> str:
+    """Fold accented characters to ASCII equivalents before tokenization."""
+    nfkd = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
 def _tokenize(text: str) -> list[str]:
-    tokens = TOKEN_PATTERN.findall(text.lower())
+    tokens = TOKEN_PATTERN.findall(_strip_diacritics(text).lower())
     expanded: list[str] = []
     seen: set[str] = set()
     for token in tokens:

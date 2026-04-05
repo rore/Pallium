@@ -1948,7 +1948,7 @@ def test_offtopic_zero_overlap_suppresses_thread_summary() -> None:
 def test_ontopic_recall_injects_thread_summary() -> None:
     """On-topic query with score=3 thread_summary MUST inject."""
     result = _build_floor_test_retrieval_result(score=3, memory_type='thread_summary')
-    outcome = _run_floor_test(result, query_text="what did we discuss about the catalog?")
+    outcome = _run_floor_test(result, query_text="what did we discuss about vector databases?")
     assert outcome.should_inject is True, (
         f"On-topic recall query should inject thread_summary. "
         f"decision_reason={outcome.decision_reason}"
