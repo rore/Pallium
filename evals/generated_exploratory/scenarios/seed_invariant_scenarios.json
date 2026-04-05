@@ -1100,5 +1100,93 @@
         }
       }
     ]
+  },
+  {
+    "scenario_id": "p1-hebrew-query-retrieves-english-memory",
+    "description": "A Hebrew query should retrieve an English-language decision via cross-language vector retrieval.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"query_language": "hebrew", "memory_language": "english"},
+      "invariant_assertions": ["INV-02"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_english_decision",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "hebrew-q-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: catalog sync batch size set to 500 items per cycle to balance throughput and memory usage.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-ops",
+            "thread_ref": "chat:library-ops:thread-hebrew-q-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://seed/hebrew-q-001-msg-1",
+            "occurred_at": "2026-03-20T12:00:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "hebrew_query",
+        "action": "query",
+        "query": {
+          "text": "\u05de\u05d4 \u05d2\u05d5\u05d3\u05dc \u05d4\u05d0\u05e6\u05d5\u05d5\u05d4 \u05dc\u05e1\u05e0\u05db\u05e8\u05d5\u05df \u05d4\u05e7\u05d8\u05dc\u05d5\u05d2",
+          "limit": 6,
+          "container_ref": "chat:library-ops",
+          "visibility": "private"
+        },
+        "invariant_assertions": ["INV-02"]
+      }
+    ]
+  },
+  {
+    "scenario_id": "p0-hebrew-content-not-leaked-cross-container",
+    "description": "Hebrew-language memory in container A must not leak to container B, validating isolation for non-English content.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "different_container", "visibility": "container", "content_language": "hebrew"},
+      "invariant_assertions": ["INV-01", "INV-04"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_hebrew_container_a",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "hebrew-iso-001-msg-1",
+            "content_type": "text/plain",
+            "content": "\u05d4\u05d7\u05dc\u05d8\u05d4: \u05d4\u05e1\u05e4\u05e8\u05d9\u05d9\u05d4 \u05ea\u05e2\u05d1\u05d5\u05e8 \u05dc\u05de\u05e2\u05e8\u05db\u05ea \u05d4\u05d6\u05de\u05e0\u05d5\u05ea \u05d7\u05d3\u05e9\u05d4 \u05d1\u05ea\u05d7\u05d9\u05dc\u05ea \u05d4\u05e8\u05d1\u05e2\u05d5\u05df \u05d4\u05d1\u05d0. \u05d4\u05de\u05e2\u05e8\u05db\u05ea \u05ea\u05ea\u05de\u05d5\u05da \u05d1\u05d4\u05d6\u05de\u05e0\u05d5\u05ea \u05de\u05e7\u05d5\u05d5\u05e0\u05d5\u05ea \u05d5\u05d4\u05d7\u05d6\u05e8\u05d5\u05ea \u05d0\u05d5\u05d8\u05d5\u05de\u05d8\u05d9\u05d5\u05ea.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-downtown",
+            "thread_ref": "chat:library-downtown:thread-hebrew-iso-001",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/hebrew-iso-001-msg-1",
+            "occurred_at": "2026-03-20T13:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_container_b",
+        "action": "query",
+        "query": {
+          "text": "\u05de\u05d4 \u05d4\u05d4\u05d7\u05dc\u05d8\u05d4 \u05dc\u05d2\u05d1\u05d9 \u05de\u05e2\u05e8\u05db\u05ea \u05d4\u05d4\u05d6\u05de\u05e0\u05d5\u05ea",
+          "limit": 6,
+          "container_ref": "chat:library-uptown",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04"]
+      }
+    ]
   }
 ]
