@@ -332,3 +332,112 @@ def test_build_thread_text_no_occurred_at_omits_date():
     )
     text = _build_thread_text(aggregate)
     assert "Session date:" not in text
+
+
+# ── Tests: thread_ref in payload and reconcile_process_result ─────────────
+
+def test_build_thread_summary_includes_thread_ref_in_payload():
+    """Fact payloads should include thread_ref for cross-thread dedup."""
+    from capabilities.thread_aggregation import ThreadAggregate
+    facts = [{"subject": "Alice", "statement": "Alice has 3 cats", "category": "personal"}]
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider(facts=facts))
+    items = [
+        SourceItem(
+            source_type="chat", source_id="tr1",
+            content_type="text/plain", content="Alice has 3 cats",
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+        SourceItem(
+            source_type="chat", source_id="tr2",
+            content_type="text/plain", content="Nice!",
+            role="assistant", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+    ]
+    aggregate = ThreadAggregate(
+        container_ref="c1", thread_ref="t1",
+        source_items=items, source_item_ids=[i.id for i in items],
+        latest_occurred_at=utc_now(), aggregate_text="", visibility="public",
+    )
+    result = plugin.build_thread_summary(aggregate, conclusions=[])
+    assert result.memory_objects[0].payload["thread_ref"] == "t1"
+
+
+def test_reconcile_removes_cross_thread_duplicates():
+    """reconcile_process_result should remove facts that duplicate cross-thread facts."""
+    from core.models import Relation
+    from core.indexing import build_index_entry
+
+    storage = SQLiteStorageProvider("sqlite:///:memory:")
+    existing_fact = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="conversational_knowledge.atomic_fact",
+        schema_version="v1",
+        payload={"subject": "Alice", "statement": "Alice has 3 cats", "category": "personal", "thread_ref": "t-other"},
+        lifecycle="active", visibility="public", container_ref="c1",
+    )
+    storage.create_memory_object(existing_fact)
+
+    dup_fact = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="conversational_knowledge.atomic_fact",
+        schema_version="v1",
+        payload={"subject": "Alice", "statement": "Alice has 3 cats", "category": "personal", "thread_ref": "t1"},
+        lifecycle="active", visibility="public", container_ref="c1",
+    )
+    unique_fact = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="conversational_knowledge.atomic_fact",
+        schema_version="v1",
+        payload={"subject": "Alice", "statement": "Alice likes painting", "category": "preference", "thread_ref": "t1"},
+        lifecycle="active", visibility="public", container_ref="c1",
+    )
+    result = ProcessResult(
+        memory_objects=[dup_fact, unique_fact],
+        relations=[
+            Relation(from_kind="memory_object", from_id=dup_fact.id, relation_type="supported_by", to_kind="source_item", to_id="s1"),
+            Relation(from_kind="memory_object", from_id=unique_fact.id, relation_type="supported_by", to_kind="source_item", to_id="s1"),
+        ],
+        index_entries=[
+            build_index_entry(target_kind="memory_object", target_id=dup_fact.id, index_type="lexical", text_view="Alice has 3 cats", text_view_name="test"),
+            build_index_entry(target_kind="memory_object", target_id=unique_fact.id, index_type="lexical", text_view="Alice likes painting", text_view_name="test"),
+        ],
+    )
+
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider())
+    reconciled = plugin.reconcile_process_result(result, storage=storage, container_ref="c1", visibility="public")
+
+    assert len(reconciled.memory_objects) == 1
+    assert reconciled.memory_objects[0].payload["statement"] == "Alice likes painting"
+    assert all(r.from_id != dup_fact.id for r in reconciled.relations)
+    assert all(e.target_id != dup_fact.id for e in reconciled.index_entries)
+
+
+def test_reconcile_keeps_same_thread_facts():
+    """reconcile should NOT filter facts that duplicate same-thread facts (those get superseded)."""
+    storage = SQLiteStorageProvider("sqlite:///:memory:")
+    existing_fact = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="conversational_knowledge.atomic_fact",
+        schema_version="v1",
+        payload={"subject": "Alice", "statement": "Alice has 3 cats", "category": "personal", "thread_ref": "t1"},
+        lifecycle="active", visibility="public", container_ref="c1",
+    )
+    storage.create_memory_object(existing_fact)
+
+    new_fact = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="conversational_knowledge.atomic_fact",
+        schema_version="v1",
+        payload={"subject": "Alice", "statement": "Alice has 3 cats", "category": "personal", "thread_ref": "t1"},
+        lifecycle="active", visibility="public", container_ref="c1",
+    )
+    result = ProcessResult(memory_objects=[new_fact], relations=[], index_entries=[])
+
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider())
+    reconciled = plugin.reconcile_process_result(result, storage=storage, container_ref="c1", visibility="public")
+
+    assert len(reconciled.memory_objects) == 1

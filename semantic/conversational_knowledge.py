@@ -171,6 +171,7 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin):
                         "subject": subject,
                         "statement": statement,
                         "category": category,
+                        "thread_ref": aggregate.thread_ref,
                     },
                     visibility=visibility or "private",
                     container_ref=container_ref,
@@ -260,6 +261,72 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin):
 
     def source_item_embedding_text(self, source_item: SourceItem) -> str | None:
         return None
+
+    def reconcile_process_result(
+        self,
+        result: ProcessResult,
+        *,
+        storage: Any,
+        container_ref: str,
+        visibility: str,
+    ) -> ProcessResult:
+        """Remove facts that duplicate active cross-thread facts in the same container."""
+        if not result.memory_objects:
+            return result
+
+        current_thread_ref = None
+        for mo in result.memory_objects:
+            if mo.type == FACT_TYPE and mo.payload.get("thread_ref"):
+                current_thread_ref = mo.payload["thread_ref"]
+                break
+        if current_thread_ref is None:
+            return result
+
+        existing_facts = storage.list_memory_objects(
+            memory_types=[FACT_TYPE], lifecycle="active",
+        )
+        # NOTE: This loads all active facts across all containers, then post-filters.
+        # O(all facts) per thread rebuild. Acceptable at current scale (~200 facts).
+        # When list_memory_objects supports container_ref filtering, scope this query.
+
+        existing_keys: set[tuple[str, str]] = set()
+        for ef in existing_facts:
+            if ef.container_ref != container_ref:
+                continue
+            if ef.payload.get("thread_ref") == current_thread_ref:
+                continue  # same thread — will be superseded, don't suppress
+            subj = normalize_for_index(str(ef.payload.get("subject", "")))
+            stmt = normalize_for_index(str(ef.payload.get("statement", "")))
+            existing_keys.add((subj, stmt))
+
+        if not existing_keys:
+            return result
+
+        keep_ids: set[str] = set()
+        filtered_memory_objects: list[MemoryObject] = []
+        for mo in result.memory_objects:
+            if mo.type != FACT_TYPE:
+                keep_ids.add(mo.id)
+                filtered_memory_objects.append(mo)
+                continue
+            key = (
+                normalize_for_index(str(mo.payload.get("subject", ""))),
+                normalize_for_index(str(mo.payload.get("statement", ""))),
+            )
+            if key in existing_keys:
+                logger.debug("Dedup: skipping cross-thread duplicate fact: %s", mo.payload.get("statement", "")[:80])
+                continue
+            keep_ids.add(mo.id)
+            filtered_memory_objects.append(mo)
+
+        if len(filtered_memory_objects) == len(result.memory_objects):
+            return result
+
+        return ProcessResult(
+            memory_objects=filtered_memory_objects,
+            relations=[r for r in result.relations if r.from_id in keep_ids],
+            index_entries=[e for e in result.index_entries if e.target_id in keep_ids],
+        )
 
 
 def _is_eligible_for_fact_extraction(source_item: SourceItem) -> bool:
