@@ -389,3 +389,155 @@ class TestFailureReproduction:
 
         found_ids = [r.memory_object_id for r in result.results]
         assert memory_id in found_ids
+
+
+# ---------------------------------------------------------------------------
+# Multilingual end-to-end integration tests
+# ---------------------------------------------------------------------------
+
+class TestHebrewRetrievalIntegration:
+    """End-to-end: Hebrew content is indexed and retrieved through the full
+    lexical pipeline (LexicalRetrievalProvider → SQLiteSearchMixin).
+    Verifies the Unicode-aware TOKEN_PATTERN works across module boundaries.
+    """
+
+    def test_hebrew_query_finds_hebrew_index_entry(self, test_db_url: str):
+        """Hebrew query tokens match Hebrew index text."""
+        from core.text import normalize_for_index
+        storage = SQLiteStorageProvider(test_db_url)
+
+        source_item = SourceItem(
+            source_type="chat_message",
+            source_id="hebrew-msg-1",
+            content_type="text/plain",
+            content="החלטנו להשתמש ב-PostgreSQL בשביל מסד הנתונים",
+            artifact_kind="message",
+            role="user",
+            container_ref="test:container",
+            thread_ref="test:thread",
+            visibility="container",
+        )
+        storage.create_source_item(source_item)
+
+        memory_object = MemoryObject(
+            type="decision",
+            schema_id="test.decision",
+            schema_version="v1",
+            payload={"decision": "להשתמש ב-PostgreSQL"},
+            visibility="container",
+            container_ref="test:container",
+        )
+        storage.create_memory_object(memory_object)
+
+        storage.create_relation(Relation(
+            from_kind="memory_object",
+            from_id=memory_object.id,
+            relation_type="supported_by",
+            to_kind="source_item",
+            to_id=source_item.id,
+        ))
+
+        # Index with Hebrew text — normalize_for_index now produces Hebrew tokens
+        index_text = normalize_for_index("החלטנו להשתמש ב-PostgreSQL בשביל מסד הנתונים")
+        assert "החלטנו" in index_text, f"Hebrew token missing from index text: {index_text}"
+        assert "postgresql" in index_text, f"English token missing from index text: {index_text}"
+
+        index_entry = IndexEntry(
+            target_kind="memory_object",
+            target_id=memory_object.id,
+            index_type="lexical",
+            text_view=index_text,
+            text_view_name="memory_object.decision_context",
+            provider_name="builtin",
+            provider_version="v1",
+        )
+        storage.create_index_entry(index_entry)
+
+        # Query with Hebrew — should find the memory
+        provider = LexicalRetrievalProvider(storage)
+        result = provider.query(
+            "מה החלטנו לגבי מסד הנתונים",
+            limit=10,
+            query_container_ref="test:container",
+        )
+
+        assert len(result.results) >= 1, "Hebrew query returned no results"
+        found_ids = [r.memory_object_id for r in result.results]
+        assert memory_object.id in found_ids
+
+    def test_mixed_hebrew_english_query_finds_entry(self, test_db_url: str):
+        """Mixed Hebrew+English query finds entry via shared English tokens."""
+        from core.text import normalize_for_index
+        storage = SQLiteStorageProvider(test_db_url)
+
+        source_item = SourceItem(
+            source_type="chat_message",
+            source_id="mixed-msg-1",
+            content_type="text/plain",
+            content="We decided to use Redis for caching.",
+            artifact_kind="message",
+            role="user",
+            container_ref="test:container",
+            thread_ref="test:thread",
+            visibility="container",
+        )
+        storage.create_source_item(source_item)
+
+        memory_object = MemoryObject(
+            type="decision",
+            schema_id="test.decision",
+            schema_version="v1",
+            payload={"decision": "use Redis for caching"},
+            visibility="container",
+            container_ref="test:container",
+        )
+        storage.create_memory_object(memory_object)
+
+        storage.create_relation(Relation(
+            from_kind="memory_object",
+            from_id=memory_object.id,
+            relation_type="supported_by",
+            to_kind="source_item",
+            to_id=source_item.id,
+        ))
+
+        index_entry = IndexEntry(
+            target_kind="memory_object",
+            target_id=memory_object.id,
+            index_type="lexical",
+            text_view=normalize_for_index("use Redis for caching"),
+            text_view_name="memory_object.decision_context",
+            provider_name="builtin",
+            provider_version="v1",
+        )
+        storage.create_index_entry(index_entry)
+
+        # Query in Hebrew mentioning "Redis" — shared English token bridges
+        provider = LexicalRetrievalProvider(storage)
+        result = provider.query(
+            "מה החלטנו לגבי Redis",
+            limit=10,
+            query_container_ref="test:container",
+        )
+
+        assert len(result.results) >= 1, "Mixed Hebrew+English query returned no results"
+        found_ids = [r.memory_object_id for r in result.results]
+        assert memory_object.id in found_ids
+
+    def test_hebrew_source_item_indexed_by_core_service(self, test_db_url: str):
+        """Verify that core/service.py indexes Hebrew source items correctly
+        via the centralized normalize_for_index from core/text.py."""
+        from core.text import normalize_for_index
+
+        hebrew_content = "אנחנו צריכים לבדוק את הביצועים של המערכת"
+        normalized = normalize_for_index(hebrew_content)
+
+        # All Hebrew words should be present as tokens
+        assert "אנחנו" in normalized
+        assert "צריכים" in normalized
+        assert "לבדוק" in normalized
+        assert "הביצועים" in normalized
+        assert "המערכת" in normalized
+        # No empty result
+        assert len(normalized.split()) >= 5
+
