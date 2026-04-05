@@ -62,6 +62,64 @@ FACT_EXTRACTION_SYSTEM_PROMPT = (
     "If there are no extractable facts, return {\"facts\": []}."
 )
 
+# ── Prompt variants for focused comparison ──────────────────────────────────
+
+PROMPT_VARIANT_A = (
+    "Extract specific, atomic facts from the conversation below. "
+    "Each fact should be independently useful for answering a future question. "
+    "Extract: names, dates, numbers, places, activities, preferences, relationships, events, stated plans. "
+    "Skip: greetings, filler, emotional reactions, generic encouragement, meta-conversation, trivial or obvious facts. "
+    "Extract each distinct fact once, even if mentioned in multiple turns. "
+    "Resolve relative dates (\"yesterday\", \"last week\") to approximate absolute dates using the session date provided. "
+    "Preserve the original language — do not translate. "
+    "Include who the fact is about (subject) and when it happened if mentioned. "
+    "Return a JSON object with key 'facts' containing up to 15 items. "
+    "Each fact: subject (string), statement (string), category (personal | event | preference | relationship | activity). "
+    "If no extractable facts, return {\"facts\": []}."
+)
+
+PROMPT_VARIANT_B = (
+    "Extract specific, atomic facts from the conversation below. "
+    "Each fact should be independently useful for answering a future question about these people or events. "
+    "Extract: names, dates, numbers, places, activities, preferences, relationships, events, stated plans. "
+    "Skip: greetings, filler, emotional reactions, generic encouragement, meta-conversation. "
+    "Do not extract trivial facts that merely restate common knowledge or obvious context. "
+    "Do not duplicate — if the same information appears across multiple turns, extract it once with the most specific version. "
+    "Prefer concrete facts over vague impressions. \"Went camping at Yellowstone in August\" is better than \"Likes outdoors\". "
+    "Resolve relative dates to approximate absolute dates using the session date. "
+    "Example: \"yesterday\" with session date 2023-08-28 → \"on approximately 2023-08-27\". "
+    "Preserve the original language — do not translate. "
+    "Include who the fact is about (subject) and when if mentioned. "
+    "Return JSON: {\"facts\": [{\"subject\": str, \"statement\": str, \"category\": \"personal|event|preference|relationship|activity\"}]}. "
+    "Return the 10 most informative facts. If fewer exist, return fewer. "
+    "If no extractable facts, return {\"facts\": []}."
+)
+
+PROMPT_VARIANT_C = (
+    "Extract specific, atomic facts from the conversation below. "
+    "Each fact should answer a possible future question about these people, places, events, or preferences. "
+    "Extract: names, dates, numbers, places, activities, preferences, relationships, events, stated plans. "
+    "Skip: greetings, filler, emotional reactions, generic encouragement, meta-conversation, trivial restatements. "
+    "If the same fact is mentioned multiple times, extract it once in its most specific form. "
+    "Resolve relative dates using the session date. \"Last Tuesday\" with session date 2024-03-15 → \"approximately 2024-03-12\". "
+    "Preserve the original language — do not translate. "
+    "\n"
+    "Good extraction: {\"subject\": \"Jordan\", \"statement\": \"Jordan completed a half-marathon in Denver on approximately 2024-03-12\", \"category\": \"event\"}\n"
+    "Bad extraction: {\"subject\": \"Jordan\", \"statement\": \"Jordan likes running\", \"category\": \"personal\"} — too vague, inferable from the good one.\n"
+    "\n"
+    "Return JSON with key 'facts' containing up to 10 items. "
+    "Each: subject (string), statement (string), category (personal | event | preference | relationship | activity). "
+    "Prioritize facts with names, dates, or numbers. "
+    "If no extractable facts, return {\"facts\": []}."
+)
+
+_PROMPT_VARIANTS: dict[str, str] = {
+    "control": FACT_EXTRACTION_SYSTEM_PROMPT,
+    "compact": PROMPT_VARIANT_A,
+    "guided": PROMPT_VARIANT_B,
+    "exemplar": PROMPT_VARIANT_C,
+}
+
 FACT_EXTRACTION_SCHEMA_DESCRIPTION = json.dumps(
     {
         "facts": [
@@ -81,9 +139,10 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin):
 
     name = "conversational_knowledge"
 
-    def __init__(self, provider: LLMProvider, *, prompt_variant: str = "fact_extraction_v1") -> None:
+    def __init__(self, provider: LLMProvider, *, prompt_variant: str = "control") -> None:
         self._provider = provider
         self._prompt_variant = prompt_variant
+        self._system_prompt = _PROMPT_VARIANTS.get(prompt_variant, FACT_EXTRACTION_SYSTEM_PROMPT)
 
     @property
     def requires_visibility_context(self) -> bool:
@@ -226,7 +285,7 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin):
         """Call the LLM to extract facts from thread text."""
         try:
             response = self._provider.generate_json(
-                system_prompt=FACT_EXTRACTION_SYSTEM_PROMPT,
+                system_prompt=self._system_prompt,
                 user_prompt=thread_text,
                 schema_description=FACT_EXTRACTION_SCHEMA_DESCRIPTION,
             )
