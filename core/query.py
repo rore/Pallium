@@ -7,6 +7,7 @@ from typing import Any
 from core.contracts import PackageQueryOutcome, QueryResult, resolve_query_filters
 from core.filters import matches_filters
 from core.models import QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace
+from core.type_registry import TypeRegistry
 from core.visibility import QueryVisibilityTrace, is_visible
 from retrieval.base import RetrievalProvider
 from retrieval.lexical import tokenize_query
@@ -33,11 +34,15 @@ class QueryExecutor:
         retrieval: RetrievalProvider,
         semantic_plugins: dict[str, SemanticPlugin],
         default_use_case: str,
+        type_registry: TypeRegistry | None = None,
+        routing_overrides=None,
     ) -> None:
         self._storage = storage
         self._retrieval = retrieval
         self._semantic_plugins = semantic_plugins
         self._default_use_case = default_use_case
+        self._type_registry = type_registry
+        self._routing_overrides = routing_overrides
 
     def query(
         self,
@@ -93,9 +98,12 @@ class QueryExecutor:
                 injectable_blocks=[],
             )
 
-        route_query_results = getattr(plugin, "route_query_results", None)
+        # Routing is a core responsibility. Call it directly when a
+        # routing-capable plugin is the default (requires visibility context).
+        # Plugins that don't require visibility (e.g., demo) skip routing.
+        has_routing = hasattr(plugin, "route_query_results") or self._type_registry is not None
         retrieval_limit = limit
-        if callable(route_query_results):
+        if has_routing:
             retrieval_limit = min(max(limit * 4, 12), 50)
         retrieval_result = self._retrieval.query(
             text=text,
@@ -116,8 +124,9 @@ class QueryExecutor:
                     filter_scope_reason=filter_resolution.filter_scope_reason,
                 ),
             )
-        if callable(route_query_results):
-            outcome = route_query_results(
+        if has_routing:
+            from core.routing import route_query_results as core_route
+            outcome = core_route(
                 text=text,
                 requested_limit=limit,
                 retrieval_result=retrieval_result,
@@ -130,6 +139,8 @@ class QueryExecutor:
                     query_container_ref=container_ref if plugin.requires_visibility_context else None,
                     require_visibility=plugin.requires_visibility_context,
                 ),
+                routing_overrides=self._routing_overrides,
+                type_registry=self._type_registry,
             )
             if not isinstance(outcome, PackageQueryOutcome):
                 raise TypeError("route_query_results must return PackageQueryOutcome")

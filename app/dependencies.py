@@ -283,6 +283,14 @@ def build_service(
             vector=vector_retrieval,
         )
 
+    # Build type registry from plugins that support type registration
+    from core.type_registry import TypeRegistry
+    type_registry = TypeRegistry()
+    for plugin in plugins.values():
+        register_routing_types = getattr(plugin, "register_routing_types", None)
+        if callable(register_routing_types):
+            register_routing_types(type_registry)
+
     return PalliumService(
         storage=storage,
         retrieval=retrieval,
@@ -294,6 +302,8 @@ def build_service(
         retention_batch_size=resolved_config.retention.batch_size,
         embedding_provider=embedding_provider,
         vector_index=vector_index,
+        type_registry=type_registry if len(type_registry) > 0 else None,
+        routing_overrides=routing_overrides,
     )
 
 

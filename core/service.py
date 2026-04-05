@@ -19,6 +19,7 @@ from core.processing import (
 from core.query import QueryExecutor
 from core.thread_rebuild import ThreadRebuilder, truncate_processing_error
 from core.turn_inference import resolve_runtime_context
+from core.type_registry import TypeRegistry
 from core.vector_embed import VectorEmbedder
 from core.models import QueryRuntimeContext, Relation, SourceItem, utc_now
 from core.observability import IntegrationDebugLogger
@@ -56,6 +57,8 @@ class PalliumService:
         retention_batch_size: int = 200,
         embedding_provider: EmbeddingProvider | None = None,
         vector_index: VectorIndex | None = None,
+        type_registry: TypeRegistry | None = None,
+        routing_overrides=None,
     ) -> None:
         self._storage = storage
         self._retrieval = retrieval
@@ -67,8 +70,13 @@ class PalliumService:
         self._retention_batch_size = retention_batch_size
         self._embedding_provider = embedding_provider
         self._vector_index = vector_index
+        self._type_registry = type_registry
         self._vector_embedder = VectorEmbedder(storage, embedding_provider, vector_index)
-        self._query_executor = QueryExecutor(storage, retrieval, semantic_plugins, default_use_case)
+        self._query_executor = QueryExecutor(
+            storage, retrieval, semantic_plugins, default_use_case,
+            type_registry=type_registry,
+            routing_overrides=routing_overrides,
+        )
         self._thread_rebuilder = ThreadRebuilder(
             storage=storage,
             semantic_plugins=semantic_plugins,
