@@ -421,6 +421,32 @@ class TestOnnxPrefixInjection:
         assert len(captured_texts) == 1
         assert captured_texts[0] == ["hello world"]  # no prefix added
 
+    def test_known_model_auto_detects_prefix(self, monkeypatch):
+        """E5 models should auto-detect prefixes without explicit config."""
+        mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules(dimensions=4)
+        monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", mock_tokenizers)
+        monkeypatch.setitem(sys.modules, "huggingface_hub", mock_hf)
+
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        captured_texts: list[list[str]] = []
+        # No explicit prefixes — should auto-detect from model name
+        provider = OnnxEmbeddingProvider(model="intfloat/multilingual-e5-small")
+
+        original_encode = provider._tokenizer.encode_batch
+        def capturing_encode(texts):
+            captured_texts.append(list(texts))
+            return original_encode(texts)
+        provider._tokenizer.encode_batch = capturing_encode
+
+        provider.embed(["hello world"], mode="query")
+        assert captured_texts[0] == ["query: hello world"]
+
+        captured_texts.clear()
+        provider.embed(["hello world"], mode="passage")
+        assert captured_texts[0] == ["passage: hello world"]
+
     def test_hebrew_with_prefix(self, monkeypatch):
         """Hebrew text with query prefix should work correctly."""
         mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules(dimensions=4)

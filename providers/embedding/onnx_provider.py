@@ -13,6 +13,17 @@ DEFAULT_MODEL_REPO = "BAAI/bge-small-en-v1.5"
 DEFAULT_ONNX_FILE = "onnx/model.onnx"
 DEFAULT_TOKENIZER_FILE = "tokenizer.json"
 
+# Known model prefix defaults.  E5-family models require "query: " / "passage: "
+# prefixes for correct asymmetric retrieval.  Config values override these.
+_KNOWN_MODEL_PREFIXES: dict[str, tuple[str, str]] = {
+    "intfloat/multilingual-e5-small": ("query: ", "passage: "),
+    "intfloat/multilingual-e5-base": ("query: ", "passage: "),
+    "intfloat/multilingual-e5-large": ("query: ", "passage: "),
+    "intfloat/e5-small-v2": ("query: ", "passage: "),
+    "intfloat/e5-base-v2": ("query: ", "passage: "),
+    "intfloat/e5-large-v2": ("query: ", "passage: "),
+}
+
 # Process-level cache: keyed by (model_path, tokenizer_path).
 # ort.InferenceSession and Tokenizer are stateless after init — safe to share
 # across provider instances within the same process.
@@ -58,8 +69,10 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
             ) from exc
 
         self._model = model
-        self._query_prefix = query_prefix
-        self._passage_prefix = passage_prefix
+        # Resolve prefixes: explicit config wins, then known model defaults, then empty
+        known = _KNOWN_MODEL_PREFIXES.get(model, ("", ""))
+        self._query_prefix = query_prefix if query_prefix else known[0]
+        self._passage_prefix = passage_prefix if passage_prefix else known[1]
         logger.info("Initialising ONNX embedding model %s (may download on first use)", model)
 
         # Download model files from HuggingFace Hub

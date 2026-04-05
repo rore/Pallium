@@ -69,9 +69,11 @@ lexical_overlap_threshold = 2
 
 [embedding_providers.onnx]
 kind = "onnx"
-model = "BAAI/bge-small-en-v1.5"
-# query_prefix = "query: "     # prefix for query-time embedding (e.g., E5 models)
-# passage_prefix = "passage: " # prefix for document-time embedding (e.g., E5 models)
+model = "intfloat/multilingual-e5-small"
+# model = "BAAI/bge-small-en-v1.5"  # English-only alternative (no prefixes needed)
+# E5-family models auto-detect query/passage prefixes. Override only if needed:
+# query_prefix = "query: "
+# passage_prefix = "passage: "
 
 [vector_index]
 enabled = true
