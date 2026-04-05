@@ -2,9 +2,9 @@
 
 # Pallium
 
-Local-first memory sidecar for AI agents. Stores selected evidence, derives
-compact memory, returns evidence-backed cards for follow-up questions and
-resumed work.
+Local-first, multilingual memory sidecar for AI agents. Stores selected
+evidence, derives compact memory, returns evidence-backed cards for follow-up
+questions and resumed work.
 
 ## The Problem
 
@@ -116,10 +116,19 @@ flowchart LR
 5. **Debug** — `POST /query/debug` or `POST /item-and-query/debug` exposes the full retrieval and routing trace
 
 Retrieval combines lexical search, vector similarity, and hybrid RRF fusion.
-Tokenization and retrieval are language-agnostic — Hebrew, Arabic, CJK,
-Cyrillic, and Latin scripts all work natively with cross-script support.
 The query path is deterministic by default, with selective LLM-assisted
 disambiguation only for bounded ambiguous cases.
+
+### Multilingual by Design
+
+Pallium is designed to be multilingual. Memory is preserved in the original
+language and cross-language recall works natively — a query in one language
+can retrieve memory stored in another.
+
+This is an intentional architectural property, not an undocumented side effect.
+Tokenization, lexical scoring, content-overlap gates, and embedding are all
+built to handle non-Latin scripts (Hebrew, Arabic, CJK, Cyrillic) as
+first-class content.
 
 See [docs/how-it-works.md](docs/how-it-works.md) for the full model.
 
