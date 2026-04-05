@@ -7,7 +7,6 @@ import pytest
 from pathlib import Path
 
 from core.models import (
-    Annotation,
     IndexEntry,
     MemoryEnvelope,
     MemoryEnvelopeDerivation,
@@ -38,15 +37,6 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         visibility="container",
     )
     storage.create_source_item(source_item)
-
-    annotation = Annotation(
-        source_item_id=source_item.id,
-        type="summary",
-        schema_id="core.summary",
-        schema_version="v1",
-        payload={"text": "Item event time reservation ordering avoids missed hold updates."},
-    )
-    storage.create_annotation(annotation)
 
     memory_object = MemoryObject(
         type="investigation_outcome",
@@ -121,7 +111,6 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     assert loaded_source.thread_ref == "thread-a"
     assert loaded_source.artifact_kind == "message"
     assert loaded_source.visibility == "container"
-    assert storage.get_annotation(annotation.id).id == annotation.id
     loaded_memory = storage.get_memory_object(memory_object.id)
     assert loaded_memory.lifecycle == "active"
     assert loaded_memory.envelope == memory_object.envelope

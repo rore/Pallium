@@ -76,7 +76,7 @@ class SelectiveEmbeddingPlugin(SemanticPlugin):
         return source_item_embedding_text(source_item)
 
     def process_item(self, source_item: SourceItem) -> ProcessResult:
-        return ProcessResult(annotations=[], memory_objects=[], relations=[], index_entries=[])
+        return ProcessResult(memory_objects=[], relations=[], index_entries=[])
 
 
 class VectorProducingPlugin(SemanticPlugin):
@@ -98,7 +98,7 @@ class VectorProducingPlugin(SemanticPlugin):
             text_view_name="test_memory.embedding",
         )
         return ProcessResult(
-            annotations=[], memory_objects=[], relations=[],
+            memory_objects=[], relations=[],
             index_entries=[vector_entry],
         )
 
@@ -112,7 +112,7 @@ class NoMemoryPlugin(SemanticPlugin):
         return source_item_embedding_text(source_item)
 
     def process_item(self, source_item: SourceItem) -> ProcessResult:
-        return ProcessResult(annotations=[], memory_objects=[], relations=[], index_entries=[])
+        return ProcessResult(memory_objects=[], relations=[], index_entries=[])
 
 
 def _build_service(

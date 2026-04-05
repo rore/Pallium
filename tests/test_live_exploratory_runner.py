@@ -47,7 +47,6 @@ def _processing_result(
         processing_claimed_at=None,
         processing_completed_at=None,
         processing_error=None,
-        annotation_ids=[],
         memory_object_ids=[],
         relation_ids=[],
         index_entry_ids=[],
