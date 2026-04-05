@@ -132,6 +132,7 @@ class PalliumService:
         if existing_source_item is not None:
             return self._build_ingest_result(existing_source_item)
 
+        # Resolve which package name to store on source_item for backward compat
         plugin_name = use_case or self._default_use_case
         plugin = self._semantic_plugins[plugin_name]
         processing_status = "pending"
@@ -175,6 +176,22 @@ class PalliumService:
                 text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW,
             )
         )
+
+        # Multi-package tracking: create per-package processing records.
+        # Currently processes via the item's assigned package (default_use_case).
+        # Future packages (e.g., fact extraction) will register here for parallel processing.
+        active_packages = [plugin_name]
+        skip_packages: list[str] = []
+        for pkg_name in active_packages:
+            pkg_plugin = self._semantic_plugins.get(pkg_name)
+            if pkg_plugin and pkg_plugin.requires_visibility_context and (container_ref is None or visibility is None):
+                skip_packages.append(pkg_name)
+        self._storage.create_package_processing_records(
+            source_item.id,
+            active_packages,
+            skip_packages=skip_packages,
+        )
+
         return self._build_ingest_result(self._storage.get_source_item(source_item.id))
 
     def get_item_processing(self, source_item_id: str) -> ItemProcessingResult:
@@ -322,9 +339,12 @@ class PalliumService:
         *,
         max_attempts: int,
         worker_id: str | None = None,
+        package_name: str | None = None,
+        package_attempts: int | None = None,
     ) -> None:
         return self._processor._process_source_item(
             source_item, max_attempts=max_attempts, worker_id=worker_id,
+            package_name=package_name, package_attempts=package_attempts,
         )
 
     def _process_thread_rebuild_lease(

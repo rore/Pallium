@@ -75,6 +75,20 @@ class RetentionLeaseLostError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class PackageProcessingTask:
+    source_item_id: str
+    package_name: str
+    status: str = "pending"
+    attempts: int = 0
+    error: str | None = None
+    claimed_by: str | None = None
+    claimed_at: datetime | None = None
+    lease_expires_at: datetime | None = None
+    completed_at: datetime | None = None
+    next_attempt_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class QueueHealthReasonCount:
     reason: str
     count: int
@@ -444,4 +458,91 @@ class StorageProvider(ABC):
         retention_enabled: bool,
         recent_failure_limit: int = 10,
     ) -> QueueHealthSnapshot:
+        raise NotImplementedError
+
+    # ── Multi-package processing tracking ──────────────────────────────────
+
+    @abstractmethod
+    def create_package_processing_records(
+        self,
+        source_item_id: str,
+        package_names: list[str],
+        *,
+        skip_packages: list[str] | None = None,
+    ) -> None:
+        """Create pending processing records for all given packages.
+
+        skip_packages: packages that should be created with status='skipped'
+        (e.g., because the item lacks required visibility context).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def claim_next_package_task(
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+        max_attempts: int,
+        now: datetime | None = None,
+    ) -> tuple[SourceItem, str, int] | None:
+        """Claim the next pending (source_item, package_name, attempts) for processing.
+
+        Returns (source_item, package_name, attempt_count) or None if no work available.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def claim_next_package_task_for_item(
+        self,
+        source_item_id: str,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+        max_attempts: int,
+        now: datetime | None = None,
+    ) -> tuple[str, int] | None:
+        """Claim the next pending package for a specific source_item.
+
+        Returns (package_name, attempt_count) or None if no pending packages for this item.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def complete_package_task(
+        self,
+        source_item_id: str,
+        package_name: str,
+        *,
+        completed_at: datetime | None = None,
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def fail_package_task(
+        self,
+        source_item_id: str,
+        package_name: str,
+        *,
+        error: str,
+        next_attempt_at: datetime | None,
+        final: bool,
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def commit_package_process_result(
+        self,
+        *,
+        source_item_id: str,
+        result: ProcessResult,
+        thread_rebuild_scope: ThreadProcessingScope | None = None,
+        completed_at: datetime | None = None,
+    ) -> list[tuple[str, str]]:
+        """Commit a process result from multi-package processing.
+
+        Like commit_processed_source_item but does NOT mark the source_item
+        as completed — source_item state is managed separately when all
+        packages are done.
+        """
         raise NotImplementedError
