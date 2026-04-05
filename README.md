@@ -8,44 +8,35 @@ questions and resumed work.
 
 ## The Problem
 
-Agents forget why decisions were made, lose investigation outcomes, and
-struggle to resume interrupted work. Transcript replay is expensive and noisy.
-Prompt summaries lose evidence. Vector search alone doesn't give you structured
-conclusions or scoped visibility.
+Agents forget. They lose decisions made three threads ago, repeat
+investigations, and resume interrupted work without the right context.
 
-Pallium preserves reusable knowledge created during the agent's own work —
-decisions, findings, constraints, and work-state checkpoints — linked back to
-supporting evidence.
+Pallium turns selected agent interactions into scoped, reusable memory —
+structured conclusions and concrete facts, linked back to supporting evidence,
+across languages. The agent gets small evidence-backed cards instead of noisy
+transcripts or lossy summaries.
 
 ## Quick Example
 
-Store a decision the agent made:
+Store a decision, then ask about it later:
 
 ```bash
-curl -X POST http://localhost:8000/items -H 'Content-Type: application/json' -d '[{
+# Ingest + query in one call (recommended pattern)
+curl -X POST http://localhost:8000/item-and-query \
+  -H 'Content-Type: application/json' -d '{
   "source_type": "chat_message",
   "source_id": "msg-042",
   "content_type": "text/plain",
-  "content": "Decision: use item event time for reservation ordering instead of wall clock. Reason: event time reflects actual hold sequence and avoids timezone drift across regional deployments.",
-  "artifact_kind": "assistant_output",
-  "role": "assistant",
+  "content": "Why did we choose event time for reservation ordering?",
+  "role": "user",
+  "artifact_kind": "message",
   "container_ref": "channel:catalog-sync",
   "visibility": "container",
   "thread_ref": "thread-17"
-}]'
-```
-
-Later, ask why:
-
-```bash
-curl -X POST http://localhost:8000/query -H 'Content-Type: application/json' -d '{
-  "text": "Why did we choose event time for reservation ordering?",
-  "container_ref": "channel:catalog-sync",
-  "visibility": "container"
 }'
 ```
 
-Pallium returns:
+Pallium returns a compact memory card with an injection decision:
 
 ```json
 {
@@ -55,22 +46,15 @@ Pallium returns:
     {
       "block_type": "memory_hit",
       "title": "decision",
-      "text": "Use item event time for reservation ordering instead of wall clock.",
+      "text": "Use item event time for reservation ordering — avoids timezone drift.",
       "memory_type": "decision"
-    }
-  ],
-  "results": [
-    {
-      "result_kind": "memory_hit",
-      "type": "decision",
-      "score": 850,
-      "container_ref": "channel:catalog-sync",
-      "visibility": "container",
-      "retrieval_source": "lexical"
     }
   ]
 }
 ```
+
+The agent injects that card directly. No reranking, no local filtering — 
+`should_inject` and `injectable_blocks` are the contract.
 
 ## Getting Started
 
@@ -104,16 +88,25 @@ walkthrough.
 flowchart LR
     A[Agent] -->|POST /item-and-query| P[Pallium]
     P -->|background| W[Extract & Embed]
-    W -->|decisions, findings,\ncheckpoints| M[(Memory + Index)]
+    W -->|decisions, facts,\ncheckpoints| M[(Memory + Index)]
     M -->|hybrid retrieval| P
     P -->|should_inject\ninjectable_blocks| A
 ```
 
 1. **Ingest** — selected evidence goes in via `POST /items` (not everything, just high-value events)
-2. **Process** — background workers extract structured memory (decisions, findings, checkpoints) and embed for retrieval
+2. **Process** — background workers extract structured memory and concrete facts, then embed for retrieval
 3. **Query** — `POST /query` retrieves compact memory + source evidence, scoped by visibility, with an injection decision
 4. **Combined** — `POST /item-and-query` does ingest + query in one call (recommended for the common per-message pattern)
 5. **Debug** — `POST /query/debug` or `POST /item-and-query/debug` exposes the full retrieval and routing trace
+
+Two production packages run in parallel over the same evidence:
+
+- **Work continuity** — decisions, investigation findings, resumed-work
+  checkpoints, thread orientation ("why did we choose this?", "where did we
+  leave off?")
+- **Factual recall** — names, dates, preferences, events, relationships
+  extracted from conversation threads ("when did Jordan go camping?", "which
+  restaurant did they recommend?")
 
 Retrieval combines lexical search, vector similarity, and hybrid RRF fusion.
 The query path is deterministic by default, with selective LLM-assisted
