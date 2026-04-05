@@ -340,3 +340,112 @@ class TestOnnxEmbeddingProvider:
         provider = OnnxEmbeddingProvider(model="test-model")
         vecs = provider.embed(["test"])
         assert all(isinstance(v, float) for v in vecs[0])
+
+
+# ---------------------------------------------------------------------------
+# EmbedMode prefix injection tests
+# ---------------------------------------------------------------------------
+
+class TestOnnxPrefixInjection:
+    """Verify that query/passage prefixes are correctly injected."""
+
+    def test_query_prefix_prepended(self, monkeypatch):
+        mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules(dimensions=4)
+        monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", mock_tokenizers)
+        monkeypatch.setitem(sys.modules, "huggingface_hub", mock_hf)
+
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        captured_texts: list[list[str]] = []
+        provider = OnnxEmbeddingProvider(
+            model="test-model",
+            query_prefix="query: ",
+            passage_prefix="passage: ",
+        )
+
+        # Monkey-patch encode_batch to capture what texts reach the tokenizer
+        original_encode = provider._tokenizer.encode_batch
+        def capturing_encode(texts):
+            captured_texts.append(list(texts))
+            return original_encode(texts)
+        provider._tokenizer.encode_batch = capturing_encode
+
+        provider.embed(["hello world"], mode="query")
+        assert len(captured_texts) == 1
+        assert captured_texts[0] == ["query: hello world"]
+
+    def test_passage_prefix_prepended(self, monkeypatch):
+        mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules(dimensions=4)
+        monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", mock_tokenizers)
+        monkeypatch.setitem(sys.modules, "huggingface_hub", mock_hf)
+
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        captured_texts: list[list[str]] = []
+        provider = OnnxEmbeddingProvider(
+            model="test-model",
+            query_prefix="query: ",
+            passage_prefix="passage: ",
+        )
+
+        original_encode = provider._tokenizer.encode_batch
+        def capturing_encode(texts):
+            captured_texts.append(list(texts))
+            return original_encode(texts)
+        provider._tokenizer.encode_batch = capturing_encode
+
+        provider.embed(["hello world"], mode="passage")
+        assert len(captured_texts) == 1
+        assert captured_texts[0] == ["passage: hello world"]
+
+    def test_no_prefix_when_not_configured(self, monkeypatch):
+        mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules(dimensions=4)
+        monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", mock_tokenizers)
+        monkeypatch.setitem(sys.modules, "huggingface_hub", mock_hf)
+
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        captured_texts: list[list[str]] = []
+        provider = OnnxEmbeddingProvider(model="test-model")  # no prefixes
+
+        original_encode = provider._tokenizer.encode_batch
+        def capturing_encode(texts):
+            captured_texts.append(list(texts))
+            return original_encode(texts)
+        provider._tokenizer.encode_batch = capturing_encode
+
+        provider.embed(["hello world"], mode="query")
+        assert len(captured_texts) == 1
+        assert captured_texts[0] == ["hello world"]  # no prefix added
+
+    def test_hebrew_with_prefix(self, monkeypatch):
+        """Hebrew text with query prefix should work correctly."""
+        mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules(dimensions=4)
+        monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", mock_tokenizers)
+        monkeypatch.setitem(sys.modules, "huggingface_hub", mock_hf)
+
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        captured_texts: list[list[str]] = []
+        provider = OnnxEmbeddingProvider(
+            model="test-model",
+            query_prefix="query: ",
+            passage_prefix="passage: ",
+        )
+
+        original_encode = provider._tokenizer.encode_batch
+        def capturing_encode(texts):
+            captured_texts.append(list(texts))
+            return original_encode(texts)
+        provider._tokenizer.encode_batch = capturing_encode
+
+        provider.embed(["שלום עולם"], mode="query")
+        assert captured_texts[0] == ["query: שלום עולם"]
+
+        captured_texts.clear()
+        provider.embed(["שלום עולם"], mode="passage")
+        assert captured_texts[0] == ["passage: שלום עולם"]
