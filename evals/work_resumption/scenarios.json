@@ -1672,5 +1672,265 @@
       ]
     },
     "forbidden_terms": []
+  },
+  {
+    "scenario_id": "cross-language-resume-hebrew-query-english-findings",
+    "scenario_family": "resumed_investigation",
+    "description": "Hebrew user resumes work on an English-language catalog sync investigation. Cross-language vector retrieval should surface the prior findings.",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "wr-thread-14-msg-1",
+        "content_type": "text/plain",
+        "content": "Why is the catalog sync dropping items when the source catalog is large?",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-014",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://wr/thread-14-msg-1",
+        "occurred_at": "2026-03-11T22:00:00Z",
+        "metadata": {
+          "topic": "catalog_sync_truncation"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-14-artifact-1",
+        "content_type": "text/plain",
+        "content": "Investigation found that the batch size limit of 200 was silently truncating large catalogs during sync, causing items beyond the 200th to be dropped.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-014",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-14-artifact-1",
+        "occurred_at": "2026-03-11T22:01:00Z",
+        "metadata": {
+          "topic": "catalog_sync_truncation"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-14-artifact-2",
+        "content_type": "text/plain",
+        "content": "Decision: increase batch size to 500 and add a truncation warning log so large catalog syncs no longer silently drop items.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-014",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-14-artifact-2",
+        "occurred_at": "2026-03-11T22:02:00Z",
+        "metadata": {
+          "topic": "catalog_sync_truncation"
+        }
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "\u05d0\u05e0\u05d9 \u05d7\u05d5\u05d6\u05e8 \u05dc\u05d1\u05d3\u05d5\u05e7 \u05d0\u05ea \u05d1\u05e2\u05d9\u05d9\u05ea \u05d4\u05e1\u05e0\u05db\u05e8\u05d5\u05df \u05e9\u05e2\u05d1\u05d3\u05e0\u05d5 \u05e2\u05dc\u05d9\u05d4 \u05e7\u05d5\u05d3\u05dd"
+      }
+    ],
+    "current_query": {
+      "text": "\u05de\u05d4 \u05de\u05e6\u05d0\u05e0\u05d5 \u05dc\u05d2\u05d1\u05d9 \u05d4\u05d1\u05e2\u05d9\u05d4 \u05d1\u05e1\u05e0\u05db\u05e8\u05d5\u05df \u05d4\u05e7\u05d8\u05dc\u05d5\u05d2",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    },
+    "target_question": "\u05de\u05d4 \u05de\u05e6\u05d0\u05e0\u05d5 \u05dc\u05d2\u05d1\u05d9 \u05d4\u05d1\u05e2\u05d9\u05d4 \u05d1\u05e1\u05e0\u05db\u05e8\u05d5\u05df \u05d4\u05e7\u05d8\u05dc\u05d5\u05d2",
+    "should_memory_help": true,
+    "expected_intent": "recall",
+    "expected_primary_layer": "lower_level_memory",
+    "acceptable_fallback_layers": [
+      "source_evidence",
+      "thread_summary"
+    ],
+    "forbidden_layers": [
+      "pattern_memory"
+    ],
+    "expected_memory_types": [
+      "investigation_outcome",
+      "decision"
+    ],
+    "expected_dimensions": {
+      "task_orientation": [
+        "catalog sync",
+        "dropped items"
+      ],
+      "key_findings": [
+        "batch size limit of 200",
+        "silently truncating large catalogs"
+      ],
+      "evidence": [
+        "investigation_outcome",
+        "decision"
+      ]
+    },
+    "retrieval_signals": {
+      "task_orientation": [
+        "catalog sync"
+      ],
+      "key_findings": [
+        "batch size limit of 200",
+        "silently truncating large catalogs",
+        "increase batch size to 500",
+        "truncation warning log"
+      ]
+    },
+    "must_preserve": [
+      "task_orientation",
+      "key_findings",
+      "evidence"
+    ],
+    "must_not_introduce": [
+      "higher_level_overreach"
+    ],
+    "guard_terms": {},
+    "forbidden_terms": []
+  },
+  {
+    "scenario_id": "mixed-language-thread-work-resumption",
+    "scenario_family": "resumed_investigation",
+    "description": "Thread with Hebrew user messages and English assistant responses. Work resumption query in Hebrew should find the checkpoint.",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "wr-thread-15-msg-1",
+        "content_type": "text/plain",
+        "content": "\u05d0\u05e0\u05d7\u05e0\u05d5 \u05e6\u05e8\u05d9\u05db\u05d9\u05dd \u05dc\u05d1\u05d3\u05d5\u05e7 \u05dc\u05de\u05d4 \u05d4\u05d4\u05e9\u05d0\u05dc\u05d5\u05ea \u05dc\u05d0 \u05de\u05ea\u05e2\u05d3\u05db\u05e0\u05d5\u05ea \u05d0\u05d7\u05e8\u05d9 \u05e1\u05e0\u05db\u05e8\u05d5\u05df",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-015",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://wr/thread-15-msg-1",
+        "occurred_at": "2026-03-11T23:00:00Z",
+        "metadata": {
+          "topic": "hold_status_sync"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-15-artifact-1",
+        "content_type": "text/plain",
+        "content": "Investigation found that hold status updates depend on the catalog sync completing within the 30-minute refresh window. When sync takes longer, holds show stale status.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-015",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-15-artifact-1",
+        "occurred_at": "2026-03-11T23:01:00Z",
+        "metadata": {
+          "topic": "hold_status_sync"
+        }
+      },
+      {
+        "source_type": "chat_message",
+        "source_id": "wr-thread-15-msg-2",
+        "content_type": "text/plain",
+        "content": "\u05de\u05d4 \u05d4\u05e6\u05e2\u05d3 \u05d4\u05d1\u05d0",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-015",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://wr/thread-15-msg-2",
+        "occurred_at": "2026-03-11T23:02:00Z",
+        "metadata": {
+          "topic": "hold_status_sync"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-thread-15-artifact-2",
+        "content_type": "text/plain",
+        "content": "Next step: add monitoring for sync jobs exceeding 25 minutes to catch timeout-risk windows before they impact hold status.",
+        "artifact_kind": "tool_use_summary",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wr-015",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wr/thread-15-artifact-2",
+        "occurred_at": "2026-03-11T23:03:00Z",
+        "metadata": {
+          "topic": "hold_status_sync"
+        }
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "\u05d0\u05e0\u05d9 \u05e4\u05d5\u05ea\u05d7 \u05e9\u05d9\u05d7\u05d4 \u05d7\u05d3\u05e9\u05d4 \u05e2\u05dc \u05d4\u05e0\u05d5\u05e9\u05d0 \u05e9\u05dc \u05e2\u05d3\u05db\u05d5\u05df \u05d4\u05d4\u05e9\u05d0\u05dc\u05d5\u05ea"
+      }
+    ],
+    "current_query": {
+      "text": "\u05de\u05d4 \u05d4\u05d9\u05d4 \u05d4\u05e6\u05e2\u05d3 \u05d4\u05d1\u05d0 \u05d1\u05e0\u05d5\u05e9\u05d0 \u05e2\u05d3\u05db\u05d5\u05df \u05d4\u05d4\u05e9\u05d0\u05dc\u05d5\u05ea",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    },
+    "target_question": "\u05de\u05d4 \u05d4\u05d9\u05d4 \u05d4\u05e6\u05e2\u05d3 \u05d4\u05d1\u05d0 \u05d1\u05e0\u05d5\u05e9\u05d0 \u05e2\u05d3\u05db\u05d5\u05df \u05d4\u05d4\u05e9\u05d0\u05dc\u05d5\u05ea",
+    "should_memory_help": true,
+    "expected_intent": "work_resumption",
+    "expected_primary_layer": "lower_level_memory",
+    "acceptable_fallback_layers": [
+      "task_checkpoint",
+      "source_evidence"
+    ],
+    "forbidden_layers": [
+      "pattern_memory",
+      "continuity_memory"
+    ],
+    "expected_memory_types": [
+      "task_checkpoint",
+      "investigation_outcome",
+      "thread_summary"
+    ],
+    "expected_dimensions": {
+      "task_orientation": [
+        "hold status updates",
+        "catalog sync"
+      ],
+      "key_findings": [
+        "30-minute refresh window",
+        "holds show stale status"
+      ],
+      "next_step_guidance": [
+        "monitoring for sync jobs exceeding 25 minutes",
+        "timeout-risk windows"
+      ],
+      "evidence": [
+        "investigation_outcome",
+        "task_checkpoint"
+      ]
+    },
+    "retrieval_signals": {
+      "task_orientation": [
+        "hold status updates",
+        "catalog sync"
+      ],
+      "key_findings": [
+        "30-minute refresh window",
+        "holds show stale status"
+      ],
+      "next_step_guidance": [
+        "monitoring for sync jobs exceeding 25 minutes",
+        "timeout-risk windows"
+      ]
+    },
+    "must_preserve": [
+      "task_orientation",
+      "key_findings",
+      "next_step_guidance",
+      "evidence"
+    ],
+    "must_not_introduce": [
+      "higher_level_overreach"
+    ],
+    "guard_terms": {},
+    "forbidden_terms": []
   }
 ]

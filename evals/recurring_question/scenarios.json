@@ -225,5 +225,63 @@
       "7 days"
     ],
     "expected_non_value_reason": null
+  },
+  {
+    "scenario_id": "cross-language-chinese-recurring-question",
+    "scenario_kind": "cross_thread_value",
+    "description": "Chinese query should recall English-language decision from a prior thread",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "benchmark-thread-cjk-001-msg-1",
+        "content_type": "text/plain",
+        "content": "How often should catalog updates be processed? We need a policy for both business hours and overnight.",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-rq-cjk-001",
+        "actor_ref": "user:catalog-admin",
+        "source_ref": "memory://benchmark/thread-cjk-001-msg-1",
+        "occurred_at": "2026-03-10T11:00:00Z",
+        "metadata": {"topic": "catalog_update_frequency"}
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "benchmark-thread-cjk-001-artifact-1",
+        "content_type": "text/plain",
+        "content": "Decision: catalog updates are processed every 15 minutes during business hours and hourly overnight.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-rq-cjk-001",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://benchmark/thread-cjk-001-artifact-1",
+        "occurred_at": "2026-03-10T11:01:00Z",
+        "metadata": {"topic": "catalog_update_frequency"}
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "\u56fe\u4e66\u9986\u76ee\u5f55\u591a\u4e45\u66f4\u65b0\u4e00\u6b21"
+      }
+    ],
+    "current_query": {
+      "text": "\u56fe\u4e66\u9986\u76ee\u5f55\u591a\u4e45\u66f4\u65b0\u4e00\u6b21",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    },
+    "target_question": "\u56fe\u4e66\u9986\u76ee\u5f55\u591a\u4e45\u66f4\u65b0\u4e00\u6b21",
+    "expected_value": true,
+    "expected_memory_types": ["decision"],
+    "expected_answer_signals": [
+      "15 minutes",
+      "hourly"
+    ],
+    "expected_failures_without_memory": [
+      "15 minutes"
+    ],
+    "expected_non_value_reason": null
   }
 ]

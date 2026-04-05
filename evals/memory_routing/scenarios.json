@@ -1154,5 +1154,76 @@
       "continuity_memory",
       "lower_level_memory"
     ]
+  },
+  {
+    "scenario_id": "hebrew-extraction-decision-memory-type",
+    "scenario_kind": "answer_continuity_value",
+    "description": "Hebrew conversation with explicit decision should extract a decision memory type, not just discussion_summary",
+    "consolidation_strategy": "thread_summary_anchored",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "mr-thread-14-msg-1",
+        "content_type": "text/plain",
+        "content": "\u05d0\u05e0\u05d7\u05e0\u05d5 \u05e6\u05e8\u05d9\u05db\u05d9\u05dd \u05dc\u05d4\u05d7\u05dc\u05d9\u05d8 \u05e2\u05dc \u05dc\u05d5\u05d7 \u05d4\u05d6\u05de\u05e0\u05d9\u05dd \u05dc\u05e1\u05e0\u05db\u05e8\u05d5\u05df \u05d4\u05e7\u05d8\u05dc\u05d5\u05d2. \u05d0\u05e0\u05d9 \u05de\u05e6\u05d9\u05e2 \u05e1\u05e0\u05db\u05e8\u05d5\u05df \u05d9\u05d5\u05de\u05d9 \u05d1-3 \u05d1\u05dc\u05d9\u05dc\u05d4 \u05db\u05e9\u05d4\u05e2\u05d5\u05de\u05e1 \u05e0\u05de\u05d5\u05da.",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-mr-014",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://mr/thread-14-msg-1",
+        "occurred_at": "2026-03-10T22:00:00Z",
+        "metadata": {
+          "topic": "catalog_sync"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "mr-thread-14-artifact-1",
+        "content_type": "text/plain",
+        "content": "Decision: catalog sync will run daily at 03:00 during the low-traffic window. This avoids impacting patron-facing operations during peak hours.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-mr-014",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://mr/thread-14-artifact-1",
+        "occurred_at": "2026-03-10T22:01:00Z",
+        "metadata": {
+          "topic": "catalog_sync"
+        }
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "\u05de\u05ea\u05d9 \u05d4\u05e1\u05e0\u05db\u05e8\u05d5\u05df \u05e9\u05dc \u05d4\u05e7\u05d8\u05dc\u05d5\u05d2 \u05e8\u05e5"
+      }
+    ],
+    "current_query": {
+      "text": "\u05de\u05ea\u05d9 \u05d4\u05e1\u05e0\u05db\u05e8\u05d5\u05df \u05e9\u05dc \u05d4\u05e7\u05d8\u05dc\u05d5\u05d2 \u05e8\u05e5",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    },
+    "target_question": "\u05de\u05ea\u05d9 \u05d4\u05e1\u05e0\u05db\u05e8\u05d5\u05df \u05e9\u05dc \u05d4\u05e7\u05d8\u05dc\u05d5\u05d2 \u05e8\u05e5",
+    "expected_value": true,
+    "expected_intent": "recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [
+      "decision"
+    ],
+    "expected_answer_signals": [
+      "03:00",
+      "daily"
+    ],
+    "expected_failures_without_memory": [
+      "03:00"
+    ],
+    "forbidden_terms": [],
+    "acceptable_top_layers": [
+      "continuity_memory",
+      "lower_level_memory"
+    ]
   }
 ]

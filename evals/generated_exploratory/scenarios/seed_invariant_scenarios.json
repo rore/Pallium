@@ -1188,5 +1188,212 @@
         "invariant_assertions": ["INV-01", "INV-04"]
       }
     ]
+  },
+  {
+    "scenario_id": "p1-hebrew-noise-query-suppressed",
+    "description": "Hebrew noise query (greeting) should not inject irrelevant memory",
+    "_generation_metadata": {
+      "taxonomy_cell": {"query_language": "hebrew", "injection_outcome": "suppress"},
+      "invariant_assertions": ["INV-03"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_english_decision",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "hebrew-noise-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: catalog sync will run on a daily schedule at 02:00 to avoid peak-hour contention with patron-facing queries.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-ops",
+            "thread_ref": "chat:library-ops:thread-hebrew-noise-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://seed/hebrew-noise-001-msg-1",
+            "occurred_at": "2026-03-20T14:00:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "hebrew_greeting_query",
+        "action": "query",
+        "query": {
+          "text": "\u05e9\u05dc\u05d5\u05dd, \u05de\u05d4 \u05e0\u05e9\u05de\u05e2",
+          "limit": 6,
+          "container_ref": "chat:library-ops",
+          "visibility": "private"
+        },
+        "invariant_assertions": ["INV-03"],
+        "soft_expectations": {
+          "must_not_include": ["catalog sync", "daily schedule", "02:00", "peak-hour"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "p1-mixed-language-message-retrieval",
+    "description": "Mixed Hebrew+English message (Hebrew with embedded English technical terms) should be retrievable",
+    "_generation_metadata": {
+      "taxonomy_cell": {"content_language": "mixed_hebrew_english", "query_intent": "backward_recall"},
+      "invariant_assertions": ["INV-02"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_mixed_language_message",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "mixed-lang-001-msg-1",
+            "content_type": "text/plain",
+            "content": "\u05d0\u05e0\u05d9 \u05d7\u05d5\u05e9\u05d1 \u05e9\u05e0\u05e9\u05ea\u05de\u05e9 \u05d1-Redis \u05dc\u05e9\u05db\u05d1\u05ea \u05d4\u05de\u05d8\u05de\u05d5\u05df \u05db\u05d9 \u05d9\u05e9 \u05dc\u05d5 \u05d1\u05d9\u05e6\u05d5\u05e2\u05d9\u05dd \u05d8\u05d5\u05d1\u05d9\u05dd",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-ops",
+            "thread_ref": "chat:library-ops:thread-mixed-lang-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://seed/mixed-lang-001-msg-1",
+            "occurred_at": "2026-03-20T15:00:00Z",
+            "visibility": "private"
+          },
+          {
+            "source_type": "assistant_artifact",
+            "source_id": "mixed-lang-001-asst-1",
+            "content_type": "text/plain",
+            "content": "Decision: use Redis for the caching layer based on performance requirements.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "chat:library-ops",
+            "thread_ref": "chat:library-ops:thread-mixed-lang-001",
+            "actor_ref": "agent:assistant",
+            "source_ref": "memory://seed/mixed-lang-001-asst-1",
+            "occurred_at": "2026-03-20T15:01:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "english_query_for_mixed_content",
+        "action": "query",
+        "query": {
+          "text": "what did we decide about caching",
+          "limit": 6,
+          "container_ref": "chat:library-ops",
+          "visibility": "private"
+        },
+        "invariant_assertions": ["INV-02"]
+      }
+    ]
+  },
+  {
+    "scenario_id": "p1-chinese-query-retrieves-english-memory",
+    "description": "Chinese query should retrieve English memory via cross-language vector retrieval",
+    "_generation_metadata": {
+      "taxonomy_cell": {"query_language": "chinese", "memory_language": "english"},
+      "invariant_assertions": ["INV-02"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_english_decision",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "chinese-q-001-msg-1",
+            "content_type": "text/plain",
+            "content": "Decision: the library catalog sync will run in batches of 500 items to avoid timeout issues.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "chat:library-ops",
+            "thread_ref": "chat:library-ops:thread-chinese-q-001",
+            "actor_ref": "agent:assistant",
+            "source_ref": "memory://seed/chinese-q-001-msg-1",
+            "occurred_at": "2026-03-20T16:00:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "chinese_query",
+        "action": "query",
+        "query": {
+          "text": "\u56fe\u4e66\u9986\u76ee\u5f55\u540c\u6b65\u7684\u6279\u91cf\u5927\u5c0f\u662f\u591a\u5c11",
+          "limit": 6,
+          "container_ref": "chat:library-ops",
+          "visibility": "private"
+        },
+        "invariant_assertions": ["INV-02"]
+      }
+    ]
+  },
+  {
+    "scenario_id": "p1-chinese-content-chinese-query",
+    "description": "Chinese content should be retrievable with Chinese query",
+    "_generation_metadata": {
+      "taxonomy_cell": {"query_language": "chinese", "memory_language": "chinese"},
+      "invariant_assertions": ["INV-02"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_chinese_and_english_content",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "chinese-cc-001-msg-1",
+            "content_type": "text/plain",
+            "content": "\u6211\u4eec\u9700\u8981\u51b3\u5b9a\u56fe\u4e66\u9986\u76ee\u5f55\u540c\u6b65\u7684\u9891\u7387\u3002\u6211\u5efa\u8bae\u6bcf\u5929\u51cc\u6668\u4e09\u70b9\u8fdb\u884c\u540c\u6b65\u3002",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-ops",
+            "thread_ref": "chat:library-ops:thread-chinese-cc-001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://seed/chinese-cc-001-msg-1",
+            "occurred_at": "2026-03-20T17:00:00Z",
+            "visibility": "private"
+          },
+          {
+            "source_type": "assistant_artifact",
+            "source_id": "chinese-cc-001-asst-1",
+            "content_type": "text/plain",
+            "content": "Decision: catalog sync will run daily at 03:00 during the low-traffic window.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "chat:library-ops",
+            "thread_ref": "chat:library-ops:thread-chinese-cc-001",
+            "actor_ref": "agent:assistant",
+            "source_ref": "memory://seed/chinese-cc-001-asst-1",
+            "occurred_at": "2026-03-20T17:01:00Z",
+            "visibility": "private"
+          }
+        ]
+      },
+      {
+        "step_id": "chinese_query",
+        "action": "query",
+        "query": {
+          "text": "\u76ee\u5f55\u540c\u6b65\u4ec0\u4e48\u65f6\u5019\u8fd0\u884c",
+          "limit": 6,
+          "container_ref": "chat:library-ops",
+          "visibility": "private"
+        },
+        "invariant_assertions": ["INV-02"]
+      }
+    ]
   }
 ]
