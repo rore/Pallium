@@ -94,6 +94,10 @@ def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
             prompt_variant="strict_typed_memory_v6_work_state_examples",
             consolidation=DEFAULT_AGENT_CONVERSATION_CONSOLIDATION,
         ),
+        "conversational_knowledge": SemanticPackageConfig(
+            name="conversational_knowledge",
+            implementation="conversational_knowledge",
+        ),
     }
 
 

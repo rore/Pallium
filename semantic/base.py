@@ -15,6 +15,13 @@ class SemanticPlugin(ABC):
     def requires_visibility_context(self) -> bool:
         return False
 
+    @property
+    def parallel_processing(self) -> bool:
+        """Whether this package should process every ingested item alongside the primary package.
+        Default: False (only processes items assigned to this package).
+        Packages that return True are added to the processing queue for all items."""
+        return False
+
     def source_item_embedding_text(self, source_item: SourceItem) -> str | None:
         """Return embedding text for this source item, or None to skip.
         Default: no source item embedding. Package overrides to select."""

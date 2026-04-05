@@ -161,6 +161,17 @@ def _build_plugin_for_package(*, config: AppConfig, package_config: SemanticPack
             providers_by_role=providers_by_role or None,
         )
 
+    if implementation == "conversational_knowledge":
+        if not package_config.llm_provider or not package_config.model:
+            return None
+        provider = build_llm_provider(
+            config,
+            provider_name=package_config.llm_provider,
+            model=package_config.model,
+        )
+        from semantic.conversational_knowledge import ConversationalKnowledgePlugin
+        return ConversationalKnowledgePlugin(provider=provider)
+
     raise ValueError(f"Unsupported semantic package implementation: {implementation}")
 
 

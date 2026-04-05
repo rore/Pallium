@@ -186,9 +186,14 @@ class PalliumService:
         )
 
         # Multi-package tracking: create per-package processing records.
-        # Currently processes via the item's assigned package (default_use_case).
-        # Future packages (e.g., fact extraction) will register here for parallel processing.
+        # Start with the item's assigned package, then add any packages that
+        # opt into parallel processing (e.g., fact extraction).
         active_packages = [plugin_name]
+        for pkg_name, pkg_plugin in self._semantic_plugins.items():
+            if pkg_name == plugin_name:
+                continue
+            if pkg_plugin.parallel_processing:
+                active_packages.append(pkg_name)
         skip_packages: list[str] = []
         for pkg_name in active_packages:
             pkg_plugin = self._semantic_plugins.get(pkg_name)
