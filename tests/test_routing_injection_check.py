@@ -5,6 +5,10 @@ from semantic.agent_conversation_memory_routing_injection import (
     candidate_injection_eligible,
     InjectionThresholds,
 )
+from semantic.agent_conversation_memory_routing_selection import (
+    _candidate_is_injection_eligible,
+)
+from core.models import QueryResultItem
 
 
 def _make_candidate(lexical_score=0, vector_score=0):
@@ -64,3 +68,34 @@ class TestPerCandidateEligibility:
         assert candidate_injection_eligible(
             _make_candidate(lexical_score=2), thresholds=strict
         ) is False
+
+
+class TestCandidateIsInjectionEligible:
+    def _make_fact_candidate(self):
+        item = QueryResultItem(
+            result_kind="memory_hit",
+            result_id="fact-1",
+            memory_object_id="mo-1",
+            type="atomic_fact",
+            payload={"statement": "Alice has 3 cats"},
+            score=100,
+            evidence=[],
+        )
+        return {
+            "item": item,
+            "layer": "atomic_fact",
+            "retrieval_score": 100,
+            "lexical_score": 80,
+            "vector_score": 70,
+            "suppression_reason_code": None,
+        }
+
+    def test_atomic_fact_is_injection_eligible(self):
+        candidate = self._make_fact_candidate()
+        assert _candidate_is_injection_eligible(
+            candidate,
+            intent="recall",
+            query_text="how many cats does Alice have",
+            allow_discussion_fallback=False,
+            allow_source_companion=False,
+        ) is True

@@ -120,6 +120,9 @@ def _select_final_candidates(
 
     return selected_candidates, summary
 
+MIN_SOURCE_HIT_SLOTS = 3
+
+
 def _select_compatible_recall_candidates(
     *,
     ranked_candidates: list[dict[str, object]],
@@ -128,47 +131,60 @@ def _select_compatible_recall_candidates(
     packaging_summary: dict[str, object],
     selected_lane: str | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None]:
-    # Filter out suppressed candidates
     compatible_candidates = [c for c in ranked_candidates if not c.get("suppression_reason_code")]
     if not compatible_candidates:
         return [], packaging_summary or None
 
     primary_candidate = compatible_candidates[0]
-
     selected_candidates = [primary_candidate]
     used_result_ids = {_routing_result_id(primary_candidate["item"])}
     primary_retrieval_score = int(primary_candidate.get("retrieval_score") or 0)
     retrieval_score_floor = primary_retrieval_score * 0.5
 
     remaining_candidates = [
-        candidate
-        for candidate in compatible_candidates
-        if _routing_result_id(candidate["item"]) not in used_result_ids
+        c for c in compatible_candidates
+        if _routing_result_id(c["item"]) not in used_result_ids
     ]
     structured_remaining = [
-        candidate
-        for candidate in remaining_candidates
-        if getattr(candidate["item"], "result_kind", None) == "memory_hit"
+        c for c in remaining_candidates
+        if getattr(c["item"], "result_kind", None) == "memory_hit"
     ]
     source_remaining = [
-        candidate
-        for candidate in remaining_candidates
-        if getattr(candidate["item"], "result_kind", None) != "memory_hit"
+        c for c in remaining_candidates
+        if getattr(c["item"], "result_kind", None) != "memory_hit"
     ]
-    for candidate_group in (structured_remaining, source_remaining):
-        for candidate in candidate_group:
-            candidate_result_id = _routing_result_id(candidate["item"])
-            if candidate_result_id in used_result_ids:
-                continue
-            if len(selected_candidates) >= requested_limit:
-                break
-            candidate_retrieval_score = int(candidate.get("retrieval_score") or 0)
-            if primary_retrieval_score > 0 and candidate_retrieval_score < retrieval_score_floor:
-                continue
-            selected_candidates.append(candidate)
-            used_result_ids.add(candidate_result_id)
+
+    # Pre-filter sources by score floor
+    eligible_source = [
+        c for c in source_remaining
+        if primary_retrieval_score == 0 or int(c.get("retrieval_score") or 0) >= retrieval_score_floor
+    ]
+
+    # Reserve slots for source_hits when eligible sources exist
+    reserved = min(MIN_SOURCE_HIT_SLOTS, len(eligible_source), max(0, requested_limit - len(selected_candidates)))
+    structured_cap = requested_limit - reserved
+
+    # Fill structured slots up to cap
+    for candidate in structured_remaining:
+        if len(selected_candidates) >= structured_cap:
+            break
+        rid = _routing_result_id(candidate["item"])
+        if rid in used_result_ids:
+            continue
+        if primary_retrieval_score > 0 and int(candidate.get("retrieval_score") or 0) < retrieval_score_floor:
+            continue
+        selected_candidates.append(candidate)
+        used_result_ids.add(rid)
+
+    # Fill remaining slots with eligible sources
+    for candidate in eligible_source:
         if len(selected_candidates) >= requested_limit:
             break
+        rid = _routing_result_id(candidate["item"])
+        if rid in used_result_ids:
+            continue
+        selected_candidates.append(candidate)
+        used_result_ids.add(rid)
 
     return selected_candidates, packaging_summary or None
 
@@ -708,6 +724,7 @@ def _candidate_content_surface(item: QueryResultItem) -> str:
         str(payload.get("blocker_state") or ""),
         str(payload.get("next_step") or ""),
         str(payload.get("rationale") or ""),
+        str(payload.get("statement") or ""),
     ])).strip()
 
 
@@ -788,7 +805,9 @@ def _candidate_is_injection_eligible(
         if _source_candidate_is_primary_injection_eligible(candidate, intent, query_text=query_text):
             return True
         return allow_source_companion and _source_candidate_is_companion_injection_eligible(intent)
-    if item.type in {"decision", "investigation_outcome", "task_checkpoint", "continuity_memory", "pattern_memory", "interest", "thread_summary", CONSTRAINT_MEMORY_TYPE}:
+    if item.type in {"decision", "investigation_outcome", "task_checkpoint", "continuity_memory", "pattern_memory", "interest", "thread_summary", "atomic_fact", CONSTRAINT_MEMORY_TYPE}:
+        # Note: atomic_fact injection relies on the content-overlap gate for topical
+        # precision (see "Injection precision over recall" decision in decisions.md).
         return True
     if item.type == "discussion_summary":
         return allow_discussion_fallback
