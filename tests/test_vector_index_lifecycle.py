@@ -40,7 +40,7 @@ class StubEmbeddingProvider(EmbeddingProvider):
     def dimensions(self) -> int:
         return 8
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], **kwargs) -> list[list[float]]:
         import hashlib
         vectors = []
         for text in texts:
