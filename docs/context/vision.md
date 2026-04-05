@@ -133,7 +133,7 @@ Pallium is not:
    retrieval is an enhancement, not the only foundation.
 
 9. Versioned semantics.
-   Annotations, memory objects, and consolidation outputs should be attributable
+   Memory objects and consolidation outputs should be attributable
    to a schema and producer version.
 
 10. Tiered memory is an extension.
