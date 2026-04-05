@@ -39,7 +39,8 @@ THREAD_SUMMARY_SYSTEM_PROMPT = (
     '"unresolved" when the thread has substantive back-and-forth discussion but no resolved conclusions, decisions, or durable findings; '
     '"weak" when the thread is a greeting, phatic exchange, sign-off, or otherwise carries no recallable information. '
     "For retrieval_context: write one short search-friendly context line (12-30 words) that helps this record match later queries, "
-    "or null when the summary already has enough search cues. Do not restate the summary."
+    "or null when the summary already has enough search cues. Do not restate the summary. "
+    "All output text fields must be in the same language as the source content. Do not translate."
 )
 
 PRIMARY_THREAD_ARTIFACTS = {
@@ -159,7 +160,8 @@ PATTERN_MEMORY_SYSTEM_PROMPT = (
     "Do not claim anything broader than the supplied support. "
     "Keep the summary concise: at most two sentences and roughly 70 words. "
     "For retrieval_context: write one short search-friendly context line (12-30 words) that helps this record match later queries, "
-    "or null when the summary already has enough search cues. Do not restate the summary."
+    "or null when the summary already has enough search cues. Do not restate the summary. "
+    "All output text fields must be in the same language as the source content. Do not translate."
 )
 
 PATTERN_MEMORY_MAX_TEXT_CHARS = 3500
@@ -188,7 +190,8 @@ CONTINUITY_MEMORY_SYSTEM_PROMPT = (
     "Do not invent recurrence beyond the supplied thread, and do not add recommendations, risks, or new conclusions. "
     "Keep the summary concise: at most two sentences and roughly 70 words. "
     "For retrieval_context: write one short search-friendly context line (12-30 words) that helps this record match later queries, "
-    "or null when the summary already has enough search cues. Do not restate the summary."
+    "or null when the summary already has enough search cues. Do not restate the summary. "
+    "All output text fields must be in the same language as the source content. Do not translate."
 )
 
 CONTINUITY_MEMORY_MAX_TEXT_CHARS = 3000
@@ -222,7 +225,8 @@ TASK_CHECKPOINT_SYSTEM_PROMPT = (
     "Do not turn this into a workflow graph, transcript replay, or speculative recommendation. "
     "Keep the summary concise: at most two sentences and roughly 80 words. "
     "For retrieval_context: write one short search-friendly context line (12-30 words) that helps this record match later queries, "
-    "or null when the summary already has enough search cues. Do not restate the summary."
+    "or null when the summary already has enough search cues. Do not restate the summary. "
+    "All output text fields must be in the same language as the source content. Do not translate."
 )
 
 TASK_CHECKPOINT_MAX_TEXT_CHARS = 3200
@@ -275,7 +279,8 @@ THREAD_SUMMARY_WITH_CHECKPOINT_SYSTEM_PROMPT = (
     "For the task_checkpoint section: capture the task, the current state, key findings, blocker or failed-attempt state when present, the next supported step when present, and a concise freshness signal. "
     "Do not turn the checkpoint into a workflow graph, transcript replay, or speculative recommendation. "
     "Keep the task_checkpoint summary concise: at most two sentences and roughly 80 words. "
-    "For task_checkpoint retrieval_context: write one short search-friendly context line (12-30 words) that helps this checkpoint match later queries, or null when the checkpoint summary already has enough search cues. Do not restate the checkpoint summary."
+    "For task_checkpoint retrieval_context: write one short search-friendly context line (12-30 words) that helps this checkpoint match later queries, or null when the checkpoint summary already has enough search cues. Do not restate the checkpoint summary. "
+    "All output text fields must be in the same language as the source content. Do not translate."
 )
 
 def _finalize_memory_builder(
