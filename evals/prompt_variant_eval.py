@@ -19,8 +19,7 @@ from app.config import AppConfig
 from app.dependencies import build_llm_provider
 from providers.llm.base import LLMProvider
 from semantic.conversational_knowledge import (
-    ConversationalKnowledgePlugin,
-    _PROMPT_VARIANTS,
+    FACT_EXTRACTION_SYSTEM_PROMPT,
 )
 
 
@@ -219,23 +218,39 @@ def run_eval(
     provider: LLMProvider,
     *,
     cache_dir: Path | None = None,
+    prompt_variants: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Run all prompt variants against all snippets. Returns structured results."""
+    """Run prompt variants against all snippets. Returns structured results.
+
+    If prompt_variants is None, tests only the current FACT_EXTRACTION_SYSTEM_PROMPT.
+    Pass a dict of {name: prompt_text} to compare multiple variants.
+    """
 
     if cache_dir is not None:
         from providers.llm.cached import CachedLLMProvider
         provider = CachedLLMProvider(provider, cache_dir)
 
+    variants = prompt_variants or {"current": FACT_EXTRACTION_SYSTEM_PROMPT}
     variant_results: dict[str, list[dict[str, Any]]] = {}
 
-    for variant_name, system_prompt in _PROMPT_VARIANTS.items():
-        plugin = ConversationalKnowledgePlugin(
-            provider=provider,
-            prompt_variant=variant_name,
-        )
+    schema_description = json.dumps(
+        {"facts": [{"subject": "string", "statement": "string", "category": "string"}]},
+        indent=2,
+    )
+
+    for variant_name, system_prompt in variants.items():
         snippet_results: list[dict[str, Any]] = []
         for snippet in SNIPPETS:
-            facts = plugin._extract_facts(snippet["thread_text"])
+            response = provider.generate_json(
+                system_prompt=system_prompt,
+                user_prompt=snippet["thread_text"],
+                schema_description=schema_description,
+            )
+            parsed = response.parsed_json
+            facts = parsed.get("facts", [])
+            if not isinstance(facts, list):
+                facts = []
+            facts = [f for f in facts if isinstance(f, dict) and f.get("statement")]
             assertion_results = check_assertions(facts, snippet["assertions"])
             passed_count = sum(1 for r in assertion_results if r["passed"])
             total_count = len(assertion_results)
@@ -255,7 +270,7 @@ def run_eval(
         "variants": variant_results,
         "prompt_word_counts": {
             name: len(prompt.split())
-            for name, prompt in _PROMPT_VARIANTS.items()
+            for name, prompt in variants.items()
         },
     }
 
