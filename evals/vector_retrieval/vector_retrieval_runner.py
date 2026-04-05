@@ -70,7 +70,7 @@ class MockEmbeddingProvider(EmbeddingProvider):
         self._text_vectors = text_vectors or {}
         self._dims = dims
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], **kwargs: object) -> list[list[float]]:
         return [
             self._text_vectors.get(t, self._default_vector)[:]
             for t in texts

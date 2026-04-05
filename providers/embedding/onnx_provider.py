@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from providers.embedding.base import EmbeddingProvider
+from providers.embedding.base import EmbedMode, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,8 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
         tokenizer_file: str = DEFAULT_TOKENIZER_FILE,
         dimensions: int | None = None,
         cache_dir: str | None = None,
+        query_prefix: str = "",
+        passage_prefix: str = "",
     ) -> None:
         try:
             import onnxruntime as ort  # noqa: F811
@@ -56,6 +58,8 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
             ) from exc
 
         self._model = model
+        self._query_prefix = query_prefix
+        self._passage_prefix = passage_prefix
         logger.info("Initialising ONNX embedding model %s (may download on first use)", model)
 
         # Download model files from HuggingFace Hub
@@ -101,9 +105,13 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
         tokenizer_path = hf_hub_download(filename=tokenizer_file, **kwargs)
         return model_path, tokenizer_path
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], *, mode: EmbedMode = "passage") -> list[list[float]]:
         if not texts:
             return []
+
+        prefix = self._query_prefix if mode == "query" else self._passage_prefix
+        if prefix:
+            texts = [prefix + t for t in texts]
 
         import numpy as np
 

@@ -115,6 +115,8 @@ def build_embedding_provider(config: AppConfig, *, provider_name: str) -> Embedd
             model=provider_config.model,
             dimensions=provider_config.dimensions,
             cache_dir=provider_config.cache_dir,
+            query_prefix=provider_config.query_prefix,
+            passage_prefix=provider_config.passage_prefix,
         )
 
     raise ValueError(f"Unsupported embedding provider kind: {provider_config.kind}")

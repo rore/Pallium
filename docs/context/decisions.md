@@ -329,6 +329,37 @@ Why:
 - user-only role guard prevents assistant responses from creating interest
 - suppressed in shared containers (container/public) per container-driven scoping
 
+### 2026-04-05 - Unicode-aware tokenization and multilingual embedding support
+
+Lexical tokenization replaced from ASCII-only `[a-z0-9]+` to Unicode-aware
+pattern centralized in `core/text.py`. Handles Latin, Hebrew, Arabic, CJK
+(character-per-token), Cyrillic, and Korean. Combining marks (Hebrew niqud,
+Arabic vowels, Latin diacritics) stripped before tokenization. Four duplicate
+TOKEN_PATTERN definitions consolidated into one canonical source.
+
+Embedding provider interface extended with `EmbedMode` (query/passage) to
+support models requiring asymmetric prefixes (e.g., multilingual-e5-small).
+Prefix strings configured in TOML, injected by the provider. Default fallback
+model remains bge-small-en-v1.5 for backward compatibility.
+
+Content-overlap injection gate extended with cross-script bypass: when query
+and candidate use entirely different Unicode scripts (e.g., Hebrew query,
+English memory), the gate defers to vector similarity instead of blocking.
+
+Stopword sets expanded from English-only to English + Hebrew. Explicit
+stopwords supplement IDF weighting for edge cases IDF alone misses.
+
+Why:
+
+- non-Latin scripts produced zero tokens from `[a-z0-9]+`, making lexical
+  retrieval and content-overlap routing non-functional for non-English content
+- the content-overlap injection gate silently bypassed for non-Latin queries
+  (empty token set), then after tokenizer fix would block valid cross-language
+  candidates without the script-aware bypass
+- embedding model swap requires prefix differentiation; the provider interface
+  had no mechanism for query vs passage mode
+- four duplicated TOKEN_PATTERN definitions were a maintenance hazard
+
 ## Open
 
 ### Ingestion policy

@@ -75,6 +75,15 @@ Design properties:
 - both `SourceItem` and `MemoryObject` remain first-class retrieval targets
 - the trace and text-view model extend to vector hits without redesigning `IndexEntry`
 
+Multilingual retrieval properties:
+
+- lexical tokenization is Unicode-aware via centralized `core/text.py`
+- non-Latin scripts (Hebrew, Arabic, CJK, Cyrillic) produce real tokens
+- CJK scripts use character-per-token tokenization (no word segmentation dependency)
+- combining marks (Hebrew niqud, Arabic vowels, Latin diacritics) stripped before tokenization
+- content-overlap injection gate includes cross-script bypass for cross-language containers
+- embedding provider supports query/passage prefix modes for multilingual models
+
 Embedding write path:
 
 - embedding happens at background processing time, not at ingest

@@ -119,7 +119,7 @@ class FakeEmbeddingProvider(EmbeddingProvider):
         self._vector = vector or [0.1, 0.2, 0.3, 0.4]
         self._dims = dims
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], **kwargs) -> list[list[float]]:
         return [self._vector[:] for _ in texts]
 
     def dimensions(self) -> int:

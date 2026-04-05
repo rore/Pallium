@@ -69,7 +69,7 @@ class VectorRetrievalProvider(RetrievalProvider):
             return RetrievalQueryResult(results=[], trace=trace)
 
         # 1. Embed query text
-        query_vectors = self._embedding_provider.embed([text])
+        query_vectors = self._embedding_provider.embed([text], mode="query")
         query_vector = query_vectors[0]
 
         # 2. Search vector index (overfetch limit * 4)

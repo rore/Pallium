@@ -1,32 +1,22 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass, field
 
 from core.contracts import ProcessResult
 from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
 from core.models import MemoryObject, MemorySubjectAnchor, Relation, SourceItem
+from core.text import (
+    TOKEN_PATTERN,
+    SENTENCE_PATTERN,
+    normalize_for_index,
+    strip_combining_marks as strip_diacritics,
+    tokenize_text,
+)
 from semantic.agent_conversation_memory_embedding import VECTOR_EMBEDDING_PROVIDER_NAME, VECTOR_EMBEDDING_PROVIDER_VERSION, build_embedding_text
 
 
 from core.retention import SEMANTIC_SIGNAL_METADATA_KEY  # noqa: F401 — re-export for backward compatibility
-
-
-SENTENCE_PATTERN = re.compile(r"(?<=[.!?])\s+")
-TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
-
-
-def strip_diacritics(text: str) -> str:
-    """Fold accented characters to ASCII equivalents.
-
-    "décision" → "decision", "über" → "uber", "catálogo" → "catalogo".
-    Non-Latin scripts (Hebrew, CJK, Cyrillic) pass through unchanged and
-    produce zero tokens from TOKEN_PATTERN — which is safe (system abstains).
-    Uses stdlib unicodedata, no external dependencies.
-    """
-    nfkd = unicodedata.normalize("NFKD", text)
-    return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
 DECISION_PATTERNS = (
@@ -95,14 +85,11 @@ def summarize_content(content: str) -> str:
     return text[:200].strip()
 
 
-def normalize_for_index(text: str) -> str:
-    return " ".join(TOKEN_PATTERN.findall(strip_diacritics(text).lower()))
-
-
-# Common English function words excluded from content-overlap checks.
-# Lives with the tokenizer it serves — when multi-language support is added,
+# Common function words excluded from content-overlap checks. English + Hebrew.
+# Lives with the tokenizer it serves — when additional languages are added,
 # this set changes alongside the tokenizer and embedding model.
 CONTENT_STOPWORDS: frozenset[str] = frozenset({
+    # -- English --
     "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
     "have", "has", "had", "do", "does", "did", "will", "would", "could",
     "should", "may", "might", "shall", "can", "must", "need",
@@ -117,6 +104,11 @@ CONTENT_STOPWORDS: frozenset[str] = frozenset({
     "very", "just", "also", "now", "then", "here", "there", "when",
     "where", "why", "how", "what", "which", "who", "whom", "this",
     "that", "these", "those", "if", "as",
+    # -- Hebrew --
+    "של", "על", "את", "עם", "אל", "מן", "לא", "כי", "גם", "או",
+    "אם", "הוא", "היא", "הם", "הן", "אני", "אנחנו", "אתה",
+    "זה", "זו", "זאת", "אלה", "כל", "עוד", "רק", "כבר", "מאוד",
+    "בין", "אבל", "אז", "כמו", "יותר", "פה", "שם",
 })
 
 
@@ -130,6 +122,8 @@ def content_tokens(text: str) -> set[str]:
     expanded: set[str] = set()
     for token in raw:
         expanded.add(token)
+        if not token.isascii():
+            continue
         # Plural stripping — mirrors retrieval/lexical.py _token_variants
         if len(token) > 4 and token.endswith("ies"):
             expanded.add(token[:-3] + "y")
@@ -536,11 +530,11 @@ def _is_substantive_summary(source_item: SourceItem, extraction: SemanticExtract
         return False
     if _has_explicit_thread_signal(extraction):
         return True
-    summary_tokens = TOKEN_PATTERN.findall(extraction.summary.lower())
-    content_tokens = TOKEN_PATTERN.findall(source_item.content.lower())
+    summary_tokens = tokenize_text(extraction.summary)
+    content_tokens_list = tokenize_text(source_item.content)
     if len(summary_tokens) >= 4:
         return True
-    return len(content_tokens) >= 4
+    return len(content_tokens_list) >= 4
 
 
 def _should_create_discussion_summary(source_item: SourceItem, extraction: SemanticExtraction) -> bool:

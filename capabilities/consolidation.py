@@ -7,6 +7,7 @@ from typing import Iterable
 
 from core.contracts import ProcessResult
 from core.models import EvidenceReference, MemoryObject
+from core.text import tokenize_text
 from core.visibility import visibility_label, visibility_matches_exact
 from storage.base import StorageProvider
 
@@ -18,6 +19,7 @@ DEFAULT_CONSOLIDATION_STRATEGIES = (
 )
 ELIGIBLE_INPUT_TYPES = {"thread_summary", "decision", "investigation_outcome"}
 CONSOLIDATION_STOPWORDS = {
+    # -- English --
     "a",
     "an",
     "and",
@@ -42,6 +44,41 @@ CONSOLIDATION_STOPWORDS = {
     "user",
     "was",
     "were",
+    # -- Hebrew --
+    "של",
+    "על",
+    "את",
+    "עם",
+    "אל",
+    "מן",
+    "לא",
+    "כי",
+    "גם",
+    "או",
+    "אם",
+    "הוא",
+    "היא",
+    "הם",
+    "הן",
+    "אני",
+    "אנחנו",
+    "אתה",
+    "זה",
+    "זו",
+    "זאת",
+    "אלה",
+    "כל",
+    "עוד",
+    "רק",
+    "כבר",
+    "מאוד",
+    "בין",
+    "אבל",
+    "אז",
+    "כמו",
+    "יותר",
+    "פה",
+    "שם",
 }
 
 
@@ -480,14 +517,10 @@ def _derive_text_view(memory_object: MemoryObject) -> str:
 
 
 def _tokenize(text: str) -> list[str]:
-    tokens = []
-    for token in "".join(character.lower() if character.isalnum() else " " for character in text).split():
-        if len(token) < 3:
-            continue
-        if token in CONSOLIDATION_STOPWORDS:
-            continue
-        tokens.append(token)
-    return tokens
+    return [
+        token for token in tokenize_text(text)
+        if len(token) >= 3 and token not in CONSOLIDATION_STOPWORDS
+    ]
 
 
 def _visibility_is_compatible(

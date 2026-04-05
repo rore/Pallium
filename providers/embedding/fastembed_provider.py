@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from providers.embedding.base import EmbeddingProvider
+from providers.embedding.base import EmbedMode, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +40,11 @@ class FastEmbedProvider(EmbeddingProvider):
             probe = list(self._engine.embed(["probe"]))
             self._dimensions = len(probe[0])
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], *, mode: EmbedMode = "passage") -> list[list[float]]:
         if not texts:
             return []
-        # fastembed.TextEmbedding.embed returns a generator of numpy arrays
+        # fastembed handles query/passage prefixes internally for supported models;
+        # the mode parameter is accepted for interface compatibility but not used here.
         return [vec.tolist() for vec in self._engine.embed(texts)]
 
     def dimensions(self) -> int:

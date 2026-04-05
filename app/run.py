@@ -140,7 +140,7 @@ def _run_rebuild_vector_index() -> int:
     if entries:
         texts = [entry.text_view for entry in entries]
         logger.info("Embedding %d entries...", len(texts))
-        vectors = embedding_provider.embed(texts)
+        vectors = embedding_provider.embed(texts, mode="passage")
         for entry, vector in zip(entries, vectors):
             vector_index.add(entry.id, vector)
 

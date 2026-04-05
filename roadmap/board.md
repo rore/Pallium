@@ -13,6 +13,7 @@
 - idea-document-schema-evolution-strategy
 
 # Done
+- add-multilingual-tokenization-and-embedding-support
 - add-multi-package-source-item-processing
 - add-conversational-knowledge-fact-extraction-package
 - add-qpp-injection-justification
