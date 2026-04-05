@@ -711,6 +711,24 @@ def _candidate_content_surface(item: QueryResultItem) -> str:
     ])).strip()
 
 
+def _scripts_differ(tokens_a: set[str], tokens_b: set[str]) -> bool:
+    """True when two token sets use entirely different Unicode scripts.
+
+    When scripts differ, content-overlap is not meaningful — defer to
+    vector similarity as the relevance signal.
+    """
+    if tokens_a & tokens_b:
+        return False  # shared tokens → scripts overlap
+    def _is_latin(t: str) -> bool:
+        return len(t) > 0 and t[0].isascii() and t[0].isalpha()
+    latin_a = any(_is_latin(t) for t in tokens_a)
+    latin_b = any(_is_latin(t) for t in tokens_b)
+    nonlatin_a = any(not t[0].isascii() for t in tokens_a if t and t[0].isalpha())
+    nonlatin_b = any(not t[0].isascii() for t in tokens_b if t and t[0].isalpha())
+    return (latin_a and not nonlatin_a and nonlatin_b and not latin_b) or \
+           (nonlatin_a and not latin_a and latin_b and not nonlatin_b)
+
+
 def _candidate_has_content_overlap(
     item: QueryResultItem,
     query_text: str,
@@ -731,6 +749,8 @@ def _candidate_has_content_overlap(
     if not candidate_text:
         return False
     candidate_ct = content_tokens(candidate_text)
+    if _scripts_differ(query_ct, candidate_ct):
+        return True  # cross-language — defer to vector similarity
     return bool(query_ct & candidate_ct)
 
 

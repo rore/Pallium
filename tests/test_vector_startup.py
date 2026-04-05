@@ -34,7 +34,7 @@ class StubEmbeddingProvider(EmbeddingProvider):
         self._dims = dims
         self._model = model
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], **kwargs) -> list[list[float]]:
         return [[0.1] * self._dims for _ in texts]
 
     def dimensions(self) -> int:

@@ -77,6 +77,7 @@
 - hybrid retrieval is now the shipped production retrieval path:
   - `CompositeRetrievalProvider` fuses lexical and vector results via Reciprocal Rank Fusion (RRF, k=60, scale=600)
   - `OnnxEmbeddingProvider` and `FastEmbedProvider` available; fastembed requires Python 3.12/3.13
+  - embedding model configured via `pallium.local.toml`; default fallback is bge-small-en-v1.5; multilingual-e5-small is supported with query/passage prefixes
   - all 6 promoted memory types are embedded at background processing time, not at ingest
   - `SourceItem` embedding is plugin-owned via a package method on the semantic plugin boundary
   - production `/query` path activates hybrid retrieval by default
@@ -84,7 +85,7 @@
 - IDF-weighted lexical scoring is shipped:
   - lexical search uses inverse document frequency weighting instead of raw token count
   - common words that appear in most documents score near zero; rare domain words score high
-  - language-agnostic — no stopword lists, the corpus statistics determine what's common
+  - language-agnostic IDF weighting supplemented by explicit multilingual stopword sets (English + Hebrew) for edge cases IDF misses
   - prevents off-topic injection (e.g., weather query matching vector DB memories on shared function words)
 - `interest` memory kind is shipped:
   - captures specific-but-uncommitted user interest (stronger than discussion_summary, weaker than task_checkpoint)
@@ -108,6 +109,11 @@
   - when aligned candidates exist, insufficient and legacy candidates enter `retained_memory_ids` as `secondary_tier` and fill remaining result slots not consumed by aligned
   - `fallback_mode = "aligned_with_secondary"` and `secondary_tier_count` exposed in anchor_prefilter trace; `anchor_tier_penalty` exposed per-candidate in routing trace
 - query tokenization is now unified: `tokenize_query` from `retrieval/lexical.py` is the single implementation; duplicate `_query_tokens` in `core/query.py` removed; debug query filter matching unified on canonical `matches_filters` (corrects lifecycle, thread_ref relaxation, and actor_ref handling on the debug path)
+- multilingual tokenization is shipped:
+  - Unicode-aware TOKEN_PATTERN centralized in `core/text.py`, handles Latin, Hebrew, Arabic, CJK, Cyrillic
+  - combining marks (Hebrew niqud, Arabic vowels, Latin diacritics) stripped before tokenization
+  - cross-language content-overlap bypass: when query and candidate use entirely different Unicode scripts, the gate defers to vector similarity instead of blocking
+  - embedding provider supports query/passage prefix modes (`EmbedMode`) for multilingual models
 - vector index self-healing is shipped:
   - source item vector embedding runs regardless of LLM outcome (survives extraction failures)
   - startup count mismatch logs a warning and continues with reduced recall instead of disabling vector

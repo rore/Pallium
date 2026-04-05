@@ -329,9 +329,6 @@ def test_no_package_tasks_falls_back_to_legacy_claim(test_db_url):
     # Create a source item directly via storage without package tracking rows
     from core.contracts import build_source_item
     from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
-    import re
-    import unicodedata
-    token_pattern = re.compile(r"[a-z0-9]+")
     item = build_source_item(
         source_type="test", source_id="legacy-1",
         content_type="text/plain", content="Legacy item.",

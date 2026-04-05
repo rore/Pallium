@@ -42,7 +42,7 @@ class FakeEmbeddingProvider(EmbeddingProvider):
         self._dims = dims
         self.embed_calls: list[list[str]] = []
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], **kwargs) -> list[list[float]]:
         self.embed_calls.append(list(texts))
         return [[0.1] * self._dims for _ in texts]
 

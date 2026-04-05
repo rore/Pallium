@@ -1,34 +1,23 @@
 from __future__ import annotations
 
-import re
-import unicodedata
-
 from core.models import (
     QueryFilters,
     QueryResultItem,
     QueryTrace,
     RetrievalStageTrace,
 )
+from core.text import TOKEN_PATTERN, strip_combining_marks
 from core.visibility import QueryVisibilityTrace, VisibilityExclusion, is_visible, visibility_label
 from retrieval.base import RetrievalProvider, RetrievalQueryResult
 from retrieval.common import build_evidence, build_excerpt, build_trace_hit
 from storage.base import StorageProvider
 
 
-TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 LEXICAL_STAGE_NAME = "lexical"
 
 
-# Duplicated from semantic/common.strip_diacritics — retrieval layer cannot
-# import from semantic/ to avoid upward coupling.
-def _strip_diacritics(text: str) -> str:
-    """Fold accented characters to ASCII equivalents before tokenization."""
-    nfkd = unicodedata.normalize("NFKD", text)
-    return "".join(c for c in nfkd if not unicodedata.combining(c))
-
-
 def _tokenize(text: str) -> list[str]:
-    tokens = TOKEN_PATTERN.findall(_strip_diacritics(text).lower())
+    tokens = TOKEN_PATTERN.findall(strip_combining_marks(text).lower())
     expanded: list[str] = []
     seen: set[str] = set()
     for token in tokens:
@@ -42,6 +31,8 @@ def _tokenize(text: str) -> list[str]:
 
 def _token_variants(token: str) -> tuple[str, ...]:
     variants = [token]
+    if not token.isascii():
+        return tuple(variants)
     if len(token) > 4 and token.endswith("ies"):
         variants.append(token[:-3] + "y")
     elif len(token) > 5 and token.endswith("es") and not token.endswith(("ses", "xes", "zes")):

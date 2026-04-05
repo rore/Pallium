@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -11,6 +12,8 @@ from capabilities.consolidation import ConsolidationPolicy, DEFAULT_CONSOLIDATIO
 from providers.llm.aicore_config import AICoreProviderConfig
 from providers.llm.base import LLMRetryPolicy
 from storage.vector_index import VectorIndexConfig
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_ENV_FILE = ".env.local"
@@ -51,6 +54,8 @@ class EmbeddingProviderConfig:
     model: str
     dimensions: int | None = None
     cache_dir: str | None = None  # model cache directory (default: HuggingFace global cache)
+    query_prefix: str = ""
+    passage_prefix: str = ""
 
 
 @dataclass(frozen=True)
@@ -129,6 +134,10 @@ class AppConfig:
         # Auto-create default ONNX embedding provider when none is configured
         embedding = copy.deepcopy(self.embedding_providers)
         if not embedding:
+            logger.warning(
+                "Using default English-only embedding model (BAAI/bge-small-en-v1.5). "
+                "Configure [embedding_providers] in pallium.local.toml for multilingual support."
+            )
             embedding["onnx"] = EmbeddingProviderConfig(
                 name="onnx",
                 kind="onnx",
@@ -533,6 +542,8 @@ def _build_embedding_provider_configs(config_data: dict[str, Any]) -> dict[str, 
                 model=_as_string(raw_value.get("model")),
                 dimensions=dimensions,
                 cache_dir=_as_string(raw_value.get("cache_dir")) if raw_value.get("cache_dir") else None,
+                query_prefix=_as_string(raw_value.get("query_prefix")),
+                passage_prefix=_as_string(raw_value.get("passage_prefix")),
             )
     return providers
 

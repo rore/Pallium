@@ -55,7 +55,7 @@ class VectorEmbedder:
             return False
         try:
             texts = [entry.text_view for entry in vector_entries]
-            vectors = self._embedding_provider.embed(texts)
+            vectors = self._embedding_provider.embed(texts, mode="passage")
             for entry, vector in zip(vector_entries, vectors):
                 self._vector_index.add(entry.id, vector)
                 self._storage.update_index_entry_provider(
@@ -118,7 +118,7 @@ class VectorEmbedder:
         if self._embedding_provider is None or self._vector_index is None:
             return False
         try:
-            vectors = self._embedding_provider.embed([index_entry.text_view])
+            vectors = self._embedding_provider.embed([index_entry.text_view], mode="passage")
             self._vector_index.add(index_entry.id, vectors[0])
             return True
         except Exception:
@@ -173,7 +173,7 @@ class VectorEmbedder:
             batch = missing_entries[:batch_size]
             if batch:
                 texts = [e.text_view for e in batch]
-                vectors = self._embedding_provider.embed(texts)
+                vectors = self._embedding_provider.embed(texts, mode="passage")
                 for entry, vector in zip(batch, vectors):
                     self._vector_index.add(entry.id, vector)
                     self._storage.update_index_entry_provider(

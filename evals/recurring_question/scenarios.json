@@ -167,5 +167,121 @@
     ],
     "expected_failures_without_memory": [],
     "expected_non_value_reason": "The current thread already contains the needed explanation, so prior memory should not materially improve the answer."
+  },
+  {
+    "scenario_id": "cross-language-recurring-question",
+    "scenario_kind": "cross_thread_value",
+    "description": "A Hebrew query about hold expiry should retrieve an English-language decision from a prior thread via cross-language retrieval.",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "benchmark-thread-3-msg-1",
+        "content_type": "text/plain",
+        "content": "We need to revisit the hold expiry policy. Patrons are complaining that 14 days is too long to wait.",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-rq-003",
+        "actor_ref": "user:circulation-manager",
+        "source_ref": "memory://benchmark/thread-3-msg-1",
+        "occurred_at": "2026-03-10T10:00:00Z",
+        "metadata": {"topic": "hold_expiry"}
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "benchmark-thread-3-artifact-1",
+        "content_type": "text/plain",
+        "content": "Decision: library holds expire after 7 days instead of the previous 14 days. This reduces queue wait times and improves item turnover.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-rq-003",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://benchmark/thread-3-artifact-1",
+        "occurred_at": "2026-03-10T10:01:00Z",
+        "metadata": {"topic": "hold_expiry"}
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "\u05db\u05de\u05d4 \u05d6\u05de\u05df \u05d4\u05d4\u05e9\u05d0\u05dc\u05d5\u05ea \u05ea\u05e7\u05e4\u05d5\u05ea"
+      }
+    ],
+    "current_query": {
+      "text": "\u05db\u05de\u05d4 \u05d6\u05de\u05df \u05d4\u05d4\u05e9\u05d0\u05dc\u05d5\u05ea \u05ea\u05e7\u05e4\u05d5\u05ea",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    },
+    "target_question": "\u05db\u05de\u05d4 \u05d6\u05de\u05df \u05d4\u05d4\u05e9\u05d0\u05dc\u05d5\u05ea \u05ea\u05e7\u05e4\u05d5\u05ea",
+    "expected_value": true,
+    "expected_memory_types": ["decision"],
+    "expected_answer_signals": [
+      "7 days",
+      "hold"
+    ],
+    "expected_failures_without_memory": [
+      "7 days"
+    ],
+    "expected_non_value_reason": null
+  },
+  {
+    "scenario_id": "cross-language-chinese-recurring-question",
+    "scenario_kind": "cross_thread_value",
+    "description": "Chinese query should recall English-language decision from a prior thread",
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "benchmark-thread-cjk-001-msg-1",
+        "content_type": "text/plain",
+        "content": "How often should catalog updates be processed? We need a policy for both business hours and overnight.",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-rq-cjk-001",
+        "actor_ref": "user:catalog-admin",
+        "source_ref": "memory://benchmark/thread-cjk-001-msg-1",
+        "occurred_at": "2026-03-10T11:00:00Z",
+        "metadata": {"topic": "catalog_update_frequency"}
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "benchmark-thread-cjk-001-artifact-1",
+        "content_type": "text/plain",
+        "content": "Decision: catalog updates are processed every 15 minutes during business hours and hourly overnight.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-rq-cjk-001",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://benchmark/thread-cjk-001-artifact-1",
+        "occurred_at": "2026-03-10T11:01:00Z",
+        "metadata": {"topic": "catalog_update_frequency"}
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "\u56fe\u4e66\u9986\u76ee\u5f55\u591a\u4e45\u66f4\u65b0\u4e00\u6b21"
+      }
+    ],
+    "current_query": {
+      "text": "\u56fe\u4e66\u9986\u76ee\u5f55\u591a\u4e45\u66f4\u65b0\u4e00\u6b21",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    },
+    "target_question": "\u56fe\u4e66\u9986\u76ee\u5f55\u591a\u4e45\u66f4\u65b0\u4e00\u6b21",
+    "expected_value": true,
+    "expected_memory_types": ["decision"],
+    "expected_answer_signals": [
+      "15 minutes",
+      "hourly"
+    ],
+    "expected_failures_without_memory": [
+      "15 minutes"
+    ],
+    "expected_non_value_reason": null
   }
 ]

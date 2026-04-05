@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import math
-import re
-import unicodedata
 
 from sqlalchemy import select
 
@@ -11,21 +9,10 @@ from core.filters import (
     target_visibility_and_container,
 )
 from core.models import QueryFilters
+from core.text import tokenize_text
 from core.visibility import VisibilityExclusion, is_visible
 from storage.base import IndexSearchHit, IndexSearchResult
 from storage.sqlite_schema import IndexEntryRecord
-
-
-TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
-
-
-# Duplicated from semantic/common.strip_diacritics — storage layer cannot
-# import from semantic/ to avoid upward coupling.  Both copies must stay
-# in sync when the normalisation strategy changes.
-def _strip_diacritics(text: str) -> str:
-    """Fold accented characters to ASCII equivalents before tokenization."""
-    nfkd = unicodedata.normalize("NFKD", text)
-    return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 # Scale factor for converting float IDF sums to integer scores.
 # Kept small so IDF scores remain in a similar range to raw token counts
@@ -62,7 +49,7 @@ class SQLiteSearchMixin:
                 record.target_kind, record.target_id, filters,
             ):
                 continue
-            text_tokens = set(TOKEN_PATTERN.findall(_strip_diacritics(record.text_view).lower()))
+            text_tokens = set(tokenize_text(record.text_view))
             filtered.append((record, text_tokens))
             for qt in unique_tokens:
                 if qt in text_tokens:
