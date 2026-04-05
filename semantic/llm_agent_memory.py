@@ -107,6 +107,10 @@ Populate only when the source explicitly states them:
 
 Prefer null or [] over weak, speculative, or inferred values.
 
+## Language
+
+All extracted text fields (decision_text, investigation_text, summary, etc.) must be in the same language as the source content. Do not translate.
+
 ## Examples
 - "Verdict: transaction-transformer had the most significant recent ledger changes." -> investigation_outcome, key_finding_text set.
 - "Task complete. No message needed." -> null, is_low_value_meta true, all signals null.
@@ -138,6 +142,10 @@ Populate only when the source explicitly states them:
 - subject_hints: extract named workstream|component|surface when the source names it as the subject of work. A name is explicit when: it appears as a noun modifier ("recent importer work" → component=importer), the source uses "work on X" / "working on X" phrasing, it identifies a location or locus in a prepositional phrase ("bug in the reservation service" → component=reservation service), or it appears as a possessive subject ("catalog sync's delay" → component=catalog sync). Return [] for negated or peripheral references ("nothing new on the X side", "not sure about X") and for casual mentions with no work content. Worked example: "recent importer work has been slow" → [{kind: "component", value: "importer"}].
 
 Prefer null or [] over weak, speculative, or inferred values.
+
+## Language
+
+All extracted text fields (decision_text, investigation_text, summary, etc.) must be in the same language as the source content. Do not translate.
 
 ## Examples
 - "Verdict: transaction-transformer had the most significant recent changes." -> investigation_outcome, key_finding_text set.
