@@ -53,6 +53,7 @@ jobs:
 | Stated constraint | `constraint_memory` | "Must stay on Python 3.12 for compatibility" |
 | Cross-thread carry-forward | `continuity_memory` | Same question answered consistently across threads |
 | Recurring patterns | `pattern_memory` | Repeated architectural preference across conversations |
+| Factual knowledge | `atomic_fact` | "Jordan completed a half-marathon in Denver in March 2024" |
 
 A fallback `discussion_summary` covers cases that don't match a specific type.
 
@@ -104,8 +105,10 @@ pretending memory never changes.
 
 ## Multilingual Support
 
-Pallium's tokenization and retrieval are language-agnostic. Content in any
-language is handled natively — no language detection or switching required.
+Pallium is designed to be multilingual. Memory is preserved in the original
+language and cross-language recall works natively — a query in one language can
+retrieve memory stored in another. This is an intentional architectural
+property, not an undocumented side effect.
 
 Supported scripts:
 
@@ -220,12 +223,31 @@ use Pallium as a consumer.
 
 ## Semantic Packages
 
-The repo includes four packages:
+Pallium processes stored evidence through semantic packages — each package
+extracts different kinds of reusable memory from the same upstream events.
+Packages run in parallel: the same ingested item can be processed by multiple
+packages independently.
 
-- `agent_conversation_memory` — the production package for repeated questions,
-  resumed work, and scoped continuity
-- `conversational_knowledge` — fact extraction package that extracts atomic
-  facts from conversation threads, runs in parallel alongside other packages
+The two production packages serve complementary recall jobs:
+
+- `agent_conversation_memory` — **work continuity**: prior decisions,
+  investigation findings, resumed-work checkpoints, thread orientation, and
+  scoped constraints. This is the package that answers "why did we choose
+  this?", "what did the investigation find?", and "where did we leave off?"
+
+- `conversational_knowledge` — **factual recall**: atomic facts extracted from
+  conversation threads — names, dates, preferences, events, relationships.
+  This is the package that answers "when did Jordan go camping?", "what's
+  Maria's phone number?", and "which restaurant did they recommend?" Memory
+  from both packages is preserved in the original language.
+
+These packages cover different failure modes. Work continuity catches
+structured conclusions that vector search misses. Factual recall catches
+concrete details that continuity-focused extraction skips because they don't
+fit decision/finding/checkpoint types.
+
+Additional packages:
+
 - `llm_agent_memory` — generic LLM-backed extraction over the semantic
   interface
 - `demo_agent_memory` — deterministic skeleton for local testing without a

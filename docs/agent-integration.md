@@ -218,13 +218,22 @@ not prompt-visible.
 
 ## How To Think About The Current Memory Jobs
 
-The current package is optimizing for a few concrete jobs:
+The current packages are optimizing for two complementary recall jobs:
+
+**Work continuity** (`agent_conversation_memory`):
 
 - remembering prior conclusions
 - remembering investigation findings
 - remembering thread orientation
 - remembering where interrupted work left off
 - carrying forward bounded cross-thread context when useful
+
+**Factual recall** (`conversational_knowledge`):
+
+- remembering concrete facts mentioned in conversations: names, dates,
+  preferences, events, relationships
+- answering "who/what/when" questions about things discussed earlier
+- preserving facts in the original language for multilingual recall
 
 The implementation uses multiple memory kinds internally to serve those jobs,
 but the integration loop does not require you to think in those terms first.
