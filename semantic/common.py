@@ -244,11 +244,6 @@ def build_process_result(
     semantic_metadata: dict[str, str] | None = None,
 ) -> ProcessResult:
     semantic_signals = _build_semantic_signal_payload(extraction, semantic_metadata=semantic_metadata)
-    summary_payload = {"text": extraction.summary}
-    if semantic_metadata:
-        summary_payload["semantic_provenance"] = semantic_metadata
-    if semantic_signals:
-        summary_payload["semantic_signals"] = semantic_signals
 
     memory_objects: list[MemoryObject] = []
     relations: list[Relation] = []

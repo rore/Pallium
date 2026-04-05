@@ -181,10 +181,9 @@ contract.
 
 ## Internal Vocabulary
 
-The generic core uses five primitives:
+The generic core uses four primitives:
 
 - **SourceItem** — one stored evidence unit from a producer
-- **Annotation** — semantic annotations derived from a source item
 - **MemoryObject** — reusable memory promoted from evidence
 - **Relation** — explicit links between evidence and derived memory
 - **IndexEntry** — retrieval materialization over source or memory text

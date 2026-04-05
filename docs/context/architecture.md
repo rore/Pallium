@@ -88,8 +88,6 @@ Implemented semantic behavior now includes:
 
 - an explicit `agent_conversation_memory` runtime package over the current LLM-backed semantic path
 - deterministic and LLM-backed semantic plugins
-- one summary annotation per ingested source item
-- one typed candidate annotation when extraction matches a typed memory path
 - promoted typed memory for:
   - `decision`
   - `investigation_outcome`
@@ -103,7 +101,7 @@ Implemented semantic behavior now includes:
   - `interest`
   - `constraint_memory`
 - fallback `discussion_summary` for non-typed extraction results
-- prompt provenance attached to LLM-derived annotations and memory objects
+- prompt provenance attached to LLM-derived memory objects
 - internal-only item semantic signals now extracted in the same item-level LLM call and persisted under `SourceItem.metadata["pallium_semantic_signals"]` for later higher-level synthesis
 
 Current `agent_conversation_memory` evidence now includes selected assistant-originated work artifacts in addition to user messages and final assistant outputs:
@@ -159,10 +157,9 @@ The core remains domain-agnostic.
 Core entities:
 
 - `SourceItem`
-- `Annotation`
+- `MemoryObject`
 - `Relation`
 - `IndexEntry`
-- `MemoryObject`
 
 Important model properties:
 
@@ -242,7 +239,6 @@ exchange for explicit evidence, thread-level state, and compact derived memory.
 One meaningful ingest can create:
 
 - one raw source item
-- one or more annotations
 - one or more direct memory objects
 - rebuilt thread-level memory such as `thread_summary` or `task_checkpoint`
 - explicit evidence relations
