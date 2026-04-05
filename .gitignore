@@ -55,3 +55,4 @@ evals/cosine_escape_hatch_validation_results.json
 .env.pelican-wsl
 evals/locomo/datasets/
 evals/locomo/output/
+evals/multilingual_quality/output/
