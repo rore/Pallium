@@ -108,6 +108,18 @@ SCENARIOS: list[dict[str, Any]] = [
                 "field": "decision",
                 "assert": "has_hebrew",
             },
+            {
+                "check_id": "atomic-facts-exist",
+                "memory_type": "atomic_fact",
+                "field": None,
+                "assert": "exists",
+            },
+            {
+                "check_id": "atomic-facts-in-hebrew",
+                "memory_type": "atomic_fact",
+                "field": "statement",
+                "assert": "all_have_hebrew",
+            },
         ],
     },
     {
@@ -170,6 +182,18 @@ SCENARIOS: list[dict[str, Any]] = [
                 "field": "summary",
                 "assert": "contains_any",
                 "values": ["200", "timeout", "batch"],
+            },
+            {
+                "check_id": "atomic-facts-exist",
+                "memory_type": "atomic_fact",
+                "field": None,
+                "assert": "exists",
+            },
+            {
+                "check_id": "atomic-facts-in-hebrew",
+                "memory_type": "atomic_fact",
+                "field": "statement",
+                "assert": "all_have_hebrew",
             },
         ],
     },
@@ -333,6 +357,14 @@ def _run_check(check: dict[str, Any], memory: list[MemoryObject]) -> dict[str, A
         found = [t for t in targets if t.lower() in value.lower()]
         passed = len(found) > 0
         return {"check_id": check_id, "passed": passed, "detail": f"found: {found}", "value_preview": value[:100]}
+
+    if assert_type == "all_have_hebrew":
+        # Check that ALL matching memories have Hebrew in the specified field
+        values = [m.payload.get(field, "") for m in matching if isinstance(m.payload.get(field, ""), str)]
+        hebrew_count = sum(1 for v in values if _has_hebrew(v))
+        passed = hebrew_count == len(values) and len(values) > 0
+        previews = [v[:60] for v in values[:3]]
+        return {"check_id": check_id, "passed": passed, "detail": f"hebrew in {hebrew_count}/{len(values)} {memory_type}", "value_preview": str(previews)}
 
     return {"check_id": check_id, "passed": False, "detail": f"unknown assert type: {assert_type}"}
 
