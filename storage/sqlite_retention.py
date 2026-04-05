@@ -22,7 +22,6 @@ from storage.base import (
     RetentionRunStats,
 )
 from storage.sqlite_schema import (
-    AnnotationRecord,
     IndexEntryRecord,
     MaintenanceStateRecord,
     MemoryObjectRecord,
@@ -601,7 +600,6 @@ class SQLiteRetentionMixin:
             for relation in relation_records
             if relation.from_kind == "memory_object"
         }
-        annotation_records = session.scalars(select(AnnotationRecord).where(AnnotationRecord.source_item_id == source_item_id)).all()
         source_index_records = session.scalars(
             select(IndexEntryRecord).where(
                 IndexEntryRecord.target_kind == "source_item",
@@ -613,8 +611,6 @@ class SQLiteRetentionMixin:
             return RetentionRunStats()
         for relation in relation_records:
             session.delete(relation)
-        for annotation in annotation_records:
-            session.delete(annotation)
         for index_entry in source_index_records:
             session.delete(index_entry)
         session.delete(source_record)

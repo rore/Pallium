@@ -4,14 +4,13 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from core.contracts import ProcessResult
-from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, Relation, SourceItem
+from core.models import EvidenceReference, IndexEntry, MemoryObject, Relation, SourceItem
 from core.turn_inference import ThreadStats
 from storage.base import StorageProvider
 from storage.sqlite_codec import SQLiteCodecMixin
 from storage.sqlite_queue import SQLiteQueueMixin
 from storage.sqlite_retention import SQLiteRetentionMixin
 from storage.sqlite_schema import (
-    AnnotationRecord,
     Base,
     IndexEntryRecord,
     MaintenanceStateRecord,
@@ -110,33 +109,6 @@ class SQLiteStorageProvider(
                 query = query.where(SourceItemRecord.id != exclude_item_id)
             row = session.execute(query).one()
             return ThreadStats(item_count=row[0], latest_created_at=row[1])
-
-    def create_annotation(self, annotation: Annotation) -> None:
-        record = AnnotationRecord(
-            id=annotation.id,
-            source_item_id=annotation.source_item_id,
-            type=annotation.type,
-            schema_id=annotation.schema_id,
-            schema_version=annotation.schema_version,
-            payload_json=self._dumps(annotation.payload) or "{}",
-            created_at=annotation.created_at,
-        )
-        with self._session_factory.begin() as session:
-            session.add(record)
-
-    def get_annotation(self, annotation_id: str) -> Annotation:
-        with self._session_factory() as session:
-            record = session.get(AnnotationRecord, annotation_id)
-            if record is None:
-                raise KeyError(annotation_id)
-            return self._to_annotation(record)
-
-    def list_annotations_for_source_item(self, source_item_id: str) -> list[Annotation]:
-        with self._session_factory() as session:
-            records = session.scalars(
-                select(AnnotationRecord).where(AnnotationRecord.source_item_id == source_item_id)
-            ).all()
-        return [self._to_annotation(record) for record in records]
 
     def create_memory_object(self, memory_object: MemoryObject) -> None:
         record = MemoryObjectRecord(

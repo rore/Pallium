@@ -89,7 +89,6 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
             extraction=direct_trace.extraction,
         )
         return ProcessResult(
-            annotations=direct_result.annotations,
             memory_objects=direct_result.memory_objects,
             relations=direct_result.relations,
             index_entries=direct_result.index_entries,

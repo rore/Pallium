@@ -198,7 +198,6 @@ class ItemProcessor:
                 direct_result.source_item_metadata_updates,
                 source_item.id,
                 {
-                    "annotation_count": len(direct_result.annotations),
                     "memory_object_types": [memory_object.type for memory_object in direct_result.memory_objects],
                     "thread_rebuild_requested": thread_rebuild_scope is not None,
                     "thread_rebuild_completed": False,
@@ -206,7 +205,6 @@ class ItemProcessor:
                 },
             )
             direct_result = ProcessResult(
-                annotations=direct_result.annotations,
                 memory_objects=direct_result.memory_objects,
                 relations=direct_result.relations,
                 index_entries=direct_result.index_entries,
@@ -285,7 +283,6 @@ class ItemProcessor:
             artifact_kind=source_item.artifact_kind,
             use_case=source_item.use_case,
             processing_status="completed",
-            produced_annotation_count=len(result.annotations),
             produced_memory_kinds=[memory_object.type for memory_object in result.memory_objects],
             thread_rebuild_ran=thread_rebuild_scope is not None,
         )

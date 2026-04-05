@@ -20,7 +20,6 @@ from storage.base import (
     ThreadProcessingScope,
 )
 from storage.sqlite_schema import (
-    AnnotationRecord,
     IndexEntryRecord,
     MaintenanceStateRecord,
     MemoryObjectRecord,
@@ -454,18 +453,6 @@ class SQLiteQueueMixin:
         )
 
     def _persist_process_result_in_session(self, session: Session, result: ProcessResult) -> None:
-        for annotation in result.annotations:
-            session.add(
-                AnnotationRecord(
-                    id=annotation.id,
-                    source_item_id=annotation.source_item_id,
-                    type=annotation.type,
-                    schema_id=annotation.schema_id,
-                    schema_version=annotation.schema_version,
-                    payload_json=self._dumps(annotation.payload) or "{}",
-                    created_at=annotation.created_at,
-                )
-            )
         for memory_object in result.memory_objects:
             session.add(
                 MemoryObjectRecord(

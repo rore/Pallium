@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from core.contracts import ProcessResult
 from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
-from core.models import Annotation, MemoryObject, MemorySubjectAnchor, Relation, SourceItem
+from core.models import MemoryObject, MemorySubjectAnchor, Relation, SourceItem
 from semantic.agent_conversation_memory_embedding import VECTOR_EMBEDDING_PROVIDER_NAME, VECTOR_EMBEDDING_PROVIDER_VERSION, build_embedding_text
 
 
@@ -250,16 +250,6 @@ def build_process_result(
     if semantic_signals:
         summary_payload["semantic_signals"] = semantic_signals
 
-    annotations = [
-        Annotation(
-            source_item_id=source_item.id,
-            type="summary",
-            schema_id="core.summary",
-            schema_version="v1",
-            payload=summary_payload,
-        )
-    ]
-
     memory_objects: list[MemoryObject] = []
     relations: list[Relation] = []
     index_entries = []
@@ -271,27 +261,6 @@ def build_process_result(
         and has_grounded_decision_evidence(source_item, extraction.decision_evidence_text)
     ):
         canonical_key = normalize_for_index(extraction.decision_text)
-        candidate_payload = {
-            "candidate_type": "decision",
-            "decision_text": extraction.decision_text,
-            "decision_evidence_text": extraction.decision_evidence_text,
-            "rationale_text": extraction.rationale_text,
-        }
-        if semantic_metadata:
-            candidate_payload["semantic_provenance"] = semantic_metadata
-        if semantic_signals:
-            candidate_payload["semantic_signals"] = semantic_signals
-        if extraction.matched_phrase:
-            candidate_payload["matched_phrase"] = extraction.matched_phrase
-        annotations.append(
-            Annotation(
-                source_item_id=source_item.id,
-                type="typed_candidate",
-                schema_id=f"{schema_prefix}.typed_candidate",
-                schema_version="v1",
-                payload=candidate_payload,
-            )
-        )
         memory_objects.append(
             MemoryObject(
                 type="decision",
@@ -329,27 +298,6 @@ def build_process_result(
         and has_grounded_investigation_evidence(source_item, extraction.investigation_evidence_text)
     ):
         canonical_key = normalize_for_index(extraction.investigation_text)
-        candidate_payload = {
-            "candidate_type": "investigation_outcome",
-            "investigation_text": extraction.investigation_text,
-            "investigation_evidence_text": extraction.investigation_evidence_text,
-            "rationale_text": extraction.rationale_text,
-        }
-        if semantic_metadata:
-            candidate_payload["semantic_provenance"] = semantic_metadata
-        if semantic_signals:
-            candidate_payload["semantic_signals"] = semantic_signals
-        if extraction.matched_phrase:
-            candidate_payload["matched_phrase"] = extraction.matched_phrase
-        annotations.append(
-            Annotation(
-                source_item_id=source_item.id,
-                type="typed_candidate",
-                schema_id=f"{schema_prefix}.typed_candidate",
-                schema_version="v1",
-                payload=candidate_payload,
-            )
-        )
         memory_objects.append(
             MemoryObject(
                 type="investigation_outcome",
@@ -480,7 +428,6 @@ def build_process_result(
     if semantic_signals:
         metadata_updates[source_item.id] = {SEMANTIC_SIGNAL_METADATA_KEY: semantic_signals}
     return ProcessResult(
-        annotations=annotations,
         memory_objects=memory_objects,
         relations=relations,
         index_entries=index_entries,

@@ -73,7 +73,6 @@ class ConsolidationRunner:
             if not synthesized.memory_objects:
                 continue
             promoted = ProcessResult(
-                annotations=synthesized.annotations,
                 memory_objects=synthesized.memory_objects,
                 relations=[
                     *synthesized.relations,

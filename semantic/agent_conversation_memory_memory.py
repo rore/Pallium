@@ -87,11 +87,6 @@ def _build_memory_envelope(
     )
 
 def _semantic_provenance_from_process_result(result: ProcessResult) -> dict[str, object]:
-    for annotation in result.annotations:
-        payload = annotation.payload if isinstance(annotation.payload, dict) else {}
-        semantic_provenance = payload.get("semantic_provenance")
-        if isinstance(semantic_provenance, dict) and semantic_provenance:
-            return dict(semantic_provenance)
     for memory_object in result.memory_objects:
         payload = memory_object.payload if isinstance(memory_object.payload, dict) else {}
         semantic_provenance = payload.get("semantic_provenance")

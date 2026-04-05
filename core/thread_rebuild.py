@@ -214,7 +214,6 @@ class ThreadRebuilder:
                             {"thread_rebuild_completed": True},
                         )
                     thread_result = ProcessResult(
-                        annotations=thread_result.annotations,
                         memory_objects=thread_result.memory_objects,
                         relations=thread_result.relations,
                         index_entries=thread_result.index_entries,
