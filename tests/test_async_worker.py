@@ -644,7 +644,7 @@ def test_run_worker_logs_failure_details(monkeypatch, test_db_url: str, capsys) 
     )
     assert ingest.processing_status == "pending"
 
-    monkeypatch.setattr("app.worker.build_service", lambda config: service)
+    monkeypatch.setattr("app.worker.build_service", lambda config, **_kw: service)
 
     exit_code = run_worker(
         ["--once", "--worker-id", "worker-log-test", "--max-attempts", "1"],

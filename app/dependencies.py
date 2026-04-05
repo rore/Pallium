@@ -220,6 +220,8 @@ def build_retrieval_provider(storage: StorageProvider) -> RetrievalProvider:
 def build_service(
     config: AppConfig | None = None,
     routing_overrides: RoutingOverrides | None = None,
+    *,
+    enable_vector: bool = True,
 ) -> PalliumService:
     resolved_config = config or AppConfig.from_env()
     storage = build_storage_provider(resolved_config)
@@ -228,13 +230,13 @@ def build_service(
         raise ValueError(f"Unsupported default use case: {resolved_config.default_use_case}")
     retrieval = build_retrieval_provider(storage)
 
-    # Vector retrieval (enabled by default)
+    # Vector retrieval (enabled by default, can be disabled for processor subprocesses)
     vector_retrieval: VectorRetrievalProvider | None = None
     vector_index: VectorIndex | None = None
     embedding_provider: EmbeddingProvider | None = None
     vector_config = resolved_config.vector_index
 
-    if vector_config.enabled:
+    if vector_config.enabled and enable_vector:
         # 1. Build embedding provider
         if not vector_config.embedding_provider:
             logger.error("Vector index enabled but no embedding_provider configured. Vector disabled.")

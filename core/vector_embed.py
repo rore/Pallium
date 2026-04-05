@@ -176,6 +176,11 @@ class VectorEmbedder:
                 vectors = self._embedding_provider.embed(texts)
                 for entry, vector in zip(batch, vectors):
                     self._vector_index.add(entry.id, vector)
+                    self._storage.update_index_entry_provider(
+                        entry.id,
+                        provider_name=self._embedding_provider.model_name(),
+                        provider_version=f"dim={self._embedding_provider.dimensions()}",
+                    )
                     total_changed += 1
 
             if total_changed > 0:

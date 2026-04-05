@@ -273,8 +273,8 @@ def test_service_reconcile_vector_index_delegates(test_db_url: str, tmp_path: Pa
     assert result == 0
 
 
-def test_worker_loop_calls_reconciliation_when_idle(test_db_url: str, monkeypatch) -> None:
-    """Worker calls reconcile_vector_index when no source items or thread rebuilds pending."""
+def test_worker_loop_does_not_call_reconciliation(test_db_url: str, monkeypatch) -> None:
+    """Worker no longer reconciles — the server daemon thread handles it."""
     from app.worker import run_worker
     from app.config import AppConfig
     from storage.vector_index import VectorIndexConfig
@@ -310,7 +310,7 @@ def test_worker_loop_calls_reconciliation_when_idle(test_db_url: str, monkeypatc
 
     monkeypatch.setattr(
         "app.worker.build_service",
-        lambda config: tracking_service,
+        lambda config, **_kw: tracking_service,
     )
 
     run_worker(["--once"], config=AppConfig(
@@ -320,4 +320,4 @@ def test_worker_loop_calls_reconciliation_when_idle(test_db_url: str, monkeypatc
         vector_index=VectorIndexConfig(enabled=False),
     ))
 
-    assert len(reconcile_calls) >= 1, "Worker should call reconcile_vector_index when idle"
+    assert len(reconcile_calls) == 0, "Worker should NOT call reconcile_vector_index (server handles it)"

@@ -93,9 +93,8 @@ class VectorRetrievalProvider(RetrievalProvider):
                 continue
             resolved_hits.append((index_entry, similarity))
 
-        # Persist removals if any stale entries were cleaned up
-        if stale_entry_ids:
-            self._vector_index.save()
+        # Stale entry removal is in-memory only — reconcile handles disk persistence.
+        # No save() call here; the query-serving process should not write the index file.
 
         # 4. Apply min_similarity threshold, filters, visibility, and dedup
         results: list[QueryResultItem] = []

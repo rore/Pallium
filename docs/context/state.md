@@ -111,8 +111,8 @@
 - vector index self-healing is shipped:
   - source item vector embedding runs regardless of LLM outcome (survives extraction failures)
   - startup count mismatch logs a warning and continues with reduced recall instead of disabling vector
-  - worker-integrated bidirectional reconciliation: embeds SQLite entries missing from usearch (batch-bounded), removes stale usearch entries missing from SQLite
-  - reconciliation runs as idle-time worker duty alongside source item processing and thread rebuilds
+  - server-owned reconciliation: a daemon thread in the API server process embeds SQLite entries missing from usearch (batch-bounded) and removes stale usearch entries missing from SQLite
+  - processor subprocesses run with `enable_vector=False` — they write IndexEntry records to SQLite only; the server reconciliation thread picks them up
   - `rebuild-vector-index` CLI command remains available for manual recovery
 - persisted annotation layer removed:
   - `Annotation` model, `AnnotationRecord` ORM, `annotations` DB table, and all storage methods deleted

@@ -465,7 +465,7 @@ class TestStaleEntryLazyRemoval:
 
         assert result.results == []
         assert "idx-stale" in vector_index.removed_ids
-        assert vector_index.was_saved
+        # Stale removal is in-memory only — reconcile handles disk persistence
 
     def test_stale_entry_skipped_valid_entry_returned(self) -> None:
         index_entry = _make_index_entry(entry_id="idx-valid", target_kind="memory_object", target_id="mo-1")
@@ -487,7 +487,6 @@ class TestStaleEntryLazyRemoval:
         assert len(result.results) == 1
         assert result.results[0].memory_object_id == "mo-1"
         assert "idx-stale" in vector_index.removed_ids
-        assert vector_index.was_saved
 
     def test_no_stale_entries_no_save(self) -> None:
         index_entry = _make_index_entry()

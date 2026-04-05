@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +27,17 @@ def _require_usearch():
     return Index
 
 
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """Write JSON to a file atomically via temp file + os.replace."""
+    tmp = path.with_suffix(f".{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        os.replace(str(tmp), str(path))
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 class VectorIndex:
     """In-process vector index backed by usearch.
 
@@ -36,6 +49,14 @@ class VectorIndex:
 
     Metadata file {index_path}.meta.json stores model_name, dimensions,
     and entry_count.
+
+    Thread safety: usearch.Index is concurrent by design (add/search/remove
+    can run simultaneously). The Python-side dicts (_id_to_key, _key_to_id)
+    are individually thread-safe under CPython's GIL, but compound operations
+    (e.g., add's read-then-write sequence) are not atomic. In practice this
+    means a concurrent search may briefly see an incomplete state — at worst
+    a single result is missed for one query. If Pallium moves to free-threaded
+    Python (PEP 703), these operations will need a lock.
     """
 
     def __init__(self, index_path: Path, dimensions: int, model_name: str) -> None:
@@ -91,22 +112,29 @@ class VectorIndex:
         return hits
 
     def save(self) -> None:
-        """Persist the index, ID map, and metadata to disk."""
+        """Persist the index, ID map, and metadata to disk.
+
+        JSON sidecar files are written atomically via temp file + os.replace.
+        meta.json is written LAST so its mtime serves as the change indicator.
+        """
         self._index_path.parent.mkdir(parents=True, exist_ok=True)
+        # 1. Binary index (usearch writes directly)
         self._index.save(str(self._index_path))
+        # 2. ID map (atomic)
         idmap_path = Path(f"{self._index_path}.idmap.json")
         idmap_data = {
             "id_to_key": self._id_to_key,
             "next_key": self._next_key,
         }
-        idmap_path.write_text(json.dumps(idmap_data), encoding="utf-8")
+        _atomic_write_json(idmap_path, idmap_data)
+        # 3. Meta LAST (atomic — its mtime is the freshness signal)
         meta_path = Path(f"{self._index_path}.meta.json")
         meta_data = {
             "model_name": self._model_name,
             "dimensions": self._dimensions,
             "entry_count": len(self._id_to_key),
         }
-        meta_path.write_text(json.dumps(meta_data), encoding="utf-8")
+        _atomic_write_json(meta_path, meta_data)
 
     @classmethod
     def load(cls, index_path: Path) -> VectorIndex:
