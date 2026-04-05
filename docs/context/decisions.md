@@ -469,3 +469,47 @@ Why:
 - this principle governs trade-offs in injection gate thresholds: when a candidate
   has retrieval signal (lexical/vector) but no verifiable content-word grounding
   with the query, the system should abstain rather than inject
+
+### 2026-04-05 - Multi-package source item processing
+
+Source items can now be processed by multiple semantic packages independently.
+A per-package tracking table (`PackageProcessingRecord`) keyed by
+`(source_item_id, use_case)` owns queue state. Packages with
+`parallel_processing = True` process every incoming item; others are assigned
+via `use_case` matching.
+
+Why:
+
+- the single-package limitation blocked running fact extraction alongside
+  conversation memory on the same source items
+- per-package tracking keeps raw source items package-neutral
+- `parallel_processing` opt-in avoids forcing all packages to process all items
+
+### 2026-04-05 - Routing as core service with TypeRegistry
+
+Routing is now a core service called directly by `QueryExecutor`, not a
+package-internal module. `TypeRegistry` lets packages register memory types
+(display names, descriptions, categories) at startup. Routing reads type
+metadata from the registry rather than hardcoding type knowledge.
+
+Why:
+
+- multi-package processing means multiple packages produce memory types that
+  must be routed together at query time
+- hardcoded type knowledge in routing would not scale across packages
+- registry-driven metadata keeps routing package-agnostic while letting each
+  package describe its own types
+
+### 2026-04-05 - Fact extraction package: conversational_knowledge
+
+The `conversational_knowledge` package extracts atomic facts from conversation
+threads. It uses the existing thread rebuild capability, runs as a
+`parallel_processing` package alongside `agent_conversation_memory`, and
+produces `conversational_fact` memory objects.
+
+Why:
+
+- LoCoMo benchmark baseline (61.2% on conv-26) confirmed that
+  `agent_conversation_memory` alone misses factual detail recall
+- thread-level extraction captures facts that span multiple messages
+- running in parallel keeps the existing conversation memory path unchanged
