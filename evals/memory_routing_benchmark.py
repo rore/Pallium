@@ -29,6 +29,8 @@ def main() -> int:
     parser.add_argument("--scenario-file", type=Path, default=DEFAULT_SCENARIO_FILE)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--run-name", default=None)
+    parser.add_argument("--cache-dir", type=Path, default=None,
+                        help="Directory for caching LLM extraction calls. Makes runs deterministic.")
     args = parser.parse_args()
 
     run_dir = run_memory_routing_benchmark(
@@ -36,6 +38,7 @@ def main() -> int:
         output_root=args.output_dir,
         config=AppConfig.from_env(),
         run_name=args.run_name,
+        cache_dir=args.cache_dir,
     )
     print(run_dir)
     return 0
@@ -48,6 +51,7 @@ def run_memory_routing_benchmark(
     config: AppConfig,
     run_name: str | None = None,
     answer_provider: LLMProvider | None = None,
+    cache_dir: Path | None = None,
 ) -> Path:
     scenarios = _load_scenarios(scenario_file)
     default_package = config.package_config(config.default_use_case)
@@ -67,7 +71,7 @@ def run_memory_routing_benchmark(
     with results_path.open("w", encoding="utf-8") as results_file:
         for scenario in scenarios:
             result = annotate_result(
-                _run_scenario(scenario=scenario, config=config, answer_provider=provider),
+                _run_scenario(scenario=scenario, config=config, answer_provider=provider, cache_dir=cache_dir),
                 suite_id="memory_routing",
             )
             results.append(result)
@@ -84,6 +88,7 @@ def _run_scenario(
     scenario: dict[str, Any],
     config: AppConfig,
     answer_provider: LLMProvider,
+    cache_dir: Path | None = None,
 ) -> dict[str, Any]:
     consolidation_strategy = scenario.get("consolidation_strategy")
     runtime_context = _scenario_runtime_context(scenario)
@@ -94,6 +99,9 @@ def _run_scenario(
         vector_index_config = replace(config.vector_index, index_path=str(Path(temp_dir) / "vector.index"))
         scenario_config = replace(config, sqlite_url=database_url, default_use_case="agent_conversation_memory", vector_index=vector_index_config)
         with TestClient(create_app(scenario_config)) as client:
+            if cache_dir is not None:
+                from evals.generated_exploratory.invariant_runner import _wrap_providers_with_cache
+                _wrap_providers_with_cache(client, cache_dir)
             for event in scenario.get("prior_events", []):
                 response = client.post("/items", json=[_with_default_visibility(event)])
                 response.raise_for_status()
