@@ -113,6 +113,10 @@ def _run_scenario(
                     use_case="agent_conversation_memory",
                     strategy_name=consolidation_strategy,
                 )
+                # Consolidation creates new memory objects with vector index entries
+                # in SQLite but doesn't sync to the usearch file. Reconcile so
+                # higher-level memories are findable by vector search.
+                client.app.state.pallium_service.reconcile_vector_index()
 
             query_contract_response = client.post("/query", json=_with_default_visibility(query_request))
             query_contract_response.raise_for_status()
