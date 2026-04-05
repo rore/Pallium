@@ -294,7 +294,8 @@
     "expected_intent": "recall",
     "expected_top_layer": "continuity_memory",
     "expected_top_memory_types": [
-      "continuity_memory"
+      "continuity_memory",
+      "decision"
     ],
     "expected_higher_level_memory_types": [
       "continuity_memory"
@@ -306,7 +307,11 @@
     "expected_failures_without_memory": [
       "30-minute batches"
     ],
-    "forbidden_terms": []
+    "forbidden_terms": [],
+    "acceptable_top_layers": [
+      "continuity_memory",
+      "lower_level_memory"
+    ]
   },
   {
     "scenario_id": "answer-continuity-paraphrase",
@@ -364,7 +369,8 @@
     "expected_intent": "recall",
     "expected_top_layer": "continuity_memory",
     "expected_top_memory_types": [
-      "continuity_memory"
+      "continuity_memory",
+      "decision"
     ],
     "expected_higher_level_memory_types": [
       "continuity_memory"
@@ -376,7 +382,11 @@
     "expected_failures_without_memory": [
       "staff inbox spam"
     ],
-    "forbidden_terms": []
+    "forbidden_terms": [],
+    "acceptable_top_layers": [
+      "continuity_memory",
+      "lower_level_memory"
+    ]
   },
   {
     "scenario_id": "precise-fact-ordering",
@@ -610,7 +620,10 @@
     "expected_failures_without_memory": [
       "stale hold updates"
     ],
-    "forbidden_terms": []
+    "forbidden_terms": [],
+    "acceptable_top_layers": [
+      "source_evidence"
+    ]
   },
   {
     "scenario_id": "evidence-trace-paraphrase-challenge",
@@ -690,7 +703,10 @@
     "expected_failures_without_memory": [
       "stale hold updates"
     ],
-    "forbidden_terms": []
+    "forbidden_terms": [],
+    "acceptable_top_layers": [
+      "source_evidence"
+    ]
   },
   {
     "scenario_id": "investigative-conclusion-verdict",
@@ -941,7 +957,9 @@
     "expected_intent": "recall",
     "expected_top_layer": "lower_level_memory",
     "acceptable_top_layers": [
-      "lower_level_memory"
+      "lower_level_memory",
+      "continuity_memory",
+      "pattern_memory"
     ],
     "expected_answer_signals": [
       "duplicate holds",

@@ -559,7 +559,7 @@ def _score_routed_candidate(
         + int(quality_score * QUALITY_WEIGHT)
         + _specificity_bonus(item, intent)
         + evidence_shape_score
-        + _higher_level_retrieval_floor_adjustment(layer, retrieval_score)
+        + _higher_level_retrieval_floor_adjustment(layer, retrieval_score, quality_score=quality_score)
         + _locality_adjustment(intent=intent, layer=layer, same_thread=same_thread, same_container=same_container)
     )
     support_grade = _routing_support_grade(evidence_shape_score, support_threshold=support_threshold)
@@ -669,15 +669,17 @@ def _specificity_bonus(item: QueryResultItem, intent: str) -> int:
     return bonus
 
 
-def _higher_level_retrieval_floor_adjustment(layer: str, retrieval_score: int) -> int:
-    """Penalise higher-level memory whose retrieval score falls below the floor.
+def _higher_level_retrieval_floor_adjustment(layer: str, retrieval_score: int, quality_score: float = 0.0) -> int:
+    """Penalise higher-level memory whose retrieval quality falls below the floor.
 
-    Replaces the former token-overlap binary check.  The penalty magnitude
-    (-160) matches the compressed scale so ranking behaviour is comparable.
+    Uses quality_score (normalized 0-1 from raw lexical/vector scores) rather
+    than RRF retrieval_score, because RRF scores are compressed into a narrow
+    8-19 range where a fixed floor of 40 would penalize every candidate.
+    quality_score >= 0.5 means at least moderate lexical or vector match.
     """
     if layer not in ROUTING_HIGHER_LEVEL_TYPES:
         return 0
-    if retrieval_score < HIGHER_LEVEL_RETRIEVAL_FLOOR:
+    if quality_score < 0.5:
         return -160
     return 0
 

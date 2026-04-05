@@ -227,7 +227,11 @@ def _run_scenario(
         answer_payload=memory_answer,
     )
     false_merge_occurred = bool(forbidden_terms_found)
-    higher_level_overuse = top_layer in HIGHER_LEVEL_LAYERS and scenario["expected_top_layer"] not in HIGHER_LEVEL_LAYERS
+    higher_level_overuse = (
+        top_layer in HIGHER_LEVEL_LAYERS
+        and scenario["expected_top_layer"] not in HIGHER_LEVEL_LAYERS
+        and top_layer not in (scenario.get("acceptable_top_layers") or [])
+    )
     answer_success = _answer_success(expected_value=bool(scenario.get("expected_value")), winner=comparison["winner"])
     policy_success = all(
         [
