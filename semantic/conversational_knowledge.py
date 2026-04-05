@@ -274,6 +274,9 @@ def _is_eligible_for_fact_extraction(source_item: SourceItem) -> bool:
 def _build_thread_text(aggregate: ThreadAggregate) -> str:
     """Build a text representation of the thread for fact extraction."""
     parts: list[str] = []
+    session_date = _extract_session_date(aggregate.source_items)
+    if session_date is not None:
+        parts.append(f"Session date: {session_date}")
     for item in aggregate.source_items:
         role = item.role or "unknown"
         content = item.content or ""
@@ -281,3 +284,11 @@ def _build_thread_text(aggregate: ThreadAggregate) -> str:
             content = content[:FACT_EXTRACTION_MAX_THREAD_CHARS // max(len(aggregate.source_items), 1)] + "..."
         parts.append(f"[{role}]: {content}")
     return "\n".join(parts)
+
+
+def _extract_session_date(source_items: list[SourceItem]) -> str | None:
+    """Extract the session date (YYYY-MM-DD) from the earliest occurred_at."""
+    dates = [item.occurred_at for item in source_items if item.occurred_at is not None]
+    if not dates:
+        return None
+    return min(dates).strftime("%Y-%m-%d")

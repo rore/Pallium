@@ -270,3 +270,65 @@ def test_multi_package_ingest_creates_fact_package_records(test_db_url):
     package_names = {r.package_name for r in records}
     assert "demo_agent_memory" in package_names
     assert "conversational_knowledge" in package_names
+
+
+# ── Tests: _build_thread_text session date injection ─────────────────────
+
+def test_build_thread_text_includes_session_date():
+    """Thread text should include the session date from earliest occurred_at."""
+    from datetime import datetime, timezone
+    from capabilities.thread_aggregation import ThreadAggregate
+    from semantic.conversational_knowledge import _build_thread_text
+    ts = datetime(2023, 8, 28, 14, 30, 0, tzinfo=timezone.utc)
+    items = [
+        SourceItem(
+            source_type="chat", source_id="d1",
+            content_type="text/plain", content="I went camping yesterday",
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            occurred_at=ts,
+        ),
+        SourceItem(
+            source_type="chat", source_id="d2",
+            content_type="text/plain", content="That sounds fun!",
+            role="assistant", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            occurred_at=datetime(2023, 8, 28, 14, 31, 0, tzinfo=timezone.utc),
+        ),
+    ]
+    aggregate = ThreadAggregate(
+        container_ref="c1", thread_ref="t1",
+        source_items=items, source_item_ids=[i.id for i in items],
+        latest_occurred_at=items[-1].occurred_at,
+        aggregate_text="", visibility="public",
+    )
+    text = _build_thread_text(aggregate)
+    assert "Session date: 2023-08-28" in text
+    assert text.index("Session date:") < text.index("[user]:")
+
+
+def test_build_thread_text_no_occurred_at_omits_date():
+    """When no occurred_at is available, omit the session date line."""
+    from capabilities.thread_aggregation import ThreadAggregate
+    from semantic.conversational_knowledge import _build_thread_text
+    items = [
+        SourceItem(
+            source_type="chat", source_id="d3",
+            content_type="text/plain", content="Hello",
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+        ),
+        SourceItem(
+            source_type="chat", source_id="d4",
+            content_type="text/plain", content="Hi",
+            role="assistant", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+        ),
+    ]
+    aggregate = ThreadAggregate(
+        container_ref="c1", thread_ref="t1",
+        source_items=items, source_item_ids=[i.id for i in items],
+        latest_occurred_at=None, aggregate_text="", visibility="public",
+    )
+    text = _build_thread_text(aggregate)
+    assert "Session date:" not in text
