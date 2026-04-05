@@ -19,6 +19,7 @@ import argparse
 import json
 import urllib.request
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -292,27 +293,62 @@ def _evaluate_conversation(
             client.app.state.pallium_service.reconcile_vector_index()
             print("  Processing complete")
 
-            # --- evaluate each QA pair ---
+            # --- evaluate each QA pair (parallel justifier+judge) ---
+            qa_inputs: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
             for qa_index, qa in enumerate(qa_pairs):
-                result = _evaluate_question(
-                    client=client,
+                query_payload = {
+                    "text": qa["question"],
+                    "limit": query_limit,
+                    "container_ref": sample_id,
+                    "visibility": "public",
+                    "runtime_context": {
+                        "turn_kind": "new_session",
+                        "session_has_sufficient_local_context": False,
+                    },
+                }
+                query_response = client.post(
+                    "/query/debug", json=query_payload
+                )
+                query_response.raise_for_status()
+                qa_inputs.append((qa_index, qa, query_response.json()))
+
+            def _eval_one(
+                entry: tuple[int, dict[str, Any], dict[str, Any]],
+            ) -> tuple[int, dict[str, Any]]:
+                qa_idx, qa_item, mem_payload = entry
+                return qa_idx, _evaluate_question_from_retrieval(
                     answer_provider=answer_provider,
                     sample_id=sample_id,
-                    qa=qa,
-                    query_limit=query_limit,
+                    qa=qa_item,
+                    memory_payload=mem_payload,
                     speaker_a=speaker_a,
                     speaker_b=speaker_b,
                 )
-                results.append(result)
 
-                if (qa_index + 1) % 50 == 0 or qa_index == len(qa_pairs) - 1:
-                    correct_so_far = sum(
-                        1 for r in results if r["correct"]
-                    )
-                    print(
-                        f"  QA progress: {qa_index + 1}/{len(qa_pairs)} "
-                        f"({correct_so_far} correct)"
-                    )
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futures = {
+                    pool.submit(_eval_one, inp): inp[0]
+                    for inp in qa_inputs
+                }
+                indexed_results: list[tuple[int, dict[str, Any]]] = []
+                done_count = 0
+                for future in as_completed(futures):
+                    idx, result = future.result()
+                    indexed_results.append((idx, result))
+                    done_count += 1
+                    if done_count % 50 == 0 or done_count == len(qa_pairs):
+                        correct_so_far = sum(
+                            1
+                            for _, r in indexed_results
+                            if r["correct"]
+                        )
+                        print(
+                            f"  QA progress: {done_count}/{len(qa_pairs)} "
+                            f"({correct_so_far} correct)"
+                        )
+
+            indexed_results.sort(key=lambda x: x[0])
+            results = [r for _, r in indexed_results]
 
             engine = getattr(
                 client.app.state.pallium_service._storage, "_engine", None
@@ -336,21 +372,25 @@ def _ingest_conversation(
     speaker_a: str,
     speaker_b: str,
 ) -> int:
-    turn_count = 0
+    BATCH_SIZE = 50
+    all_items: list[dict[str, Any]] = []
     for session_key, session_date, turns in sessions:
         for turn in turns:
-            item = _turn_to_item(
-                turn=turn,
-                sample_id=sample_id,
-                session_key=session_key,
-                session_date=session_date,
-                speaker_a=speaker_a,
-                speaker_b=speaker_b,
+            all_items.append(
+                _turn_to_item(
+                    turn=turn,
+                    sample_id=sample_id,
+                    session_key=session_key,
+                    session_date=session_date,
+                    speaker_a=speaker_a,
+                    speaker_b=speaker_b,
+                )
             )
-            response = client.post("/items", json=[item])
-            response.raise_for_status()
-            turn_count += 1
-    return turn_count
+    for start in range(0, len(all_items), BATCH_SIZE):
+        batch = all_items[start : start + BATCH_SIZE]
+        response = client.post("/items", json=batch)
+        response.raise_for_status()
+    return len(all_items)
 
 
 def _parse_sessions(
@@ -420,34 +460,20 @@ def _turn_to_item(
 # ---------------------------------------------------------------------------
 
 
-def _evaluate_question(
+def _evaluate_question_from_retrieval(
     *,
-    client: TestClient,
     answer_provider: LLMProvider,
     sample_id: str,
     qa: dict[str, Any],
-    query_limit: int,
+    memory_payload: dict[str, Any],
     speaker_a: str,
     speaker_b: str,
 ) -> dict[str, Any]:
+    """Evaluate a QA pair given pre-fetched retrieval results (thread-safe)."""
     question = qa["question"]
     gold_answer = qa.get("answer", "")
     category = qa.get("category", 0)
     category_name = CATEGORY_NAMES.get(category, f"unknown_{category}")
-
-    query_payload = {
-        "text": question,
-        "limit": query_limit,
-        "container_ref": sample_id,
-        "visibility": "public",
-        "runtime_context": {
-            "turn_kind": "new_session",
-            "session_has_sufficient_local_context": False,
-        },
-    }
-    query_response = client.post("/query/debug", json=query_payload)
-    query_response.raise_for_status()
-    memory_payload = query_response.json()
 
     retrieved_context = _format_retrieved_context(memory_payload)
     answer_result = _generate_answer(
@@ -526,7 +552,8 @@ def _format_retrieved_context(memory_payload: dict[str, Any]) -> str:
         if result.get("result_kind") == "memory_hit":
             payload = result.get("payload") or {}
             summary = (
-                payload.get("carry_forward_answer")
+                payload.get("statement")
+                or payload.get("carry_forward_answer")
                 or payload.get("decision")
                 or payload.get("investigation_outcome")
                 or payload.get("summary")

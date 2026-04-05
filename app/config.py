@@ -146,7 +146,7 @@ class AppConfig:
                 timeout_seconds=timeout_seconds,
                 retry_policy=existing_legacy.retry_policy if existing_legacy else LLMRetryPolicy(),
             )
-            for package_name in ("llm_agent_memory", "agent_conversation_memory"):
+            for package_name in ("llm_agent_memory", "agent_conversation_memory", "conversational_knowledge"):
                 current = packages.get(package_name, SemanticPackageConfig(name=package_name, implementation=package_name))
                 packages[package_name] = SemanticPackageConfig(
                     name=current.name,

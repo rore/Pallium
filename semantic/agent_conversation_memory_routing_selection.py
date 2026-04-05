@@ -480,6 +480,15 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             evidence=item.evidence,
             memory_type=item.type,
         )
+    if item.type == "atomic_fact":
+        return InjectableBlock(
+            result_id=str(item.result_id),
+            block_type="memory",
+            title="Known Fact",
+            text=str(payload.get("statement") or "").strip(),
+            evidence=item.evidence,
+            memory_type=item.type,
+        )
     if item.type in {"thread_summary", "discussion_summary"}:
         summary_text = str(payload.get("summary") or "").strip()
         return InjectableBlock(
