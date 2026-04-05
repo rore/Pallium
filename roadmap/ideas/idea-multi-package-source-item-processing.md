@@ -1,10 +1,11 @@
 ---
 id: idea-multi-package-source-item-processing
 title: Multi-package source item processing
-status: queued
+status: done
 priority: medium
 commitment: uncommitted
 milestone: Idea
+resolved_by: add-multi-package-source-item-processing
 ---
 
 ## Summary

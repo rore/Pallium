@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-04-04
+2026-04-05
 
 ## Repo Snapshot
 
@@ -114,6 +114,7 @@
   - combining marks (Hebrew niqud, Arabic vowels, Latin diacritics) stripped before tokenization
   - cross-language content-overlap bypass: when query and candidate use entirely different Unicode scripts, the gate defers to vector similarity instead of blocking
   - embedding provider supports query/passage prefix modes (`EmbedMode`) for multilingual models
+- embedding provider auto-detects query/passage prefixes for known model families (E5 family)
 - vector index self-healing is shipped:
   - source item vector embedding runs regardless of LLM outcome (survives extraction failures)
   - startup count mismatch logs a warning and continues with reduced recall instead of disabling vector
@@ -139,7 +140,7 @@
   - live exploratory drift and replay-promotion tooling
 - the developer-work confidence harness should be read by hard-gate fields first, not by aggregate scenario-success counts alone
 - replay is now a real tooling surface, but replay coverage is still materially smaller than the authored confidence packs
-- test suite: 854 passed, 5 skipped
+- test suite: 965 passed, 147 skipped
 - semantic extraction fixture set: 58 items (12 decisions, 14 investigations, 20 boundary-null, 13 signal cases)
 - subject_hints eval surface is shipped:
   - ground-truth fixture: 33 items across 7 pattern classes (harder modifiers, gerunds, hard negatives)

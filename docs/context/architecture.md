@@ -309,12 +309,13 @@ Implemented pieces:
 
 Current chosen path:
 
-- provider: OpenAI-compatible
-- model: `gpt-5-mini`
-- extraction prompt variant: `strict_typed_memory_v5_compact_examples`
+- provider: Anthropic Claude
+- model: `claude-sonnet-4-6` (write_extraction), `claude-haiku-4-5` (background roles)
+- extraction prompt variant: `strict_typed_memory_v7_claude_structured`
 - enrichment prompt variant: `search_context_v2_compact`
 - prompt schema: `typed_memory_extraction`
 - prompt schema version: `v7`
+- OpenAI-compatible fallback: `gpt-5-mini` with `strict_typed_memory_v6_work_state_examples`
 
 The item-level prompt now carries field-specific internal-signal rules and examples so a single extraction call can also emit low-value-meta, constraint, blocker, progress, next-step, and key-finding state. Higher-level memory objects can also carry write-time `retrieval_enrichment` produced by the separate `write_enrichment` role. Prompt changes should be validated both with stub tests and with comparative eval runners before defaults change; see [prompt-improvement.md](prompt-improvement.md).
 

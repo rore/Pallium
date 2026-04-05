@@ -23,11 +23,11 @@ The current `agent_conversation_memory` slice intentionally produces more than a
 raw append-only log:
 
 - source items
-- annotations
 - direct memory objects
 - rebuilt thread-level memory
 - explicit evidence relations
 - lexical index entries
+- vector embeddings
 
 That is acceptable for the current bounded use case, but it creates predictable
 future pressure in:

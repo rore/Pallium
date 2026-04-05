@@ -102,6 +102,30 @@ memories from being injected into other users' contexts.
 The lifecycle is intentionally minimal — enough to keep recall useful without
 pretending memory never changes.
 
+## Multilingual Support
+
+Pallium's tokenization and retrieval are language-agnostic. Content in any
+language is handled natively — no language detection or switching required.
+
+Supported scripts:
+
+- **Latin** (English, Spanish, French, German, etc.)
+- **Hebrew** and **Arabic** (right-to-left, with combining mark stripping)
+- **CJK** (Chinese, Japanese, Korean — character-per-token tokenization)
+- **Cyrillic** (Russian, Ukrainian, etc.)
+
+Key behaviors:
+
+- Combining marks (Hebrew niqud, Arabic vowels, Latin diacritics) are stripped
+  before tokenization so variant spellings match
+- When query and candidate use entirely different Unicode scripts, the lexical
+  content-overlap gate defers to vector similarity instead of blocking
+- Embedding providers support query/passage prefix modes for multilingual
+  models (e.g. E5 family). Pallium auto-detects prefixes for known model
+  families.
+
+For configuration, see [configuration.md](configuration.md#embedding-providers).
+
 ## How Retrieval Works
 
 The query path follows a staged pipeline:
@@ -136,6 +160,9 @@ where it returns `should_inject: false`:
 | Low-value query | `low_value_query` | Greetings, acknowledgements, or meta-conversation that won't benefit from memory |
 | Same-thread context | `same_thread_context_sufficient` | The agent already has the relevant context in its current conversation — injection would be redundant |
 | No relevant memory | `no_relevant_memory` | Retrieval ran but nothing matched well enough to surface |
+| Only low-value candidates | `only_low_value_candidates` | Matches found but all are too low-value to inject |
+| Low injection confidence | `low_injection_confidence` | Candidates exist but confidence is too low to recommend injection |
+| No candidates above floor | `no_candidates_above_floor` | Candidates exist but none scored above the minimum routing floor |
 | Lane ambiguity | `lane_ambiguity` | The query didn't clearly map to a retrieval strategy and Pallium chose silence over a guess |
 | No lane eligible | `no_lane_eligible` | No structural lane (work resumption, evidence trace, residual recall) matched the query shape |
 
@@ -193,10 +220,12 @@ use Pallium as a consumer.
 
 ## Semantic Packages
 
-The repo includes three packages:
+The repo includes four packages:
 
 - `agent_conversation_memory` — the production package for repeated questions,
   resumed work, and scoped continuity
+- `conversational_knowledge` — fact extraction package that extracts atomic
+  facts from conversation threads, runs in parallel alongside other packages
 - `llm_agent_memory` — generic LLM-backed extraction over the semantic
   interface
 - `demo_agent_memory` — deterministic skeleton for local testing without a

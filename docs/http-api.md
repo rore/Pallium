@@ -251,7 +251,9 @@ Response fields:
   agent's prompt
 - `decision_reason` — why: `"carry_forward_available"`,
   `"same_thread_context_sufficient"`, `"no_relevant_memory"`,
-  `"only_low_value_candidates"`, or `"low_value_query"`
+  `"only_low_value_candidates"`, `"low_injection_confidence"`,
+  `"no_candidates_above_floor"`, `"constraint_supplement"`,
+  `"low_value_query"`, `"lane_ambiguity"`, or `"no_lane_eligible"`
 - `injectable_blocks` — ready-to-use blocks for prompt injection, each with
   `block_type`, `title`, `text`, optional `memory_type`, and `evidence` refs
 - `results` — ranked result list (see below)
