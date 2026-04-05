@@ -151,7 +151,7 @@ Why:
 
 ### 2026-03-09 - Store prompt provenance with LLM-derived semantic artifacts
 
-LLM-derived annotations, memory objects, and eval traces should record the prompt schema id, prompt schema version, and prompt variant that produced them.
+LLM-derived memory objects and eval traces should record the prompt schema id, prompt schema version, and prompt variant that produced them.
 
 Why:
 
@@ -426,3 +426,24 @@ Why:
   surface in remaining result slots without displacing aligned winners
 - the penalty invariant (`penalty >= focus_boost`) is tested explicitly so the
   ranking guarantee is verifiable, not just assumed
+
+### 2026-04-05 - Remove persisted annotation layer
+
+The `Annotation` model, `AnnotationRecord` ORM, `annotations` DB table, storage
+methods, and all `annotation_ids` / `annotation_count` API fields were removed.
+The core data model is now four primitives: SourceItem, MemoryObject, Relation,
+IndexEntry.
+
+Why:
+
+- annotations were a dead abstraction — their data was 100% duplicated in
+  MemoryObjects; no query-time code ever read them
+- the one functional dependency (provenance relay in
+  `_semantic_provenance_from_process_result`) was validated to always succeed
+  through the memory_object fallback path
+- removing them simplifies the data model, reduces storage writes per ingest,
+  and eliminates a concept that overlapped confusingly with the unrelated routing
+  "annotations" (transient scoring dict keys on candidates)
+- the transient `SemanticExtraction` (intermediate LLM extraction artifact) is
+  preserved — the claim is that *persisted* annotations are unnecessary, not that
+  intermediate extraction is unnecessary

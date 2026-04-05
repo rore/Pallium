@@ -114,6 +114,11 @@
   - worker-integrated bidirectional reconciliation: embeds SQLite entries missing from usearch (batch-bounded), removes stale usearch entries missing from SQLite
   - reconciliation runs as idle-time worker duty alongside source item processing and thread rebuilds
   - `rebuild-vector-index` CLI command remains available for manual recovery
+- persisted annotation layer removed:
+  - `Annotation` model, `AnnotationRecord` ORM, `annotations` DB table, and all storage methods deleted
+  - `annotation_ids` and `annotation_count` removed from API responses and contracts
+  - annotation data was 100% duplicated in MemoryObjects; no query-time code read annotations
+  - core data model reduced to four primitives: SourceItem, MemoryObject, Relation, IndexEntry
 
 ## Verification Notes
 
@@ -128,7 +133,7 @@
   - live exploratory drift and replay-promotion tooling
 - the developer-work confidence harness should be read by hard-gate fields first, not by aggregate scenario-success counts alone
 - replay is now a real tooling surface, but replay coverage is still materially smaller than the authored confidence packs
-- test suite: 780 passed, 5 skipped
+- test suite: 854 passed, 5 skipped
 - semantic extraction fixture set: 58 items (12 decisions, 14 investigations, 20 boundary-null, 13 signal cases)
 - subject_hints eval surface is shipped:
   - ground-truth fixture: 33 items across 7 pattern classes (harder modifiers, gerunds, hard negatives)

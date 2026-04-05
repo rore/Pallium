@@ -50,18 +50,6 @@ class SourceItemRecord(Base):
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 
-class AnnotationRecord(Base):
-    __tablename__ = "annotations"
-
-    id = Column(String, primary_key=True)
-    source_item_id = Column(String, nullable=False)
-    type = Column(String, nullable=False)
-    schema_id = Column(String, nullable=False)
-    schema_version = Column(String, nullable=False)
-    payload_json = Column(Text, nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False)
-
-
 class MemoryObjectRecord(Base):
     __tablename__ = "memory_objects"
 

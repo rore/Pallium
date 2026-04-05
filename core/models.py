@@ -58,17 +58,6 @@ class SourceItem:
     created_at: datetime = field(default_factory=utc_now)
 
 
-@dataclass(frozen=True)
-class Annotation:
-    source_item_id: str
-    type: str
-    schema_id: str
-    schema_version: str
-    payload: dict[str, Any]
-    id: str = field(default_factory=new_id)
-    created_at: datetime = field(default_factory=utc_now)
-
-
 MemoryEnvelopeKind = Literal["constraint", "finding", "episode", "next_step", "summary", "unknown"]
 MemorySubjectAnchorKind = Literal["workstream", "component", "surface"]
 MemoryEnvelopeConfidence = Literal["high", "medium", "low", "unknown"]

@@ -47,7 +47,6 @@ def test_post_items_returns_pending_and_raw_index_only(client) -> None:
     assert response.status_code == 200
     payload = response.json()[0]
     assert payload["source_item_id"]
-    assert payload["annotation_ids"] == []
     assert payload["memory_object_ids"] == []
     assert payload["relation_ids"] == []
     assert len(payload["index_entry_ids"]) == 1
@@ -75,7 +74,6 @@ def test_post_items_is_idempotent_and_returns_current_processing_snapshot(client
     assert second_response.status_code == 200
     assert first_response.json()[0]["processing_status"] == "pending"
     assert second_response.json()[0]["processing_status"] == "completed"
-    assert len(second_response.json()[0]["annotation_ids"]) == 2
     assert len(second_response.json()[0]["memory_object_ids"]) == 1
     assert second_response.json()[0]["processing_attempts"] == 1
 
@@ -265,7 +263,6 @@ def test_llm_plugin_path_processes_after_worker_completion(monkeypatch, test_db_
     llm_client.app.state.pallium_service.drain_processing_queue(worker_id="llm-test")
     status_response = llm_client.get(f"/items/{create_response.json()[0]['source_item_id']}/processing")
     assert status_response.json()["processing_status"] == "completed"
-    assert len(status_response.json()["annotation_ids"]) == 2
 
 
 def test_worker_failure_is_reported_via_processing_endpoint(monkeypatch, test_db_url: str) -> None:
@@ -745,7 +742,6 @@ def test_post_items_batch_returns_list_of_responses(client) -> None:
         assert item_response["source_item_id"]
         assert item_response["processing_status"] == "pending"
         assert item_response["processing_attempts"] == 0
-        assert item_response["annotation_ids"] == []
         assert item_response["memory_object_ids"] == []
         assert len(item_response["index_entry_ids"]) == 1
 

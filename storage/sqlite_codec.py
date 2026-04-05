@@ -5,7 +5,6 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 
 from core.models import (
-    Annotation,
     EvidenceReference,
     IndexEntry,
     MemoryEnvelope,
@@ -19,7 +18,6 @@ from core.models import (
 )
 from storage.base import RetentionLease, ThreadProcessingLease
 from storage.sqlite_schema import (
-    AnnotationRecord,
     IndexEntryRecord,
     MaintenanceStateRecord,
     MemoryObjectRecord,
@@ -65,18 +63,6 @@ class SQLiteCodecMixin:
             processing_completed_at=SQLiteCodecMixin._normalize_datetime(record.processing_completed_at),
             processing_error=record.processing_error,
             processing_next_attempt_at=SQLiteCodecMixin._normalize_datetime(record.processing_next_attempt_at),
-            created_at=SQLiteCodecMixin._normalize_datetime(record.created_at) or utc_now(),
-        )
-
-    @staticmethod
-    def _to_annotation(record: AnnotationRecord) -> Annotation:
-        return Annotation(
-            id=record.id,
-            source_item_id=record.source_item_id,
-            type=record.type,
-            schema_id=record.schema_id,
-            schema_version=record.schema_version,
-            payload=SQLiteCodecMixin._loads(record.payload_json),
             created_at=SQLiteCodecMixin._normalize_datetime(record.created_at) or utc_now(),
         )
 

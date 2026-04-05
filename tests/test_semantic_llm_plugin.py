@@ -121,7 +121,6 @@ def test_llm_plugin_promotes_decision_memory_from_valid_extraction() -> None:
 
     result = plugin.process_item(source_item)
 
-    assert len(result.annotations) == 2
     assert result.memory_objects[0].type == "decision"
     assert result.memory_objects[0].schema_id == "llm.decision"
     assert result.memory_objects[0].payload["decision"] == "use item item event time reservation ordering"
@@ -171,7 +170,6 @@ def test_llm_plugin_promotes_investigation_outcome_from_explicit_verdict_extract
 
     result = plugin.process_item(source_item)
 
-    assert len(result.annotations) == 2
     assert result.memory_objects[0].type == "investigation_outcome"
     assert result.memory_objects[0].payload["investigation_outcome"] == "transaction-transformer had the most significant recent ledger changes"
     assert result.memory_objects[0].payload["investigation_evidence_text"] == "Here's the verdict: transaction-transformer had the most significant recent ledger changes by a wide margin."
@@ -262,8 +260,7 @@ def test_llm_plugin_returns_internal_signals_and_metadata_patch_from_single_call
     trace = plugin.analyze_item(source_item)
 
     assert trace.process_result.memory_objects[0].type == "discussion_summary"
-    summary_annotation = trace.process_result.annotations[0]
-    semantic_signals = summary_annotation.payload["semantic_signals"]
+    semantic_signals = trace.process_result.source_item_metadata_updates[source_item.id][SEMANTIC_SIGNAL_METADATA_KEY]
     assert semantic_signals["constraint_text"].startswith("No browser auth")
     assert semantic_signals["next_step_text"].startswith("Compare ledger-query")
     assert semantic_signals["blocker_text"].startswith("Browser and SSO")
@@ -307,10 +304,8 @@ def test_llm_plugin_flags_low_value_meta_without_promoting_typed_memory() -> Non
 
     result = plugin.process_item(source_item)
 
-    assert len(result.annotations) == 1
     assert result.memory_objects == []
     assert result.thread_rebuild_requested is False
-    assert result.annotations[0].payload["semantic_signals"]["is_low_value_meta"] is True
     assert result.source_item_metadata_updates[source_item.id][SEMANTIC_SIGNAL_METADATA_KEY]["is_low_value_meta"] is True
 
 
@@ -348,7 +343,6 @@ def test_llm_plugin_promotes_investigation_outcome_from_valid_extraction() -> No
 
     result = plugin.process_item(source_item)
 
-    assert len(result.annotations) == 2
     assert result.memory_objects[0].type == "investigation_outcome"
     assert result.memory_objects[0].payload["investigation_outcome"] == "arrival-time ordering missed hold updates during sync delays"
     assert result.memory_objects[0].payload["investigation_evidence_text"] == "Investigation found that arrival-time ordering missed hold updates during sync delays"
@@ -387,7 +381,6 @@ def test_llm_plugin_uses_discussion_summary_when_typed_output_lacks_evidence_tex
 
     result = plugin.process_item(source_item)
 
-    assert len(result.annotations) == 1
     assert result.memory_objects[0].type == "discussion_summary"
     assert result.memory_objects[0].schema_id == "llm.discussion_summary"
 
@@ -427,7 +420,6 @@ def test_llm_plugin_promotes_decision_when_evidence_is_grounded_in_source() -> N
 
     result = plugin.process_item(source_item)
 
-    assert len(result.annotations) == 2  # summary + typed_candidate
     assert result.memory_objects[0].type == "decision"
 
 
@@ -466,7 +458,6 @@ def test_llm_plugin_promotes_investigation_when_evidence_is_grounded_in_source()
 
     result = plugin.process_item(source_item)
 
-    assert len(result.annotations) == 2  # summary + typed_candidate
     assert result.memory_objects[0].type == "investigation_outcome"
 
 

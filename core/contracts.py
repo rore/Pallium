@@ -5,7 +5,6 @@ from datetime import datetime
 from typing import Any
 
 from core.models import (
-    Annotation,
     IndexEntry,
     InjectableBlock,
     MemoryObject,
@@ -29,7 +28,6 @@ class SupersessionHint:
 
 @dataclass(frozen=True)
 class ProcessResult:
-    annotations: list[Annotation]
     memory_objects: list[MemoryObject]
     relations: list[Relation]
     index_entries: list[IndexEntry]
@@ -41,7 +39,6 @@ class ProcessResult:
 @dataclass(frozen=True)
 class IngestResult:
     source_item_id: str
-    annotation_ids: list[str]
     memory_object_ids: list[str]
     relation_ids: list[str]
     index_entry_ids: list[str]
@@ -52,7 +49,6 @@ class IngestResult:
     def as_dict(self) -> dict[str, object]:
         return {
             "source_item_id": self.source_item_id,
-            "annotation_ids": self.annotation_ids,
             "memory_object_ids": self.memory_object_ids,
             "relation_ids": self.relation_ids,
             "index_entry_ids": self.index_entry_ids,
@@ -71,12 +67,10 @@ class ItemProcessingResult:
     processing_claimed_at: datetime | None
     processing_completed_at: datetime | None
     processing_error: str | None
-    annotation_ids: list[str]
     memory_object_ids: list[str]
     relation_ids: list[str]
     index_entry_ids: list[str]
     failure_category: str | None = None
-    annotation_count: int = 0
     memory_object_types: list[str] = field(default_factory=list)
     thread_rebuild_requested: bool = False
     thread_rebuild_completed: bool = False
@@ -91,12 +85,10 @@ class ItemProcessingResult:
             "processing_claimed_at": self.processing_claimed_at,
             "processing_completed_at": self.processing_completed_at,
             "processing_error": self.processing_error,
-            "annotation_ids": self.annotation_ids,
             "memory_object_ids": self.memory_object_ids,
             "relation_ids": self.relation_ids,
             "index_entry_ids": self.index_entry_ids,
             "failure_category": self.failure_category,
-            "annotation_count": self.annotation_count,
             "memory_object_types": self.memory_object_types,
             "thread_rebuild_requested": self.thread_rebuild_requested,
             "thread_rebuild_completed": self.thread_rebuild_completed,

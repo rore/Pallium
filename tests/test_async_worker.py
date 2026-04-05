@@ -55,7 +55,6 @@ class BlockingThreadAggregationPlugin(ThreadAggregationSemanticPlugin):
             visibility=source_item.visibility,
         )
         return ProcessResult(
-            annotations=[],
             memory_objects=[decision],
             relations=[
                 Relation(
@@ -123,7 +122,6 @@ class BlockingThreadAggregationPlugin(ThreadAggregationSemanticPlugin):
             for source_item_id in aggregate.source_item_ids
         ]
         return ProcessResult(
-            annotations=[],
             memory_objects=[thread_summary, task_checkpoint],
             relations=relations,
             index_entries=[],
@@ -323,7 +321,6 @@ def test_transactional_commit_rolls_back_partial_processing_and_retry_stays_clea
     assert after_first.processing_status == 'pending'
     assert after_first.processing_attempts == 1
     assert after_first.processing_error == 'commit boom'
-    assert after_first.annotation_ids == []
     assert after_first.memory_object_ids == []
     assert after_first.relation_ids == []
     assert len(after_first.index_entry_ids) == 1
@@ -341,7 +338,6 @@ def test_transactional_commit_rolls_back_partial_processing_and_retry_stays_clea
     assert final_state.processing_status == 'completed'
     assert final_state.processing_attempts == 2
     assert final_state.processing_error is None
-    assert len(final_state.annotation_ids) == 2
     assert len(final_state.memory_object_ids) == 1
     assert len(final_state.relation_ids) == 1
     assert len(final_state.index_entry_ids) == 3  # source_item content + memory lexical + memory vector
@@ -487,7 +483,7 @@ def test_thread_processing_lease_is_single_winner_and_expired_lease_is_reclaimab
     )
     storage.commit_processed_source_item(
         source_item_id=source_item.id,
-        result=ProcessResult(annotations=[], memory_objects=[], relations=[], index_entries=[]),
+        result=ProcessResult(memory_objects=[], relations=[], index_entries=[]),
         thread_rebuild_scope=scope,
     )
 
@@ -583,7 +579,7 @@ def test_thread_rebuild_loop_exits_after_max_iterations(test_db_url: str) -> Non
             return True
 
         def process_item(self, source_item):
-            return ProcessResult(annotations=[], memory_objects=[], relations=[], index_entries=[])
+            return ProcessResult(memory_objects=[], relations=[], index_entries=[])
 
         def supports_thread_aggregation(self, source_item) -> bool:
             return True

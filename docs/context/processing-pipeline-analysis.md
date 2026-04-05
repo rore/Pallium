@@ -104,7 +104,7 @@ Item sits in the pending queue until a processor claims it.
 | 2d. Create vector index entry metadata | SQLite write | ~1ms | — | Records the text_view, not the vector yet |
 | **2e. LLM extraction** | **HTTP round-trip** | **~500ms-3s** | — | **Dominant cost.** 1 call to Sonnet (write_extraction role) |
 | 2f. Reconcile result | in-memory + SQLite | ~5ms | 2e | Supersession check against existing memory |
-| 2g. SQLite commit | SQLite write | ~5-10ms | 2f | Atomic: memory objects, annotations, relations, index entries, status→completed |
+| 2g. SQLite commit | SQLite write | ~5-10ms | 2f | Atomic: memory objects, relations, index entries, status→completed |
 | 2h. Embed memory object vectors | ONNX inference | ~20-50ms | 2g | Batched for all vector entries in the result |
 | 2i. **Save vector index to disk** | File I/O | ~5-20ms | 2h | Writes full index + idmap + meta |
 | 2j. Embed source item vector | ONNX inference | ~20-50ms | 2g | Source content embedding |

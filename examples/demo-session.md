@@ -38,7 +38,6 @@ Response confirms ingest:
 [{
   "source_item_id": "si_a1b2c3",
   "processing_status": "pending",
-  "annotation_ids": [],
   "memory_object_ids": [],
   "relation_ids": [],
   "index_entry_ids": []

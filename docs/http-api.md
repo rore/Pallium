@@ -104,8 +104,6 @@ Recommended example for `agent_conversation_memory`:
 Response — always an array:
 
 - `source_item_id` — internal ID assigned by Pallium
-- `annotation_ids` — IDs of semantic annotations produced (may be empty if
-  processing is still pending)
 - `memory_object_ids` — IDs of any memory objects promoted immediately
 - `relation_ids` — IDs of evidence relations created
 - `index_entry_ids` — IDs of retrieval index entries created
@@ -138,7 +136,7 @@ The response includes:
 
 - processing state and attempts
 - any processing error and failure category
-- produced annotation, memory, relation, and index ids
+- produced memory, relation, and index ids
 - produced memory types
 - whether thread rebuild was requested and completed
 - compact provenance for produced memory

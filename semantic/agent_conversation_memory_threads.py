@@ -526,7 +526,6 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 for conclusion in carried_conclusions
             )
         return ProcessResult(
-            annotations=[],
             memory_objects=memory_objects,
             relations=relations,
             index_entries=index_entries,
@@ -777,7 +776,6 @@ def build_pattern_memory(*, provider: LLMProvider, prompt_variant: str, plugin_n
             llm_metadata=response.metadata,
         )
         return ProcessResult(
-            annotations=[],
             memory_objects=[memory_object],
             relations=[],
             index_entries=index_entries,
@@ -876,7 +874,6 @@ def build_continuity_memory(*, provider: LLMProvider, prompt_variant: str, plugi
             llm_metadata=response.metadata,
         )
         return ProcessResult(
-            annotations=[],
             memory_objects=[memory_object],
             relations=[],
             index_entries=index_entries,

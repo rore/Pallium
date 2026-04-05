@@ -56,7 +56,6 @@ class ItemCreateResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     source_item_id: str
-    annotation_ids: list[str]
     memory_object_ids: list[str]
     relation_ids: list[str]
     index_entry_ids: list[str]
@@ -82,12 +81,10 @@ class ProcessingStatusResponse(BaseModel):
     processing_claimed_at: datetime | None = None
     processing_completed_at: datetime | None = None
     processing_error: str | None = None
-    annotation_ids: list[str]
     memory_object_ids: list[str]
     relation_ids: list[str]
     index_entry_ids: list[str]
     failure_category: str | None = None
-    annotation_count: int = 0
     memory_object_types: list[str] = Field(default_factory=list)
     thread_rebuild_requested: bool = False
     thread_rebuild_completed: bool = False

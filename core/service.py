@@ -334,7 +334,6 @@ class PalliumService:
         processing = self._build_processing_result(source_item)
         return IngestResult(
             source_item_id=processing.source_item_id,
-            annotation_ids=processing.annotation_ids,
             memory_object_ids=processing.memory_object_ids,
             relation_ids=processing.relation_ids,
             index_entry_ids=processing.index_entry_ids,
@@ -344,7 +343,6 @@ class PalliumService:
         )
 
     def _build_processing_result(self, source_item: SourceItem) -> ItemProcessingResult:
-        annotations = self._storage.list_annotations_for_source_item(source_item.id)
         memory_objects = self._storage.list_memory_objects_for_source_item(source_item.id)
         relations = self._storage.list_relations_for_source_item(source_item.id)
         index_entries = self._storage.list_index_entries_for_target(
@@ -367,12 +365,10 @@ class PalliumService:
             processing_claimed_at=source_item.processing_claimed_at,
             processing_completed_at=source_item.processing_completed_at,
             processing_error=source_item.processing_error,
-            annotation_ids=[item.id for item in annotations],
             memory_object_ids=[item.id for item in memory_objects],
             relation_ids=[item.id for item in relations],
             index_entry_ids=[item.id for item in index_entries],
             failure_category=observability.get("failure_category"),
-            annotation_count=int(observability.get("annotation_count", len(annotations))),
             memory_object_types=list(observability.get("memory_object_types", [item.type for item in memory_objects])),
             thread_rebuild_requested=bool(observability.get("thread_rebuild_requested", False)),
             thread_rebuild_completed=bool(observability.get("thread_rebuild_completed", False)),
@@ -443,8 +439,6 @@ class PalliumService:
         )
 
     def _persist_process_result(self, result: ProcessResult) -> None:
-        for annotation in result.annotations:
-            self._storage.create_annotation(annotation)
         for memory_object in result.memory_objects:
             self._storage.create_memory_object(memory_object)
         for relation in result.relations:

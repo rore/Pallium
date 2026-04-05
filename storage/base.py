@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from core.contracts import MemoryRetentionPolicy, ProcessResult
-from core.models import Annotation, EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
+from core.models import EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
 from core.turn_inference import ThreadStats
 from core.visibility import VisibilityExclusion
 
@@ -332,23 +332,11 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def create_annotation(self, annotation: Annotation) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
     def list_source_items_for_thread(self, container_ref: str, thread_ref: str) -> list[SourceItem]:
         raise NotImplementedError
 
     @abstractmethod
     def get_thread_stats(self, thread_ref: str, *, exclude_item_id: str | None = None) -> ThreadStats:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_annotation(self, annotation_id: str) -> Annotation:
-        raise NotImplementedError
-
-    @abstractmethod
-    def list_annotations_for_source_item(self, source_item_id: str) -> list[Annotation]:
         raise NotImplementedError
 
     @abstractmethod

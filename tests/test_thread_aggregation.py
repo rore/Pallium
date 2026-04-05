@@ -395,7 +395,7 @@ def test_agent_conversation_runner_surfaces_thread_summary(monkeypatch, tmp_path
 
 
 
-def test_low_value_meta_item_keeps_raw_source_and_summary_annotation_without_durable_memory(monkeypatch, test_db_url: str) -> None:
+def test_low_value_meta_item_keeps_raw_source_without_durable_memory(monkeypatch, test_db_url: str) -> None:
     client = _create_thread_client(monkeypatch, test_db_url)
     response = client.post(
         "/items",
@@ -415,12 +415,10 @@ def test_low_value_meta_item_keeps_raw_source_and_summary_annotation_without_dur
     source_item_id = response.json()[0]["source_item_id"]
     storage = client.app.state.pallium_service._storage
     source_item = storage.get_source_item(source_item_id)
-    annotations = storage.list_annotations_for_source_item(source_item_id)
     memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
     processing = client.app.state.pallium_service.get_item_processing(source_item_id)
 
     assert source_item.source_id == "thread-meta-1"
-    assert any(annotation.type == "summary" for annotation in annotations)
     assert all(memory.type != "discussion_summary" for memory in memory_objects)
     assert all(memory.type != "thread_summary" for memory in memory_objects)
     assert processing.thread_rebuild_requested is False
