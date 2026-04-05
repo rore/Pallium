@@ -57,7 +57,6 @@ FACT_EXTRACTION_SYSTEM_PROMPT = (
     "Skip: greetings, filler, emotional reactions, generic encouragement, meta-conversation, trivial restatements. "
     "If the same fact is mentioned multiple times, extract it once in its most specific form. "
     "Resolve relative dates using the session date. \"Last Tuesday\" with session date 2024-03-15 → \"approximately 2024-03-12\". "
-    "Preserve the original language — do not translate. "
     "\n"
     "Good extraction: {\"subject\": \"Jordan\", \"statement\": \"Jordan completed a half-marathon in Denver on approximately 2024-03-12\", \"category\": \"event\"}\n"
     "Bad extraction: {\"subject\": \"Jordan\", \"statement\": \"Jordan likes running\", \"category\": \"personal\"} — too vague, inferable from the good one.\n"
@@ -65,7 +64,11 @@ FACT_EXTRACTION_SYSTEM_PROMPT = (
     "Return JSON with key 'facts' containing up to 10 items. "
     "Each: subject (string), statement (string), category (personal | event | preference | relationship | activity). "
     "Prioritize facts with names, dates, or numbers. "
-    "If no extractable facts, return {\"facts\": []}."
+    "If no extractable facts, return {\"facts\": []}. "
+    "\n"
+    "LANGUAGE: The examples above are in English for illustration only. "
+    "Write the statement field in the same language as the conversation messages. "
+    "If the conversation is in Hebrew, statements must be in Hebrew. Do not translate."
 )
 
 FACT_EXTRACTION_SCHEMA_DESCRIPTION = json.dumps(
