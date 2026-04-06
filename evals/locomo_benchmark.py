@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import urllib.request
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -35,6 +36,7 @@ from providers.llm.base import LLMProvider
 
 DEFAULT_DATASET_PATH = Path("evals/locomo/datasets/locomo10.json")
 DEFAULT_OUTPUT_DIR = Path("evals/locomo/output")
+DEFAULT_DB_CACHE_DIR = Path("evals/locomo/db_cache")
 LOCOMO_DATASET_URL = (
     "https://raw.githubusercontent.com/LuxiaraQian/locomo/main/data/locomo10.json"
 )
@@ -115,6 +117,27 @@ def main() -> int:
         action="store_true",
         help="Download the LoCoMo dataset if not present.",
     )
+    parser.add_argument(
+        "--db-cache-dir",
+        type=Path,
+        default=None,
+        help="Cache processed DBs per conversation. Skips ingestion+extraction on reuse.",
+    )
+    parser.add_argument(
+        "--rebuild-db-cache",
+        action="store_true",
+        help="Force rebuild of cached DBs even if they exist.",
+    )
+    parser.add_argument(
+        "--mini",
+        action="store_true",
+        help="Run a small representative subset (3 questions per category per conversation).",
+    )
+    parser.add_argument(
+        "--verbose-results",
+        action="store_true",
+        help="Record full retrieval details in results for diagnostic analysis.",
+    )
     args = parser.parse_args()
 
     if not args.dataset.exists():
@@ -135,6 +158,10 @@ def main() -> int:
         limit_questions=args.limit_questions,
         query_limit=args.query_limit,
         cache_dir=args.cache_dir,
+        db_cache_dir=args.db_cache_dir,
+        rebuild_db_cache=args.rebuild_db_cache,
+        mini=args.mini,
+        verbose_results=args.verbose_results,
     )
     print(f"\nResults: {run_dir}")
     return 0
@@ -156,6 +183,10 @@ def run_locomo_benchmark(
     limit_questions: int | None = None,
     query_limit: int = 10,
     cache_dir: Path | None = None,
+    db_cache_dir: Path | None = None,
+    rebuild_db_cache: bool = False,
+    mini: bool = False,
+    verbose_results: bool = False,
 ) -> Path:
     dataset = _load_dataset(dataset_path)
     if conversation_ids:
@@ -202,6 +233,10 @@ def run_locomo_benchmark(
                 limit_questions=limit_questions,
                 query_limit=query_limit,
                 cache_dir=cache_dir,
+                db_cache_dir=db_cache_dir,
+                rebuild_db_cache=rebuild_db_cache,
+                mini=mini,
+                verbose_results=verbose_results,
             )
             for result in conv_results:
                 all_results.append(result)
@@ -239,10 +274,24 @@ def _evaluate_conversation(
     limit_questions: int | None,
     query_limit: int,
     cache_dir: Path | None,
+    db_cache_dir: Path | None = None,
+    rebuild_db_cache: bool = False,
+    mini: bool = False,
+    verbose_results: bool = False,
 ) -> list[dict[str, Any]]:
     sample_id = conversation["sample_id"]
     conv = conversation["conversation"]
     qa_pairs = [qa for qa in conversation["qa"] if qa.get("category") != 5]
+
+    # Mini mode: 3 questions per category for fast iteration.
+    if mini:
+        by_cat: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for qa in qa_pairs:
+            by_cat[qa.get("category", 0)].append(qa)
+        qa_pairs = []
+        for cat in sorted(by_cat):
+            qa_pairs.extend(by_cat[cat][:3])
+
     if limit_questions:
         qa_pairs = qa_pairs[:limit_questions]
 
@@ -252,11 +301,33 @@ def _evaluate_conversation(
 
     results: list[dict[str, Any]] = []
 
+    # DB caching: reuse a processed DB if available.
+    cached_db_path = None
+    cached_vector_path = None
+    use_cached_db = False
+    if db_cache_dir is not None:
+        db_cache_dir.mkdir(parents=True, exist_ok=True)
+        cached_db_path = db_cache_dir / f"{sample_id}.db"
+        cached_vector_prefix = db_cache_dir / f"{sample_id}.vector.index"
+        use_cached_db = (
+            not rebuild_db_cache
+            and cached_db_path.exists()
+            and cached_vector_prefix.exists()
+        )
+
     with TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
-        database_url = f"sqlite:///{Path(temp_dir) / 'locomo.db'}"
+        db_path = Path(temp_dir) / "locomo.db"
+        vector_path = Path(temp_dir) / "vector.index"
+
+        if use_cached_db:
+            shutil.copy2(cached_db_path, db_path)
+            _copy_vector_index(cached_vector_prefix, vector_path)
+            print(f"  Using cached DB for {sample_id}")
+
+        database_url = f"sqlite:///{db_path}"
         vector_index_config = replace(
             config.vector_index,
-            index_path=str(Path(temp_dir) / "vector.index"),
+            index_path=str(vector_path),
         )
         scenario_config = replace(
             config,
@@ -270,28 +341,34 @@ def _evaluate_conversation(
                 from evals.generated_exploratory.invariant_runner import (
                     _wrap_providers_with_cache,
                 )
-
                 _wrap_providers_with_cache(client, cache_dir)
 
-            # --- ingest all turns ---
-            turn_count = _ingest_conversation(
-                client=client,
-                sample_id=sample_id,
-                sessions=sessions,
-                speaker_a=speaker_a,
-                speaker_b=speaker_b,
-            )
-            print(
-                f"  Ingested {turn_count} turns across {len(sessions)} sessions"
-            )
+            if not use_cached_db:
+                # --- ingest all turns ---
+                turn_count = _ingest_conversation(
+                    client=client,
+                    sample_id=sample_id,
+                    sessions=sessions,
+                    speaker_a=speaker_a,
+                    speaker_b=speaker_b,
+                )
+                print(
+                    f"  Ingested {turn_count} turns across {len(sessions)} sessions"
+                )
 
-            # --- semantic extraction ---
-            print("  Processing semantic extraction...")
-            client.app.state.pallium_service.drain_processing_queue(
-                worker_id="locomo-runner"
-            )
-            client.app.state.pallium_service.reconcile_vector_index()
-            print("  Processing complete")
+                # --- semantic extraction ---
+                print("  Processing semantic extraction...")
+                client.app.state.pallium_service.drain_processing_queue(
+                    worker_id="locomo-runner"
+                )
+                client.app.state.pallium_service.reconcile_vector_index()
+                print("  Processing complete")
+
+                # Cache the processed DB for reuse.
+                if cached_db_path is not None:
+                    shutil.copy2(db_path, cached_db_path)
+                    _copy_vector_index(vector_path, cached_vector_prefix)
+                    print(f"  Cached DB for {sample_id}")
 
             # --- evaluate each QA pair (parallel justifier+judge) ---
             qa_inputs: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
@@ -323,6 +400,7 @@ def _evaluate_conversation(
                     memory_payload=mem_payload,
                     speaker_a=speaker_a,
                     speaker_b=speaker_b,
+                    verbose=verbose_results,
                 )
 
             with ThreadPoolExecutor(max_workers=4) as pool:
@@ -468,10 +546,11 @@ def _evaluate_question_from_retrieval(
     memory_payload: dict[str, Any],
     speaker_a: str,
     speaker_b: str,
+    verbose: bool = False,
 ) -> dict[str, Any]:
     """Evaluate a QA pair given pre-fetched retrieval results (thread-safe)."""
     question = qa["question"]
-    gold_answer = qa.get("answer", "")
+    gold_answer = str(qa.get("answer", ""))
     category = qa.get("category", 0)
     category_name = CATEGORY_NAMES.get(category, f"unknown_{category}")
 
@@ -491,7 +570,10 @@ def _evaluate_question_from_retrieval(
         predicted_answer=answer_result["answer"],
     )
 
-    return {
+    # Check if the gold answer content appears in the retrieved context.
+    gold_in_context = _gold_in_context(gold_answer, retrieved_context)
+
+    result: dict[str, Any] = {
         "sample_id": sample_id,
         "question": question,
         "gold_answer": gold_answer,
@@ -509,7 +591,14 @@ def _evaluate_question_from_retrieval(
             memory_payload.get("injectable_blocks", [])
         ),
         "retrieval_summary": _retrieval_summary(memory_payload),
+        "gold_in_context": gold_in_context,
     }
+
+    if verbose:
+        result["retrieved_results"] = _compact_results(memory_payload)
+        result["justifier_context"] = retrieved_context[:2000]
+
+    return result
 
 
 def _format_retrieved_context(memory_payload: dict[str, Any]) -> str:
@@ -674,6 +763,50 @@ def _retrieval_summary(memory_payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _gold_in_context(gold_answer: str, context: str) -> bool:
+    """Check if the gold answer's key terms appear in the retrieved context."""
+    gold_lower = gold_answer.lower().strip()
+    context_lower = context.lower()
+    # Direct substring match.
+    if gold_lower in context_lower:
+        return True
+    # Check if key content words from the gold answer appear.
+    gold_tokens = {
+        t for t in gold_lower.split()
+        if len(t) >= 3 and t not in {"the", "and", "for", "was", "that", "with", "from", "she", "her", "his"}
+    }
+    if not gold_tokens:
+        return False
+    matched = sum(1 for t in gold_tokens if t in context_lower)
+    return matched >= len(gold_tokens) * 0.6
+
+
+def _compact_results(memory_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Create compact result records for verbose output."""
+    compact: list[dict[str, Any]] = []
+    for r in memory_payload.get("results", []):
+        entry: dict[str, Any] = {
+            "kind": r.get("result_kind"),
+            "type": r.get("type"),
+            "score": r.get("score"),
+            "retrieval_source": r.get("retrieval_source"),
+        }
+        if r.get("result_kind") == "source_hit":
+            entry["excerpt"] = (r.get("excerpt") or "")[:150]
+            entry["occurred_at"] = r.get("occurred_at")
+        else:
+            payload = r.get("payload") or {}
+            entry["text"] = (
+                payload.get("statement")
+                or payload.get("summary")
+                or payload.get("decision")
+                or payload.get("carry_forward_answer")
+                or ""
+            )[:150]
+        compact.append(entry)
+    return compact
+
+
 # ---------------------------------------------------------------------------
 # Summary & report
 # ---------------------------------------------------------------------------
@@ -749,6 +882,13 @@ def _build_summary(
     inject_count = sum(1 for r in results if r["should_inject"])
     inject_rate = inject_count / total * 100 if total else 0
 
+    # Retrieval diagnostic: how often was the gold answer in the context?
+    gold_in_ctx = sum(1 for r in results if r.get("gold_in_context"))
+    gold_in_ctx_correct = sum(1 for r in results if r.get("gold_in_context") and r["correct"])
+    gold_in_ctx_wrong = sum(1 for r in results if r.get("gold_in_context") and not r["correct"])
+    gold_not_in_ctx = sum(1 for r in results if not r.get("gold_in_context"))
+    gold_not_in_ctx_correct = sum(1 for r in results if not r.get("gold_in_context") and r["correct"])
+
     return {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -765,6 +905,13 @@ def _build_summary(
         "retrieval_stats": {
             "avg_results_per_query": round(avg_results, 1),
             "injection_rate_pct": round(inject_rate, 1),
+        },
+        "retrieval_diagnostic": {
+            "gold_in_context": gold_in_ctx,
+            "gold_in_context_correct": gold_in_ctx_correct,
+            "gold_in_context_wrong": gold_in_ctx_wrong,
+            "gold_not_in_context": gold_not_in_ctx,
+            "gold_not_in_context_but_correct": gold_not_in_ctx_correct,
         },
     }
 
@@ -825,6 +972,32 @@ def _build_report(
         ]
     )
 
+    diag = summary.get("retrieval_diagnostic", {})
+    if diag:
+        gold_in = diag.get("gold_in_context", 0)
+        gold_in_correct = diag.get("gold_in_context_correct", 0)
+        gold_in_wrong = diag.get("gold_in_context_wrong", 0)
+        gold_out = diag.get("gold_not_in_context", 0)
+        gold_out_correct = diag.get("gold_not_in_context_but_correct", 0)
+        total_q = gold_in + gold_out
+        lines.extend(
+            [
+                "",
+                "## Retrieval Diagnostic",
+                "",
+                f"- Gold answer found in context: {gold_in}/{total_q} "
+                f"({round(gold_in / total_q * 100, 1) if total_q else 0}%)",
+                f"  - Correct when found: {gold_in_correct}/{gold_in} "
+                f"({round(gold_in_correct / gold_in * 100, 1) if gold_in else 0}%)",
+                f"  - Wrong despite found: {gold_in_wrong}/{gold_in} "
+                f"({round(gold_in_wrong / gold_in * 100, 1) if gold_in else 0}%) — justifier failures",
+                f"- Gold answer NOT in context: {gold_out}/{total_q} "
+                f"({round(gold_out / total_q * 100, 1) if total_q else 0}%) — retrieval failures",
+                f"  - Correct despite not found: {gold_out_correct}/{gold_out} "
+                f"({round(gold_out_correct / gold_out * 100, 1) if gold_out else 0}%)",
+            ]
+        )
+
     failures = [
         r
         for r in results
@@ -872,6 +1045,15 @@ def _download_dataset(path: Path) -> None:
     print(f"Downloading LoCoMo dataset to {path} ...")
     urllib.request.urlretrieve(LOCOMO_DATASET_URL, path)
     print("Done.")
+
+
+def _copy_vector_index(src: Path, dst: Path) -> None:
+    """Copy all vector index files (main + .idmap.json + .meta.json)."""
+    for suffix in ("", ".idmap.json", ".meta.json"):
+        src_file = Path(f"{src}{suffix}")
+        dst_file = Path(f"{dst}{suffix}")
+        if src_file.exists():
+            shutil.copy2(src_file, dst_file)
 
 
 def _build_run_id(config: AppConfig) -> str:
