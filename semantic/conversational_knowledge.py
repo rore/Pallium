@@ -12,13 +12,14 @@ import json
 import logging
 from typing import Any
 
+from capabilities.consolidation import ConsolidationGroup, ConsolidationPolicy
 from capabilities.thread_aggregation import ThreadAggregate
 from core.contracts import ProcessResult
 from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
 from core.models import MemoryObject, Relation, SourceItem, new_id, utc_now
 from core.type_registry import TypeRegistration, TypeRegistry
 from providers.llm.base import LLMProvider, LLMJsonResponse
-from semantic.base import ThreadAggregationSemanticPlugin
+from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
 from semantic.common import normalize_for_index
 
 
@@ -49,6 +50,35 @@ ELIGIBLE_ARTIFACT_ROLES = {
 }
 
 FACT_EXTRACTION_MAX_THREAD_CHARS = 6000
+
+# ── Fact summary (consolidation output) constants ────────────────────────
+
+FACT_SUMMARY_SCHEMA_ID = "conversational_knowledge.fact_summary"
+FACT_SUMMARY_SCHEMA_VERSION = "v1"
+FACT_SUMMARY_TYPE = "fact_summary"
+
+FACT_CONSOLIDATION_PROMPT_SCHEMA_ID = "fact_consolidation"
+FACT_CONSOLIDATION_PROMPT_SCHEMA_VERSION = "v1"
+
+FACT_SUMMARY_LEXICAL_TEXT_VIEW = "memory_object.fact_summary_statement"
+FACT_SUMMARY_VECTOR_TEXT_VIEW = "memory_object.fact_summary_embedding"
+
+FACT_CONSOLIDATION_SYSTEM_PROMPT = (
+    "Consolidate the atomic facts below into one summary for the given subject and category. "
+    "Return JSON: {\"summary\": \"...\"}\n"
+    "Format: a single sentence starting with \"{subject}'s {category}:\" followed by a comma-separated enumeration. "
+    "Include sub-details in parentheses where multiple facts relate to the same topic. "
+    "Merge duplicates. Preserve all proper nouns, dates, numbers, and qualifying details. "
+    "Do not add inferences or facts not in the input. "
+    "Write in the same language as the input facts."
+)
+
+FACT_CONSOLIDATION_SCHEMA_DESCRIPTION = json.dumps(
+    {"summary": "consolidated fact summary as enumerated list"},
+    indent=2,
+)
+
+# ── Extraction prompt ────────────────────────────────────────────────────
 
 FACT_EXTRACTION_SYSTEM_PROMPT = (
     "Extract specific, atomic facts from the conversation below. "
@@ -90,8 +120,8 @@ FACT_EXTRACTION_SCHEMA_DESCRIPTION = json.dumps(
 )
 
 
-class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin):
-    """Extracts atomic facts from conversation threads."""
+class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, ConsolidationSemanticPlugin):
+    """Extracts atomic facts from conversation threads and consolidates them cross-thread."""
 
     name = "conversational_knowledge"
 
@@ -114,6 +144,32 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin):
     @property
     def thread_conclusion_types(self) -> frozenset[str]:
         return frozenset()
+
+    # ── Consolidation interface ──────────────────────────────────────────
+
+    @property
+    def consolidation_policy(self) -> ConsolidationPolicy | None:
+        return ConsolidationPolicy(
+            enabled_strategies=("fact_consolidation",),
+            default_strategy="fact_consolidation",
+            max_candidates_per_run=200,
+            max_group_size=50,
+            same_container_required=True,
+            time_window_hours=8760,
+            lexical_overlap_threshold=0,
+        )
+
+    def supports_consolidation(self, memory_object: MemoryObject) -> bool:
+        return memory_object.type == FACT_TYPE
+
+    def build_consolidated_memory(self, group: ConsolidationGroup) -> ProcessResult:
+        return _build_fact_summary(
+            provider=self._provider,
+            group=group,
+            prompt_variant=self._prompt_variant,
+        )
+
+    # ── Per-item processing ──────────────────────────────────────────────
 
     def process_item(self, source_item: SourceItem) -> ProcessResult:
         """Lightweight per-item check. No LLM calls, no memory objects.
@@ -255,7 +311,7 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin):
         return [f for f in facts if isinstance(f, dict) and f.get("statement")]
 
     def register_routing_types(self, registry: TypeRegistry) -> None:
-        """Register atomic_fact type with the core type registry."""
+        """Register atomic_fact and fact_summary types with the core type registry."""
         registry.register(
             TypeRegistration(
                 type_name="atomic_fact",
@@ -270,6 +326,22 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin):
                 block_title="Known Fact",
                 block_text_field="statement",
                 high_value=False,
+            )
+        )
+        registry.register(
+            TypeRegistration(
+                type_name="fact_summary",
+                layer_name="fact_summary",
+                weight_by_intent={
+                    "recall": 150,
+                    "structured_recall": 170,
+                    "work_resumption": 60,
+                    "evidence_trace": 120,
+                },
+                default_weight=100,
+                block_title="Fact Summary",
+                block_text_field="summary",
+                high_value=True,
             )
         )
 
@@ -373,3 +445,104 @@ def _extract_session_date(source_items: list[SourceItem]) -> str | None:
     if not dates:
         return None
     return min(dates).strftime("%Y-%m-%d")
+
+
+# ── Fact consolidation ───────────────────────────────────────────────────
+
+
+def _build_fact_summary(
+    *,
+    provider: LLMProvider,
+    group: ConsolidationGroup,
+    prompt_variant: str,
+) -> ProcessResult:
+    """Synthesize a group of atomic_facts into one fact_summary via LLM."""
+    fact_lines: list[str] = []
+    for candidate in group.candidates:
+        statement = str(candidate.memory_object.payload.get("statement", "")).strip()
+        if statement:
+            fact_lines.append(f"- {statement}")
+
+    if not fact_lines:
+        return ProcessResult(memory_objects=[], relations=[], index_entries=[])
+
+    subject = str(group.merge_rationale.get("subject", "")).strip()
+    category = str(group.merge_rationale.get("category", "")).strip()
+
+    user_prompt = (
+        f"Subject: {subject}\n"
+        f"Category: {category}\n"
+        f"Facts ({len(fact_lines)}):\n" + "\n".join(fact_lines)
+    )
+
+    response = provider.generate_json(
+        system_prompt=FACT_CONSOLIDATION_SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+        schema_description=FACT_CONSOLIDATION_SCHEMA_DESCRIPTION,
+    )
+
+    parsed_summary = response.parsed_json.get("summary")
+    if not isinstance(parsed_summary, str) or not parsed_summary.strip():
+        raise ValueError("fact consolidation must return a non-empty summary string")
+
+    summary = parsed_summary.strip()
+    memory_id = new_id()
+
+    consolidation_provenance = {
+        "memory_kind": "fact_summary",
+        "strategy_name": group.strategy_name,
+        "strategy_version": group.strategy_version,
+        "prompt_schema_id": FACT_CONSOLIDATION_PROMPT_SCHEMA_ID,
+        "prompt_schema_version": FACT_CONSOLIDATION_PROMPT_SCHEMA_VERSION,
+        "prompt_variant": prompt_variant,
+    }
+
+    memory_object = MemoryObject(
+        id=memory_id,
+        type=FACT_SUMMARY_TYPE,
+        schema_id=FACT_SUMMARY_SCHEMA_ID,
+        schema_version=FACT_SUMMARY_SCHEMA_VERSION,
+        payload={
+            "subject": subject,
+            "category": category,
+            "summary": summary,
+            "fact_count": len(fact_lines),
+            "supporting_memory_ids": list(group.candidate_ids),
+            "latest_occurred_at": group.latest_occurred_at.isoformat(),
+            "container_ref": group.container_ref,
+            "group_key": group.group_key,
+            "consolidation_provenance": consolidation_provenance,
+        },
+        visibility=group.visibility,
+        container_ref=group.container_ref,
+        freshness_at=group.latest_occurred_at,
+    )
+
+    index_entries = [
+        build_index_entry(
+            target_kind="memory_object",
+            target_id=memory_id,
+            index_type="lexical",
+            text_view=normalize_for_index(summary),
+            text_view_name=FACT_SUMMARY_LEXICAL_TEXT_VIEW,
+        ),
+    ]
+
+    embedding_text = f"{subject}: {summary}" if subject else summary
+    index_entries.append(
+        build_index_entry(
+            target_kind="memory_object",
+            target_id=memory_id,
+            index_type=VECTOR_INDEX_TYPE,
+            text_view=embedding_text,
+            text_view_name=FACT_SUMMARY_VECTOR_TEXT_VIEW,
+            provider_name=VECTOR_EMBEDDING_PROVIDER_NAME,
+            provider_version=VECTOR_EMBEDDING_PROVIDER_VERSION,
+        )
+    )
+
+    return ProcessResult(
+        memory_objects=[memory_object],
+        relations=[],
+        index_entries=index_entries,
+    )

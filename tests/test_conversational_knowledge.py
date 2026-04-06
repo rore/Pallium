@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -15,6 +16,7 @@ from semantic.base import SemanticPlugin
 from semantic.conversational_knowledge import (
     ConversationalKnowledgePlugin,
     FACT_TYPE,
+    FACT_SUMMARY_TYPE,
     _is_eligible_for_fact_extraction,
 )
 from semantic.demo_agent_memory import DemoAgentMemoryPlugin
@@ -28,11 +30,15 @@ class StubFactExtractionProvider(LLMProvider):
 
     provider_name = "stub_fact"
 
-    def __init__(self, facts: list[dict] | None = None):
+    def __init__(self, facts: list[dict] | None = None, consolidation_summary: str | None = None):
         self._facts = facts or []
+        self._consolidation_summary = consolidation_summary or "Alice: cat owner (3 cats); painting enthusiast"
 
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
-        result = {"facts": self._facts}
+        if "consolidat" in system_prompt.lower() or "consolidat" in schema_description.lower():
+            result = {"summary": self._consolidation_summary}
+        else:
+            result = {"facts": self._facts}
         raw = json.dumps(result)
         return LLMJsonResponse(raw_text=raw, parsed_json=result)
 
@@ -441,3 +447,220 @@ def test_reconcile_keeps_same_thread_facts():
     reconciled = plugin.reconcile_process_result(result, storage=storage, container_ref="c1", visibility="public")
 
     assert len(reconciled.memory_objects) == 1
+
+
+# ── Tests: consolidation — strategy grouping ────────────────────────────
+
+def _make_fact_candidate(*, subject: str, category: str, container_ref: str, thread_ref: str, visibility: str = "public"):
+    """Helper to build a ConsolidationCandidate for an atomic_fact."""
+    from capabilities.consolidation import ConsolidationCandidate
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    mo = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="conversational_knowledge.atomic_fact", schema_version="v1",
+        payload={"subject": subject, "statement": f"{subject} fact in {thread_ref}", "category": category, "thread_ref": thread_ref},
+        lifecycle="active", visibility=visibility, container_ref=container_ref,
+    )
+    return ConsolidationCandidate(
+        memory_object=mo,
+        evidence=(),
+        text_view=f"{subject} fact in {thread_ref}",
+        tokens=frozenset(f"{subject} fact in {thread_ref}".lower().split()),
+        container_ref=container_ref,
+        thread_ref=thread_ref,
+        latest_occurred_at=ts,
+        visibility=visibility,
+    )
+
+
+def test_fact_consolidation_strategy_groups_by_subject_category():
+    """Groups atomic facts by (container_ref, subject, category)."""
+    from capabilities.consolidation import FactConsolidationStrategy, ConsolidationPolicy
+    strategy = FactConsolidationStrategy()
+    policy = ConsolidationPolicy(max_candidates_per_run=200)
+
+    candidates = [
+        _make_fact_candidate(subject="Alice", category="personal", container_ref="c1", thread_ref="t1"),
+        _make_fact_candidate(subject="Alice", category="personal", container_ref="c1", thread_ref="t2"),
+        _make_fact_candidate(subject="Alice", category="personal", container_ref="c1", thread_ref="t3"),
+        _make_fact_candidate(subject="Alice", category="activity", container_ref="c1", thread_ref="t1"),
+        _make_fact_candidate(subject="Alice", category="activity", container_ref="c1", thread_ref="t2"),
+        _make_fact_candidate(subject="Alice", category="activity", container_ref="c1", thread_ref="t3"),
+    ]
+    selected = strategy.select_candidates(candidates, policy)
+    groups = strategy.group_candidates(selected, policy)
+
+    assert len(groups) == 2
+    group_keys = {g.merge_rationale["category"].lower() for g in groups}
+    assert group_keys == {"personal", "activity"}
+    for g in groups:
+        assert len(g.candidates) == 3
+        assert g.thread_ref is None  # cross-thread
+
+
+def test_fact_consolidation_strategy_skips_small_groups():
+    """Groups below MIN_GROUP_SIZE or MIN_DISTINCT_THREADS are excluded."""
+    from capabilities.consolidation import FactConsolidationStrategy, ConsolidationPolicy
+    strategy = FactConsolidationStrategy()
+    policy = ConsolidationPolicy(max_candidates_per_run=200)
+
+    # Only 2 facts — below MIN_GROUP_SIZE=3
+    candidates = [
+        _make_fact_candidate(subject="Bob", category="personal", container_ref="c1", thread_ref="t1"),
+        _make_fact_candidate(subject="Bob", category="personal", container_ref="c1", thread_ref="t2"),
+    ]
+    groups = strategy.group_candidates(strategy.select_candidates(candidates, policy), policy)
+    assert len(groups) == 0
+
+    # 3 facts but all same thread — below MIN_DISTINCT_THREADS=2
+    candidates = [
+        _make_fact_candidate(subject="Bob", category="personal", container_ref="c1", thread_ref="t1"),
+        _make_fact_candidate(subject="Bob", category="personal", container_ref="c1", thread_ref="t1"),
+        _make_fact_candidate(subject="Bob", category="personal", container_ref="c1", thread_ref="t1"),
+    ]
+    groups = strategy.group_candidates(strategy.select_candidates(candidates, policy), policy)
+    assert len(groups) == 0
+
+
+def test_fact_consolidation_strategy_selects_only_atomic_facts():
+    """Strategy filters out non-atomic_fact candidates."""
+    from capabilities.consolidation import FactConsolidationStrategy, ConsolidationPolicy, ConsolidationCandidate
+    strategy = FactConsolidationStrategy()
+    policy = ConsolidationPolicy(max_candidates_per_run=200)
+
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    thread_summary = ConsolidationCandidate(
+        memory_object=MemoryObject(
+            id=new_id(), type="thread_summary",
+            schema_id="test", schema_version="v1",
+            payload={"summary": "test summary"},
+            lifecycle="active", visibility="public", container_ref="c1",
+        ),
+        evidence=(), text_view="test summary",
+        tokens=frozenset(["test", "summary"]),
+        container_ref="c1", thread_ref="t1",
+        latest_occurred_at=ts, visibility="public",
+    )
+    fact = _make_fact_candidate(subject="Alice", category="personal", container_ref="c1", thread_ref="t1")
+
+    selected = strategy.select_candidates([thread_summary, fact], policy)
+    assert len(selected) == 1
+    assert selected[0].memory_object.type == "atomic_fact"
+
+
+# ── Tests: consolidation — plugin interface ─────────────────────────────
+
+def test_consolidation_policy_present():
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider())
+    policy = plugin.consolidation_policy
+    assert policy is not None
+    assert "fact_consolidation" in policy.enabled_strategies
+    assert policy.default_strategy == "fact_consolidation"
+
+
+def test_supports_consolidation_atomic_fact():
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider())
+    fact = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="test", schema_version="v1",
+        payload={"statement": "test"}, lifecycle="active",
+    )
+    assert plugin.supports_consolidation(fact) is True
+
+
+def test_supports_consolidation_rejects_other_types():
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider())
+    summary = MemoryObject(
+        id=new_id(), type="thread_summary",
+        schema_id="test", schema_version="v1",
+        payload={"summary": "test"}, lifecycle="active",
+    )
+    assert plugin.supports_consolidation(summary) is False
+
+
+# ── Tests: consolidation — build_consolidated_memory ────────────────────
+
+def test_build_consolidated_memory_produces_fact_summary():
+    """LLM synthesis creates a fact_summary with correct payload and indexes."""
+    from capabilities.consolidation import ConsolidationGroup
+    canned_summary = "Alice's personal: cat owner (3 cats); painting enthusiast"
+    plugin = ConversationalKnowledgePlugin(
+        provider=StubFactExtractionProvider(consolidation_summary=canned_summary),
+    )
+    candidates = tuple([
+        _make_fact_candidate(subject="Alice", category="personal", container_ref="c1", thread_ref="t1"),
+        _make_fact_candidate(subject="Alice", category="personal", container_ref="c1", thread_ref="t2"),
+        _make_fact_candidate(subject="Alice", category="personal", container_ref="c1", thread_ref="t3"),
+    ])
+    group = ConsolidationGroup(
+        strategy_name="fact_consolidation",
+        strategy_version="v1",
+        group_key="fact_consolidation:public:c1:alice:personal",
+        candidates=candidates,
+        container_ref="c1",
+        thread_ref=None,
+        latest_occurred_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        visibility="public",
+        merge_rationale={"subject": "Alice", "category": "personal"},
+    )
+
+    result = plugin.build_consolidated_memory(group)
+
+    assert len(result.memory_objects) == 1
+    mo = result.memory_objects[0]
+    assert mo.type == FACT_SUMMARY_TYPE
+    assert mo.schema_id == "conversational_knowledge.fact_summary"
+    assert mo.payload["subject"] == "Alice"
+    assert mo.payload["category"] == "personal"
+    assert mo.payload["summary"] == canned_summary
+    assert mo.payload["fact_count"] == 3
+    assert mo.payload["group_key"] == "fact_consolidation:public:c1:alice:personal"
+    assert mo.payload["consolidation_provenance"]["strategy_name"] == "fact_consolidation"
+    assert mo.payload["consolidation_provenance"]["prompt_variant"] == "fact_extraction_v1"
+    assert mo.visibility == "public"
+    assert mo.container_ref == "c1"
+
+    # 2 index entries: lexical + vector
+    assert len(result.index_entries) == 2
+    types = {e.index_type for e in result.index_entries}
+    assert "lexical" in types
+
+    # Relations are empty — the runner adds them
+    assert result.relations == []
+
+
+# ── Tests: consolidation — type registration ────────────────────────────
+
+def test_register_routing_types_includes_fact_summary():
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider())
+    registry = TypeRegistry()
+    plugin.register_routing_types(registry)
+    assert "fact_summary" in registry
+    reg = registry.get("fact_summary")
+    assert reg.block_title == "Fact Summary"
+    assert reg.block_text_field == "summary"
+    assert reg.high_value is True
+
+
+# ── Tests: consolidation — _derive_text_view ────────────────────────────
+
+def test_derive_text_view_atomic_fact():
+    from capabilities.consolidation import _derive_text_view
+    mo = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="test", schema_version="v1",
+        payload={"statement": "Alice has 3 cats"},
+        lifecycle="active",
+    )
+    assert _derive_text_view(mo) == "Alice has 3 cats"
+
+
+def test_derive_text_view_atomic_fact_empty():
+    from capabilities.consolidation import _derive_text_view
+    mo = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="test", schema_version="v1",
+        payload={},
+        lifecycle="active",
+    )
+    assert _derive_text_view(mo) == ""

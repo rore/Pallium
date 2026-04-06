@@ -17,7 +17,7 @@ DEFAULT_CONSOLIDATION_STRATEGIES = (
     "container_topic_window",
     "thread_summary_anchored",
 )
-ELIGIBLE_INPUT_TYPES = {"thread_summary", "decision", "investigation_outcome"}
+ELIGIBLE_INPUT_TYPES = {"thread_summary", "decision", "investigation_outcome", "atomic_fact"}
 CONSOLIDATION_STOPWORDS = {
     # -- English --
     "a",
@@ -359,6 +359,65 @@ class ThreadSummaryAnchoredStrategy(ConsolidationStrategy):
         return groups
 
 
+class FactConsolidationStrategy(ConsolidationStrategy):
+    """Groups atomic_fact objects by (container_ref, subject, category) for cross-thread aggregation."""
+
+    name = "fact_consolidation"
+    MIN_GROUP_SIZE = 3
+    MIN_DISTINCT_THREADS = 2
+
+    def select_candidates(self, candidates: list[ConsolidationCandidate], policy: ConsolidationPolicy) -> list[ConsolidationCandidate]:
+        facts = [c for c in candidates if c.memory_object.type == "atomic_fact"]
+        return _limit_candidates(facts, policy.max_candidates_per_run)
+
+    def group_candidates(self, candidates: list[ConsolidationCandidate], policy: ConsolidationPolicy) -> list[ConsolidationGroup]:
+        grouped: dict[tuple[str | None, str, str, str], list[ConsolidationCandidate]] = {}
+        for candidate in candidates:
+            payload = candidate.memory_object.payload
+            subject = str(payload.get("subject", "")).strip().lower()
+            category = str(payload.get("category", "")).strip().lower()
+            if not subject or not category:
+                continue
+            key = (candidate.container_ref, subject, category, candidate.visibility)
+            grouped.setdefault(key, []).append(candidate)
+
+        groups: list[ConsolidationGroup] = []
+        for (container_ref, subject, category, visibility), members in grouped.items():
+            if len(members) < self.MIN_GROUP_SIZE:
+                continue
+            distinct_threads = {c.thread_ref for c in members if c.thread_ref}
+            if len(distinct_threads) < self.MIN_DISTINCT_THREADS:
+                continue
+
+            ordered = tuple(_sort_candidates(members))
+            latest = max(c.latest_occurred_at for c in ordered)
+            original_subject = str(ordered[0].memory_object.payload.get("subject", "")).strip()
+            original_category = str(ordered[0].memory_object.payload.get("category", "")).strip()
+            group_key = f"{self.name}:{visibility_label(visibility)}:{container_ref or 'none'}:{subject}:{category}"
+            groups.append(
+                ConsolidationGroup(
+                    strategy_name=self.name,
+                    strategy_version=self.version,
+                    group_key=group_key,
+                    candidates=ordered,
+                    container_ref=container_ref,
+                    thread_ref=None,
+                    latest_occurred_at=latest,
+                    visibility=visibility,
+                    merge_rationale={
+                        "grouping_mode": "fact_consolidation",
+                        "container_ref": container_ref,
+                        "subject": original_subject,
+                        "category": original_category,
+                        "fact_count": len(ordered),
+                        "distinct_thread_count": len(distinct_threads),
+                        "thread_refs": sorted(distinct_threads),
+                    },
+                )
+            )
+        return groups
+
+
 class ConsolidationCapability:
     def __init__(self) -> None:
         self._strategies: dict[str, ConsolidationStrategy] = {
@@ -367,6 +426,7 @@ class ConsolidationCapability:
                 ThreadLocalCarryForwardStrategy(),
                 ContainerTopicWindowStrategy(),
                 ThreadSummaryAnchoredStrategy(),
+                FactConsolidationStrategy(),
             )
         }
 
@@ -513,6 +573,8 @@ def _derive_text_view(memory_object: MemoryObject) -> str:
         return " ".join(part for part in [payload.get("decision", ""), payload.get("rationale", "")] if part)
     if memory_object.type == "investigation_outcome":
         return " ".join(part for part in [payload.get("investigation_outcome", ""), payload.get("rationale", "")] if part)
+    if memory_object.type == "atomic_fact":
+        return str(payload.get("statement", ""))
     return str(payload.get("summary", ""))
 
 
