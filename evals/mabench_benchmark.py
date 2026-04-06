@@ -376,7 +376,27 @@ def _evaluate_row(
                     worker_id="mabench-runner"
                 )
                 client.app.state.pallium_service.reconcile_vector_index()
-                print("    Processing complete")
+
+                # Run consolidation to trigger contradiction detection + supersession.
+                # Run for both packages — conversational_knowledge has contradiction detection.
+                print("    Running consolidation...")
+                consolidation_count = 0
+                for use_case in ("conversational_knowledge", "agent_conversation_memory"):
+                    while True:
+                        try:
+                            result = client.app.state.pallium_service.run_consolidation_pass(
+                                use_case=use_case,
+                            )
+                        except (ValueError, KeyError):
+                            break
+                        if result is None:
+                            break
+                        consolidation_count += 1
+                if consolidation_count:
+                    # Re-reconcile vector index after consolidation creates new objects.
+                    client.app.state.pallium_service.reconcile_vector_index()
+                print(f"    Processing complete ({consolidation_count} consolidation passes)")
+
 
                 if cached_db_path is not None:
                     shutil.copy2(db_path, cached_db_path)
