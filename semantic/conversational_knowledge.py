@@ -125,9 +125,13 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
 
     name = "conversational_knowledge"
 
-    def __init__(self, provider: LLMProvider, *, prompt_variant: str = "fact_extraction_v1") -> None:
+    def __init__(self, provider: LLMProvider, *, prompt_variant: str = "fact_extraction_v1", providers_by_role: dict[str, LLMProvider] | None = None) -> None:
         self._provider = provider
         self._prompt_variant = prompt_variant
+        self._providers_by_role = providers_by_role or {}
+
+    def _provider_for_role(self, role: str) -> LLMProvider:
+        return self._providers_by_role.get(role, self._provider)
 
     @property
     def requires_visibility_context(self) -> bool:
@@ -295,7 +299,7 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
     def _extract_facts(self, thread_text: str) -> list[dict[str, Any]]:
         """Call the LLM to extract facts from thread text."""
         try:
-            response = self._provider.generate_json(
+            response = self._provider_for_role("fact_extraction").generate_json(
                 system_prompt=FACT_EXTRACTION_SYSTEM_PROMPT,
                 user_prompt=thread_text,
                 schema_description=FACT_EXTRACTION_SCHEMA_DESCRIPTION,
