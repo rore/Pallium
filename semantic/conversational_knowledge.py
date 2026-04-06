@@ -49,7 +49,8 @@ ELIGIBLE_ARTIFACT_ROLES = {
     ("assistant_output", "assistant"),
 }
 
-FACT_EXTRACTION_MAX_THREAD_CHARS = 6000
+FACT_EXTRACTION_MAX_ITEMS_PER_CHUNK = 10   # max source items per LLM call
+FACT_EXTRACTION_MAX_CHARS_PER_CHUNK = 6000  # max chars of thread text per LLM call
 
 # ── Fact summary (consolidation output) constants ────────────────────────
 
@@ -97,7 +98,7 @@ FACT_EXTRACTION_SYSTEM_PROMPT = (
     "Good: {\"subject\": \"Jordan\", \"statement\": \"Jordan completed a half-marathon in Denver on approximately 2024-03-12\", \"category\": \"event\"}\n"
     "Bad: {\"subject\": \"Jordan\", \"statement\": \"Jordan likes running\", \"category\": \"personal\"} — too vague.\n"
     "\n"
-    "Return JSON with key 'facts' containing up to 10 items. "
+    "Return JSON with key 'facts' containing up to 20 items. "
     "Each: subject (string), statement (string), category (personal | event | preference | relationship | activity). "
     "Prioritize facts with names, dates, numbers, or specific details. "
     "If no extractable facts, return {\"facts\": []}. "
@@ -201,17 +202,21 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
     ) -> ProcessResult:
         """Extract atomic facts from the full thread.
 
-        Makes one LLM call to extract all facts. Returns atomic_fact memory
-        objects with lexical and vector index entries.
+        Splits source items into chunks bounded by item count and char budget.
+        Each chunk gets one LLM call. Results are merged and deduped.
         """
         if len(aggregate.source_items) < 2:
             return ProcessResult(memory_objects=[], relations=[], index_entries=[])
 
-        thread_text = _build_thread_text(aggregate)
-        if not thread_text.strip():
+        chunk_texts = _build_chunk_texts(aggregate.source_items)
+        if not chunk_texts:
             return ProcessResult(memory_objects=[], relations=[], index_entries=[])
 
-        raw_facts = self._extract_facts(thread_text)
+        raw_facts: list[dict] = []
+        for chunk_text in chunk_texts:
+            raw_facts.extend(self._extract_facts(chunk_text))
+
+        raw_facts = _dedup_extracted_facts(raw_facts)
         if not raw_facts:
             return ProcessResult(memory_objects=[], relations=[], index_entries=[])
 
@@ -428,19 +433,61 @@ def _is_eligible_for_fact_extraction(source_item: SourceItem) -> bool:
     return (artifact_kind, role) in ELIGIBLE_ARTIFACT_ROLES
 
 
-def _build_thread_text(aggregate: ThreadAggregate) -> str:
-    """Build a text representation of the thread for fact extraction."""
-    parts: list[str] = []
-    session_date = _extract_session_date(aggregate.source_items)
-    if session_date is not None:
-        parts.append(f"Session date: {session_date}")
-    for item in aggregate.source_items:
+def _build_chunk_texts(source_items: list[SourceItem]) -> list[str]:
+    """Split source items into chunk texts for extraction.
+
+    Each chunk is bounded by both item count (FACT_EXTRACTION_MAX_ITEMS_PER_CHUNK)
+    and character budget (FACT_EXTRACTION_MAX_CHARS_PER_CHUNK). No item is ever
+    truncated — if a single item exceeds the char budget, it gets its own chunk.
+    """
+    session_date = _extract_session_date(source_items)
+    date_header = f"Session date: {session_date}\n" if session_date else ""
+
+    chunks: list[str] = []
+    current_lines: list[str] = []
+    current_chars = len(date_header)
+    current_count = 0
+
+    for item in source_items:
         role = item.role or "unknown"
         content = item.content or ""
-        if len(content) > FACT_EXTRACTION_MAX_THREAD_CHARS // max(len(aggregate.source_items), 1):
-            content = content[:FACT_EXTRACTION_MAX_THREAD_CHARS // max(len(aggregate.source_items), 1)] + "..."
-        parts.append(f"[{role}]: {content}")
-    return "\n".join(parts)
+        line = f"[{role}]: {content}"
+        line_chars = len(line) + 1  # +1 for newline
+
+        # Start a new chunk if adding this item would exceed either limit
+        # (but always allow at least one item per chunk)
+        if current_count > 0 and (
+            current_count >= FACT_EXTRACTION_MAX_ITEMS_PER_CHUNK
+            or current_chars + line_chars > FACT_EXTRACTION_MAX_CHARS_PER_CHUNK
+        ):
+            chunks.append(date_header + "\n".join(current_lines))
+            current_lines = []
+            current_chars = len(date_header)
+            current_count = 0
+
+        current_lines.append(line)
+        current_chars += line_chars
+        current_count += 1
+
+    if current_lines:
+        chunks.append(date_header + "\n".join(current_lines))
+
+    return chunks
+
+
+def _dedup_extracted_facts(facts: list[dict]) -> list[dict]:
+    """Remove duplicate facts from merged multi-chunk extraction."""
+    seen: set[tuple[str, str]] = set()
+    result: list[dict] = []
+    for fact in facts:
+        key = (
+            normalize_for_index(str(fact.get("subject", ""))),
+            normalize_for_index(str(fact.get("statement", ""))),
+        )
+        if key not in seen:
+            seen.add(key)
+            result.append(fact)
+    return result
 
 
 def _extract_session_date(source_items: list[SourceItem]) -> str | None:

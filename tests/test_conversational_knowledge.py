@@ -278,13 +278,12 @@ def test_multi_package_ingest_creates_fact_package_records(test_db_url):
     assert "conversational_knowledge" in package_names
 
 
-# ── Tests: _build_thread_text session date injection ─────────────────────
+# ── Tests: _build_chunk_texts session date injection ─────────────────────
 
-def test_build_thread_text_includes_session_date():
-    """Thread text should include the session date from earliest occurred_at."""
+def test_build_chunk_texts_includes_session_date():
+    """Chunk texts should include the session date from earliest occurred_at."""
     from datetime import datetime, timezone
-    from capabilities.thread_aggregation import ThreadAggregate
-    from semantic.conversational_knowledge import _build_thread_text
+    from semantic.conversational_knowledge import _build_chunk_texts
     ts = datetime(2023, 8, 28, 14, 30, 0, tzinfo=timezone.utc)
     items = [
         SourceItem(
@@ -302,21 +301,16 @@ def test_build_thread_text_includes_session_date():
             occurred_at=datetime(2023, 8, 28, 14, 31, 0, tzinfo=timezone.utc),
         ),
     ]
-    aggregate = ThreadAggregate(
-        container_ref="c1", thread_ref="t1",
-        source_items=items, source_item_ids=[i.id for i in items],
-        latest_occurred_at=items[-1].occurred_at,
-        aggregate_text="", visibility="public",
-    )
-    text = _build_thread_text(aggregate)
+    chunks = _build_chunk_texts(items)
+    assert len(chunks) == 1
+    text = chunks[0]
     assert "Session date: 2023-08-28" in text
     assert text.index("Session date:") < text.index("[user]:")
 
 
-def test_build_thread_text_no_occurred_at_omits_date():
+def test_build_chunk_texts_no_occurred_at_omits_date():
     """When no occurred_at is available, omit the session date line."""
-    from capabilities.thread_aggregation import ThreadAggregate
-    from semantic.conversational_knowledge import _build_thread_text
+    from semantic.conversational_knowledge import _build_chunk_texts
     items = [
         SourceItem(
             source_type="chat", source_id="d3",
@@ -331,13 +325,124 @@ def test_build_thread_text_no_occurred_at_omits_date():
             container_ref="c1", thread_ref="t1",
         ),
     ]
-    aggregate = ThreadAggregate(
-        container_ref="c1", thread_ref="t1",
-        source_items=items, source_item_ids=[i.id for i in items],
-        latest_occurred_at=None, aggregate_text="", visibility="public",
-    )
-    text = _build_thread_text(aggregate)
-    assert "Session date:" not in text
+    chunks = _build_chunk_texts(items)
+    assert len(chunks) == 1
+    assert "Session date:" not in chunks[0]
+
+
+def test_build_chunk_texts_splits_by_item_count():
+    """Chunks should split when item count exceeds the max."""
+    from semantic.conversational_knowledge import _build_chunk_texts, FACT_EXTRACTION_MAX_ITEMS_PER_CHUNK
+    items = [
+        SourceItem(
+            source_type="chat", source_id=f"item{i}",
+            content_type="text/plain", content=f"Short fact {i}.",
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+        )
+        for i in range(20)
+    ]
+    chunks = _build_chunk_texts(items)
+    assert len(chunks) == 2
+    # Each chunk should have exactly 10 items
+    for chunk in chunks:
+        lines = [l for l in chunk.split("\n") if l.startswith("[")]
+        assert len(lines) == FACT_EXTRACTION_MAX_ITEMS_PER_CHUNK
+
+
+def test_build_chunk_texts_splits_by_char_budget():
+    """Chunks should split when char budget is exceeded."""
+    from semantic.conversational_knowledge import _build_chunk_texts, FACT_EXTRACTION_MAX_CHARS_PER_CHUNK
+    # 5 items at 2000 chars each — should need multiple chunks
+    items = [
+        SourceItem(
+            source_type="chat", source_id=f"long{i}",
+            content_type="text/plain", content="x" * 2000,
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+        )
+        for i in range(5)
+    ]
+    chunks = _build_chunk_texts(items)
+    assert len(chunks) >= 2
+    # No item should be truncated — each chunk should contain full content
+    for chunk in chunks:
+        assert "..." not in chunk
+
+
+def test_build_chunk_texts_single_large_item():
+    """A single item exceeding the char budget gets its own chunk."""
+    from semantic.conversational_knowledge import _build_chunk_texts, FACT_EXTRACTION_MAX_CHARS_PER_CHUNK
+    items = [
+        SourceItem(
+            source_type="chat", source_id="huge",
+            content_type="text/plain", content="y" * 8000,
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+        ),
+        SourceItem(
+            source_type="chat", source_id="small",
+            content_type="text/plain", content="Hello",
+            role="assistant", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+        ),
+    ]
+    chunks = _build_chunk_texts(items)
+    assert len(chunks) == 2
+    assert "y" * 8000 in chunks[0]  # full content preserved
+    assert "Hello" in chunks[1]
+
+
+def test_build_chunk_texts_preserves_order():
+    """Items within chunks must maintain original conversation order."""
+    from semantic.conversational_knowledge import _build_chunk_texts
+    items = [
+        SourceItem(
+            source_type="chat", source_id=f"ord{i}",
+            content_type="text/plain", content=f"Message {i}",
+            role="user" if i % 2 == 0 else "assistant",
+            artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+        )
+        for i in range(15)
+    ]
+    chunks = _build_chunk_texts(items)
+    # Reconstruct all lines across chunks
+    all_lines = []
+    for chunk in chunks:
+        all_lines.extend(l for l in chunk.split("\n") if l.startswith("["))
+    numbers = [int(l.split("Message ")[1]) for l in all_lines]
+    assert numbers == list(range(15))
+
+
+def test_build_chunk_texts_small_thread_single_chunk():
+    """A small thread should produce exactly one chunk."""
+    from semantic.conversational_knowledge import _build_chunk_texts
+    items = [
+        SourceItem(
+            source_type="chat", source_id=f"sm{i}",
+            content_type="text/plain", content=f"Short {i}",
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+        )
+        for i in range(3)
+    ]
+    chunks = _build_chunk_texts(items)
+    assert len(chunks) == 1
+
+
+def test_dedup_extracted_facts():
+    """Dedup should remove exact statement duplicates across chunks."""
+    from semantic.conversational_knowledge import _dedup_extracted_facts
+    facts = [
+        {"subject": "Alice", "statement": "Alice has 3 cats", "category": "personal"},
+        {"subject": "Bob", "statement": "Bob lives in NYC", "category": "personal"},
+        {"subject": "Alice", "statement": "Alice has 3 cats", "category": "personal"},  # exact dup
+    ]
+    result = _dedup_extracted_facts(facts)
+    assert len(result) == 2
+    assert result[0]["subject"] == "Alice"
+    assert result[1]["subject"] == "Bob"
 
 
 # ── Tests: thread_ref in payload and reconcile_process_result ─────────────
