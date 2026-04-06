@@ -30,13 +30,18 @@ class StubFactExtractionProvider(LLMProvider):
 
     provider_name = "stub_fact"
 
-    def __init__(self, facts: list[dict] | None = None, consolidation_summary: str | None = None):
+    def __init__(self, facts: list[dict] | None = None, consolidation_summary: str | None = None, superseded_indices: list[int] | None = None):
         self._facts = facts or []
         self._consolidation_summary = consolidation_summary or "Alice: cat owner (3 cats); painting enthusiast"
+        self._superseded_indices = superseded_indices or []
 
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
         if "consolidat" in system_prompt.lower() or "consolidat" in schema_description.lower():
-            result = {"summary": self._consolidation_summary}
+            result = {
+                "summary": self._consolidation_summary,
+                "superseded_indices": self._superseded_indices,
+                "reasoning": "stub contradiction detection",
+            }
         else:
             result = {"facts": self._facts}
         raw = json.dumps(result)
@@ -722,6 +727,8 @@ def test_build_consolidated_memory_produces_fact_summary():
     assert mo.payload["group_key"] == "fact_consolidation:public:c1:alice:personal"
     assert mo.payload["consolidation_provenance"]["strategy_name"] == "fact_consolidation"
     assert mo.payload["consolidation_provenance"]["prompt_variant"] == "fact_extraction_v1"
+    assert mo.payload["superseded_candidate_ids"] == []
+    assert mo.payload["contradiction_reasoning"] == "stub contradiction detection"
     assert mo.visibility == "public"
     assert mo.container_ref == "c1"
 
@@ -732,6 +739,121 @@ def test_build_consolidated_memory_produces_fact_summary():
 
     # Relations are empty — the runner adds them
     assert result.relations == []
+
+
+def test_build_consolidated_memory_maps_superseded_indices():
+    """LLM-reported superseded_indices are mapped to candidate memory IDs."""
+    from capabilities.consolidation import ConsolidationGroup
+    plugin = ConversationalKnowledgePlugin(
+        provider=StubFactExtractionProvider(
+            consolidation_summary="Alice's personal: citizen of India",
+            superseded_indices=[0],
+        ),
+    )
+    candidates = tuple([
+        _make_fact_candidate(subject="Alice", category="personal", container_ref="c1", thread_ref="t1"),
+        _make_fact_candidate(subject="Alice", category="personal", container_ref="c1", thread_ref="t2"),
+        _make_fact_candidate(subject="Alice", category="personal", container_ref="c1", thread_ref="t3"),
+    ])
+    group = ConsolidationGroup(
+        strategy_name="fact_consolidation",
+        strategy_version="v1",
+        group_key="fact_consolidation:public:c1:alice:personal",
+        candidates=candidates,
+        container_ref="c1",
+        thread_ref=None,
+        latest_occurred_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        visibility="public",
+        merge_rationale={"subject": "Alice", "category": "personal"},
+    )
+
+    result = plugin.build_consolidated_memory(group)
+    mo = result.memory_objects[0]
+    assert mo.payload["superseded_candidate_ids"] == [candidates[0].memory_object.id]
+
+
+def test_build_consolidated_memory_ignores_out_of_range_indices():
+    """Out-of-range or non-integer superseded_indices are silently ignored."""
+    from capabilities.consolidation import ConsolidationGroup
+    plugin = ConversationalKnowledgePlugin(
+        provider=StubFactExtractionProvider(
+            consolidation_summary="Alice's personal: test",
+            superseded_indices=[99, -1, "invalid"],
+        ),
+    )
+    candidates = tuple([
+        _make_fact_candidate(subject="Alice", category="personal", container_ref="c1", thread_ref="t1"),
+        _make_fact_candidate(subject="Alice", category="personal", container_ref="c1", thread_ref="t2"),
+        _make_fact_candidate(subject="Alice", category="personal", container_ref="c1", thread_ref="t3"),
+    ])
+    group = ConsolidationGroup(
+        strategy_name="fact_consolidation",
+        strategy_version="v1",
+        group_key="fact_consolidation:public:c1:alice:personal",
+        candidates=candidates,
+        container_ref="c1",
+        thread_ref=None,
+        latest_occurred_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        visibility="public",
+        merge_rationale={"subject": "Alice", "category": "personal"},
+    )
+
+    result = plugin.build_consolidated_memory(group)
+    mo = result.memory_objects[0]
+    assert mo.payload["superseded_candidate_ids"] == []
+
+
+def test_consolidation_runner_supersedes_contradicted_facts(test_db_url):
+    """Runner reads superseded_candidate_ids from fact_summary and marks atomic_facts as superseded."""
+
+    # Create a service with the fact extraction plugin that reports a contradiction.
+    # superseded_indices=[0] means the LLM flagged the first candidate in the sorted group.
+    plugin = ConversationalKnowledgePlugin(
+        provider=StubFactExtractionProvider(
+            consolidation_summary="Alice's personal: citizen of India",
+            superseded_indices=[0],
+        ),
+    )
+    storage = SQLiteStorageProvider(test_db_url)
+    service = PalliumService(
+        storage=storage,
+        retrieval=LexicalRetrievalProvider(storage),
+        semantic_plugins={"conversational_knowledge": plugin},
+        default_use_case="conversational_knowledge",
+    )
+
+    # Create 3 atomic_fact memory objects across different threads
+    for i in range(3):
+        mo = MemoryObject(
+            id=new_id(),
+            type="atomic_fact",
+            schema_id="conversational_knowledge.atomic_fact",
+            schema_version="v1",
+            payload={"subject": "Alice", "statement": f"Alice fact {i}", "category": "personal", "thread_ref": f"t{i}"},
+            lifecycle="active",
+            visibility="public",
+            container_ref="c1",
+        )
+        storage.create_memory_object(mo)
+
+    # Run consolidation
+    result = service.run_consolidation_pass(use_case="conversational_knowledge")
+
+    assert result is not None
+    assert len(result.groups) == 1
+    assert len(result.groups[0].superseded_memory_ids) == 1
+
+    # Verify: exactly one atomic_fact is superseded, the other two remain active
+    all_facts = storage.list_memory_objects(memory_types=["atomic_fact"])
+    active = [f for f in all_facts if f.lifecycle == "active"]
+    superseded = [f for f in all_facts if f.lifecycle == "superseded"]
+    assert len(superseded) == 1
+    assert len(active) == 2
+
+    # Verify: a fact_summary was created with the superseded_candidate_ids payload
+    summaries = storage.list_memory_objects(memory_types=["fact_summary"], lifecycle="active")
+    assert len(summaries) == 1
+    assert summaries[0].payload["superseded_candidate_ids"] == [superseded[0].id]
 
 
 # ── Tests: consolidation — type registration ────────────────────────────

@@ -536,12 +536,13 @@ def _build_fact_summary(
     """
     fact_lines: list[str] = []
     candidate_ids_by_index: list[str] = []
-    for i, candidate in enumerate(group.candidates):
+    for candidate in group.candidates:
         statement = str(candidate.memory_object.payload.get("statement", "")).strip()
         if not statement:
             continue
+        prompt_index = len(candidate_ids_by_index)
         ts = candidate.latest_occurred_at.strftime("%Y-%m-%dT%H:%M:%S") if candidate.latest_occurred_at else "unknown"
-        fact_lines.append(f"[{i}] ({ts}) {statement}")
+        fact_lines.append(f"[{prompt_index}] ({ts}) {statement}")
         candidate_ids_by_index.append(candidate.memory_object.id)
 
     if not fact_lines:

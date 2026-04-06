@@ -90,11 +90,29 @@ class ConsolidationRunner:
                     self._supersede_fn(active_memory_id, memory_object.id)
                     superseded_ids.append(active_memory_id)
 
-                # Supersede contradicted candidate facts (from LLM contradiction detection)
+                # Supersede contradicted candidate facts (from LLM contradiction detection).
+                # Uses storage directly because supersede_fn requires matching types,
+                # but here a fact_summary supersedes atomic_fact (cross-type).
                 for candidate_id in memory_object.payload.get("superseded_candidate_ids", []):
-                    if candidate_id not in superseded_ids:
-                        self._supersede_fn(candidate_id, memory_object.id)
-                        superseded_ids.append(candidate_id)
+                    if candidate_id in superseded_ids:
+                        continue
+                    try:
+                        candidate = self._storage.get_memory_object(candidate_id)
+                    except KeyError:
+                        continue
+                    if candidate.lifecycle == "superseded":
+                        continue
+                    self._storage.update_memory_object_lifecycle(candidate_id, "superseded")
+                    self._storage.create_relation(
+                        Relation(
+                            from_kind="memory_object",
+                            from_id=memory_object.id,
+                            relation_type="supersedes",
+                            to_kind="memory_object",
+                            to_id=candidate_id,
+                        )
+                    )
+                    superseded_ids.append(candidate_id)
 
             group_results.append(
                 ConsolidationRunGroupResult(
