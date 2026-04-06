@@ -179,33 +179,10 @@ def route_query_results(
                 injectable_blocks=[],
                 sharp_candidate_diagnostics=[],
             )
-        # Step 3b: Evidence trace detection (deterministic, no LLM)
-        # Only override when source hits overwhelmingly dominate the candidate set
-        # AND at least one source hit has vector confirmation (retrieval_source
-        # includes vector). Without vector confirmation, source-dominant sets are
-        # likely lexical noise (e.g., stop-word overlap on off-topic queries).
-        source_ratio = float(candidate_evidence.get("source_hit_ratio", 0))
-        _any_source_has_vector = any(
-            item.result_kind == "source_hit"
-            and getattr(item, "retrieval_source", None) in ("vector", "both")
-            for item in anchor_prefiltered_candidates
-        )
-        if (source_ratio >= 0.75
-            and _any_source_has_vector
-            and not signal_envelope.resume_state
-            and not signal_envelope.low_value
-            and not signal_envelope.evidence_request):
-            signal_envelope = QuerySignalEnvelope(
-                low_value=signal_envelope.low_value,
-                history_lookup=signal_envelope.history_lookup,
-                latest_status_request=signal_envelope.latest_status_request,
-                resume_state=signal_envelope.resume_state,
-                evidence_request=True,
-                source=signal_envelope.source,
-                confidence=signal_envelope.confidence,
-                semantic_classification_used=False,
-                derivation_signals=signal_envelope.derivation_signals + ("source_ratio_override",),
-            )
+        # Step 3b: removed — source_ratio_override was circular with
+        # multi-package indexing. Evidence_trace intent should only be set
+        # from runtime_context or the resolver, not inferred from retrieval
+        # composition. See LoCoMo benchmark investigation 2026-04-06.
         # Step 4: Lane narrowing (consumes envelope via compatible shape tags)
         _envelope_shape_tags: list[str] = []
         if signal_envelope.resume_state:
