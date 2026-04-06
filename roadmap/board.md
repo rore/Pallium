@@ -13,6 +13,7 @@
 - idea-document-schema-evolution-strategy
 
 # Done
+- add-fact-consolidation-strategy-for-conversational-knowledge
 - add-multilingual-tokenization-and-embedding-support
 - add-multi-package-source-item-processing
 - add-conversational-knowledge-fact-extraction-package

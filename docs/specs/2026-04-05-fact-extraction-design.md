@@ -163,10 +163,11 @@ MemoryObject(
 ### What the package does NOT do
 
 - No per-item memory extraction
-- No cross-thread fact merging or deduplication
 - No fact importance scoring or decay
 - No relation graph between facts
 - No incremental delta extraction (re-extracts full thread each time)
+
+Cross-thread fact consolidation is now handled by `FactConsolidationStrategy`, which groups `atomic_fact` objects by `(container_ref, subject, category)` into `fact_summary` memory objects. See `capabilities/consolidation.py` and `semantic/conversational_knowledge.py`.
 
 ---
 

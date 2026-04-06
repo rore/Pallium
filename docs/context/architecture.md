@@ -96,7 +96,7 @@ Embedding write path:
 Implemented semantic behavior now includes:
 
 - an explicit `agent_conversation_memory` runtime package over the current LLM-backed semantic path
-- a `conversational_knowledge` fact extraction package that extracts atomic facts from threads using the thread rebuild mechanism, runs as a `parallel_processing` package alongside `agent_conversation_memory`
+- a `conversational_knowledge` fact extraction package that extracts atomic facts from threads using the thread rebuild mechanism, runs as a `parallel_processing` package alongside `agent_conversation_memory`, and consolidates cross-thread facts into `fact_summary` objects via `FactConsolidationStrategy`
 - deterministic and LLM-backed semantic plugins
 - promoted typed memory for:
   - `decision`
@@ -328,10 +328,12 @@ Current behavior:
 - first higher-level memory kinds:
   - `pattern_memory`
   - `continuity_memory`
+  - `fact_summary` (from `conversational_knowledge` via `FactConsolidationStrategy`)
 - first eligible lower-level inputs:
   - `thread_summary`
   - `decision`
   - `investigation_outcome`
+  - `atomic_fact` (for `conversational_knowledge` consolidation only)
 - consolidation remains bounded and additive
 - exact-match visibility compatibility is a hard precondition for consolidation groups in the scope-aware package
 - higher-level memory is evidence-backed and lifecycle-managed
@@ -349,6 +351,10 @@ Implemented strategies for `agent_conversation_memory`:
 - `thread_local_carry_forward`
 - `container_topic_window`
 - `thread_summary_anchored`
+
+Implemented strategies for `conversational_knowledge`:
+
+- `fact_consolidation` — groups `atomic_fact` by `(container_ref, subject, category)` into `fact_summary` objects; skips groups with fewer than 3 facts or fewer than 2 distinct threads
 
 Current package default:
 

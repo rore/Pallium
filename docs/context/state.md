@@ -34,6 +34,8 @@
   - `pattern_memory`
   - `continuity_memory`
   - `constraint_memory`
+  - `atomic_fact` (from `conversational_knowledge`)
+  - `fact_summary` (from `conversational_knowledge` consolidation, `high_value=True`)
   - fallback `discussion_summary`
 - visibility terminology: `"limited"` renamed to `"container"` (visible within this single container); `container_visibility` field renamed to `visibility`; breaking change — requires fresh DB after applying
 - actor-scoped memory and container-driven visibility rules are shipped:

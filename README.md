@@ -105,8 +105,9 @@ Two production packages run in parallel over the same evidence:
   checkpoints, thread orientation ("why did we choose this?", "where did we
   leave off?")
 - **Factual recall** — names, dates, preferences, events, relationships
-  extracted from conversation threads ("when did Jordan go camping?", "which
-  restaurant did they recommend?")
+  extracted from conversation threads, consolidated by subject and topic
+  for multi-hop recall ("when did Jordan go camping?", "what activities
+  does Melanie partake in?")
 
 Retrieval combines lexical search, vector similarity, and hybrid RRF fusion.
 The query path is deterministic by default, with selective LLM-assisted

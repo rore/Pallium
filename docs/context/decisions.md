@@ -536,7 +536,7 @@ Why:
 The `conversational_knowledge` package extracts atomic facts from conversation
 threads. It uses the existing thread rebuild capability, runs as a
 `parallel_processing` package alongside `agent_conversation_memory`, and
-produces `conversational_fact` memory objects.
+produces `atomic_fact` memory objects.
 
 Why:
 
@@ -544,3 +544,22 @@ Why:
   `agent_conversation_memory` alone misses factual detail recall
 - thread-level extraction captures facts that span multiple messages
 - running in parallel keeps the existing conversation memory path unchanged
+
+### 2026-04-06 - Fact consolidation via FactConsolidationStrategy
+
+`FactConsolidationStrategy` groups `atomic_fact` objects by
+`(container_ref, subject, category)` into `fact_summary` memory objects
+via LLM synthesis. `fact_summary` is registered as `high_value=True`
+in the type registry.
+
+Why:
+
+- LoCoMo multi_hop failures (11 of 15) were caused by cross-session
+  fact scattering — facts about one person's activities were spread
+  across many threads, and top-10 retrieval couldn't aggregate them
+- grouping by subject + category produces one retrieval hit that
+  answers aggregate questions ("What activities does Melanie partake in?")
+- minimum thresholds (3+ facts, 2+ threads) avoid wasting LLM calls
+  on small groups that retrieval already handles
+- consolidation uses the existing ConsolidationRunner framework with
+  no changes to the runner itself
