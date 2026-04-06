@@ -172,6 +172,15 @@ def _build_plugin_for_package(*, config: AppConfig, package_config: SemanticPack
             model=package_config.model,
         )
         providers_by_role = _resolve_providers_by_role(config, package_config, provider)
+        # Default: use sonnet for fact_consolidation (contradiction detection
+        # needs stronger reasoning than haiku provides — tested P=0.94 R=1.00
+        # vs haiku P=0.82 R=0.82). Override via model_roles config if needed.
+        if "fact_consolidation" not in providers_by_role and package_config.model:
+            sonnet_model = _upgrade_to_sonnet(package_config.model)
+            if sonnet_model != package_config.model:
+                providers_by_role["fact_consolidation"] = build_llm_provider(
+                    config, provider_name=package_config.llm_provider, model=sonnet_model,
+                )
         from semantic.conversational_knowledge import ConversationalKnowledgePlugin
         return ConversationalKnowledgePlugin(
             provider=provider,
@@ -199,6 +208,16 @@ def _resolve_providers_by_role(
             )
         by_role[role] = provider_cache[role_model]
     return by_role
+
+
+def _upgrade_to_sonnet(model: str) -> str:
+    """Derive a sonnet model identifier from a haiku one.
+
+    Returns the original model unchanged if it doesn't contain 'haiku'.
+    """
+    if "haiku" in model:
+        return model.replace("haiku", "sonnet")
+    return model
 
 
 def _build_resolver_config(*, provider: LLMProvider, package_config: SemanticPackageConfig) -> dict[str, object] | None:

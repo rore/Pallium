@@ -306,8 +306,12 @@ Available roles:
 - `thread_aggregation` — thread summary + task checkpoint (simpler schemas, code has fallback defaults)
 - `consolidation` — pattern and continuity memory (simplest schemas)
 - `query_ambiguity_resolution` — resolver on query hot path (speed-critical, simple A/B decision)
+- `fact_extraction` — conversational_knowledge per-thread fact extraction (handles 10-20 structured facts)
+- `fact_consolidation` — conversational_knowledge cross-thread consolidation with contradiction detection (needs strong reasoning)
 
 Benchmarked recommendation (Anthropic Claude):
+
+**agent_conversation_memory roles:**
 
 | Role | Model class | Rationale |
 |---|---|---|
@@ -316,7 +320,16 @@ Benchmarked recommendation (Anthropic Claude):
 | `consolidation` | Haiku | Simplest schemas. Same benchmark results as thread_aggregation. |
 | `query_ambiguity_resolution` | Haiku | Hot path (800ms timeout), simple A/B decision. Speed matters more than depth. |
 
-When using OpenAI or other providers, the same principle applies: use the strongest model for `write_extraction` and a faster/cheaper model for the other three roles.
+**conversational_knowledge roles:**
+
+| Role | Model class | Rationale |
+|---|---|---|
+| `fact_extraction` | Haiku (default) | Produces up to 20 structured facts per chunk. Haiku handles this reliably. |
+| `fact_consolidation` | Sonnet (auto-default) | Contradiction detection requires discriminating single-valued property conflicts from multi-valued predicates and separate events. Sonnet: P=0.94 R=1.00 vs Haiku: P=0.82 R=0.82. |
+
+The `fact_consolidation` role auto-upgrades from Haiku to Sonnet when the package model is Haiku and no explicit override is configured.
+
+When using OpenAI or other providers, the same principle applies: use the strongest model for `write_extraction` and `fact_consolidation`, and a faster/cheaper model for the other roles.
 
 Example:
 
@@ -328,6 +341,19 @@ model = "claude-sonnet-4-6"
 thread_aggregation = "claude-haiku-4-5"
 consolidation = "claude-haiku-4-5"
 query_ambiguity_resolution = "claude-haiku-4-5"
+```
+
+For conversational_knowledge, `fact_consolidation` defaults to Sonnet automatically.
+To override explicitly:
+
+```toml
+[semantic_packages.conversational_knowledge]
+model = "claude-haiku-4-5"
+
+# Optional — fact_consolidation auto-upgrades to Sonnet when omitted
+[semantic_packages.conversational_knowledge.model_roles]
+fact_consolidation = "claude-sonnet-4-6"
+fact_extraction = "claude-haiku-4-5"
 ```
 
 Equivalent env override:
@@ -432,6 +458,7 @@ The following defaults apply when fields are omitted:
 - `agent_conversation_memory.resolver_enabled` defaults to `true`
 - `agent_conversation_memory.resolver_timeout_ms` defaults to `800`
 - `model_roles` defaults to empty — all roles use the package `model`
+  - Exception: `conversational_knowledge.fact_consolidation` auto-upgrades to Sonnet when the package model is Haiku
 - `vector_index.enabled` defaults to `true`
 - `vector_index.embedding_provider` defaults to `"onnx"`
 - `vector_index.index_path` defaults to `"./pallium_vector.index"`
