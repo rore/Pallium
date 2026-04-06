@@ -252,7 +252,7 @@ def _evaluate_conversation(
 
     results: list[dict[str, Any]] = []
 
-    with TemporaryDirectory() as temp_dir:
+    with TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
         database_url = f"sqlite:///{Path(temp_dir) / 'locomo.db'}"
         vector_index_config = replace(
             config.vector_index,
