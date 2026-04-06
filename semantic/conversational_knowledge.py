@@ -66,16 +66,37 @@ FACT_SUMMARY_VECTOR_TEXT_VIEW = "memory_object.fact_summary_embedding"
 
 FACT_CONSOLIDATION_SYSTEM_PROMPT = (
     "Consolidate the atomic facts below into one summary for the given subject and category. "
-    "Return JSON: {\"summary\": \"...\"}\n"
-    "Format: a single sentence starting with \"{subject}'s {category}:\" followed by a comma-separated enumeration. "
-    "Include sub-details in parentheses where multiple facts relate to the same topic. "
-    "Merge duplicates. Preserve all proper nouns, dates, numbers, and qualifying details. "
-    "Do not add inferences or facts not in the input. "
+    "Also detect CONTRADICTIONS among the input facts.\n\n"
+    "CONTRADICTION: Two facts contradict ONLY if they assign incompatible values to the SAME "
+    "single-valued property. Examples:\n"
+    "- 'born in London' vs 'born in Berlin' — same property (birthplace), incompatible → CONTRADICTION\n"
+    "- 'citizen of France' vs 'citizen of India' — same property (citizenship), incompatible → CONTRADICTION\n"
+    "- 'married to X' vs 'married to Y' — same property (spouse), incompatible → CONTRADICTION\n\n"
+    "NOT a contradiction (do NOT supersede):\n"
+    "- Different properties: 'died in X' and 'authored Y' — different predicates, both survive\n"
+    "- Multi-valued predicates: 'authored book A' and 'authored book B' — a person can author many books\n"
+    "- Separate events: 'went camping in July' and 'went camping in October' — two distinct events\n"
+    "- Paraphrases: 'has kids' and 'has children' — same fact, merge in summary but do NOT supersede\n"
+    "- Elaborations: 'is an artist' and 'creates paintings' — related but not contradictory\n\n"
+    "When in doubt, do NOT supersede. Only flag clear single-valued property conflicts.\n"
+    "When facts contradict, the NEWER one (later timestamp) supersedes the older. "
+    "Add the older fact's index to superseded_indices.\n\n"
+    "Return JSON:\n"
+    "{\"summary\": \"consolidated summary text\", "
+    "\"superseded_indices\": [indices of contradicted facts only], "
+    "\"reasoning\": \"brief explanation\"}\n\n"
+    "Summary format: a single sentence starting with \"{subject}'s {category}:\" "
+    "followed by a comma-separated enumeration. "
+    "Preserve all proper nouns, dates, numbers. Do not infer facts not in the input. "
     "Write in the same language as the input facts."
 )
 
 FACT_CONSOLIDATION_SCHEMA_DESCRIPTION = json.dumps(
-    {"summary": "consolidated fact summary as enumerated list"},
+    {
+        "summary": "consolidated fact summary as enumerated list",
+        "superseded_indices": [0],
+        "reasoning": "brief explanation of contradictions found, or empty string",
+    },
     indent=2,
 )
 
@@ -169,7 +190,7 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
 
     def build_consolidated_memory(self, group: ConsolidationGroup) -> ProcessResult:
         return _build_fact_summary(
-            provider=self._provider,
+            provider=self._provider_for_role("fact_consolidation"),
             group=group,
             prompt_variant=self._prompt_variant,
         )
@@ -507,12 +528,21 @@ def _build_fact_summary(
     group: ConsolidationGroup,
     prompt_variant: str,
 ) -> ProcessResult:
-    """Synthesize a group of atomic_facts into one fact_summary via LLM."""
+    """Synthesize a group of atomic_facts into one fact_summary via LLM.
+
+    Also detects contradictions: the LLM returns superseded_indices identifying
+    which input facts are contradicted by newer ones. The corresponding candidate
+    IDs are stored in the fact_summary payload for the runner to act on.
+    """
     fact_lines: list[str] = []
-    for candidate in group.candidates:
+    candidate_ids_by_index: list[str] = []
+    for i, candidate in enumerate(group.candidates):
         statement = str(candidate.memory_object.payload.get("statement", "")).strip()
-        if statement:
-            fact_lines.append(f"- {statement}")
+        if not statement:
+            continue
+        ts = candidate.latest_occurred_at.strftime("%Y-%m-%dT%H:%M:%S") if candidate.latest_occurred_at else "unknown"
+        fact_lines.append(f"[{i}] ({ts}) {statement}")
+        candidate_ids_by_index.append(candidate.memory_object.id)
 
     if not fact_lines:
         return ProcessResult(memory_objects=[], relations=[], index_entries=[])
@@ -537,6 +567,18 @@ def _build_fact_summary(
         raise ValueError("fact consolidation must return a non-empty summary string")
 
     summary = parsed_summary.strip()
+
+    # Map superseded_indices from the LLM response to candidate memory IDs
+    raw_indices = response.parsed_json.get("superseded_indices", [])
+    superseded_candidate_ids: list[str] = []
+    if isinstance(raw_indices, list):
+        for idx in raw_indices:
+            if isinstance(idx, int) and 0 <= idx < len(candidate_ids_by_index):
+                cid = candidate_ids_by_index[idx]
+                if cid not in superseded_candidate_ids:
+                    superseded_candidate_ids.append(cid)
+
+    reasoning = str(response.parsed_json.get("reasoning", "")).strip()
     memory_id = new_id()
 
     consolidation_provenance = {
@@ -559,6 +601,8 @@ def _build_fact_summary(
             "summary": summary,
             "fact_count": len(fact_lines),
             "supporting_memory_ids": list(group.candidate_ids),
+            "superseded_candidate_ids": superseded_candidate_ids,
+            "contradiction_reasoning": reasoning,
             "latest_occurred_at": group.latest_occurred_at.isoformat(),
             "container_ref": group.container_ref,
             "group_key": group.group_key,

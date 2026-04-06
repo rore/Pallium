@@ -90,6 +90,12 @@ class ConsolidationRunner:
                     self._supersede_fn(active_memory_id, memory_object.id)
                     superseded_ids.append(active_memory_id)
 
+                # Supersede contradicted candidate facts (from LLM contradiction detection)
+                for candidate_id in memory_object.payload.get("superseded_candidate_ids", []):
+                    if candidate_id not in superseded_ids:
+                        self._supersede_fn(candidate_id, memory_object.id)
+                        superseded_ids.append(candidate_id)
+
             group_results.append(
                 ConsolidationRunGroupResult(
                     strategy_name=group.strategy_name,
