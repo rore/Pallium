@@ -66,8 +66,9 @@ DATASET_CONFIGS: dict[str, dict[str, Any]] = {
 CONTEXT_DEPTHS = {"6k", "32k", "64k", "262k"}
 
 # Chunking constants.
-CHUNK_SIZE_CHARS = 16000  # ~4096 tokens at ~4 chars/token — matches MABench chunking.
-THREAD_GROUP_SIZE = 10  # Chunks per thread.
+CHUNK_SIZE_CHARS = 16000  # Fallback for non-fact-list contexts.
+THREAD_GROUP_SIZE = 20  # Facts per thread — keeps threads within extraction windows.
+FACT_LINE_PATTERN = re.compile(r"(?:^|\n)\d+\.\s+")  # "0. Fact text here."
 TIMESTAMP_BASE = datetime(2024, 1, 1, tzinfo=timezone.utc)
 TIMESTAMP_INCREMENT = timedelta(hours=1)
 
@@ -368,7 +369,7 @@ def _evaluate_row(
                     row_id=row_id,
                     chunks=chunks,
                 )
-                print(f"    Ingested {item_count} chunks across {_thread_count(len(chunks))} threads")
+                print(f"    Ingested {item_count} items across {_thread_count(len(chunks))} threads")
 
                 print("    Processing semantic extraction...")
                 client.app.state.pallium_service.drain_processing_queue(
@@ -450,7 +451,38 @@ def _evaluate_row(
 
 
 def _chunk_text(context: str) -> list[str]:
-    """Split context into sentence-aligned chunks."""
+    """Split context into individual facts or sentence-aligned chunks.
+
+    FactConsolidation data is a numbered list of atomic facts:
+        "0. Thomas Kyd was born in London.\n1. The chairperson of Fatah is..."
+    Each fact becomes one chunk (= one source item), matching Pallium's
+    per-message ingestion model.
+
+    Falls back to sentence-aligned chunking if the context doesn't match
+    the numbered-fact pattern.
+    """
+    facts = _split_numbered_facts(context)
+    if facts:
+        return facts
+    # Fallback: sentence-aligned chunking for non-fact-list contexts.
+    return _chunk_by_sentences(context)
+
+
+def _split_numbered_facts(context: str) -> list[str]:
+    """Split '0. Fact one.\n1. Fact two.\n...' into individual fact strings."""
+    # Split on the numbered fact boundaries.
+    parts = FACT_LINE_PATTERN.split(context)
+    # First part is preamble (e.g., "Here is a list of facts:\n").
+    facts: list[str] = []
+    for part in parts:
+        text = part.strip()
+        if text and len(text) > 5:  # Skip empty/trivial fragments.
+            facts.append(text)
+    return facts
+
+
+def _chunk_by_sentences(context: str) -> list[str]:
+    """Fallback: split on sentence boundaries into ~CHUNK_SIZE_CHARS chunks."""
     sentences = _split_sentences(context)
     chunks: list[str] = []
     current_chunk: list[str] = []
