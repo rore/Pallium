@@ -1,0 +1,380 @@
+[
+  {
+    "subject": "mahmoud abbas",
+    "text_a": "Mahmoud Abbas: Mahmoud Abbas is the chairperson of Fatah",
+    "text_b": "Mahmoud Abbas: Mahmoud Abbas works in the field of politician",
+    "stmt_a": "Mahmoud Abbas is the chairperson of Fatah",
+    "stmt_b": "Mahmoud Abbas works in the field of politician",
+    "thread_a": "sf-sh-row0-t0",
+    "thread_b": "sf-sh-row0-t13"
+  },
+  {
+    "subject": "amy winehouse",
+    "text_a": "Amy Winehouse: Amy Winehouse died in Camden Town",
+    "text_b": "Amy Winehouse: Amy Winehouse performed Back to Black",
+    "stmt_a": "Amy Winehouse died in Camden Town",
+    "stmt_b": "Amy Winehouse performed Back to Black",
+    "thread_a": "sf-sh-row0-t0",
+    "thread_b": "sf-sh-row0-t14"
+  },
+  {
+    "subject": "ursula k. le guin",
+    "text_a": "Ursula K. Le Guin: Ursula K. Le Guin is the author of A Wizard of Earthsea",
+    "text_b": "Ursula K. Le Guin: Ursula K. Le Guin died in the city of Portland",
+    "stmt_a": "Ursula K. Le Guin is the author of A Wizard of Earthsea",
+    "stmt_b": "Ursula K. Le Guin died in the city of Portland",
+    "thread_a": "sf-sh-row0-t0",
+    "thread_b": "sf-sh-row0-t2"
+  },
+  {
+    "subject": "tim cook",
+    "text_a": "Tim Cook: Tim Cook is the chief executive officer of Apple Inc.",
+    "text_b": "Tim Cook: Tim Cook is a citizen of United States of America",
+    "stmt_a": "Tim Cook is the chief executive officer of Apple Inc.",
+    "stmt_b": "Tim Cook is a citizen of United States of America",
+    "thread_a": "sf-sh-row0-t0",
+    "thread_b": "sf-sh-row0-t22"
+  },
+  {
+    "subject": "coco chanel",
+    "text_a": "Coco Chanel: Coco Chanel founded Chanel",
+    "text_b": "Coco Chanel: Coco Chanel died in the city of Paris",
+    "stmt_a": "Coco Chanel founded Chanel",
+    "stmt_b": "Coco Chanel died in the city of Paris",
+    "thread_a": "sf-sh-row0-t0",
+    "thread_b": "sf-sh-row0-t17"
+  },
+  {
+    "subject": "satya nadella",
+    "text_a": "Satya Nadella: Satya Nadella was born in the city of Hyderabad",
+    "text_b": "Satya Nadella: Satya Nadella is the chief executive officer of Microsoft",
+    "stmt_a": "Satya Nadella was born in the city of Hyderabad",
+    "stmt_b": "Satya Nadella is the chief executive officer of Microsoft",
+    "thread_a": "sf-sh-row0-t1",
+    "thread_b": "sf-sh-row0-t4"
+  },
+  {
+    "subject": "frank zappa",
+    "text_a": "Frank Zappa: Frank Zappa died in the city of Los Angeles",
+    "text_b": "Frank Zappa: Frank Zappa died in the city of Berlin",
+    "stmt_a": "Frank Zappa died in the city of Los Angeles",
+    "stmt_b": "Frank Zappa died in the city of Berlin",
+    "thread_a": "sf-sh-row0-t1",
+    "thread_b": "sf-sh-row0-t2"
+  },
+  {
+    "subject": "dave filoni",
+    "text_a": "Dave Filoni: Dave Filoni is employed by Lucasfilm",
+    "text_b": "Dave Filoni: Dave Filoni is employed by British Broadcasting Corporation",
+    "stmt_a": "Dave Filoni is employed by Lucasfilm",
+    "stmt_b": "Dave Filoni is employed by British Broadcasting Corporation",
+    "thread_a": "sf-sh-row0-t1",
+    "thread_b": "sf-sh-row0-t11"
+  },
+  {
+    "subject": "henri grégoire",
+    "text_a": "Henri Grégoire: Henri Grégoire is a citizen of France",
+    "text_b": "Henri Grégoire: Henri Grégoire is a citizen of India",
+    "stmt_a": "Henri Grégoire is a citizen of France",
+    "stmt_b": "Henri Grégoire is a citizen of India",
+    "thread_a": "sf-sh-row0-t2",
+    "thread_b": "sf-sh-row0-t11"
+  },
+  {
+    "subject": "friedrich nietzsche",
+    "text_a": "Friedrich Nietzsche: Friedrich Nietzsche is famous for Thus Spoke Zarathustra",
+    "text_b": "Friedrich Nietzsche: Friedrich Nietzsche is the author of The Birth of Tragedy",
+    "stmt_a": "Friedrich Nietzsche is famous for Thus Spoke Zarathustra",
+    "stmt_b": "Friedrich Nietzsche is the author of The Birth of Tragedy",
+    "thread_a": "sf-sh-row0-t2",
+    "thread_b": "sf-sh-row0-t3"
+  },
+  {
+    "subject": "pesäpallo",
+    "text_a": "pesäpallo: pesäpallo was created in Finland",
+    "text_b": "pesäpallo: pesäpallo was created in the country of Philippines",
+    "stmt_a": "pesäpallo was created in Finland",
+    "stmt_b": "pesäpallo was created in the country of Philippines",
+    "thread_a": "sf-sh-row0-t3",
+    "thread_b": "sf-sh-row0-t13"
+  },
+  {
+    "subject": "bob iger",
+    "text_a": "Bob Iger: Bob Iger is the director of American Broadcasting Company",
+    "text_b": "Bob Iger: Bob Iger is a citizen of United States of America",
+    "stmt_a": "Bob Iger is the director of American Broadcasting Company",
+    "stmt_b": "Bob Iger is a citizen of United States of America",
+    "thread_a": "sf-sh-row0-t3",
+    "thread_b": "sf-sh-row0-t15"
+  },
+  {
+    "subject": "bruce springsteen",
+    "text_a": "Bruce Springsteen: Bruce Springsteen performed Born in the U.S.A.",
+    "text_b": "Bruce Springsteen: Bruce Springsteen plays rock music",
+    "stmt_a": "Bruce Springsteen performed Born in the U.S.A.",
+    "stmt_b": "Bruce Springsteen plays rock music",
+    "thread_a": "sf-sh-row0-t3",
+    "thread_b": "sf-sh-row0-t17"
+  },
+  {
+    "subject": "carlos gómez",
+    "text_a": "Carlos Gómez: Carlos Gómez is associated with the sport of baseball",
+    "text_b": "Carlos Gómez: Carlos Gómez is associated with the sport of basketball",
+    "stmt_a": "Carlos Gómez is associated with the sport of baseball",
+    "stmt_b": "Carlos Gómez is associated with the sport of basketball",
+    "thread_a": "sf-sh-row0-t4",
+    "thread_b": "sf-sh-row0-t20"
+  },
+  {
+    "subject": "stefan löfven",
+    "text_a": "Stefan Löfven: Stefan Löfven is the Prime Minister of Sweden",
+    "text_b": "Stefan Löfven: Stefan Löfven worked in the city of Stockholm",
+    "stmt_a": "Stefan Löfven is the Prime Minister of Sweden",
+    "stmt_b": "Stefan Löfven worked in the city of Stockholm",
+    "thread_a": "sf-sh-row0-t4",
+    "thread_b": "sf-sh-row0-t8"
+  },
+  {
+    "subject": "nobuhiro watsuki",
+    "text_a": "Nobuhiro Watsuki: Nobuhiro Watsuki is famous for Rurouni Kenshin",
+    "text_b": "Nobuhiro Watsuki: Nobuhiro Watsuki is famous for The Fairly OddParents",
+    "stmt_a": "Nobuhiro Watsuki is famous for Rurouni Kenshin",
+    "stmt_b": "Nobuhiro Watsuki is famous for The Fairly OddParents",
+    "thread_a": "sf-sh-row0-t4",
+    "thread_b": "sf-sh-row0-t13"
+  },
+  {
+    "subject": "england",
+    "text_a": "England: The official language of England is English",
+    "text_b": "England: England is located in Europe",
+    "stmt_a": "The official language of England is English",
+    "stmt_b": "England is located in Europe",
+    "thread_a": "sf-sh-row0-t5",
+    "thread_b": "sf-sh-row0-t10"
+  },
+  {
+    "subject": "charles dickens",
+    "text_a": "Charles Dickens: Charles Dickens is the author of Our Mutual Friend",
+    "text_b": "Charles Dickens: Charles Dickens is married to Catherine Dickens",
+    "stmt_a": "Charles Dickens is the author of Our Mutual Friend",
+    "stmt_b": "Charles Dickens is married to Catherine Dickens",
+    "thread_a": "sf-sh-row0-t5",
+    "thread_b": "sf-sh-row0-t6"
+  },
+  {
+    "subject": "charles dickens",
+    "text_a": "Charles Dickens: Charles Dickens is the author of Our Mutual Friend",
+    "text_b": "Charles Dickens: Charles Dickens is the author of Sketches by Boz",
+    "stmt_a": "Charles Dickens is the author of Our Mutual Friend",
+    "stmt_b": "Charles Dickens is the author of Sketches by Boz",
+    "thread_a": "sf-sh-row0-t5",
+    "thread_b": "sf-sh-row0-t16"
+  },
+  {
+    "subject": "charles dickens",
+    "text_a": "Charles Dickens: Charles Dickens is the author of Our Mutual Friend",
+    "text_b": "Charles Dickens: Charles Dickens died in the city of Gads Hill Place",
+    "stmt_a": "Charles Dickens is the author of Our Mutual Friend",
+    "stmt_b": "Charles Dickens died in the city of Gads Hill Place",
+    "thread_a": "sf-sh-row0-t5",
+    "thread_b": "sf-sh-row0-t22"
+  },
+  {
+    "subject": "charles dickens",
+    "text_a": "Charles Dickens: Charles Dickens is married to Catherine Dickens",
+    "text_b": "Charles Dickens: Charles Dickens is the author of Sketches by Boz",
+    "stmt_a": "Charles Dickens is married to Catherine Dickens",
+    "stmt_b": "Charles Dickens is the author of Sketches by Boz",
+    "thread_a": "sf-sh-row0-t6",
+    "thread_b": "sf-sh-row0-t16"
+  },
+  {
+    "subject": "charles dickens",
+    "text_a": "Charles Dickens: Charles Dickens is married to Catherine Dickens",
+    "text_b": "Charles Dickens: Charles Dickens died in the city of Gads Hill Place",
+    "stmt_a": "Charles Dickens is married to Catherine Dickens",
+    "stmt_b": "Charles Dickens died in the city of Gads Hill Place",
+    "thread_a": "sf-sh-row0-t6",
+    "thread_b": "sf-sh-row0-t22"
+  },
+  {
+    "subject": "charles dickens",
+    "text_a": "Charles Dickens: Charles Dickens is the author of Sketches by Boz",
+    "text_b": "Charles Dickens: Charles Dickens died in the city of Gads Hill Place",
+    "stmt_a": "Charles Dickens is the author of Sketches by Boz",
+    "stmt_b": "Charles Dickens died in the city of Gads Hill Place",
+    "thread_a": "sf-sh-row0-t16",
+    "thread_b": "sf-sh-row0-t22"
+  },
+  {
+    "subject": "oscar wilde",
+    "text_a": "Oscar Wilde: Oscar Wilde died in Paris",
+    "text_b": "Oscar Wilde: Oscar Wilde is the author of Lady Windermere's Fan",
+    "stmt_a": "Oscar Wilde died in Paris",
+    "stmt_b": "Oscar Wilde is the author of Lady Windermere's Fan",
+    "thread_a": "sf-sh-row0-t6",
+    "thread_b": "sf-sh-row0-t7"
+  },
+  {
+    "subject": "bill frisell",
+    "text_a": "Bill Frisell: Bill Frisell was educated at Berklee College of Music",
+    "text_b": "Bill Frisell: Bill Frisell was educated at The University of the Arts",
+    "stmt_a": "Bill Frisell was educated at Berklee College of Music",
+    "stmt_b": "Bill Frisell was educated at The University of the Arts",
+    "thread_a": "sf-sh-row0-t7",
+    "thread_b": "sf-sh-row0-t15"
+  },
+  {
+    "subject": "charles darwin",
+    "text_a": "Charles Darwin: Charles Darwin is married to Emma Darwin",
+    "text_b": "Charles Darwin: Charles Darwin is married to Amala Paul",
+    "stmt_a": "Charles Darwin is married to Emma Darwin",
+    "stmt_b": "Charles Darwin is married to Amala Paul",
+    "thread_a": "sf-sh-row0-t8",
+    "thread_b": "sf-sh-row0-t16"
+  },
+  {
+    "subject": "country joe mcdonald",
+    "text_a": "Country Joe McDonald: Country Joe McDonald is a citizen of United States of America",
+    "text_b": "Country Joe McDonald: Country Joe McDonald is a citizen of Romania",
+    "stmt_a": "Country Joe McDonald is a citizen of United States of America",
+    "stmt_b": "Country Joe McDonald is a citizen of Romania",
+    "thread_a": "sf-sh-row0-t8",
+    "thread_b": "sf-sh-row0-t12"
+  },
+  {
+    "subject": "alan jay lerner",
+    "text_a": "Alan Jay Lerner: Alan Jay Lerner died in the city of New York City",
+    "text_b": "Alan Jay Lerner: Alan Jay Lerner died in Mansourah, Algeria",
+    "stmt_a": "Alan Jay Lerner died in the city of New York City",
+    "stmt_b": "Alan Jay Lerner died in Mansourah, Algeria",
+    "thread_a": "sf-sh-row0-t8",
+    "thread_b": "sf-sh-row0-t19"
+  },
+  {
+    "subject": "john keats",
+    "text_a": "John Keats: John Keats is the author of Endymion",
+    "text_b": "John Keats: John Keats died in Rome",
+    "stmt_a": "John Keats is the author of Endymion",
+    "stmt_b": "John Keats died in Rome",
+    "thread_a": "sf-sh-row0-t9",
+    "thread_b": "sf-sh-row0-t10"
+  },
+  {
+    "subject": "aristotle",
+    "text_a": "Aristotle: Aristotle's child is Nicomachus",
+    "text_b": "Aristotle: Aristotle authored Categories",
+    "stmt_a": "Aristotle's child is Nicomachus",
+    "stmt_b": "Aristotle authored Categories",
+    "thread_a": "sf-sh-row0-t9",
+    "thread_b": "sf-sh-row0-t10"
+  },
+  {
+    "subject": "bo ryan",
+    "text_a": "Bo Ryan: Bo Ryan is associated with the sport of basketball",
+    "text_b": "Bo Ryan: Bo Ryan is associated with the sport of association football",
+    "stmt_a": "Bo Ryan is associated with the sport of basketball",
+    "stmt_b": "Bo Ryan is associated with the sport of association football",
+    "thread_a": "sf-sh-row0-t9",
+    "thread_b": "sf-sh-row0-t17"
+  },
+  {
+    "subject": "cédric klapisch",
+    "text_a": "Cédric Klapisch: Cédric Klapisch is a citizen of France",
+    "text_b": "Cédric Klapisch: Cédric Klapisch is a citizen of Malaysia",
+    "stmt_a": "Cédric Klapisch is a citizen of France",
+    "stmt_b": "Cédric Klapisch is a citizen of Malaysia",
+    "thread_a": "sf-sh-row0-t10",
+    "thread_b": "sf-sh-row0-t12"
+  },
+  {
+    "subject": "sasanian empire",
+    "text_a": "Sasanian Empire: Sasanian Empire was founded by Ardashir I",
+    "text_b": "Sasanian Empire: Sasanian Empire was founded by Walter Chrysler",
+    "stmt_a": "Sasanian Empire was founded by Ardashir I",
+    "stmt_b": "Sasanian Empire was founded by Walter Chrysler",
+    "thread_a": "sf-sh-row0-t11",
+    "thread_b": "sf-sh-row0-t13"
+  },
+  {
+    "subject": "dana international",
+    "text_a": "Dana International: Dana International plays pop music",
+    "text_b": "Dana International: Dana International performed Born in the U.S.A.",
+    "stmt_a": "Dana International plays pop music",
+    "stmt_b": "Dana International performed Born in the U.S.A.",
+    "thread_a": "sf-sh-row0-t12",
+    "thread_b": "sf-sh-row0-t16"
+  },
+  {
+    "subject": "sable",
+    "text_a": "Sable: Sable is a citizen of United States of America",
+    "text_b": "Sable: Sable is a citizen of Czech Republic",
+    "stmt_a": "Sable is a citizen of United States of America",
+    "stmt_b": "Sable is a citizen of Czech Republic",
+    "thread_a": "sf-sh-row0-t12",
+    "thread_b": "sf-sh-row0-t15"
+  },
+  {
+    "subject": "the beatles",
+    "text_a": "The Beatles: The Beatles performed Past Masters",
+    "text_b": "The Beatles: The Beatles performed Free as a Bird",
+    "stmt_a": "The Beatles performed Past Masters",
+    "stmt_b": "The Beatles performed Free as a Bird",
+    "thread_a": "sf-sh-row0-t12",
+    "thread_b": "sf-sh-row0-t17"
+  },
+  {
+    "subject": "lou reed",
+    "text_a": "Lou Reed: Lou Reed was educated at Syracuse University",
+    "text_b": "Lou Reed: Lou Reed was educated at Fordham University",
+    "stmt_a": "Lou Reed was educated at Syracuse University",
+    "stmt_b": "Lou Reed was educated at Fordham University",
+    "thread_a": "sf-sh-row0-t14",
+    "thread_b": "sf-sh-row0-t20"
+  },
+  {
+    "subject": "amala paul",
+    "text_a": "Amala Paul: Amala Paul is a citizen of India",
+    "text_b": "Amala Paul: Amala Paul is a citizen of Belgium",
+    "stmt_a": "Amala Paul is a citizen of India",
+    "stmt_b": "Amala Paul is a citizen of Belgium",
+    "thread_a": "sf-sh-row0-t14",
+    "thread_b": "sf-sh-row0-t16"
+  },
+  {
+    "subject": "andrew carnegie",
+    "text_a": "Andrew Carnegie: Andrew Carnegie is a citizen of United States of America",
+    "text_b": "Andrew Carnegie: Andrew Carnegie is a citizen of United Kingdom",
+    "stmt_a": "Andrew Carnegie is a citizen of United States of America",
+    "stmt_b": "Andrew Carnegie is a citizen of United Kingdom",
+    "thread_a": "sf-sh-row0-t16",
+    "thread_b": "sf-sh-row0-t18"
+  },
+  {
+    "subject": "thomas arne",
+    "text_a": "Thomas Arne: Thomas Arne was born in the city of London",
+    "text_b": "Thomas Arne: Thomas Arne was born in the city of Bengaluru",
+    "stmt_a": "Thomas Arne was born in the city of London",
+    "stmt_b": "Thomas Arne was born in the city of Bengaluru",
+    "thread_a": "sf-sh-row0-t17",
+    "thread_b": "sf-sh-row0-t18"
+  },
+  {
+    "subject": "wilhelm ii",
+    "text_a": "Wilhelm II: Wilhelm II was educated at University of Bonn",
+    "text_b": "Wilhelm II: Wilhelm II was educated at Baldwin Wallace University",
+    "stmt_a": "Wilhelm II was educated at University of Bonn",
+    "stmt_b": "Wilhelm II was educated at Baldwin Wallace University",
+    "thread_a": "sf-sh-row0-t17",
+    "thread_b": "sf-sh-row0-t22"
+  },
+  {
+    "subject": "sophia hawthorne",
+    "text_a": "Sophia Hawthorne: Sophia Hawthorne is married to Nathaniel Hawthorne",
+    "text_b": "Sophia Hawthorne: Sophia Hawthorne is married to Joan Didion",
+    "stmt_a": "Sophia Hawthorne is married to Nathaniel Hawthorne",
+    "stmt_b": "Sophia Hawthorne is married to Joan Didion",
+    "thread_a": "sf-sh-row0-t20",
+    "thread_b": "sf-sh-row0-t21"
+  }
+]

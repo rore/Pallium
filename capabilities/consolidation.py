@@ -451,7 +451,7 @@ class ConsolidationCapability:
         )
         requires_visibility_context = getattr(plugin, "requires_visibility_context", False)
         candidates = [
-            self._build_candidate(storage, memory_object)
+            self.build_candidate(storage, memory_object)
             for memory_object in memory_objects
             if plugin.supports_consolidation(memory_object)
             and (not requires_visibility_context or memory_object.visibility != "private")
@@ -476,7 +476,7 @@ class ConsolidationCapability:
     ) -> ProcessResult:
         return plugin.build_consolidated_memory(group)
 
-    def _build_candidate(self, storage: StorageProvider, memory_object: MemoryObject) -> ConsolidationCandidate | None:
+    def build_candidate(self, storage: StorageProvider, memory_object: MemoryObject) -> ConsolidationCandidate | None:
         evidence = tuple(storage.get_evidence_for_memory_object(memory_object.id))
         if not _visibility_is_compatible(memory_object.visibility, evidence):
             return None

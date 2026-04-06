@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import unicodedata
 from typing import Any, Callable
 
 from capabilities.thread_aggregation import build_thread_aggregate
@@ -14,6 +13,7 @@ from core.visibility import visibility_matches_exact, visibility_label
 from providers.llm.base import LLMProviderError
 from semantic.base import SemanticPlugin, ThreadAggregationSemanticPlugin
 from storage.base import StorageProvider, ThreadProcessingLease, ThreadProcessingScope
+from storage.sqlite_codec import extract_memory_subject
 
 
 # ── Failure classification constants (shared with core.processing) ──────────
@@ -295,9 +295,9 @@ class ThreadRebuilder:
         for mo in thread_result.memory_objects:
             if mo.type != "atomic_fact":
                 continue
-            raw_subject = mo.payload.get("subject") if mo.payload else None
-            if isinstance(raw_subject, str) and raw_subject.strip():
-                subjects.add(unicodedata.normalize("NFKC", raw_subject.strip()).lower())
+            normalized = extract_memory_subject(mo)
+            if normalized:
+                subjects.add(normalized)
 
         if not subjects:
             return

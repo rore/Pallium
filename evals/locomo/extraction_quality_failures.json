@@ -1,0 +1,1838 @@
+{
+  "description": "Extraction quality failures with source turn text. For each case: the question, gold answer, evidence turn IDs, and the ACTUAL conversation text that contains the answer. Use this to test whether an improved extraction prompt captures the missing details.",
+  "conversation": "conv-26",
+  "speakers": {
+    "speaker_a": "Caroline",
+    "speaker_b": "Melanie"
+  },
+  "total_cases": 30,
+  "common_patterns": [
+    "Proper nouns dropped: Sweden -> home country",
+    "Specific details dropped: dinosaurs, nature -> kids interests not captured",
+    "Titles/names dropped: Nothing is Impossible not extracted as book title",
+    "Event specifics dropped: abstract art -> just art",
+    "Wrong date from wrong session: conference in July retrieved as October"
+  ],
+  "cases": [
+    {
+      "question": "What is Caroline's relationship status?",
+      "gold_answer": "Single",
+      "predicted_answer": "Caroline has experienced a tough breakup, but her current relationship status is not explicitly stated in the available context.",
+      "category": "multi_hop",
+      "evidence_ids": [
+        "D3:13",
+        "D2:14"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D3:13",
+          "source_id": "conv-26_D3:13",
+          "extracted": true,
+          "memory_count": 10,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        },
+        {
+          "evidence_id": "D2:14",
+          "source_id": "conv-26_D2:14",
+          "extracted": true,
+          "memory_count": 12,
+          "memory_types": [
+            "decision",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": false
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "thread_summary"
+      ],
+      "judge_reasoning": "The gold answer states Caroline is single, but the generated answer says her relationship status is not explicitly stated, which contradicts the known answer.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D3:13",
+          "speaker": "Caroline",
+          "session": "session_3",
+          "date": "7:55 pm on 9 June, 2023",
+          "text": "Yeah, I'm really lucky to have them. They've been there through everything, I've known these friends for 4 years, since I moved from my home country. Their love and help have been so important especially after that tough breakup. I'm super thankful. Who supports you, Mel?"
+        },
+        {
+          "evidence_id": "D2:14",
+          "speaker": "Caroline",
+          "session": "session_2",
+          "date": "1:14 pm on 25 May, 2023",
+          "text": "I'm thrilled to make a family for kids who need one. It'll be tough as a single parent, but I'm up for the challenge!"
+        }
+      ]
+    },
+    {
+      "question": "Where did Caroline move from 4 years ago?",
+      "gold_answer": "Sweden",
+      "predicted_answer": "Caroline's home country, but the specific country is not mentioned in the available context.",
+      "category": "multi_hop",
+      "evidence_ids": [
+        "D3:13",
+        "D4:3"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D3:13",
+          "source_id": "conv-26_D3:13",
+          "extracted": true,
+          "memory_count": 10,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        },
+        {
+          "evidence_id": "D4:3",
+          "source_id": "conv-26_D4:3",
+          "extracted": true,
+          "memory_count": 13,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact"
+      ],
+      "judge_reasoning": "The generated answer says the specific country is not mentioned, but the gold answer is Sweden.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D3:13",
+          "speaker": "Caroline",
+          "session": "session_3",
+          "date": "7:55 pm on 9 June, 2023",
+          "text": "Yeah, I'm really lucky to have them. They've been there through everything, I've known these friends for 4 years, since I moved from my home country. Their love and help have been so important especially after that tough breakup. I'm super thankful. Who supports you, Mel?"
+        },
+        {
+          "evidence_id": "D4:3",
+          "speaker": "Caroline",
+          "session": "session_4",
+          "date": "10:37 am on 27 June, 2023",
+          "text": "Thanks, Melanie! This necklace is super special to me - a gift from my grandma in my home country, Sweden. She gave it to me when I was young, and it stands for love, faith and strength. It's like a reminder of my roots and all the love and support I get from my family."
+        }
+      ]
+    },
+    {
+      "question": "When is Caroline going to the transgender conference?",
+      "gold_answer": "July 2023",
+      "predicted_answer": "Caroline plans to attend the transgender conference this month (approximately October 2023).",
+      "category": "single_hop",
+      "evidence_ids": [
+        "D5:13"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D5:13",
+          "source_id": "conv-26_D5:13",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "thread_summary"
+      ],
+      "judge_reasoning": "The generated answer says October 2023, but the gold answer indicates the conference is in July 2023.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D5:13",
+          "speaker": "Caroline",
+          "session": "session_5",
+          "date": "1:36 pm on 3 July, 2023",
+          "text": "Thanks Mel! I'm going to a transgender conference this month. I'm so excited to meet other people in the community and learn more about advocacy. It's gonna be great!"
+        }
+      ]
+    },
+    {
+      "question": "What do Melanie's kids like?",
+      "gold_answer": "dinosaurs, nature",
+      "predicted_answer": "The retrieved context does not provide specific information about what Melanie's kids like or their personal interests and preferences.",
+      "category": "multi_hop",
+      "evidence_ids": [
+        "D6:6",
+        "D4:8"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D6:6",
+          "source_id": "conv-26_D6:6",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        },
+        {
+          "evidence_id": "D4:8",
+          "source_id": "conv-26_D4:8",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": false
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact"
+      ],
+      "judge_reasoning": "The gold answer states Melanie's kids like dinosaurs and nature, but the generated answer claims this information is not available in the context.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D6:6",
+          "speaker": "Melanie",
+          "session": "session_6",
+          "date": "8:18 pm on 6 July, 2023",
+          "text": "They were stoked for the dinosaur exhibit! They love learning about animals and the bones were so cool. It reminds me why I love being a mom."
+        },
+        {
+          "evidence_id": "D4:8",
+          "speaker": "Melanie",
+          "session": "session_4",
+          "date": "10:37 am on 27 June, 2023",
+          "text": "It was an awesome time, Caroline! We explored nature, roasted marshmallows around the campfire and even went on a hike. The view from the top was amazing! The 2 younger kids love nature. It was so special having these moments together as a family - I'll never forget it!"
+        }
+      ]
+    },
+    {
+      "question": "What books has Melanie read?",
+      "gold_answer": "\"Nothing is Impossible\", \"Charlotte's Web\"",
+      "predicted_answer": "The only book mentioned in relation to Melanie is 'Charlotte's Web', which was her favorite childhood book. No other books she has read are mentioned in the context.",
+      "category": "multi_hop",
+      "evidence_ids": [
+        "D7:8",
+        "D6:10"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D7:8",
+          "source_id": "conv-26_D7:8",
+          "extracted": true,
+          "memory_count": 9,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        },
+        {
+          "evidence_id": "D6:10",
+          "source_id": "conv-26_D6:10",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact"
+      ],
+      "judge_reasoning": "The generated answer only mentions 'Charlotte's Web' but misses 'Nothing is Impossible', which is also part of the gold answer.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D7:8",
+          "speaker": "Melanie",
+          "session": "session_7",
+          "date": "4:33 pm on 12 July, 2023",
+          "text": "Caroline, so glad you got the support! Your experience really brought you to where you need to be. You're gonna make a huge difference! This book I read last year reminds me to always pursue my dreams, just like you are doing!🌟"
+        },
+        {
+          "evidence_id": "D6:10",
+          "speaker": "Melanie",
+          "session": "session_6",
+          "date": "8:18 pm on 6 July, 2023",
+          "text": "I loved reading \"Charlotte's Web\" as a kid. It was so cool seeing how friendship and compassion can make a difference."
+        }
+      ]
+    },
+    {
+      "question": "When did Melanie read the book \"nothing is impossible\"?",
+      "gold_answer": "2022",
+      "predicted_answer": "There is no information in the retrieved context about Melanie reading a book called 'Nothing is Impossible'.",
+      "category": "single_hop",
+      "evidence_ids": [
+        "D7:8"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D7:8",
+          "source_id": "conv-26_D7:8",
+          "extracted": true,
+          "memory_count": 9,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact"
+      ],
+      "judge_reasoning": "The gold answer states 2022, but the generated answer claims there's no information about this, which is incorrect since the gold answer indicates this information should be known.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D7:8",
+          "speaker": "Melanie",
+          "session": "session_7",
+          "date": "4:33 pm on 12 July, 2023",
+          "text": "Caroline, so glad you got the support! Your experience really brought you to where you need to be. You're gonna make a huge difference! This book I read last year reminds me to always pursue my dreams, just like you are doing!🌟"
+        }
+      ]
+    },
+    {
+      "question": "When did Caroline go to a pride parade during the summer?",
+      "gold_answer": "The week before 3 July 2023",
+      "predicted_answer": "Caroline attended a pride parade on approximately August 11, 2023.",
+      "category": "single_hop",
+      "evidence_ids": [
+        "D5:1"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D5:1",
+          "source_id": "conv-26_D5:1",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "thread_summary"
+      ],
+      "judge_reasoning": "The gold answer indicates the pride parade was the week before July 3, 2023 (late June 2023), while the generated answer states August 11, 2023, which is a different time period.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D5:1",
+          "speaker": "Caroline",
+          "session": "session_5",
+          "date": "1:36 pm on 3 July, 2023",
+          "text": "Since we last spoke, some big things have happened. Last week I went to an LGBTQ+ pride parade. Everyone was so happy and it made me feel like I belonged. It showed me how much our community has grown, it was amazing!"
+        }
+      ]
+    },
+    {
+      "question": "What activities has Melanie done with her family?",
+      "gold_answer": "Pottery, painting, camping, museum, swimming, hiking",
+      "predicted_answer": "Melanie has gone camping with her family, including a beach camping trip (around 2023-10-19). She also bought figurines that remind her of family love (around 2023-10-21).",
+      "category": "multi_hop",
+      "evidence_ids": [
+        "D8:4",
+        "D8:6",
+        "D9:1",
+        "D6:4",
+        "D1:18",
+        "D3:14"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D8:4",
+          "source_id": "conv-26_D8:4",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": false
+        },
+        {
+          "evidence_id": "D8:6",
+          "source_id": "conv-26_D8:6",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": false
+        },
+        {
+          "evidence_id": "D9:1",
+          "source_id": "conv-26_D9:1",
+          "extracted": true,
+          "memory_count": 7,
+          "memory_types": [
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": false
+        },
+        {
+          "evidence_id": "D6:4",
+          "source_id": "conv-26_D6:4",
+          "extracted": true,
+          "memory_count": 10,
+          "memory_types": [
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        },
+        {
+          "evidence_id": "D1:18",
+          "source_id": "conv-26_D1:18",
+          "extracted": true,
+          "memory_count": 8,
+          "memory_types": [
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": false
+        },
+        {
+          "evidence_id": "D3:14",
+          "source_id": "conv-26_D3:14",
+          "extracted": true,
+          "memory_count": 8,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact"
+      ],
+      "judge_reasoning": "The generated answer only mentions camping and buying figurines, missing several activities from the gold answer: pottery, painting, museum visits, swimming, and hiking.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D8:4",
+          "speaker": "Melanie",
+          "session": "session_8",
+          "date": "1:51 pm on 15 July, 2023",
+          "text": "The kids loved it! They were so excited to get their hands dirty and make something with clay. It was special to watch their creativity and imagination come to life, they made this!"
+        },
+        {
+          "evidence_id": "D8:6",
+          "speaker": "Melanie",
+          "session": "session_8",
+          "date": "1:51 pm on 15 July, 2023",
+          "text": "We love painting together lately, especially nature-inspired ones. Here's our latest work from last weekend."
+        },
+        {
+          "evidence_id": "D9:1",
+          "speaker": "Melanie",
+          "session": "session_9",
+          "date": "2:31 pm on 17 July, 2023",
+          "text": "Hey Caroline, hope all's good! I had a quiet weekend after we went camping with my fam two weekends ago. It was great to unplug and hang with the kids. What've you been up to? Anything fun over the weekend?"
+        },
+        {
+          "evidence_id": "D6:4",
+          "speaker": "Melanie",
+          "session": "session_6",
+          "date": "8:18 pm on 6 July, 2023",
+          "text": "That's awesome, Caroline! Congrats on following your dreams. Yesterday I took the kids to the museum - it was so cool spending time with them and seeing their eyes light up!"
+        },
+        {
+          "evidence_id": "D1:18",
+          "speaker": "Melanie",
+          "session": "session_1",
+          "date": "1:56 pm on 8 May, 2023",
+          "text": "Yep, Caroline. Taking care of ourselves is vital. I'm off to go swimming with the kids. Talk to you soon!"
+        },
+        {
+          "evidence_id": "D3:14",
+          "speaker": "Melanie",
+          "session": "session_3",
+          "date": "7:55 pm on 9 June, 2023",
+          "text": "I'm lucky to have my husband and kids; they keep me motivated."
+        }
+      ]
+    },
+    {
+      "question": "Who supports Caroline when she has a negative experience?",
+      "gold_answer": "Her mentors, family, and friends",
+      "predicted_answer": "Melanie supports Caroline when she has negative experiences.",
+      "category": "multi_hop",
+      "evidence_ids": [
+        "D12:1",
+        "D3:11"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D12:1",
+          "source_id": "conv-26_D12:1",
+          "extracted": true,
+          "memory_count": 9,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        },
+        {
+          "evidence_id": "D3:11",
+          "source_id": "conv-26_D3:11",
+          "extracted": true,
+          "memory_count": 10,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": false
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "decision"
+      ],
+      "judge_reasoning": "The gold answer mentions mentors, family, and friends as a group, while the generated answer only mentions a specific person named Melanie, which doesn't match the broader support system described in ",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D12:1",
+          "speaker": "Caroline",
+          "session": "session_12",
+          "date": "1:50 pm on 17 August, 2023",
+          "text": "Hey Mel! How're ya doin'? Recently, I had a not-so-great experience on a hike. I ran into a group of religious conservatives who said something that really upset me. It made me think how much work we still have to do for LGBTQ rights. It's been so helpful to have people around me who accept and supp"
+        },
+        {
+          "evidence_id": "D3:11",
+          "speaker": "Caroline",
+          "session": "session_3",
+          "date": "7:55 pm on 9 June, 2023",
+          "text": "Thanks, Mel! My friends, family and mentors are my rocks – they motivate me and give me the strength to push on. Here's a pic from when we met up last week!"
+        }
+      ]
+    },
+    {
+      "question": "What types of pottery have Melanie and her kids made?",
+      "gold_answer": "bowls, cup",
+      "predicted_answer": "The only specific pottery item mentioned is a pottery plate that Melanie made in pottery class around 2023-08-24. There is also a reference to Melanie making bowls with cool designs (mentioned by Caro",
+      "category": "multi_hop",
+      "evidence_ids": [
+        "D12:14",
+        "D8:4",
+        "D5:6"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D12:14",
+          "source_id": "conv-26_D12:14",
+          "extracted": true,
+          "memory_count": 7,
+          "memory_types": [
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": false
+        },
+        {
+          "evidence_id": "D8:4",
+          "source_id": "conv-26_D8:4",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": false
+        },
+        {
+          "evidence_id": "D5:6",
+          "source_id": "conv-26_D5:6",
+          "extracted": true,
+          "memory_count": 9,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "decision"
+      ],
+      "judge_reasoning": "The gold answer mentions bowls and cups, but the generated answer mentions bowls and a plate, missing the cup entirely.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D12:14",
+          "speaker": "Melanie",
+          "session": "session_12",
+          "date": "1:50 pm on 17 August, 2023",
+          "text": "I appreciate our friendship too, Caroline. You've always been there for me."
+        },
+        {
+          "evidence_id": "D8:4",
+          "speaker": "Melanie",
+          "session": "session_8",
+          "date": "1:51 pm on 15 July, 2023",
+          "text": "The kids loved it! They were so excited to get their hands dirty and make something with clay. It was special to watch their creativity and imagination come to life, they made this!"
+        },
+        {
+          "evidence_id": "D5:6",
+          "speaker": "Melanie",
+          "session": "session_5",
+          "date": "1:36 pm on 3 July, 2023",
+          "text": "I'm a big fan of pottery - the creativity and skill is awesome. Plus, making it is so calming. Look at this!"
+        }
+      ]
+    },
+    {
+      "question": "What has Melanie painted?",
+      "gold_answer": "Horse, sunset, sunrise",
+      "predicted_answer": "Melanie has painted three known works: (1) a sunset-inspired painting last week (around early October 2023) with colors that make her feel calm, (2) an abstract painting with blue streaks to convey tr",
+      "category": "multi_hop",
+      "evidence_ids": [
+        "D13:8",
+        "D8:6",
+        "D1:12"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D13:8",
+          "source_id": "conv-26_D13:8",
+          "extracted": true,
+          "memory_count": 10,
+          "memory_types": [
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": false
+        },
+        {
+          "evidence_id": "D8:6",
+          "source_id": "conv-26_D8:6",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": false
+        },
+        {
+          "evidence_id": "D1:12",
+          "source_id": "conv-26_D1:12",
+          "extracted": true,
+          "memory_count": 8,
+          "memory_types": [
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact"
+      ],
+      "judge_reasoning": "The gold answer includes a horse painting, but the generated answer mentions abstract painting with blue streaks instead of a horse, missing that key item.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D13:8",
+          "speaker": "Melanie",
+          "session": "session_13",
+          "date": "3:31 pm on 23 August, 2023",
+          "text": "Wow, that sounds great - I agree, they're awesome. Here's a photo of my horse painting I did recently."
+        },
+        {
+          "evidence_id": "D8:6",
+          "speaker": "Melanie",
+          "session": "session_8",
+          "date": "1:51 pm on 15 July, 2023",
+          "text": "We love painting together lately, especially nature-inspired ones. Here's our latest work from last weekend."
+        },
+        {
+          "evidence_id": "D1:12",
+          "speaker": "Melanie",
+          "session": "session_1",
+          "date": "1:56 pm on 8 May, 2023",
+          "text": "You'd be a great counselor! Your empathy and understanding will really help the people you work with. By the way, take a look at this."
+        }
+      ]
+    },
+    {
+      "question": "What symbols are important to Caroline?",
+      "gold_answer": "Rainbow flag, transgender symbol",
+      "predicted_answer": "The retrieved context does not explicitly mention specific symbols that are important to Caroline. However, based on the available information, LGBTQ+ themes and trans experience are central to her ar",
+      "category": "multi_hop",
+      "evidence_ids": [
+        "D14:15",
+        "D4:1"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D14:15",
+          "source_id": "conv-26_D14:15",
+          "extracted": true,
+          "memory_count": 13,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": false
+        },
+        {
+          "evidence_id": "D4:1",
+          "source_id": "conv-26_D4:1",
+          "extracted": true,
+          "memory_count": 12,
+          "memory_types": [
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "thread_summary"
+      ],
+      "judge_reasoning": "The gold answer specifies 'Rainbow flag, transgender symbol' as important symbols to Caroline, but the generated answer fails to identify these specific symbols, instead providing a vague inference ab",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D14:15",
+          "speaker": "Caroline",
+          "session": "session_14",
+          "date": "1:33 pm on 25 August, 2023",
+          "text": "The rainbow flag mural is important to me as it reflects the courage and strength of the trans community. The eagle symbolizes freedom and pride, representing my own resilience and that of others."
+        },
+        {
+          "evidence_id": "D4:1",
+          "speaker": "Caroline",
+          "session": "session_4",
+          "date": "10:37 am on 27 June, 2023",
+          "text": "Hey Melanie! Long time no talk! A lot's been going on in my life! Take a look at this."
+        }
+      ]
+    },
+    {
+      "question": "What book did Melanie read from Caroline's suggestion?",
+      "gold_answer": "\"Becoming Nicole\"",
+      "predicted_answer": "The retrieved context does not contain information about Melanie reading a book suggested by Caroline.",
+      "category": "multi_hop",
+      "evidence_ids": [
+        "D7:11",
+        "D17:10"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D7:11",
+          "source_id": "conv-26_D7:11",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        },
+        {
+          "evidence_id": "D17:10",
+          "source_id": "conv-26_D17:10",
+          "extracted": true,
+          "memory_count": 10,
+          "memory_types": [
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": false
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact"
+      ],
+      "judge_reasoning": "The generated answer claims no information is available, but the gold answer indicates Melanie read 'Becoming Nicole' from Caroline's suggestion.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D7:11",
+          "speaker": "Caroline",
+          "session": "session_7",
+          "date": "4:33 pm on 12 July, 2023",
+          "text": "I loved \"Becoming Nicole\" by Amy Ellis Nutt. It's a real inspiring true story about a trans girl and her family. It made me feel connected and gave me a lot of hope for my own path. Highly recommend it for sure!"
+        },
+        {
+          "evidence_id": "D17:10",
+          "speaker": "Melanie",
+          "session": "session_17",
+          "date": "10:31 am on 13 October, 2023",
+          "text": "Thanks, Caroline. It was tough, but I'm doing ok. Been reading that book you recommended a while ago and painting to keep busy."
+        }
+      ]
+    },
+    {
+      "question": "What items has Melanie bought?",
+      "gold_answer": "Figurines, shoes",
+      "predicted_answer": "Melanie bought figurines that remind her of family love.",
+      "category": "multi_hop",
+      "evidence_ids": [
+        "D19:2",
+        "D7:18"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D19:2",
+          "source_id": "conv-26_D19:2",
+          "extracted": true,
+          "memory_count": 8,
+          "memory_types": [
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        },
+        {
+          "evidence_id": "D7:18",
+          "source_id": "conv-26_D7:18",
+          "extracted": true,
+          "memory_count": 9,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "thread_summary"
+      ],
+      "judge_reasoning": "The generated answer only mentions figurines but misses shoes, which is part of the gold answer.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D19:2",
+          "speaker": "Melanie",
+          "session": "session_19",
+          "date": "9:55 am on 22 October, 2023",
+          "text": "Congrats, Caroline! Adoption sounds awesome. I'm so happy for you. These figurines I bought yesterday remind me of family love. Tell me, what's your vision for the future?"
+        },
+        {
+          "evidence_id": "D7:18",
+          "speaker": "Melanie",
+          "session": "session_7",
+          "date": "4:33 pm on 12 July, 2023",
+          "text": "Luna and Oliver! They are so sweet and playful - they really liven up the house! Just got some new shoes, too!"
+        }
+      ]
+    },
+    {
+      "question": "Would Caroline want to move back to her home country soon?",
+      "gold_answer": "No; she's in the process of adopting children.",
+      "predicted_answer": "There is no direct evidence that Caroline wants to move back to Sweden soon. In fact, the available context suggests the opposite is more likely.",
+      "category": "temporal",
+      "evidence_ids": [
+        "D19:1",
+        "D19:3"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D19:1",
+          "source_id": "conv-26_D19:1",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        },
+        {
+          "evidence_id": "D19:3",
+          "source_id": "conv-26_D19:3",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "discussion_summary"
+      ],
+      "judge_reasoning": "The generated answer doesn't mention the key reason (adopting children) why Caroline wouldn't move back, just vaguely says there's no evidence she wants to move back.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D19:1",
+          "speaker": "Caroline",
+          "session": "session_19",
+          "date": "9:55 am on 22 October, 2023",
+          "text": "Woohoo Melanie! I passed the adoption agency interviews last Friday! I'm so excited and thankful. This is a big move towards my goal of having a family."
+        },
+        {
+          "evidence_id": "D19:3",
+          "speaker": "Caroline",
+          "session": "session_19",
+          "date": "9:55 am on 22 October, 2023",
+          "text": "Thanks so much, Melanie! It's beautiful! It really brings home how much love's in families - both blood and the ones we choose. I hope to build my own family and put a roof over kids who haven't had that before. For me, adoption is a way of giving back and showing love and acceptance."
+        }
+      ]
+    },
+    {
+      "question": "What are Caroline's plans for the summer?",
+      "gold_answer": "researching adoption agencies",
+      "predicted_answer": "Caroline and Melanie plan to do a summer outing together to catch up and explore nature.",
+      "category": "open_domain",
+      "evidence_ids": [
+        "D2:8"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D2:8",
+          "source_id": "conv-26_D2:8",
+          "extracted": true,
+          "memory_count": 12,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "thread_summary"
+      ],
+      "judge_reasoning": "The generated answer mentions a summer outing with Melanie, while the gold answer states Caroline's plans involve researching adoption agencies.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D2:8",
+          "speaker": "Caroline",
+          "session": "session_2",
+          "date": "1:14 pm on 25 May, 2023",
+          "text": "Researching adoption agencies — it's been a dream to have a family and give a loving home to kids who need it."
+        }
+      ]
+    },
+    {
+      "question": "What is Caroline excited about in the adoption process?",
+      "gold_answer": "creating a family for kids who need one",
+      "predicted_answer": "Caroline is excited about passing the adoption agency interviews, which she describes as a big move towards her goal of having a family.",
+      "category": "open_domain",
+      "evidence_ids": [
+        "D2:14"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D2:14",
+          "source_id": "conv-26_D2:14",
+          "extracted": true,
+          "memory_count": 12,
+          "memory_types": [
+            "decision",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "decision",
+        "discussion_summary",
+        "thread_summary"
+      ],
+      "judge_reasoning": "The gold answer focuses on Caroline's excitement about creating a family for kids who need one, while the generated answer focuses on passing adoption agency interviews as a specific milestone, which ",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D2:14",
+          "speaker": "Caroline",
+          "session": "session_2",
+          "date": "1:14 pm on 25 May, 2023",
+          "text": "I'm thrilled to make a family for kids who need one. It'll be tough as a single parent, but I'm up for the challenge!"
+        }
+      ]
+    },
+    {
+      "question": "What did Melanie and her family do while camping?",
+      "gold_answer": "explored nature, roasted marshmallows, and went on a hike",
+      "predicted_answer": "The retrieved context does not provide specific details about what Melanie and her family did while camping. It only confirms that Melanie loves camping trips with her family and that she went on camp",
+      "category": "open_domain",
+      "evidence_ids": [
+        "D4:8"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D4:8",
+          "source_id": "conv-26_D4:8",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact"
+      ],
+      "judge_reasoning": "The generated answer says it cannot find the specific details, but the gold answer contains specific activities (explored nature, roasted marshmallows, went on a hike) that were mentioned in prior con",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D4:8",
+          "speaker": "Melanie",
+          "session": "session_4",
+          "date": "10:37 am on 27 June, 2023",
+          "text": "It was an awesome time, Caroline! We explored nature, roasted marshmallows around the campfire and even went on a hike. The view from the top was amazing! The 2 younger kids love nature. It was so special having these moments together as a family - I'll never forget it!"
+        }
+      ]
+    },
+    {
+      "question": "What was discussed in the LGBTQ+ counseling workshop?",
+      "gold_answer": "therapeutic methods and how to best work with trans people",
+      "predicted_answer": "The retrieved context does not provide details about what was discussed in the LGBTQ+ counseling workshop that Caroline attended around 2023-06-23. Only the fact that she attended the workshop is ment",
+      "category": "open_domain",
+      "evidence_ids": [
+        "D4:13"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D4:13",
+          "source_id": "conv-26_D4:13",
+          "extracted": true,
+          "memory_count": 13,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "decision",
+        "discussion_summary",
+        "thread_summary"
+      ],
+      "judge_reasoning": "The gold answer specifies that therapeutic methods and working with trans people were discussed, while the generated answer claims no details about the workshop content are available.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D4:13",
+          "speaker": "Caroline",
+          "session": "session_4",
+          "date": "10:37 am on 27 June, 2023",
+          "text": "I'm still figuring out the details, but I'm thinking of working with trans people, helping them accept themselves and supporting their mental health. Last Friday, I went to an LGBTQ+ counseling workshop and it was really enlightening. They talked about different therapeutic methods and how to best w"
+        }
+      ]
+    },
+    {
+      "question": "What did Caroline take away from the book \"Becoming Nicole\"?",
+      "gold_answer": "Lessons on self-acceptance and finding support",
+      "predicted_answer": "The retrieved context does not specify what Caroline took away from the book 'Becoming Nicole' by Amy Ellis Nutt. It only states that it is her favorite book, that it is a true story about a trans gir",
+      "category": "open_domain",
+      "evidence_ids": [
+        "D7:13"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D7:13",
+          "source_id": "conv-26_D7:13",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "decision",
+        "discussion_summary",
+        "thread_summary"
+      ],
+      "judge_reasoning": "The gold answer specifies 'lessons on self-acceptance and finding support' as what Caroline took away from the book, but the generated answer says this information is not specified in the context, whi",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D7:13",
+          "speaker": "Caroline",
+          "session": "session_7",
+          "date": "4:33 pm on 12 July, 2023",
+          "text": "It taught me self-acceptance and how to find support. It also showed me that tough times don't last - hope and love exist. Pets bring so much joy too, though."
+        }
+      ]
+    },
+    {
+      "question": "What did Mel and her kids make during the pottery workshop?",
+      "gold_answer": "pots",
+      "predicted_answer": "The retrieved context does not specify what Mel and her kids made during the pottery workshop.",
+      "category": "open_domain",
+      "evidence_ids": [
+        "D8:2"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D8:2",
+          "source_id": "conv-26_D8:2",
+          "extracted": true,
+          "memory_count": 10,
+          "memory_types": [
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "decision"
+      ],
+      "judge_reasoning": "The gold answer states they made 'pots', but the generated answer claims the information is not specified in the context.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D8:2",
+          "speaker": "Melanie",
+          "session": "session_8",
+          "date": "1:51 pm on 15 July, 2023",
+          "text": "Hey Caroline, it's been super busy here. So much since we talked! Last Fri I finally took my kids to a pottery workshop. We all made our own pots, it was fun and therapeutic!"
+        }
+      ]
+    },
+    {
+      "question": "What kind of pot did Mel and her kids make with clay?",
+      "gold_answer": "a cup with a dog face on it",
+      "predicted_answer": "The specific type of pot or clay creation made by Mel and her kids is not mentioned in the available context.",
+      "category": "open_domain",
+      "evidence_ids": [
+        "D8:4"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D8:4",
+          "source_id": "conv-26_D8:4",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "discussion_summary"
+      ],
+      "judge_reasoning": "The gold answer specifies they made a cup with a dog face on it, but the generated answer claims this information is not available.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D8:4",
+          "speaker": "Melanie",
+          "session": "session_8",
+          "date": "1:51 pm on 15 July, 2023",
+          "text": "The kids loved it! They were so excited to get their hands dirty and make something with clay. It was special to watch their creativity and imagination come to life, they made this!"
+        }
+      ]
+    },
+    {
+      "question": "What did Mel and her kids paint in their latest project in July 2023?",
+      "gold_answer": "a sunset with a palm tree",
+      "predicted_answer": "Mel and her kids created a nature-inspired painting together on approximately 2023-07-09.",
+      "category": "open_domain",
+      "evidence_ids": [
+        "D8:6"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D8:6",
+          "source_id": "conv-26_D8:6",
+          "extracted": true,
+          "memory_count": 11,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "thread_summary"
+      ],
+      "judge_reasoning": "The generated answer only mentions a 'nature-inspired painting' without specifying the subject (sunset with a palm tree) that the gold answer requires.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D8:6",
+          "speaker": "Melanie",
+          "session": "session_8",
+          "date": "1:51 pm on 15 July, 2023",
+          "text": "We love painting together lately, especially nature-inspired ones. Here's our latest work from last weekend."
+        }
+      ]
+    },
+    {
+      "question": "What did Caroline see at the council meeting for adoption?",
+      "gold_answer": "many people wanting to create loving homes for children in need",
+      "predicted_answer": "The retrieved context does not specify what Caroline saw at the adoption council meeting, only that it was inspiring and emotional, reinforcing her determination to adopt a child and create a loving h",
+      "category": "open_domain",
+      "evidence_ids": [
+        "D8:9"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D8:9",
+          "source_id": "conv-26_D8:9",
+          "extracted": true,
+          "memory_count": 13,
+          "memory_types": [
+            "decision",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "decision",
+        "thread_summary"
+      ],
+      "judge_reasoning": "The generated answer fails to mention the specific detail that Caroline saw many people wanting to create loving homes for children in need, which is the key content of what she observed at the meetin",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D8:9",
+          "speaker": "Caroline",
+          "session": "session_8",
+          "date": "1:51 pm on 15 July, 2023",
+          "text": "That photo is stunning! So glad you bonded over our love of nature. Last Friday I went to a council meeting for adoption. It was inspiring and emotional - so many people wanted to create loving homes for children in need. It made me even more determined to adopt."
+        }
+      ]
+    },
+    {
+      "question": "Why did Melanie choose to use colors and patterns in her pottery project?",
+      "gold_answer": "She wanted to catch the eye and make people smile.",
+      "predicted_answer": "Melanie chose to use colors and patterns in her pottery bowl project as a means of self-expression. She views pottery as a major part of her life and uses it to express her emotions.",
+      "category": "open_domain",
+      "evidence_ids": [
+        "D12:6"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D12:6",
+          "source_id": "conv-26_D12:6",
+          "extracted": true,
+          "memory_count": 8,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact"
+      ],
+      "judge_reasoning": "The generated answer focuses on self-expression and emotions, while the gold answer specifically states she wanted to catch the eye and make people smile - these are meaningfully different motivations",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D12:6",
+          "speaker": "Melanie",
+          "session": "session_12",
+          "date": "1:50 pm on 17 August, 2023",
+          "text": "Thanks, Caroline! I'm obsessed with those, so I made something to catch the eye and make people smile. Plus, painting helps me express my feelings and be creative. Each stroke carries a part of me."
+        }
+      ]
+    },
+    {
+      "question": "What advice does Caroline give for getting started with adoption?",
+      "gold_answer": "Do research, find an adoption agency or lawyer, gather necessary documents, and prepare emotionally.",
+      "predicted_answer": "The retrieved context does not contain specific advice from Caroline about getting started with adoption. The context shows that Caroline applied to adoption agencies (August 2023), contacted a mentor",
+      "category": "open_domain",
+      "evidence_ids": [
+        "D17:7"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D17:7",
+          "source_id": "conv-26_D17:7",
+          "extracted": true,
+          "memory_count": 13,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "decision",
+        "discussion_summary",
+        "thread_summary"
+      ],
+      "judge_reasoning": "The gold answer provides specific advice Caroline gives for getting started with adoption, while the generated answer claims no such advice exists in the context.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D17:7",
+          "speaker": "Caroline",
+          "session": "session_17",
+          "date": "10:31 am on 13 October, 2023",
+          "text": "Yep! Do your research and find an adoption agency or lawyer. They'll help with the process and provide all the info. Gather documents like references, financial info and medical checks. Don't forget to prepare emotionally, since the wait can be hard. It's all worth it in the end though."
+        }
+      ]
+    },
+    {
+      "question": "What does Melanie do to keep herself busy during her pottery break?",
+      "gold_answer": "Read a book and paint.",
+      "predicted_answer": "The retrieved context does not provide information about what Melanie does to keep herself busy during her pottery break.",
+      "category": "open_domain",
+      "evidence_ids": [
+        "D17:10"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D17:10",
+          "source_id": "conv-26_D17:10",
+          "extracted": true,
+          "memory_count": 10,
+          "memory_types": [
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact"
+      ],
+      "judge_reasoning": "The gold answer states Melanie reads a book and paints, but the generated answer claims no information is available about this topic.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D17:10",
+          "speaker": "Melanie",
+          "session": "session_17",
+          "date": "10:31 am on 13 October, 2023",
+          "text": "Thanks, Caroline. It was tough, but I'm doing ok. Been reading that book you recommended a while ago and painting to keep busy."
+        }
+      ]
+    },
+    {
+      "question": "What did the posters at the poetry reading say?",
+      "gold_answer": "\"Trans Lives Matter\"",
+      "predicted_answer": "The specific wording or content of the posters at the transgender poetry reading is not mentioned in the available context.",
+      "category": "open_domain",
+      "evidence_ids": [
+        "D17:19"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D17:19",
+          "source_id": "conv-26_D17:19",
+          "extracted": true,
+          "memory_count": 13,
+          "memory_types": [
+            "discussion_summary",
+            "thread_summary",
+            "task_checkpoint",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact",
+        "thread_summary"
+      ],
+      "judge_reasoning": "The gold answer states the posters said 'Trans Lives Matter,' but the generated answer claims this information is not available in the context.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D17:19",
+          "speaker": "Caroline",
+          "session": "session_17",
+          "date": "10:31 am on 13 October, 2023",
+          "text": "It was a transgender poetry reading where transgender people shared their stories through poetry. It was extra special 'cause it was a safe place for self-expression and it was really empowering to hear others share and celebrate their identities."
+        }
+      ]
+    },
+    {
+      "question": "How did Melanie's children handle the accident?",
+      "gold_answer": "They were scared but resilient",
+      "predicted_answer": "The retrieved context does not contain information about how Melanie's children handled the accident. Caroline asked Melanie about it ('How did they handle the accident?'), but Melanie's response is n",
+      "category": "open_domain",
+      "evidence_ids": [
+        "D18:7"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D18:7",
+          "source_id": "conv-26_D18:7",
+          "extracted": true,
+          "memory_count": 8,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact"
+      ],
+      "judge_reasoning": "The gold answer states the children were scared but resilient, but the generated answer claims this information is not available in the context.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D18:7",
+          "speaker": "Melanie",
+          "session": "session_18",
+          "date": "6:55 pm on 20 October, 2023",
+          "text": "Thanks! They were scared but we reassured them and explained their brother would be OK. They're tough kids."
+        }
+      ]
+    },
+    {
+      "question": "What was Melanie's reaction to her children enjoying the Grand Canyon?",
+      "gold_answer": "She was happy and thankful",
+      "predicted_answer": "No specific reaction from Melanie about her children enjoying the Grand Canyon is recorded in the available context.",
+      "category": "open_domain",
+      "evidence_ids": [
+        "D18:5"
+      ],
+      "evidence_traces": [
+        {
+          "evidence_id": "D18:5",
+          "source_id": "conv-26_D18:5",
+          "extracted": true,
+          "memory_count": 8,
+          "memory_types": [
+            "discussion_summary",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact",
+            "atomic_fact"
+          ],
+          "retrieved": true
+        }
+      ],
+      "retrieved_types": [
+        "atomic_fact"
+      ],
+      "judge_reasoning": "The gold answer states Melanie was happy and thankful, but the generated answer claims no information is available about her reaction.",
+      "evidence_turn_text": [
+        {
+          "evidence_id": "D18:5",
+          "speaker": "Melanie",
+          "session": "session_18",
+          "date": "6:55 pm on 20 October, 2023",
+          "text": "Yeah, you're right, Caroline. Family's super important to me. Especially after the accident, I've thought a lot about how much I need them. They mean the world to me and I'm so thankful to have them. Thankfully, they enjoyed the Grand Canyon a lot!"
+        }
+      ]
+    }
+  ]
+}

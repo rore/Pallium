@@ -1,0 +1,370 @@
+[
+  {
+    "source": "mabench",
+    "subject": "alan jay lerner",
+    "facts": [
+      {
+        "statement": "Alan Jay Lerner died in the city of New York City",
+        "thread": "sf-sh-row0-t8",
+        "freshness": "2026-04-06 14:15:25.433415"
+      },
+      {
+        "statement": "Alan Jay Lerner died in Mansourah, Algeria",
+        "thread": "sf-sh-row0-t19",
+        "freshness": "2026-04-06 14:16:22.581951"
+      }
+    ]
+  },
+  {
+    "source": "mabench",
+    "subject": "amala paul",
+    "facts": [
+      {
+        "statement": "Amala Paul is a citizen of India",
+        "thread": "sf-sh-row0-t14",
+        "freshness": "2026-04-06 14:15:56.943085"
+      },
+      {
+        "statement": "Amala Paul is a citizen of Belgium",
+        "thread": "sf-sh-row0-t16",
+        "freshness": "2026-04-06 14:16:08.671775"
+      }
+    ]
+  },
+  {
+    "source": "mabench",
+    "subject": "amy winehouse",
+    "facts": [
+      {
+        "statement": "Amy Winehouse died in Camden Town",
+        "thread": "sf-sh-row0-t0",
+        "freshness": "2026-04-06 14:14:43.383933"
+      },
+      {
+        "statement": "Amy Winehouse performed Back to Black",
+        "thread": "sf-sh-row0-t14",
+        "freshness": "2026-04-06 14:15:56.943554"
+      }
+    ]
+  },
+  {
+    "source": "mabench",
+    "subject": "andrew carnegie",
+    "facts": [
+      {
+        "statement": "Andrew Carnegie is a citizen of United States of America",
+        "thread": "sf-sh-row0-t16",
+        "freshness": "2026-04-06 14:16:08.673042"
+      },
+      {
+        "statement": "Andrew Carnegie is a citizen of United Kingdom",
+        "thread": "sf-sh-row0-t18",
+        "freshness": "2026-04-06 14:16:18.086748"
+      }
+    ]
+  },
+  {
+    "source": "mabench",
+    "subject": "aristotle",
+    "facts": [
+      {
+        "statement": "Aristotle's child is Nicomachus",
+        "thread": "sf-sh-row0-t9",
+        "freshness": "2026-04-06 14:15:31.374444"
+      },
+      {
+        "statement": "Aristotle authored Categories",
+        "thread": "sf-sh-row0-t10",
+        "freshness": "2026-04-06 14:15:36.574321"
+      }
+    ]
+  },
+  {
+    "source": "mabench",
+    "subject": "bill frisell",
+    "facts": [
+      {
+        "statement": "Bill Frisell was educated at Berklee College of Music",
+        "thread": "sf-sh-row0-t7",
+        "freshness": "2026-04-06 14:15:20.719046"
+      },
+      {
+        "statement": "Bill Frisell was educated at The University of the Arts",
+        "thread": "sf-sh-row0-t15",
+        "freshness": "2026-04-06 14:16:02.654514"
+      }
+    ]
+  },
+  {
+    "source": "mabench",
+    "subject": "bo ryan",
+    "facts": [
+      {
+        "statement": "Bo Ryan is associated with the sport of basketball",
+        "thread": "sf-sh-row0-t9",
+        "freshness": "2026-04-06 14:15:31.374618"
+      },
+      {
+        "statement": "Bo Ryan is associated with the sport of association football",
+        "thread": "sf-sh-row0-t17",
+        "freshness": "2026-04-06 14:16:13.785953"
+      }
+    ]
+  },
+  {
+    "source": "mabench",
+    "subject": "bob iger",
+    "facts": [
+      {
+        "statement": "Bob Iger is the director of American Broadcasting Company",
+        "thread": "sf-sh-row0-t3",
+        "freshness": "2026-04-06 14:14:59.953950"
+      },
+      {
+        "statement": "Bob Iger is a citizen of United States of America",
+        "thread": "sf-sh-row0-t15",
+        "freshness": "2026-04-06 14:16:02.654724"
+      }
+    ]
+  },
+  {
+    "source": "locomo",
+    "subject": "caroline",
+    "facts": [
+      {
+        "statement": "Caroline attended a LGBTQ support group on approximately 2023-05-07",
+        "thread": "conv-26_session_1",
+        "freshness": "2026-04-06 10:33:46.336530",
+        "category": "event"
+      },
+      {
+        "statement": "Caroline found the transgender stories at the support group inspiring",
+        "thread": "conv-26_session_1",
+        "freshness": "2026-04-06 10:33:46.336782",
+        "category": "personal"
+      },
+      {
+        "statement": "Caroline feels accepted and has gained courage to embrace herself through the support group",
+        "thread": "conv-26_session_1",
+        "freshness": "2026-04-06 10:33:46.336967",
+        "category": "personal"
+      },
+      {
+        "statement": "Caroline is interested in counseling or mental health careers to support people with similar issues",
+        "thread": "conv-26_session_1",
+        "freshness": "2026-04-06 10:33:46.337162",
+        "category": "preference"
+      },
+      {
+        "statement": "Caroline plans to continue her education and explore career options",
+        "thread": "conv-26_session_1",
+        "freshness": "2026-04-06 10:33:46.337353",
+        "category": "activity"
+      },
+      {
+        "statement": "Caroline joined a new LGBTQ activist group on approximately 2023-07-18",
+        "thread": "conv-26_session_10",
+        "freshness": "2026-04-06 10:33:49.869054",
+        "category": "event"
+      },
+      {
+        "statement": "Caroline is a member of 'Connected LGBTQ Activists'",
+        "thread": "conv-26_session_10",
+        "freshness": "2026-04-06 10:33:49.869386",
+        "category": "relationship"
+      },
+      {
+        "statement": "Caroline's city held a pride parade on approximately 2023-07-16",
+        "thread": "conv-26_session_10",
+        "freshness": "2026-04-06 10:33:49.869554",
+        "category": "event"
+      },
+      {
+        "statement": "Caroline attended a pride parade on approximately 2023-08-11",
+        "thread": "conv-26_session_11",
+        "freshness": "2026-04-06 10:33:53.357982",
+        "category": "event"
+      },
+      {
+        "statement": "Caroline is an artist",
+        "thread": "conv-26_session_11",
+        "freshness": "2026-04-06 10:33:53.358180",
+        "category": "personal"
+      },
+      {
+        "statement": "Caroline is trans",
+        "thread": "conv-26_session_11",
+        "freshness": "2026-04-06 10:33:53.358700",
+        "category": "personal"
+      },
+      {
+        "statement": "Caroline's art expresses her trans experience and explores her transition",
+        "thread": "conv-26_session_11",
+        "freshness": "2026-04-06 10:33:53.358936",
+        "category": "activity"
+      },
+      {
+        "statement": "Caroline created a painting titled 'Embracing Identity' about finding comfort and love in being yourself",
+        "thread": "conv-26_session_11",
+        "freshness": "2026-04-06 10:33:53.359174",
+        "category": "activity"
+      },
+      {
+        "statement": "Caroline uses her art to speak up for LGBTQ+ community acceptance and to represent inclusivity and diversity",
+        "thread": "conv-26_session_11",
+        "freshness": "2026-04-06 10:33:53.359392",
+        "category": "preference"
+      },
+      {
+        "statement": "Caroline advocates for LGBTQ rights and equality",
+        "thread": "conv-26_session_11",
+        "freshness": "2026-04-06 10:33:53.359648",
+        "category": "preference"
+      }
+    ]
+  },
+  {
+    "source": "locomo",
+    "subject": "melanie",
+    "facts": [
+      {
+        "statement": "Melanie is managing responsibilities with kids and work",
+        "thread": "conv-26_session_1",
+        "freshness": "2026-04-06 10:33:46.337530",
+        "category": "personal"
+      },
+      {
+        "statement": "Melanie painted a lake sunrise last year",
+        "thread": "conv-26_session_1",
+        "freshness": "2026-04-06 10:33:46.337709",
+        "category": "activity"
+      },
+      {
+        "statement": "Melanie uses painting as a way to express feelings, get creative, and relax",
+        "thread": "conv-26_session_1",
+        "freshness": "2026-04-06 10:33:46.337895",
+        "category": "preference"
+      },
+      {
+        "statement": "Melanie swims with her kids",
+        "thread": "conv-26_session_1",
+        "freshness": "2026-04-06 10:33:46.338134",
+        "category": "activity"
+      },
+      {
+        "statement": "Melanie has kids",
+        "thread": "conv-26_session_10",
+        "freshness": "2026-04-06 10:33:49.869719",
+        "category": "personal"
+      },
+      {
+        "statement": "Melanie goes to the beach with her kids usually once or twice a year",
+        "thread": "conv-26_session_10",
+        "freshness": "2026-04-06 10:33:49.869879",
+        "category": "activity"
+      },
+      {
+        "statement": "Melanie has a family camping trip as a summer tradition where they roast marshmallows and tell stories around the campfire",
+        "thread": "conv-26_session_10",
+        "freshness": "2026-04-06 10:33:49.870054",
+        "category": "activity"
+      },
+      {
+        "statement": "Melanie watched the Perseid meteor shower with her family on a camping trip approximately one year ago (around 2022)",
+        "thread": "conv-26_session_10",
+        "freshness": "2026-04-06 10:33:49.870242",
+        "category": "event"
+      },
+      {
+        "statement": "Melanie has a youngest child who took her first steps",
+        "thread": "conv-26_session_10",
+        "freshness": "2026-04-06 10:33:49.870425",
+        "category": "event"
+      },
+      {
+        "statement": "Melanie celebrated her daughter's birthday with a concert on approximately 2023-08-13",
+        "thread": "conv-26_session_11",
+        "freshness": "2026-04-06 10:33:53.357245",
+        "category": "event"
+      },
+      {
+        "statement": "Melanie attended a Matt Patterson concert on approximately 2023-08-13",
+        "thread": "conv-26_session_11",
+        "freshness": "2026-04-06 10:33:53.357544",
+        "category": "event"
+      },
+      {
+        "statement": "Melanie recently completed a pottery project, specifically a decorative bowl with multiple colors and patterns",
+        "thread": "conv-26_session_12",
+        "freshness": "2026-04-06 10:33:56.765025",
+        "category": "activity"
+      },
+      {
+        "statement": "Melanie uses painting as a form of self-expression and creative outlet",
+        "thread": "conv-26_session_12",
+        "freshness": "2026-04-06 10:33:56.765259",
+        "category": "preference"
+      },
+      {
+        "statement": "Melanie has a strong connection to art and views it as a sanctuary and source of comfort",
+        "thread": "conv-26_session_12",
+        "freshness": "2026-04-06 10:33:56.765432",
+        "category": "personal"
+      },
+      {
+        "statement": "Melanie owns cats named Oliver and Bailey",
+        "thread": "conv-26_session_13",
+        "freshness": "2026-04-06 10:34:00.637954",
+        "category": "personal"
+      }
+    ]
+  },
+  {
+    "source": "locomo",
+    "subject": "caroline and melanie",
+    "facts": [
+      {
+        "statement": "Caroline and Melanie are friends",
+        "thread": "conv-26_session_1",
+        "freshness": "2026-04-06 10:33:46.338625",
+        "category": "relationship"
+      },
+      {
+        "statement": "Caroline and Melanie attended Pride fest together last year",
+        "thread": "conv-26_session_12",
+        "freshness": "2026-04-06 10:33:56.765609",
+        "category": "event"
+      },
+      {
+        "statement": "Caroline and Melanie are planning a summer outing together to explore nature and catch up",
+        "thread": "conv-26_session_12",
+        "freshness": "2026-04-06 10:33:56.765779",
+        "category": "event"
+      },
+      {
+        "statement": "Caroline and Melanie have a close friendship and are mutually supportive",
+        "thread": "conv-26_session_12",
+        "freshness": "2026-04-06 10:33:56.766157",
+        "category": "relationship"
+      },
+      {
+        "statement": "Caroline and Melanie support each other",
+        "thread": "conv-26_session_19",
+        "freshness": "2026-04-06 10:34:23.336170",
+        "category": "relationship"
+      },
+      {
+        "statement": "Caroline and Melanie are friends who share creative interests",
+        "thread": "conv-26_session_5",
+        "freshness": "2026-04-06 10:34:36.855904",
+        "category": "relationship"
+      },
+      {
+        "statement": "Caroline and Melanie are friends who value mental health support",
+        "thread": "conv-26_session_7",
+        "freshness": "2026-04-06 10:34:44.287725",
+        "category": "relationship"
+      }
+    ]
+  }
+]

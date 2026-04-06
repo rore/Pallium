@@ -1,0 +1,264 @@
+[
+  {
+    "source": "mabench",
+    "subject": "alan jay lerner",
+    "fact_count": 2,
+    "facts": [
+      "Alan Jay Lerner died in the city of New York City",
+      "Alan Jay Lerner died in Mansourah, Algeria"
+    ],
+    "llm_response": {
+      "groups": [
+        {
+          "type": "contradiction",
+          "fact_indices": [
+            0,
+            1
+          ],
+          "keep_index": 1,
+          "reasoning": "Both facts assert where Alan Jay Lerner died, but give different locations (New York City vs Mansourah, Algeria). A person can only die in one place. The newer fact (index 1) supersedes the older one."
+        }
+      ]
+    }
+  },
+  {
+    "source": "mabench",
+    "subject": "amala paul",
+    "fact_count": 2,
+    "facts": [
+      "Amala Paul is a citizen of India",
+      "Amala Paul is a citizen of Belgium"
+    ],
+    "llm_response": {
+      "groups": [
+        {
+          "type": "contradiction",
+          "fact_indices": [
+            0,
+            1
+          ],
+          "keep_index": 1,
+          "reasoning": "Both facts assert different citizenships for Amala Paul (India vs Belgium). These are contradictory values for the same property. The newer fact (index 1) supersedes the older one."
+        }
+      ]
+    }
+  },
+  {
+    "source": "mabench",
+    "subject": "amy winehouse",
+    "fact_count": 2,
+    "facts": [
+      "Amy Winehouse died in Camden Town",
+      "Amy Winehouse performed Back to Black"
+    ],
+    "llm_response": {
+      "groups": []
+    }
+  },
+  {
+    "source": "mabench",
+    "subject": "andrew carnegie",
+    "fact_count": 2,
+    "facts": [
+      "Andrew Carnegie is a citizen of United States of America",
+      "Andrew Carnegie is a citizen of United Kingdom"
+    ],
+    "llm_response": {
+      "groups": [
+        {
+          "type": "contradiction",
+          "fact_indices": [
+            0,
+            1
+          ],
+          "keep_index": 1,
+          "reasoning": "Both facts assert Andrew Carnegie's citizenship but with different countries (USA vs UK). A citizenship claim as a singular property contradicts the other. The newer fact (index 1) supersedes the older. Note: historically, Carnegie held both, but as competing singular assertions here, the newer one is kept."
+        }
+      ]
+    }
+  },
+  {
+    "source": "mabench",
+    "subject": "aristotle",
+    "fact_count": 2,
+    "facts": [
+      "Aristotle's child is Nicomachus",
+      "Aristotle authored Categories"
+    ],
+    "llm_response": {
+      "groups": []
+    }
+  },
+  {
+    "source": "mabench",
+    "subject": "bill frisell",
+    "fact_count": 2,
+    "facts": [
+      "Bill Frisell was educated at Berklee College of Music",
+      "Bill Frisell was educated at The University of the Arts"
+    ],
+    "llm_response": {
+      "groups": [
+        {
+          "type": "contradiction",
+          "fact_indices": [
+            0,
+            1
+          ],
+          "keep_index": 1,
+          "reasoning": "Both facts assert where Bill Frisell was educated, but give different institutions (Berklee College of Music vs. The University of the Arts). A person can attend multiple schools, but these are presented as singular education facts for the same predicate. The newer fact (index 1) supersedes the older. Note: In reality, Frisell attended both, but as atomic facts with the same predicate, the newer one takes precedence."
+        }
+      ]
+    }
+  },
+  {
+    "source": "mabench",
+    "subject": "bo ryan",
+    "fact_count": 2,
+    "facts": [
+      "Bo Ryan is associated with the sport of basketball",
+      "Bo Ryan is associated with the sport of association football"
+    ],
+    "llm_response": {
+      "groups": [
+        {
+          "type": "contradiction",
+          "fact_indices": [
+            0,
+            1
+          ],
+          "keep_index": 1,
+          "reasoning": "Both facts assert different sports for Bo Ryan's association — basketball vs. association football. These are incompatible values for the same property. The newer fact (index 1) supersedes the older."
+        }
+      ]
+    }
+  },
+  {
+    "source": "mabench",
+    "subject": "bob iger",
+    "fact_count": 2,
+    "facts": [
+      "Bob Iger is the director of American Broadcasting Company",
+      "Bob Iger is a citizen of United States of America"
+    ],
+    "llm_response": {
+      "groups": []
+    }
+  },
+  {
+    "source": "locomo",
+    "subject": "caroline",
+    "fact_count": 15,
+    "facts": [
+      "Caroline attended a LGBTQ support group on approximately 2023-05-07",
+      "Caroline found the transgender stories at the support group inspiring",
+      "Caroline feels accepted and has gained courage to embrace herself through the support group",
+      "Caroline is interested in counseling or mental health careers to support people with similar issues",
+      "Caroline plans to continue her education and explore career options",
+      "Caroline joined a new LGBTQ activist group on approximately 2023-07-18",
+      "Caroline is a member of 'Connected LGBTQ Activists'",
+      "Caroline's city held a pride parade on approximately 2023-07-16",
+      "Caroline attended a pride parade on approximately 2023-08-11",
+      "Caroline is an artist",
+      "Caroline is trans",
+      "Caroline's art expresses her trans experience and explores her transition",
+      "Caroline created a painting titled 'Embracing Identity' about finding comfort and love in being yourself",
+      "Caroline uses her art to speak up for LGBTQ+ community acceptance and to represent inclusivity and diversity",
+      "Caroline advocates for LGBTQ rights and equality"
+    ],
+    "llm_response": {
+      "groups": [
+        {
+          "type": "contradiction",
+          "fact_indices": [
+            7,
+            8
+          ],
+          "keep_index": 8,
+          "reasoning": "Both facts describe a pride parade, but fact 7 says it was in Caroline's city on approximately 2023-07-16, while fact 8 says Caroline attended a pride parade on approximately 2023-08-11. These could be two separate events, but given the similar context and close dates, the more recent and specific fact (Caroline personally attending on 2023-08-11) supersedes the earlier city-held parade date. However, these could also be distinct events (city parade vs. one Caroline attended). Given the ambiguity, treating as distinct is also valid, but the newer session fact is kept."
+        }
+      ]
+    }
+  },
+  {
+    "source": "locomo",
+    "subject": "melanie",
+    "fact_count": 15,
+    "facts": [
+      "Melanie is managing responsibilities with kids and work",
+      "Melanie painted a lake sunrise last year",
+      "Melanie uses painting as a way to express feelings, get creative, and relax",
+      "Melanie swims with her kids",
+      "Melanie has kids",
+      "Melanie goes to the beach with her kids usually once or twice a year",
+      "Melanie has a family camping trip as a summer tradition where they roast marshmallows and tell stories around the campfire",
+      "Melanie watched the Perseid meteor shower with her family on a camping trip approximately one year ago (around 2022)",
+      "Melanie has a youngest child who took her first steps",
+      "Melanie celebrated her daughter's birthday with a concert on approximately 2023-08-13",
+      "Melanie attended a Matt Patterson concert on approximately 2023-08-13",
+      "Melanie recently completed a pottery project, specifically a decorative bowl with multiple colors and patterns",
+      "Melanie uses painting as a form of self-expression and creative outlet",
+      "Melanie has a strong connection to art and views it as a sanctuary and source of comfort",
+      "Melanie owns cats named Oliver and Bailey"
+    ],
+    "llm_response": {
+      "groups": [
+        {
+          "type": "duplicate",
+          "fact_indices": [
+            4,
+            0
+          ],
+          "keep_index": 0,
+          "reasoning": "Fact [4] 'Melanie has kids' is implied by and duplicated in fact [0] which mentions 'kids and work'. Fact [0] is more specific about her managing responsibilities."
+        },
+        {
+          "type": "duplicate",
+          "fact_indices": [
+            2,
+            12
+          ],
+          "keep_index": 13,
+          "reasoning": "Facts [2] and [12] both describe Melanie using painting/art as a form of self-expression and creative outlet. Fact [13] is the most comprehensive, describing her strong connection to art as a sanctuary and source of comfort, so keeping [13] which encompasses the sentiment of both [2] and [12]. Grouping the duplicates [2] and [12] together, keeping [12] as the more recent and concise version."
+        }
+      ]
+    }
+  },
+  {
+    "source": "locomo",
+    "subject": "caroline and melanie",
+    "fact_count": 7,
+    "facts": [
+      "Caroline and Melanie are friends",
+      "Caroline and Melanie attended Pride fest together last year",
+      "Caroline and Melanie are planning a summer outing together to explore nature and catch up",
+      "Caroline and Melanie have a close friendship and are mutually supportive",
+      "Caroline and Melanie support each other",
+      "Caroline and Melanie are friends who share creative interests",
+      "Caroline and Melanie are friends who value mental health support"
+    ],
+    "llm_response": {
+      "groups": [
+        {
+          "type": "duplicate",
+          "fact_indices": [
+            3,
+            4
+          ],
+          "keep_index": 3,
+          "reasoning": "Both facts state that Caroline and Melanie support each other; fact 3 is more specific, describing 'mutual support' within a 'close friendship'."
+        },
+        {
+          "type": "duplicate",
+          "fact_indices": [
+            0,
+            5,
+            6
+          ],
+          "keep_index": 5,
+          "reasoning": "Facts 0, 5, and 6 all state that Caroline and Melanie are friends. Facts 5 and 6 add specific details (creative interests, mental health support), so they are more informative than fact 0. Keeping fact 5 as representative, but note fact 6 is also distinct in its detail — however, the base 'are friends' claim in fact 0 is duplicated by both."
+        }
+      ]
+    }
+  }
+]
