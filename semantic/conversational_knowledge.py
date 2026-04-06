@@ -186,7 +186,7 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
         )
 
     def supports_consolidation(self, memory_object: MemoryObject) -> bool:
-        return memory_object.type == FACT_TYPE
+        return memory_object.type in {FACT_TYPE, FACT_SUMMARY_TYPE}
 
     def build_consolidated_memory(self, group: ConsolidationGroup) -> ProcessResult:
         return _build_fact_summary(
@@ -386,63 +386,8 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
         container_ref: str,
         visibility: str,
     ) -> ProcessResult:
-        """Remove facts that duplicate active cross-thread facts in the same container."""
-        if not result.memory_objects:
-            return result
-
-        current_thread_ref = None
-        for mo in result.memory_objects:
-            if mo.type == FACT_TYPE and mo.payload.get("thread_ref"):
-                current_thread_ref = mo.payload["thread_ref"]
-                break
-        if current_thread_ref is None:
-            return result
-
-        existing_facts = storage.list_memory_objects(
-            memory_types=[FACT_TYPE], lifecycle="active",
-        )
-        # NOTE: This loads all active facts across all containers, then post-filters.
-        # O(all facts) per thread rebuild. Acceptable at current scale (~200 facts).
-        # When list_memory_objects supports container_ref filtering, scope this query.
-
-        existing_keys: set[tuple[str, str]] = set()
-        for ef in existing_facts:
-            if ef.container_ref != container_ref:
-                continue
-            if ef.payload.get("thread_ref") == current_thread_ref:
-                continue  # same thread — will be superseded, don't suppress
-            subj = normalize_for_index(str(ef.payload.get("subject", "")))
-            stmt = normalize_for_index(str(ef.payload.get("statement", "")))
-            existing_keys.add((subj, stmt))
-
-        if not existing_keys:
-            return result
-
-        keep_ids: set[str] = set()
-        filtered_memory_objects: list[MemoryObject] = []
-        for mo in result.memory_objects:
-            if mo.type != FACT_TYPE:
-                keep_ids.add(mo.id)
-                filtered_memory_objects.append(mo)
-                continue
-            key = (
-                normalize_for_index(str(mo.payload.get("subject", ""))),
-                normalize_for_index(str(mo.payload.get("statement", ""))),
-            )
-            if key in existing_keys:
-                logger.debug("Dedup: skipping cross-thread duplicate fact: %s", mo.payload.get("statement", "")[:80])
-                continue
-            keep_ids.add(mo.id)
-            filtered_memory_objects.append(mo)
-
-        if len(filtered_memory_objects) == len(result.memory_objects):
-            return result
-
-        return ProcessResult(
-            memory_objects=filtered_memory_objects,
-            relations=[r for r in result.relations if r.from_id in keep_ids],
-            index_entries=[e for e in result.index_entries if e.target_id in keep_ids],
-        )
+        """Post-extraction hook. Cross-thread dedup removed — consolidation handles it."""
+        return result
 
 
 def _is_eligible_for_fact_extraction(source_item: SourceItem) -> bool:
@@ -535,27 +480,42 @@ def _build_fact_summary(
     IDs are stored in the fact_summary payload for the runner to act on.
     """
     fact_lines: list[str] = []
+    existing_summary_lines: list[str] = []
     candidate_ids_by_index: list[str] = []
+    all_candidate_ids: list[str] = []
+
     for candidate in group.candidates:
-        statement = str(candidate.memory_object.payload.get("statement", "")).strip()
+        mo = candidate.memory_object
+        all_candidate_ids.append(mo.id)
+
+        # fact_summary candidates represent accumulated knowledge from prior consolidation
+        if mo.type == "fact_summary":
+            summary_text = str(mo.payload.get("summary", "")).strip()
+            if summary_text:
+                existing_summary_lines.append(f"(existing summary) {summary_text}")
+            continue
+
+        # atomic_fact candidates are individual facts
+        statement = str(mo.payload.get("statement", "")).strip()
         if not statement:
             continue
         prompt_index = len(candidate_ids_by_index)
         ts = candidate.latest_occurred_at.strftime("%Y-%m-%dT%H:%M:%S") if candidate.latest_occurred_at else "unknown"
         fact_lines.append(f"[{prompt_index}] ({ts}) {statement}")
-        candidate_ids_by_index.append(candidate.memory_object.id)
+        candidate_ids_by_index.append(mo.id)
 
-    if not fact_lines:
+    if not fact_lines and not existing_summary_lines:
         return ProcessResult(memory_objects=[], relations=[], index_entries=[])
 
     subject = str(group.merge_rationale.get("subject", "")).strip()
     category = str(group.merge_rationale.get("category", "")).strip()
 
-    user_prompt = (
-        f"Subject: {subject}\n"
-        f"Category: {category}\n"
-        f"Facts ({len(fact_lines)}):\n" + "\n".join(fact_lines)
-    )
+    prompt_parts = [f"Subject: {subject}", f"Category: {category}"]
+    if existing_summary_lines:
+        prompt_parts.append("Previous summary:\n" + "\n".join(existing_summary_lines))
+    if fact_lines:
+        prompt_parts.append(f"Facts ({len(fact_lines)}):\n" + "\n".join(fact_lines))
+    user_prompt = "\n".join(prompt_parts)
 
     response = provider.generate_json(
         system_prompt=FACT_CONSOLIDATION_SYSTEM_PROMPT,
@@ -569,16 +529,7 @@ def _build_fact_summary(
 
     summary = parsed_summary.strip()
 
-    # Map superseded_indices from the LLM response to candidate memory IDs
-    raw_indices = response.parsed_json.get("superseded_indices", [])
-    superseded_candidate_ids: list[str] = []
-    if isinstance(raw_indices, list):
-        for idx in raw_indices:
-            if isinstance(idx, int) and 0 <= idx < len(candidate_ids_by_index):
-                cid = candidate_ids_by_index[idx]
-                if cid not in superseded_candidate_ids:
-                    superseded_candidate_ids.append(cid)
-
+    # LLM may still report specific contradictions for reasoning, but ALL inputs get superseded.
     reasoning = str(response.parsed_json.get("reasoning", "")).strip()
     memory_id = new_id()
 
@@ -600,9 +551,8 @@ def _build_fact_summary(
             "subject": subject,
             "category": category,
             "summary": summary,
-            "fact_count": len(fact_lines),
-            "supporting_memory_ids": list(group.candidate_ids),
-            "superseded_candidate_ids": superseded_candidate_ids,
+            "fact_count": len(fact_lines) + len(existing_summary_lines),
+            "supporting_memory_ids": all_candidate_ids,
             "contradiction_reasoning": reasoning,
             "latest_occurred_at": group.latest_occurred_at.isoformat(),
             "container_ref": group.container_ref,

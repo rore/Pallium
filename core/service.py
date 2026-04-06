@@ -70,6 +70,7 @@ class PalliumService:
             observability=self._observability,
             persist_fn=self._persist_process_result,
             supersede_fn=self.supersede_memory_object,
+            consolidation_fn=self._run_targeted_fact_consolidation,
         )
         self._processor = ItemProcessor(
             storage=storage,
@@ -441,10 +442,12 @@ class PalliumService:
         *,
         use_case: str | None = None,
         strategy_name: str | None = None,
+        container_ref: str | None = None,
     ) -> ConsolidationRunResult | None:
         return self._consolidation_runner.run_consolidation_pass(
             use_case=use_case,
             strategy_name=strategy_name,
+            container_ref=container_ref,
         )
 
     def supersede_memory_object(self, superseded_id: str, replacement_id: str) -> None:
@@ -464,6 +467,10 @@ class PalliumService:
                 to_id=superseded_id,
             )
         )
+
+    def _run_targeted_fact_consolidation(self, use_case: str, container_ref: str, subjects: list[str]) -> None:
+        """Callback for ThreadRebuilder: run fact consolidation for specific subjects."""
+        self._consolidation_runner.run_targeted_consolidation(use_case, container_ref, subjects)
 
     def _persist_process_result(self, result: ProcessResult) -> None:
         for memory_object in result.memory_objects:

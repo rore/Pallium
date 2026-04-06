@@ -8,6 +8,7 @@ from core.models import EvidenceReference, IndexEntry, MemoryObject, Relation, S
 from core.turn_inference import ThreadStats
 from storage.base import StorageProvider
 from storage.sqlite_codec import SQLiteCodecMixin
+from storage.sqlite_codec import extract_memory_subject
 from storage.sqlite_queue import SQLiteQueueMixin
 from storage.sqlite_retention import SQLiteRetentionMixin
 from storage.sqlite_schema import (
@@ -123,6 +124,7 @@ class SQLiteStorageProvider(
             container_ref=memory_object.container_ref,
             actor_ref=memory_object.actor_ref,
             freshness_at=self._normalize_datetime(memory_object.freshness_at) or memory_object.created_at,
+            subject=extract_memory_subject(memory_object),
             created_at=memory_object.created_at,
         )
         with self._session_factory.begin() as session:
@@ -146,13 +148,17 @@ class SQLiteStorageProvider(
         with self._session_factory.begin() as session:
             return self._refresh_memory_object_freshness_in_session(session, memory_object_id)
 
-    def list_memory_objects(self, memory_types: list[str] | None = None, lifecycle: str | None = None) -> list[MemoryObject]:
+    def list_memory_objects(self, memory_types: list[str] | None = None, lifecycle: str | None = None, container_ref: str | None = None, subject_in: list[str] | None = None) -> list[MemoryObject]:
         with self._session_factory() as session:
             statement = select(MemoryObjectRecord)
             if memory_types:
                 statement = statement.where(MemoryObjectRecord.type.in_(memory_types))
             if lifecycle is not None:
                 statement = statement.where(MemoryObjectRecord.lifecycle == lifecycle)
+            if container_ref is not None:
+                statement = statement.where(MemoryObjectRecord.container_ref == container_ref)
+            if subject_in is not None:
+                statement = statement.where(MemoryObjectRecord.subject.in_(subject_in))
             records = session.scalars(statement).all()
         return [self._to_memory_object(record) for record in records]
 

@@ -370,7 +370,7 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list_memory_objects(self, memory_types: list[str] | None = None, lifecycle: str | None = None) -> list[MemoryObject]:
+    def list_memory_objects(self, memory_types: list[str] | None = None, lifecycle: str | None = None, container_ref: str | None = None, subject_in: list[str] | None = None) -> list[MemoryObject]:
         raise NotImplementedError
 
     @abstractmethod

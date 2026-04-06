@@ -17,7 +17,7 @@ DEFAULT_CONSOLIDATION_STRATEGIES = (
     "container_topic_window",
     "thread_summary_anchored",
 )
-ELIGIBLE_INPUT_TYPES = {"thread_summary", "decision", "investigation_outcome", "atomic_fact"}
+ELIGIBLE_INPUT_TYPES = {"thread_summary", "decision", "investigation_outcome", "atomic_fact", "fact_summary"}
 CONSOLIDATION_STOPWORDS = {
     # -- English --
     "a",
@@ -360,14 +360,14 @@ class ThreadSummaryAnchoredStrategy(ConsolidationStrategy):
 
 
 class FactConsolidationStrategy(ConsolidationStrategy):
-    """Groups atomic_fact objects by (container_ref, subject, category) for cross-thread aggregation."""
+    """Groups atomic_fact and fact_summary objects by (container_ref, subject, category) for cross-thread aggregation."""
 
     name = "fact_consolidation"
-    MIN_GROUP_SIZE = 3
+    MIN_GROUP_SIZE = 2
     MIN_DISTINCT_THREADS = 2
 
     def select_candidates(self, candidates: list[ConsolidationCandidate], policy: ConsolidationPolicy) -> list[ConsolidationCandidate]:
-        facts = [c for c in candidates if c.memory_object.type == "atomic_fact"]
+        facts = [c for c in candidates if c.memory_object.type in {"atomic_fact", "fact_summary"}]
         return _limit_candidates(facts, policy.max_candidates_per_run)
 
     def group_candidates(self, candidates: list[ConsolidationCandidate], policy: ConsolidationPolicy) -> list[ConsolidationGroup]:
@@ -442,8 +442,13 @@ class ConsolidationCapability:
         plugin,
         strategy: ConsolidationStrategy,
         policy: ConsolidationPolicy,
+        container_ref: str | None = None,
     ) -> list[ConsolidationCandidate]:
-        memory_objects = storage.list_memory_objects(memory_types=list(ELIGIBLE_INPUT_TYPES), lifecycle="active")
+        memory_objects = storage.list_memory_objects(
+            memory_types=list(ELIGIBLE_INPUT_TYPES),
+            lifecycle="active",
+            container_ref=container_ref,
+        )
         requires_visibility_context = getattr(plugin, "requires_visibility_context", False)
         candidates = [
             self._build_candidate(storage, memory_object)

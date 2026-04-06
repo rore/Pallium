@@ -64,6 +64,7 @@ class MemoryObjectRecord(Base):
     container_ref = Column(String, nullable=True)
     actor_ref = Column(String, nullable=True)
     freshness_at = Column(DateTime(timezone=True), nullable=True)
+    subject = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 
@@ -173,6 +174,7 @@ class SQLiteSchemaMixin:
         "envelope_json": "ALTER TABLE memory_objects ADD COLUMN envelope_json TEXT",
         "container_ref": "ALTER TABLE memory_objects ADD COLUMN container_ref VARCHAR",
         "actor_ref": "ALTER TABLE memory_objects ADD COLUMN actor_ref VARCHAR",
+        "subject": "ALTER TABLE memory_objects ADD COLUMN subject VARCHAR",
     }
     _INDEX_ENTRY_MIGRATIONS = {
         "text_view_name": "ALTER TABLE index_entries ADD COLUMN text_view_name VARCHAR",
@@ -189,6 +191,13 @@ class SQLiteSchemaMixin:
             "ON source_items(source_type, source_id)"
         ),
     }
+    _INDEX_MIGRATIONS = {
+        "idx_memory_objects_subject_lookup": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_objects_subject_lookup "
+            "ON memory_objects(container_ref, subject, type) "
+            "WHERE lifecycle = 'active' AND subject IS NOT NULL"
+        ),
+    }
 
     def _initialize_schema(self) -> None:
         with self._schema_initialization_lock():
@@ -198,6 +207,7 @@ class SQLiteSchemaMixin:
             self._ensure_index_entry_columns()
             self._ensure_maintenance_state_columns()
             self._ensure_unique_indexes()
+            self._ensure_indexes()
             self._backfill_legacy_memory_freshness()
 
     @contextmanager
@@ -303,4 +313,9 @@ class SQLiteSchemaMixin:
                         f"duplicate (source_type, source_id) rows exist. "
                         f"Resolve duplicates before restarting. Duplicates: {detail}"
                     )
+                connection.execute(text(create_sql))
+
+    def _ensure_indexes(self) -> None:
+        with self._engine.begin() as connection:
+            for _index_name, create_sql in self._INDEX_MIGRATIONS.items():
                 connection.execute(text(create_sql))

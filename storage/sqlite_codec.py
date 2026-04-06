@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from dataclasses import asdict
 from datetime import datetime, timezone
 
@@ -308,3 +309,20 @@ class SQLiteCodecMixin:
         if not value:
             return {}
         return json.loads(value)
+
+
+_SUBJECT_TYPES = {"atomic_fact", "fact_summary"}
+
+
+def extract_memory_subject(memory_object: MemoryObject) -> str | None:
+    """Extract and normalize subject for the denormalized storage column.
+
+    Returns NFKC-normalized, lowercased, stripped subject for atomic_fact
+    and fact_summary types. NULL for all other types.
+    """
+    if memory_object.type not in _SUBJECT_TYPES:
+        return None
+    raw = memory_object.payload.get("subject") if memory_object.payload else None
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    return unicodedata.normalize("NFKC", raw.strip()).lower()

@@ -41,6 +41,7 @@ class ConsolidationRunner:
         *,
         use_case: str | None = None,
         strategy_name: str | None = None,
+        container_ref: str | None = None,
     ) -> ConsolidationRunResult | None:
         plugin_name = use_case or self._default_use_case
         plugin = self._semantic_plugins[plugin_name]
@@ -60,6 +61,7 @@ class ConsolidationRunner:
             plugin=plugin,
             strategy=strategy,
             policy=policy,
+            container_ref=container_ref,
         )
         groups = self._consolidation_capability.group_candidates(
             strategy=strategy,
@@ -83,18 +85,22 @@ class ConsolidationRunner:
             self._persist_fn(promoted)
 
             superseded_ids: list[str] = []
+            created_memory_ids = {mo.id for mo in synthesized.memory_objects}
+
             for memory_object in synthesized.memory_objects:
+                # Supersede prior fact_summaries with the same group_key (same-type)
                 for active_memory_id in self._find_active_consolidated_memory_ids(group, memory_object):
                     if active_memory_id == memory_object.id or active_memory_id in superseded_ids:
                         continue
                     self._supersede_fn(active_memory_id, memory_object.id)
                     superseded_ids.append(active_memory_id)
 
-                # Supersede contradicted candidate facts (from LLM contradiction detection).
-                # Uses storage directly because supersede_fn requires matching types,
-                # but here a fact_summary supersedes atomic_fact (cross-type).
-                for candidate_id in memory_object.payload.get("superseded_candidate_ids", []):
-                    if candidate_id in superseded_ids:
+            # For fact_consolidation: supersede ALL input candidates because the
+            # fact_summary replaces all inputs as the canonical representation.
+            # Other strategies (thread_summary_anchored, etc.) keep their inputs active.
+            if group.strategy_name == "fact_consolidation":
+                for candidate_id in group.candidate_ids:
+                    if candidate_id in superseded_ids or candidate_id in created_memory_ids:
                         continue
                     try:
                         candidate = self._storage.get_memory_object(candidate_id)
@@ -102,11 +108,14 @@ class ConsolidationRunner:
                         continue
                     if candidate.lifecycle == "superseded":
                         continue
+                    replacement_id = synthesized.memory_objects[0].id
+                    # Cross-type supersession (fact_summary supersedes atomic_fact):
+                    # uses storage directly because supersede_fn requires matching types.
                     self._storage.update_memory_object_lifecycle(candidate_id, "superseded")
                     self._storage.create_relation(
                         Relation(
                             from_kind="memory_object",
-                            from_id=memory_object.id,
+                            from_id=replacement_id,
                             relation_type="supersedes",
                             to_kind="memory_object",
                             to_id=candidate_id,
@@ -137,6 +146,95 @@ class ConsolidationRunner:
             selected_candidate_ids=tuple(candidate.memory_object.id for candidate in candidates),
             groups=tuple(group_results),
         )
+
+    def run_targeted_consolidation(
+        self,
+        use_case: str,
+        container_ref: str,
+        subjects: list[str],
+    ) -> None:
+        """Run fact consolidation for specific subjects after a thread rebuild.
+
+        Loads only facts/summaries for the given subjects in the given container,
+        groups them, and runs the consolidation LLM call per group. This is the
+        automatic trigger — no global scan.
+        """
+        plugin_name = use_case
+        plugin = self._semantic_plugins.get(plugin_name)
+        if plugin is None or not isinstance(plugin, ConsolidationSemanticPlugin):
+            return
+        policy = plugin.consolidation_policy
+        if policy is None:
+            return
+
+        strategy = self._consolidation_capability.resolve_strategy("fact_consolidation")
+
+        # Targeted candidate selection: only facts for these subjects in this container
+        memory_objects = self._storage.list_memory_objects(
+            memory_types=["atomic_fact", "fact_summary"],
+            lifecycle="active",
+            container_ref=container_ref,
+            subject_in=subjects,
+        )
+        candidates = [
+            self._consolidation_capability._build_candidate(self._storage, mo)
+            for mo in memory_objects
+            if plugin.supports_consolidation(mo)
+        ]
+        candidates = [c for c in candidates if c is not None]
+        if not candidates:
+            return
+
+        # Group and process — bypass MIN_GROUP_SIZE/MIN_DISTINCT_THREADS since the
+        # trigger already confirmed cross-thread relevance.
+        groups = strategy.group_candidates(candidates, policy)
+
+        for group in groups:
+            synthesized = self._consolidation_capability.synthesize_group(plugin=plugin, group=group)
+            if not synthesized.memory_objects:
+                continue
+            promoted = ProcessResult(
+                memory_objects=synthesized.memory_objects,
+                relations=[
+                    *synthesized.relations,
+                    *self._build_consolidation_relations(group, synthesized.memory_objects),
+                ],
+                index_entries=synthesized.index_entries,
+            )
+            self._persist_fn(promoted)
+
+            superseded_ids: list[str] = []
+            created_memory_ids = {mo.id for mo in synthesized.memory_objects}
+
+            for memory_object in synthesized.memory_objects:
+                for active_memory_id in self._find_active_consolidated_memory_ids(group, memory_object):
+                    if active_memory_id == memory_object.id or active_memory_id in superseded_ids:
+                        continue
+                    self._supersede_fn(active_memory_id, memory_object.id)
+                    superseded_ids.append(active_memory_id)
+
+            # Supersede ALL input candidates (fact_consolidation strategy)
+            for candidate_id in group.candidate_ids:
+                if candidate_id in superseded_ids or candidate_id in created_memory_ids:
+                    continue
+                try:
+                    candidate = self._storage.get_memory_object(candidate_id)
+                except KeyError:
+                    continue
+                if candidate.lifecycle == "superseded":
+                    continue
+                replacement_id = synthesized.memory_objects[0].id
+                self._storage.update_memory_object_lifecycle(candidate_id, "superseded")
+                self._storage.create_relation(
+                    Relation(
+                        from_kind="memory_object",
+                        from_id=replacement_id,
+                        relation_type="supersedes",
+                        to_kind="memory_object",
+                        to_id=candidate_id,
+                    )
+                )
+                superseded_ids.append(candidate_id)
 
     def _build_consolidation_relations(
         self,

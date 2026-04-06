@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import unicodedata
 from typing import Any, Callable
 
 from capabilities.thread_aggregation import build_thread_aggregate
@@ -127,6 +128,7 @@ class ThreadRebuilder:
         observability: IntegrationDebugLogger,
         persist_fn: Callable[[ProcessResult], None],
         supersede_fn: Callable[[str, str], None],
+        consolidation_fn: Callable[[str, str, list[str]], None] | None = None,
     ) -> None:
         self._storage = storage
         self._semantic_plugins = semantic_plugins
@@ -134,6 +136,7 @@ class ThreadRebuilder:
         self._observability = observability
         self._persist_fn = persist_fn
         self._supersede_fn = supersede_fn
+        self._consolidation_fn = consolidation_fn
         self._logger = logging.getLogger(__name__)
 
     def process_next_thread_rebuild(
@@ -247,6 +250,12 @@ class ThreadRebuilder:
                 )
                 if self._vector_embedder.embed_process_result(thread_result):
                     self._vector_embedder.save_vector_index()
+                self._maybe_trigger_fact_consolidation(
+                    thread_result=thread_result,
+                    use_case=current_lease.use_case,
+                    container_ref=current_lease.container_ref,
+                    current_thread_ref=current_lease.thread_ref,
+                )
             else:
                 has_pending = self._storage.complete_thread_processing_scope(
                     scope_key=current_lease.scope_key,
@@ -268,6 +277,59 @@ class ThreadRebuilder:
             scope_key=current_lease.scope_key,
             thread_ref=current_lease.thread_ref,
         )
+
+    def _maybe_trigger_fact_consolidation(
+        self,
+        *,
+        thread_result: ProcessResult,
+        use_case: str,
+        container_ref: str,
+        current_thread_ref: str,
+    ) -> None:
+        """After thread rebuild, check if any extracted subjects need cross-thread consolidation."""
+        if self._consolidation_fn is None:
+            return
+
+        # Collect subjects from newly created atomic_facts
+        subjects: set[str] = set()
+        for mo in thread_result.memory_objects:
+            if mo.type != "atomic_fact":
+                continue
+            raw_subject = mo.payload.get("subject") if mo.payload else None
+            if isinstance(raw_subject, str) and raw_subject.strip():
+                subjects.add(unicodedata.normalize("NFKC", raw_subject.strip()).lower())
+
+        if not subjects:
+            return
+
+        # For each subject, check if cross-thread facts or an existing fact_summary exist
+        subjects_to_consolidate: list[str] = []
+        for subject in subjects:
+            existing = self._storage.list_memory_objects(
+                memory_types=["atomic_fact", "fact_summary"],
+                lifecycle="active",
+                container_ref=container_ref,
+                subject_in=[subject],
+            )
+            # Check for cross-thread matches: any fact from a different thread, or any fact_summary
+            has_cross_thread = any(
+                mo.type == "fact_summary"
+                or (mo.payload.get("thread_ref") and mo.payload["thread_ref"] != current_thread_ref)
+                for mo in existing
+            )
+            if has_cross_thread:
+                subjects_to_consolidate.append(subject)
+
+        if not subjects_to_consolidate:
+            return
+
+        try:
+            self._consolidation_fn(use_case, container_ref, subjects_to_consolidate)
+        except Exception:
+            self._logger.warning(
+                "Post-rebuild fact consolidation failed for %s (subjects: %s); will retry on next rebuild",
+                container_ref, subjects_to_consolidate, exc_info=True,
+            )
 
     def _maybe_rebuild_thread_summary(
         self,

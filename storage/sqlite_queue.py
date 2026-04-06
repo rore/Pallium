@@ -10,6 +10,7 @@ from core.visibility import visibility_matches_exact
 from core.models import new_id, utc_now
 from core.observability import OBSERVABILITY_METADATA_KEY
 from core.retention import RETENTION_MAINTENANCE_KEY
+from storage.sqlite_codec import extract_memory_subject
 from storage.base import (
     LeasedSourceItemInfo,
     LeasedThreadScopeInfo,
@@ -468,6 +469,7 @@ class SQLiteQueueMixin:
                     container_ref=memory_object.container_ref,
                     actor_ref=memory_object.actor_ref,
                     freshness_at=self._normalize_datetime(memory_object.freshness_at) or memory_object.created_at,
+                    subject=extract_memory_subject(memory_object),
                     created_at=memory_object.created_at,
                 )
             )
