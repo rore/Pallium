@@ -370,6 +370,12 @@ def _evaluate_conversation(
                     _copy_vector_index(vector_path, cached_vector_prefix)
                     print(f"  Cached DB for {sample_id}")
 
+            # --- build evidence trace map (source_id → memory objects) ---
+            evidence_map = _build_evidence_map(
+                client=client,
+                sample_id=sample_id,
+            )
+
             # --- evaluate each QA pair (parallel justifier+judge) ---
             qa_inputs: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
             for qa_index, qa in enumerate(qa_pairs):
@@ -393,7 +399,7 @@ def _evaluate_conversation(
                 entry: tuple[int, dict[str, Any], dict[str, Any]],
             ) -> tuple[int, dict[str, Any]]:
                 qa_idx, qa_item, mem_payload = entry
-                return qa_idx, _evaluate_question_from_retrieval(
+                result = _evaluate_question_from_retrieval(
                     answer_provider=answer_provider,
                     sample_id=sample_id,
                     qa=qa_item,
@@ -402,6 +408,14 @@ def _evaluate_conversation(
                     speaker_b=speaker_b,
                     verbose=verbose_results,
                 )
+                # Add evidence trace: where was the answer lost?
+                result["evidence_trace"] = _trace_evidence(
+                    qa=qa_item,
+                    sample_id=sample_id,
+                    evidence_map=evidence_map,
+                    retrieval_result_ids=_extract_result_memory_ids(mem_payload),
+                )
+                return qa_idx, result
 
             with ThreadPoolExecutor(max_workers=4) as pool:
                 futures = {
@@ -808,8 +822,126 @@ def _compact_results(memory_payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Evidence trace: track where the answer is lost in the pipeline
+# ---------------------------------------------------------------------------
+
+
+def _build_evidence_map(
+    *,
+    client: TestClient,
+    sample_id: str,
+) -> dict[str, list[dict[str, Any]]]:
+    """Build a map from source_id → memory objects created from that source item.
+
+    Returns {source_id: [{type, id, text}]} for all source items that produced
+    memory objects.
+    """
+    storage = client.app.state.pallium_service._storage
+    # Get all active memory objects and their evidence links.
+    all_memories = storage.list_memory_objects(lifecycle="active")
+    evidence_map: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for mo in all_memories:
+        evidence_refs = storage.get_evidence_for_memory_object(mo.id)
+        payload = mo.payload or {}
+        text = (
+            payload.get("statement")
+            or payload.get("summary")
+            or payload.get("decision")
+            or payload.get("investigation_outcome")
+            or payload.get("carry_forward_answer")
+            or ""
+        )
+        for ref in evidence_refs:
+            if ref.source_id:
+                evidence_map[ref.source_id].append({
+                    "memory_id": mo.id,
+                    "type": mo.type,
+                    "text": str(text)[:200],
+                })
+    return dict(evidence_map)
+
+
+def _trace_evidence(
+    *,
+    qa: dict[str, Any],
+    sample_id: str,
+    evidence_map: dict[str, list[dict[str, Any]]],
+    retrieval_result_ids: set[str],
+) -> dict[str, Any]:
+    """Trace each evidence turn through the pipeline: extraction → retrieval."""
+    evidence_ids = qa.get("evidence", [])
+    if not evidence_ids:
+        return {"evidence_ids": [], "extraction_found": False, "retrieval_found": False}
+
+    traces: list[dict[str, Any]] = []
+    any_extracted = False
+    any_retrieved = False
+
+    for eid in evidence_ids:
+        source_id = f"{sample_id}_{eid}"
+        memories = evidence_map.get(source_id, [])
+        extracted = len(memories) > 0
+        retrieved = any(m["memory_id"] in retrieval_result_ids for m in memories)
+        if extracted:
+            any_extracted = True
+        if retrieved:
+            any_retrieved = True
+        traces.append({
+            "evidence_id": eid,
+            "source_id": source_id,
+            "extracted": extracted,
+            "memory_count": len(memories),
+            "memory_types": [m["type"] for m in memories],
+            "retrieved": retrieved,
+        })
+
+    return {
+        "evidence_ids": evidence_ids,
+        "traces": traces,
+        "extraction_found": any_extracted,
+        "retrieval_found": any_retrieved,
+    }
+
+
+def _extract_result_memory_ids(memory_payload: dict[str, Any]) -> set[str]:
+    """Extract all memory object IDs from retrieval results."""
+    ids: set[str] = set()
+    for r in memory_payload.get("results", []):
+        if r.get("result_kind") == "memory_hit" and r.get("memory_object_id"):
+            ids.add(r["memory_object_id"])
+    return ids
+
+
+# ---------------------------------------------------------------------------
 # Summary & report
 # ---------------------------------------------------------------------------
+
+
+def _build_pipeline_diagnostic(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize where answers are lost: extraction, retrieval, or justification."""
+    with_trace = [r for r in results if r.get("evidence_trace", {}).get("traces")]
+    if not with_trace:
+        return {}
+    total = len(with_trace)
+    extracted = sum(1 for r in with_trace if r["evidence_trace"]["extraction_found"])
+    retrieved = sum(1 for r in with_trace if r["evidence_trace"]["retrieval_found"])
+    in_context = sum(1 for r in with_trace if r.get("gold_in_context"))
+    correct = sum(1 for r in with_trace if r["correct"])
+
+    return {
+        "questions_with_evidence": total,
+        "extraction_found": extracted,
+        "extraction_rate": round(extracted / total * 100, 1) if total else 0,
+        "retrieval_found": retrieved,
+        "retrieval_rate": round(retrieved / total * 100, 1) if total else 0,
+        "gold_in_context": in_context,
+        "context_rate": round(in_context / total * 100, 1) if total else 0,
+        "correct": correct,
+        "accuracy": round(correct / total * 100, 1) if total else 0,
+        "loss_at_extraction": total - extracted,
+        "loss_at_retrieval": extracted - retrieved,
+        "loss_at_justification": in_context - correct,
+    }
 
 
 def _build_summary(
@@ -913,6 +1045,7 @@ def _build_summary(
             "gold_not_in_context": gold_not_in_ctx,
             "gold_not_in_context_but_correct": gold_not_in_ctx_correct,
         },
+        "pipeline_diagnostic": _build_pipeline_diagnostic(results),
     }
 
 
@@ -995,6 +1128,34 @@ def _build_report(
                 f"({round(gold_out / total_q * 100, 1) if total_q else 0}%) — retrieval failures",
                 f"  - Correct despite not found: {gold_out_correct}/{gold_out} "
                 f"({round(gold_out_correct / gold_out * 100, 1) if gold_out else 0}%)",
+            ]
+        )
+
+    pipeline = summary.get("pipeline_diagnostic", {})
+    if pipeline and pipeline.get("questions_with_evidence"):
+        total_q = pipeline["questions_with_evidence"]
+        lines.extend(
+            [
+                "",
+                "## Pipeline Diagnostic (where answers are lost)",
+                "",
+                f"- Evidence turns available: {total_q} questions",
+                f"- Extracted into memory: {pipeline['extraction_found']}/{total_q} "
+                f"({pipeline['extraction_rate']}%)",
+                f"- Retrieved for query: {pipeline['retrieval_found']}/{total_q} "
+                f"({pipeline['retrieval_rate']}%)",
+                f"- Gold in justifier context: {pipeline['gold_in_context']}/{total_q} "
+                f"({pipeline['context_rate']}%)",
+                f"- Correct answer: {pipeline['correct']}/{total_q} "
+                f"({pipeline['accuracy']}%)",
+                "",
+                f"Loss breakdown:",
+                f"  - Lost at extraction: {pipeline['loss_at_extraction']} questions "
+                f"(fact never created from evidence turn)",
+                f"  - Lost at retrieval: {pipeline['loss_at_retrieval']} questions "
+                f"(fact exists but not in top-{summary['retrieval_stats']['avg_results_per_query']:.0f} results)",
+                f"  - Lost at justification: {pipeline['loss_at_justification']} questions "
+                f"(answer in context but justifier got it wrong)",
             ]
         )
 
