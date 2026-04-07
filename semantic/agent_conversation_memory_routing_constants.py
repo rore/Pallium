@@ -188,8 +188,20 @@ ROUTING_FOCUS_BOOST = 80
 
 ANCHOR_SECONDARY_TIER_PENALTY = 80  # must be >= ROUTING_FOCUS_BOOST; ensures aligned always outranks secondary tier even at max focus boost
 
-LEXICAL_NORM_SCALE = 6  # normalization for quality score; IDF/BM25-to-[0,1]
+LEXICAL_NORM_SCALE = 6.0  # BM25 normalization scale; recalibrate from eval score distributions
 QUALITY_WEIGHT = 200    # multiplier for quality_score in scoring formula (used later in Phase 2)
+
+
+def normalize_lexical_score(raw_score: float | int | None) -> float:
+    """Normalize raw lexical score (BM25 float) to 0.0-1.0 range.
+
+    Single point of control for lexical score normalization.
+    All routing consumers MUST call this instead of using raw scores.
+    To recalibrate after scoring engine changes, adjust LEXICAL_NORM_SCALE only.
+    """
+    if raw_score is None:
+        return 0.0
+    return min(float(raw_score) / LEXICAL_NORM_SCALE, 1.0)
 
 ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY = 60
 

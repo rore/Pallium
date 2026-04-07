@@ -15,6 +15,8 @@ import os
 import sys
 from dataclasses import dataclass
 
+from semantic.agent_conversation_memory_routing_constants import normalize_lexical_score
+
 _VERBOSE = os.environ.get("PALLIUM_INJECTION_VERBOSE", "") == "1"
 
 
@@ -38,17 +40,17 @@ HIGH_VALUE_MEMORY_TYPES = frozenset({
 class InjectionThresholds:
     """All injection check thresholds. Swappable for testing.
 
-    Lexical thresholds use BM25 floats in composite mode.
+    Lexical thresholds are in normalized 0-1 space (via normalize_lexical_score).
     In lexical-only mode (no composite scores), the set-level gate falls
     through to the retrieval_score > 0 check instead.
     """
-    set_lexical_threshold: float = 2      # min BM25/IDF for set-level gate (composite mode)
-    set_vector_high: int = 750            # cosine*1000 for strong vector match
-    set_lexical_low: float = 1e-10        # min lexical for vector+lexical condition (any BM25 match)
-    candidate_lexical_floor: float = 1e-10  # per-candidate min lexical (source hits); any BM25 match
-    candidate_vector_override: int = 800  # per-candidate strong vector (source hits)
-    high_value_lexical_floor: float = 1e-10 # per-candidate min lexical (structured memory); any BM25 match
-    high_value_vector_floor: int = 650    # per-candidate vector floor (structured memory)
+    set_lexical_threshold: float = 0.33    # min normalized lexical for set-level gate (≈ 2/6)
+    set_vector_high: int = 750             # cosine*1000 for strong vector match
+    set_lexical_low: float = 0.01          # min normalized lexical for vector+lexical condition (any meaningful match)
+    candidate_lexical_floor: float = 0.01  # per-candidate min normalized lexical (source hits)
+    candidate_vector_override: int = 800   # per-candidate strong vector (source hits)
+    high_value_lexical_floor: float = 0.01 # per-candidate min normalized lexical (structured memory)
+    high_value_vector_floor: int = 650     # per-candidate vector floor (structured memory)
 
 
 _DEFAULT_THRESHOLDS = InjectionThresholds()
@@ -86,7 +88,7 @@ def should_allow_injection(
             if getattr(c.get("item"), "type", None) != "discussion_summary"
         ]
         _lex_candidates = _non_summary_candidates or candidates
-        best_lexical = max(float(c.get("lexical_score", 0) or 0) for c in _lex_candidates)
+        best_lexical = max(normalize_lexical_score(c.get("lexical_score")) for c in _lex_candidates)
         best_vector = max(int(c.get("vector_score", 0) or 0) for c in candidates)
         has_any_lexical = any(c.get("lexical_score") is not None for c in _lex_candidates)
 
@@ -166,7 +168,7 @@ def candidate_injection_eligible(
     item_type = getattr(item, "type", None) if item else None
 
     if raw_lex is not None or raw_vec is not None:
-        lex = float(raw_lex or 0)
+        lex = normalize_lexical_score(raw_lex)
         vec = float(raw_vec or 0)
         is_source = item_kind == "source_hit"
 

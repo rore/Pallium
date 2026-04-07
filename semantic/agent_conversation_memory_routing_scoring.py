@@ -14,8 +14,8 @@ from semantic.agent_conversation_memory_threads import (
 from semantic.agent_conversation_memory_routing_constants import (
     ANCHOR_SECONDARY_TIER_PENALTY,
     HIGHER_LEVEL_RETRIEVAL_FLOOR,
-    LEXICAL_NORM_SCALE,
     QUALITY_WEIGHT,
+    normalize_lexical_score,
     ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY,
     ROUTING_FALLBACK_MARGIN,
     ROUTING_FAMILY_INFERENCE_PRIORITY,
@@ -59,7 +59,7 @@ def _compute_quality_score(lexical_score: float, vector_score: float) -> float:
     Uses fixed normalization: BM25 scores are divided by LEXICAL_NORM_SCALE,
     vector similarity scores by 1000.
     """
-    lex_norm = min(lexical_score / LEXICAL_NORM_SCALE, 1.0)
+    lex_norm = normalize_lexical_score(lexical_score)
     vec_norm = vector_score / 1000.0
     return max(lex_norm, vec_norm)
 
