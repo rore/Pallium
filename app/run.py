@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
 def run(args: list[str] | None = None) -> int:
     parsed = build_parser().parse_args(args)
     if parsed.mode == "serve":
+        # Auto-set PALLIUM_BASE_URL if not already set — needed by the MCP endpoint
+        # which is mounted on this server and calls back to the HTTP API
+        import os
+        if "PALLIUM_BASE_URL" not in os.environ:
+            os.environ["PALLIUM_BASE_URL"] = f"http://{parsed.host}:{parsed.port}"
         uvicorn.run(
             "app.main:app",
             factory=True,
