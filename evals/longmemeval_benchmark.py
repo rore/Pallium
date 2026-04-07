@@ -506,24 +506,6 @@ def _process_question(
                 )
                 client.app.state.pallium_service.reconcile_vector_index()
 
-                # --- consolidation ---
-                if not skip_consolidation:
-                    consolidation_count = 0
-                    for use_case in ("conversational_knowledge", "agent_conversation_memory"):
-                        while True:
-                            try:
-                                result = client.app.state.pallium_service.run_consolidation_pass(
-                                    use_case=use_case,
-                                )
-                            except (ValueError, KeyError):
-                                break
-                            if result is None or len(result.groups) == 0:
-                                break
-                            consolidation_count += 1
-                    if consolidation_count:
-                        client.app.state.pallium_service.reconcile_vector_index()
-                        print(f"  Consolidation: {consolidation_count} passes")
-
                 print("  Processing complete")
 
                 # Cache the processed DB for reuse.
