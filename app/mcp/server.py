@@ -1,8 +1,14 @@
-"""Pallium MCP server — stdio transport adapter wrapping the HTTP API."""
+"""Pallium MCP server — exposes memory tools over MCP protocol.
+
+Wraps Pallium's HTTP API. Supports stdio (local testing) and
+streamable-http (production, remote access) transports.
+"""
 
 from __future__ import annotations
 
 import json
+import os
+from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 
@@ -16,9 +22,9 @@ NOT_CONFIGURED_MSG = (
 )
 
 
-def create_server() -> FastMCP:
+def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     """Create a FastMCP server with Pallium tools registered."""
-    server = FastMCP("pallium")
+    server = FastMCP("pallium", host=host, port=port)
 
     @server.tool()
     async def pallium_query(
@@ -98,9 +104,21 @@ def create_server() -> FastMCP:
 
 
 def main() -> None:
-    """Run the Pallium MCP server with stdio transport."""
-    server = create_server()
-    server.run(transport="stdio")
+    """Run the Pallium MCP server.
+
+    Transport and bind address are configured via environment:
+      PALLIUM_MCP_TRANSPORT: "stdio" or "streamable-http" (default: streamable-http)
+      FASTMCP_HOST: bind host (default: 127.0.0.1)
+      FASTMCP_PORT: bind port (default: 8001)
+    """
+    transport_val = os.environ.get("PALLIUM_MCP_TRANSPORT", "streamable-http")
+    if transport_val not in ("stdio", "sse", "streamable-http"):
+        raise ValueError(f"Invalid MCP transport: {transport_val}")
+    transport: Literal["stdio", "sse", "streamable-http"] = transport_val  # type: ignore[assignment]
+    host = os.environ.get("FASTMCP_HOST", "127.0.0.1")
+    port = int(os.environ.get("FASTMCP_PORT", "8001"))
+    server = create_server(host=host, port=port)
+    server.run(transport=transport)
 
 
 if __name__ == "__main__":

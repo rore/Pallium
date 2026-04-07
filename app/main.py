@@ -48,6 +48,14 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     # Start vector reconciliation daemon if vector index is active
     if service._vector_index is not None:
         app.state._reconcile_stop = _start_reconcile_thread(service)
+    # Mount MCP endpoint if mcp[cli] is installed
+    try:
+        from app.mcp.server import create_server as create_mcp_server
+        mcp_server = create_mcp_server()
+        app.mount("/mcp", mcp_server.streamable_http_app())
+        logger.info("MCP endpoint mounted at /mcp")
+    except ImportError:
+        pass  # mcp[cli] not installed — MCP endpoint not available
     return app
 
 
