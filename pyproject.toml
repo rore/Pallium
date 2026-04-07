@@ -41,8 +41,12 @@ vector = [
     "onnxruntime>=1.17,<2.0",
     "tokenizers>=0.21,<1.0",
 ]
+mcp = [
+    "mcp[cli]>=1.20,<2.0",
+]
 dev = [
     "pytest>=8.3,<9.0",
+    "pytest-asyncio>=0.24,<1.0",
     "pytest-xdist>=3.6,<4.0",
 ]
 
@@ -59,6 +63,7 @@ filterwarnings = [
 [tool.setuptools]
 packages = [
     "app",
+    "app.mcp",
     "capabilities",
     "api",
     "core",

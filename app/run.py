@@ -19,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "mode",
         nargs="?",
-        choices=("all", "serve", "processor", "cleaner", "rebuild-vector-index", "download-embedding-model"),
+        choices=("all", "serve", "mcp", "processor", "cleaner", "rebuild-vector-index", "download-embedding-model"),
         default="all",
     )
     parser.add_argument("--host", default="127.0.0.1")
@@ -49,6 +49,14 @@ def run(args: list[str] | None = None) -> int:
             reload=parsed.reload,
             log_config=build_uvicorn_log_config(component="api"),
         )
+        return 0
+    if parsed.mode == "mcp":
+        try:
+            from app.mcp.server import main as mcp_main
+        except ImportError:
+            logger.error("MCP dependencies not installed. Run: pip install -e '.[mcp]'")
+            return 1
+        mcp_main()
         return 0
     if parsed.mode == "processor":
         processor_args: list[str] = []
