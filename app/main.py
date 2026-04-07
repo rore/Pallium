@@ -55,7 +55,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         app.mount("/mcp", mcp_server.streamable_http_app())
         logger.info("MCP endpoint mounted at /mcp")
     except ImportError:
-        pass  # mcp[cli] not installed — MCP endpoint not available
+        logger.warning("MCP endpoint not available: mcp[cli] not installed. Run: pip install 'mcp[cli]'")
     return app
 
 
