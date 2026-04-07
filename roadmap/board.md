@@ -11,6 +11,7 @@
 - idea-operational-scale-hardening
 - idea-optional-reranker-support
 - idea-document-schema-evolution-strategy
+- idea-multi-vector-long-text-embedding
 
 # Done
 - add-fact-consolidation-strategy-for-conversational-knowledge
