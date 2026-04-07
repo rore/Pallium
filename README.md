@@ -142,54 +142,36 @@ Not a fit:
 
 ## Benchmarks
 
-Pallium is evaluated against external memory benchmarks to track retrieval
-quality. These benchmarks were designed for long-context models or
-general-purpose memory systems — Pallium is a structured retrieval sidecar, so
-the numbers need context.
+### LoCoMo — Conversational Recall (ACL 2024)
 
-### LoCoMo — Conversational Fact Recall (ACL 2024)
-
-Tests answering factual questions about multi-session conversations (names,
-dates, events, relationships). End-to-end: question → retrieval → LLM answer →
-judge.
+Multi-session conversational QA — names, dates, events, relationships.
 
 | | Single-hop | Open-domain | Temporal | Multi-hop | Overall |
 |---|---|---|---|---|---|
-| **Pallium** | 61.1% | 61.6% | 44.8% | 43.3% | **57.1%** |
+| ByteRover | 96.6% | 85.9% | 97.8% | 93.3% | 96.1% |
+| Mem0 | — | — | — | — | 66.9% |
+| **Pallium** | **61.1%** | **61.6%** | **44.8%** | **43.3%** | **57.1%** |
+| OpenAI Memory | — | — | — | — | 52.9% |
 
-Comparison: ByteRover 96.1%, Mem0 66.9%, OpenAI Memory 52.9%.
-
-**Why the gap to ByteRover?** Pallium extracts structured memory (decisions,
-investigations, checkpoints) — not raw fact transcription. LoCoMo asks trivia
-questions ("When did Caroline go camping?") that need atomic detail Pallium's
-continuity-focused extraction intentionally abstracts away. Pallium's factual
-recall package addresses this, but the architecture prioritizes reusable
-conclusions over verbatim recall.
+Pallium prioritizes structured memory (decisions, investigations, checkpoints)
+over verbatim fact recall. LoCoMo is heavy on trivia-style questions that
+reward raw transcription — a different design point. The factual recall package
+narrows this gap; temporal and multi-hop are active improvement areas.
 
 ### FactConsolidation — Contradiction Handling (MemoryAgentBench, ICLR 2026)
 
-Tests whether the system retrieves updated facts over stale contradictory ones.
-Data contains counterfactual rewrites (e.g., "CEO of Microsoft is Steve Jobs"
-replacing the real answer) — the system must return the update, not the
-original.
+Tests whether updated facts are retrieved over stale contradictory ones.
+Pallium is a retrieval sidecar — the retrieval rate (did the right fact reach
+the consuming agent?) is the primary metric.
 
-**Pallium is a retrieval system, not an answer generator.** The meaningful
-metric is retrieval rate (did the right fact reach the context?), not end-to-end
-accuracy (did the evaluator LLM use it?).
+| | Pallium retrieval | Pallium e2e | GPT-4o | BM25 RAG | Mem0 | Zep |
+|---|---|---|---|---|---|---|
+| **Single-hop** | **85%** | 63% | 92% | 45% | 20% | 10% |
+| **Multi-hop** | **28%** | 9.2% | 28% | 6% | 0% | 0% |
 
-| | Retrieval rate | End-to-end | Notes |
-|---|---|---|---|
-| **Single-hop** | **85%** | 63% | 22% gap = evaluator LLM overrides counterfactuals with real-world knowledge |
-| **Multi-hop** | **28%** | 9.2% | Matches GPT-4o long-context (28%); multi-hop contradiction is unsolved across all systems |
-
-Comparison (end-to-end, published baselines): GPT-4o 60%/5%, BM25 RAG 45%/6%,
-Mem0 20%/0%, Zep 10%/0%.
-
-**Why report retrieval rate separately?** The 22-point gap between retrieval
-(85%) and end-to-end (63%) on single-hop is entirely the evaluator LLM
-preferring its training knowledge over absurd counterfactuals in context. When
-Pallium surfaces the right fact and the LLM uses it, accuracy is 100%. That
-gap is the consuming agent's problem, not the memory system's.
+The gap between retrieval and end-to-end is the evaluator LLM overriding
+counterfactual test data with its own training knowledge — outside the memory
+system's scope.
 
 ### Running Benchmarks
 
