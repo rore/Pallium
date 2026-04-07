@@ -208,6 +208,7 @@ class SQLiteSchemaMixin:
             self._ensure_maintenance_state_columns()
             self._ensure_unique_indexes()
             self._ensure_indexes()
+            self._ensure_fts5_table()
             self._backfill_legacy_memory_freshness()
 
     @contextmanager
@@ -319,3 +320,32 @@ class SQLiteSchemaMixin:
         with self._engine.begin() as connection:
             for _index_name, create_sql in self._INDEX_MIGRATIONS.items():
                 connection.execute(text(create_sql))
+
+    def _ensure_fts5_available(self, connection) -> None:
+        """Verify FTS5 extension is available. Fail fast with clear message."""
+        try:
+            connection.execute(text(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_check USING fts5(x)"
+            ))
+            connection.execute(text("DROP TABLE IF EXISTS _fts5_check"))
+        except Exception as exc:
+            raise RuntimeError(
+                "SQLite FTS5 extension is not available. "
+                "Pallium requires FTS5 for lexical search. "
+                "Python 3.9+ bundles SQLite with FTS5 enabled by default."
+            ) from exc
+
+    def _ensure_fts5_table(self) -> None:
+        with self._engine.begin() as connection:
+            self._ensure_fts5_available(connection)
+            connection.execute(text(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS lexical_fts USING fts5("
+                "text_view, "
+                "index_entry_id UNINDEXED, "
+                "target_kind UNINDEXED, "
+                "target_id UNINDEXED, "
+                "text_view_name UNINDEXED, "
+                "container_ref UNINDEXED, "
+                "tokenize='unicode61 remove_diacritics 2'"
+                ")"
+            ))

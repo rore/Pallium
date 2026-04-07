@@ -517,6 +517,20 @@ def test_count_index_entries_by_type(test_db_url: str) -> None:
     assert storage.count_index_entries_by_type("nonexistent") == 0
 
 
+def test_fts5_lexical_table_created(test_db_url: str) -> None:
+    """Schema init must create the lexical_fts FTS5 virtual table."""
+    from sqlalchemy import create_engine, text as sa_text
+    storage = SQLiteStorageProvider(test_db_url)
+    engine = create_engine(test_db_url)
+    with engine.connect() as conn:
+        tables = [
+            row[0] for row in conn.execute(
+                sa_text("SELECT name FROM sqlite_master WHERE type='table'")
+            )
+        ]
+    assert "lexical_fts" in tables
+
+
 def test_unique_index_migration_fails_on_existing_duplicates(tmp_path: Path) -> None:
     from sqlalchemy import create_engine, text as sql_text
 
