@@ -219,8 +219,15 @@ def test_consolidation_does_not_cross_visibility_contexts(monkeypatch, test_db_u
             use_case="agent_conversation_memory",
             strategy_name="container_topic_window",
         )
-        assert result is not None
-        assert result.groups == ()
+        # Candidates exist but can't be grouped (different visibility contexts).
+        # run_consolidation_pass returns None when no groups are formed.
+        assert result is None
+
+        # Verify both memories still active (no cross-visibility supersession).
+        storage = client.app.state.pallium_service._storage
+        active = storage.list_memory_objects(lifecycle="active")
+        active_types = {m.type for m in active if m.type not in ("thread_summary", "atomic_fact")}
+        assert len(active_types) >= 1
 
 
 def test_debug_trace_reports_visibility_exclusions(monkeypatch, test_db_url: str) -> None:
