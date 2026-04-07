@@ -195,7 +195,7 @@ class QueryResultItem:
     artifact_kind: str | None = None
     visibility: str = "private"
     retrieval_source: str | None = None
-    lexical_score: int | None = None
+    lexical_score: float | None = None
     vector_score: int | None = None
 
     def __post_init__(self) -> None:

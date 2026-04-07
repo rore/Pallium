@@ -179,7 +179,7 @@ class RetrievalTraceHitResponse(BaseModel):
     index_entry_id: str
     index_type: str
     text_view_name: str
-    score: int
+    score: float
     matched_tokens: list[str]
     provider_name: str | None = None
     provider_version: str | None = None
