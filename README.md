@@ -140,6 +140,31 @@ Not a fit:
 - agent runtime or workflow engine
 - general-purpose vector database
 
+## Benchmarks
+
+Pallium is evaluated against external memory benchmarks to track retrieval
+quality and regression.
+
+| Benchmark | What it tests | Pallium | Context |
+|-----------|--------------|---------|---------|
+| **LoCoMo** (ACL 2024) | Conversational fact recall across multi-session dialogues | **57.1%** overall | ByteRover 96.1%, Mem0 66.9%, OpenAI Memory 52.9% |
+| **FactConsolidation-SH** (MemoryAgentBench, ICLR 2026) | Preference for updated facts over stale contradictory ones | **85% retrieval**, 63% end-to-end | GPT-4o 92% (long-context), BM25 RAG 45% |
+| **FactConsolidation-MH** (MemoryAgentBench, ICLR 2026) | Multi-hop reasoning over updated facts | **28% retrieval**, 9.2% end-to-end | GPT-4o 28% (long-context), BM25 RAG 6% |
+
+LoCoMo measures conversational recall — the core use case. FactConsolidation
+measures contradiction handling, where the retrieval rate (did Pallium surface
+the right fact?) is the meaningful metric; the end-to-end gap reflects the
+evaluator LLM overriding counterfactual test data with real-world knowledge.
+
+Run benchmarks locally:
+
+```bash
+python -m evals.locomo_benchmark --download
+python -m evals.locomo_benchmark --mini --cache-dir .local/llm-cache
+python -m evals.mabench_benchmark --download
+python -m evals.mabench_benchmark --mini --cache-dir .local/llm-cache
+```
+
 ## Documentation
 
 - [Getting Started](docs/getting-started.md) — local setup to first query
