@@ -10,11 +10,17 @@ from app.config import AppConfig
 from app.dependencies import build_service
 from app.runtime_logging import emit_runtime_log
 from app.signal_context import graceful_stop
+from app.transient_errors import is_transient_error
 from core.contracts import ItemProcessingResult
 from storage.base import ThreadProcessingLease
 from core.service import DEFAULT_PROCESSING_LEASE_SECONDS, DEFAULT_PROCESSING_MAX_ATTEMPTS
 
 MAX_REBUILD_WAIT_SECONDS = 5.0
+
+# Transient error retry policy
+_TRANSIENT_BACKOFF_BASE = 1.0
+_TRANSIENT_BACKOFF_MAX = 30.0
+_TRANSIENT_MAX_CONSECUTIVE = 10
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -58,29 +64,57 @@ def run_worker(
             return True
         return False
 
+    consecutive_transient_errors = 0
+
     with graceful_stop(install=install_signal_handlers) as stop:
         try:
             while True:
                 if _stopping():
                     return 0
-                result = service.process_next_source_item(
-                    worker_id=worker_id,
-                    lease_seconds=parsed.lease_seconds,
-                    max_attempts=parsed.max_attempts,
-                )
-                if result is not None:
-                    _log_result(worker_id, result)
-                    if parsed.once or _stopping():
-                        return 0
-                    if clock() - last_rebuild_check >= MAX_REBUILD_WAIT_SECONDS:
-                        _try_thread_rebuild()
+                try:
+                    result = service.process_next_source_item(
+                        worker_id=worker_id,
+                        lease_seconds=parsed.lease_seconds,
+                        max_attempts=parsed.max_attempts,
+                    )
+                    if result is not None:
+                        _log_result(worker_id, result)
+                        if parsed.once or _stopping():
+                            return 0
+                        if clock() - last_rebuild_check >= MAX_REBUILD_WAIT_SECONDS:
+                            _try_thread_rebuild()
+                            last_rebuild_check = clock()
+                        continue
+                    if _try_thread_rebuild():
                         last_rebuild_check = clock()
+                        if parsed.once or _stopping():
+                            return 0
+                        continue
+                except Exception as exc:
+                    if not is_transient_error(exc):
+                        raise
+                    consecutive_transient_errors += 1
+                    backoff = min(
+                        _TRANSIENT_BACKOFF_MAX,
+                        _TRANSIENT_BACKOFF_BASE * (2 ** (consecutive_transient_errors - 1)),
+                    )
+                    emit_runtime_log(
+                        "processor",
+                        f"worker_id={worker_id} transient_error={exc} "
+                        f"consecutive={consecutive_transient_errors} backoff={backoff:.1f}s",
+                        stderr=True,
+                    )
+                    if consecutive_transient_errors >= _TRANSIENT_MAX_CONSECUTIVE:
+                        emit_runtime_log(
+                            "processor",
+                            f"worker_id={worker_id} giving up after {consecutive_transient_errors} "
+                            f"consecutive transient errors",
+                            stderr=True,
+                        )
+                        return 1
+                    sleep_fn(backoff)
                     continue
-                if _try_thread_rebuild():
-                    last_rebuild_check = clock()
-                    if parsed.once or _stopping():
-                        return 0
-                    continue
+                consecutive_transient_errors = 0
                 if parsed.once or _stopping():
                     return 0
                 sleep_fn(parsed.poll_interval_seconds)

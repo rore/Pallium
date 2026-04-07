@@ -10,6 +10,11 @@ from collections.abc import Callable
 from app.runtime_logging import emit_runtime_log
 from app.signal_context import graceful_stop
 
+# Supervisor restart policy: if a child crashes more than this many times
+# within the window, the supervisor gives up and shuts everything down.
+_MAX_RAPID_RESTARTS = 3
+_RAPID_RESTART_WINDOW_SECONDS = 60.0
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run Pallium API with supervised background processors")
@@ -39,6 +44,7 @@ def run_supervisor(
     popen_factory: Callable[..., subprocess.Popen] = subprocess.Popen,
     sleep_fn: Callable[[float], None] = time.sleep,
     should_stop: Callable[[], bool] | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> int:
     parsed = build_parser().parse_args(args)
     if parsed.reload:
@@ -49,41 +55,96 @@ def run_supervisor(
     if parsed.cleaners < 0:
         raise ValueError("--cleaners must be >= 0")
 
-    processes: list[subprocess.Popen] = []
+    # Each managed slot: (command, label, process, restart_times)
+    slots: list[_ManagedSlot] = []
     exit_code = 0
 
     with graceful_stop(install=True) as stop:
         try:
-            server = popen_factory(build_server_command(parsed.host, parsed.port), cwd=os.getcwd())
-            processes.append(server)
+            # Start all children
+            server_cmd = build_server_command(parsed.host, parsed.port)
+            server = popen_factory(server_cmd, cwd=os.getcwd())
+            slots.append(_ManagedSlot(
+                command=server_cmd,
+                label="api",
+                process=server,
+                restartable=False,
+                restart_times=[],
+            ))
             emit_runtime_log("supervisor", f"started api pid={server.pid} host={parsed.host} port={parsed.port}")
             for index in range(1, parsed.processors + 1):
-                processor = popen_factory(build_processor_command(index), cwd=os.getcwd())
-                processes.append(processor)
-                emit_runtime_log("supervisor", f"started processor pid={processor.pid} processor_id=supervisor-processor-{index}")
+                cmd = build_processor_command(index)
+                proc = popen_factory(cmd, cwd=os.getcwd())
+                slots.append(_ManagedSlot(
+                    command=cmd,
+                    label=f"processor supervisor-processor-{index}",
+                    process=proc,
+                    restartable=True,
+                    restart_times=[],
+                ))
+                emit_runtime_log("supervisor", f"started processor pid={proc.pid} processor_id=supervisor-processor-{index}")
             for index in range(1, parsed.cleaners + 1):
-                cleaner = popen_factory(build_cleaner_command(index), cwd=os.getcwd())
-                processes.append(cleaner)
-                emit_runtime_log("supervisor", f"started cleaner pid={cleaner.pid} cleaner_id=supervisor-cleaner-{index}")
+                cmd = build_cleaner_command(index)
+                proc = popen_factory(cmd, cwd=os.getcwd())
+                slots.append(_ManagedSlot(
+                    command=cmd,
+                    label=f"cleaner supervisor-cleaner-{index}",
+                    process=proc,
+                    restartable=True,
+                    restart_times=[],
+                ))
+                emit_runtime_log("supervisor", f"started cleaner pid={proc.pid} cleaner_id=supervisor-cleaner-{index}")
 
             while True:
                 if should_stop is not None and should_stop():
                     stop.requested = True
-                for process in processes:
-                    return_code = process.poll()
-                    if return_code is not None:
-                        emit_runtime_log("supervisor", f"process exited pid={process.pid} code={return_code}", stderr=return_code != 0)
+                for slot in slots:
+                    return_code = slot.process.poll()
+                    if return_code is None:
+                        continue
+                    emit_runtime_log(
+                        "supervisor",
+                        f"process exited pid={slot.process.pid} label={slot.label} code={return_code}",
+                        stderr=return_code != 0,
+                    )
+                    if not slot.restartable:
+                        # API server exit is always fatal
                         exit_code = return_code
                         stop.requested = True
                         break
+                    # Check restart budget
+                    now = clock()
+                    slot.restart_times = [
+                        t for t in slot.restart_times
+                        if now - t < _RAPID_RESTART_WINDOW_SECONDS
+                    ]
+                    if len(slot.restart_times) >= _MAX_RAPID_RESTARTS:
+                        emit_runtime_log(
+                            "supervisor",
+                            f"child {slot.label} crashed {_MAX_RAPID_RESTARTS} times "
+                            f"within {_RAPID_RESTART_WINDOW_SECONDS}s, shutting down",
+                            stderr=True,
+                        )
+                        exit_code = return_code
+                        stop.requested = True
+                        break
+                    # Restart the child
+                    slot.restart_times.append(now)
+                    new_proc = popen_factory(slot.command, cwd=os.getcwd())
+                    emit_runtime_log(
+                        "supervisor",
+                        f"restarted {slot.label} old_pid={slot.process.pid} new_pid={new_proc.pid}",
+                    )
+                    slot.process = new_proc
                 if stop.requested:
                     break
                 sleep_fn(0.1)
         finally:
-            for process in reversed(processes):
+            all_processes = [slot.process for slot in slots]
+            for process in reversed(all_processes):
                 if process.poll() is None:
                     process.terminate()
-            for process in reversed(processes):
+            for process in reversed(all_processes):
                 if process.poll() is None:
                     try:
                         process.wait(timeout=5)
@@ -96,6 +157,27 @@ def run_supervisor(
                         process.kill()
                         process.wait(timeout=5)
     return exit_code
+
+
+class _ManagedSlot:
+    """Tracks a supervised child process and its restart history."""
+
+    __slots__ = ("command", "label", "process", "restartable", "restart_times")
+
+    def __init__(
+        self,
+        *,
+        command: list[str],
+        label: str,
+        process: subprocess.Popen,
+        restartable: bool,
+        restart_times: list[float],
+    ) -> None:
+        self.command = command
+        self.label = label
+        self.process = process
+        self.restartable = restartable
+        self.restart_times = restart_times
 
 
 if __name__ == "__main__":

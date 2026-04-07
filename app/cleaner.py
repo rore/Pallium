@@ -10,7 +10,10 @@ from app.config import AppConfig
 from app.dependencies import build_service
 from app.runtime_logging import emit_runtime_log
 from app.signal_context import graceful_stop
+from app.transient_errors import is_transient_error
 from storage.base import RetentionLeaseLostError, RetentionRunStats
+
+_TRANSIENT_MAX_CONSECUTIVE = 10
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,6 +46,8 @@ def run_cleaner(
     lease_seconds = parsed.lease_seconds if parsed.lease_seconds is not None else resolved_config.retention.lease_seconds
     batch_size = parsed.batch_size if parsed.batch_size is not None else resolved_config.retention.batch_size
 
+    consecutive_transient_errors = 0
+
     with graceful_stop(install=install_signal_handlers) as stop:
         try:
             while True:
@@ -62,6 +67,31 @@ def run_cleaner(
                         return 0
                     sleep_fn(run_interval_seconds)
                     continue
+                except Exception as exc:
+                    if not is_transient_error(exc):
+                        raise
+                    consecutive_transient_errors += 1
+                    emit_runtime_log(
+                        "cleaner",
+                        f"cleaner_id={cleaner_id} transient_error={exc} "
+                        f"consecutive={consecutive_transient_errors}",
+                        stderr=True,
+                    )
+                    if consecutive_transient_errors >= _TRANSIENT_MAX_CONSECUTIVE:
+                        emit_runtime_log(
+                            "cleaner",
+                            f"cleaner_id={cleaner_id} giving up after "
+                            f"{consecutive_transient_errors} consecutive transient errors",
+                            stderr=True,
+                        )
+                        return 1
+                    if parsed.once:
+                        return 1
+                    if stop.requested or (should_stop is not None and should_stop()):
+                        return 0
+                    sleep_fn(run_interval_seconds)
+                    continue
+                consecutive_transient_errors = 0
                 if stats is not None:
                     _log_retention_stats(cleaner_id, stats)
                     if parsed.once:

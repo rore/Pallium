@@ -241,13 +241,21 @@ class ThreadRebuilder:
                 return
 
             if thread_result is not None:
-                has_pending = self._storage.commit_process_result_and_complete_scope(
-                    result=thread_result,
-                    supersession_pairs=supersession_pairs,
-                    scope_key=current_lease.scope_key,
-                    worker_id=worker_id,
-                    claimed_at=current_lease.processing_claimed_at,
-                )
+                try:
+                    has_pending = self._storage.commit_process_result_and_complete_scope(
+                        result=thread_result,
+                        supersession_pairs=supersession_pairs,
+                        scope_key=current_lease.scope_key,
+                        worker_id=worker_id,
+                        claimed_at=current_lease.processing_claimed_at,
+                    )
+                except Exception:
+                    self._logger.warning(
+                        "Thread rebuild commit failed for scope %s; lease will expire and scope will be re-claimed",
+                        current_lease.scope_key,
+                        exc_info=True,
+                    )
+                    raise
                 if self._vector_embedder.embed_process_result(thread_result):
                     self._vector_embedder.save_vector_index()
                 self._maybe_trigger_fact_consolidation(
@@ -257,11 +265,19 @@ class ThreadRebuilder:
                     current_thread_ref=current_lease.thread_ref,
                 )
             else:
-                has_pending = self._storage.complete_thread_processing_scope(
-                    scope_key=current_lease.scope_key,
-                    worker_id=worker_id,
-                    claimed_at=current_lease.processing_claimed_at,
-                )
+                try:
+                    has_pending = self._storage.complete_thread_processing_scope(
+                        scope_key=current_lease.scope_key,
+                        worker_id=worker_id,
+                        claimed_at=current_lease.processing_claimed_at,
+                    )
+                except Exception:
+                    self._logger.warning(
+                        "Thread rebuild scope completion failed for scope %s; lease will expire",
+                        current_lease.scope_key,
+                        exc_info=True,
+                    )
+                    raise
             if not has_pending:
                 return
             next_lease = self._storage.claim_thread_processing_scope(

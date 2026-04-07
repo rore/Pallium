@@ -2,14 +2,19 @@ from __future__ import annotations
 
 from datetime import timedelta
 import re
+import sqlite3
 import threading
 from subprocess import TimeoutExpired
+from unittest.mock import MagicMock
+
+from sqlalchemy.exc import OperationalError as SAOperationalError
 
 from app.config import AppConfig
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import _vector_index_path_for_sqlite
 from app.processor import run_processor
 from app.worker import run_worker
+from app.transient_errors import is_transient_error
 from app import supervisor
 from core.contracts import ProcessResult, build_source_item
 from core.service import DEFAULT_PROCESSING_LEASE_SECONDS, PalliumService
@@ -20,6 +25,11 @@ from storage.base import ThreadProcessingScope
 from storage.sqlite import SQLiteStorageProvider
 from sqlalchemy.orm import Session
 from core.models import MemoryObject, Relation
+
+
+def _make_sa_operational_error(message: str) -> SAOperationalError:
+    """Create a SQLAlchemy OperationalError wrapping a sqlite3 OperationalError."""
+    return SAOperationalError("statement", {}, sqlite3.OperationalError(message))
 
 
 class AlwaysFailPlugin(SemanticPlugin):
@@ -661,3 +671,240 @@ def test_run_worker_logs_failure_details(monkeypatch, test_db_url: str, capsys) 
     assert "status=failed" in output
     assert "failure_category=" in output
     assert "processing_error=boom" in output
+
+
+# ── Transient SQLite error handling ───────────────────────────────────
+
+
+def testis_transient_error_recognizes_known_errors() -> None:
+    # Raw sqlite3 errors
+    assert is_transient_error(sqlite3.OperationalError("disk I/O error"))
+    assert is_transient_error(sqlite3.OperationalError("database is locked"))
+    assert is_transient_error(sqlite3.OperationalError("database table is locked"))
+    assert is_transient_error(sqlite3.OperationalError("unable to open database file"))
+    # SQLAlchemy-wrapped errors (what actually propagates from storage)
+    assert is_transient_error(_make_sa_operational_error("disk I/O error"))
+    assert is_transient_error(_make_sa_operational_error("database is locked"))
+
+
+def testis_transient_error_rejects_non_transient() -> None:
+    assert not is_transient_error(sqlite3.OperationalError("no such table: foo"))
+    assert not is_transient_error(_make_sa_operational_error("no such table: foo"))
+    assert not is_transient_error(RuntimeError("disk I/O error"))
+    assert not is_transient_error(ValueError("something"))
+
+
+def test_worker_retries_on_transient_sqlite_error_then_recovers(monkeypatch, test_db_url: str, capsys) -> None:
+    service = _build_service(test_db_url)
+    ingest = service.ingest_item(
+        source_type="decision_note",
+        source_id="worker-transient-1",
+        content_type="text/plain",
+        content="Decision: test transient error recovery.",
+        metadata=None,
+        use_case="demo_agent_memory",
+        artifact_kind="assistant_output",
+        role="assistant",
+    )
+
+    call_count = [0]
+    original_process = service.process_next_source_item
+
+    def failing_then_working(**kwargs):
+        call_count[0] += 1
+        if call_count[0] <= 2:
+            raise _make_sa_operational_error("disk I/O error")
+        return original_process(**kwargs)
+
+    service.process_next_source_item = failing_then_working
+    monkeypatch.setattr("app.worker.build_service", lambda config, **_kw: service)
+
+    sleep_durations: list[float] = []
+    original_sleep = lambda d: sleep_durations.append(d)
+
+    exit_code = run_worker(
+        ["--once", "--worker-id", "worker-transient-test"],
+        config=AppConfig(
+            storage_backend="sqlite",
+            sqlite_url=test_db_url,
+            default_use_case="demo_agent_memory",
+            vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)),
+        ),
+        sleep_fn=original_sleep,
+        install_signal_handlers=False,
+    )
+
+    assert exit_code == 0
+    assert call_count[0] == 3  # 2 failures + 1 success
+    assert len(sleep_durations) == 2  # backed off twice
+    assert sleep_durations[0] == 1.0  # first backoff
+    assert sleep_durations[1] == 2.0  # second backoff (exponential)
+
+    status = service.get_item_processing(ingest.source_item_id)
+    assert status.processing_status == "completed"
+
+    captured = capsys.readouterr()
+    assert "transient_error" in captured.err
+
+
+def test_worker_gives_up_after_max_consecutive_transient_errors(monkeypatch, test_db_url: str, capsys) -> None:
+    service = _build_service(test_db_url)
+    service.ingest_item(
+        source_type="decision_note",
+        source_id="worker-transient-max-1",
+        content_type="text/plain",
+        content="Decision: test max transient errors.",
+        metadata=None,
+        use_case="demo_agent_memory",
+    )
+
+    def always_fail(**kwargs):
+        raise _make_sa_operational_error("database is locked")
+
+    service.process_next_source_item = always_fail
+    monkeypatch.setattr("app.worker.build_service", lambda config, **_kw: service)
+
+    exit_code = run_worker(
+        ["--worker-id", "worker-transient-max-test"],
+        config=AppConfig(
+            storage_backend="sqlite",
+            sqlite_url=test_db_url,
+            default_use_case="demo_agent_memory",
+            vector_index=VectorIndexConfig(enabled=False),
+        ),
+        sleep_fn=lambda _: None,
+        install_signal_handlers=False,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "giving up" in captured.err
+
+
+def test_worker_non_transient_sqlite_error_still_crashes(monkeypatch, test_db_url: str) -> None:
+    service = _build_service(test_db_url)
+    service.ingest_item(
+        source_type="decision_note",
+        source_id="worker-nontransient-1",
+        content_type="text/plain",
+        content="Decision: test non-transient error.",
+        metadata=None,
+        use_case="demo_agent_memory",
+    )
+
+    def raise_non_transient(**kwargs):
+        raise _make_sa_operational_error("no such table: source_items")
+
+    service.process_next_source_item = raise_non_transient
+    monkeypatch.setattr("app.worker.build_service", lambda config, **_kw: service)
+
+    import pytest
+    with pytest.raises(SAOperationalError, match="no such table"):
+        run_worker(
+            ["--once", "--worker-id", "worker-nontransient-test"],
+            config=AppConfig(
+                storage_backend="sqlite",
+                sqlite_url=test_db_url,
+                default_use_case="demo_agent_memory",
+                vector_index=VectorIndexConfig(enabled=False),
+            ),
+            sleep_fn=lambda _: None,
+            install_signal_handlers=False,
+        )
+
+
+# ── Supervisor restart behavior ───────────────────────────────────────
+
+
+def test_supervisor_restarts_crashed_processor(capsys) -> None:
+    started: list[FakeProcess] = []
+    poll_count = [0]
+
+    def popen_factory(command, cwd=None):
+        process = FakeProcess(command, cwd=cwd)
+        started.append(process)
+        return process
+
+    def sleep_fn(_):
+        poll_count[0] += 1
+        # On first poll, crash the first processor
+        if poll_count[0] == 1:
+            for proc in started:
+                if 'app.processor' in proc.command:
+                    proc.returncode = 1
+                    break
+        # On third poll, stop
+        if poll_count[0] >= 3:
+            return
+
+    exit_code = supervisor.run_supervisor(
+        ['--host', '127.0.0.1', '--port', '8010', '--processors', '1', '--cleaners', '0'],
+        popen_factory=popen_factory,
+        sleep_fn=sleep_fn,
+        should_stop=lambda: poll_count[0] >= 3,
+    )
+
+    assert exit_code == 0
+    # Should have started: api + processor + restarted processor = 3
+    assert len(started) == 3
+    assert any('app.processor' in p.command for p in started[2:])  # restart
+
+    captured = capsys.readouterr()
+    assert "restarted" in captured.out
+
+
+def test_supervisor_shuts_down_on_rapid_crashes(capsys) -> None:
+    started: list[FakeProcess] = []
+    poll_count = [0]
+
+    def popen_factory(command, cwd=None):
+        process = FakeProcess(command, cwd=cwd)
+        # Make every processor crash immediately
+        if 'app.processor' in command:
+            process.returncode = 1
+        started.append(process)
+        return process
+
+    def sleep_fn(_):
+        poll_count[0] += 1
+
+    # Use a fixed clock so all restarts are within the rapid-restart window
+    exit_code = supervisor.run_supervisor(
+        ['--host', '127.0.0.1', '--port', '8010', '--processors', '1', '--cleaners', '0'],
+        popen_factory=popen_factory,
+        sleep_fn=sleep_fn,
+        clock=lambda: 0.0,  # time never advances
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "crashed" in captured.err
+    # api(1) + processor(1) + 3 restarts = 5
+    processor_starts = [p for p in started if 'app.processor' in p.command]
+    assert len(processor_starts) == 4  # original + 3 restarts
+
+
+def test_supervisor_api_exit_is_always_fatal(capsys) -> None:
+    started: list[FakeProcess] = []
+    poll_count = [0]
+
+    def popen_factory(command, cwd=None):
+        process = FakeProcess(command, cwd=cwd)
+        started.append(process)
+        return process
+
+    def sleep_fn(_):
+        poll_count[0] += 1
+        if poll_count[0] == 1:
+            # Crash the API server
+            started[0].returncode = 2
+
+    exit_code = supervisor.run_supervisor(
+        ['--host', '127.0.0.1', '--port', '8010', '--processors', '1', '--cleaners', '0'],
+        popen_factory=popen_factory,
+        sleep_fn=sleep_fn,
+    )
+
+    assert exit_code == 2
+    # No restarts should have happened — only original api + processor
+    assert len(started) == 2
