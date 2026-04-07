@@ -938,3 +938,130 @@ def test_e2e_cross_thread_facts_consolidated_automatically(test_db_url):
     superseded_alice_personal = [f for f in alice_personal_facts if f.lifecycle == "superseded"]
     assert len(active_alice_personal) == 0, f"Expected 0 active Alice/personal facts, got {len(active_alice_personal)}"
     assert len(superseded_alice_personal) >= 2, f"Expected >=2 superseded Alice/personal facts, got {len(superseded_alice_personal)}"
+
+
+def test_e2e_reconsolidation_updates_existing_summary(test_db_url):
+    """Re-consolidation: when new facts arrive for a subject that already has a fact_summary,
+    the existing summary is included as input and the output supersedes both the old summary
+    and the new atomic_facts.
+    """
+    from datetime import timedelta
+
+    consolidation_call_count = 0
+
+    class ReconsolidationProvider(LLMProvider):
+        """Returns different facts per thread and tracks consolidation calls.
+        First consolidation: summary from t1+t2 facts.
+        Second consolidation: updated summary incorporating t3 facts + prior summary.
+        """
+        provider_name = "reconsolidation_stub"
+
+        def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+            nonlocal consolidation_call_count
+            if "consolidat" in system_prompt.lower():
+                consolidation_call_count += 1
+                if "previous summary" in user_prompt.lower():
+                    # Re-consolidation: sees existing summary + new facts
+                    result = {
+                        "summary": "Alice's personal: lives in Tokyo (moved from Paris), has a cat, speaks Japanese",
+                        "superseded_indices": [],
+                        "reasoning": "Updated: Alice moved from Paris to Tokyo",
+                    }
+                else:
+                    # First consolidation: t1+t2 facts
+                    result = {
+                        "summary": "Alice's personal: lives in Paris, has a cat",
+                        "superseded_indices": [],
+                        "reasoning": "Initial consolidation",
+                    }
+            elif "t3" in user_prompt:
+                result = {"facts": [
+                    {"subject": "Alice", "statement": "Alice moved to Tokyo", "category": "personal"},
+                    {"subject": "Alice", "statement": "Alice speaks Japanese", "category": "personal"},
+                ]}
+            elif "t2" in user_prompt:
+                result = {"facts": [
+                    {"subject": "Alice", "statement": "Alice lives in Paris", "category": "personal"},
+                    {"subject": "Alice", "statement": "Alice has a cat", "category": "personal"},
+                ]}
+            else:
+                result = {"facts": [
+                    {"subject": "Alice", "statement": "Alice lives in Berlin", "category": "personal"},
+                ]}
+            return LLMJsonResponse(raw_text=json.dumps(result), parsed_json=result)
+
+    provider = ReconsolidationProvider()
+    storage = SQLiteStorageProvider(test_db_url)
+    service = PalliumService(
+        storage=storage,
+        retrieval=LexicalRetrievalProvider(storage),
+        semantic_plugins={"conversational_knowledge": ConversationalKnowledgePlugin(provider=provider)},
+        default_use_case="conversational_knowledge",
+    )
+
+    base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    # Phase 1: Ingest threads t1 and t2, triggering first consolidation
+    for i, (thread, content) in enumerate([
+        ("t1", "Alice told me she lives in Berlin"),
+        ("t1", "We talked about her life there"),
+        ("t2", "Alice said she moved to Paris and got a cat"),
+        ("t2", "She loves the city"),
+    ]):
+        service.ingest_item(
+            source_type="chat_message", source_id=f"msg-{i}",
+            content_type="text/plain", content=content,
+            metadata=None, use_case=None,
+            container_ref="c1", thread_ref=thread,
+            role="user", artifact_kind="message",
+            visibility="public", occurred_at=base_time + timedelta(hours=i),
+        )
+    service.drain_processing_queue(worker_id="test")
+
+    # After phase 1: should have 1 active fact_summary, all atomic_facts superseded
+    summaries_v1 = storage.list_memory_objects(memory_types=["fact_summary"], lifecycle="active", container_ref="c1")
+    personal_v1 = [s for s in summaries_v1 if s.payload.get("category", "").lower() == "personal"]
+    assert len(personal_v1) == 1, f"Phase 1: expected 1 fact_summary, got {len(personal_v1)}"
+    summary_v1_id = personal_v1[0].id
+    assert "paris" in personal_v1[0].payload["summary"].lower()
+
+    # Phase 2: Ingest thread t3 with new facts about Alice
+    for i, (thread, content) in enumerate([
+        ("t3", "Alice told me she moved to Tokyo and is learning Japanese"),
+        ("t3", "She's really enjoying the new city"),
+    ], start=10):
+        service.ingest_item(
+            source_type="chat_message", source_id=f"msg-{i}",
+            content_type="text/plain", content=content,
+            metadata=None, use_case=None,
+            container_ref="c1", thread_ref=thread,
+            role="user", artifact_kind="message",
+            visibility="public", occurred_at=base_time + timedelta(hours=i),
+        )
+    service.drain_processing_queue(worker_id="test")
+
+    # After phase 2: should have a NEW fact_summary (v2), old one superseded
+    summaries_v2 = storage.list_memory_objects(memory_types=["fact_summary"], lifecycle="active", container_ref="c1")
+    personal_v2 = [s for s in summaries_v2 if s.payload.get("category", "").lower() == "personal"]
+    assert len(personal_v2) == 1, f"Phase 2: expected 1 active fact_summary, got {len(personal_v2)}"
+    assert personal_v2[0].id != summary_v1_id, "New summary should have a different ID from v1"
+    assert "tokyo" in personal_v2[0].payload["summary"].lower(), "Updated summary should mention Tokyo"
+
+    # Old summary should be superseded
+    old_summary = storage.get_memory_object(summary_v1_id)
+    assert old_summary.lifecycle == "superseded", f"Old summary should be superseded, got {old_summary.lifecycle}"
+
+    # New atomic_facts from t3 should also be superseded
+    all_facts = storage.list_memory_objects(memory_types=["atomic_fact"], lifecycle="active", container_ref="c1")
+    active_alice_personal = [
+        f for f in all_facts
+        if f.payload.get("subject", "").lower() == "alice"
+        and f.payload.get("category", "").lower() == "personal"
+    ]
+    assert len(active_alice_personal) == 0, f"All Alice/personal atomic_facts should be superseded, got {len(active_alice_personal)} active"
+
+    # Consolidation should have been called at least twice (once per phase)
+    assert consolidation_call_count >= 2, f"Expected >=2 consolidation calls, got {consolidation_call_count}"
+
+    # The re-consolidation call should have received the previous summary as input
+    # (verified by the "previous summary" check in the provider returning "Tokyo")
