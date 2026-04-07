@@ -340,32 +340,70 @@ def run_longmemeval_benchmark(
     run_dir.mkdir(parents=True, exist_ok=True)
     results_path = run_dir / "results.jsonl"
 
-    all_results: list[dict[str, Any]] = []
+    # --- Phase 1: DB work (sequential) ---
+    # Ingest, extract, consolidate, query, and build evidence traces.
+    # Each question needs its own isolated DB, so this must be sequential.
+    qa_inputs: list[tuple[int, dict[str, Any], dict[str, Any], dict[str, Any]]] = []
+    for q_index, question in enumerate(dataset):
+        question_id = question["question_id"]
+        print(
+            f"\n[{q_index + 1}/{len(dataset)}] {question_id} "
+            f"({question.get('question_type', '?')})..."
+        )
+
+        memory_payload, evidence_trace = _process_question(
+            question=question,
+            config=config,
+            query_limit=query_limit,
+            cache_dir=cache_dir,
+            db_cache_dir=db_cache_dir,
+            rebuild_db_cache=rebuild_db_cache,
+            skip_consolidation=skip_consolidation,
+        )
+        qa_inputs.append((q_index, question, memory_payload, evidence_trace))
+
+    # --- Phase 2: LLM evaluation (parallel) ---
+    # Answer generation + judging are pure LLM calls, parallelized across questions.
+    print(f"\nEvaluating {len(qa_inputs)} questions (parallel)...")
+
+    def _eval_one(
+        entry: tuple[int, dict[str, Any], dict[str, Any], dict[str, Any]],
+    ) -> tuple[int, dict[str, Any]]:
+        q_idx, q, mem_payload, ev_trace = entry
+        result = _evaluate_question_from_retrieval(
+            answer_provider=provider,
+            question=q,
+            memory_payload=mem_payload,
+            verbose=verbose_results,
+        )
+        result["evidence_trace"] = ev_trace
+        return q_idx, result
+
+    all_results: list[dict[str, Any]] = [{}] * len(qa_inputs)
     with results_path.open("w", encoding="utf-8") as results_file:
-        for q_index, question in enumerate(dataset):
-            question_id = question["question_id"]
-            print(
-                f"\n[{q_index + 1}/{len(dataset)}] {question_id} "
-                f"({question.get('question_type', '?')})..."
-            )
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {
+                pool.submit(_eval_one, inp): inp[0]
+                for inp in qa_inputs
+            }
+            done_count = 0
+            for future in as_completed(futures):
+                idx, result = future.result()
+                all_results[idx] = result
+                done_count += 1
+                status = "correct" if result["correct"] else "WRONG"
+                if done_count % 10 == 0 or done_count == len(qa_inputs):
+                    correct_so_far = sum(
+                        1 for r in all_results if r.get("correct")
+                    )
+                    print(
+                        f"  Eval progress: {done_count}/{len(qa_inputs)} "
+                        f"({correct_so_far} correct)"
+                    )
 
-            result = _evaluate_question(
-                question=question,
-                config=config,
-                answer_provider=provider,
-                query_limit=query_limit,
-                cache_dir=cache_dir,
-                db_cache_dir=db_cache_dir,
-                rebuild_db_cache=rebuild_db_cache,
-                verbose_results=verbose_results,
-                skip_consolidation=skip_consolidation,
-            )
-            all_results.append(result)
+        # Write results in original order.
+        for result in all_results:
             results_file.write(json.dumps(result) + "\n")
-            results_file.flush()
-
-            status = "correct" if result["correct"] else "WRONG"
-            print(f"  {status}: {result.get('predicted_answer', '')[:100]}")
 
     summary = _build_summary(
         results=all_results,
@@ -387,18 +425,20 @@ def run_longmemeval_benchmark(
 # ---------------------------------------------------------------------------
 
 
-def _evaluate_question(
+def _process_question(
     *,
     question: dict[str, Any],
     config: AppConfig,
-    answer_provider: LLMProvider,
     query_limit: int,
     cache_dir: Path | None,
     db_cache_dir: Path | None = None,
     rebuild_db_cache: bool = False,
-    verbose_results: bool = False,
     skip_consolidation: bool = False,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """DB-bound work: ingest, extract, consolidate, query, build evidence trace.
+
+    Returns (memory_payload, evidence_trace).
+    """
     question_id = question["question_id"]
     sessions = question.get("haystack_sessions", [])
     session_dates = question.get("haystack_dates", [])
@@ -477,7 +517,7 @@ def _evaluate_question(
                                 )
                             except (ValueError, KeyError):
                                 break
-                            if result is None:
+                            if result is None or len(result.groups) == 0:
                                 break
                             consolidation_count += 1
                     if consolidation_count:
@@ -517,16 +557,8 @@ def _evaluate_question(
             query_response.raise_for_status()
             memory_payload = query_response.json()
 
-            # --- answer + judge (parallel via thread pool) ---
-            eval_result = _evaluate_question_from_retrieval(
-                answer_provider=answer_provider,
-                question=question,
-                memory_payload=memory_payload,
-                verbose=verbose_results,
-            )
-
             # --- evidence trace ---
-            eval_result["evidence_trace"] = _build_evidence_trace(
+            evidence_trace = _build_evidence_trace(
                 question=question,
                 has_answer_source_ids=has_answer_source_ids,
                 evidence_map=evidence_map,
@@ -541,7 +573,7 @@ def _evaluate_question(
             if engine is not None:
                 engine.dispose()
 
-    return eval_result
+    return memory_payload, evidence_trace
 
 
 # ---------------------------------------------------------------------------

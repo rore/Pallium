@@ -792,6 +792,47 @@ def test_consolidation_runner_supersedes_all_input_facts(test_db_url):
     assert summaries[0].payload["summary"] == "Alice's personal: citizen of India"
 
 
+def test_consolidation_returns_none_when_no_groups_formed(test_db_url):
+    """run_consolidation_pass returns None when candidates exist but form no groups.
+
+    This prevents infinite loops in callers that loop until None.
+    Each fact has a unique subject, so no groups can be formed.
+    """
+    plugin = ConversationalKnowledgePlugin(
+        provider=StubFactExtractionProvider(
+            consolidation_summary="unused",
+        ),
+    )
+    storage = SQLiteStorageProvider(test_db_url)
+    service = PalliumService(
+        storage=storage,
+        retrieval=LexicalRetrievalProvider(storage),
+        semantic_plugins={"conversational_knowledge": plugin},
+        default_use_case="conversational_knowledge",
+    )
+
+    # Create 3 atomic_facts with DIFFERENT subjects — no groups possible.
+    for i, (subject, statement) in enumerate([
+        ("Alice", "Alice lives in Berlin"),
+        ("Bob", "Bob works at CERN"),
+        ("Carol", "Carol plays piano"),
+    ]):
+        mo = MemoryObject(
+            id=f"no-group-fact-{i}",
+            type="atomic_fact",
+            schema_id="conversational_knowledge.atomic_fact",
+            schema_version="v1",
+            payload={"subject": subject, "statement": statement, "category": "personal", "thread_ref": f"t{i}"},
+            lifecycle="active",
+            visibility="public",
+            container_ref="c1",
+        )
+        storage.create_memory_object(mo)
+
+    result = service.run_consolidation_pass(use_case="conversational_knowledge")
+    assert result is None, "Should return None when no groups can be formed (prevents infinite loops)"
+
+
 # ── Tests: consolidation — type registration ────────────────────────────
 
 def test_register_routing_types_includes_fact_summary():

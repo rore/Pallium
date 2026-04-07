@@ -70,6 +70,9 @@ class ConsolidationRunner:
             policy=policy,
         )
 
+        if not groups:
+            return None
+
         group_results: list[ConsolidationRunGroupResult] = []
         for group in groups:
             created_ids, created_types, superseded_ids = self._process_consolidation_group(plugin, group)
