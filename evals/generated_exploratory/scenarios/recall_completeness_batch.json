@@ -1,0 +1,334 @@
+[
+  {
+    "scenario_id": "recall-comparative-branch-hold-queues",
+    "description": "Two branches report different hold queue lengths in separate threads; query asks which has more. Tests whether retrieval finds both entities for comparison.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"thread_relation": "cross_thread", "query_intent": "backward_recall", "query_complexity": "comparative"},
+      "invariant_assertions": ["INV-01", "INV-03", "INV-04", "INV-07", "INV-09"],
+      "priority_tier": "P1",
+      "tier_reason": "recall_completeness",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "downtown_holds_report",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:recall-comp-001:alpha-1",
+            "content_type": "text/plain",
+            "content": "Downtown branch hold queue is at 47 items as of this morning. Most are inter-library loans that arrived over the weekend. Shelf space is getting tight in the holds area.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:recall-comp-001",
+            "thread_ref": "test:thread:comp-001-alpha",
+            "actor_ref": "test:user:branch-librarian",
+            "source_ref": "memory://test/recall-comp-001-alpha-1",
+            "occurred_at": "2026-04-03T09:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "eastside_holds_report",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:recall-comp-001:beta-1",
+            "content_type": "text/plain",
+            "content": "Eastside branch checked the hold queue — only 12 items waiting for pickup. We cleared most of the backlog yesterday during the afternoon shift.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:recall-comp-001",
+            "thread_ref": "test:thread:comp-001-beta",
+            "actor_ref": "test:user:branch-librarian",
+            "source_ref": "memory://test/recall-comp-001-beta-1",
+            "occurred_at": "2026-04-03T10:30:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_comparison",
+        "action": "query",
+        "query": {
+          "text": "Which branch has more holds waiting right now, Downtown or Eastside?",
+          "limit": 6,
+          "container_ref": "test:channel:recall-comp-001",
+          "thread_ref": "test:thread:comp-001-gamma",
+          "actor_ref": "test:user:branch-librarian",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-03", "INV-04", "INV-07", "INV-09"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["Downtown", "Eastside"]
+        },
+        "soft_expectations": {
+          "must_include": ["downtown", "eastside", "hold"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "recall-comparative-catalog-systems",
+    "description": "Two catalog systems evaluated in separate threads with different strengths; query asks which is better for a specific use case. Tests cross-entity comparison retrieval.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"thread_relation": "cross_thread", "query_intent": "backward_recall", "query_complexity": "comparative"},
+      "invariant_assertions": ["INV-01", "INV-03", "INV-04", "INV-07", "INV-09"],
+      "priority_tier": "P1",
+      "tier_reason": "recall_completeness",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "koha_evaluation",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:recall-comp-002:alpha-1",
+            "content_type": "text/plain",
+            "content": "Finished evaluating Koha. MARC record import is solid — batch import handled our 15,000 record test set in under 3 minutes. The cataloging interface is clean but the patron management module feels dated. No built-in SMS notifications.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:recall-comp-002",
+            "thread_ref": "test:thread:comp-002-alpha",
+            "actor_ref": "test:user:catalog-admin",
+            "source_ref": "memory://test/recall-comp-002-alpha-1",
+            "occurred_at": "2026-04-01T14:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "evergreen_evaluation",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:recall-comp-002:beta-1",
+            "content_type": "text/plain",
+            "content": "Evergreen evaluation done. Patron management is much stronger — supports SMS, email, and push notifications out of the box. Multi-branch consortium features are excellent. But the cataloging workflow is clunky, MARC imports took 8 minutes for the same test set, and the interface needs significant staff training.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:recall-comp-002",
+            "thread_ref": "test:thread:comp-002-beta",
+            "actor_ref": "test:user:catalog-admin",
+            "source_ref": "memory://test/recall-comp-002-beta-1",
+            "occurred_at": "2026-04-02T10:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_comparison",
+        "action": "query",
+        "query": {
+          "text": "Between Koha and Evergreen, which one has better cataloging features?",
+          "limit": 6,
+          "container_ref": "test:channel:recall-comp-002",
+          "thread_ref": "test:thread:comp-002-gamma",
+          "actor_ref": "test:user:catalog-admin",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-03", "INV-04", "INV-07", "INV-09"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["Koha", "Evergreen"]
+        },
+        "soft_expectations": {
+          "must_include": ["koha", "evergreen", "catalog"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "recall-aggregative-self-checkout-branches",
+    "description": "Three branches mentioned across separate threads as having self-checkout kiosks; query asks which branches have them. Tests retrieval completeness across N entities.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"thread_relation": "cross_thread", "query_intent": "backward_recall", "query_complexity": "aggregative"},
+      "invariant_assertions": ["INV-01", "INV-03", "INV-04", "INV-07", "INV-09"],
+      "priority_tier": "P1",
+      "tier_reason": "recall_completeness",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "downtown_kiosk_report",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:recall-agg-001:alpha-1",
+            "content_type": "text/plain",
+            "content": "Downtown branch self-checkout kiosks are fully operational. All 4 units passed the firmware update and the receipt printers are working. Patrons are using them heavily during the lunch rush.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:recall-agg-001",
+            "thread_ref": "test:thread:agg-001-alpha",
+            "actor_ref": "test:user:branch-librarian",
+            "source_ref": "memory://test/recall-agg-001-alpha-1",
+            "occurred_at": "2026-04-01T09:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "westside_kiosk_report",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:recall-agg-001:beta-1",
+            "content_type": "text/plain",
+            "content": "Westside branch got 2 self-checkout kiosks installed last Thursday. Staff training went smoothly, and we've already processed about 80 checkouts through them. One minor issue — the barcode scanner on unit 2 needs recalibration.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:recall-agg-001",
+            "thread_ref": "test:thread:agg-001-beta",
+            "actor_ref": "test:user:branch-librarian",
+            "source_ref": "memory://test/recall-agg-001-beta-1",
+            "occurred_at": "2026-04-02T11:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "north_kiosk_report",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:recall-agg-001:gamma-1",
+            "content_type": "text/plain",
+            "content": "North branch self-checkout rollout is complete. We have 3 kiosks active near the main entrance. The only remaining task is adding the accessibility signage for the ADA-compliant unit.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:recall-agg-001",
+            "thread_ref": "test:thread:agg-001-gamma",
+            "actor_ref": "test:user:branch-librarian",
+            "source_ref": "memory://test/recall-agg-001-gamma-1",
+            "occurred_at": "2026-04-03T14:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_aggregation",
+        "action": "query",
+        "query": {
+          "text": "Which branches have self-checkout kiosks installed?",
+          "limit": 6,
+          "container_ref": "test:channel:recall-agg-001",
+          "thread_ref": "test:thread:agg-001-delta",
+          "actor_ref": "test:user:branch-librarian",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-03", "INV-04", "INV-07", "INV-09"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["Downtown", "Westside", "North"]
+        },
+        "soft_expectations": {
+          "must_include": ["downtown", "westside", "north", "self-checkout"]
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "recall-aggregative-overdue-patrons",
+    "description": "Three different patrons mentioned with overdue items across separate threads; query asks for a count. Tests whether retrieval gathers all matching entities for aggregation.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"thread_relation": "cross_thread", "query_intent": "backward_recall", "query_complexity": "aggregative"},
+      "invariant_assertions": ["INV-01", "INV-03", "INV-04", "INV-07", "INV-09"],
+      "priority_tier": "P1",
+      "tier_reason": "recall_completeness",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "patron_martinez_overdue",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:recall-agg-002:alpha-1",
+            "content_type": "text/plain",
+            "content": "Patron Martinez has 3 overdue items — two novels and a DVD. Last notification was sent 5 days ago. He usually returns things within a week of the reminder so I'm not worried yet.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:recall-agg-002",
+            "thread_ref": "test:thread:agg-002-alpha",
+            "actor_ref": "test:user:patron-services",
+            "source_ref": "memory://test/recall-agg-002-alpha-1",
+            "occurred_at": "2026-04-01T10:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "patron_chen_overdue",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:recall-agg-002:beta-1",
+            "content_type": "text/plain",
+            "content": "Patron Chen still has that reference book overdue from last month. It's a reserve-only title so other patrons are waiting. We should escalate to a phone call since the email reminders haven't worked.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:recall-agg-002",
+            "thread_ref": "test:thread:agg-002-beta",
+            "actor_ref": "test:user:patron-services",
+            "source_ref": "memory://test/recall-agg-002-beta-1",
+            "occurred_at": "2026-04-02T13:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "patron_okafor_overdue",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "test-msg:recall-agg-002:gamma-1",
+            "content_type": "text/plain",
+            "content": "Patron Okafor called about her overdue audiobooks. She said she thought the due date was next week — turns out there was a date display bug on the mobile app. I waived the fines but the items are still outstanding.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test:channel:recall-agg-002",
+            "thread_ref": "test:thread:agg-002-gamma",
+            "actor_ref": "test:user:patron-services",
+            "source_ref": "memory://test/recall-agg-002-gamma-1",
+            "occurred_at": "2026-04-03T09:30:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_aggregation",
+        "action": "query",
+        "query": {
+          "text": "Which patrons currently have overdue items?",
+          "limit": 6,
+          "container_ref": "test:channel:recall-agg-002",
+          "thread_ref": "test:thread:agg-002-delta",
+          "actor_ref": "test:user:patron-services",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-03", "INV-04", "INV-07", "INV-09"],
+        "quality_expectations": {
+          "should_inject": true,
+          "required_block_content": ["Martinez", "Chen", "Okafor"]
+        },
+        "soft_expectations": {
+          "must_include": ["martinez", "chen", "okafor", "overdue"]
+        }
+      }
+    ]
+  }
+]
