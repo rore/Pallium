@@ -45,7 +45,9 @@ class TestSetLevelGate:
         assert should_allow_injection(candidates) is False
 
     def test_custom_thresholds(self):
-        lenient = InjectionThresholds(set_lexical_threshold=1)
+        # Thresholds are in normalized 0-1 space; raw score 1 normalizes to 1/6 ≈ 0.167.
+        # A lenient threshold of 0.1 should allow a normalized score of 0.167.
+        lenient = InjectionThresholds(set_lexical_threshold=0.1)
         candidates = [_make_candidate(lexical_score=1, vector_score=0)]
         assert should_allow_injection(candidates, thresholds=lenient) is True
 
@@ -64,7 +66,9 @@ class TestPerCandidateEligibility:
         assert candidate_injection_eligible(_make_candidate(lexical_score=0, vector_score=0)) is False
 
     def test_custom_thresholds(self):
-        strict = InjectionThresholds(candidate_lexical_floor=3)
+        # Thresholds are in normalized 0-1 space; raw score 2 normalizes to 2/6 ≈ 0.333.
+        # A strict threshold of 0.5 (≈ raw 3) should block a normalized score of 0.333.
+        strict = InjectionThresholds(candidate_lexical_floor=0.5)
         assert candidate_injection_eligible(
             _make_candidate(lexical_score=2), thresholds=strict
         ) is False

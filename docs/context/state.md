@@ -84,9 +84,10 @@
   - `SourceItem` embedding is plugin-owned via a package method on the semantic plugin boundary
   - production `/query` path activates hybrid retrieval by default
   - retrieval trace continues to show per-result origin (lexical, vector, or fused)
-- IDF-weighted lexical scoring is shipped:
-  - lexical search uses inverse document frequency weighting instead of raw token count
-  - common words that appear in most documents score near zero; rare domain words score high
+- FTS5 lexical retrieval is shipped (addresses lexical retrieval scaling concern):
+  - O(N) full-table-scan replaced by SQLite FTS5 inverted-index lookup with native BM25 scoring
+  - standalone `lexical_fts` FTS5 virtual table maintained transactionally alongside `index_entries`
+  - BM25 scores (float) replace IDF integers; `normalize_lexical_score()` provides 0-1 normalization for all routing consumers
   - language-agnostic IDF weighting supplemented by explicit multilingual stopword sets (English + Hebrew) for edge cases IDF misses
   - prevents off-topic injection (e.g., weather query matching vector DB memories on shared function words)
 - `interest` memory kind is shipped:

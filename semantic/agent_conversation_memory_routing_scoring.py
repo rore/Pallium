@@ -14,8 +14,8 @@ from semantic.agent_conversation_memory_threads import (
 from semantic.agent_conversation_memory_routing_constants import (
     ANCHOR_SECONDARY_TIER_PENALTY,
     HIGHER_LEVEL_RETRIEVAL_FLOOR,
-    LEXICAL_NORM_SCALE,
     QUALITY_WEIGHT,
+    normalize_lexical_score,
     ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY,
     ROUTING_FALLBACK_MARGIN,
     ROUTING_FAMILY_INFERENCE_PRIORITY,
@@ -53,12 +53,13 @@ from semantic.agent_conversation_memory_anchors import (
 # Quality score
 # ---------------------------------------------------------------------------
 
-def _compute_quality_score(lexical_score: int, vector_score: int) -> float:
+def _compute_quality_score(lexical_score: float, vector_score: float) -> float:
     """Normalized quality from raw retrieval scores. Returns 0.0-1.0.
 
-    Uses fixed normalization (LEXICAL_NORM_SCALE=6, not result-set-dependent).
+    Uses fixed normalization: BM25 scores are divided by LEXICAL_NORM_SCALE,
+    vector similarity scores by 1000.
     """
-    lex_norm = min(lexical_score / LEXICAL_NORM_SCALE, 1.0)
+    lex_norm = normalize_lexical_score(lexical_score)
     vec_norm = vector_score / 1000.0
     return max(lex_norm, vec_norm)
 
@@ -541,7 +542,7 @@ def _score_routed_candidate(
     support_threshold: dict[str, int] | None = None,
 ) -> dict[str, object]:
     layer = _result_layer(item)
-    retrieval_score = int(item.score)
+    retrieval_score = item.score
     same_thread = _candidate_matches_thread(item, query_filters)
     same_container = _candidate_matches_container(item, query_filters)
     evidence_shape_score = _candidate_evidence_shape_score(
@@ -551,8 +552,8 @@ def _score_routed_candidate(
     )
     _weights = layer_weights or ROUTING_LAYER_WEIGHTS
     quality_score = _compute_quality_score(
-        int(item.lexical_score or 0),
-        int(item.vector_score or 0),
+        float(item.lexical_score or 0),
+        float(item.vector_score or 0),
     )
     base_routing_score = (
         _weights[intent][layer]
@@ -669,7 +670,7 @@ def _specificity_bonus(item: QueryResultItem, intent: str) -> int:
     return bonus
 
 
-def _higher_level_retrieval_floor_adjustment(layer: str, retrieval_score: int, quality_score: float = 0.0) -> int:
+def _higher_level_retrieval_floor_adjustment(layer: str, retrieval_score: float, quality_score: float = 0.0) -> int:
     """Penalise higher-level memory whose retrieval quality falls below the floor.
 
     Uses quality_score (normalized 0-1 from raw lexical/vector scores) rather
@@ -939,7 +940,7 @@ def _summarize_routing_layers(scored_candidates: list[dict[str, object]]) -> dic
             continue
         best_candidate = max(
             layer_candidates,
-            key=lambda candidate: (int(candidate["support_score"]), int(candidate["retrieval_score"])),
+            key=lambda candidate: (float(candidate["support_score"]), float(candidate["retrieval_score"])),
         )
         summary[layer] = {
             "candidate_count": len(layer_candidates),
@@ -997,8 +998,8 @@ def _select_routing_focus(
                 best_fallback_layer, best_fallback_summary = max(
                     structured_fallback,
                     key=lambda item: (
-                        int(item[1].get("best_support_score", 0)),
-                        int(item[1].get("best_retrieval_score", 0)),
+                        float(item[1].get("best_support_score", 0)),
+                        float(item[1].get("best_retrieval_score", 0)),
                     ),
                 )
             elif supported_lower_level is not None:
@@ -1007,16 +1008,16 @@ def _select_routing_focus(
                 best_fallback_layer, best_fallback_summary = max(
                     fallback_candidates,
                     key=lambda item: (
-                        int(item[1].get("best_support_score", 0)),
-                        int(item[1].get("best_retrieval_score", 0)),
+                        float(item[1].get("best_support_score", 0)),
+                        float(item[1].get("best_retrieval_score", 0)),
                     ),
                 )
         else:
             best_fallback_layer, best_fallback_summary = max(
                 fallback_candidates,
                 key=lambda item: (
-                    int(item[1].get("best_support_score", 0)),
-                    int(item[1].get("best_retrieval_score", 0)),
+                    float(item[1].get("best_support_score", 0)),
+                    float(item[1].get("best_retrieval_score", 0)),
                 ),
             )
     primary_count = int(primary_summary.get("candidate_count", 0))

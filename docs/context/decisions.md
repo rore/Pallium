@@ -563,3 +563,7 @@ Why:
   on small groups that retrieval already handles
 - consolidation uses the existing ConsolidationRunner framework with
   no changes to the runner itself
+
+### 2026-04-07 — FTS5 lexical retrieval
+
+Replaced the O(N) full-table-scan lexical search with SQLite FTS5 inverted-index lookup + BM25 scoring. A standalone `lexical_fts` FTS5 virtual table lives alongside `index_entries`. Write and delete paths maintain both tables transactionally. BM25 scores (float) replace IDF integers; all routing consumers use `normalize_lexical_score()` for 0-1 normalization. See spec: `docs/specs/2026-04-07-fts5-lexical-retrieval-design.md`.

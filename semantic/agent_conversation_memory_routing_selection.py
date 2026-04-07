@@ -11,6 +11,7 @@ from semantic.agent_conversation_memory_threads import (
 from semantic.agent_conversation_memory_routing_constants import (
     ROUTING_SUPPORT_THRESHOLD,
     WORK_RESUMPTION_SIGNAL_PRIORITY,
+    normalize_lexical_score,
     _candidate_container_refs,
     _candidate_thread_refs,
     _routing_result_id,
@@ -283,7 +284,7 @@ def _build_injectable_blocks(
             "should_inject": False,
             "decision_reason": "low_injection_confidence",
             "injection_method": "simplified",
-            "best_lexical": max((int(c.get("lexical_score", 0) or 0) for c in final_candidates), default=0),
+            "best_lexical": max((normalize_lexical_score(c.get("lexical_score")) for c in final_candidates), default=0),
             "best_vector": max((int(c.get("vector_score", 0) or 0) for c in final_candidates), default=0),
             "returned_block_ids": [],
             "eligible_result_ids": [],

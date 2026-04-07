@@ -3,13 +3,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from core.models import QueryResultItem
+from semantic.agent_conversation_memory_routing_constants import normalize_lexical_score
 
 
 @dataclass(frozen=True)
 class FloorThresholds:
     """Relevance floor thresholds. Swappable for testing."""
-    min_vector: int = 580   # cosine * 1000 (0.58)
-    min_lexical: int = 2    # IDF score
+    min_vector: int = 580       # cosine * 1000 (0.58)
+    min_lexical: float = 0.33   # normalized 0-1 (≈ 2/6 raw BM25)
 
 
 _DEFAULT_THRESHOLDS = FloorThresholds()
@@ -19,7 +20,7 @@ _DEFAULT_THRESHOLDS = FloorThresholds()
 class FloorResult:
     survivors: list[QueryResultItem]
     filtered_count: int
-    filtered_score_ranges: dict[str, tuple[int, int]]
+    filtered_score_ranges: dict[str, tuple[float, float]]
 
 
 def apply_relevance_floor(
@@ -33,7 +34,7 @@ def apply_relevance_floor(
     """
     survivors: list[QueryResultItem] = []
     filtered_vectors: list[int] = []
-    filtered_lexicals: list[int] = []
+    filtered_lexicals: list[float] = []
 
     for item in candidates:
         raw_vec = getattr(item, "vector_score", None)
@@ -43,7 +44,7 @@ def apply_relevance_floor(
             survivors.append(item)
             continue
         vec = int(raw_vec or 0)
-        lex = int(raw_lex or 0)
+        lex = normalize_lexical_score(raw_lex)
         # A candidate fails the floor only when both measured dimensions are weak.
         # A None score is treated as "no signal" — not as a failing score.
         vec_ok = raw_vec is not None and vec >= thresholds.min_vector
@@ -60,7 +61,7 @@ def apply_relevance_floor(
             # Only one dimension present and it's weak — not enough evidence to filter.
             survivors.append(item)
 
-    ranges: dict[str, tuple[int, int]] = {}
+    ranges: dict[str, tuple[float, float]] = {}
     if filtered_vectors:
         ranges["vector"] = (min(filtered_vectors), max(filtered_vectors))
     if filtered_lexicals:

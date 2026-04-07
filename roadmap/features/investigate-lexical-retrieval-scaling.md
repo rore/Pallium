@@ -1,9 +1,9 @@
 ---
 id: investigate-lexical-retrieval-scaling
 title: Investigate lexical retrieval scaling beyond full-scan
-status: not-started
+status: done
 priority: high
-commitment: uncommitted
+commitment: committed
 milestone: Next
 ---
 

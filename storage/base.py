@@ -17,7 +17,7 @@ class IndexSearchHit:
     index_entry_id: str
     index_type: str
     text_view_name: str
-    score: int
+    score: float
     matched_tokens: tuple[str, ...]
     provider_name: str | None = None
     provider_version: str | None = None

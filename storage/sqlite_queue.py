@@ -28,6 +28,7 @@ from storage.sqlite_schema import (
     RelationRecord,
     SourceItemRecord,
     ThreadProcessingLeaseRecord,
+    insert_lexical_fts_row,
 )
 
 
@@ -497,6 +498,19 @@ class SQLiteQueueMixin:
                     provider_version=index_entry.provider_version,
                 )
             )
+            if index_entry.index_type == "lexical":
+                container_ref = self._resolve_container_ref_in_session(
+                    session, index_entry.target_kind, index_entry.target_id,
+                )
+                insert_lexical_fts_row(
+                    session,
+                    index_entry_id=index_entry.id,
+                    target_kind=index_entry.target_kind,
+                    target_id=index_entry.target_id,
+                    text_view=index_entry.text_view,
+                    text_view_name=index_entry.text_view_name,
+                    container_ref=container_ref,
+                )
 
     def _apply_supersession_pairs_in_session(self, session: Session, supersession_pairs: list[tuple[str, str]]) -> None:
         for superseded_id, replacement_id in supersession_pairs:

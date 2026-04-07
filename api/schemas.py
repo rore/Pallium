@@ -127,7 +127,7 @@ class EvidenceResponse(BaseModel):
 class QueryResultResponse(BaseModel):
     result_id: str | None = None
     result_kind: str
-    score: int
+    score: float
     evidence: list[EvidenceResponse]
     memory_object_id: str | None = None
     type: str | None = None
@@ -179,7 +179,7 @@ class RetrievalTraceHitResponse(BaseModel):
     index_entry_id: str
     index_type: str
     text_view_name: str
-    score: int
+    score: float
     matched_tokens: list[str]
     provider_name: str | None = None
     provider_version: str | None = None
