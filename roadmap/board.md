@@ -1,6 +1,5 @@
 # Next
 - investigate-thread-level-interest-and-threadless-aggregation
-- investigate-lexical-retrieval-scaling
 
 # Later
 - add-bounded-memory-lifecycle-hardening
@@ -14,6 +13,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- investigate-lexical-retrieval-scaling
 - add-fact-consolidation-strategy-for-conversational-knowledge
 - add-multilingual-tokenization-and-embedding-support
 - add-multi-package-source-item-processing
