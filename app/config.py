@@ -56,6 +56,7 @@ class EmbeddingProviderConfig:
     cache_dir: str | None = None  # model cache directory (default: HuggingFace global cache)
     query_prefix: str = ""
     passage_prefix: str = ""
+    max_tokens: int = 512         # max token sequence length (ONNX provider only)
 
 
 @dataclass(frozen=True)

@@ -66,14 +66,33 @@ def _make_mock_onnx_modules(*, dimensions: int = 384):
     class MockEncoding:
         def __init__(self, length: int = 5):
             self.ids = list(range(length))
+            self.overflowing: list = []
 
     class MockTokenizer:
+        def __init__(self):
+            self._max_length: int | None = None
+
         @classmethod
         def from_file(cls, path):
             return cls()
 
+        def enable_truncation(self, max_length: int) -> None:
+            self._max_length = max_length
+
         def encode_batch(self, texts):
-            return [MockEncoding() for _ in texts]
+            encodings = []
+            for text in texts:
+                # Simulate token count roughly proportional to word count
+                token_count = max(1, len(text.split()))
+                enc = MockEncoding(token_count)
+                if self._max_length is not None and token_count > self._max_length:
+                    overflow_ids = enc.ids[self._max_length:]
+                    enc.ids = enc.ids[:self._max_length]
+                    overflow_enc = MockEncoding(0)
+                    overflow_enc.ids = overflow_ids
+                    enc.overflowing = [overflow_enc]
+                encodings.append(enc)
+            return encodings
 
     mock_tokenizers.Tokenizer = MockTokenizer  # type: ignore[attr-defined]
 
@@ -340,6 +359,54 @@ class TestOnnxEmbeddingProvider:
         provider = OnnxEmbeddingProvider(model="test-model")
         vecs = provider.embed(["test"])
         assert all(isinstance(v, float) for v in vecs[0])
+
+    def test_long_text_truncated_not_crashed(self, monkeypatch):
+        """Text exceeding max_tokens is truncated instead of crashing the model."""
+        mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules(dimensions=384)
+        monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", mock_tokenizers)
+        monkeypatch.setitem(sys.modules, "huggingface_hub", mock_hf)
+
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        provider = OnnxEmbeddingProvider(model="test-model", max_tokens=10)
+        # Generate text that would produce more than 10 tokens (one per word in mock)
+        long_text = " ".join(f"word{i}" for i in range(100))
+        vecs = provider.embed([long_text])
+        assert len(vecs) == 1
+        assert len(vecs[0]) == 384
+
+    def test_long_text_does_not_poison_batch(self, monkeypatch):
+        """One oversized text in a batch must not prevent other texts from embedding."""
+        mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules(dimensions=384)
+        monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", mock_tokenizers)
+        monkeypatch.setitem(sys.modules, "huggingface_hub", mock_hf)
+
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        provider = OnnxEmbeddingProvider(model="test-model", max_tokens=10)
+        short_text = "hello world"
+        long_text = " ".join(f"word{i}" for i in range(100))
+        vecs = provider.embed([short_text, long_text, "another short"])
+        assert len(vecs) == 3
+
+    def test_truncation_logs_warning(self, monkeypatch, caplog):
+        """Truncation emits a warning so oversized content is detectable."""
+        mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules(dimensions=384)
+        monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
+        monkeypatch.setitem(sys.modules, "tokenizers", mock_tokenizers)
+        monkeypatch.setitem(sys.modules, "huggingface_hub", mock_hf)
+
+        from providers.embedding.onnx_provider import OnnxEmbeddingProvider
+
+        provider = OnnxEmbeddingProvider(model="test-model", max_tokens=10)
+        long_text = " ".join(f"word{i}" for i in range(100))
+
+        import logging
+        with caplog.at_level(logging.WARNING, logger="providers.embedding.onnx_provider"):
+            provider.embed([long_text])
+        assert any("truncated" in r.message.lower() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

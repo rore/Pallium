@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL_REPO = "BAAI/bge-small-en-v1.5"
 DEFAULT_ONNX_FILE = "onnx/model.onnx"
 DEFAULT_TOKENIZER_FILE = "tokenizer.json"
+DEFAULT_MAX_TOKENS = 512  # BERT-family position embedding limit (bge, e5, etc.)
 
 # Known model prefix defaults.  E5-family models require "query: " / "passage: "
 # prefixes for correct asymmetric retrieval.  Config values override these.
@@ -51,6 +52,7 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
         cache_dir: str | None = None,
         query_prefix: str = "",
         passage_prefix: str = "",
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> None:
         try:
             import onnxruntime as ort  # noqa: F811
@@ -69,6 +71,7 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
             ) from exc
 
         self._model = model
+        self._max_tokens = max_tokens
         # Resolve prefixes: explicit config wins, then known model defaults, then empty
         known = _KNOWN_MODEL_PREFIXES.get(model, ("", ""))
         self._query_prefix = query_prefix if query_prefix else known[0]
@@ -90,6 +93,10 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
             )
             self._tokenizer = Tokenizer.from_file(tokenizer_path)
             _SESSION_CACHE[cache_key] = (self._session, self._tokenizer)
+
+        # Truncate sequences to model's max position embedding length.
+        # Without this, texts exceeding the limit crash the ONNX model.
+        self._tokenizer.enable_truncation(max_length=max_tokens)
 
         # Determine dimensions
         if dimensions is not None:
@@ -129,6 +136,18 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
         import numpy as np
 
         encodings = self._tokenizer.encode_batch(texts)
+
+        # Warn when truncation occurs so we can detect content being silently cut
+        for i, enc in enumerate(encodings):
+            if enc.overflowing:
+                logger.warning(
+                    "Embedding text truncated from %d to %d tokens (index %d in batch of %d)",
+                    len(enc.ids) + sum(len(o.ids) for o in enc.overflowing),
+                    len(enc.ids),
+                    i,
+                    len(texts),
+                )
+
         max_len = max(len(e.ids) for e in encodings)
 
         input_ids = np.zeros((len(texts), max_len), dtype=np.int64)
