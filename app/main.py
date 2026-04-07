@@ -48,12 +48,14 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     # Start vector reconciliation daemon if vector index is active
     if service._vector_index is not None:
         app.state._reconcile_stop = _start_reconcile_thread(service)
-    # Mount MCP endpoint if mcp[cli] is installed
+    # Mount MCP endpoint — the sub-app serves at /mcp internally,
+    # so we mount at root to make the external path /mcp.
+    # API routes are checked first; the mount is a fallback.
     try:
         from app.mcp.server import create_server as create_mcp_server
         mcp_server = create_mcp_server()
-        app.mount("/mcp", mcp_server.streamable_http_app())
-        logger.info("MCP endpoint mounted at /mcp")
+        app.mount("", mcp_server.streamable_http_app())
+        logger.info("MCP endpoint available at /mcp")
     except ImportError:
         logger.warning("MCP endpoint not available: mcp[cli] not installed. Run: pip install 'mcp[cli]'")
     return app
