@@ -2,7 +2,7 @@
 
 Evaluates Pallium against the LongMemEval dataset (ICLR 2025), measuring ability
 to answer factual questions about multi-session conversations using per-question
-isolated ingestion, semantic extraction, optional consolidation, and type-specific
+isolated ingestion, semantic extraction, and type-specific
 LLM-as-judge scoring.
 
 Dataset: https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned
@@ -236,11 +236,6 @@ def main() -> int:
         action="store_true",
         help="Record full retrieval details in results for diagnostic analysis.",
     )
-    parser.add_argument(
-        "--skip-consolidation",
-        action="store_true",
-        help="Skip the consolidation pass (for comparison runs).",
-    )
     args = parser.parse_args()
 
     # Auto-set --dataset when --variant oracle is used and --dataset was not
@@ -272,7 +267,6 @@ def main() -> int:
         rebuild_db_cache=args.rebuild_db_cache,
         mini=args.mini,
         verbose_results=args.verbose_results,
-        skip_consolidation=args.skip_consolidation,
     )
     print(f"\nResults: {run_dir}")
     return 0
@@ -298,8 +292,8 @@ def run_longmemeval_benchmark(
     rebuild_db_cache: bool = False,
     mini: bool = False,
     verbose_results: bool = False,
-    skip_consolidation: bool = False,
 ) -> Path:
+
     dataset = _load_dataset(dataset_path)
 
     # Filter by question type.
@@ -341,7 +335,7 @@ def run_longmemeval_benchmark(
     results_path = run_dir / "results.jsonl"
 
     # --- Phase 1: DB work (sequential) ---
-    # Ingest, extract, consolidate, query, and build evidence traces.
+    # Ingest, extract, query, and build evidence traces.
     # Each question needs its own isolated DB, so this must be sequential.
     qa_inputs: list[tuple[int, dict[str, Any], dict[str, Any], dict[str, Any]]] = []
     for q_index, question in enumerate(dataset):
@@ -358,7 +352,6 @@ def run_longmemeval_benchmark(
             cache_dir=cache_dir,
             db_cache_dir=db_cache_dir,
             rebuild_db_cache=rebuild_db_cache,
-            skip_consolidation=skip_consolidation,
         )
         qa_inputs.append((q_index, question, memory_payload, evidence_trace))
 
@@ -433,9 +426,8 @@ def _process_question(
     cache_dir: Path | None,
     db_cache_dir: Path | None = None,
     rebuild_db_cache: bool = False,
-    skip_consolidation: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """DB-bound work: ingest, extract, consolidate, query, build evidence trace.
+    """DB-bound work: ingest, extract, query, build evidence trace.
 
     Returns (memory_payload, evidence_trace).
     """
