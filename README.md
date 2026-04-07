@@ -146,12 +146,9 @@ Not a fit:
 
 Multi-session conversational QA — names, dates, events, relationships.
 
-| | Single-hop | Open-domain | Temporal | Multi-hop | Overall |
-|---|---|---|---|---|---|
-| ByteRover | 96.6% | 85.9% | 97.8% | 93.3% | 96.1% |
-| Mem0 | — | — | — | — | 66.9% |
-| **Pallium** | **61.1%** | **61.6%** | **44.8%** | **43.3%** | **57.1%** |
-| OpenAI Memory | — | — | — | — | 52.9% |
+| Single-hop | Open-domain | Temporal | Multi-hop | Overall |
+|---|---|---|---|---|
+| 61.1% | 61.6% | 44.8% | 43.3% | **57.1%** |
 
 Pallium prioritizes structured memory (decisions, investigations, checkpoints)
 over verbatim fact recall. LoCoMo is heavy on trivia-style questions that
@@ -164,10 +161,10 @@ Tests whether updated facts are retrieved over stale contradictory ones.
 Pallium is a retrieval sidecar — the retrieval rate (did the right fact reach
 the consuming agent?) is the primary metric.
 
-| | Pallium retrieval | Pallium e2e | GPT-4o | BM25 RAG | Mem0 | Zep |
-|---|---|---|---|---|---|---|
-| **Single-hop** | **85%** | 63% | 92% | 45% | 20% | 10% |
-| **Multi-hop** | **28%** | 9.2% | 28% | 6% | 0% | 0% |
+| | Retrieval | End-to-end |
+|---|---|---|
+| **Single-hop** | **85%** | 63% |
+| **Multi-hop** | **28%** | 9.2% |
 
 The gap between retrieval and end-to-end is the evaluator LLM overriding
 counterfactual test data with its own training knowledge — outside the memory
