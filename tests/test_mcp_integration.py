@@ -10,6 +10,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
+pytest.importorskip("mcp", reason="mcp[cli] not installed")
+
 from app.main import create_app
 from app.config import AppConfig
 from app.mcp.client import PalliumMcpClient

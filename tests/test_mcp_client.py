@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+pytest.importorskip("mcp", reason="mcp[cli] not installed")
+
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import PalliumContext
 
