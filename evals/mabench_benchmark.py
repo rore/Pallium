@@ -389,7 +389,7 @@ def _evaluate_row(
                             )
                         except (ValueError, KeyError):
                             break
-                        if result is None:
+                        if result is None or len(result.groups) == 0:
                             break
                         consolidation_count += 1
                 if consolidation_count:
