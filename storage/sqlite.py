@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import create_engine, func, select
+import json
+
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from core.contracts import ProcessResult
@@ -233,6 +235,29 @@ class SQLiteStorageProvider(
             ).all()
         return [self._to_relation(record) for record in records]
 
+    def _resolve_container_ref_in_session(
+        self, session, target_kind: str, target_id: str,
+    ) -> str | None:
+        """Resolve container_ref for an index target within an existing session."""
+        if target_kind == "source_item":
+            record = session.get(SourceItemRecord, target_id)
+            return record.container_ref if record else None
+        if target_kind == "memory_object":
+            record = session.get(MemoryObjectRecord, target_id)
+            if record is None:
+                return None
+            if record.container_ref is not None:
+                return record.container_ref
+            # Fallback: envelope_json → scope.container_ref
+            if record.envelope_json:
+                try:
+                    envelope = json.loads(record.envelope_json)
+                    return envelope.get("scope", {}).get("container_ref")
+                except (json.JSONDecodeError, TypeError):
+                    return None
+            return None
+        return None
+
     def create_index_entry(self, index_entry: IndexEntry) -> None:
         record = IndexEntryRecord(
             id=index_entry.id,
@@ -246,6 +271,25 @@ class SQLiteStorageProvider(
         )
         with self._session_factory.begin() as session:
             session.add(record)
+            if index_entry.index_type == "lexical":
+                container_ref = self._resolve_container_ref_in_session(
+                    session, index_entry.target_kind, index_entry.target_id,
+                )
+                session.execute(
+                    text(
+                        "INSERT INTO lexical_fts"
+                        "(text_view, index_entry_id, target_kind, target_id, text_view_name, container_ref) "
+                        "VALUES (:text_view, :index_entry_id, :target_kind, :target_id, :text_view_name, :container_ref)"
+                    ),
+                    {
+                        "text_view": index_entry.text_view,
+                        "index_entry_id": index_entry.id,
+                        "target_kind": index_entry.target_kind,
+                        "target_id": index_entry.target_id,
+                        "text_view_name": index_entry.text_view_name,
+                        "container_ref": container_ref,
+                    },
+                )
 
     def list_index_entries_for_target(self, target_kind: str, target_id: str) -> list[IndexEntry]:
         with self._session_factory() as session:

@@ -531,6 +531,110 @@ def test_fts5_lexical_table_created(test_db_url: str) -> None:
     assert "lexical_fts" in tables
 
 
+def test_create_lexical_index_entry_populates_fts5(test_db_url: str) -> None:
+    """Creating a lexical index entry must also insert into lexical_fts."""
+    from sqlalchemy import create_engine, text as sa_text
+    storage = SQLiteStorageProvider(test_db_url)
+
+    source_item = SourceItem(
+        source_type="chat_message",
+        source_id="fts5-write-test",
+        content_type="text/plain",
+        content="Test content for FTS5 write path",
+        container_ref="test:container",
+        visibility="container",
+    )
+    storage.create_source_item(source_item)
+
+    index_entry = IndexEntry(
+        target_kind="source_item",
+        target_id=source_item.id,
+        index_type="lexical",
+        text_view="reservation ordering system updates",
+    )
+    storage.create_index_entry(index_entry)
+
+    # Verify FTS5 row exists with correct metadata
+    engine = create_engine(test_db_url)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            sa_text("SELECT index_entry_id, target_kind, target_id, container_ref, text_view FROM lexical_fts")
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == index_entry.id
+    assert rows[0][1] == "source_item"
+    assert rows[0][2] == source_item.id
+    assert rows[0][3] == "test:container"
+    assert rows[0][4] == "reservation ordering system updates"
+
+
+def test_create_vector_index_entry_does_not_populate_fts5(test_db_url: str) -> None:
+    """Vector index entries must NOT be inserted into lexical_fts."""
+    from sqlalchemy import create_engine, text as sa_text
+    storage = SQLiteStorageProvider(test_db_url)
+
+    index_entry = IndexEntry(
+        target_kind="source_item",
+        target_id="src-vec-1",
+        index_type="vector",
+        text_view="some vector content",
+        provider_name="onnx",
+    )
+    storage.create_index_entry(index_entry)
+
+    engine = create_engine(test_db_url)
+    with engine.connect() as conn:
+        count = conn.execute(
+            sa_text("SELECT COUNT(*) FROM lexical_fts")
+        ).scalar()
+    assert count == 0
+
+
+def test_fts5_resolves_container_ref_from_memory_object_envelope(test_db_url: str) -> None:
+    """container_ref must be resolved from envelope_json when direct column is NULL."""
+    from sqlalchemy import create_engine, text as sa_text
+    storage = SQLiteStorageProvider(test_db_url)
+
+    mo = MemoryObject(
+        type="decision",
+        schema_id="test.decision",
+        schema_version="v1",
+        payload={"decision": "test"},
+        visibility="container",
+        container_ref=None,
+        envelope=MemoryEnvelope(
+            schema_id="core.memory_envelope",
+            schema_version="v1",
+            kind="finding",
+            scope=MemoryEnvelopeScope(container_ref="envelope:container"),
+            subjects=[],
+            confidence="high",
+            derivation=MemoryEnvelopeDerivation(
+                producer_kind="item_extraction",
+                producer_schema_id="test",
+                producer_schema_version="v1",
+            ),
+        ),
+    )
+    storage.create_memory_object(mo)
+
+    storage.create_index_entry(IndexEntry(
+        target_kind="memory_object",
+        target_id=mo.id,
+        index_type="lexical",
+        text_view="envelope container ref test",
+    ))
+
+    engine = create_engine(test_db_url)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            sa_text("SELECT container_ref FROM lexical_fts WHERE target_id = :tid"),
+            {"tid": mo.id},
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == "envelope:container"
+
+
 def test_unique_index_migration_fails_on_existing_duplicates(tmp_path: Path) -> None:
     from sqlalchemy import create_engine, text as sql_text
 
