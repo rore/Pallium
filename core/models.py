@@ -173,7 +173,7 @@ class QueryRuntimeContext:
 @dataclass(frozen=True)
 class QueryResultItem:
     result_kind: str
-    score: int
+    score: float
     evidence: list[EvidenceReference]
     result_id: str | None = None
     memory_object_id: str | None = None
@@ -228,7 +228,7 @@ class RetrievalTraceHit:
     index_entry_id: str
     index_type: str
     text_view_name: str
-    score: int
+    score: float
     matched_tokens: tuple[str, ...]
     provider_name: str | None = None
     provider_version: str | None = None

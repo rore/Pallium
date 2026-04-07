@@ -36,14 +36,19 @@ HIGH_VALUE_MEMORY_TYPES = frozenset({
 
 @dataclass(frozen=True)
 class InjectionThresholds:
-    """All injection check thresholds. Swappable for testing."""
-    set_lexical_threshold: int = 2      # min IDF for set-level gate
-    set_vector_high: int = 750          # cosine*1000 for strong vector match
-    set_lexical_low: int = 1            # min lexical for vector+lexical condition
-    candidate_lexical_floor: int = 1    # per-candidate min lexical (source hits)
+    """All injection check thresholds. Swappable for testing.
+
+    Lexical thresholds use BM25 floats in composite mode.
+    In lexical-only mode (no composite scores), the set-level gate falls
+    through to the retrieval_score > 0 check instead.
+    """
+    set_lexical_threshold: float = 2      # min BM25/IDF for set-level gate (composite mode)
+    set_vector_high: int = 750            # cosine*1000 for strong vector match
+    set_lexical_low: float = 1e-10        # min lexical for vector+lexical condition (any BM25 match)
+    candidate_lexical_floor: float = 1e-10  # per-candidate min lexical (source hits); any BM25 match
     candidate_vector_override: int = 800  # per-candidate strong vector (source hits)
-    high_value_lexical_floor: int = 1   # per-candidate min lexical (structured memory)
-    high_value_vector_floor: int = 650  # per-candidate vector floor (structured memory)
+    high_value_lexical_floor: float = 1e-10 # per-candidate min lexical (structured memory); any BM25 match
+    high_value_vector_floor: int = 650    # per-candidate vector floor (structured memory)
 
 
 _DEFAULT_THRESHOLDS = InjectionThresholds()
@@ -81,7 +86,7 @@ def should_allow_injection(
             if getattr(c.get("item"), "type", None) != "discussion_summary"
         ]
         _lex_candidates = _non_summary_candidates or candidates
-        best_lexical = max(int(c.get("lexical_score", 0) or 0) for c in _lex_candidates)
+        best_lexical = max(float(c.get("lexical_score", 0) or 0) for c in _lex_candidates)
         best_vector = max(int(c.get("vector_score", 0) or 0) for c in candidates)
         has_any_lexical = any(c.get("lexical_score") is not None for c in _lex_candidates)
 
@@ -132,7 +137,7 @@ def should_allow_injection(
         return result
 
     # Fallback: composite scores absent (lexical-only retrieval mode).
-    best_retrieval = max(int(c.get("retrieval_score", 0) or 0) for c in candidates)
+    best_retrieval = max(float(c.get("retrieval_score", 0) or 0) for c in candidates)
     result = best_retrieval > 0
     if verbose:
         _verbose(
@@ -161,8 +166,8 @@ def candidate_injection_eligible(
     item_type = getattr(item, "type", None) if item else None
 
     if raw_lex is not None or raw_vec is not None:
-        lex = int(raw_lex or 0)
-        vec = int(raw_vec or 0)
+        lex = float(raw_lex or 0)
+        vec = float(raw_vec or 0)
         is_source = item_kind == "source_hit"
 
         # Structured memory: lower bar
@@ -191,7 +196,7 @@ def candidate_injection_eligible(
         return eligible
 
     # No composite scores — lexical-only retrieval mode.
-    retrieval = int(candidate.get("retrieval_score", 0) or 0)
+    retrieval = float(candidate.get("retrieval_score", 0) or 0)
     eligible = retrieval > 0
     if verbose:
         _verbose(

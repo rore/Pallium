@@ -26,7 +26,7 @@ class InjectionSignals:
 
     # Score shape (QPP core) — always available
     top_routing_score: int
-    max_retrieval_score: int
+    max_retrieval_score: float
     candidate_count: int
 
     # Support / structure
@@ -39,7 +39,7 @@ class InjectionSignals:
     top_gap: int                          # [0].routing_score - [1].routing_score (0 if <2)
 
     # Composite retrieval — may be None
-    max_lexical_score: int | None
+    max_lexical_score: float | None
     max_vector_score: int | None
 
     # Recency
@@ -108,7 +108,7 @@ def compute_injection_signals(
     routing_scores_sorted = sorted(routing_scores, reverse=True)
 
     top_routing_score = routing_scores_sorted[0]
-    max_retrieval_score = max(int(c["retrieval_score"]) for c in final_candidates)
+    max_retrieval_score = max(float(c["retrieval_score"]) for c in final_candidates)
 
     # Support grade — pick the best
     best_support_grade = "weak"
@@ -139,7 +139,7 @@ def compute_injection_signals(
 
     # Composite retrieval signals
     lexical_scores = [
-        int(c["lexical_score"])
+        float(c["lexical_score"])
         for c in final_candidates
         if c.get("lexical_score") is not None
     ]
@@ -348,11 +348,11 @@ def justify_injection_rules(
     #   distinguished from legitimate cross-thread recall at the signal level.
     #   Off-topic suppression for score=1 requires composite retrieval mode.
     #
-    # Composite: check max_lexical_score against the IDF threshold.  Lexical
+    # Composite: check max_lexical_score against the BM25 threshold.  Lexical
     #   overlap is the primary evidence of topical relevance.  Vector-only
     #   candidates (no lexical match) are handled by Gate 4 (vector confidence).
     if signals.is_lexical_only:
-        if signals.max_retrieval_score >= 1:
+        if signals.max_retrieval_score > 0:
             return JustificationResult(
                 justified=True,
                 score=0.85,

@@ -144,8 +144,9 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         include_visibility_trace=True,
     )
     assert public_hits.hits == []
-    assert public_hits.visibility_exclusions
-    assert public_hits.visibility_exclusions[0].reason == "query_visibility_excludes_candidate"
+    # With FTS5, container-mismatched entries are filtered in SQL (not Python),
+    # so visibility exclusions are no longer produced for container mismatches.
+    # The invariant that matters: no hits are returned for wrong container.
 
     storage.update_memory_object_lifecycle(memory_object.id, "superseded")
     assert storage.get_memory_object(memory_object.id).lifecycle == "superseded"
@@ -684,6 +685,140 @@ def test_retention_deletes_fts5_rows(test_db_url: str) -> None:
     with engine.connect() as conn:
         count_after = conn.execute(sa_text("SELECT COUNT(*) FROM lexical_fts")).scalar()
     assert count_after == 0
+
+
+def test_fts5_search_returns_bm25_scores(test_db_url: str) -> None:
+    """FTS5 search must return float BM25 scores with higher = better."""
+    storage = SQLiteStorageProvider(test_db_url)
+
+    texts = [
+        "the quick brown fox jumps over the lazy dog",
+        "the weather today is sunny and warm",
+        "the reservation ordering system avoids missed hold updates",
+    ]
+    for i, content in enumerate(texts):
+        si = SourceItem(
+            source_type="chat_message",
+            source_id=f"fts5-search-{i}",
+            content_type="text/plain",
+            content=content,
+            visibility="public",
+        )
+        storage.create_source_item(si)
+        storage.create_index_entry(IndexEntry(
+            target_kind="source_item",
+            target_id=si.id,
+            index_type="lexical",
+            text_view=content,
+        ))
+
+    hits = storage.search_index_entries(["reservation"], limit=10).hits
+    assert hits
+    assert isinstance(hits[0].score, float)
+    assert hits[0].score > 0  # Negated BM25: positive means good match
+    assert len(hits) == 1
+
+
+def test_fts5_container_scoped_filtering(test_db_url: str) -> None:
+    """FTS5 search with query_container_ref must only return entries from that container."""
+    storage = SQLiteStorageProvider(test_db_url)
+
+    for container in ["container:a", "container:b"]:
+        si = SourceItem(
+            source_type="chat_message",
+            source_id=f"fts5-container-{container}",
+            content_type="text/plain",
+            content=f"reservation in {container}",
+            container_ref=container,
+            visibility="container",
+        )
+        storage.create_source_item(si)
+        storage.create_index_entry(IndexEntry(
+            target_kind="source_item",
+            target_id=si.id,
+            index_type="lexical",
+            text_view="reservation ordering discussion",
+        ))
+
+    hits_a = storage.search_index_entries(
+        ["reservation"], limit=10, query_container_ref="container:a",
+    ).hits
+    hits_b = storage.search_index_entries(
+        ["reservation"], limit=10, query_container_ref="container:b",
+    ).hits
+    hits_all = storage.search_index_entries(
+        ["reservation"], limit=10,
+    ).hits
+
+    assert len(hits_a) == 1
+    assert len(hits_b) == 1
+    assert len(hits_all) == 2
+
+
+def test_fts5_match_expression_safety(test_db_url: str) -> None:
+    """Tokens that look like FTS5 operators must be quoted and not alter query semantics."""
+    storage = SQLiteStorageProvider(test_db_url)
+
+    si = SourceItem(
+        source_type="chat_message",
+        source_id="fts5-safety-test",
+        content_type="text/plain",
+        content="do not override the near settings",
+        visibility="public",
+    )
+    storage.create_source_item(si)
+    storage.create_index_entry(IndexEntry(
+        target_kind="source_item",
+        target_id=si.id,
+        index_type="lexical",
+        text_view="do not override the near settings",
+    ))
+
+    hits = storage.search_index_entries(["not", "near"], limit=10).hits
+    assert hits
+
+
+def test_fts5_bm25_rare_term_ranks_above_common(test_db_url: str) -> None:
+    """BM25 must rank rare domain terms above ubiquitous common terms (regression)."""
+    storage = SQLiteStorageProvider(test_db_url)
+
+    common_texts = [
+        "the quick brown fox jumps over the lazy dog",
+        "the weather today is sunny and warm",
+        "the latest release notes are available",
+        "update the configuration file for deployment",
+        "the team discussed project milestones",
+        "review the pull request before merging",
+    ]
+    domain_text = "the reservation ordering system avoids missed hold updates"
+
+    for i, txt in enumerate(common_texts + [domain_text]):
+        si = SourceItem(
+            source_type="chat_message",
+            source_id=f"bm25-rank-{i}",
+            content_type="text/plain",
+            content=txt,
+            visibility="public",
+        )
+        storage.create_source_item(si)
+        storage.create_index_entry(IndexEntry(
+            target_kind="source_item",
+            target_id=si.id,
+            index_type="lexical",
+            text_view=txt,
+        ))
+
+    domain_hits = storage.search_index_entries(["reservation"], limit=10).hits
+    common_hits = storage.search_index_entries(["the"], limit=10).hits
+    assert domain_hits
+    assert common_hits
+    assert domain_hits[0].score > common_hits[0].score, (
+        f"Domain score ({domain_hits[0].score}) must exceed "
+        f"common score ({common_hits[0].score})"
+    )
+
+    mixed_hits = storage.search_index_entries(["the", "reservation"], limit=10).hits
+    assert mixed_hits[0].target_id == domain_hits[0].target_id
 
 
 def test_unique_index_migration_fails_on_existing_duplicates(tmp_path: Path) -> None:

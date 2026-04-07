@@ -127,7 +127,7 @@ class EvidenceResponse(BaseModel):
 class QueryResultResponse(BaseModel):
     result_id: str | None = None
     result_kind: str
-    score: int
+    score: float
     evidence: list[EvidenceResponse]
     memory_object_id: str | None = None
     type: str | None = None

@@ -8,8 +8,8 @@ from core.models import QueryResultItem
 @dataclass(frozen=True)
 class FloorThresholds:
     """Relevance floor thresholds. Swappable for testing."""
-    min_vector: int = 580   # cosine * 1000 (0.58)
-    min_lexical: int = 2    # IDF score
+    min_vector: int = 580       # cosine * 1000 (0.58)
+    min_lexical: float = 2      # BM25/IDF score
 
 
 _DEFAULT_THRESHOLDS = FloorThresholds()
@@ -43,7 +43,7 @@ def apply_relevance_floor(
             survivors.append(item)
             continue
         vec = int(raw_vec or 0)
-        lex = int(raw_lex or 0)
+        lex = float(raw_lex or 0)
         # A candidate fails the floor only when both measured dimensions are weak.
         # A None score is treated as "no signal" — not as a failing score.
         vec_ok = raw_vec is not None and vec >= thresholds.min_vector
