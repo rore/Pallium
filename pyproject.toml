@@ -35,6 +35,9 @@ dependencies = [
 [project.urls]
 Repository = "https://github.com/rore/Pallium"
 
+[project.scripts]
+pallium-mcp = "app.mcp.server:main"
+
 [project.optional-dependencies]
 vector = [
     "usearch>=2.9,<3.0",
