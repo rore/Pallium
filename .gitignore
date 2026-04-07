@@ -59,4 +59,8 @@ evals/locomo/db_cache/
 evals/mabench/datasets/
 evals/mabench/output/
 evals/mabench/db_cache/
+evals/mabench/stderr.log
+evals/longmemeval/datasets/
+evals/longmemeval/output/
+evals/longmemeval/db_cache/
 evals/multilingual_quality/output/
