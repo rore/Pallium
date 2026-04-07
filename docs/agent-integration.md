@@ -275,6 +275,72 @@ memory attribution.
 For a concrete code walkthrough, see
 [integration-example.md](integration-example.md).
 
+## MCP Tools (Agent-Initiated Memory Access)
+
+In addition to the runtime-driven HTTP integration above, Pallium exposes an
+MCP endpoint that gives the LLM direct access to memory tools. This enables
+the agent to explicitly search, debug retrieval, and ingest artifacts — useful
+when automatic injection isn't enough.
+
+### Architecture
+
+The MCP endpoint is served via streamable-http transport on the same port as
+the HTTP API:
+
+```
+http://<pallium-host>:8000/mcp
+```
+
+No separate process or port. The endpoint is automatically available when
+Pallium starts with `mcp[cli]` installed (`pip install pallium[mcp]` or
+`pip install "mcp[cli]"`).
+
+### Tools
+
+| Tool | Purpose |
+|---|---|
+| `pallium_query` | Search memory explicitly. Use when auto-injection is missing something. |
+| `pallium_query_debug` | Investigate retrieval — scores, stages, filtering. Use when memory seems missing. |
+| `pallium_ingest` | Store an artifact for processing. Goes through the standard extraction pipeline. |
+
+All tools accept optional scope parameters (`container_ref`, `thread_ref`,
+`actor_ref`, `visibility`) for filtering. When omitted, queries search globally.
+
+### Registration
+
+Register the MCP server with your agent runtime using the streamable-http
+transport. For Claude Code:
+
+```bash
+claude mcp add --transport http pallium http://<pallium-host>:8000/mcp
+```
+
+### Agent Instructions
+
+The integrating runtime should include instructions that teach the LLM the
+two-tier model:
+
+1. **Automatic** — the runtime queries Pallium and injects relevant memory
+   before each turn. The LLM trusts this for most cases.
+2. **Explicit tools** — when automatic injection is insufficient, the LLM
+   uses the MCP tools directly.
+
+Example instruction block:
+
+```markdown
+You have access to a memory system. Relevant memories are automatically
+injected into your context. For explicit access:
+- pallium_query — search when auto-injection is missing something
+- pallium_query_debug — investigate why a memory wasn't found
+- pallium_ingest — store something for future recall
+Don't query on every turn. Don't re-query injected context.
+```
+
+### Responses
+
+All tools return Pallium's HTTP API responses verbatim as pretty-printed JSON.
+No transformation — the API response is the contract.
+
 ## Boundaries
 
 Pallium is the memory layer, not an authorization service or agent runtime.

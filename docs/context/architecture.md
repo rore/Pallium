@@ -15,13 +15,14 @@ Main layers:
 7. Retrieval layer
 8. Background processor and supervisor runtime
 
-## MCP Transport Adapter
+## MCP Endpoint
 
-`app/mcp/` provides a stdio MCP server that wraps the HTTP API. It is a separate
-process entry point (`python -m app.run mcp`) used by MCP-compatible agent runtimes.
-The MCP server depends only on `mcp[cli]` and `httpx` — no core Pallium imports.
-It reads scope defaults from environment variables and proxies tool calls to the
-running Pallium HTTP server.
+`app/mcp/` provides an MCP server mounted on the FastAPI app at `/mcp` via
+streamable-http transport. Agent runtimes connect to `http://<host>:<port>/mcp`
+to access `pallium_query`, `pallium_query_debug`, and `pallium_ingest` tools.
+The MCP module depends only on `mcp[cli]` and `httpx` — no core Pallium imports.
+It proxies tool calls to the HTTP API on the same server. Also available as a
+standalone entry point (`python -m app.run mcp`) for stdio transport.
 
 ## Implemented Core and Retrieval Slice
 

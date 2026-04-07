@@ -1,7 +1,7 @@
 # MCP Server for Agent Awareness — Design Spec
 
 **Date:** 2026-04-07
-**Status:** Draft
+**Status:** Implemented
 
 ---
 

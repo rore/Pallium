@@ -186,6 +186,6 @@ python -m evals.mabench_benchmark --mini --cache-dir .local/llm-cache
 - [How It Works](docs/how-it-works.md) — architecture, memory model, retrieval
 - [HTTP API](docs/http-api.md) — endpoints, request/response shapes, examples
 - [Configuration](docs/configuration.md) — providers, packages, tuning knobs
-- [Agent Integration](docs/agent-integration.md) — wiring Pallium into a runtime
+- [Agent Integration](docs/agent-integration.md) — wiring Pallium into a runtime, MCP tools
 - [Integration Example](docs/integration-example.md) — Slack agent walkthrough with code
 - [Privacy and Visibility](docs/privacy-and-visibility.md) — scoped memory boundaries
