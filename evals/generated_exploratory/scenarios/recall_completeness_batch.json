@@ -18,7 +18,7 @@
             "source_type": "chat_message",
             "source_id": "test-msg:recall-comp-001:alpha-1",
             "content_type": "text/plain",
-            "content": "Downtown branch hold queue is at 47 items as of this morning. Most are inter-library loans that arrived over the weekend. Shelf space is getting tight in the holds area.",
+            "content": "I investigated the Downtown branch hold queue situation. It's backed up to 47 items — mostly inter-library loans that arrived over the weekend. The root cause is that the sorting station was offline for two days. Shelf space in the holds area is at capacity and we need to either add temporary shelving or speed up the notification cycle to get patrons picking up faster.",
             "artifact_kind": "message",
             "role": "user",
             "container_ref": "test:channel:recall-comp-001",
@@ -38,7 +38,7 @@
             "source_type": "chat_message",
             "source_id": "test-msg:recall-comp-001:beta-1",
             "content_type": "text/plain",
-            "content": "Eastside branch checked the hold queue — only 12 items waiting for pickup. We cleared most of the backlog yesterday during the afternoon shift.",
+            "content": "Investigated the Eastside branch hold queue — only 12 items waiting for pickup. We cleared most of the backlog yesterday by running an extra notification batch during the afternoon shift. The process improvement from last week is working: switching to same-day pickup alerts cut the average hold wait from 4 days to 1.5 days.",
             "artifact_kind": "message",
             "role": "user",
             "container_ref": "test:channel:recall-comp-001",
@@ -64,7 +64,7 @@
         "invariant_assertions": ["INV-01", "INV-03", "INV-04", "INV-07", "INV-09"],
         "quality_expectations": {
           "should_inject": true,
-          "required_block_content": ["Downtown", "Eastside"]
+          "required_block_content": ["47", "12"]
         },
         "soft_expectations": {
           "must_include": ["downtown", "eastside", "hold"]
@@ -137,7 +137,7 @@
         "invariant_assertions": ["INV-01", "INV-03", "INV-04", "INV-07", "INV-09"],
         "quality_expectations": {
           "should_inject": true,
-          "required_block_content": ["Koha", "Evergreen"]
+          "required_block_content": ["MARC", "patron management"]
         },
         "soft_expectations": {
           "must_include": ["koha", "evergreen", "catalog"]
@@ -164,7 +164,7 @@
             "source_type": "chat_message",
             "source_id": "test-msg:recall-agg-001:alpha-1",
             "content_type": "text/plain",
-            "content": "Downtown branch self-checkout kiosks are fully operational. All 4 units passed the firmware update and the receipt printers are working. Patrons are using them heavily during the lunch rush.",
+            "content": "Investigated the Downtown branch self-checkout rollout. All 4 kiosks are fully operational after the firmware update. The receipt printer jam issue from last week is resolved. Patron usage is heavy during lunch rush — averaging 35 checkouts per hour across the 4 units, which is taking significant load off the front desk staff.",
             "artifact_kind": "message",
             "role": "user",
             "container_ref": "test:channel:recall-agg-001",
@@ -184,7 +184,7 @@
             "source_type": "chat_message",
             "source_id": "test-msg:recall-agg-001:beta-1",
             "content_type": "text/plain",
-            "content": "Westside branch got 2 self-checkout kiosks installed last Thursday. Staff training went smoothly, and we've already processed about 80 checkouts through them. One minor issue — the barcode scanner on unit 2 needs recalibration.",
+            "content": "Investigated the Westside branch self-checkout deployment. 2 kiosks installed last Thursday, staff training completed. We've processed about 80 checkouts so far. One issue found: the barcode scanner on unit 2 needs recalibration — it's rejecting about 15% of scans. Ordered a replacement scanner, should arrive by Wednesday.",
             "artifact_kind": "message",
             "role": "user",
             "container_ref": "test:channel:recall-agg-001",
@@ -204,7 +204,7 @@
             "source_type": "chat_message",
             "source_id": "test-msg:recall-agg-001:gamma-1",
             "content_type": "text/plain",
-            "content": "North branch self-checkout rollout is complete. We have 3 kiosks active near the main entrance. The only remaining task is adding the accessibility signage for the ADA-compliant unit.",
+            "content": "North branch self-checkout rollout is complete — investigated the setup and all 3 kiosks are active near the main entrance. The ADA-compliant unit passed accessibility testing. Only remaining task is adding the bilingual signage. Throughput is lower than Downtown since we only have 3 units, but staff reports positive patron feedback.",
             "artifact_kind": "message",
             "role": "user",
             "container_ref": "test:channel:recall-agg-001",
@@ -230,7 +230,7 @@
         "invariant_assertions": ["INV-01", "INV-03", "INV-04", "INV-07", "INV-09"],
         "quality_expectations": {
           "should_inject": true,
-          "required_block_content": ["Downtown", "Westside", "North"]
+          "required_block_content": ["4 kiosks", "barcode scanner", "3 kiosks"]
         },
         "soft_expectations": {
           "must_include": ["downtown", "westside", "north", "self-checkout"]
