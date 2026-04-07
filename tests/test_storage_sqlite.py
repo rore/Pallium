@@ -635,6 +635,57 @@ def test_fts5_resolves_container_ref_from_memory_object_envelope(test_db_url: st
     assert rows[0][0] == "envelope:container"
 
 
+def test_retention_deletes_fts5_rows(test_db_url: str) -> None:
+    """Retention must delete FTS5 rows when deleting lexical index entries."""
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import create_engine, text as sa_text
+    from core.contracts import MemoryRetentionPolicy
+
+    storage = SQLiteStorageProvider(test_db_url)
+
+    # Use an occurred_at far enough in the past to exceed the ordinary 30-day TTL.
+    occurred_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    source_item = SourceItem(
+        source_type="chat_message",
+        source_id="fts5-delete-test",
+        content_type="text/plain",
+        content="content to be deleted",
+        container_ref="test:container",
+        visibility="container",
+        occurred_at=occurred_at,
+        processing_status="completed",
+        processing_completed_at=occurred_at,
+        created_at=occurred_at,
+    )
+    storage.create_source_item(source_item)
+    storage.create_index_entry(IndexEntry(
+        target_kind="source_item",
+        target_id=source_item.id,
+        index_type="lexical",
+        text_view="deletable content here",
+    ))
+
+    # Verify FTS5 row exists
+    engine = create_engine(test_db_url)
+    with engine.connect() as conn:
+        count_before = conn.execute(sa_text("SELECT COUNT(*) FROM lexical_fts")).scalar()
+    assert count_before == 1
+
+    # Delete via retention: now is well past TTL, no durable types to protect the source.
+    now = datetime.now(timezone.utc)
+    retention_policy = MemoryRetentionPolicy(
+        durable_types=frozenset(),
+        working_types=frozenset(),
+        orphan_delete_types=frozenset(),
+    )
+    storage.run_retention_pass(now=now, batch_size=10, retention_policy=retention_policy)
+
+    # Verify FTS5 row is gone
+    with engine.connect() as conn:
+        count_after = conn.execute(sa_text("SELECT COUNT(*) FROM lexical_fts")).scalar()
+    assert count_after == 0
+
+
 def test_unique_index_migration_fails_on_existing_duplicates(tmp_path: Path) -> None:
     from sqlalchemy import create_engine, text as sql_text
 

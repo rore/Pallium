@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
 from core.contracts import MemoryRetentionPolicy
@@ -578,6 +578,21 @@ class SQLiteRetentionMixin:
                 return True
         return False
 
+    def _delete_index_entry_in_session(
+        self, session: Session, record: IndexEntryRecord,
+    ) -> None:
+        """Delete an index entry and its FTS5 shadow row (if lexical).
+
+        ALL lexical index entry deletion MUST go through this helper.
+        No code path should call session.delete() on an IndexEntryRecord directly.
+        """
+        if record.index_type == "lexical":
+            session.execute(
+                text("DELETE FROM lexical_fts WHERE index_entry_id = :id"),
+                {"id": record.id},
+            )
+        session.delete(record)
+
     def _delete_source_item_cascade_in_session(
         self,
         session: Session,
@@ -612,7 +627,7 @@ class SQLiteRetentionMixin:
         for relation in relation_records:
             session.delete(relation)
         for index_entry in source_index_records:
-            session.delete(index_entry)
+            self._delete_index_entry_in_session(session, index_entry)
         session.delete(source_record)
         stats = RetentionRunStats(
             deleted_source_items=1,
@@ -674,7 +689,7 @@ class SQLiteRetentionMixin:
         for relation in relation_records:
             session.delete(relation)
         for index_record in index_records:
-            session.delete(index_record)
+            self._delete_index_entry_in_session(session, index_record)
         session.delete(memory_record)
         return RetentionRunStats(
             deleted_memory_objects=1,
