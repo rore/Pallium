@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import create_engine, func, select, text
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from core.contracts import ProcessResult
@@ -22,6 +22,7 @@ from storage.sqlite_schema import (
     SQLiteSchemaMixin,
     SourceItemRecord,
     ThreadProcessingLeaseRecord,
+    insert_lexical_fts_row,
 )
 from storage.sqlite_search import SQLiteSearchMixin
 
@@ -275,20 +276,14 @@ class SQLiteStorageProvider(
                 container_ref = self._resolve_container_ref_in_session(
                     session, index_entry.target_kind, index_entry.target_id,
                 )
-                session.execute(
-                    text(
-                        "INSERT INTO lexical_fts"
-                        "(text_view, index_entry_id, target_kind, target_id, text_view_name, container_ref) "
-                        "VALUES (:text_view, :index_entry_id, :target_kind, :target_id, :text_view_name, :container_ref)"
-                    ),
-                    {
-                        "text_view": index_entry.text_view,
-                        "index_entry_id": index_entry.id,
-                        "target_kind": index_entry.target_kind,
-                        "target_id": index_entry.target_id,
-                        "text_view_name": index_entry.text_view_name,
-                        "container_ref": container_ref,
-                    },
+                insert_lexical_fts_row(
+                    session,
+                    index_entry_id=index_entry.id,
+                    target_kind=index_entry.target_kind,
+                    target_id=index_entry.target_id,
+                    text_view=index_entry.text_view,
+                    text_view_name=index_entry.text_view_name,
+                    container_ref=container_ref,
                 )
 
     def list_index_entries_for_target(self, target_kind: str, target_id: str) -> list[IndexEntry]:

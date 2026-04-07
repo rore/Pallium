@@ -144,8 +144,7 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
         include_visibility_trace=True,
     )
     assert public_hits.hits == []
-    # With FTS5, container-mismatched entries are filtered in SQL (not Python),
-    # so visibility exclusions are no longer produced for container mismatches.
+    # Container filtering happens in Python visibility checks, not SQL.
     # The invariant that matters: no hits are returned for wrong container.
 
     storage.update_memory_object_lifecycle(memory_object.id, "superseded")

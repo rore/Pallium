@@ -28,6 +28,7 @@ from storage.sqlite_schema import (
     RelationRecord,
     SourceItemRecord,
     ThreadProcessingLeaseRecord,
+    insert_lexical_fts_row,
 )
 
 
@@ -501,20 +502,14 @@ class SQLiteQueueMixin:
                 container_ref = self._resolve_container_ref_in_session(
                     session, index_entry.target_kind, index_entry.target_id,
                 )
-                session.execute(
-                    text(
-                        "INSERT INTO lexical_fts"
-                        "(text_view, index_entry_id, target_kind, target_id, text_view_name, container_ref) "
-                        "VALUES (:text_view, :index_entry_id, :target_kind, :target_id, :text_view_name, :container_ref)"
-                    ),
-                    {
-                        "text_view": index_entry.text_view,
-                        "index_entry_id": index_entry.id,
-                        "target_kind": index_entry.target_kind,
-                        "target_id": index_entry.target_id,
-                        "text_view_name": index_entry.text_view_name,
-                        "container_ref": container_ref,
-                    },
+                insert_lexical_fts_row(
+                    session,
+                    index_entry_id=index_entry.id,
+                    target_kind=index_entry.target_kind,
+                    target_id=index_entry.target_id,
+                    text_view=index_entry.text_view,
+                    text_view_name=index_entry.text_view_name,
+                    container_ref=container_ref,
                 )
 
     def _apply_supersession_pairs_in_session(self, session: Session, supersession_pairs: list[tuple[str, str]]) -> None:

@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from sqlalchemy import Column, DateTime, Integer, String, Text, UniqueConstraint, text
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import Session, declarative_base
 
 
 Base = declarative_base()
@@ -349,3 +349,31 @@ class SQLiteSchemaMixin:
                 "tokenize='unicode61 remove_diacritics 2'"
                 ")"
             ))
+
+
+def insert_lexical_fts_row(
+    session: Session,
+    *,
+    index_entry_id: str,
+    target_kind: str,
+    target_id: str,
+    text_view: str,
+    text_view_name: str | None,
+    container_ref: str | None,
+) -> None:
+    """Insert a single row into the lexical_fts FTS5 virtual table."""
+    session.execute(
+        text(
+            "INSERT INTO lexical_fts"
+            "(text_view, index_entry_id, target_kind, target_id, text_view_name, container_ref) "
+            "VALUES (:text_view, :index_entry_id, :target_kind, :target_id, :text_view_name, :container_ref)"
+        ),
+        {
+            "text_view": text_view,
+            "index_entry_id": index_entry_id,
+            "target_kind": target_kind,
+            "target_id": target_id,
+            "text_view_name": text_view_name,
+            "container_ref": container_ref,
+        },
+    )

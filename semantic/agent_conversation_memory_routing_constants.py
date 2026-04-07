@@ -189,7 +189,6 @@ ROUTING_FOCUS_BOOST = 80
 ANCHOR_SECONDARY_TIER_PENALTY = 80  # must be >= ROUTING_FOCUS_BOOST; ensures aligned always outranks secondary tier even at max focus boost
 
 LEXICAL_NORM_SCALE = 6  # normalization for quality score; IDF/BM25-to-[0,1]
-LEXICAL_QUALITY_FLOOR = 1e-10  # quality floor for higher-level penalty; any positive BM25 match passes
 QUALITY_WEIGHT = 200    # multiplier for quality_score in scoring formula (used later in Phase 2)
 
 ROUTING_DEMOTED_HIGHER_LEVEL_PENALTY = 60
