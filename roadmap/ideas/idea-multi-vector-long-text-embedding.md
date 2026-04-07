@@ -50,7 +50,7 @@ Industry consensus (sentence-transformers, Pinecone, Weaviate docs) is that mult
 
 1. **Chunk granularity for fact_summary.** Should we chunk at comma boundaries (one vector per fact or fact-group), or use a fixed token-budget chunking strategy? Fact-level chunks would give precise retrieval but multiply storage.
 2. **Overlap.** MemPalace uses 100-char overlap. Is overlap necessary for our use case, or do the memory object types have enough natural structure (facts are self-contained sentences) that zero-overlap works?
-3. **Is this needed at all?** The truncation warning log will show real-world frequency. If <5% of objects exceed 512 tokens, the hybrid retrieval mitigation (lexical catches the tail) may be sufficient.
+3. **Scope.** Most derived memory types (decisions, investigations, thread summaries, patterns) are already char-budgeted by LLM prompt design and unlikely to exceed 512 tokens. The types that realistically need multi-vector are **fact_summary** (50 consolidated facts) and **source_item** (unbounded user input). The truncation warning log will confirm this empirically — the solution may only need to target those two types.
 
 ## Done When
 
