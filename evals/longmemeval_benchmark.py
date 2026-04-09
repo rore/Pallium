@@ -595,6 +595,10 @@ def _process_question(
                 _copy_vector_index(vector_path, cached_vector_prefix)
                 print(f"  Cached DB for {question_id}")
         else:
+            # Reconcile the vector index loaded from cache so vector retrieval
+            # can find entries that were indexed during the original extraction.
+            service.reconcile_vector_index()
+
             # Reconstruct has_answer_source_ids from the sessions data.
             has_answer_source_ids = _collect_has_answer_source_ids(
                 question_id=question_id,
@@ -751,11 +755,24 @@ def _evaluate_question_from_retrieval(
     is_abstention = question_id.endswith("_abs")
 
     retrieved_context = _format_retrieved_context(memory_payload)
+
+    # Build preamble — preference questions need synthesis, not factual lookup.
+    preamble_parts: list[str] = []
+    if question_date:
+        preamble_parts.append(f"Current Date: {question_date}")
+    if question_type == "single-session-preference":
+        preamble_parts.append(
+            "This is a preference question. The user previously stated personal "
+            "preferences in the context. Provide a short answer describing what "
+            "the user would prefer based on the context — do NOT say 'not found'."
+        )
+    preamble = "\n\n".join(preamble_parts) + "\n\n" if preamble_parts else ""
+
     answer_result = _generate_answer_common(
         provider=answer_provider,
         question=question_text,
         retrieved_context=retrieved_context,
-        preamble=f"Current Date: {question_date}\n\n" if question_date else "",
+        preamble=preamble,
     )
 
     judge_result = _judge_answer(
