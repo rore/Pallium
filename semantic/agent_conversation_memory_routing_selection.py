@@ -240,6 +240,11 @@ def _build_injectable_blocks(
             "eligible_result_ids": [],
             "dropped_by_cap_result_ids": [],
             "cap": INJECTION_HARD_CEILING,
+            "dedup_applied": False,
+            "dedup_removed_count": 0,
+            "dedup_removed_result_ids": [],
+            "expansion_applied": False,
+            "expansion_added_count": 0,
             "same_thread_context_evaluation": same_thread_context,
         }
     if not final_candidates:
@@ -250,6 +255,11 @@ def _build_injectable_blocks(
             "eligible_result_ids": [],
             "dropped_by_cap_result_ids": [],
             "cap": INJECTION_HARD_CEILING,
+            "dedup_applied": False,
+            "dedup_removed_count": 0,
+            "dedup_removed_result_ids": [],
+            "expansion_applied": False,
+            "expansion_added_count": 0,
             "same_thread_context_evaluation": same_thread_context,
         }
 
@@ -278,6 +288,11 @@ def _build_injectable_blocks(
                 "eligible_result_ids": returned_ids,
                 "dropped_by_cap_result_ids": [],
                 "cap": INJECTION_HARD_CEILING,
+                "dedup_applied": False,
+                "dedup_removed_count": 0,
+                "dedup_removed_result_ids": [],
+                "expansion_applied": False,
+                "expansion_added_count": 0,
                 "same_thread_context_evaluation": same_thread_context,
             }
         return [], {
@@ -290,6 +305,11 @@ def _build_injectable_blocks(
             "eligible_result_ids": [],
             "dropped_by_cap_result_ids": [],
             "cap": INJECTION_HARD_CEILING,
+            "dedup_applied": False,
+            "dedup_removed_count": 0,
+            "dedup_removed_result_ids": [],
+            "expansion_applied": False,
+            "expansion_added_count": 0,
             "same_thread_context_evaluation": same_thread_context,
         }
 
@@ -329,6 +349,11 @@ def _build_injectable_blocks(
             "eligible_result_ids": [],
             "dropped_by_cap_result_ids": [],
             "cap": INJECTION_HARD_CEILING,
+            "dedup_applied": False,
+            "dedup_removed_count": 0,
+            "dedup_removed_result_ids": [],
+            "expansion_applied": False,
+            "expansion_added_count": 0,
             "same_thread_context_evaluation": same_thread_context,
         }
 

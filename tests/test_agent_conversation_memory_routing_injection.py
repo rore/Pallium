@@ -2438,11 +2438,13 @@ def test_dynamic_cap_expands_beyond_floor_when_scores_permit() -> None:
     )
     assert outcome.should_inject is True
     # Should have at least 3 blocks (floor)
-    assert len(outcome.injectable_blocks) >= 3
+    assert len(outcome.injectable_blocks) > 3  # expansion must add at least 1 beyond floor
     routing = (outcome.trace.routing or {}) if outcome.trace else {}
     injection = routing.get("injection_decision", {})
     assert injection.get("cap") == 5
     assert "cap_config" in injection
+    assert injection.get("expansion_applied") is True
+    assert injection.get("expansion_added_count", 0) > 0
 
 
 def test_injection_dedup_removes_cross_package_duplicate_in_pipeline() -> None:
