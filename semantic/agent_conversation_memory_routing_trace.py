@@ -338,6 +338,7 @@ def _build_sharp_candidate_diagnostics(
     retrieved_result_ids: set[str] | None = None,
     debug_candidate_loader=None,
     candidate_injection_eligibility_fn: Callable[..., bool] | None = None,
+    dedup_kept_map: dict[str, str] | None = None,
 ) -> list[dict[str, object]]:
     selected_injection_ids = {block.result_id for block in injectable_blocks}
     final_result_ids = {_routing_result_id(candidate["item"]) for candidate in final_candidates}
@@ -358,7 +359,12 @@ def _build_sharp_candidate_diagnostics(
             loss_reason_code = candidate.get("excluded_reason_code")
             loss_reason = candidate.get("excluded_reason")
         elif result_id not in selected_injection_ids:
-            if decision_reason == "same_thread_context_sufficient":
+            _dedup_map = dedup_kept_map or {}
+            if result_id in _dedup_map:
+                loss_stage = "dedup"
+                loss_reason_code = "injection_dedup"
+                loss_reason = "Candidate was removed as a semantic duplicate of a higher-scored candidate."
+            elif decision_reason == "same_thread_context_sufficient":
                 loss_stage = "packaging"
                 loss_reason_code = "same_thread_context_sufficient"
                 loss_reason = "Current same-thread session already had sufficient local context, so Pallium suppressed injection."
@@ -389,6 +395,7 @@ def _build_sharp_candidate_diagnostics(
             "loss_stage": loss_stage,
             "loss_reason_code": loss_reason_code,
             "loss_reason": loss_reason,
+            "dedup_kept_result_id": (dedup_kept_map or {}).get(result_id),
             "retrieved": True,
             "lexical_rank": candidate.get("lexical_rank"),
             "routing_rank": candidate.get("routing_rank"),

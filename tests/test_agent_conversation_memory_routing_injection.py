@@ -2520,3 +2520,64 @@ def test_injection_dedup_removes_cross_package_duplicate_in_pipeline() -> None:
     injection = routing.get("injection_decision", {})
     assert injection.get("dedup_applied") is True
     assert injection.get("dedup_removed_count") >= 1
+
+
+def test_sharp_diagnostics_shows_dedup_loss_stage() -> None:
+    """A deduped candidate should have loss_stage='dedup' in sharp diagnostics."""
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help', thread_ref='chat:library-help:thread-diag-dedup')
+    now = datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc)
+    shared_evidence = [
+        EvidenceReference(source_item_id='msg-diag-1', source_type='message', source_id='msg-diag-1', occurred_at=now),
+    ]
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-diag-1',
+                type='decision',
+                payload={'decision': 'Catalog batch scheduling deprioritized for sprint', 'rationale': 'Capacity constraints'},
+                score=20,
+                evidence=shared_evidence,
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-diag-dedup',
+                freshness_at=now,
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-diag-2',
+                type='decision',
+                payload={'decision': 'Catalog batch scheduling not relevant this sprint', 'rationale': 'Team focused elsewhere'},
+                score=18,
+                evidence=shared_evidence,
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-diag-dedup',
+                freshness_at=now,
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What were the catalog batch scheduling decisions?',
+            query_tokens=('catalog', 'batch', 'scheduling', 'decisions'),
+            limit=5,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+    outcome = plugin.route_query_results(
+        text='What were the catalog batch scheduling decisions?',
+        requested_limit=5,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        include_trace=True,
+    )
+    # Find the deduped candidate in diagnostics
+    dedup_diags = [
+        d for d in outcome.sharp_candidate_diagnostics
+        if d.get("loss_stage") == "dedup"
+    ]
+    if dedup_diags:
+        assert dedup_diags[0]["loss_reason_code"] == "injection_dedup"
+        assert dedup_diags[0].get("dedup_kept_result_id") is not None

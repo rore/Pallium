@@ -361,6 +361,14 @@ def _build_injectable_blocks(
     deduped_candidates, dedup_removed = _dedup_eligible_candidates(primary_eligible_candidates)
     dedup_removed_ids = [_routing_result_id(c["item"]) for c in dedup_removed]
 
+    dedup_kept_map: dict[str, str] = {}
+    for removed_candidate in dedup_removed:
+        removed_id = _routing_result_id(removed_candidate["item"])
+        for kept in deduped_candidates:
+            if _is_content_duplicate(removed_candidate, kept):
+                dedup_kept_map[removed_id] = _routing_result_id(kept["item"])
+                break
+
     floor = min(INJECTION_MIN_FLOOR, len(deduped_candidates))
     selected_candidates = list(deduped_candidates[:floor])
 
@@ -458,6 +466,7 @@ def _build_injectable_blocks(
         "dedup_applied": bool(dedup_removed),
         "dedup_removed_count": len(dedup_removed),
         "dedup_removed_result_ids": dedup_removed_ids,
+        "dedup_kept_map": dedup_kept_map,
         "expansion_applied": expansion_added > 0,
         "expansion_added_count": expansion_added,
         "same_thread_context_evaluation": same_thread_context,

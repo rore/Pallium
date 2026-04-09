@@ -591,7 +591,7 @@ def test_fresher_same_kind_conclusion_ranks_above_older_one() -> None:
     assert outcome.trace is not None
     diagnostics = {item['result_id']: item for item in outcome.sharp_candidate_diagnostics}
     assert diagnostics['memory_object:decision-fresh']['selected_for_injection'] is True
-    assert diagnostics['memory_object:decision-old']['selected_for_injection'] is True or diagnostics['memory_object:decision-old']['loss_reason_code'] in {'older_same_kind_conclusion', 'final_injection_cap', None}
+    assert diagnostics['memory_object:decision-old']['selected_for_injection'] is True or diagnostics['memory_object:decision-old']['loss_reason_code'] in {'older_same_kind_conclusion', 'final_injection_cap', 'injection_dedup', None}
 
 def test_process_item_emits_same_thread_supersession_hint_for_sharp_conclusion() -> None:
     plugin = AgentConversationMemoryPlugin(

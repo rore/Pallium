@@ -445,6 +445,7 @@ def route_query_results(
             retrieved_result_ids={_routing_result_id(item) for item in retrieval_result.results},
             debug_candidate_loader=debug_candidate_loader if include_trace else None,
             candidate_injection_eligibility_fn=_candidate_is_injection_eligible,
+            dedup_kept_map=dict(injection_summary.get("dedup_kept_map") or {}),
         )
         final_results = [candidate["item"] for candidate in final_candidates]
 
