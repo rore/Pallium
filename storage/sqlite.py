@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from core.contracts import ProcessResult
@@ -338,6 +338,60 @@ class SQLiteStorageProvider(
                 raise KeyError(index_entry_id)
             record.provider_name = provider_name
             record.provider_version = provider_version
+
+    def retarget_index_entries_for_target(
+        self, target_kind: str, old_target_id: str, new_target_id: str,
+    ) -> int:
+        with self._session_factory.begin() as session:
+            return self._retarget_index_entries_in_session(
+                session, target_kind, old_target_id, new_target_id,
+            )
+
+    def _retarget_index_entries_in_session(
+        self,
+        session: Session,
+        target_kind: str,
+        old_target_id: str,
+        new_target_id: str,
+    ) -> int:
+        """Move all index entries from old_target_id to new_target_id within an open session.
+
+        Updates the index_entries table and rebuilds lexical_fts rows (FTS5
+        does not support UPDATE on columns, so we DELETE + INSERT).
+        The vector index is unaffected — it is keyed by entry_id, and the
+        target_id is resolved at query time via get_index_entry().
+        """
+        records = session.scalars(
+            select(IndexEntryRecord).where(
+                IndexEntryRecord.target_kind == target_kind,
+                IndexEntryRecord.target_id == old_target_id,
+            )
+        ).all()
+        if not records:
+            return 0
+
+        new_container_ref = self._resolve_container_ref_in_session(
+            session, target_kind, new_target_id,
+        )
+
+        for record in records:
+            record.target_id = new_target_id
+            if record.index_type == "lexical":
+                # FTS5 cannot UPDATE columns; delete old row and insert new.
+                session.execute(
+                    text("DELETE FROM lexical_fts WHERE index_entry_id = :id"),
+                    {"id": record.id},
+                )
+                insert_lexical_fts_row(
+                    session,
+                    index_entry_id=record.id,
+                    target_kind=target_kind,
+                    target_id=new_target_id,
+                    text_view=record.text_view,
+                    text_view_name=record.text_view_name,
+                    container_ref=new_container_ref,
+                )
+        return len(records)
 
     def get_evidence_for_memory_object(self, memory_object_id: str) -> list[EvidenceReference]:
         with self._session_factory() as session:

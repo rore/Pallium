@@ -224,6 +224,9 @@ class ConsolidationRunner:
                     continue
                 self._supersede_fn(active_memory_id, memory_object.id)
                 superseded_ids.add(active_memory_id)
+                self._storage.retarget_index_entries_for_target(
+                    "memory_object", active_memory_id, memory_object.id,
+                )
 
         # For fact_consolidation: supersede ALL input candidates because the
         # fact_summary replaces all inputs as the canonical representation.
@@ -250,6 +253,9 @@ class ConsolidationRunner:
                         to_kind="memory_object",
                         to_id=candidate_id,
                     )
+                )
+                self._storage.retarget_index_entries_for_target(
+                    "memory_object", candidate_id, replacement_id,
                 )
                 superseded_ids.add(candidate_id)
 

@@ -427,6 +427,18 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def retarget_index_entries_for_target(
+        self, target_kind: str, old_target_id: str, new_target_id: str,
+    ) -> int:
+        """Move all index entries from old_target_id to new_target_id.
+
+        Used during supersession to preserve focused index entries (e.g.,
+        atomic_fact embeddings) when the target memory object is superseded
+        by a replacement.  Returns the number of entries retargeted.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def update_index_entry_provider(self, index_entry_id: str, provider_name: str, provider_version: str) -> None:
         """Update the provider metadata on an index entry (used after embedding)."""
         raise NotImplementedError

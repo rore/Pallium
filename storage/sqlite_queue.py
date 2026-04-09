@@ -563,6 +563,9 @@ class SQLiteQueueMixin:
                     to_id=superseded_id,
                 )
             )
+            self._retarget_index_entries_in_session(
+                session, "memory_object", superseded_id, replacement_id,
+            )
 
     def _resolve_supersession_pairs_in_session(
         self,
