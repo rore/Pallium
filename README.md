@@ -163,7 +163,7 @@ the consuming agent?) is the primary metric.
 
 | | Retrieval | End-to-end |
 |---|---|---|
-| **Single-hop** | **85%** | 63% |
+| **Single-hop** | **85%** | 73% |
 | **Multi-hop** | **28%** | 9.2% |
 
 The gap between retrieval and end-to-end is the evaluator LLM overriding

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import shutil
 import urllib.request
 from collections import defaultdict
@@ -33,6 +34,8 @@ from app.config import AppConfig
 from app.dependencies import build_llm_provider
 from app.main import create_app
 from providers.llm.base import LLMProvider
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_DATASET_PATH = Path("evals/locomo/datasets/locomo10.json")
 DEFAULT_OUTPUT_DIR = Path("evals/locomo/output")
@@ -51,6 +54,24 @@ CATEGORY_NAMES = {
 
 ANSWER_SCHEMA = '{"answer":"string","reasoning":"string"}'
 JUDGE_SCHEMA = '{"correct":"boolean","reasoning":"string"}'
+GOLD_IN_CONTEXT_SCHEMA = '{"present":"boolean","reasoning":"string"}'
+
+GOLD_IN_CONTEXT_SYSTEM_PROMPT = """\
+Determine whether the retrieved context contains sufficient information to answer the question \
+with the given gold answer. You are NOT judging whether the context is well-written or complete — \
+only whether the key facts from the gold answer are present somewhere in the context.
+
+Be generous: if the context contains the same information in different words, a different date format, \
+or a paraphrase, that counts as present. For multi-part gold answers (e.g., "A, B, and C"), ALL parts \
+must be present for the answer to count as present.
+
+For "not mentioned" gold answers: if the context truly lacks the information and the gold answer says \
+the information was not mentioned, return present=true (the absence is correctly represented).
+
+Return a JSON object with:
+- present: true if the context contains enough information to produce the gold answer, false otherwise
+- reasoning: one sentence explanation (keep it short)\
+"""
 
 # Hindsight's default LoCoMo judge prompt (generous grading).
 LOCOMO_JUDGE_SYSTEM_PROMPT = """\
@@ -585,7 +606,12 @@ def _evaluate_question_from_retrieval(
     )
 
     # Check if the gold answer content appears in the retrieved context.
-    gold_in_context = _gold_in_context(gold_answer, retrieved_context)
+    gold_in_context = _gold_in_context(
+        gold_answer,
+        retrieved_context,
+        provider=answer_provider,
+        question=question,
+    )
 
     result: dict[str, Any] = {
         "sample_id": sample_id,
@@ -777,14 +803,29 @@ def _retrieval_summary(memory_payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _gold_in_context(gold_answer: str, context: str) -> bool:
-    """Check if the gold answer's key terms appear in the retrieved context."""
+def _gold_in_context(
+    gold_answer: str,
+    context: str,
+    *,
+    provider: LLMProvider | None = None,
+    question: str = "",
+) -> bool:
+    """Check if the gold answer's key information is present in the retrieved context.
+
+    Uses LLM-as-judge when a provider is given, otherwise falls back to token overlap.
+    """
+    if provider is not None and question:
+        return _gold_in_context_llm(
+            provider=provider,
+            question=question,
+            gold_answer=gold_answer,
+            context=context,
+        )
+    # Fallback: simple token overlap heuristic.
     gold_lower = gold_answer.lower().strip()
     context_lower = context.lower()
-    # Direct substring match.
     if gold_lower in context_lower:
         return True
-    # Check if key content words from the gold answer appear.
     gold_tokens = {
         t for t in gold_lower.split()
         if len(t) >= 3 and t not in {"the", "and", "for", "was", "that", "with", "from", "she", "her", "his"}
@@ -793,6 +834,34 @@ def _gold_in_context(gold_answer: str, context: str) -> bool:
         return False
     matched = sum(1 for t in gold_tokens if t in context_lower)
     return matched >= len(gold_tokens) * 0.6
+
+
+def _gold_in_context_llm(
+    *,
+    provider: LLMProvider,
+    question: str,
+    gold_answer: str,
+    context: str,
+) -> bool:
+    """LLM-based check: does the context contain the information needed for the gold answer?"""
+    user_prompt = (
+        f"Question: {question}\n"
+        f"Gold answer: {gold_answer}\n\n"
+        f"Retrieved context:\n{context[:4000]}"
+    )
+    try:
+        response = provider.generate_json(
+            system_prompt=GOLD_IN_CONTEXT_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            schema_description=GOLD_IN_CONTEXT_SCHEMA,
+        )
+        present = response.parsed_json.get("present", False)
+        if isinstance(present, str):
+            present = present.lower() in {"true", "yes", "1"}
+        return bool(present)
+    except Exception:
+        logger.warning("Gold-in-context LLM check failed, falling back to heuristic")
+        return _gold_in_context(gold_answer, context)
 
 
 def _compact_results(memory_payload: dict[str, Any]) -> list[dict[str, Any]]:

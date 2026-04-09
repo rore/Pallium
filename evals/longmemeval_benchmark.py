@@ -345,12 +345,6 @@ def run_longmemeval_benchmark(
     )
     qa_inputs: list[tuple[int, dict[str, Any], dict[str, Any], dict[str, Any]]] = []
     with TestClient(create_app(initial_config)) as client:
-        if cache_dir is not None:
-            from evals.generated_exploratory.invariant_runner import (
-                _wrap_providers_with_cache,
-            )
-            _wrap_providers_with_cache(client, cache_dir)
-
         for q_index, question in enumerate(dataset):
             question_id = question["question_id"]
             print(
@@ -363,6 +357,7 @@ def run_longmemeval_benchmark(
                 question=question,
                 config=config,
                 query_limit=query_limit,
+                cache_dir=cache_dir,
                 db_cache_dir=db_cache_dir,
                 rebuild_db_cache=rebuild_db_cache,
             )
@@ -437,6 +432,7 @@ def _process_question(
     question: dict[str, Any],
     config: AppConfig,
     query_limit: int,
+    cache_dir: Path | None = None,
     db_cache_dir: Path | None = None,
     rebuild_db_cache: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -553,6 +549,13 @@ def _process_question(
             type_registry=type_registry if len(type_registry) > 0 else None,
         )
         client.app.state.pallium_service = service
+
+        # Wrap LLM providers with cache on the new service (must happen after swap).
+        if cache_dir is not None:
+            from evals.generated_exploratory.invariant_runner import (
+                _wrap_providers_with_cache,
+            )
+            _wrap_providers_with_cache(client, cache_dir)
 
         if not use_cached_db:
             # --- ingest all sessions ---

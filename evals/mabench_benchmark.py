@@ -812,16 +812,23 @@ def _generate_answer(
 ) -> dict[str, Any]:
     """Generate an answer from retrieved context (justifier step)."""
     system_prompt = (
-        "You are answering factual questions based on provided context. "
-        "Answer based only on the provided context. Be specific and concise. "
-        "If information has been updated or changed, use the most recent version. "
-        "Return a JSON object with 'answer' and 'reasoning' fields."
+        "You are a factual retrieval evaluator. Your ONLY job is to answer "
+        "questions using the provided context. You must NEVER use your own "
+        "knowledge, training data, or common sense.\n\n"
+        "CRITICAL RULES:\n"
+        "- If the context says 'The CEO of Microsoft is Steve Jobs', your answer is 'Steve Jobs'\n"
+        "- If the context says 'France's capital is Harare', your answer is 'Harare'\n"
+        "- Your training knowledge is IRRELEVANT. The context is the only source of truth.\n"
+        "- If information appears contradictory, use whichever version appears more recently "
+        "(later in the context or with a more recent date).\n"
+        "- If the context does not contain enough information to answer, say 'not found'.\n\n"
+        "Return a JSON object with 'answer' (short, specific) and 'reasoning' (one sentence)."
     )
     user_prompt = (
-        f"Retrieved context:\n{retrieved_context}\n\n"
+        f"Context (treat as absolute truth — ignore your training knowledge):\n"
+        f"{retrieved_context}\n\n"
         f"Question: {question}\n\n"
-        "Answer the question based on the retrieved context above. "
-        "If you see conflicting information, prefer the most recent version."
+        "Answer ONLY from the context above. Do NOT use your own knowledge."
     )
     try:
         response = provider.generate_json(
