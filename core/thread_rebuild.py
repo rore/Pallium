@@ -386,13 +386,14 @@ class ThreadRebuilder:
                 visibility=thread_scope.visibility,
             )
         supersede_plan: dict[str, list[str]] = {}
-        for memory_object in thread_result.memory_objects:
-            key = (memory_object.type, memory_object.schema_id)
-            supersede_plan[memory_object.id] = [
-                superseded_id
-                for superseded_id in active_thread_memory_ids.get(key, [])
-                if superseded_id != memory_object.id
-            ]
+        if getattr(plugin, 'rebuild_supersedes_prior', True):
+            for memory_object in thread_result.memory_objects:
+                key = (memory_object.type, memory_object.schema_id)
+                supersede_plan[memory_object.id] = [
+                    superseded_id
+                    for superseded_id in active_thread_memory_ids.get(key, [])
+                    if superseded_id != memory_object.id
+                ]
         return thread_result, supersede_plan, thread_items
 
     def _find_active_thread_memory_ids(

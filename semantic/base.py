@@ -51,6 +51,17 @@ class ThreadAggregationSemanticPlugin(SemanticPlugin):
         build_thread_summary(). Default: empty (pass all active memory)."""
         return frozenset()
 
+    @property
+    def rebuild_supersedes_prior(self) -> bool:
+        """Whether thread rebuild should supersede all prior memory objects of
+        the same (type, schema_id) key.
+
+        Default: True — the existing behavior where each rebuild fully replaces
+        the prior memory set. Plugins returning False opt into additive mode:
+        new memory objects accumulate alongside existing ones.
+        """
+        return True
+
     @abstractmethod
     def supports_thread_aggregation(self, source_item: SourceItem) -> bool:
         raise NotImplementedError
