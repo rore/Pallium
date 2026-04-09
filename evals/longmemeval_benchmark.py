@@ -238,8 +238,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--mini",
-        action="store_true",
-        help="Run a small representative subset (3 questions per category).",
+        nargs="?",
+        const=3,
+        type=int,
+        default=None,
+        metavar="N",
+        help="Run a representative subset (N questions per category, default 3).",
     )
     parser.add_argument(
         "--verbose-results",
@@ -300,7 +304,7 @@ def run_longmemeval_benchmark(
     cache_dir: Path | None = None,
     db_cache_dir: Path | None = None,
     rebuild_db_cache: bool = False,
-    mini: bool = False,
+    mini: int | bool = False,
     verbose_results: bool = False,
 ) -> Path:
 
@@ -312,14 +316,15 @@ def run_longmemeval_benchmark(
         if not dataset:
             raise ValueError(f"No questions found matching types: {question_types}")
 
-    # Mini mode: 3 questions per category for fast iteration.
+    # Mini mode: N questions per category for representative sampling.
     if mini:
+        mini_count = mini if isinstance(mini, int) else 3
         by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for q in dataset:
             by_type[q.get("question_type", "unknown")].append(q)
         dataset = []
         for qt in sorted(by_type):
-            dataset.extend(by_type[qt][:3])
+            dataset.extend(by_type[qt][:mini_count])
 
     if limit_questions:
         dataset = dataset[:limit_questions]
