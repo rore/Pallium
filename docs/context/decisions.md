@@ -567,3 +567,31 @@ Why:
 ### 2026-04-07 — FTS5 lexical retrieval
 
 Replaced the O(N) full-table-scan lexical search with SQLite FTS5 inverted-index lookup + BM25 scoring. A standalone `lexical_fts` FTS5 virtual table lives alongside `index_entries`. Write and delete paths maintain both tables transactionally. BM25 scores (float) replace IDF integers; all routing consumers use `normalize_lexical_score()` for 0-1 normalization. See spec: `docs/specs/2026-04-07-fts5-lexical-retrieval-design.md`.
+
+### 2026-04-09 - WAL journal mode for multi-process SQLite
+
+WAL (Write-Ahead Logging) is enabled during schema initialization. WAL allows concurrent readers
+during writes and reduces write contention between the API server, processors, and cleaners.
+
+Why:
+
+- DELETE journal mode (SQLite default) acquires an exclusive lock for the full transaction duration
+- with sustained write pressure from multiple processes, this creates visible contention
+- WAL allows readers to proceed during writes and narrows the write-contention window to commit time
+- WAL is the recommended journal mode for multi-process SQLite on local disk
+- also required for non-blocking snapshot persistence via the SQLite backup API
+
+### 2026-04-09 - SQLite backup API for snapshot persistence
+
+Periodic snapshots use Python's `sqlite3.backup()` with page-level yielding (`pages=256,
+sleep=0.01`) instead of `VACUUM INTO`. Shutdown snapshots use `pages=-1` (all-at-once) since no
+writers are active.
+
+Why:
+
+- `VACUUM INTO` holds a shared lock for the entire copy duration, blocking all writers
+- at expected scale (hundreds of MB), this means seconds of write stall
+- `sqlite3.backup()` copies pages in batches, yielding to writers between batches
+- individual lock holds are microseconds per batch; writers see negligible contention
+- the backup API produces a raw page copy (no defragmentation), which is acceptable — the goal is
+  consistent snapshot, not compaction

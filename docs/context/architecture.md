@@ -302,6 +302,27 @@ Future lifecycle direction should stay generic rather than package-specific:
 
 These are intended as future engine-level lifecycle signals, not semantic memory kinds.
 
+## Snapshot Persistence
+
+Pallium supports periodic SQLite snapshot persistence for ephemeral storage deployments
+(containers, VMs, cloud compute). The live database runs on fast local/ephemeral disk while
+consistent snapshots are written to a configurable durable path.
+
+Current behavior:
+
+- startup: restore newest valid snapshot to live DB path (before any child process spawns)
+- runtime: periodic snapshots via SQLite backup API with page-level yielding to writers
+- shutdown: best-effort snapshot after all children exit
+- dirty tracking: snapshot only when DB modified since last snapshot (mtime-based)
+- pruning: retains configurable number of most recent snapshots
+- validation: `PRAGMA quick_check` on restore candidates, falling back to older snapshots
+- vector index is not snapshotted — reconciliation rebuilds it from DB after restore
+
+The snapshot worker runs as a restartable supervised child process alongside processors and
+cleaners. WAL mode is enabled on the live database for concurrent read/write access.
+
+Configuration: `[snapshot]` section in `pallium.local.toml` or `PALLIUM_SNAPSHOT_*` env vars.
+
 ## Semantic Regression
 
 The repo now treats semantic evaluation as a first-class product asset.
