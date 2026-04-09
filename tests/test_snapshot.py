@@ -16,7 +16,7 @@ from app.snapshot import (
     _is_dirty,
     _find_latest_snapshot,
     restore_snapshot,
-    _prune_old_snapshots,
+    prune_old_snapshots,
     run_snapshot,
 )
 
@@ -473,7 +473,7 @@ def test_prune_keeps_n(tmp_path: Path) -> None:
         create_snapshot(str(db_path), snapshot_dir)
     snapshots_before = list(snapshot_dir.glob("pallium-*.db"))
     assert len(snapshots_before) == 8
-    _prune_old_snapshots(snapshot_dir, keep=5)
+    prune_old_snapshots(snapshot_dir, keep=5)
     remaining = sorted(snapshot_dir.glob("pallium-*.db"), key=lambda p: p.name, reverse=True)
     assert len(remaining) == 5
     # Verify the 5 newest survived
@@ -490,7 +490,7 @@ def test_prune_fewer_than_max(tmp_path: Path) -> None:
     for _ in range(3):
         time.sleep(1.1)
         create_snapshot(str(db_path), snapshot_dir)
-    _prune_old_snapshots(snapshot_dir, keep=5)
+    prune_old_snapshots(snapshot_dir, keep=5)
     remaining = list(snapshot_dir.glob("pallium-*.db"))
     assert len(remaining) == 3
 
@@ -503,7 +503,7 @@ def test_prune_ignores_non_snapshot_files(tmp_path: Path) -> None:
     db_path = tmp_path / "source.db"
     _make_test_db(db_path, rows=1)
     create_snapshot(str(db_path), snapshot_dir)
-    _prune_old_snapshots(snapshot_dir, keep=1)
+    prune_old_snapshots(snapshot_dir, keep=1)
     assert (snapshot_dir / "readme.txt").exists()
     assert (snapshot_dir / "other.db").exists()
     assert len(list(snapshot_dir.glob("pallium-*.db"))) == 1

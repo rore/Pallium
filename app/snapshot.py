@@ -40,9 +40,11 @@ def _validate_snapshot(path: Path) -> bool:
         if path.stat().st_size == 0:
             return False
         conn = sqlite3.connect(str(path))
-        result = conn.execute("PRAGMA quick_check").fetchone()
-        conn.close()
-        return result is not None and result[0] == "ok"
+        try:
+            result = conn.execute("PRAGMA quick_check").fetchone()
+            return result is not None and result[0] == "ok"
+        finally:
+            conn.close()
     except Exception:
         return False
 
@@ -63,17 +65,23 @@ def create_snapshot(
     final_path = snapshot_dir / f"pallium-{timestamp}.db"
     tmp_path = snapshot_dir / f"pallium-{timestamp}.tmp"
 
-    src = sqlite3.connect(live_db_path, timeout=5)
-    dst = sqlite3.connect(str(tmp_path))
+    src = None
+    dst = None
     try:
+        src = sqlite3.connect(live_db_path, timeout=5)
+        dst = sqlite3.connect(str(tmp_path))
         src.backup(dst, pages=pages_per_step, sleep=sleep_between)
         dst.close()
+        dst = None
         src.close()
+        src = None
         os.replace(str(tmp_path), str(final_path))
         return final_path
     except BaseException:
-        dst.close()
-        src.close()
+        if dst is not None:
+            dst.close()
+        if src is not None:
+            src.close()
         tmp_path.unlink(missing_ok=True)
         raise
 
@@ -124,7 +132,7 @@ def restore_snapshot(snapshot_dir: Path, live_db_path: str) -> bool:
     return False
 
 
-def _prune_old_snapshots(snapshot_dir: Path, *, keep: int) -> None:
+def prune_old_snapshots(snapshot_dir: Path, *, keep: int) -> None:
     """Remove oldest snapshots, keeping the most recent `keep` files."""
     snapshots = sorted(snapshot_dir.glob("pallium-*.db"), key=lambda p: p.name, reverse=True)
     for old in snapshots[keep:]:
@@ -149,8 +157,12 @@ def run_snapshot(
     resolved_config = config or AppConfig.from_env()
     snapshot_config = resolved_config.snapshot
 
-    if not snapshot_config.enabled or not snapshot_config.snapshot_path:
+    if not snapshot_config.enabled:
         return 0
+
+    if not snapshot_config.snapshot_path:
+        emit_runtime_log("snapshot", "snapshot enabled but snapshot_path not set", stderr=True)
+        return 1
 
     live_db_path = resolve_live_db_path(resolved_config.sqlite_url)
     snapshot_dir = Path(snapshot_config.snapshot_path)
@@ -169,7 +181,7 @@ def run_snapshot(
                     path = create_snapshot(live_db_path, snapshot_dir)
                     if path is not None:
                         emit_runtime_log("snapshot", f"created {path.name}")
-                        _prune_old_snapshots(snapshot_dir, keep=snapshot_config.max_snapshots)
+                        prune_old_snapshots(snapshot_dir, keep=snapshot_config.max_snapshots)
             except Exception as exc:
                 emit_runtime_log("snapshot", f"failed: {exc}", stderr=True)
             if stop.requested or (should_stop is not None and should_stop()):

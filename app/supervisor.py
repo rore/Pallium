@@ -11,7 +11,7 @@ from pathlib import Path
 from app.config import AppConfig
 from app.runtime_logging import emit_runtime_log
 from app.signal_context import graceful_stop
-from app.snapshot import resolve_live_db_path, restore_snapshot, create_snapshot, _prune_old_snapshots
+from app.snapshot import resolve_live_db_path, restore_snapshot, create_snapshot, prune_old_snapshots
 
 # Supervisor restart policy: if a child crashes more than this many times
 # within the window, the supervisor gives up and shuts everything down.
@@ -62,9 +62,15 @@ def run_supervisor(
     if parsed.cleaners < 0:
         raise ValueError("--cleaners must be >= 0")
 
-    # Load config for snapshot features
-    config = AppConfig.from_env()
-    snapshot_config = config.snapshot
+    # Load config for snapshot features (non-fatal — snapshot is optional)
+    try:
+        config = AppConfig.from_env()
+        snapshot_config = config.snapshot
+    except Exception as exc:
+        emit_runtime_log("supervisor", f"config load failed, snapshots disabled: {exc}", stderr=True)
+        from app.config import SnapshotConfig
+        config = None
+        snapshot_config = SnapshotConfig()
 
     # Restore snapshot before spawning any children
     if snapshot_config.enabled and snapshot_config.snapshot_path:
@@ -205,7 +211,7 @@ def run_supervisor(
                     )
                     if path is not None:
                         emit_runtime_log("supervisor", f"shutdown snapshot: {path.name}")
-                        _prune_old_snapshots(snapshot_dir, keep=snapshot_config.max_snapshots)
+                        prune_old_snapshots(snapshot_dir, keep=snapshot_config.max_snapshots)
                 except Exception as exc:
                     emit_runtime_log(
                         "supervisor",
