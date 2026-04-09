@@ -48,6 +48,7 @@ tmp/
 .worktrees/
 pallium_vector.index*
 data/
+.data/
 evals/external_memory_pressure/output/
 evals/low_value_churn/output/
 evals/write_enrichment/output/
