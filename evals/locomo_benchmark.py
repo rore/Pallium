@@ -34,6 +34,20 @@ from app.config import AppConfig
 from app.dependencies import build_llm_provider
 from app.main import create_app
 from providers.llm.base import LLMProvider
+from evals.eval_common import (
+    ANSWER_SCHEMA,
+    JUDGE_SCHEMA,
+    GOLD_IN_CONTEXT_SCHEMA,
+    GOLD_IN_CONTEXT_SYSTEM_PROMPT,
+    build_run_id as _build_run_id_common,
+    compact_results as _compact_results,
+    copy_vector_index as _copy_vector_index,
+    format_retrieved_context as _format_retrieved_context,
+    generate_answer as _generate_answer_common,
+    gold_in_context as _gold_in_context,
+    gold_in_context_llm as _gold_in_context_llm,
+    retrieval_summary as _retrieval_summary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,27 +65,6 @@ CATEGORY_NAMES = {
     4: "open_domain",
     5: "adversarial",
 }
-
-ANSWER_SCHEMA = '{"answer":"string","reasoning":"string"}'
-JUDGE_SCHEMA = '{"correct":"boolean","reasoning":"string"}'
-GOLD_IN_CONTEXT_SCHEMA = '{"present":"boolean","reasoning":"string"}'
-
-GOLD_IN_CONTEXT_SYSTEM_PROMPT = """\
-Determine whether the retrieved context contains sufficient information to answer the question \
-with the given gold answer. You are NOT judging whether the context is well-written or complete — \
-only whether the key facts from the gold answer are present somewhere in the context.
-
-Be generous: if the context contains the same information in different words, a different date format, \
-or a paraphrase, that counts as present. For multi-part gold answers (e.g., "A, B, and C"), ALL parts \
-must be present for the answer to count as present.
-
-For "not mentioned" gold answers: if the context truly lacks the information and the gold answer says \
-the information was not mentioned, return present=true (the absence is correctly represented).
-
-Return a JSON object with:
-- present: true if the context contains enough information to produce the gold answer, false otherwise
-- reasoning: one sentence explanation (keep it short)\
-"""
 
 # Hindsight's default LoCoMo judge prompt (generous grading).
 LOCOMO_JUDGE_SYSTEM_PROMPT = """\
@@ -234,7 +227,7 @@ def run_locomo_benchmark(
     else:
         provider = answer_provider
 
-    run_id = run_name or _build_run_id(config)
+    run_id = run_name or _build_run_id_common(config, "locomo-benchmark")
     run_dir = output_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     results_path = run_dir / "results.jsonl"
@@ -590,12 +583,11 @@ def _evaluate_question_from_retrieval(
     category_name = CATEGORY_NAMES.get(category, f"unknown_{category}")
 
     retrieved_context = _format_retrieved_context(memory_payload)
-    answer_result = _generate_answer(
+    answer_result = _generate_answer_common(
         provider=answer_provider,
         question=question,
         retrieved_context=retrieved_context,
-        speaker_a=speaker_a,
-        speaker_b=speaker_b,
+        preamble=f"Speakers in this conversation: {speaker_a} and {speaker_b}\n\n",
     )
 
     judge_result = _judge_answer(
@@ -641,119 +633,6 @@ def _evaluate_question_from_retrieval(
     return result
 
 
-def _format_retrieved_context(memory_payload: dict[str, Any]) -> str:
-    """Format Pallium retrieval results for the justifier LLM."""
-    parts: list[str] = []
-
-    # Primary: injectable blocks (the curated output Pallium thinks should be injected).
-    for i, block in enumerate(memory_payload.get("injectable_blocks", [])):
-        block_type = (
-            block.get("block_type") or block.get("memory_type") or "memory"
-        )
-        title = block.get("title", "")
-        text = block.get("text", "")
-        evidence = block.get("evidence", [])
-
-        part = f"[Memory {i + 1} ({block_type})]"
-        if title:
-            part += f" {title}"
-        part += f"\n{text}"
-
-        if evidence:
-            dates = [
-                e.get("occurred_at", "")
-                for e in evidence
-                if e.get("occurred_at")
-            ]
-            actors = [
-                e.get("actor_ref", "")
-                for e in evidence
-                if e.get("actor_ref")
-            ]
-            if dates:
-                part += f"\n(Evidence dates: {', '.join(dates[:3])})"
-            if actors:
-                part += f"\n(Speakers: {', '.join(sorted(set(actors)))})"
-        parts.append(part)
-
-    # Secondary: raw retrieval results for additional grounding.
-    for i, result in enumerate(memory_payload.get("results", [])):
-        if result.get("result_kind") == "memory_hit":
-            payload = result.get("payload") or {}
-            summary = (
-                payload.get("statement")
-                or payload.get("carry_forward_answer")
-                or payload.get("decision")
-                or payload.get("investigation_outcome")
-                or payload.get("summary")
-                or payload.get("description")
-                or ""
-            )
-            if summary:
-                occurred_at = result.get("occurred_at", "")
-                mem_type = result.get("type", "memory")
-                date_note = f" (date: {occurred_at})" if occurred_at else ""
-                parts.append(
-                    f"[Fact {i + 1} ({mem_type})] {summary}{date_note}"
-                )
-        elif result.get("result_kind") == "source_hit":
-            excerpt = result.get("excerpt", "")
-            if excerpt:
-                occurred_at = result.get("occurred_at", "")
-                actor = result.get("actor_ref", "")
-                date_note = f" (date: {occurred_at})" if occurred_at else ""
-                parts.append(
-                    f"[Source {i + 1}] {actor}: {excerpt}{date_note}"
-                )
-
-    return "\n\n".join(parts) if parts else "No relevant memories found."
-
-
-def _generate_answer(
-    *,
-    provider: LLMProvider,
-    question: str,
-    retrieved_context: str,
-    speaker_a: str,
-    speaker_b: str,
-) -> dict[str, Any]:
-    """Generate an answer from retrieved context (justifier step)."""
-    system_prompt = (
-        f"You are a helpful assistant answering questions about conversations "
-        f"between {speaker_a} and {speaker_b} based on retrieved memory "
-        f"context. Answer based only on the provided context. Be specific and "
-        f"concise. Return a JSON object with 'answer' and 'reasoning' fields."
-    )
-    user_prompt = (
-        "# INSTRUCTIONS:\n"
-        "1. Carefully analyze all provided memories and evidence\n"
-        "2. Pay special attention to timestamps to determine the answer\n"
-        "3. If the question asks about a specific event or fact, look for "
-        "direct evidence in the memories\n"
-        "4. If memories contain contradictory information or multiple "
-        "instances, mention all of them\n"
-        "5. Convert relative time references to specific dates when possible\n"
-        "6. Be as specific as possible about people, places, and events\n"
-        "7. If the answer is not explicitly stated, use logical reasoning "
-        "based on the available information\n\n"
-        f"Retrieved context:\n{retrieved_context}\n\n"
-        f"Question: {question}\n\n"
-        "Answer the question based on the retrieved context above."
-    )
-    try:
-        response = provider.generate_json(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            schema_description=ANSWER_SCHEMA,
-        )
-        return {
-            "answer": str(response.parsed_json.get("answer", "")),
-            "reasoning": str(response.parsed_json.get("reasoning", "")),
-        }
-    except Exception as exc:
-        return {"answer": f"[ERROR: {exc}]", "reasoning": "Generation failed"}
-
-
 def _judge_answer(
     *,
     provider: LLMProvider,
@@ -782,112 +661,6 @@ def _judge_answer(
         }
     except Exception as exc:
         return {"correct": False, "reasoning": f"[ERROR: {exc}]"}
-
-
-def _retrieval_summary(memory_payload: dict[str, Any]) -> dict[str, Any]:
-    results = memory_payload.get("results", [])
-    memory_hits = [
-        r for r in results if r.get("result_kind") == "memory_hit"
-    ]
-    source_hits = [
-        r for r in results if r.get("result_kind") == "source_hit"
-    ]
-    memory_types = sorted(
-        {r.get("type", "") for r in memory_hits if r.get("type")}
-    )
-    return {
-        "total_results": len(results),
-        "memory_hits": len(memory_hits),
-        "source_hits": len(source_hits),
-        "memory_types": memory_types,
-    }
-
-
-def _gold_in_context(
-    gold_answer: str,
-    context: str,
-    *,
-    provider: LLMProvider | None = None,
-    question: str = "",
-) -> bool:
-    """Check if the gold answer's key information is present in the retrieved context.
-
-    Uses LLM-as-judge when a provider is given, otherwise falls back to token overlap.
-    """
-    if provider is not None and question:
-        return _gold_in_context_llm(
-            provider=provider,
-            question=question,
-            gold_answer=gold_answer,
-            context=context,
-        )
-    # Fallback: simple token overlap heuristic.
-    gold_lower = gold_answer.lower().strip()
-    context_lower = context.lower()
-    if gold_lower in context_lower:
-        return True
-    gold_tokens = {
-        t for t in gold_lower.split()
-        if len(t) >= 3 and t not in {"the", "and", "for", "was", "that", "with", "from", "she", "her", "his"}
-    }
-    if not gold_tokens:
-        return False
-    matched = sum(1 for t in gold_tokens if t in context_lower)
-    return matched >= len(gold_tokens) * 0.6
-
-
-def _gold_in_context_llm(
-    *,
-    provider: LLMProvider,
-    question: str,
-    gold_answer: str,
-    context: str,
-) -> bool:
-    """LLM-based check: does the context contain the information needed for the gold answer?"""
-    user_prompt = (
-        f"Question: {question}\n"
-        f"Gold answer: {gold_answer}\n\n"
-        f"Retrieved context:\n{context[:4000]}"
-    )
-    try:
-        response = provider.generate_json(
-            system_prompt=GOLD_IN_CONTEXT_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            schema_description=GOLD_IN_CONTEXT_SCHEMA,
-        )
-        present = response.parsed_json.get("present", False)
-        if isinstance(present, str):
-            present = present.lower() in {"true", "yes", "1"}
-        return bool(present)
-    except Exception:
-        logger.warning("Gold-in-context LLM check failed, falling back to heuristic")
-        return _gold_in_context(gold_answer, context)
-
-
-def _compact_results(memory_payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Create compact result records for verbose output."""
-    compact: list[dict[str, Any]] = []
-    for r in memory_payload.get("results", []):
-        entry: dict[str, Any] = {
-            "kind": r.get("result_kind"),
-            "type": r.get("type"),
-            "score": r.get("score"),
-            "retrieval_source": r.get("retrieval_source"),
-        }
-        if r.get("result_kind") == "source_hit":
-            entry["excerpt"] = (r.get("excerpt") or "")[:150]
-            entry["occurred_at"] = r.get("occurred_at")
-        else:
-            payload = r.get("payload") or {}
-            entry["text"] = (
-                payload.get("statement")
-                or payload.get("summary")
-                or payload.get("decision")
-                or payload.get("carry_forward_answer")
-                or ""
-            )[:150]
-        compact.append(entry)
-    return compact
 
 
 # ---------------------------------------------------------------------------
@@ -1275,28 +1048,6 @@ def _download_dataset(path: Path) -> None:
     print(f"Downloading LoCoMo dataset to {path} ...")
     urllib.request.urlretrieve(LOCOMO_DATASET_URL, path)
     print("Done.")
-
-
-def _copy_vector_index(src: Path, dst: Path) -> None:
-    """Copy all vector index files (main + .idmap.json + .meta.json)."""
-    for suffix in ("", ".idmap.json", ".meta.json"):
-        src_file = Path(f"{src}{suffix}")
-        dst_file = Path(f"{dst}{suffix}")
-        if src_file.exists():
-            shutil.copy2(src_file, dst_file)
-
-
-def _build_run_id(config: AppConfig) -> str:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    provider = (
-        config.llm_provider_for_default_use_case or "provider"
-    ).replace("_", "-")
-    model = (
-        (config.llm_model_for_default_use_case or "model")
-        .replace("/", "-")
-        .replace(".", "-")
-    )
-    return f"locomo-benchmark__{provider}__{model}__{timestamp}"
 
 
 if __name__ == "__main__":

@@ -33,6 +33,16 @@ from app.config import AppConfig
 from app.dependencies import build_llm_provider
 from app.main import create_app
 from providers.llm.base import LLMProvider
+from evals.eval_common import (
+    ANSWER_SCHEMA,
+    build_run_id as _build_run_id_common,
+    compact_results as _compact_results,
+    copy_vector_index as _copy_vector_index,
+    format_retrieved_context as _format_retrieved_context,
+    generate_answer as _generate_answer_common,
+    gold_in_context as _gold_in_context,
+    retrieval_summary as _retrieval_summary,
+)
 
 DEFAULT_DATASET_DIR = Path("evals/mabench/datasets")
 DEFAULT_OUTPUT_DIR = Path("evals/mabench/output")
@@ -44,8 +54,6 @@ HF_API_URL = (
     "?dataset=ai-hyz/MemoryAgentBench&config=default&split=Conflict_Resolution"
     "&offset=0&length=100"
 )
-
-ANSWER_SCHEMA = '{"answer":"string","reasoning":"string"}'
 
 # Available dataset configurations.
 DATASET_CONFIGS: dict[str, dict[str, Any]] = {
@@ -95,8 +103,8 @@ def main() -> int:
     parser.add_argument(
         "--query-limit",
         type=int,
-        default=10,
-        help="Number of results to retrieve per query (default: 10).",
+        default=20,
+        help="Number of results to retrieve per query (default: 20).",
     )
     parser.add_argument(
         "--cache-dir",
@@ -205,7 +213,7 @@ def run_mabench_benchmark(
     else:
         provider = answer_provider
 
-    run_id = run_name or _build_run_id(config, context_depth)
+    run_id = run_name or _build_run_id_common(config, "mabench-sf", extra_parts=[context_depth])
     run_dir = output_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     results_path = run_dir / "results.jsonl"
@@ -626,7 +634,7 @@ def _evaluate_question(
     """Evaluate a single question with SubEM scoring and pipeline diagnostics."""
     retrieved_context = _format_retrieved_context(memory_payload)
 
-    answer_result = _generate_answer(
+    answer_result = _generate_answer_common(
         provider=answer_provider,
         question=question,
         retrieved_context=retrieved_context,
@@ -634,6 +642,14 @@ def _evaluate_question(
 
     predicted = answer_result["answer"]
     correct = _subem_score(predicted, gold_answers)
+
+    # Gold-in-context check (use LLM with the first gold answer as reference).
+    gold_in_ctx = _gold_in_context(
+        gold_answers[0] if gold_answers else "",
+        retrieved_context,
+        provider=answer_provider,
+        question=question,
+    )
 
     # Pipeline diagnostic.
     pipeline = _pipeline_diagnostic(memory_payload, fact_lookup, gold_answers=gold_answers)
@@ -649,6 +665,8 @@ def _evaluate_question(
         "result_count": len(memory_payload.get("results", [])),
         "should_inject": memory_payload.get("should_inject"),
         "injectable_block_count": len(memory_payload.get("injectable_blocks", [])),
+        "retrieval_summary": _retrieval_summary(memory_payload),
+        "gold_in_context": gold_in_ctx,
         "pipeline_diagnostic": pipeline,
     }
 
@@ -797,124 +815,6 @@ def _best_rank(results: list[dict[str, Any]], fact_texts: list[str]) -> int:
             if _text_overlap(fact, text_lower):
                 return rank
     return len(results)  # Not found — worst possible rank.
-
-
-# ---------------------------------------------------------------------------
-# Answer generation
-# ---------------------------------------------------------------------------
-
-
-def _generate_answer(
-    *,
-    provider: LLMProvider,
-    question: str,
-    retrieved_context: str,
-) -> dict[str, Any]:
-    """Generate an answer from retrieved context (justifier step)."""
-    system_prompt = (
-        "You are a factual retrieval evaluator. Your ONLY job is to answer "
-        "questions using the provided context. You must NEVER use your own "
-        "knowledge, training data, or common sense.\n\n"
-        "CRITICAL RULES:\n"
-        "- If the context says 'The CEO of Microsoft is Steve Jobs', your answer is 'Steve Jobs'\n"
-        "- If the context says 'France's capital is Harare', your answer is 'Harare'\n"
-        "- Your training knowledge is IRRELEVANT. The context is the only source of truth.\n"
-        "- If information appears contradictory, use whichever version appears more recently "
-        "(later in the context or with a more recent date).\n"
-        "- If the context does not contain enough information to answer, say 'not found'.\n\n"
-        "Return a JSON object with 'answer' (short, specific) and 'reasoning' (one sentence)."
-    )
-    user_prompt = (
-        f"Context (treat as absolute truth — ignore your training knowledge):\n"
-        f"{retrieved_context}\n\n"
-        f"Question: {question}\n\n"
-        "Answer ONLY from the context above. Do NOT use your own knowledge."
-    )
-    try:
-        response = provider.generate_json(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            schema_description=ANSWER_SCHEMA,
-        )
-        return {
-            "answer": str(response.parsed_json.get("answer", "")),
-            "reasoning": str(response.parsed_json.get("reasoning", "")),
-        }
-    except Exception as exc:
-        return {"answer": f"[ERROR: {exc}]", "reasoning": "Generation failed"}
-
-
-def _format_retrieved_context(memory_payload: dict[str, Any]) -> str:
-    """Format Pallium retrieval results for the justifier LLM."""
-    parts: list[str] = []
-
-    for i, block in enumerate(memory_payload.get("injectable_blocks", [])):
-        block_type = block.get("block_type") or block.get("memory_type") or "memory"
-        title = block.get("title", "")
-        text = block.get("text", "")
-        evidence = block.get("evidence", [])
-
-        part = f"[Memory {i + 1} ({block_type})]"
-        if title:
-            part += f" {title}"
-        part += f"\n{text}"
-
-        if evidence:
-            dates = [e.get("occurred_at", "") for e in evidence if e.get("occurred_at")]
-            if dates:
-                part += f"\n(Evidence dates: {', '.join(dates[:3])})"
-        parts.append(part)
-
-    for i, result in enumerate(memory_payload.get("results", [])):
-        if result.get("result_kind") == "memory_hit":
-            payload = result.get("payload") or {}
-            summary = (
-                payload.get("statement")
-                or payload.get("carry_forward_answer")
-                or payload.get("decision")
-                or payload.get("investigation_outcome")
-                or payload.get("summary")
-                or payload.get("description")
-                or ""
-            )
-            if summary:
-                occurred_at = result.get("occurred_at", "")
-                mem_type = result.get("type", "memory")
-                date_note = f" (date: {occurred_at})" if occurred_at else ""
-                parts.append(f"[Fact {i + 1} ({mem_type})] {summary}{date_note}")
-        elif result.get("result_kind") == "source_hit":
-            excerpt = result.get("excerpt", "")
-            if excerpt:
-                occurred_at = result.get("occurred_at", "")
-                date_note = f" (date: {occurred_at})" if occurred_at else ""
-                parts.append(f"[Source {i + 1}] {excerpt}{date_note}")
-
-    return "\n\n".join(parts) if parts else "No relevant information found."
-
-
-def _compact_results(memory_payload: dict[str, Any]) -> list[dict[str, Any]]:
-    compact: list[dict[str, Any]] = []
-    for r in memory_payload.get("results", []):
-        entry: dict[str, Any] = {
-            "kind": r.get("result_kind"),
-            "type": r.get("type"),
-            "score": r.get("score"),
-            "retrieval_source": r.get("retrieval_source"),
-        }
-        if r.get("result_kind") == "source_hit":
-            entry["excerpt"] = (r.get("excerpt") or "")[:150]
-            entry["occurred_at"] = r.get("occurred_at")
-        else:
-            payload = r.get("payload") or {}
-            entry["text"] = (
-                payload.get("statement")
-                or payload.get("summary")
-                or payload.get("decision")
-                or payload.get("carry_forward_answer")
-                or ""
-            )[:150]
-        compact.append(entry)
-    return compact
 
 
 # ---------------------------------------------------------------------------
@@ -1095,32 +995,6 @@ def _download_dataset(dataset_dir: Path) -> None:
 
     output_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
     print(f"Downloaded {len(rows)} rows to {output_path}")
-
-
-# ---------------------------------------------------------------------------
-# Utilities
-# ---------------------------------------------------------------------------
-
-
-def _copy_vector_index(src: Path, dst: Path) -> None:
-    for suffix in ("", ".idmap.json", ".meta.json"):
-        src_file = Path(f"{src}{suffix}")
-        dst_file = Path(f"{dst}{suffix}")
-        if src_file.exists():
-            shutil.copy2(src_file, dst_file)
-
-
-def _build_run_id(config: AppConfig, context_depth: str) -> str:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    provider = (
-        config.llm_provider_for_default_use_case or "provider"
-    ).replace("_", "-")
-    model = (
-        (config.llm_model_for_default_use_case or "model")
-        .replace("/", "-")
-        .replace(".", "-")
-    )
-    return f"mabench-sf-{context_depth}__{provider}__{model}__{timestamp}"
 
 
 if __name__ == "__main__":
