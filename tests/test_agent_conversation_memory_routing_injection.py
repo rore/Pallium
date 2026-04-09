@@ -2221,3 +2221,168 @@ def test_multi_user_shared_thread_summary_and_checkpoint_inject_together() -> No
         f"Thread-level memories from multi-user thread should be injectable. Got types: {injected_types}"
     )
 
+
+def test_dedup_detects_cross_package_duplicate_via_evidence_and_text() -> None:
+    """Decision and atomic_fact from same source with overlapping text → duplicate."""
+    from semantic.agent_conversation_memory_routing_selection import (
+        _is_content_duplicate,
+        _dedup_eligible_candidates,
+    )
+    shared_evidence = [
+        EvidenceReference(
+            source_item_id='msg-15',
+            source_type='message',
+            source_id='msg-15',
+        )
+    ]
+    decision_candidate = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="decision-1",
+            type="decision",
+            payload={"decision": "DPP-360 deprioritized", "rationale": "not relevant to current sprint"},
+            score=18,
+            evidence=shared_evidence,
+            container_ref="chat:test",
+        ),
+        "routing_score": 500,
+    }
+    fact_candidate = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="fact-1",
+            type="atomic_fact",
+            payload={"statement": "DPP-360 not relevant"},
+            score=15,
+            evidence=shared_evidence + [
+                EvidenceReference(source_item_id='msg-14', source_type='message', source_id='msg-14'),
+            ],
+            container_ref="chat:test",
+        ),
+        "routing_score": 400,
+    }
+    assert _is_content_duplicate(decision_candidate, fact_candidate) is True
+    retained, removed = _dedup_eligible_candidates([decision_candidate, fact_candidate])
+    assert len(retained) == 1
+    assert retained[0]["item"].memory_object_id == "decision-1"
+    assert len(removed) == 1
+    assert removed[0]["item"].memory_object_id == "fact-1"
+
+
+def test_dedup_preserves_same_thread_different_topic_memories() -> None:
+    """Two atomic_facts from same thread but different topics share evidence but not text → both survive."""
+    from semantic.agent_conversation_memory_routing_selection import (
+        _is_content_duplicate,
+        _dedup_eligible_candidates,
+    )
+    thread_evidence = [
+        EvidenceReference(source_item_id='msg-1', source_type='message', source_id='msg-1'),
+        EvidenceReference(source_item_id='msg-2', source_type='message', source_id='msg-2'),
+        EvidenceReference(source_item_id='msg-3', source_type='message', source_id='msg-3'),
+    ]
+    dpp_fact = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="fact-dpp",
+            type="atomic_fact",
+            payload={"statement": "DPP-360 was deprioritized from the current sprint"},
+            score=18,
+            evidence=thread_evidence,
+            container_ref="chat:test",
+        ),
+        "routing_score": 500,
+    }
+    btp_fact = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="fact-btp",
+            type="atomic_fact",
+            payload={"statement": "BTP internal logging architecture has three distinct layers"},
+            score=16,
+            evidence=thread_evidence,
+            container_ref="chat:test",
+        ),
+        "routing_score": 400,
+    }
+    assert _is_content_duplicate(dpp_fact, btp_fact) is False
+    retained, removed = _dedup_eligible_candidates([dpp_fact, btp_fact])
+    assert len(retained) == 2
+    assert len(removed) == 0
+
+
+def test_dedup_detects_text_only_duplicate_without_shared_evidence() -> None:
+    """Two candidates with no shared evidence but 70%+ text overlap → duplicate."""
+    from semantic.agent_conversation_memory_routing_selection import _is_content_duplicate
+    candidate_a = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="mem-a",
+            type="pattern_memory",
+            payload={"summary": "catalog sync delays cause duplicate hold records"},
+            score=18,
+            evidence=[EvidenceReference(source_item_id='src-a', source_type='message', source_id='src-a')],
+            container_ref="chat:test",
+        ),
+        "routing_score": 500,
+    }
+    candidate_b = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="mem-b",
+            type="continuity_memory",
+            payload={"carry_forward_answer": "catalog sync delays cause duplicate holds"},
+            score=15,
+            evidence=[EvidenceReference(source_item_id='src-b', source_type='message', source_id='src-b')],
+            container_ref="chat:test",
+        ),
+        "routing_score": 400,
+    }
+    assert _is_content_duplicate(candidate_a, candidate_b) is True
+
+
+def test_dedup_greedy_sweep_preserves_non_transitive_pair() -> None:
+    """A~B and B~C but not A~C → A and C survive, only B removed."""
+    from semantic.agent_conversation_memory_routing_selection import _dedup_eligible_candidates
+    candidate_a = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="mem-a",
+            type="pattern_memory",
+            payload={"summary": "catalog sync duplicate hold records batch queue"},
+            score=18,
+            evidence=[],
+            container_ref="chat:test",
+        ),
+        "routing_score": 500,
+    }
+    candidate_b = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="mem-b",
+            type="pattern_memory",
+            payload={"summary": "duplicate hold records batch queue journal refactoring"},
+            score=16,
+            evidence=[],
+            container_ref="chat:test",
+        ),
+        "routing_score": 400,
+    }
+    candidate_c = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="mem-c",
+            type="pattern_memory",
+            payload={"summary": "batch queue journal refactoring monitoring"},
+            score=14,
+            evidence=[],
+            container_ref="chat:test",
+        ),
+        "routing_score": 300,
+    }
+    retained, removed = _dedup_eligible_candidates([candidate_a, candidate_b, candidate_c])
+    retained_ids = {c["item"].memory_object_id for c in retained}
+    removed_ids = {c["item"].memory_object_id for c in removed}
+    assert "mem-a" in retained_ids
+    assert "mem-c" in retained_ids
+    assert "mem-b" in removed_ids
+

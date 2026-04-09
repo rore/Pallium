@@ -991,3 +991,100 @@ def _find_constraint_supplements(
         reverse=True,
     )
     return constraint_candidates[:max_count]
+
+
+# ---------------------------------------------------------------------------
+# Injection dedup + dynamic cap
+# ---------------------------------------------------------------------------
+
+INJECTION_MIN_FLOOR = 3
+INJECTION_EXPANSION_RATIO = 0.4
+INJECTION_HARD_CEILING = 5
+DEDUP_EVIDENCE_TEXT_THRESHOLD = 0.4
+DEDUP_TEXT_ONLY_THRESHOLD = 0.7
+DEDUP_MIN_TOKENS = 2
+
+
+def _candidate_evidence_ids(candidate: dict[str, object]) -> set[str]:
+    """Extract source_item_ids from a candidate's evidence references."""
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    evidence = getattr(item, "evidence", None) or []
+    return {e.source_item_id for e in evidence if hasattr(e, "source_item_id")}
+
+
+def _is_content_duplicate(
+    candidate_a: dict[str, object],
+    candidate_b: dict[str, object],
+) -> bool:
+    """Two-gate duplicate check: evidence+text or text-only.
+
+    Returns True when two candidates carry semantically duplicate content.
+    Evidence overlap alone is not sufficient (thread-level extractions share
+    all source items) — it must be combined with text overlap.
+    """
+    item_a = candidate_a["item"]
+    item_b = candidate_b["item"]
+    assert isinstance(item_a, QueryResultItem)
+    assert isinstance(item_b, QueryResultItem)
+
+    text_a = _candidate_content_surface(item_a)
+    text_b = _candidate_content_surface(item_b)
+    tokens_a = content_tokens(text_a)
+    tokens_b = content_tokens(text_b)
+
+    # Overlap coefficient: |intersection| / min(|A|, |B|)
+    min_size = min(len(tokens_a), len(tokens_b))
+    if min_size == 0:
+        return False
+    overlap = len(tokens_a & tokens_b) / min_size
+
+    # Gate 1: evidence overlap + loose text threshold
+    evidence_a = _candidate_evidence_ids(candidate_a)
+    evidence_b = _candidate_evidence_ids(candidate_b)
+    if evidence_a and evidence_b and evidence_a & evidence_b:
+        if overlap >= DEDUP_EVIDENCE_TEXT_THRESHOLD:
+            return True
+
+    # Gate 2: text-only with strict threshold (needs minimum tokens)
+    if min_size >= DEDUP_MIN_TOKENS and overlap >= DEDUP_TEXT_ONLY_THRESHOLD:
+        return True
+
+    return False
+
+
+def _dedup_eligible_candidates(
+    candidates: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Greedy dedup sweep: retain candidates in routing_score order, skip duplicates.
+
+    Returns (retained, removed) where removed candidates are those that
+    duplicate an already-retained candidate.
+    """
+    if len(candidates) <= 1:
+        return list(candidates), []
+
+    retained: list[dict[str, object]] = []
+    removed: list[dict[str, object]] = []
+    for candidate in candidates:
+        is_dup = False
+        for kept in retained:
+            if _is_content_duplicate(candidate, kept):
+                is_dup = True
+                break
+        if is_dup:
+            removed.append(candidate)
+        else:
+            retained.append(candidate)
+    return retained, removed
+
+
+def _is_duplicate_of_selected(
+    candidate: dict[str, object],
+    selected: list[dict[str, object]],
+) -> bool:
+    """Check if a candidate duplicates any already-selected candidate."""
+    for kept in selected:
+        if _is_content_duplicate(candidate, kept):
+            return True
+    return False
