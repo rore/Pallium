@@ -566,17 +566,20 @@ def _process_question(
         )
         client.app.state.pallium_service = service
 
-        # Wrap LLM providers with cache on the new service (must happen after swap).
+        # Wrap LLM providers with cache on the new service.
         if cache_dir is not None:
             from evals.generated_exploratory.invariant_runner import (
                 _wrap_providers_with_cache,
             )
+            # Temporarily point app.state at the per-question service so the
+            # cache wrapper (which reads from app.state) targets the right one.
+            client.app.state.pallium_service = service
             _wrap_providers_with_cache(client, cache_dir)
 
         if not use_cached_db:
             # --- ingest all sessions ---
             has_answer_source_ids = _ingest_sessions(
-                client=client,
+                service=service,
                 question_id=question_id,
                 sessions=sessions,
                 session_dates=session_dates,
@@ -593,12 +596,6 @@ def _process_question(
             service.reconcile_vector_index()
 
             print("  Processing complete")
-
-            # Cache the processed DB for reuse.
-            if cached_db_path is not None:
-                shutil.copy2(db_path, cached_db_path)
-                _copy_vector_index(vector_path, cached_vector_prefix)
-                print(f"  Cached DB for {question_id}")
         else:
             # Reconcile the vector index loaded from cache so vector retrieval
             # can find entries that were indexed during the original extraction.
@@ -612,22 +609,46 @@ def _process_question(
             )
 
         # --- build evidence map ---
-        evidence_map = _build_evidence_map(client=client)
+        evidence_map = _build_evidence_map(service=service)
 
         # --- query ---
-        query_payload = {
-            "text": question["question"],
-            "limit": query_limit,
-            "container_ref": question_id,
-            "visibility": "public",
-            "runtime_context": {
-                "turn_kind": "new_session",
-                "session_has_sufficient_local_context": False,
-            },
-        }
-        query_response = client.post("/query/debug", json=query_payload)
-        query_response.raise_for_status()
-        memory_payload = query_response.json()
+        from core.models import QueryRuntimeContext
+        query_result = service.query(
+            question["question"],
+            query_limit,
+            container_ref=question_id,
+            visibility="public",
+            runtime_context=QueryRuntimeContext(
+                turn_kind="new_session",
+                session_has_sufficient_local_context=False,
+            ),
+            include_trace=True,
+        )
+
+        # Serialize to the same dict format the /query/debug endpoint returns.
+        from api.routes import (
+            _serialize_injectable_block,
+            _serialize_result,
+        )
+
+        def _json_safe(obj: object) -> object:
+            """Convert datetime objects to ISO strings for JSON compatibility."""
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            if isinstance(obj, dict):
+                return {k: _json_safe(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_json_safe(v) for v in obj]
+            return obj
+
+        memory_payload = _json_safe({
+            "results": [_serialize_result(item) for item in query_result.results],
+            "should_inject": query_result.should_inject,
+            "decision_reason": query_result.decision_reason,
+            "injectable_blocks": [
+                _serialize_injectable_block(b) for b in query_result.injectable_blocks
+            ],
+        })
 
         # --- evidence trace ---
         evidence_trace = _build_evidence_trace(
@@ -643,6 +664,12 @@ def _process_question(
         if engine is not None:
             engine.dispose()
 
+        # Cache the processed DB after disposing the engine so all data is flushed.
+        if not use_cached_db and cached_db_path is not None:
+            shutil.copy2(db_path, cached_db_path)
+            _copy_vector_index(vector_path, cached_vector_prefix)
+            print(f"  Cached DB for {question_id}")
+
         # Restore original service so the shared client stays usable.
         client.app.state.pallium_service = original_service
 
@@ -656,7 +683,7 @@ def _process_question(
 
 def _ingest_sessions(
     *,
-    client: TestClient,
+    service: Any,
     question_id: str,
     sessions: list[list[dict[str, Any]]],
     session_dates: list[str],
@@ -700,8 +727,25 @@ def _ingest_sessions(
 
     for start in range(0, len(all_items), BATCH_SIZE):
         batch = all_items[start : start + BATCH_SIZE]
-        response = client.post("/items", json=batch)
-        response.raise_for_status()
+        for item_data in batch:
+            occurred_at = item_data.get("occurred_at")
+            if isinstance(occurred_at, str):
+                occurred_at = datetime.fromisoformat(occurred_at)
+            service.ingest_item(
+                source_type=item_data["source_type"],
+                source_id=item_data["source_id"],
+                content_type=item_data["content_type"],
+                content=item_data["content"],
+                metadata=None,
+                use_case=None,
+                occurred_at=occurred_at,
+                role=item_data.get("role"),
+                actor_ref=item_data.get("actor_ref"),
+                container_ref=item_data.get("container_ref"),
+                thread_ref=item_data.get("thread_ref"),
+                artifact_kind=item_data.get("artifact_kind"),
+                visibility=item_data.get("visibility"),
+            )
 
     return has_answer_source_ids
 
@@ -864,10 +908,10 @@ def _judge_answer(
 
 def _build_evidence_map(
     *,
-    client: TestClient,
+    service: Any,
 ) -> dict[str, list[dict[str, Any]]]:
     """Build source_id → memory objects map for pipeline tracing."""
-    storage = client.app.state.pallium_service._storage
+    storage = service._storage
     all_memories = storage.list_memory_objects(lifecycle="active")
     evidence_map: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for mo in all_memories:
