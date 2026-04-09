@@ -908,3 +908,61 @@ def test_supervisor_api_exit_is_always_fatal(capsys) -> None:
     assert exit_code == 2
     # No restarts should have happened — only original api + processor
     assert len(started) == 2
+
+
+# ── Supervisor snapshot integration ──────────────────────────────────
+
+
+def test_supervisor_spawns_snapshot_worker_when_enabled(capsys, tmp_path, monkeypatch) -> None:
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        f'[snapshot]\nenabled = true\nsnapshot_path = "{snapshot_dir.as_posix()}"\ninterval_seconds = 60\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+
+    started: list[FakeProcess] = []
+    def popen_factory(command, cwd=None):
+        process = FakeProcess(command, cwd=cwd)
+        started.append(process)
+        return process
+
+    exit_code = supervisor.run_supervisor(
+        ['--host', '127.0.0.1', '--port', '8099', '--processors', '1', '--cleaners', '0'],
+        popen_factory=popen_factory,
+        sleep_fn=lambda _: None,
+        should_stop=lambda: True,
+    )
+
+    assert exit_code == 0
+    snapshot_processes = [p for p in started if 'app.snapshot' in ' '.join(str(c) for c in p.command)]
+    assert len(snapshot_processes) == 1
+    assert all(p.terminated for p in started)
+
+    supervisor_output = capsys.readouterr().out
+    assert "started snapshot pid=" in supervisor_output
+
+
+def test_supervisor_does_not_spawn_snapshot_when_disabled(capsys, tmp_path, monkeypatch) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text("", encoding="utf-8")
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+
+    started: list[FakeProcess] = []
+    def popen_factory(command, cwd=None):
+        process = FakeProcess(command, cwd=cwd)
+        started.append(process)
+        return process
+
+    exit_code = supervisor.run_supervisor(
+        ['--host', '127.0.0.1', '--port', '8099', '--processors', '1', '--cleaners', '0'],
+        popen_factory=popen_factory,
+        sleep_fn=lambda _: None,
+        should_stop=lambda: True,
+    )
+
+    assert exit_code == 0
+    snapshot_processes = [p for p in started if 'app.snapshot' in ' '.join(str(c) for c in p.command)]
+    assert len(snapshot_processes) == 0

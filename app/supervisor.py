@@ -6,9 +6,12 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from pathlib import Path
 
+from app.config import AppConfig
 from app.runtime_logging import emit_runtime_log
 from app.signal_context import graceful_stop
+from app.snapshot import resolve_live_db_path, restore_snapshot, create_snapshot, _prune_old_snapshots
 
 # Supervisor restart policy: if a child crashes more than this many times
 # within the window, the supervisor gives up and shuts everything down.
@@ -38,6 +41,10 @@ def build_cleaner_command(index: int) -> list[str]:
     return [sys.executable, "-m", "app.cleaner", "--cleaner-id", f"supervisor-cleaner-{index}"]
 
 
+def build_snapshot_command(interval_seconds: int) -> list[str]:
+    return [sys.executable, "-m", "app.snapshot", "--interval-seconds", str(interval_seconds)]
+
+
 def run_supervisor(
     args: list[str] | None = None,
     *,
@@ -54,6 +61,24 @@ def run_supervisor(
         raise ValueError("--processors must be >= 1")
     if parsed.cleaners < 0:
         raise ValueError("--cleaners must be >= 0")
+
+    # Load config for snapshot features
+    config = AppConfig.from_env()
+    snapshot_config = config.snapshot
+
+    # Restore snapshot before spawning any children
+    if snapshot_config.enabled and snapshot_config.snapshot_path:
+        snapshot_dir = Path(snapshot_config.snapshot_path)
+        if snapshot_dir.is_dir():
+            try:
+                live_db_path = resolve_live_db_path(config.sqlite_url)
+                restored = restore_snapshot(snapshot_dir, live_db_path)
+                if restored:
+                    emit_runtime_log("supervisor", f"restored snapshot to {live_db_path}")
+                else:
+                    emit_runtime_log("supervisor", "snapshot restore skipped (live DB exists or no snapshots)")
+            except Exception as exc:
+                emit_runtime_log("supervisor", f"snapshot restore failed: {exc}", stderr=True)
 
     # Each managed slot: (command, label, process, restart_times)
     slots: list[_ManagedSlot] = []
@@ -94,6 +119,18 @@ def run_supervisor(
                     restart_times=[],
                 ))
                 emit_runtime_log("supervisor", f"started cleaner pid={proc.pid} cleaner_id=supervisor-cleaner-{index}")
+
+            if snapshot_config.enabled and snapshot_config.snapshot_path:
+                cmd = build_snapshot_command(snapshot_config.interval_seconds)
+                proc = popen_factory(cmd, cwd=os.getcwd())
+                slots.append(_ManagedSlot(
+                    command=cmd,
+                    label="snapshot",
+                    process=proc,
+                    restartable=True,
+                    restart_times=[],
+                ))
+                emit_runtime_log("supervisor", f"started snapshot pid={proc.pid}")
 
             while True:
                 if should_stop is not None and should_stop():
@@ -156,6 +193,25 @@ def run_supervisor(
                         )
                         process.kill()
                         process.wait(timeout=5)
+
+            # Best-effort shutdown snapshot
+            if snapshot_config.enabled and snapshot_config.snapshot_path:
+                try:
+                    snapshot_dir = Path(snapshot_config.snapshot_path)
+                    live_db_path = resolve_live_db_path(config.sqlite_url)
+                    path = create_snapshot(
+                        live_db_path, snapshot_dir,
+                        pages_per_step=-1, sleep_between=0,
+                    )
+                    if path is not None:
+                        emit_runtime_log("supervisor", f"shutdown snapshot: {path.name}")
+                        _prune_old_snapshots(snapshot_dir, keep=snapshot_config.max_snapshots)
+                except Exception as exc:
+                    emit_runtime_log(
+                        "supervisor",
+                        f"shutdown snapshot failed (data loss window ~{snapshot_config.interval_seconds}s): {exc}",
+                        stderr=True,
+                    )
     return exit_code
 
 
