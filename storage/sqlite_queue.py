@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, text
@@ -33,6 +34,35 @@ from storage.sqlite_schema import (
 
 
 class SQLiteQueueMixin:
+    @contextmanager
+    def _begin_immediate(self):
+        """Start a transaction with BEGIN IMMEDIATE for exclusive claim operations.
+
+        SQLite's default DEFERRED transactions don't acquire a write lock until
+        the first write statement.  When two processes run an UPDATE-with-subquery
+        concurrently, both can evaluate the subquery before either acquires the
+        lock, causing double-pickup of the same queue item.
+
+        BEGIN IMMEDIATE acquires a RESERVED lock at transaction start, serialising
+        concurrent claim attempts so only one process evaluates the subquery at a
+        time.
+        """
+        session = self._session_factory()
+        try:
+            conn = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+            conn.execute(text("BEGIN IMMEDIATE"))
+            yield session
+            session.flush()
+            conn.execute(text("COMMIT"))
+        except BaseException:
+            try:
+                conn.execute(text("ROLLBACK"))
+            except Exception:
+                pass
+            raise
+        finally:
+            session.close()
+
     def claim_next_source_item(
         self,
         *,
@@ -75,7 +105,7 @@ class SQLiteQueueMixin:
             RETURNING id
             """
         )
-        with self._session_factory.begin() as session:
+        with self._begin_immediate() as session:
             row = session.execute(
                 statement,
                 {
@@ -244,7 +274,7 @@ class SQLiteQueueMixin:
             RETURNING scope_key
             """
         )
-        with self._session_factory.begin() as session:
+        with self._begin_immediate() as session:
             row = session.execute(
                 statement,
                 {
@@ -288,7 +318,7 @@ class SQLiteQueueMixin:
             RETURNING scope_key
             """
         )
-        with self._session_factory.begin() as session:
+        with self._begin_immediate() as session:
             row = session.execute(
                 statement,
                 {
@@ -742,7 +772,7 @@ class SQLiteQueueMixin:
             RETURNING id, source_item_id, package_name
             """
         )
-        with self._session_factory.begin() as session:
+        with self._begin_immediate() as session:
             row = session.execute(
                 statement,
                 {
@@ -808,7 +838,7 @@ class SQLiteQueueMixin:
             RETURNING package_name
             """
         )
-        with self._session_factory.begin() as session:
+        with self._begin_immediate() as session:
             row = session.execute(
                 statement,
                 {
