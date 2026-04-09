@@ -2578,6 +2578,8 @@ def test_sharp_diagnostics_shows_dedup_loss_stage() -> None:
         d for d in outcome.sharp_candidate_diagnostics
         if d.get("loss_stage") == "dedup"
     ]
-    if dedup_diags:
-        assert dedup_diags[0]["loss_reason_code"] == "injection_dedup"
-        assert dedup_diags[0].get("dedup_kept_result_id") is not None
+    assert len(dedup_diags) >= 1, (
+        f"Expected at least one dedup diagnostic, got {outcome.sharp_candidate_diagnostics}"
+    )
+    assert dedup_diags[0]["loss_reason_code"] == "injection_dedup"
+    assert dedup_diags[0].get("dedup_kept_result_id") is not None
