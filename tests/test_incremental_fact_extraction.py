@@ -617,11 +617,12 @@ def test_e2e_incremental_thread_lifecycle(monkeypatch, test_db_url: str):
 
     # Phase 2 extraction should only contain the new messages, not the old ones
     phase2_prompts = extraction_call_prompts[calls_after_phase1:]
+    assert any("fix the holds" in p.lower() or "due-date" in p.lower() for p in phase2_prompts), \
+        "Expected at least one phase 2 prompt to contain new message content"
     for prompt in phase2_prompts:
-        # New messages should be present
         has_new_content = ("fix the holds" in prompt.lower() or "due-date" in prompt.lower())
         # Old messages should NOT be present (incremental extraction)
-        has_old_content = ("library holds disappearing" in prompt.lower() and "use item event time" in prompt.lower())
+        has_old_content = ("library holds disappearing" in prompt.lower() or "use item event time" in prompt.lower())
         if has_new_content:
             assert not has_old_content, (
                 "Phase 2 extraction prompt should not contain old messages "
