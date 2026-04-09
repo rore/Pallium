@@ -34,12 +34,6 @@ max_concurrency = 4
 [semantic_packages.demo_agent_memory]
 implementation = "demo_agent_memory"
 
-[semantic_packages.llm_agent_memory]
-implementation = "llm_agent_memory"
-llm_provider = "openai"
-model = "gpt-5-mini"
-prompt_variant = "strict_typed_memory_v5_compact_examples"
-
 [semantic_packages.agent_conversation_memory]
 implementation = "agent_conversation_memory"
 llm_provider = "openai"
