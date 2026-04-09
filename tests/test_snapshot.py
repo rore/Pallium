@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3 as stdlib_sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -505,3 +506,71 @@ def test_prune_ignores_non_snapshot_files(tmp_path: Path) -> None:
     assert (snapshot_dir / "readme.txt").exists()
     assert (snapshot_dir / "other.db").exists()
     assert len(list(snapshot_dir.glob("pallium-*.db"))) == 1
+
+
+# === WAL mode tests ===
+
+
+def test_wal_mode_enabled(tmp_path: Path) -> None:
+    from storage.sqlite import SQLiteStorageProvider
+
+    db_path = tmp_path / "wal_test.db"
+    SQLiteStorageProvider(f"sqlite:///{db_path}")
+    conn = stdlib_sqlite3.connect(str(db_path))
+    mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+    conn.close()
+    assert mode == "wal"
+
+
+def test_begin_immediate_under_wal(tmp_path: Path) -> None:
+    from core.models import utc_now, new_id, SourceItem
+    from storage.sqlite import SQLiteStorageProvider
+
+    db_path = tmp_path / "wal_concurrent.db"
+    storage = SQLiteStorageProvider(f"sqlite:///{db_path}")
+
+    # Insert 10 pending items
+    for i in range(10):
+        item = SourceItem(
+            id=new_id(),
+            source_type="test",
+            source_id=f"queue-{i}",
+            content_type="text",
+            content=f"content-{i}",
+            use_case="agent_conversation_memory",
+            processing_status="pending",
+            created_at=utc_now(),
+        )
+        storage.create_source_item(item)
+
+    claimed_ids: list[str] = []
+    lock = threading.Lock()
+    errors: list[Exception] = []
+
+    def claim_worker(worker_name: str, iterations: int) -> None:
+        for _ in range(iterations):
+            try:
+                result = storage.claim_next_source_item(
+                    worker_id=worker_name,
+                    lease_seconds=60,
+                    max_attempts=3,
+                )
+                if result is not None:
+                    with lock:
+                        claimed_ids.append(result.id)
+            except Exception as exc:
+                with lock:
+                    errors.append(exc)
+
+    t1 = threading.Thread(target=claim_worker, args=("worker-a", 100))
+    t2 = threading.Thread(target=claim_worker, args=("worker-b", 100))
+    t1.start()
+    t2.start()
+    t1.join(timeout=30)
+    t2.join(timeout=30)
+
+    assert len(errors) == 0, f"Unexpected errors: {errors}"
+    # No double-claims
+    assert len(claimed_ids) == len(set(claimed_ids)), "Double-claims detected"
+    # All 10 items claimed
+    assert len(claimed_ids) == 10
