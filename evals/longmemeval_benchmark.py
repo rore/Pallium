@@ -58,6 +58,24 @@ BATCH_SIZE = 50
 
 ANSWER_SCHEMA = '{"answer":"string","reasoning":"string"}'
 JUDGE_SCHEMA = '{"correct":"boolean","reasoning":"string"}'
+GOLD_IN_CONTEXT_SCHEMA = '{"present":"boolean","reasoning":"string"}'
+
+GOLD_IN_CONTEXT_SYSTEM_PROMPT = """\
+Determine whether the retrieved context contains sufficient information to answer the question \
+with the given gold answer. You are NOT judging whether the context is well-written or complete — \
+only whether the key facts from the gold answer are present somewhere in the context.
+
+Be generous: if the context contains the same information in different words, a different date format, \
+or a paraphrase, that counts as present. For multi-part gold answers (e.g., "A, B, and C"), ALL parts \
+must be present for the answer to count as present.
+
+For "not mentioned" gold answers: if the context truly lacks the information and the gold answer says \
+the information was not mentioned, return present=true (the absence is correctly represented).
+
+Return a JSON object with:
+- present: true if the context contains enough information to produce the gold answer, false otherwise
+- reasoning: one sentence explanation (keep it short)\
+"""
 
 # ---------------------------------------------------------------------------
 # Judge prompts — type-specific, following the LongMemEval paper methodology.
@@ -756,7 +774,12 @@ def _evaluate_question_from_retrieval(
         question_type=question_type,
     )
 
-    gold_in_context = _gold_in_context(gold_answer, retrieved_context)
+    gold_in_context = _gold_in_context(
+        gold_answer,
+        retrieved_context,
+        provider=answer_provider,
+        question=question_text,
+    )
 
     result: dict[str, Any] = {
         "question_id": question_id,
@@ -939,8 +962,25 @@ def _retrieval_summary(memory_payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _gold_in_context(gold_answer: str, context: str) -> bool:
-    """Check if the gold answer's key terms appear in the retrieved context."""
+def _gold_in_context(
+    gold_answer: str,
+    context: str,
+    *,
+    provider: LLMProvider | None = None,
+    question: str = "",
+) -> bool:
+    """Check if the gold answer's key information is present in the retrieved context.
+
+    Uses LLM-as-judge when a provider is given, otherwise falls back to token overlap.
+    """
+    if provider is not None and question:
+        return _gold_in_context_llm(
+            provider=provider,
+            question=question,
+            gold_answer=gold_answer,
+            context=context,
+        )
+    # Fallback: simple token overlap heuristic.
     gold_lower = gold_answer.lower().strip()
     context_lower = context.lower()
     if gold_lower in context_lower:
@@ -953,6 +993,33 @@ def _gold_in_context(gold_answer: str, context: str) -> bool:
         return False
     matched = sum(1 for t in gold_tokens if t in context_lower)
     return matched >= len(gold_tokens) * 0.6
+
+
+def _gold_in_context_llm(
+    *,
+    provider: LLMProvider,
+    question: str,
+    gold_answer: str,
+    context: str,
+) -> bool:
+    """LLM-based check: does the context contain the information needed for the gold answer?"""
+    user_prompt = (
+        f"Question: {question}\n"
+        f"Gold answer: {gold_answer}\n\n"
+        f"Retrieved context:\n{context[:4000]}"
+    )
+    try:
+        response = provider.generate_json(
+            system_prompt=GOLD_IN_CONTEXT_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            schema_description=GOLD_IN_CONTEXT_SCHEMA,
+        )
+        present = response.parsed_json.get("present", False)
+        if isinstance(present, str):
+            present = present.lower() in {"true", "yes", "1"}
+        return bool(present)
+    except Exception:
+        return _gold_in_context(gold_answer, context)
 
 
 def _compact_results(memory_payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1203,6 +1270,8 @@ def _build_summary(
         "invalid_questions": invalid,
         "correct": correct,
         "accuracy": round(correct / valid * 100, 1) if valid else 0,
+        "memory_delivery_accuracy": round(gold_in_ctx / valid * 100, 1) if valid else 0,
+        "justifier_failures": gold_in_ctx_wrong,
         "by_question_type": type_stats,
         "abstention": {
             "total": abstention_total,
@@ -1243,6 +1312,11 @@ def _build_report(
         f"**{summary['accuracy']}%** "
         f"({summary['correct']}/{summary['valid_questions']} correct"
         f"{invalid_note})",
+        "",
+        f"Memory delivery accuracy: **{summary['memory_delivery_accuracy']}%** "
+        f"(gold answer in retrieved context — Pallium's retrieval success rate)",
+        f"Justifier failures: {summary['justifier_failures']} "
+        f"(correct context delivered but answer generation failed)",
         "",
         "## By Question Type",
         "",
