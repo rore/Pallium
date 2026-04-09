@@ -868,7 +868,10 @@ def test_fresh_thread_broad_recall_prefers_structured_memory_over_noisy_source_e
     # Without the shaping stage, source_evidence may win when retrieval scores favor it.
     assert outcome.results
     assert outcome.injectable_blocks
-    assert any('admin portal' in block.text.lower() or 'local browser' in block.text.lower() for block in outcome.injectable_blocks)
+    # Dedup may merge the thread_summary into the task_checkpoint (overlapping content).
+    # The core invariant: structured memory (checkpoint) beats source evidence.
+    injected_ids = {b.result_id for b in outcome.injectable_blocks}
+    assert 'memory_object:checkpoint-recall-1' in injected_ids
 
 def test_query_only_current_thread_summary_is_excluded_from_recall_packaging() -> None:
     plugin = AgentConversationMemoryPlugin(
@@ -2386,3 +2389,132 @@ def test_dedup_greedy_sweep_preserves_non_transitive_pair() -> None:
     assert "mem-c" in retained_ids
     assert "mem-b" in removed_ids
 
+
+def test_dynamic_cap_expands_beyond_floor_when_scores_permit() -> None:
+    """With 5 eligible candidates, expansion includes those above 40% of top score."""
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help', thread_ref='chat:library-help:thread-dynamic-cap')
+    now = datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc)
+    # Each candidate has distinct content but shares 'library' + 'policy' with the query
+    decisions = [
+        {'decision': 'Library policy on batch sync size increased to 500 records', 'rationale': 'Throughput testing showed linear scaling'},
+        {'decision': 'Library policy on reservation hold timeout extended to 48 hours', 'rationale': 'Patron complaints about premature expiry'},
+        {'decision': 'Library policy on overdue notification changed to weekly', 'rationale': 'Reducing alert fatigue for staff'},
+        {'decision': 'Library policy on interlibrary loans routed through regional hub', 'rationale': 'Faster fulfillment from neighboring branches'},
+        {'decision': 'Library policy on patron account merging deployed', 'rationale': 'Staff reported growing duplicate profiles'},
+    ]
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id=f'decision-cap-{i}',
+                type='decision',
+                payload=decisions[i],
+                score=20 - i,
+                evidence=[EvidenceReference(source_item_id=f'src-cap-{i}', source_type='message', source_id=f'src-cap-{i}', occurred_at=now)],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-dynamic-cap',
+                freshness_at=now,
+            )
+            for i in range(5)
+        ],
+        trace=QueryTrace(
+            query_text='What library policy decisions were made recently?',
+            query_tokens=('library', 'policy', 'decisions', 'made', 'recently'),
+            limit=5,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+    outcome = plugin.route_query_results(
+        text='What library policy decisions were made recently?',
+        requested_limit=5,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        include_trace=True,
+    )
+    assert outcome.should_inject is True
+    # Should have at least 3 blocks (floor)
+    assert len(outcome.injectable_blocks) >= 3
+    routing = (outcome.trace.routing or {}) if outcome.trace else {}
+    injection = routing.get("injection_decision", {})
+    assert injection.get("cap") == 5
+    assert "cap_config" in injection
+
+
+def test_injection_dedup_removes_cross_package_duplicate_in_pipeline() -> None:
+    """Decision and atomic_fact about same topic from same source -> only one injected."""
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help', thread_ref='chat:library-help:thread-dedup-pipe')
+    now = datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc)
+    shared_evidence = [
+        EvidenceReference(source_item_id='msg-dedup-1', source_type='message', source_id='msg-dedup-1', occurred_at=now),
+    ]
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-dedup-1',
+                type='decision',
+                payload={'decision': 'Catalog sync batch scheduling deprioritized', 'rationale': 'Not relevant to current sprint priorities'},
+                score=20,
+                evidence=shared_evidence,
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-dedup-pipe',
+                freshness_at=now,
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='fact-dedup-1',
+                type='atomic_fact',
+                payload={'statement': 'Catalog sync batch scheduling not relevant to current sprint'},
+                score=18,
+                evidence=shared_evidence,
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-dedup-pipe',
+                freshness_at=now,
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-dedup-2',
+                type='decision',
+                payload={'decision': 'Library reservation hold timeout extended to 48 hours', 'rationale': 'User complaints about premature hold expiry'},
+                score=16,
+                evidence=[EvidenceReference(source_item_id='msg-dedup-2', source_type='message', source_id='msg-dedup-2', occurred_at=now)],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-dedup-pipe',
+                freshness_at=now,
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What were the recent catalog and library decisions?',
+            query_tokens=('recent', 'catalog', 'library', 'decisions'),
+            limit=5,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+    outcome = plugin.route_query_results(
+        text='What were the recent catalog and library decisions?',
+        requested_limit=5,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        include_trace=True,
+    )
+    assert outcome.should_inject is True
+    injected_ids = {b.result_id for b in outcome.injectable_blocks}
+    # The decision should win over the atomic_fact (higher score -> higher routing_score)
+    assert 'memory_object:decision-dedup-1' in injected_ids
+    assert 'memory_object:fact-dedup-1' not in injected_ids
+    # The second decision (different topic) should survive
+    assert 'memory_object:decision-dedup-2' in injected_ids
+    routing = (outcome.trace.routing or {}) if outcome.trace else {}
+    injection = routing.get("injection_decision", {})
+    assert injection.get("dedup_applied") is True
+    assert injection.get("dedup_removed_count") >= 1

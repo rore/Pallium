@@ -239,7 +239,7 @@ def _build_injectable_blocks(
             "returned_block_ids": [],
             "eligible_result_ids": [],
             "dropped_by_cap_result_ids": [],
-            "cap": 3,
+            "cap": INJECTION_HARD_CEILING,
             "same_thread_context_evaluation": same_thread_context,
         }
     if not final_candidates:
@@ -249,7 +249,7 @@ def _build_injectable_blocks(
             "returned_block_ids": [],
             "eligible_result_ids": [],
             "dropped_by_cap_result_ids": [],
-            "cap": 3,
+            "cap": INJECTION_HARD_CEILING,
             "same_thread_context_evaluation": same_thread_context,
         }
 
@@ -277,7 +277,7 @@ def _build_injectable_blocks(
                 "returned_block_ids": returned_ids,
                 "eligible_result_ids": returned_ids,
                 "dropped_by_cap_result_ids": [],
-                "cap": 3,
+                "cap": INJECTION_HARD_CEILING,
                 "same_thread_context_evaluation": same_thread_context,
             }
         return [], {
@@ -289,7 +289,7 @@ def _build_injectable_blocks(
             "returned_block_ids": [],
             "eligible_result_ids": [],
             "dropped_by_cap_result_ids": [],
-            "cap": 3,
+            "cap": INJECTION_HARD_CEILING,
             "same_thread_context_evaluation": same_thread_context,
         }
 
@@ -328,12 +328,32 @@ def _build_injectable_blocks(
             "returned_block_ids": [],
             "eligible_result_ids": [],
             "dropped_by_cap_result_ids": [],
-            "cap": 3,
+            "cap": INJECTION_HARD_CEILING,
             "same_thread_context_evaluation": same_thread_context,
         }
 
-    selected_candidates = list(primary_eligible_candidates[:3])
-    if intent == "work_resumption" and len(selected_candidates) < 3:
+    # --- Dedup + dynamic cap (replaces static [:3] cap) ---
+    deduped_candidates, dedup_removed = _dedup_eligible_candidates(primary_eligible_candidates)
+    dedup_removed_ids = [_routing_result_id(c["item"]) for c in dedup_removed]
+
+    floor = min(INJECTION_MIN_FLOOR, len(deduped_candidates))
+    selected_candidates = list(deduped_candidates[:floor])
+
+    # Expand beyond floor if candidates score well relative to top
+    expansion_added = 0
+    if deduped_candidates and floor > 0:
+        top_score = int(deduped_candidates[0].get("routing_score") or 0)
+        if top_score > 0 and len(deduped_candidates) > floor:
+            expansion_floor_score = top_score * INJECTION_EXPANSION_RATIO
+            for candidate in deduped_candidates[floor:]:
+                if len(selected_candidates) >= INJECTION_HARD_CEILING:
+                    break
+                if int(candidate.get("routing_score") or 0) >= expansion_floor_score:
+                    selected_candidates.append(candidate)
+                    expansion_added += 1
+
+    # Companion fill (work_resumption only): fill to ceiling with dedup check
+    if intent == "work_resumption" and len(selected_candidates) < INJECTION_HARD_CEILING:
         used_result_ids = {_routing_result_id(candidate["item"]) for candidate in selected_candidates}
         companion_candidates = [
             candidate
@@ -349,20 +369,25 @@ def _build_injectable_blocks(
             and _routing_result_id(candidate["item"]) not in used_result_ids
         ]
         for candidate in companion_candidates:
-            if len(selected_candidates) >= 3:
+            if len(selected_candidates) >= INJECTION_HARD_CEILING:
                 break
+            if _is_duplicate_of_selected(candidate, selected_candidates):
+                continue
             selected_candidates.append(candidate)
             used_result_ids.add(_routing_result_id(candidate["item"]))
 
-    # Constraint supplement: add recent constraint if room permits
-    if len(selected_candidates) < 3:
+    # Constraint supplement: add recent constraint if room permits, with dedup check
+    if len(selected_candidates) < INJECTION_HARD_CEILING:
         _selected_ids = {_routing_result_id(c["item"]) for c in selected_candidates}
         constraint_supplements = _find_constraint_supplements(
             ranked_candidates,
             already_selected_ids=_selected_ids,
-            max_count=min(_CONSTRAINT_SUPPLEMENT_CAP, 3 - len(selected_candidates)),
+            max_count=min(_CONSTRAINT_SUPPLEMENT_CAP, INJECTION_HARD_CEILING - len(selected_candidates)),
         )
-        selected_candidates.extend(constraint_supplements)
+        for cs in constraint_supplements:
+            if _is_duplicate_of_selected(cs, selected_candidates):
+                continue
+            selected_candidates.append(cs)
 
     blocks = [_build_injectable_block_from_candidate(candidate, intent=intent) for candidate in selected_candidates]
     returned_ids = [block.result_id for block in blocks]
@@ -399,7 +424,17 @@ def _build_injectable_blocks(
         "returned_block_ids": returned_ids,
         "eligible_result_ids": eligible_ids,
         "dropped_by_cap_result_ids": dropped_ids,
-        "cap": 3,
+        "cap": INJECTION_HARD_CEILING,
+        "cap_config": {
+            "floor": INJECTION_MIN_FLOOR,
+            "expansion_ratio": INJECTION_EXPANSION_RATIO,
+            "ceiling": INJECTION_HARD_CEILING,
+        },
+        "dedup_applied": bool(dedup_removed),
+        "dedup_removed_count": len(dedup_removed),
+        "dedup_removed_result_ids": dedup_removed_ids,
+        "expansion_applied": expansion_added > 0,
+        "expansion_added_count": expansion_added,
         "same_thread_context_evaluation": same_thread_context,
     }
 
