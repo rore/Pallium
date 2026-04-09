@@ -86,6 +86,14 @@ class RetentionConfig:
     batch_size: int = 200
 
 
+@dataclass(frozen=True)
+class SnapshotConfig:
+    enabled: bool = False
+    snapshot_path: str | None = None
+    interval_seconds: int = 60
+    max_snapshots: int = 5
+
+
 def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
     return {
         "demo_agent_memory": SemanticPackageConfig(name="demo_agent_memory", implementation="demo_agent_memory"),
@@ -118,6 +126,7 @@ class AppConfig:
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
     retention: RetentionConfig = field(default_factory=RetentionConfig)
     vector_index: VectorIndexConfig = field(default_factory=VectorIndexConfig)
+    snapshot: SnapshotConfig = field(default_factory=SnapshotConfig)
 
     # Legacy compatibility inputs. New code should prefer llm_providers and semantic_packages.
     llm_provider: str | None = None
@@ -229,6 +238,31 @@ class AppConfig:
                     env_values,
                     _read_nested(config_data, "retention", "batch_size"),
                     200,
+                ),
+            ),
+            snapshot=SnapshotConfig(
+                enabled=_resolve_bool_value(
+                    "PALLIUM_SNAPSHOT_ENABLED",
+                    env_values,
+                    _read_nested(config_data, "snapshot", "enabled"),
+                    False,
+                ),
+                snapshot_path=_resolve_global_value(
+                    "PALLIUM_SNAPSHOT_PATH",
+                    env_values,
+                    _as_optional_string(_read_nested(config_data, "snapshot", "snapshot_path")),
+                ),
+                interval_seconds=_resolve_int_setting(
+                    "PALLIUM_SNAPSHOT_INTERVAL_SECONDS",
+                    env_values,
+                    _read_nested(config_data, "snapshot", "interval_seconds"),
+                    60,
+                ),
+                max_snapshots=_resolve_int_setting(
+                    "PALLIUM_SNAPSHOT_MAX_SNAPSHOTS",
+                    env_values,
+                    _read_nested(config_data, "snapshot", "max_snapshots"),
+                    5,
                 ),
             ),
             llm_providers=_build_provider_configs(config_data, env_values),
