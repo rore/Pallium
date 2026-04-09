@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from typing import Any
 
 from capabilities.consolidation import ConsolidationGroup, ConsolidationPolicy
@@ -169,7 +170,11 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
 
     @property
     def thread_conclusion_types(self) -> frozenset[str]:
-        return frozenset()
+        return frozenset({FACT_TYPE})
+
+    @property
+    def rebuild_supersedes_prior(self) -> bool:
+        return False
 
     # ── Consolidation interface ──────────────────────────────────────────
 
@@ -221,23 +226,44 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
         aggregate: ThreadAggregate,
         conclusions: list[MemoryObject],
     ) -> ProcessResult:
-        """Extract atomic facts from the full thread.
+        """Extract atomic facts incrementally from new thread messages.
 
-        Splits source items into chunks bounded by item count and char budget.
-        Each chunk gets one LLM call. Results are merged and deduped.
+        On first extraction (no existing facts), processes the full thread.
+        On subsequent calls, only processes source items newer than the
+        extraction watermark stored in existing facts.
         """
         if len(aggregate.source_items) < 2:
             return ProcessResult(memory_objects=[], relations=[], index_entries=[])
 
-        chunk_texts = _build_chunk_texts(aggregate.source_items)
+        # Determine which items are new since the last extraction
+        existing_facts = conclusions  # filtered to FACT_TYPE by thread_conclusion_types
+        watermark = _resolve_extraction_watermark(existing_facts)
+
+        if watermark is not None:
+            new_items = [
+                item for item in aggregate.source_items
+                if item.created_at > watermark
+            ]
+        else:
+            # First extraction or backward compat — process full thread
+            new_items = list(aggregate.source_items)
+
+        if not new_items:
+            return ProcessResult(memory_objects=[], relations=[], index_entries=[])
+
+        chunk_texts = _build_chunk_texts(new_items)
         if not chunk_texts:
             return ProcessResult(memory_objects=[], relations=[], index_entries=[])
 
+        existing_facts_context = _build_existing_facts_context(existing_facts)
+
         raw_facts: list[dict] = []
         for chunk_text in chunk_texts:
-            raw_facts.extend(self._extract_facts(chunk_text))
+            raw_facts.extend(
+                self._extract_facts(chunk_text, existing_facts=existing_facts_context)
+            )
 
-        raw_facts = _dedup_extracted_facts(raw_facts)
+        raw_facts = _dedup_extracted_facts(raw_facts, existing_facts=existing_facts_context)
         if not raw_facts:
             return ProcessResult(memory_objects=[], relations=[], index_entries=[])
 
@@ -248,6 +274,9 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
         )
         container_ref = aggregate.container_ref
         visibility = aggregate.visibility
+
+        # Watermark: max created_at among the new items we just processed
+        new_watermark = max(item.created_at for item in new_items).isoformat()
 
         memory_objects: list[MemoryObject] = []
         relations: list[Relation] = []
@@ -272,6 +301,7 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
                         "statement": statement,
                         "category": category,
                         "thread_ref": aggregate.thread_ref,
+                        "extraction_watermark": new_watermark,
                     },
                     visibility=visibility or "private",
                     container_ref=container_ref,
@@ -279,7 +309,7 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
                 )
             )
 
-            # Evidence: supported_by all thread source items
+            # Evidence: supported_by ALL thread source items (not just new — preserves retention safety)
             for item in aggregate.source_items:
                 relations.append(
                     Relation(
@@ -322,12 +352,29 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
             index_entries=index_entries,
         )
 
-    def _extract_facts(self, thread_text: str) -> list[dict[str, Any]]:
-        """Call the LLM to extract facts from thread text."""
+    def _extract_facts(self, thread_text: str, *, existing_facts: list[dict] | None = None) -> list[dict[str, Any]]:
+        """Call the LLM to extract facts from thread text.
+
+        When existing_facts is provided, prepends them to the user prompt so
+        the LLM avoids re-extracting already-known facts.
+        """
+        user_prompt = thread_text
+        if existing_facts:
+            existing_lines = "\n".join(
+                f"- {f.get('subject', '')}: {f.get('statement', '')}"
+                for f in existing_facts
+            )
+            user_prompt = (
+                f"Previously extracted facts (do NOT re-extract these):\n"
+                f"{existing_lines}\n\n"
+                f"New conversation messages to extract facts from:\n"
+                f"{thread_text}"
+            )
+
         try:
             response = self._provider_for_role("fact_extraction").generate_json(
                 system_prompt=FACT_EXTRACTION_SYSTEM_PROMPT,
-                user_prompt=thread_text,
+                user_prompt=user_prompt,
                 schema_description=FACT_EXTRACTION_SCHEMA_DESCRIPTION,
             )
             parsed = response.parsed_json
@@ -399,6 +446,36 @@ def _is_eligible_for_fact_extraction(source_item: SourceItem) -> bool:
     return (artifact_kind, role) in ELIGIBLE_ARTIFACT_ROLES
 
 
+def _resolve_extraction_watermark(existing_facts: list[MemoryObject]) -> datetime | None:
+    """Read extraction_watermark from existing facts and return the max timestamp.
+
+    Returns None if no facts exist or any fact lacks the watermark field,
+    which triggers full extraction (backward compatibility).
+    """
+    if not existing_facts:
+        return None
+    timestamps: list[datetime] = []
+    for fact in existing_facts:
+        watermark_str = fact.payload.get("extraction_watermark")
+        if watermark_str is None:
+            # Any fact missing the field → full extraction for backward compat
+            return None
+        timestamps.append(datetime.fromisoformat(watermark_str))
+    return max(timestamps)
+
+
+def _build_existing_facts_context(existing_facts: list[MemoryObject]) -> list[dict]:
+    """Convert existing MemoryObject facts to dicts for prompt context and dedup."""
+    result: list[dict] = []
+    for fact in existing_facts:
+        result.append({
+            "subject": str(fact.payload.get("subject", "")).strip(),
+            "statement": str(fact.payload.get("statement", "")).strip(),
+            "category": str(fact.payload.get("category", "")).strip(),
+        })
+    return result
+
+
 def _build_chunk_texts(source_items: list[SourceItem]) -> list[str]:
     """Split source items into chunk texts for extraction.
 
@@ -441,9 +518,20 @@ def _build_chunk_texts(source_items: list[SourceItem]) -> list[str]:
     return chunks
 
 
-def _dedup_extracted_facts(facts: list[dict]) -> list[dict]:
-    """Remove duplicate facts from merged multi-chunk extraction."""
+def _dedup_extracted_facts(facts: list[dict], existing_facts: list[dict] | None = None) -> list[dict]:
+    """Remove duplicate facts from merged multi-chunk extraction.
+
+    When existing_facts is provided, pre-seeds the seen set so new facts
+    that duplicate existing ones are filtered out.
+    """
     seen: set[tuple[str, str]] = set()
+    if existing_facts:
+        for fact in existing_facts:
+            key = (
+                normalize_for_index(str(fact.get("subject", ""))),
+                normalize_for_index(str(fact.get("statement", ""))),
+            )
+            seen.add(key)
     result: list[dict] = []
     for fact in facts:
         key = (
