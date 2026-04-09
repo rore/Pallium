@@ -451,6 +451,11 @@ def _resolve_extraction_watermark(existing_facts: list[MemoryObject]) -> datetim
 
     Returns None if no facts exist or any fact lacks the watermark field,
     which triggers full extraction (backward compatibility).
+
+    Known v1 limitation: if all facts for a thread are superseded by
+    consolidation (fact_summary), the next rebuild finds no active facts
+    and falls back to full re-extraction. This is self-correcting but
+    wastes one LLM call per consolidation cycle.
     """
     if not existing_facts:
         return None
@@ -460,7 +465,11 @@ def _resolve_extraction_watermark(existing_facts: list[MemoryObject]) -> datetim
         if watermark_str is None:
             # Any fact missing the field → full extraction for backward compat
             return None
-        timestamps.append(datetime.fromisoformat(watermark_str))
+        try:
+            timestamps.append(datetime.fromisoformat(watermark_str))
+        except (ValueError, TypeError):
+            logger.warning("Malformed extraction_watermark '%s'; falling back to full extraction", watermark_str)
+            return None
     return max(timestamps)
 
 
