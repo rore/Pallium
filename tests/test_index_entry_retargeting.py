@@ -396,3 +396,294 @@ class TestRetentionInteraction:
 
         # Entry still exists and points to new_mo
         assert storage.get_index_entry(entry.id).target_id == new_mo.id
+
+
+# ---------------------------------------------------------------------------
+# Integration: consolidation runner retargets entries end-to-end
+# ---------------------------------------------------------------------------
+
+class TestConsolidationRunnerRetargets:
+
+    def test_cross_type_supersession_retargets_entries(self, test_db_url: str) -> None:
+        """Full consolidation: atomic_facts with index entries → fact_summary.
+        Entries should be retargeted from superseded atomic_facts to new fact_summary."""
+        import json
+        from providers.llm.base import LLMProvider, LLMJsonResponse
+        from semantic.conversational_knowledge import ConversationalKnowledgePlugin
+        from retrieval.lexical import LexicalRetrievalProvider
+        from core.service import PalliumService
+
+        class StubProvider(LLMProvider):
+            provider_name = "stub"
+            def generate_json(self, *, system_prompt, user_prompt, schema_description):
+                result = {
+                    "summary": "Alice is a citizen of India and speaks Hindi fluently",
+                    "superseded_indices": [],
+                    "reasoning": "stub",
+                }
+                return LLMJsonResponse(raw_text=json.dumps(result), parsed_json=result)
+
+        storage = SQLiteStorageProvider(test_db_url)
+        plugin = ConversationalKnowledgePlugin(provider=StubProvider())
+        service = PalliumService(
+            storage=storage,
+            retrieval=LexicalRetrievalProvider(storage),
+            semantic_plugins={"conversational_knowledge": plugin},
+            default_use_case="conversational_knowledge",
+        )
+
+        # Create 3 atomic_facts with index entries (simulating what semantic processing does)
+        atomic_ids = []
+        entry_ids = []
+        for i in range(3):
+            mo = MemoryObject(
+                type="atomic_fact",
+                schema_id="conversational_knowledge.atomic_fact",
+                schema_version="v1",
+                payload={
+                    "subject": "Alice",
+                    "statement": f"Alice fact {i}",
+                    "category": "personal",
+                    "thread_ref": f"t{i}",
+                },
+                lifecycle="active",
+                visibility="public",
+                container_ref="c1",
+            )
+            storage.create_memory_object(mo)
+            atomic_ids.append(mo.id)
+
+            # Create lexical + vector entries (like semantic processing does)
+            lex_entry = _make_index_entry(
+                "memory_object", mo.id, "lexical",
+                text_view=f"alice fact {i}",
+                text_view_name="memory_object.fact_statement",
+            )
+            vec_entry = _make_index_entry(
+                "memory_object", mo.id, "vector",
+                text_view=f"Alice: Alice fact {i}",
+                text_view_name="memory_object.fact_embedding",
+            )
+            storage.create_index_entry(lex_entry)
+            storage.create_index_entry(vec_entry)
+            entry_ids.extend([lex_entry.id, vec_entry.id])
+
+        # Run consolidation
+        result = service.run_consolidation_pass(use_case="conversational_knowledge")
+        assert result is not None
+        assert len(result.groups) == 1
+
+        # Verify atomic_facts are superseded
+        for aid in atomic_ids:
+            assert storage.get_memory_object(aid).lifecycle == "superseded"
+
+        # Find the new fact_summary
+        summaries = storage.list_memory_objects(memory_types=["fact_summary"], lifecycle="active")
+        assert len(summaries) == 1
+        fact_summary_id = summaries[0].id
+
+        # KEY ASSERTION: all 6 entries (3 lexical + 3 vector) should now point to fact_summary
+        for eid in entry_ids:
+            entry = storage.get_index_entry(eid)
+            assert entry.target_id == fact_summary_id, (
+                f"Entry {eid} still points to {entry.target_id}, expected {fact_summary_id}"
+            )
+
+        # Old atomic_facts should have NO entries pointing at them
+        for aid in atomic_ids:
+            assert storage.list_index_entries_for_target("memory_object", aid) == []
+
+        # fact_summary should have the retargeted entries PLUS its own entries
+        all_entries = storage.list_index_entries_for_target("memory_object", fact_summary_id)
+        retargeted = [e for e in all_entries if e.id in entry_ids]
+        own = [e for e in all_entries if e.id not in entry_ids]
+        assert len(retargeted) == 6  # 3 lexical + 3 vector from atomic_facts
+        assert len(own) >= 1  # fact_summary's own entries
+
+    def test_same_type_supersession_retargets_entries(self, test_db_url: str) -> None:
+        """When fact_summary v2 supersedes v1, v1's entries (including those
+        retargeted from atomic_facts) should move to v2."""
+        import json
+        from providers.llm.base import LLMProvider, LLMJsonResponse
+        from semantic.conversational_knowledge import ConversationalKnowledgePlugin
+        from retrieval.lexical import LexicalRetrievalProvider
+        from core.service import PalliumService
+
+        call_count = 0
+
+        class StubConsolidationProvider(LLMProvider):
+            provider_name = "stub"
+            def generate_json(self, *, system_prompt, user_prompt, schema_description):
+                nonlocal call_count
+                call_count += 1
+                summary = f"Alice consolidated summary version {call_count}"
+                result = {
+                    "summary": summary,
+                    "superseded_indices": [],
+                    "reasoning": "stub",
+                }
+                return LLMJsonResponse(raw_text=json.dumps(result), parsed_json=result)
+
+        storage = SQLiteStorageProvider(test_db_url)
+        plugin = ConversationalKnowledgePlugin(provider=StubConsolidationProvider())
+        service = PalliumService(
+            storage=storage,
+            retrieval=LexicalRetrievalProvider(storage),
+            semantic_plugins={"conversational_knowledge": plugin},
+            default_use_case="conversational_knowledge",
+        )
+
+        # Create 3 atomic_facts with entries
+        original_entry_ids = []
+        for i in range(3):
+            mo = MemoryObject(
+                type="atomic_fact",
+                schema_id="conversational_knowledge.atomic_fact",
+                schema_version="v1",
+                payload={
+                    "subject": "Alice", "statement": f"Alice fact {i}",
+                    "category": "personal", "thread_ref": f"t{i}",
+                },
+                lifecycle="active", visibility="public", container_ref="c1",
+            )
+            storage.create_memory_object(mo)
+            entry = _make_index_entry(
+                "memory_object", mo.id, "lexical",
+                text_view=f"alice fact {i}",
+            )
+            storage.create_index_entry(entry)
+            original_entry_ids.append(entry.id)
+
+        # First consolidation: atomic_facts → fact_summary v1
+        result1 = service.run_consolidation_pass(use_case="conversational_knowledge")
+        assert result1 is not None
+        v1_summaries = storage.list_memory_objects(memory_types=["fact_summary"], lifecycle="active")
+        assert len(v1_summaries) == 1
+        v1_id = v1_summaries[0].id
+
+        # All original entries point to v1
+        for eid in original_entry_ids:
+            assert storage.get_index_entry(eid).target_id == v1_id
+
+        # Add new atomic_facts from different threads to trigger re-consolidation
+        # (strategy requires MIN_DISTINCT_THREADS=2 and MIN_GROUP_SIZE=2)
+        new_entry_ids = []
+        for i, tref in enumerate(["t_new1", "t_new2"]):
+            new_mo = MemoryObject(
+                type="atomic_fact",
+                schema_id="conversational_knowledge.atomic_fact",
+                schema_version="v1",
+                payload={
+                    "subject": "Alice", "statement": f"Alice fact new {i}",
+                    "category": "personal", "thread_ref": tref,
+                },
+                lifecycle="active", visibility="public", container_ref="c1",
+            )
+            storage.create_memory_object(new_mo)
+            new_entry = _make_index_entry(
+                "memory_object", new_mo.id, "lexical",
+                text_view=f"alice fact new {i}",
+            )
+            storage.create_index_entry(new_entry)
+            new_entry_ids.append(new_entry.id)
+
+        # Second consolidation: fact_summary v1 + new atomic_facts → fact_summary v2
+        result2 = service.run_consolidation_pass(use_case="conversational_knowledge")
+        assert result2 is not None
+
+        # v1 should be superseded
+        assert storage.get_memory_object(v1_id).lifecycle == "superseded"
+
+        # Find v2
+        v2_summaries = storage.list_memory_objects(memory_types=["fact_summary"], lifecycle="active")
+        assert len(v2_summaries) == 1
+        v2_id = v2_summaries[0].id
+        assert v2_id != v1_id
+
+        # KEY: original entries from atomic_facts should now point to v2 (chain retarget)
+        for eid in original_entry_ids:
+            entry = storage.get_index_entry(eid)
+            assert entry.target_id == v2_id, (
+                f"Entry {eid} points to {entry.target_id}, expected v2={v2_id}"
+            )
+
+        # New atomic_facts' entries should also point to v2
+        for eid in new_entry_ids:
+            assert storage.get_index_entry(eid).target_id == v2_id
+
+        # No ghost entries: v1 should have no entries pointing at it
+        assert storage.list_index_entries_for_target("memory_object", v1_id) == []
+
+    def test_zero_ghost_entries_after_consolidation(self, test_db_url: str) -> None:
+        """After consolidation, NO index entries should point to superseded memories."""
+        import json
+        from providers.llm.base import LLMProvider, LLMJsonResponse
+        from semantic.conversational_knowledge import ConversationalKnowledgePlugin
+        from retrieval.lexical import LexicalRetrievalProvider
+        from core.service import PalliumService
+
+        class StubProvider(LLMProvider):
+            provider_name = "stub"
+            def generate_json(self, *, system_prompt, user_prompt, schema_description):
+                result = {
+                    "summary": "All facts about Alice consolidated",
+                    "superseded_indices": [],
+                    "reasoning": "stub",
+                }
+                return LLMJsonResponse(raw_text=json.dumps(result), parsed_json=result)
+
+        storage = SQLiteStorageProvider(test_db_url)
+        service = PalliumService(
+            storage=storage,
+            retrieval=LexicalRetrievalProvider(storage),
+            semantic_plugins={
+                "conversational_knowledge": ConversationalKnowledgePlugin(
+                    provider=StubProvider(),
+                ),
+            },
+            default_use_case="conversational_knowledge",
+        )
+
+        # Create atomic_facts with entries
+        for i in range(5):
+            mo = MemoryObject(
+                type="atomic_fact",
+                schema_id="conversational_knowledge.atomic_fact",
+                schema_version="v1",
+                payload={
+                    "subject": "Alice", "statement": f"fact {i}",
+                    "category": "personal", "thread_ref": f"t{i}",
+                },
+                lifecycle="active", visibility="public", container_ref="c1",
+            )
+            storage.create_memory_object(mo)
+            for idx_type, view_name in [
+                ("lexical", "memory_object.fact_statement"),
+                ("vector", "memory_object.fact_embedding"),
+            ]:
+                storage.create_index_entry(_make_index_entry(
+                    "memory_object", mo.id, idx_type,
+                    text_view=f"alice fact {i}",
+                    text_view_name=view_name,
+                ))
+
+        # Run consolidation
+        service.run_consolidation_pass(use_case="conversational_knowledge")
+
+        # THE INVARIANT: zero ghost entries
+        all_entries = (
+            storage.list_index_entries_by_type("lexical")
+            + storage.list_index_entries_by_type("vector")
+        )
+        ghosts = []
+        for entry in all_entries:
+            if entry.target_kind != "memory_object":
+                continue
+            try:
+                mo = storage.get_memory_object(entry.target_id)
+                if mo.lifecycle == "superseded":
+                    ghosts.append((entry.id, entry.target_id, mo.type))
+            except KeyError:
+                ghosts.append((entry.id, entry.target_id, "MISSING"))
+
+        assert ghosts == [], f"Found {len(ghosts)} ghost entries: {ghosts[:5]}"
