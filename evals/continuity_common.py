@@ -309,7 +309,7 @@ def score_injection_contract(
     eligible_result_ids = list(injection_summary.get("eligible_result_ids", []))
     returned_block_ids = list(injection_summary.get("returned_block_ids", []))
     dropped_by_cap_result_ids = list(injection_summary.get("dropped_by_cap_result_ids", []))
-    cap_value = int(injection_summary.get("cap", 3) or 3)
+    cap_value = int(injection_summary.get("cap", 5) or 5)
     cap_obeyed = injected_block_count <= cap_value
     cap_behavior_ok = True
     if expected_cap_behavior == "drop_extra_candidates":
@@ -433,7 +433,7 @@ def default_injection_expectations(
         resolved_forbidden_block_types = fallback_block_types_from_layers(forbidden_layers or [])
     resolved_block_count = acceptable_injected_block_count
     if resolved_block_count is None:
-        resolved_block_count = {"min": 1, "max": 3} if resolved_should_inject else 0
+        resolved_block_count = {"min": 1, "max": 5} if resolved_should_inject else 0
     return {
         "expected_should_inject": bool(resolved_should_inject),
         "expected_decision_reason": resolved_decision_reason,

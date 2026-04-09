@@ -2346,6 +2346,9 @@ def test_dedup_detects_text_only_duplicate_without_shared_evidence() -> None:
 def test_dedup_greedy_sweep_preserves_non_transitive_pair() -> None:
     """A~B and B~C but not A~C → A and C survive, only B removed."""
     from semantic.agent_conversation_memory_routing_selection import _dedup_eligible_candidates
+    # A (pattern_memory) ~ B (continuity_memory) on shared tokens, different types → dedup fires
+    # B (continuity_memory) ~ C (atomic_fact) on shared tokens, different types → dedup fires
+    # A (pattern_memory) ~ C (atomic_fact) no shared tokens → not duplicate
     candidate_a = {
         "item": QueryResultItem(
             result_kind="memory_hit",
@@ -2362,8 +2365,8 @@ def test_dedup_greedy_sweep_preserves_non_transitive_pair() -> None:
         "item": QueryResultItem(
             result_kind="memory_hit",
             memory_object_id="mem-b",
-            type="pattern_memory",
-            payload={"summary": "duplicate hold records batch queue journal refactoring"},
+            type="continuity_memory",
+            payload={"carry_forward_answer": "duplicate hold records batch queue journal refactoring"},
             score=16,
             evidence=[],
             container_ref="chat:test",
@@ -2374,8 +2377,8 @@ def test_dedup_greedy_sweep_preserves_non_transitive_pair() -> None:
         "item": QueryResultItem(
             result_kind="memory_hit",
             memory_object_id="mem-c",
-            type="pattern_memory",
-            payload={"summary": "batch queue journal refactoring monitoring"},
+            type="atomic_fact",
+            payload={"statement": "batch queue journal refactoring monitoring"},
             score=14,
             evidence=[],
             container_ref="chat:test",
@@ -2539,7 +2542,7 @@ def test_sharp_diagnostics_shows_dedup_loss_stage() -> None:
                 result_kind='memory_hit',
                 memory_object_id='decision-diag-1',
                 type='decision',
-                payload={'decision': 'Catalog batch scheduling deprioritized for sprint', 'rationale': 'Capacity constraints'},
+                payload={'decision': 'Catalog batch scheduling deprioritized for current sprint', 'rationale': 'Capacity constraints prevent batch scheduling work'},
                 score=20,
                 evidence=shared_evidence,
                 container_ref='chat:library-help',
@@ -2549,8 +2552,8 @@ def test_sharp_diagnostics_shows_dedup_loss_stage() -> None:
             QueryResultItem(
                 result_kind='memory_hit',
                 memory_object_id='decision-diag-2',
-                type='decision',
-                payload={'decision': 'Catalog batch scheduling not relevant this sprint', 'rationale': 'Team focused elsewhere'},
+                type='investigation_outcome',
+                payload={'investigation_outcome': 'Catalog batch scheduling deprioritized for current sprint due to capacity constraints', 'rationale': 'Capacity constraints prevent scheduling work'},
                 score=18,
                 evidence=shared_evidence,
                 container_ref='chat:library-help',

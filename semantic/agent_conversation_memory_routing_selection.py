@@ -409,8 +409,6 @@ def _build_injectable_blocks(
         for candidate in companion_candidates:
             if len(selected_candidates) >= INJECTION_HARD_CEILING:
                 break
-            if _is_duplicate_of_selected(candidate, selected_candidates):
-                continue
             selected_candidates.append(candidate)
             used_result_ids.add(_routing_result_id(candidate["item"]))
 
@@ -1074,7 +1072,7 @@ def _find_constraint_supplements(
 INJECTION_MIN_FLOOR = 3
 INJECTION_EXPANSION_RATIO = 0.4
 INJECTION_HARD_CEILING = 5
-DEDUP_EVIDENCE_TEXT_THRESHOLD = 0.4
+DEDUP_EVIDENCE_TEXT_THRESHOLD = 0.75
 DEDUP_TEXT_ONLY_THRESHOLD = 0.7
 DEDUP_MIN_TOKENS = 2
 
@@ -1094,6 +1092,11 @@ def _is_content_duplicate(
     """Two-gate duplicate check: evidence+text or text-only.
 
     Returns True when two candidates carry semantically duplicate content.
+    Only applies between memory_hit candidates of different types (the cross-
+    package case: e.g., decision + atomic_fact about the same content).
+    Source hits are never deduped (they are raw evidence, not derived memory).
+    Same-type memories are never deduped (two decisions from the same thread
+    are likely about different things even if they share vocabulary).
     Evidence overlap alone is not sufficient (thread-level extractions share
     all source items) — it must be combined with text overlap.
     """
@@ -1101,6 +1104,12 @@ def _is_content_duplicate(
     item_b = candidate_b["item"]
     assert isinstance(item_a, QueryResultItem)
     assert isinstance(item_b, QueryResultItem)
+
+    # Only dedup between memory_hit candidates of different types
+    if item_a.result_kind != "memory_hit" or item_b.result_kind != "memory_hit":
+        return False
+    if item_a.type == item_b.type:
+        return False
 
     text_a = _candidate_content_surface(item_a)
     text_b = _candidate_content_surface(item_b)

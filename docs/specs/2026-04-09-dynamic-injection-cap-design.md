@@ -54,7 +54,7 @@ Uses existing `content_tokens()` (stopword-filtered, plural-stem-aware) and `_ca
 
 ```
 is_duplicate(A, B) =
-    (shared_evidence(A, B) AND overlap_coeff(A, B) >= 0.4)   # evidence corroborates loose text match
+    (shared_evidence(A, B) AND overlap_coeff(A, B) >= 0.75)   # evidence corroborates text match
     OR (overlap_coeff(A, B) >= 0.7                             # text-only requires strict match
         AND min(|tokens_A|, |tokens_B|) >= 2)
 ```
