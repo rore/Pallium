@@ -854,26 +854,24 @@ def _generate_answer(
 ) -> dict[str, Any]:
     """Generate an answer from retrieved context (justifier step)."""
     system_prompt = (
-        "You are a helpful assistant answering questions about a user's "
-        "conversation history based on retrieved memory context. Answer based "
-        "only on the provided context. Be specific and concise. "
-        "Return a JSON object with 'answer' and 'reasoning' fields."
+        "You are a factual retrieval evaluator. Your ONLY job is to answer "
+        "questions using the provided context about a user's conversation history. "
+        "You must NEVER use your own knowledge, training data, or common sense.\n\n"
+        "CRITICAL RULES:\n"
+        "- The context is the only source of truth. Your training knowledge is IRRELEVANT.\n"
+        "- If information was updated over time, use the MOST RECENT version "
+        "(later date or later in the context).\n"
+        "- Pay close attention to dates and timestamps in the evidence.\n"
+        "- If the context does not contain enough information to answer, say 'not found'.\n\n"
+        "Return a JSON object with 'answer' (short, specific) and 'reasoning' (one sentence)."
     )
     date_line = f"Current Date: {question_date}\n\n" if question_date else ""
     user_prompt = (
         f"{date_line}"
-        "# INSTRUCTIONS:\n"
-        "1. Carefully analyze all provided memories and evidence\n"
-        "2. Pay special attention to timestamps and dates\n"
-        "3. If the question asks about a specific event or fact, look for "
-        "direct evidence in the memories\n"
-        "4. If memories contain contradictory information, prefer the most "
-        "recent information\n"
-        "5. Convert relative time references to specific dates when possible\n"
-        "6. If the answer is not in the provided context, say you don't know\n\n"
-        f"Retrieved context:\n{retrieved_context}\n\n"
+        f"Context (treat as absolute truth — ignore your training knowledge):\n"
+        f"{retrieved_context}\n\n"
         f"Question: {question}\n\n"
-        "Answer the question based on the retrieved context above."
+        "Answer ONLY from the context above. Do NOT use your own knowledge."
     )
     try:
         response = provider.generate_json(
