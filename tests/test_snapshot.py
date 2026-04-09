@@ -17,6 +17,7 @@ from app.snapshot import (
     _find_latest_snapshot,
     restore_snapshot,
     _prune_old_snapshots,
+    run_snapshot,
 )
 
 
@@ -574,3 +575,50 @@ def test_begin_immediate_under_wal(tmp_path: Path) -> None:
     assert len(claimed_ids) == len(set(claimed_ids)), "Double-claims detected"
     # All 10 items claimed
     assert len(claimed_ids) == 10
+
+
+# === Worker loop test ===
+
+
+def test_snapshot_worker_loop_unit(tmp_path: Path, monkeypatch) -> None:
+    db_dir = tmp_path / "db"
+    db_dir.mkdir()
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    db_path = db_dir / "pallium.db"
+    _make_test_db(db_path, rows=5)
+
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        f"""
+[snapshot]
+enabled = true
+snapshot_path = "{snapshot_dir.as_posix()}"
+interval_seconds = 60
+max_snapshots = 5
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("PALLIUM_SQLITE_URL", f"sqlite:///{db_path.as_posix()}")
+
+    call_count = 0
+
+    def counting_sleep(seconds: float) -> None:
+        nonlocal call_count
+        call_count += 1
+
+    stop_after = 2
+
+    def should_stop() -> bool:
+        return call_count >= stop_after
+
+    exit_code = run_snapshot(
+        ["--interval-seconds", "1"],
+        sleep_fn=counting_sleep,
+        should_stop=should_stop,
+        install_signal_handlers=False,
+    )
+    assert exit_code == 0
+    snapshots = list(snapshot_dir.glob("pallium-*.db"))
+    assert len(snapshots) >= 1

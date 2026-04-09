@@ -6,12 +6,19 @@ shutdown snapshot. Uses the SQLite backup API for non-blocking copies.
 """
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import shutil
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Callable
+
+from app.config import AppConfig, SnapshotConfig
+from app.runtime_logging import emit_runtime_log
+from app.signal_context import graceful_stop
 
 logger = logging.getLogger(__name__)
 
@@ -122,3 +129,54 @@ def _prune_old_snapshots(snapshot_dir: Path, *, keep: int) -> None:
     snapshots = sorted(snapshot_dir.glob("pallium-*.db"), key=lambda p: p.name, reverse=True)
     for old in snapshots[keep:]:
         old.unlink(missing_ok=True)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run Pallium snapshot worker")
+    parser.add_argument("--interval-seconds", type=int, default=None)
+    return parser
+
+
+def run_snapshot(
+    args: list[str] | None = None,
+    *,
+    config: AppConfig | None = None,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    should_stop: Callable[[], bool] | None = None,
+    install_signal_handlers: bool | None = None,
+) -> int:
+    parsed = build_parser().parse_args(args)
+    resolved_config = config or AppConfig.from_env()
+    snapshot_config = resolved_config.snapshot
+
+    if not snapshot_config.enabled or not snapshot_config.snapshot_path:
+        return 0
+
+    live_db_path = resolve_live_db_path(resolved_config.sqlite_url)
+    snapshot_dir = Path(snapshot_config.snapshot_path)
+    interval = parsed.interval_seconds or snapshot_config.interval_seconds
+
+    if not snapshot_dir.is_dir():
+        emit_runtime_log("snapshot", f"snapshot_path does not exist: {snapshot_dir}", stderr=True)
+        return 1
+
+    with graceful_stop(install=install_signal_handlers) as stop:
+        while True:
+            if stop.requested or (should_stop is not None and should_stop()):
+                break
+            try:
+                if _is_dirty(live_db_path, snapshot_dir):
+                    path = create_snapshot(live_db_path, snapshot_dir)
+                    if path is not None:
+                        emit_runtime_log("snapshot", f"created {path.name}")
+                        _prune_old_snapshots(snapshot_dir, keep=snapshot_config.max_snapshots)
+            except Exception as exc:
+                emit_runtime_log("snapshot", f"failed: {exc}", stderr=True)
+            if stop.requested or (should_stop is not None and should_stop()):
+                break
+            sleep_fn(interval)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(run_snapshot())
