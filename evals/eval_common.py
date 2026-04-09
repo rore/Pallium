@@ -271,10 +271,15 @@ def generate_answer(
         "- Your training knowledge is IRRELEVANT. The context is the only source of truth.\n"
         "- The context may contain facts about many different entities. You must answer ONLY "
         "about the specific entity mentioned in the question — ignore facts about other entities.\n"
-        "- If information appears contradictory, use whichever version appears more recently "
-        "(later in the context or with a more recent date).\n"
+        "- If information appears contradictory, prefer consolidated facts (labeled 'fact_summary') "
+        "over individual thread summaries, as they represent cross-session distilled information. "
+        "If still ambiguous, use whichever version has the more recent date.\n"
         "- Pay close attention to dates and timestamps in the evidence.\n"
-        "- If the context does not contain enough information to answer, say 'not found'.\n\n"
+        "- For counting questions ('how many', 'how much total'), read the ENTIRE context and "
+        "enumerate every distinct item before giving a number. Do not stop at the first few matches.\n"
+        "- Read ALL facts thoroughly before answering. The answer may appear in any fact, "
+        "not just the first few. Say 'not found' ONLY if you have read every fact and none "
+        "contains the answer.\n\n"
         "Return a JSON object with 'answer' (short, specific) and 'reasoning' (one sentence)."
     )
     user_prompt = (
@@ -283,8 +288,9 @@ def generate_answer(
         f"{retrieved_context}\n\n"
         f"Question: {question}\n\n"
         "Step 1: Identify the specific entity the question is asking about.\n"
-        "Step 2: Find facts in the context that are directly about that entity.\n"
-        "Step 3: Answer from those facts only. Do NOT use your own knowledge."
+        "Step 2: Read the ENTIRE context. Find ALL facts about that entity.\n"
+        "Step 3: If facts conflict, prefer fact_summary entries (consolidated) over thread summaries.\n"
+        "Step 4: Answer from those facts only. Do NOT use your own knowledge."
     )
     try:
         response = provider.generate_json(

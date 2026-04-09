@@ -813,7 +813,8 @@ def _evaluate_question_from_retrieval(
         preamble_parts.append(
             "This is a preference question. The user previously stated personal "
             "preferences in the context. Provide a short answer describing what "
-            "the user would prefer based on the context — do NOT say 'not found'."
+            "the user would prefer based on the context — do NOT say 'not found'. "
+            "Pay attention to BOTH what the user likes AND what they want to avoid."
         )
     preamble = "\n\n".join(preamble_parts) + "\n\n" if preamble_parts else ""
 
