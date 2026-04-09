@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
 from datetime import timedelta
 from typing import Any, Callable
@@ -94,6 +95,7 @@ class ItemProcessor:
         if first_task is not None:
             source_item, package_name, package_attempts = first_task
             source_item_id = source_item.id
+            packages_processed = [package_name]
             self._process_source_item(
                 source_item,
                 max_attempts=max_attempts,
@@ -112,6 +114,7 @@ class ItemProcessor:
                 if next_task is None:
                     break
                 next_package, next_attempts = next_task
+                packages_processed.append(next_package)
                 # Re-fetch source_item in case metadata changed
                 next_item = self._storage.get_source_item(source_item_id)
                 self._process_source_item(
@@ -121,7 +124,8 @@ class ItemProcessor:
                     package_name=next_package,
                     package_attempts=next_attempts,
                 )
-            return self._get_item_processing(source_item_id)
+            result = self._get_item_processing(source_item_id)
+            return dataclasses.replace(result, packages_processed=packages_processed)
 
         # Legacy path: claim from source_items table (for items without
         # package_processing_status rows, e.g. pre-migration data)

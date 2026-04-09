@@ -127,6 +127,8 @@ def _log_result(worker_id: str, result: ItemProcessingResult) -> None:
         f"worker_id={worker_id} source_item={result.source_item_id} "
         f"status={result.processing_status} attempts={result.processing_attempts}"
     )
+    if result.packages_processed:
+        message = f"{message} packages={','.join(result.packages_processed)}"
     if result.failure_category:
         message = f"{message} failure_category={result.failure_category}"
     if result.processing_error:

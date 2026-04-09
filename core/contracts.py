@@ -75,6 +75,7 @@ class ItemProcessingResult:
     thread_rebuild_requested: bool = False
     thread_rebuild_completed: bool = False
     produced_memory_provenance: list[dict[str, Any]] = field(default_factory=list)
+    packages_processed: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -93,6 +94,7 @@ class ItemProcessingResult:
             "thread_rebuild_requested": self.thread_rebuild_requested,
             "thread_rebuild_completed": self.thread_rebuild_completed,
             "produced_memory_provenance": self.produced_memory_provenance,
+            "packages_processed": self.packages_processed,
         }
 
 
