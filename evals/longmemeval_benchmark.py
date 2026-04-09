@@ -31,7 +31,6 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from app.config import AppConfig
-from app.dependencies import build_llm_provider
 from app.main import create_app
 from providers.llm.base import LLMProvider
 
@@ -321,6 +320,7 @@ def run_longmemeval_benchmark(
                 f"Default use case '{config.default_use_case}' is missing "
                 "LLM package config"
             )
+        from app.dependencies import build_llm_provider
         provider = build_llm_provider(
             config,
             provider_name=default_package.llm_provider,
@@ -337,23 +337,36 @@ def run_longmemeval_benchmark(
     # --- Phase 1: DB work (sequential) ---
     # Ingest, extract, query, and build evidence traces.
     # Each question needs its own isolated DB, so this must be sequential.
+    # We create one TestClient and swap the service per question to avoid
+    # re-initializing the embedding model (~2-4s) on every question.
+    initial_config = replace(
+        config,
+        default_use_case="agent_conversation_memory",
+    )
     qa_inputs: list[tuple[int, dict[str, Any], dict[str, Any], dict[str, Any]]] = []
-    for q_index, question in enumerate(dataset):
-        question_id = question["question_id"]
-        print(
-            f"\n[{q_index + 1}/{len(dataset)}] {question_id} "
-            f"({question.get('question_type', '?')})..."
-        )
+    with TestClient(create_app(initial_config)) as client:
+        if cache_dir is not None:
+            from evals.generated_exploratory.invariant_runner import (
+                _wrap_providers_with_cache,
+            )
+            _wrap_providers_with_cache(client, cache_dir)
 
-        memory_payload, evidence_trace = _process_question(
-            question=question,
-            config=config,
-            query_limit=query_limit,
-            cache_dir=cache_dir,
-            db_cache_dir=db_cache_dir,
-            rebuild_db_cache=rebuild_db_cache,
-        )
-        qa_inputs.append((q_index, question, memory_payload, evidence_trace))
+        for q_index, question in enumerate(dataset):
+            question_id = question["question_id"]
+            print(
+                f"\n[{q_index + 1}/{len(dataset)}] {question_id} "
+                f"({question.get('question_type', '?')})..."
+            )
+
+            memory_payload, evidence_trace = _process_question(
+                client=client,
+                question=question,
+                config=config,
+                query_limit=query_limit,
+                db_cache_dir=db_cache_dir,
+                rebuild_db_cache=rebuild_db_cache,
+            )
+            qa_inputs.append((q_index, question, memory_payload, evidence_trace))
 
     # --- Phase 2: LLM evaluation (parallel) ---
     # Answer generation + judging are pure LLM calls, parallelized across questions.
@@ -420,14 +433,17 @@ def run_longmemeval_benchmark(
 
 def _process_question(
     *,
+    client: TestClient,
     question: dict[str, Any],
     config: AppConfig,
     query_limit: int,
-    cache_dir: Path | None,
     db_cache_dir: Path | None = None,
     rebuild_db_cache: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """DB-bound work: ingest, extract, query, build evidence trace.
+
+    Swaps the service on the shared TestClient per question (fresh DB + vector
+    index) while reusing the app's embedding model and LLM providers.
 
     Returns (memory_payload, evidence_trace).
     """
@@ -448,6 +464,10 @@ def _process_question(
             and cached_db_path.exists()
             and cached_vector_prefix.exists()
         )
+
+    # Reuse embedding provider from the shared app's service.
+    original_service = client.app.state.pallium_service
+    shared_embedding = original_service._embedding_provider
 
     with TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
         db_path = Path(temp_dir) / "longmemeval.db"
@@ -470,82 +490,138 @@ def _process_question(
             vector_index=vector_index_config,
         )
 
-        with TestClient(create_app(scenario_config)) as client:
-            if cache_dir is not None:
-                from evals.generated_exploratory.invariant_runner import (
-                    _wrap_providers_with_cache,
+        # Build a new service with fresh DB but reuse the shared embedding provider.
+        from app.dependencies import (
+            build_retrieval_provider,
+            build_semantic_plugins,
+            build_storage_provider,
+        )
+        from core.observability import IntegrationDebugLogger
+        from core.service import PalliumService
+        from core.type_registry import TypeRegistry
+        from retrieval.composite import CompositeRetrievalProvider
+        from retrieval.vector import VectorRetrievalProvider
+        from storage.vector_index import VectorIndex
+
+        storage = build_storage_provider(scenario_config)
+        plugins = build_semantic_plugins(scenario_config)
+        retrieval = build_retrieval_provider(storage)
+
+        # Reuse embedding provider; build fresh vector index for this question's DB.
+        vector_index = None
+        if shared_embedding is not None:
+            index_path = Path(scenario_config.vector_index.index_path)
+            try:
+                if index_path.exists() and Path(f"{index_path}.meta.json").exists():
+                    vector_index = VectorIndex.load(index_path)
+                else:
+                    vector_index = VectorIndex.create_empty(
+                        index_path,
+                        dimensions=shared_embedding.dimensions(),
+                        model_name=shared_embedding.model_name(),
+                    )
+            except Exception:
+                vector_index = None
+
+            if vector_index is not None:
+                vector_retrieval = VectorRetrievalProvider(
+                    storage=storage,
+                    vector_index=vector_index,
+                    embedding_provider=shared_embedding,
+                    min_similarity=scenario_config.vector_index.min_similarity,
                 )
-                _wrap_providers_with_cache(client, cache_dir)
-
-            if not use_cached_db:
-                # --- ingest all sessions ---
-                has_answer_source_ids = _ingest_sessions(
-                    client=client,
-                    question_id=question_id,
-                    sessions=sessions,
-                    session_dates=session_dates,
-                    session_ids=session_ids,
-                )
-                print(
-                    f"  Ingested {sum(len(s) for s in sessions)} turns "
-                    f"across {len(sessions)} sessions"
+                retrieval = CompositeRetrievalProvider(
+                    lexical=retrieval,
+                    vector=vector_retrieval,
                 )
 
-                # --- semantic extraction ---
-                print("  Processing semantic extraction...")
-                client.app.state.pallium_service.drain_processing_queue(
-                    worker_id="longmemeval-runner"
-                )
-                client.app.state.pallium_service.reconcile_vector_index()
+        type_registry = TypeRegistry()
+        for plugin in plugins.values():
+            register_fn = getattr(plugin, "register_routing_types", None)
+            if callable(register_fn):
+                register_fn(type_registry)
 
-                print("  Processing complete")
+        service = PalliumService(
+            storage=storage,
+            retrieval=retrieval,
+            semantic_plugins=plugins,
+            default_use_case=scenario_config.default_use_case,
+            observability=IntegrationDebugLogger(enabled=False),
+            retention_enabled=False,
+            embedding_provider=shared_embedding,
+            vector_index=vector_index,
+            type_registry=type_registry if len(type_registry) > 0 else None,
+        )
+        client.app.state.pallium_service = service
 
-                # Cache the processed DB for reuse.
-                if cached_db_path is not None:
-                    shutil.copy2(db_path, cached_db_path)
-                    _copy_vector_index(vector_path, cached_vector_prefix)
-                    print(f"  Cached DB for {question_id}")
-            else:
-                # Reconstruct has_answer_source_ids from the sessions data.
-                has_answer_source_ids = _collect_has_answer_source_ids(
-                    question_id=question_id,
-                    sessions=sessions,
-                    session_ids=session_ids,
-                )
-
-            # --- build evidence map ---
-            evidence_map = _build_evidence_map(client=client)
-
-            # --- query ---
-            query_payload = {
-                "text": question["question"],
-                "limit": query_limit,
-                "container_ref": question_id,
-                "visibility": "public",
-                "runtime_context": {
-                    "turn_kind": "new_session",
-                    "session_has_sufficient_local_context": False,
-                },
-            }
-            query_response = client.post("/query/debug", json=query_payload)
-            query_response.raise_for_status()
-            memory_payload = query_response.json()
-
-            # --- evidence trace ---
-            evidence_trace = _build_evidence_trace(
-                question=question,
-                has_answer_source_ids=has_answer_source_ids,
-                evidence_map=evidence_map,
-                retrieval_result_ids=_extract_result_memory_ids(memory_payload),
+        if not use_cached_db:
+            # --- ingest all sessions ---
+            has_answer_source_ids = _ingest_sessions(
+                client=client,
+                question_id=question_id,
+                sessions=sessions,
+                session_dates=session_dates,
                 session_ids=session_ids,
-                memory_payload=memory_payload,
+            )
+            print(
+                f"  Ingested {sum(len(s) for s in sessions)} turns "
+                f"across {len(sessions)} sessions"
             )
 
-            engine = getattr(
-                client.app.state.pallium_service._storage, "_engine", None
+            # --- semantic extraction ---
+            print("  Processing semantic extraction...")
+            service.drain_processing_queue(worker_id="longmemeval-runner")
+            service.reconcile_vector_index()
+
+            print("  Processing complete")
+
+            # Cache the processed DB for reuse.
+            if cached_db_path is not None:
+                shutil.copy2(db_path, cached_db_path)
+                _copy_vector_index(vector_path, cached_vector_prefix)
+                print(f"  Cached DB for {question_id}")
+        else:
+            # Reconstruct has_answer_source_ids from the sessions data.
+            has_answer_source_ids = _collect_has_answer_source_ids(
+                question_id=question_id,
+                sessions=sessions,
+                session_ids=session_ids,
             )
-            if engine is not None:
-                engine.dispose()
+
+        # --- build evidence map ---
+        evidence_map = _build_evidence_map(client=client)
+
+        # --- query ---
+        query_payload = {
+            "text": question["question"],
+            "limit": query_limit,
+            "container_ref": question_id,
+            "visibility": "public",
+            "runtime_context": {
+                "turn_kind": "new_session",
+                "session_has_sufficient_local_context": False,
+            },
+        }
+        query_response = client.post("/query/debug", json=query_payload)
+        query_response.raise_for_status()
+        memory_payload = query_response.json()
+
+        # --- evidence trace ---
+        evidence_trace = _build_evidence_trace(
+            question=question,
+            has_answer_source_ids=has_answer_source_ids,
+            evidence_map=evidence_map,
+            retrieval_result_ids=_extract_result_memory_ids(memory_payload),
+            session_ids=session_ids,
+            memory_payload=memory_payload,
+        )
+
+        engine = getattr(service._storage, "_engine", None)
+        if engine is not None:
+            engine.dispose()
+
+        # Restore original service so the shared client stays usable.
+        client.app.state.pallium_service = original_service
 
     return memory_payload, evidence_trace
 
