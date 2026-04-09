@@ -19,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "mode",
         nargs="?",
-        choices=("all", "serve", "mcp", "processor", "cleaner", "rebuild-vector-index", "download-embedding-model"),
+        choices=("all", "serve", "mcp", "processor", "cleaner", "snapshot", "rebuild-vector-index", "download-embedding-model"),
         default="all",
     )
     parser.add_argument("--host", default="127.0.0.1")
@@ -88,6 +88,9 @@ def run(args: list[str] | None = None) -> int:
         if parsed.once:
             cleaner_args.append("--once")
         return run_cleaner(cleaner_args)
+    if parsed.mode == "snapshot":
+        from app.snapshot import run_snapshot
+        return run_snapshot()
     if parsed.mode == "rebuild-vector-index":
         return _run_rebuild_vector_index()
     if parsed.mode == "download-embedding-model":
