@@ -155,7 +155,7 @@ def _run_consolidation_scenario(
     config: AppConfig,
     strategy_name: str | None,
 ) -> dict[str, Any]:
-    with TemporaryDirectory() as temp_dir:
+    with TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
         database_url = f"sqlite:///{Path(temp_dir) / 'consolidation.db'}"
         vector_index_config = replace(config.vector_index, index_path=str(Path(temp_dir) / "vector.index"))
         scenario_config = replace(

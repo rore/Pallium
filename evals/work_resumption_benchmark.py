@@ -153,7 +153,7 @@ def _run_scenario(
     consolidation_strategy: str | None,
 ) -> dict[str, Any]:
     query_request = _scenario_query_request(scenario)
-    with TemporaryDirectory() as temp_dir:
+    with TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
         database_url = f"sqlite:///{Path(temp_dir) / 'work-resumption.db'}"
         vector_index_config = replace(config.vector_index, index_path=str(Path(temp_dir) / "vector.index"))
         scenario_config = replace(

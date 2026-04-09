@@ -5,6 +5,8 @@ benchmark runners. Extracted to prevent copy-paste drift between runners.
 """
 from __future__ import annotations
 
+import argparse
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -12,6 +14,9 @@ from typing import Any
 
 from providers.llm.base import LLMProvider
 from app.config import AppConfig
+from app.dependencies import build_llm_provider
+from providers.llm.cached import CachedLLMProvider
+from evals.eval_rate_limiter import TokenBucketRateLimiter
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -23,6 +28,8 @@ logger = logging.getLogger(__name__)
 ANSWER_SCHEMA = '{"answer":"string","reasoning":"string"}'
 JUDGE_SCHEMA = '{"correct":"boolean","reasoning":"string"}'
 GOLD_IN_CONTEXT_SCHEMA = '{"present":"boolean","reasoning":"string"}'
+
+COMBINED_JUDGE_SCHEMA = '{"correct":"boolean","judge_reasoning":"string","gold_in_context":"boolean","context_reasoning":"string"}'
 
 GOLD_IN_CONTEXT_SYSTEM_PROMPT = """\
 Determine whether the retrieved context contains sufficient information to answer the question \
@@ -186,6 +193,7 @@ def gold_in_context(
     *,
     provider: LLMProvider | None = None,
     question: str = "",
+    rate_limiter: TokenBucketRateLimiter | None = None,
 ) -> bool:
     """Check if the gold answer's key information is present in the retrieved context.
 
@@ -197,6 +205,7 @@ def gold_in_context(
             question=question,
             gold_answer=gold_answer,
             context=context,
+            rate_limiter=rate_limiter,
         )
     # Fallback: simple token overlap heuristic.
     gold_lower = gold_answer.lower().strip()
@@ -219,6 +228,7 @@ def gold_in_context_llm(
     question: str,
     gold_answer: str,
     context: str,
+    rate_limiter: TokenBucketRateLimiter | None = None,
 ) -> bool:
     """LLM-based check: does the context contain the information needed for the gold answer?"""
     user_prompt = (
@@ -227,6 +237,8 @@ def gold_in_context_llm(
         f"Retrieved context:\n{context[:4000]}"
     )
     try:
+        if rate_limiter:
+            rate_limiter.acquire()
         response = provider.generate_json(
             system_prompt=GOLD_IN_CONTEXT_SYSTEM_PROMPT,
             user_prompt=user_prompt,
@@ -242,6 +254,85 @@ def gold_in_context_llm(
 
 
 # ---------------------------------------------------------------------------
+# Combined judge + gold-in-context (merged into one LLM call)
+# ---------------------------------------------------------------------------
+
+
+def combined_judge(
+    *,
+    provider: LLMProvider,
+    question: str,
+    gold_answer: str,
+    predicted_answer: str,
+    retrieved_context: str,
+    judge_system_prompt: str,
+    rate_limiter: TokenBucketRateLimiter | None = None,
+) -> dict[str, Any]:
+    """Merged judge + gold-in-context check in a single LLM call.
+
+    Returns dict with: correct (bool), judge_reasoning (str),
+    gold_in_context (bool), context_reasoning (str).
+    """
+    system_prompt = (
+        "You must perform two independent evaluation tasks on the same question.\n"
+        "Evaluate each task separately — do not let one task's result influence the other.\n"
+        "\n"
+        "=== TASK 1: JUDGE THE GENERATED ANSWER ===\n"
+        f"{judge_system_prompt}\n"
+        "\n"
+        "=== TASK 2: CHECK IF GOLD ANSWER INFORMATION IS IN THE RETRIEVED CONTEXT ===\n"
+        "Determine whether the retrieved context contains sufficient information to answer "
+        "the question with the given gold answer. Be generous: paraphrases, different formats, "
+        "or rewordings count as present. For multi-part answers, ALL parts must be present.\n"
+        "For \"not mentioned\" gold answers: if the context correctly lacks the information, "
+        "return gold_in_context=true.\n"
+        "\n"
+        "=== INPUT ===\n"
+        "Return a single JSON object with all four fields."
+    )
+    user_prompt = (
+        f"Question: {question}\n"
+        f"Gold answer: {gold_answer}\n"
+        f"Generated answer: {predicted_answer}\n\n"
+        f"Retrieved context:\n{retrieved_context[:4000]}"
+    )
+    try:
+        if rate_limiter:
+            rate_limiter.acquire()
+        response = provider.generate_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            schema_description=COMBINED_JUDGE_SCHEMA,
+        )
+        parsed = response.parsed_json
+
+        correct = parsed.get("correct", False)
+        if isinstance(correct, str):
+            correct = correct.lower() in {"true", "yes", "1"}
+
+        gold_in_ctx = parsed.get("gold_in_context", False)
+        if isinstance(gold_in_ctx, str):
+            gold_in_ctx = gold_in_ctx.lower() in {"true", "yes", "1"}
+
+        return {
+            "correct": bool(correct),
+            "judge_reasoning": str(parsed.get("judge_reasoning", "")),
+            "gold_in_context": bool(gold_in_ctx),
+            "context_reasoning": str(parsed.get("context_reasoning", "")),
+        }
+    except Exception as exc:
+        # Fall back to heuristic for gold_in_context to avoid corrupting
+        # the metric with transient LLM failures.
+        gic_fallback = gold_in_context(gold_answer, retrieved_context)
+        return {
+            "correct": False,
+            "judge_reasoning": f"[ERROR: {exc}]",
+            "gold_in_context": gic_fallback,
+            "context_reasoning": f"[ERROR: {exc}] (heuristic fallback)",
+        }
+
+
+# ---------------------------------------------------------------------------
 # Answer generation (justifier)
 # ---------------------------------------------------------------------------
 
@@ -252,6 +343,7 @@ def generate_answer(
     question: str,
     retrieved_context: str,
     preamble: str = "",
+    rate_limiter: TokenBucketRateLimiter | None = None,
 ) -> dict[str, Any]:
     """Generate an answer from retrieved context (justifier step).
 
@@ -293,6 +385,8 @@ def generate_answer(
         "Step 4: Answer from those facts only. Do NOT use your own knowledge."
     )
     try:
+        if rate_limiter:
+            rate_limiter.acquire()
         response = provider.generate_json(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -339,3 +433,143 @@ def build_run_id(
         parts.extend(extra_parts)
     parts += [provider, model, timestamp]
     return "__".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Shared CLI arguments
+# ---------------------------------------------------------------------------
+
+
+def add_common_benchmark_args(parser: argparse.ArgumentParser) -> None:
+    """Add CLI arguments shared across all benchmark runners."""
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Directory for caching LLM calls (extraction + eval).",
+    )
+    parser.add_argument(
+        "--db-cache-dir",
+        type=Path,
+        default=None,
+        help="Cache processed DBs per conversation/row. Skips ingestion+extraction on reuse.",
+    )
+    parser.add_argument(
+        "--rebuild-db-cache",
+        action="store_true",
+        help="Force rebuild of cached DBs even if they exist.",
+    )
+    parser.add_argument(
+        "--verbose-results",
+        action="store_true",
+        help="Record full retrieval details in results for diagnostic analysis.",
+    )
+    parser.add_argument(
+        "--no-eval-cache",
+        action="store_true",
+        help="Disable caching of eval-time LLM calls (justifier/judge/gold-in-context).",
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=4,
+        help="Thread pool size for parallel QA evaluation (default: 4).",
+    )
+    parser.add_argument(
+        "--rate-limit",
+        type=int,
+        default=20,
+        help="Rate limit in requests per minute for LLM API calls (default: 20).",
+    )
+    parser.add_argument(
+        "--separate-judge",
+        action="store_true",
+        help="Use separate judge + gold-in-context calls instead of merged (3 calls vs 2).",
+    )
+    parser.add_argument(
+        "--judge-model",
+        default=None,
+        help="Model for judge/gold-in-context calls. Defaults to the main model.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Retrieval result ID extraction
+# ---------------------------------------------------------------------------
+
+
+def extract_result_memory_ids(memory_payload: dict[str, Any]) -> set[str]:
+    """Extract all memory object IDs from retrieval results."""
+    ids: set[str] = set()
+    for r in memory_payload.get("results", []):
+        if r.get("result_kind") == "memory_hit" and r.get("memory_object_id"):
+            ids.add(r["memory_object_id"])
+    return ids
+
+
+# ---------------------------------------------------------------------------
+# Provider builders
+# ---------------------------------------------------------------------------
+
+
+def build_eval_providers(
+    config: AppConfig,
+    *,
+    cache_dir: Path | None = None,
+    no_eval_cache: bool = False,
+    judge_model: str | None = None,
+) -> tuple[LLMProvider, LLMProvider]:
+    """Build the main and judge LLM providers for benchmark evaluation.
+
+    Returns (main_provider, judge_provider). When judge_model is None,
+    both are the same provider instance.
+    """
+    default_package = config.package_config(config.default_use_case)
+    if not default_package.llm_provider or not default_package.model:
+        raise ValueError(
+            f"Default use case '{config.default_use_case}' is missing "
+            "LLM package config"
+        )
+    main_provider = build_llm_provider(
+        config,
+        provider_name=default_package.llm_provider,
+        model=default_package.model,
+    )
+
+    if judge_model is not None:
+        # Build a separate provider for judge calls with the specified model.
+        judge_provider = build_llm_provider(
+            config,
+            provider_name=default_package.llm_provider,
+            model=judge_model,
+        )
+    else:
+        judge_provider = main_provider
+
+    # Wrap with cache if requested.
+    if cache_dir is not None and not no_eval_cache:
+        main_tag = getattr(main_provider, '_model', 'unknown')
+        main_provider = CachedLLMProvider(
+            main_provider, cache_dir, model_tag=main_tag
+        )
+        if judge_model is not None:
+            judge_tag = getattr(judge_provider, '_model', 'unknown')
+            judge_provider = CachedLLMProvider(
+                judge_provider, cache_dir, model_tag=judge_tag
+            )
+        else:
+            judge_provider = main_provider
+
+    return main_provider, judge_provider
+
+
+# ---------------------------------------------------------------------------
+# Rate limiter builder
+# ---------------------------------------------------------------------------
+
+
+def build_rate_limiter(rate_limit: int) -> TokenBucketRateLimiter | None:
+    """Build a rate limiter if rate_limit > 0, else None."""
+    if rate_limit <= 0:
+        return None
+    return TokenBucketRateLimiter(capacity=rate_limit, refill_interval=60.0 / rate_limit)

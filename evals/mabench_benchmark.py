@@ -30,11 +30,13 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from app.config import AppConfig
-from app.dependencies import build_llm_provider
 from app.main import create_app
 from providers.llm.base import LLMProvider
 from evals.eval_common import (
     ANSWER_SCHEMA,
+    add_common_benchmark_args as _add_common_benchmark_args,
+    build_eval_providers as _build_eval_providers,
+    build_rate_limiter as _build_rate_limiter,
     build_run_id as _build_run_id_common,
     compact_results as _compact_results,
     copy_vector_index as _copy_vector_index,
@@ -43,6 +45,7 @@ from evals.eval_common import (
     gold_in_context as _gold_in_context,
     retrieval_summary as _retrieval_summary,
 )
+from evals.eval_rate_limiter import TokenBucketRateLimiter
 
 DEFAULT_DATASET_DIR = Path("evals/mabench/datasets")
 DEFAULT_OUTPUT_DIR = Path("evals/mabench/output")
@@ -106,37 +109,16 @@ def main() -> int:
         default=20,
         help="Number of results to retrieve per query (default: 20).",
     )
-    parser.add_argument(
-        "--cache-dir",
-        type=Path,
-        default=None,
-        help="Directory for caching LLM extraction calls.",
-    )
-    parser.add_argument(
-        "--db-cache-dir",
-        type=Path,
-        default=None,
-        help="Cache processed DBs per test row.",
-    )
-    parser.add_argument(
-        "--rebuild-db-cache",
-        action="store_true",
-        help="Force rebuild of cached DBs even if they exist.",
-    )
-    parser.add_argument(
-        "--download",
-        action="store_true",
-        help="Download the MABench dataset if not present.",
-    )
+    _add_common_benchmark_args(parser)
     parser.add_argument(
         "--mini",
         action="store_true",
         help="Run a small subset (5 questions per dataset).",
     )
     parser.add_argument(
-        "--verbose-results",
+        "--download",
         action="store_true",
-        help="Record full retrieval details in results.",
+        help="Download the MABench dataset if not present.",
     )
     args = parser.parse_args()
 
@@ -170,6 +152,10 @@ def main() -> int:
         rebuild_db_cache=args.rebuild_db_cache,
         mini=args.mini,
         verbose_results=args.verbose_results,
+        no_eval_cache=args.no_eval_cache,
+        max_workers=args.max_workers,
+        judge_model=args.judge_model,
+        rate_limit=args.rate_limit,
     )
     print(f"\nResults: {run_dir}")
     return 0
@@ -195,23 +181,26 @@ def run_mabench_benchmark(
     rebuild_db_cache: bool = False,
     mini: bool = False,
     verbose_results: bool = False,
+    no_eval_cache: bool = False,
+    max_workers: int = 4,
+    judge_model: str | None = None,
+    rate_limit: int = 20,
 ) -> Path:
     raw_dataset = json.loads(dataset_path.read_text(encoding="utf-8"))
     dataset_ids = dataset_ids or list(DATASET_CONFIGS.keys())
 
-    default_package = config.package_config(config.default_use_case)
-    if answer_provider is None:
-        if not default_package.llm_provider or not default_package.model:
-            raise ValueError(
-                f"Default use case '{config.default_use_case}' is missing LLM config"
-            )
-        provider = build_llm_provider(
-            config,
-            provider_name=default_package.llm_provider,
-            model=default_package.model,
-        )
-    else:
+    if answer_provider is not None:
         provider = answer_provider
+        judge_provider = answer_provider
+    else:
+        provider, judge_provider = _build_eval_providers(
+            config,
+            cache_dir=cache_dir,
+            no_eval_cache=no_eval_cache,
+            judge_model=judge_model,
+        )
+
+    rate_limiter = _build_rate_limiter(rate_limit)
 
     run_id = run_name or _build_run_id_common(config, "mabench-sf", extra_parts=[context_depth])
     run_dir = output_root / run_id
@@ -249,11 +238,14 @@ def run_mabench_benchmark(
                     answers=answers,
                     config=config,
                     answer_provider=provider,
+                    judge_provider=judge_provider,
                     query_limit=query_limit,
                     cache_dir=cache_dir,
                     db_cache_dir=db_cache_dir,
                     rebuild_db_cache=rebuild_db_cache,
                     verbose_results=verbose_results,
+                    max_workers=max_workers,
+                    rate_limiter=rate_limiter,
                 )
                 for result in row_results:
                     all_results.append(result)
@@ -314,11 +306,14 @@ def _evaluate_row(
     answers: list[Any],
     config: AppConfig,
     answer_provider: LLMProvider,
+    judge_provider: LLMProvider,
     query_limit: int,
     cache_dir: Path | None,
     db_cache_dir: Path | None = None,
     rebuild_db_cache: bool = False,
     verbose_results: bool = False,
+    max_workers: int = 4,
+    rate_limiter: TokenBucketRateLimiter | None = None,
 ) -> list[dict[str, Any]]:
     context = row["context"]
     metadata = row.get("metadata", {})
@@ -417,6 +412,7 @@ def _evaluate_row(
                 q_idx, question, golds, mem_payload = entry
                 result = _evaluate_question(
                     answer_provider=answer_provider,
+                    judge_provider=judge_provider,
                     row_id=row_id,
                     dataset_id=dataset_id,
                     question=question,
@@ -424,10 +420,11 @@ def _evaluate_row(
                     memory_payload=mem_payload,
                     fact_lookup=fact_lookup.get(q_idx),
                     verbose=verbose_results,
+                    rate_limiter=rate_limiter,
                 )
                 return q_idx, result
 
-            with ThreadPoolExecutor(max_workers=4) as pool:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = {pool.submit(_eval_one, inp): inp[0] for inp in qa_inputs}
                 indexed: list[tuple[int, dict[str, Any]]] = []
                 done_count = 0
@@ -623,6 +620,7 @@ def _build_fact_lookup(
 def _evaluate_question(
     *,
     answer_provider: LLMProvider,
+    judge_provider: LLMProvider,
     row_id: str,
     dataset_id: str,
     question: str,
@@ -630,6 +628,7 @@ def _evaluate_question(
     memory_payload: dict[str, Any],
     fact_lookup: dict[str, Any] | None,
     verbose: bool = False,
+    rate_limiter: TokenBucketRateLimiter | None = None,
 ) -> dict[str, Any]:
     """Evaluate a single question with SubEM scoring and pipeline diagnostics."""
     retrieved_context = _format_retrieved_context(memory_payload)
@@ -638,6 +637,7 @@ def _evaluate_question(
         provider=answer_provider,
         question=question,
         retrieved_context=retrieved_context,
+        rate_limiter=rate_limiter,
     )
 
     predicted = answer_result["answer"]
@@ -647,8 +647,9 @@ def _evaluate_question(
     gold_in_ctx = _gold_in_context(
         gold_answers[0] if gold_answers else "",
         retrieved_context,
-        provider=answer_provider,
+        provider=judge_provider,
         question=question,
+        rate_limiter=rate_limiter,
     )
 
     # Pipeline diagnostic.

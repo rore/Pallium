@@ -195,7 +195,7 @@ def _run_memory_branch(
     answer_provider: LLMProvider,
     branch_name: str,
 ) -> dict[str, Any]:
-    with TemporaryDirectory() as temp_dir:
+    with TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
         database_url = f"sqlite:///{Path(temp_dir) / 'tiered-memory-validation.db'}"
         vector_index_config = replace(config.vector_index, index_path=str(Path(temp_dir) / "vector.index"))
         scenario_config = replace(

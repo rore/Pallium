@@ -31,7 +31,6 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from app.config import AppConfig
-from app.dependencies import build_llm_provider
 from app.main import create_app
 from providers.llm.base import LLMProvider
 from evals.eval_common import (
@@ -39,15 +38,21 @@ from evals.eval_common import (
     JUDGE_SCHEMA,
     GOLD_IN_CONTEXT_SCHEMA,
     GOLD_IN_CONTEXT_SYSTEM_PROMPT,
+    add_common_benchmark_args as _add_common_benchmark_args,
+    build_eval_providers as _build_eval_providers,
+    build_rate_limiter as _build_rate_limiter,
     build_run_id as _build_run_id_common,
+    combined_judge as _combined_judge,
     compact_results as _compact_results,
     copy_vector_index as _copy_vector_index,
+    extract_result_memory_ids as _extract_result_memory_ids,
     format_retrieved_context as _format_retrieved_context,
     generate_answer as _generate_answer_common,
     gold_in_context as _gold_in_context,
     gold_in_context_llm as _gold_in_context_llm,
     retrieval_summary as _retrieval_summary,
 )
+from evals.eval_rate_limiter import TokenBucketRateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -120,37 +125,16 @@ def main() -> int:
         default=10,
         help="Number of results to retrieve per query (default: 10).",
     )
-    parser.add_argument(
-        "--cache-dir",
-        type=Path,
-        default=None,
-        help="Directory for caching LLM extraction calls.",
-    )
-    parser.add_argument(
-        "--download",
-        action="store_true",
-        help="Download the LoCoMo dataset if not present.",
-    )
-    parser.add_argument(
-        "--db-cache-dir",
-        type=Path,
-        default=None,
-        help="Cache processed DBs per conversation. Skips ingestion+extraction on reuse.",
-    )
-    parser.add_argument(
-        "--rebuild-db-cache",
-        action="store_true",
-        help="Force rebuild of cached DBs even if they exist.",
-    )
+    _add_common_benchmark_args(parser)
     parser.add_argument(
         "--mini",
         action="store_true",
         help="Run a small representative subset (3 questions per category per conversation).",
     )
     parser.add_argument(
-        "--verbose-results",
+        "--download",
         action="store_true",
-        help="Record full retrieval details in results for diagnostic analysis.",
+        help="Download the LoCoMo dataset if not present.",
     )
     args = parser.parse_args()
 
@@ -176,6 +160,11 @@ def main() -> int:
         rebuild_db_cache=args.rebuild_db_cache,
         mini=args.mini,
         verbose_results=args.verbose_results,
+        no_eval_cache=args.no_eval_cache,
+        max_workers=args.max_workers,
+        separate_judge=args.separate_judge,
+        judge_model=args.judge_model,
+        rate_limit=args.rate_limit,
     )
     print(f"\nResults: {run_dir}")
     return 0
@@ -201,6 +190,11 @@ def run_locomo_benchmark(
     rebuild_db_cache: bool = False,
     mini: bool = False,
     verbose_results: bool = False,
+    no_eval_cache: bool = False,
+    max_workers: int = 4,
+    separate_judge: bool = False,
+    judge_model: str | None = None,
+    rate_limit: int = 20,
 ) -> Path:
     dataset = _load_dataset(dataset_path)
     if conversation_ids:
@@ -212,20 +206,18 @@ def run_locomo_benchmark(
                 f"No conversations found matching: {conversation_ids}"
             )
 
-    default_package = config.package_config(config.default_use_case)
-    if answer_provider is None:
-        if not default_package.llm_provider or not default_package.model:
-            raise ValueError(
-                f"Default use case '{config.default_use_case}' is missing "
-                "LLM package config"
-            )
-        provider = build_llm_provider(
-            config,
-            provider_name=default_package.llm_provider,
-            model=default_package.model,
-        )
-    else:
+    if answer_provider is not None:
         provider = answer_provider
+        judge_provider = answer_provider
+    else:
+        provider, judge_provider = _build_eval_providers(
+            config,
+            cache_dir=cache_dir,
+            no_eval_cache=no_eval_cache,
+            judge_model=judge_model,
+        )
+
+    rate_limiter = _build_rate_limiter(rate_limit)
 
     run_id = run_name or _build_run_id_common(config, "locomo-benchmark")
     run_dir = output_root / run_id
@@ -244,6 +236,7 @@ def run_locomo_benchmark(
                 conversation=conversation,
                 config=config,
                 answer_provider=provider,
+                judge_provider=judge_provider,
                 limit_questions=limit_questions,
                 query_limit=query_limit,
                 cache_dir=cache_dir,
@@ -251,6 +244,9 @@ def run_locomo_benchmark(
                 rebuild_db_cache=rebuild_db_cache,
                 mini=mini,
                 verbose_results=verbose_results,
+                max_workers=max_workers,
+                separate_judge=separate_judge,
+                rate_limiter=rate_limiter,
             )
             for result in conv_results:
                 all_results.append(result)
@@ -285,6 +281,7 @@ def _evaluate_conversation(
     conversation: dict[str, Any],
     config: AppConfig,
     answer_provider: LLMProvider,
+    judge_provider: LLMProvider,
     limit_questions: int | None,
     query_limit: int,
     cache_dir: Path | None,
@@ -292,6 +289,9 @@ def _evaluate_conversation(
     rebuild_db_cache: bool = False,
     mini: bool = False,
     verbose_results: bool = False,
+    max_workers: int = 4,
+    separate_judge: bool = False,
+    rate_limiter: TokenBucketRateLimiter | None = None,
 ) -> list[dict[str, Any]]:
     sample_id = conversation["sample_id"]
     conv = conversation["conversation"]
@@ -415,12 +415,15 @@ def _evaluate_conversation(
                 qa_idx, qa_item, mem_payload = entry
                 result = _evaluate_question_from_retrieval(
                     answer_provider=answer_provider,
+                    judge_provider=judge_provider,
                     sample_id=sample_id,
                     qa=qa_item,
                     memory_payload=mem_payload,
                     speaker_a=speaker_a,
                     speaker_b=speaker_b,
                     verbose=verbose_results,
+                    separate_judge=separate_judge,
+                    rate_limiter=rate_limiter,
                 )
                 # Add evidence trace: where was the answer lost?
                 result["evidence_trace"] = _trace_evidence(
@@ -431,7 +434,7 @@ def _evaluate_conversation(
                 )
                 return qa_idx, result
 
-            with ThreadPoolExecutor(max_workers=4) as pool:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = {
                     pool.submit(_eval_one, inp): inp[0]
                     for inp in qa_inputs
@@ -569,12 +572,15 @@ def _turn_to_item(
 def _evaluate_question_from_retrieval(
     *,
     answer_provider: LLMProvider,
+    judge_provider: LLMProvider,
     sample_id: str,
     qa: dict[str, Any],
     memory_payload: dict[str, Any],
     speaker_a: str,
     speaker_b: str,
     verbose: bool = False,
+    separate_judge: bool = False,
+    rate_limiter: TokenBucketRateLimiter | None = None,
 ) -> dict[str, Any]:
     """Evaluate a QA pair given pre-fetched retrieval results (thread-safe)."""
     question = qa["question"]
@@ -588,22 +594,42 @@ def _evaluate_question_from_retrieval(
         question=question,
         retrieved_context=retrieved_context,
         preamble=f"Speakers in this conversation: {speaker_a} and {speaker_b}\n\n",
+        rate_limiter=rate_limiter,
     )
 
-    judge_result = _judge_answer(
-        provider=answer_provider,
-        question=question,
-        gold_answer=gold_answer,
-        predicted_answer=answer_result["answer"],
-    )
+    if separate_judge:
+        # Legacy 3-call path: separate judge + gold-in-context.
+        judge_result = _judge_answer(
+            provider=judge_provider,
+            question=question,
+            gold_answer=gold_answer,
+            predicted_answer=answer_result["answer"],
+            rate_limiter=rate_limiter,
+        )
+        correct = judge_result["correct"]
+        judge_reasoning = judge_result["reasoning"]
 
-    # Check if the gold answer content appears in the retrieved context.
-    gold_in_context = _gold_in_context(
-        gold_answer,
-        retrieved_context,
-        provider=answer_provider,
-        question=question,
-    )
+        gold_in_ctx = _gold_in_context(
+            gold_answer,
+            retrieved_context,
+            provider=judge_provider,
+            question=question,
+            rate_limiter=rate_limiter,
+        )
+    else:
+        # Merged 2-call path: combined judge + gold-in-context.
+        combined = _combined_judge(
+            provider=judge_provider,
+            question=question,
+            gold_answer=gold_answer,
+            predicted_answer=answer_result["answer"],
+            retrieved_context=retrieved_context,
+            judge_system_prompt=LOCOMO_JUDGE_SYSTEM_PROMPT,
+            rate_limiter=rate_limiter,
+        )
+        correct = combined["correct"]
+        judge_reasoning = combined["judge_reasoning"]
+        gold_in_ctx = combined["gold_in_context"]
 
     result: dict[str, Any] = {
         "sample_id": sample_id,
@@ -614,8 +640,8 @@ def _evaluate_question_from_retrieval(
         "evidence_ids": qa.get("evidence", []),
         "predicted_answer": answer_result["answer"],
         "answer_reasoning": answer_result.get("reasoning", ""),
-        "correct": judge_result["correct"],
-        "judge_reasoning": judge_result["reasoning"],
+        "correct": correct,
+        "judge_reasoning": judge_reasoning,
         "result_count": len(memory_payload.get("results", [])),
         "should_inject": memory_payload.get("should_inject"),
         "decision_reason": memory_payload.get("decision_reason"),
@@ -623,7 +649,7 @@ def _evaluate_question_from_retrieval(
             memory_payload.get("injectable_blocks", [])
         ),
         "retrieval_summary": _retrieval_summary(memory_payload),
-        "gold_in_context": gold_in_context,
+        "gold_in_context": gold_in_ctx,
     }
 
     if verbose:
@@ -639,6 +665,7 @@ def _judge_answer(
     question: str,
     gold_answer: str,
     predicted_answer: str,
+    rate_limiter: TokenBucketRateLimiter | None = None,
 ) -> dict[str, Any]:
     """Judge whether the predicted answer is correct (LLM-as-judge)."""
     user_prompt = (
@@ -647,6 +674,8 @@ def _judge_answer(
         f"Generated answer: {predicted_answer}"
     )
     try:
+        if rate_limiter:
+            rate_limiter.acquire()
         response = provider.generate_json(
             system_prompt=LOCOMO_JUDGE_SYSTEM_PROMPT,
             user_prompt=user_prompt,
@@ -743,15 +772,6 @@ def _trace_evidence(
         "extraction_found": any_extracted,
         "retrieval_found": any_retrieved,
     }
-
-
-def _extract_result_memory_ids(memory_payload: dict[str, Any]) -> set[str]:
-    """Extract all memory object IDs from retrieval results."""
-    ids: set[str] = set()
-    for r in memory_payload.get("results", []):
-        if r.get("result_kind") == "memory_hit" and r.get("memory_object_id"):
-            ids.add(r["memory_object_id"])
-    return ids
 
 
 # ---------------------------------------------------------------------------

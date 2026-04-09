@@ -276,7 +276,7 @@ def _run_scenario(
     config: AppConfig,
 ) -> dict[str, Any]:
     """Execute a scenario and return the debug payload + query payload."""
-    with TemporaryDirectory() as temp_dir:
+    with TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
         db_url = f"sqlite:///{Path(temp_dir) / 'cal.db'}"
         scenario_config = replace(
             config,

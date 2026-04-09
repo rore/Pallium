@@ -94,7 +94,7 @@ def _run_scenario(
     runtime_context = _scenario_runtime_context(scenario)
     query_request = dict(scenario["current_query"])
     query_request.setdefault("runtime_context", runtime_context)
-    with TemporaryDirectory() as temp_dir:
+    with TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
         database_url = f"sqlite:///{Path(temp_dir) / 'memory-routing.db'}"
         vector_index_config = replace(config.vector_index, index_path=str(Path(temp_dir) / "vector.index"))
         scenario_config = replace(config, sqlite_url=database_url, default_use_case="agent_conversation_memory", vector_index=vector_index_config)

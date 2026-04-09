@@ -366,7 +366,7 @@ def _run_scenario(
     """Execute a single scenario and return invariant results."""
     scenario_id = scenario.get("scenario_id", "unknown")
 
-    with TemporaryDirectory() as temp_dir:
+    with TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
         database_url = f"sqlite:///{Path(temp_dir) / 'scenario.db'}"
         vector_index_config = replace(
             config.vector_index,
