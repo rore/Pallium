@@ -42,60 +42,43 @@ def _start_reconcile_thread(
     return stop
 
 
-def _build_mcp_lifespan(app_ref: FastAPI):
-    """Build a lifespan that initializes the MCP session manager if available."""
-    try:
-        from app.mcp.server import create_server as create_mcp_server
-    except ImportError:
-        logger.warning("MCP endpoint not available: mcp[cli] not installed. Run: pip install 'mcp[cli]'")
-        return None
-
-    mcp_server = create_mcp_server()
-    mcp_app = mcp_server.streamable_http_app()
-    # Get the session manager for lifespan management
-    session_manager = mcp_server._session_manager
-
-    @contextlib.asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        async with session_manager.run():
-            yield
-
-    # Mount the MCP sub-app at root — its internal route is /mcp
-    app_ref.mount("", mcp_app)
-    logger.info("MCP endpoint available at /mcp")
-    return lifespan
-
-
 def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverrides | None = None) -> FastAPI:
-    # Build MCP lifespan first (needs to mount before app is fully configured)
-    # We create a temporary app to check MCP availability, then create the real one
-    mcp_lifespan = None
+    # Check MCP availability
+    mcp_available = False
+    mcp_app = None
+    session_manager = None
     try:
         from app.mcp.server import create_server as create_mcp_server
-        _mcp_available = True
-    except ImportError:
-        _mcp_available = False
-        logger.warning("MCP endpoint not available: mcp[cli] not installed. Run: pip install 'mcp[cli]'")
-
-    if _mcp_available:
+        mcp_available = True
         mcp_server = create_mcp_server()
         mcp_app = mcp_server.streamable_http_app()
         session_manager = mcp_server._session_manager
+    except ImportError:
+        logger.warning("MCP endpoint not available: mcp[cli] not installed. Run: pip install 'mcp[cli]'")
 
-        @contextlib.asynccontextmanager
-        async def mcp_lifespan(app: FastAPI) -> AsyncIterator[None]:
-            async with session_manager.run():
-                yield
-
-    app = FastAPI(title="Pallium", version="0.1.0", lifespan=mcp_lifespan)
     service = build_service(config, routing_overrides=routing_overrides)
+
+    @contextlib.asynccontextmanager
+    async def app_lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
+        # Start reconcile thread inside lifespan so shutdown stops it cleanly.
+        stop: threading.Event | None = None
+        if service._vector_index is not None:
+            stop = _start_reconcile_thread(service)
+            app_instance.state._reconcile_stop = stop
+        try:
+            if mcp_available and session_manager is not None:
+                async with session_manager.run():
+                    yield
+            else:
+                yield
+        finally:
+            if stop is not None:
+                stop.set()
+
+    app = FastAPI(title="Pallium", version="0.1.0", lifespan=app_lifespan)
     app.state.pallium_service = service
     app.include_router(build_router(service))
-    # Start vector reconciliation daemon if vector index is active
-    if service._vector_index is not None:
-        app.state._reconcile_stop = _start_reconcile_thread(service)
-    # Mount MCP sub-app at root — its internal route is /mcp
-    if _mcp_available:
+    if mcp_available and mcp_app is not None:
         app.mount("", mcp_app)
         logger.info("MCP endpoint available at /mcp")
     return app
