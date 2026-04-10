@@ -69,3 +69,10 @@ def test_run_serve_mode_configures_timestamped_uvicorn_logging(monkeypatch) -> N
     assert log_config["formatters"]["pallium_default"]["component"] == "api"
     assert log_config["loggers"]["uvicorn.error"]["handlers"] == ["default"]
     assert log_config["loggers"]["uvicorn.access"]["handlers"] == ["access"]
+
+
+def test_run_snapshot_mode(monkeypatch) -> None:
+    """Verify 'snapshot' is a valid CLI mode that dispatches to run_snapshot."""
+    from app.run import build_parser
+    parsed = build_parser().parse_args(["snapshot"])
+    assert parsed.mode == "snapshot"
