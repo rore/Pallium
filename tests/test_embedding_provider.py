@@ -273,6 +273,7 @@ class TestBuildEmbeddingProvider:
         monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
         monkeypatch.setitem(sys.modules, "tokenizers", mock_tokenizers)
         monkeypatch.setitem(sys.modules, "huggingface_hub", mock_hf)
+        monkeypatch.delitem(sys.modules, "providers.embedding.onnx_provider", raising=False)
 
         from app.dependencies import build_embedding_provider
 
@@ -313,11 +314,22 @@ class TestOnnxImportGuard:
 # ---------------------------------------------------------------------------
 
 class TestOnnxEmbeddingProvider:
-    def test_embed_returns_correct_dimensions(self, monkeypatch):
-        mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules(dimensions=384)
+    @pytest.fixture(autouse=True)
+    def _clear_onnx_module_cache(self, monkeypatch):
+        """Force re-import of onnx_provider so it binds to freshly mocked modules."""
+        monkeypatch.delitem(sys.modules, "providers.embedding.onnx_provider", raising=False)
+
+    def _setup_mock_onnx(self, monkeypatch, *, dimensions: int = 384):
+        """Set up mock ONNX modules and force re-import of onnx_provider."""
+        mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules(dimensions=dimensions)
         monkeypatch.setitem(sys.modules, "onnxruntime", mock_ort)
         monkeypatch.setitem(sys.modules, "tokenizers", mock_tokenizers)
         monkeypatch.setitem(sys.modules, "huggingface_hub", mock_hf)
+        # Force re-import so onnx_provider binds to the mocked modules
+        monkeypatch.delitem(sys.modules, "providers.embedding.onnx_provider", raising=False)
+
+    def test_embed_returns_correct_dimensions(self, monkeypatch):
+        self._setup_mock_onnx(monkeypatch, dimensions=384)
 
         from providers.embedding.onnx_provider import OnnxEmbeddingProvider
 
@@ -415,6 +427,10 @@ class TestOnnxEmbeddingProvider:
 
 class TestOnnxPrefixInjection:
     """Verify that query/passage prefixes are correctly injected."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_onnx_module_cache(self, monkeypatch):
+        monkeypatch.delitem(sys.modules, "providers.embedding.onnx_provider", raising=False)
 
     def test_query_prefix_prepended(self, monkeypatch):
         mock_ort, mock_tokenizers, mock_hf = _make_mock_onnx_modules(dimensions=4)
