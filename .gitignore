@@ -5,6 +5,8 @@ __pycache__/
 .venv/
 *.pyc
 pallium.db
+pallium.db-wal
+pallium.db-shm
 tmp*.db
 pallium.egg-info/
 build/
