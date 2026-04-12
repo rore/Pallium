@@ -20,6 +20,10 @@ evals/recurring_question/output/
 
 
 pallium.local.toml
+pallium.aicore-test.toml
+docker-compose.test-e2e.yml
+tests/aicore_proxy.py
+evals/*.log
 
 
 evals/consolidation/output/
