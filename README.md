@@ -174,14 +174,19 @@ Tests whether updated facts are retrieved over stale contradictory ones.
 Pallium is a retrieval sidecar — the retrieval rate (did the right fact reach
 the consuming agent?) is the primary metric.
 
-| | Retrieval | End-to-end |
+| | Retrieval rate | End-to-end |
 |---|---|---|
-| **Single-hop** | **85%** | 73% |
-| **Multi-hop** | **28%** | 9.2% |
+| **Single-hop** | **82%** | 51.5% |
+| **Multi-hop** | **10%** | 7% |
 
-The gap between retrieval and end-to-end is the evaluator LLM overriding
-counterfactual test data with its own training knowledge — outside the memory
-system's scope.
+*6k context depth (455 facts). Retrieval rate = gold answer present in
+returned context.*
+
+The end-to-end gap has two causes: (1) the evaluator LLM overrides
+counterfactual test data with its own training knowledge, and (2) older
+memory objects that haven't been superseded outnumber the newer
+contradictory fact in the context. Multi-hop is low because it requires
+chaining two independent facts — an open area for improvement.
 
 ### Running Benchmarks
 
