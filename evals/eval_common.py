@@ -170,7 +170,9 @@ def format_retrieved_context(memory_payload: dict[str, Any]) -> str:
                     f"[Fact {i + 1} ({mem_type})] {summary}{date_note}"
                 )
         elif result.get("result_kind") == "source_hit":
-            excerpt = result.get("excerpt", "")
+            # Prefer full source content (enriched by benchmark runners)
+            # over the 160-char excerpt from the production API.
+            excerpt = result.get("source_content") or result.get("excerpt", "")
             if excerpt:
                 occurred_at = result.get("occurred_at", "")
                 actor = result.get("actor_ref", "")
@@ -491,6 +493,31 @@ def add_common_benchmark_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Model for judge/gold-in-context calls. Defaults to the main model.",
     )
+
+
+# ---------------------------------------------------------------------------
+# Source content enrichment
+# ---------------------------------------------------------------------------
+
+
+def enrich_source_content(memory_payload: dict[str, Any], storage: Any) -> None:
+    """Attach full source content to source_hit results for the justifier.
+
+    The production API returns 160-char excerpts, which is correct for HTTP
+    responses. But benchmark justifiers need the full text to answer accurately.
+    Mutates the payload in place.
+    """
+    for result in memory_payload.get("results", []):
+        if result.get("result_kind") != "source_hit":
+            continue
+        sid = result.get("source_item_id")
+        if not sid:
+            continue
+        try:
+            source_item = storage.get_source_item(sid)
+            result["source_content"] = source_item.content
+        except Exception:
+            pass  # Keep the excerpt as fallback
 
 
 # ---------------------------------------------------------------------------

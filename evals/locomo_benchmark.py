@@ -46,6 +46,7 @@ from evals.eval_common import (
     compact_results as _compact_results,
     copy_vector_index as _copy_vector_index,
     extract_result_memory_ids as _extract_result_memory_ids,
+    enrich_source_content as _enrich_source_content,
     format_retrieved_context as _format_retrieved_context,
     generate_answer as _generate_answer_common,
     gold_in_context as _gold_in_context,
@@ -408,6 +409,11 @@ def _evaluate_conversation(
                 )
                 query_response.raise_for_status()
                 qa_inputs.append((qa_index, qa, query_response.json()))
+
+            # Enrich source hits with full content (excerpts are 160-char truncated).
+            storage = client.app.state.pallium_service._storage
+            for _, _, mem_payload in qa_inputs:
+                _enrich_source_content(mem_payload, storage)
 
             def _eval_one(
                 entry: tuple[int, dict[str, Any], dict[str, Any]],

@@ -40,6 +40,7 @@ from evals.eval_common import (
     build_run_id as _build_run_id_common,
     compact_results as _compact_results,
     copy_vector_index as _copy_vector_index,
+    enrich_source_content as _enrich_source_content,
     format_retrieved_context as _format_retrieved_context,
     generate_answer as _generate_answer_common,
     gold_in_context as _gold_in_context,
@@ -405,6 +406,11 @@ def _evaluate_row(
 
                 gold_answers = answer_list if isinstance(answer_list, list) else [str(answer_list)]
                 qa_inputs.append((q_index, question, gold_answers, query_response.json()))
+
+            # Enrich source hits with full content (excerpts are 160-char truncated).
+            storage = client.app.state.pallium_service._storage
+            for _, _, _, mem_payload in qa_inputs:
+                _enrich_source_content(mem_payload, storage)
 
             def _eval_one(
                 entry: tuple[int, str, list[str], dict[str, Any]],

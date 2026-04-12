@@ -46,6 +46,7 @@ from evals.eval_common import (
     compact_results as _compact_results,
     copy_vector_index as _copy_vector_index,
     extract_result_memory_ids as _extract_result_memory_ids,
+    enrich_source_content as _enrich_source_content,
     format_retrieved_context as _format_retrieved_context,
     generate_answer as _generate_answer_common,
     gold_in_context as _gold_in_context,
@@ -644,6 +645,9 @@ def _process_question(
                 _serialize_injectable_block(b) for b in query_result.injectable_blocks
             ],
         })
+
+        # Enrich source hits with full content (excerpts are 160-char truncated).
+        _enrich_source_content(memory_payload, service._storage)
 
         # --- evidence trace ---
         evidence_trace = _build_evidence_trace(
