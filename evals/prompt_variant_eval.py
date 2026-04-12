@@ -170,6 +170,24 @@ SNIPPETS: list[dict[str, Any]] = [
             "must_contain_pattern": [r"2024-04-0[6-9]|2024-04-1[0-4]|April\s*(6|7|8|9|10|11|12|13|14)"],
         },
     },
+    {
+        "id": "correction_handling",
+        "description": "User corrections extracted as facts alongside originals",
+        "thread_text": (
+            "Session date: 2024-05-20\n"
+            "[user]: Our team just deployed the backend to the us-west-1 region.\n"
+            "[assistant]: Got it, deployed to us-west-1.\n"
+            "[user]: Actually wait, I got that wrong. We deployed to us-east-2, not us-west-1. "
+            "The migration finished last Thursday.\n"
+            "[assistant]: Thanks for the correction, noted."
+        ),
+        "assertions": {
+            "must_contain_any": [["us-east-2"], ["us-west-1"]],
+            "min_must_contain_hits": 2,
+            "must_contain_pattern": [r"2024-05-1[4-6]|May\s*(14|15|16)"],
+            "max_facts": 4,
+        },
+    },
 ]
 
 
