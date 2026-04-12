@@ -163,6 +163,11 @@ def format_retrieved_context(memory_payload: dict[str, Any]) -> str:
                 or ""
             )
             if summary:
+                # Prepend subject for atomic_fact / fact_summary so the
+                # justifier can distinguish otherwise-identical statements.
+                subject = payload.get("subject", "")
+                if subject and subject.lower() not in summary.lower():
+                    summary = f"{subject}: {summary}"
                 occurred_at = result.get("occurred_at", "")
                 mem_type = result.get("type", "memory")
                 date_note = f" (date: {occurred_at})" if occurred_at else ""
