@@ -146,6 +146,23 @@ class MaintenanceStateRecord(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False)
 
 
+class QueryAuditLogRecord(Base):
+    __tablename__ = "query_audit_log"
+
+    id = Column(String, primary_key=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    source_item_id = Column(String, nullable=False)
+    source_id = Column(String, nullable=False)
+    thread_ref = Column(String, nullable=True)
+    container_ref = Column(String, nullable=True)
+    actor_ref = Column(String, nullable=True)
+    visibility = Column(String, nullable=True)
+    query_text = Column(Text, nullable=False)
+    should_inject = Column(Integer, nullable=False, default=0)
+    decision_reason = Column(String, nullable=False)
+    injected_blocks_json = Column(Text, nullable=False, default="[]")
+
+
 class SQLiteSchemaMixin:
     _SOURCE_ITEM_MIGRATIONS = {
         "occurred_at": "ALTER TABLE source_items ADD COLUMN occurred_at DATETIME",
@@ -198,6 +215,20 @@ class SQLiteSchemaMixin:
             "WHERE lifecycle = 'active' AND subject IS NOT NULL"
         ),
     }
+    _QUERY_AUDIT_LOG_INDEX_MIGRATIONS = {
+        "idx_query_audit_log_thread": (
+            "CREATE INDEX IF NOT EXISTS idx_query_audit_log_thread "
+            "ON query_audit_log(thread_ref, created_at)"
+        ),
+        "idx_query_audit_log_actor": (
+            "CREATE INDEX IF NOT EXISTS idx_query_audit_log_actor "
+            "ON query_audit_log(actor_ref, created_at)"
+        ),
+        "idx_query_audit_log_container": (
+            "CREATE INDEX IF NOT EXISTS idx_query_audit_log_container "
+            "ON query_audit_log(container_ref, created_at)"
+        ),
+    }
 
     def _initialize_schema(self) -> None:
         with self._schema_initialization_lock():
@@ -208,6 +239,7 @@ class SQLiteSchemaMixin:
             self._ensure_maintenance_state_columns()
             self._ensure_unique_indexes()
             self._ensure_indexes()
+            self._ensure_query_audit_log_indexes()
             self._ensure_fts5_table()
             self._backfill_legacy_memory_freshness()
 
@@ -319,6 +351,11 @@ class SQLiteSchemaMixin:
     def _ensure_indexes(self) -> None:
         with self._engine.begin() as connection:
             for _index_name, create_sql in self._INDEX_MIGRATIONS.items():
+                connection.execute(text(create_sql))
+
+    def _ensure_query_audit_log_indexes(self) -> None:
+        with self._engine.begin() as connection:
+            for _index_name, create_sql in self._QUERY_AUDIT_LOG_INDEX_MIGRATIONS.items():
                 connection.execute(text(create_sql))
 
     def _ensure_fts5_available(self, connection) -> None:

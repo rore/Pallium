@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
+import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
 
@@ -19,7 +22,7 @@ from core.thread_rebuild import ThreadRebuilder, truncate_processing_error
 from core.turn_inference import resolve_runtime_context
 from core.type_registry import TypeRegistry
 from core.vector_embed import VectorEmbedder
-from core.models import QueryRuntimeContext, Relation, SourceItem, utc_now
+from core.models import InjectableBlock, QueryRuntimeContext, Relation, SourceItem, utc_now
 from core.observability import IntegrationDebugLogger
 from providers.embedding.base import EmbeddingProvider
 from retrieval.base import RetrievalProvider
@@ -471,6 +474,56 @@ class PalliumService:
     def _run_targeted_fact_consolidation(self, use_case: str, container_ref: str, subjects: list[str]) -> None:
         """Callback for ThreadRebuilder: run fact consolidation for specific subjects."""
         self._consolidation_runner.run_targeted_consolidation(use_case, container_ref, subjects)
+
+    def write_query_audit(
+        self,
+        *,
+        source_item_id: str,
+        source_id: str,
+        thread_ref: str | None,
+        container_ref: str | None,
+        actor_ref: str | None,
+        visibility: str | None,
+        query_text: str,
+        should_inject: bool,
+        decision_reason: str,
+        injectable_blocks: list[InjectableBlock],
+        results: list,
+    ) -> None:
+        result_lookup = {}
+        for item in results:
+            rid = getattr(item, 'result_id', None)
+            if rid is not None:
+                result_lookup[rid] = item
+
+        blocks_json_list = []
+        for block in injectable_blocks:
+            matched = result_lookup.get(block.result_id)
+            blocks_json_list.append({
+                "result_id": block.result_id,
+                "memory_type": block.memory_type,
+                "block_type": block.block_type,
+                "score": getattr(matched, 'score', 0.0) if matched else 0.0,
+                "retrieval_source": getattr(matched, 'retrieval_source', None) if matched else None,
+                "memory_object_id": getattr(matched, 'memory_object_id', None) if matched else None,
+                "title_preview": (block.title or "")[:120],
+            })
+
+        row = {
+            "id": str(uuid.uuid4()),
+            "created_at": datetime.now(timezone.utc),
+            "source_item_id": source_item_id,
+            "source_id": source_id,
+            "thread_ref": thread_ref,
+            "container_ref": container_ref,
+            "actor_ref": actor_ref,
+            "visibility": visibility,
+            "query_text": query_text,
+            "should_inject": 1 if should_inject else 0,
+            "decision_reason": decision_reason,
+            "injected_blocks_json": json.dumps(blocks_json_list),
+        }
+        self._storage.write_query_audit_row(row)
 
     def _persist_process_result(self, result: ProcessResult) -> None:
         for memory_object in result.memory_objects:

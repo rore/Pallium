@@ -372,6 +372,6 @@ def _load_or_create_vector_index(
         return None
 
 
-def build_router(service: PalliumService):
-    return create_router(service)
+def build_router(service: PalliumService, *, audit_log_enabled: bool = False):
+    return create_router(service, audit_log_enabled=audit_log_enabled)
 

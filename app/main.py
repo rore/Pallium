@@ -61,7 +61,8 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     except ImportError:
         logger.warning("MCP endpoint not available: mcp[cli] not installed. Run: pip install 'mcp[cli]'")
 
-    service = build_service(config, routing_overrides=routing_overrides)
+    resolved_config = config or AppConfig.from_env()
+    service = build_service(resolved_config, routing_overrides=routing_overrides)
 
     @contextlib.asynccontextmanager
     async def app_lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
@@ -112,7 +113,9 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         status_code = 200 if ready else 503
         return JSONResponse(content=body, status_code=status_code)
 
-    app.include_router(build_router(service))
+    app.include_router(build_router(
+        service, audit_log_enabled=resolved_config.observability.query_audit_log,
+    ))
     if mcp_available and mcp_app is not None:
         app.mount("", mcp_app)
         logger.info("MCP endpoint available at /mcp")

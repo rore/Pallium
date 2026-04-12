@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from sqlalchemy import create_engine, event, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -18,6 +19,7 @@ from storage.sqlite_schema import (
     IndexEntryRecord,
     MaintenanceStateRecord,
     MemoryObjectRecord,
+    QueryAuditLogRecord,
     RelationRecord,
     SQLiteSchemaMixin,
     SourceItemRecord,
@@ -428,6 +430,11 @@ class SQLiteStorageProvider(
                 select(SourceItemRecord).where(SourceItemRecord.id.in_(source_ids))
             ).all()
         return [self._to_evidence_reference(record) for record in records]
+
+    def write_query_audit_row(self, row: dict[str, Any]) -> None:
+        record = QueryAuditLogRecord(**row)
+        with self._session_factory.begin() as session:
+            session.add(record)
 
     def _after_commit_processed_source_item_persist(
         self,

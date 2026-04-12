@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException
 
 from api.schemas import (
@@ -183,7 +185,38 @@ def _serialize_trace(trace: QueryTrace) -> dict[str, object]:
     }
 
 
-def create_router(service: PalliumService) -> APIRouter:
+logger = logging.getLogger(__name__)
+
+
+def _maybe_write_query_audit(
+    service: PalliumService,
+    audit_log_enabled: bool,
+    ingest_result,
+    request,
+    query_text: str,
+    query_result,
+) -> None:
+    if not audit_log_enabled:
+        return
+    try:
+        service.write_query_audit(
+            source_item_id=ingest_result.source_item_id,
+            source_id=request.source_id,
+            thread_ref=request.thread_ref,
+            container_ref=request.container_ref,
+            actor_ref=request.query_actor_ref,
+            visibility=request.visibility_kind(),
+            query_text=query_text,
+            should_inject=query_result.should_inject,
+            decision_reason=query_result.decision_reason,
+            injectable_blocks=query_result.injectable_blocks,
+            results=query_result.results,
+        )
+    except Exception:
+        logger.warning("query audit log write failed", exc_info=True)
+
+
+def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -> APIRouter:
     router = APIRouter()
 
     def _ingest_one(request: ItemCreateRequest) -> ItemCreateResponse:
@@ -361,6 +394,9 @@ def create_router(service: PalliumService) -> APIRouter:
             visibility=request.visibility_kind(),
             runtime_context=runtime_context,
         )
+        _maybe_write_query_audit(
+            service, audit_log_enabled, ingest_result, request, query_text, query_result,
+        )
         return ItemAndQueryResponse(
             source_item_id=ingest_result.source_item_id,
             results=[_serialize_result(item) for item in query_result.results],
@@ -404,6 +440,9 @@ def create_router(service: PalliumService) -> APIRouter:
             visibility=request.visibility_kind(),
             runtime_context=runtime_context,
             include_trace=True,
+        )
+        _maybe_write_query_audit(
+            service, audit_log_enabled, ingest_result, request, query_text, query_result,
         )
         if query_result.trace is None:
             raise ValueError("debug query must include retrieval trace")

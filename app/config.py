@@ -76,6 +76,7 @@ class SemanticPackageConfig:
 @dataclass(frozen=True)
 class ObservabilityConfig:
     integration_debug: bool = False
+    query_audit_log: bool = False
 
 
 @dataclass(frozen=True)
@@ -212,7 +213,13 @@ class AppConfig:
                     env_values,
                     _read_nested(config_data, "observability", "integration_debug"),
                     False,
-                )
+                ),
+                query_audit_log=_resolve_bool_value(
+                    "PALLIUM_OBSERVABILITY_QUERY_AUDIT_LOG",
+                    env_values,
+                    _read_nested(config_data, "observability", "query_audit_log"),
+                    False,
+                ),
             ),
             retention=RetentionConfig(
                 enabled=_resolve_bool_value(
