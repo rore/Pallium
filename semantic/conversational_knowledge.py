@@ -33,7 +33,7 @@ FACT_SCHEMA_VERSION = "v1"
 FACT_TYPE = "atomic_fact"
 
 FACT_PROMPT_SCHEMA_ID = "fact_extraction"
-FACT_PROMPT_SCHEMA_VERSION = "v1"
+FACT_PROMPT_SCHEMA_VERSION = "v2"
 
 VECTOR_EMBEDDING_PROVIDER_NAME = "embedding"
 VECTOR_EMBEDDING_PROVIDER_VERSION = "v1"
@@ -105,6 +105,7 @@ FACT_CONSOLIDATION_SCHEMA_DESCRIPTION = json.dumps(
 
 FACT_EXTRACTION_SYSTEM_PROMPT = (
     "Extract specific, atomic facts from the conversation below. "
+    "Record what participants stated, not what is objectively true — if a statement contradicts common knowledge or a prior fact, still extract it. "
     "Each fact should answer a possible future question about these people, places, events, or preferences. "
     "Extract: names, dates, numbers, places, activities, preferences, relationships, events, stated plans, "
     "emotional reactions to significant events, what was discussed or learned, recommendations between people. "
