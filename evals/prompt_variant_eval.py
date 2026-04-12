@@ -107,6 +107,69 @@ SNIPPETS: list[dict[str, Any]] = [
             "must_contain_pattern": [r"2023-10|October\s*2023"],
         },
     },
+    {
+        "id": "opinion_not_fact",
+        "description": "Opinions and hypotheticals not extracted as facts",
+        "thread_text": (
+            "Session date: 2024-02-10\n"
+            "[user]: We live in Portland. I work at Reed College.\n"
+            "[assistant]: Nice! Do you like it there?\n"
+            "[user]: Yeah it's great. I think we might move to Denver someday though. "
+            "My wife sometimes talks about maybe going back to school. "
+            "I wonder if the kids would like it there.\n"
+            "[assistant]: Denver is a great city!"
+        ),
+        "assertions": {
+            "must_contain_any": [["Portland"], ["Reed College"]],
+            "must_not_contain": [
+                "Denver",
+                "back to school",
+            ],
+            "max_facts": 4,
+        },
+    },
+    {
+        "id": "assistant_utterances_not_facts",
+        "description": "Assistant paraphrases not double-counted as facts",
+        "thread_text": (
+            "Session date: 2024-03-01\n"
+            "[user]: My daughter Emma just turned 7. She started at Lincoln Elementary this year.\n"
+            "[assistant]: That's a great age! Emma must be in second grade at Lincoln Elementary. "
+            "Seven-year-olds are so curious.\n"
+            "[user]: Yeah, she loves her science class there.\n"
+            "[assistant]: Science is wonderful at that age!"
+        ),
+        "assertions": {
+            "must_contain_any": [["Emma", "7"], ["Lincoln Elementary"], ["science"]],
+            "count_containing": {"Emma": 1},
+            "must_not_contain": ["second grade", "curious", "wonderful"],
+            "max_facts": 4,
+        },
+    },
+    {
+        "id": "specificity_preservation",
+        "description": "Qualifying details preserved, not vaguely summarized",
+        "thread_text": (
+            "Session date: 2024-04-15\n"
+            "[user]: We went to the Belmont Gallery downtown last weekend. "
+            "They had an amazing exhibit of abstract oil paintings by a local artist named Tomoko Sato.\n"
+            "[assistant]: That sounds lovely!\n"
+            "[user]: Yeah, we also stopped by the Japanese garden in Washington Park afterward. "
+            "The cherry blossoms were in full bloom."
+        ),
+        "assertions": {
+            "must_contain_any": [
+                ["Belmont Gallery"],
+                ["abstract", "oil"],
+                ["Tomoko Sato"],
+                ["Japanese garden"],
+                ["cherry blossoms"],
+            ],
+            "min_must_contain_hits": 4,
+            "max_facts": 6,
+            "must_contain_pattern": [r"2024-04-0[6-9]|2024-04-1[0-4]|April\s*(6|7|8|9|10|11|12|13|14)"],
+        },
+    },
 ]
 
 
