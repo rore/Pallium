@@ -155,6 +155,19 @@ over verbatim fact recall. LoCoMo is heavy on trivia-style questions that
 reward raw transcription — a different design point. The factual recall package
 narrows this gap; temporal and multi-hop are active improvement areas.
 
+### LongMemEval — Multi-Session Memory (ICLR 2025)
+
+Long-term interactive memory — single-session recall, cross-session reasoning,
+temporal ordering, knowledge updates.
+
+| User | Assistant | Preference | Multi-session | Temporal | Knowledge-update | Overall |
+|---|---|---|---|---|---|---|
+| 90% | 100% | 100% | 70% | 100% | 100% | **93.2%** |
+
+Remaining failures are cross-object aggregation questions ("how many total",
+"how much spent") that require counting or summing across multiple independent
+memory objects — a capability gap, not a retrieval miss.
+
 ### FactConsolidation — Contradiction Handling (MemoryAgentBench, ICLR 2026)
 
 Tests whether updated facts are retrieved over stale contradictory ones.
@@ -175,6 +188,8 @@ system's scope.
 ```bash
 python -m evals.locomo_benchmark --download
 python -m evals.locomo_benchmark --mini --cache-dir .local/llm-cache
+python -m evals.longmemeval_benchmark --download
+python -m evals.longmemeval_benchmark --mini --cache-dir .local/llm-cache
 python -m evals.mabench_benchmark --download
 python -m evals.mabench_benchmark --mini --cache-dir .local/llm-cache
 ```
