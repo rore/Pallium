@@ -6,6 +6,7 @@ Current live prompt-backed roles:
 
 - `write_extraction`
 - `write_enrichment`
+- `fact_extraction` (in `conversational_knowledge` package)
 
 Current default variants:
 
@@ -78,6 +79,14 @@ Enrichment runner currently reports:
 - required-term hits and misses
 - forbidden-term violations
 - prompt text metrics
+
+## Fast Evaluators
+
+When changing a prompt, build or extend a focused evaluator that tests the specific behavior you are changing plus regression scenarios for existing behavior, before running any full benchmark. Fast evaluators use synthetic scenarios with concrete assertions (~10-20 LLM calls, under a minute with cache). Full benchmarks (LoCoMo, MABench, LongMemEval) are expensive integration checks — run them only after the fast evaluator passes clean.
+
+Existing fast evaluators:
+
+- Fact extraction: `evals/prompt_variant_eval.py` (8 snippets, ~32 LLM calls with 2 variants)
 
 ## Working Rules
 
