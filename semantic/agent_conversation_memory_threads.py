@@ -1180,8 +1180,8 @@ def _build_thread_material(source_items: list[SourceItem]) -> str:
         if item.content.strip() and not _is_low_value_meta_artifact(item)
     ]
     if filtered_lines:
-        return "`n".join(filtered_lines)
-    return "`n".join(
+        return "\n".join(filtered_lines)
+    return "\n".join(
         f"{item.role or 'unknown'}/{item.artifact_kind or 'unknown'}: {item.content.strip()}"
         for item in source_items
         if item.content.strip()

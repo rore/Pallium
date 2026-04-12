@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from core.models import (
     QueryFilters,
     QueryResultItem,
@@ -11,6 +13,8 @@ from core.visibility import QueryVisibilityTrace, VisibilityExclusion, is_visibl
 from retrieval.base import RetrievalProvider, RetrievalQueryResult
 from retrieval.common import build_evidence, build_excerpt, build_trace_hit
 from storage.base import StorageProvider
+
+logger = logging.getLogger(__name__)
 
 
 LEXICAL_STAGE_NAME = "lexical"
@@ -121,8 +125,12 @@ class LexicalRetrievalProvider(RetrievalProvider):
             seen.add(key)
 
             if hit.target_kind == "memory_object":
-                memory_object = self._storage.get_memory_object(hit.target_id)
-                evidence = self._storage.get_evidence_for_memory_object(hit.target_id)
+                try:
+                    memory_object = self._storage.get_memory_object(hit.target_id)
+                    evidence = self._storage.get_evidence_for_memory_object(hit.target_id)
+                except KeyError:
+                    logger.debug("Skipping deleted memory_object %s during hydration", hit.target_id)
+                    continue
                 results.append(
                     QueryResultItem(
                         result_kind="memory_hit",
@@ -136,7 +144,11 @@ class LexicalRetrievalProvider(RetrievalProvider):
                     )
                 )
             elif hit.target_kind == "source_item":
-                source_item = self._storage.get_source_item(hit.target_id)
+                try:
+                    source_item = self._storage.get_source_item(hit.target_id)
+                except KeyError:
+                    logger.debug("Skipping deleted source_item %s during hydration", hit.target_id)
+                    continue
                 results.append(
                     QueryResultItem(
                         result_kind="source_hit",

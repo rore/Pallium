@@ -399,8 +399,8 @@ def route_query_results(
         for routing_rank, candidate in enumerate(ranked_candidates, start=1):
             candidate["routing_rank"] = routing_rank
         if _INJ_VERBOSE:
-            _inj_verbose(f"ROUTING query={text[:80]!r} | final_candidates={len(final_candidates)} ranked={len(ranked_candidates)}")
-            for c in final_candidates[:6]:
+            _inj_verbose(f"ROUTING query={text[:80]!r} | scored={len(scored_candidates)} ranked={len(ranked_candidates)}")
+            for c in ranked_candidates[:6]:
                 item = c["item"]
                 _inj_verbose(
                     f"  rank={c.get('routing_rank')} id={getattr(item, 'result_id', '?')[:35]} "

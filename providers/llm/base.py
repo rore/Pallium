@@ -308,12 +308,15 @@ def compute_backoff_seconds(*, attempt: int, policy: LLMRetryPolicy) -> float:
     return min(max_seconds, exponential + jitter)
 
 
+MAX_RETRY_AFTER_SECONDS = 60.0
+
+
 def _parse_retry_after_seconds(response: httpx.Response) -> float | None:
     retry_after = response.headers.get("retry-after")
     if not retry_after:
         return None
     try:
-        return max(0.0, float(retry_after))
+        return min(MAX_RETRY_AFTER_SECONDS, max(0.0, float(retry_after)))
     except ValueError:
         return None
 

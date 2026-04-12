@@ -158,8 +158,12 @@ class VectorRetrievalProvider(RetrievalProvider):
 
             # 6. Hydrate into QueryResultItem (same pattern as lexical.py)
             if index_entry.target_kind == "memory_object":
-                memory_object = self._storage.get_memory_object(index_entry.target_id)
-                evidence = self._storage.get_evidence_for_memory_object(index_entry.target_id)
+                try:
+                    memory_object = self._storage.get_memory_object(index_entry.target_id)
+                    evidence = self._storage.get_evidence_for_memory_object(index_entry.target_id)
+                except KeyError:
+                    logger.debug("Skipping deleted memory_object %s during hydration", index_entry.target_id)
+                    continue
                 results.append(
                     QueryResultItem(
                         result_kind="memory_hit",
@@ -173,7 +177,11 @@ class VectorRetrievalProvider(RetrievalProvider):
                     )
                 )
             elif index_entry.target_kind == "source_item":
-                source_item = self._storage.get_source_item(index_entry.target_id)
+                try:
+                    source_item = self._storage.get_source_item(index_entry.target_id)
+                except KeyError:
+                    logger.debug("Skipping deleted source_item %s during hydration", index_entry.target_id)
+                    continue
                 results.append(
                     QueryResultItem(
                         result_kind="source_hit",

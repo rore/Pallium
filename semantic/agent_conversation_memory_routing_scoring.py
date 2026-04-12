@@ -639,7 +639,7 @@ def _specificity_bonus(item: QueryResultItem, intent: str) -> int:
     if item.result_kind == "memory_hit" and item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
         if intent == "structured_recall":
             bonus += 48 if item.type == "investigation_outcome" else 40
-        elif intent in {"structured_recall", "evidence_trace"}:
+        elif intent == "evidence_trace":
             bonus += 25 if item.type == "decision" else 23
         else:
             bonus += 10

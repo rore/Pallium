@@ -872,3 +872,31 @@ def test_task_checkpoint_null_actor_ref_in_multi_actor_thread(monkeypatch, test_
             f"Task checkpoint from multi-actor thread should have actor_ref=None, "
             f"got actor_ref={checkpoint.actor_ref}"
         )
+
+
+def test_build_thread_material_uses_newlines():
+    """Verify _build_thread_material joins lines with real newlines, not backtick-n."""
+    from core.models import SourceItem
+    from semantic.agent_conversation_memory_threads import _build_thread_material
+
+    items = [
+        SourceItem(
+            source_type="message",
+            source_id="msg-1",
+            content_type="text",
+            content="First message content",
+            role="user",
+            artifact_kind="message",
+        ),
+        SourceItem(
+            source_type="message",
+            source_id="msg-2",
+            content_type="text",
+            content="Second message content",
+            role="assistant",
+            artifact_kind="message",
+        ),
+    ]
+    result = _build_thread_material(items)
+    assert "\n" in result, "Expected real newline in thread material"
+    assert "`n" not in result, "Found literal backtick-n in thread material"

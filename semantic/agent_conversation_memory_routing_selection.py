@@ -768,7 +768,7 @@ def _candidate_qualifies_as_same_thread_local_state(
             return True, ""
         if payload.get("content_quality") == "substantive":
             return True, ""
-        if support_grade in {"supported", "strong"} and (support_score >= ROUTING_SUPPORT_THRESHOLD["supported"] or len(overlap_tokens) >= 2):
+        if support_grade in {"supported", "strong"} and support_score >= ROUTING_SUPPORT_THRESHOLD["supported"]:
             return True, ""
         return False, "weak_same_thread_summary"
 

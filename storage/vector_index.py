@@ -118,8 +118,14 @@ class VectorIndex:
         meta.json is written LAST so its mtime serves as the change indicator.
         """
         self._index_path.parent.mkdir(parents=True, exist_ok=True)
-        # 1. Binary index (usearch writes directly)
-        self._index.save(str(self._index_path))
+        # 1. Binary index (atomic via temp + replace)
+        tmp_index = self._index_path.with_suffix(f".{uuid.uuid4().hex[:8]}.tmp")
+        try:
+            self._index.save(str(tmp_index))
+            os.replace(str(tmp_index), str(self._index_path))
+        except BaseException:
+            tmp_index.unlink(missing_ok=True)
+            raise
         # 2. ID map (atomic)
         idmap_path = Path(f"{self._index_path}.idmap.json")
         idmap_data = {
