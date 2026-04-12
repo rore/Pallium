@@ -201,9 +201,6 @@ class SQLiteSchemaMixin:
 
     def _initialize_schema(self) -> None:
         with self._schema_initialization_lock():
-            # Enable WAL mode for concurrent read/write access
-            with self._engine.begin() as connection:
-                connection.execute(text("PRAGMA journal_mode=WAL"))
             Base.metadata.create_all(self._engine)
             self._ensure_source_item_columns()
             self._ensure_memory_object_columns()

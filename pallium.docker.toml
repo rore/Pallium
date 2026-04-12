@@ -1,0 +1,11 @@
+# Minimal config for Docker build-time model download.
+# Runtime configuration is provided entirely via environment variables.
+# This file is removed after the model download step in the Dockerfile.
+
+[embedding_providers.onnx]
+kind = "onnx"
+model = "intfloat/multilingual-e5-small"
+
+[vector_index]
+enabled = true
+embedding_provider = "onnx"

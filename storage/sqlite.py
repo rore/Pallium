@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import create_engine, func, select, text
+from sqlalchemy import create_engine, event, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from core.contracts import ProcessResult
@@ -38,8 +38,26 @@ class SQLiteStorageProvider(
     def __init__(self, database_url: str) -> None:
         connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
         self._engine = create_engine(database_url, future=True, connect_args=connect_args)
+        self._register_sqlite_connect_hooks(self._engine)
         self._session_factory = sessionmaker(self._engine, expire_on_commit=False, class_=Session)
         self._initialize_schema()
+
+    @staticmethod
+    def _register_sqlite_connect_hooks(engine) -> None:
+        """Register connection-level hooks for SQLite engines.
+
+        Sets WAL journal mode on every new connection so concurrent readers
+        and writers (API server, processors, cleaners) can operate without
+        blocking each other.
+        """
+        if engine.url.get_backend_name() != "sqlite":
+            return
+
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.close()
 
     def find_source_item(self, source_type: str, source_id: str) -> SourceItem | None:
         with self._session_factory() as session:

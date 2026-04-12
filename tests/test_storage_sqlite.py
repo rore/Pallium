@@ -852,6 +852,13 @@ def test_unique_index_migration_fails_on_existing_duplicates(tmp_path: Path) -> 
         SQLiteStorageProvider(database_url)
 
 
+def test_wal_journal_mode_enabled(test_db_url: str) -> None:
+    """SQLiteStorageProvider must enable WAL journal mode on every connection."""
+    from sqlalchemy import text as sa_text
 
+    storage = SQLiteStorageProvider(test_db_url)
+    with storage._session_factory() as session:
+        journal_mode = session.execute(sa_text("PRAGMA journal_mode")).scalar()
+    assert journal_mode == "wal"
 
 

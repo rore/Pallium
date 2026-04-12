@@ -11,6 +11,7 @@ tmp*.db
 pallium.egg-info/
 build/
 .env.local
+.env
 evals/semantic/output/
 
 evals/agent_conversation/output/

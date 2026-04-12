@@ -1,0 +1,49 @@
+# Pallium + LLM proxy — local integration testing.
+# Matches the production container pod shape (two containers, shared network).
+#
+# Usage:
+#   cp .env.docker.example .env   # fill in LLM proxy credentials
+#   docker compose up
+
+services:
+  pallium:
+    build: .
+    ports: ["8000:8000"]
+    environment:
+      PALLIUM_SQLITE_URL: sqlite:////tmp/pallium/pallium.db
+      PALLIUM_SNAPSHOT_ENABLED: "true"
+      PALLIUM_SNAPSHOT_PATH: /mnt/pallium-snapshots
+      PALLIUM_SNAPSHOT_INTERVAL_SECONDS: "60"
+      PALLIUM_VECTOR_INDEX_ENABLED: "true"
+      PALLIUM_VECTOR_INDEX_PATH: /tmp/pallium/vector.index
+      PALLIUM_RETENTION_ENABLED: "true"
+      PALLIUM_RETENTION_RUN_INTERVAL_SECONDS: "300"
+      PALLIUM_PROCESSORS: "2"
+      PALLIUM_CLEANERS: "1"
+      PALLIUM_PROVIDER__MAIN__KIND: anthropic_claude
+      PALLIUM_PROVIDER__MAIN__BASE_URL: http://llm-proxy:3030/v1
+      PALLIUM_PROVIDER__MAIN__API_KEY: proxy-dummy-token
+      PALLIUM_PROVIDER__MAIN__AUTH_STYLE: bearer
+      PALLIUM_PROVIDER__MAIN__TIMEOUT_SECONDS: "30"
+      PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__LLM_PROVIDER: main
+      PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__MODEL: anthropic--claude-sonnet-latest
+      PALLIUM_PACKAGE__CONVERSATIONAL_KNOWLEDGE__LLM_PROVIDER: main
+      PALLIUM_PACKAGE__CONVERSATIONAL_KNOWLEDGE__MODEL: anthropic--claude-haiku-latest
+      LOG_LEVEL: INFO
+    volumes:
+      - pallium-snapshots:/mnt/pallium-snapshots
+    depends_on:
+      llm-proxy:
+        condition: service_started
+
+  llm-proxy:
+    image: ${LLM_PROXY_IMAGE}
+    ports: ["3030:3030"]
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "3030"
+    env_file:
+      - .env
+
+volumes:
+  pallium-snapshots:

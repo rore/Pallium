@@ -21,7 +21,7 @@ from app.mcp.context import PalliumContext
 @pytest.fixture()
 def pallium_asgi_app(test_db_url: str):
     from storage.vector_index import VectorIndexConfig
-    return create_app(
+    app = create_app(
         AppConfig(
             storage_backend="sqlite",
             sqlite_url=test_db_url,
@@ -29,6 +29,8 @@ def pallium_asgi_app(test_db_url: str):
             vector_index=VectorIndexConfig(enabled=False),
         )
     )
+    app.state._lifespan_complete = True
+    return app
 
 
 @pytest.fixture()
