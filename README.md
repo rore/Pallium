@@ -2,19 +2,28 @@
 
 # Pallium
 
-Local-first, multilingual memory sidecar for AI agents. Stores selected
-evidence, derives compact memory, returns evidence-backed cards for follow-up
-questions and resumed work.
+Memory sidecar for AI agents. Extracts structured memory from conversations
+— decisions, facts, investigation outcomes, work checkpoints — and returns
+compact evidence-backed cards when the agent needs context from earlier
+threads.
 
-## The Problem
+Multilingual by design: queries in one language retrieve memory stored in
+another. Local-first, no cloud dependencies.
 
-Agents forget. They lose decisions made three threads ago, repeat
-investigations, and resume interrupted work without the right context.
+## What It Looks Like
 
-Pallium turns selected agent interactions into scoped, reusable memory —
-structured conclusions and concrete facts, linked back to supporting evidence,
-across languages. The agent gets small evidence-backed cards instead of noisy
-transcripts or lossy summaries.
+Thread 1: your agent helps debug a deployment issue. After investigation,
+it decides to use event timestamps for ordering. Pallium extracts and stores
+the decision with its evidence.
+
+Thread 2 (days later): a colleague asks "why do we use event time for
+ordering?" Pallium returns a compact card:
+
+    decision: "Use event time for reservation ordering — avoids timezone drift."
+    evidence: thread-A, 2024-03-15
+
+The agent answers immediately with the original reasoning — no
+re-investigation, no guessing, no pasting from old threads.
 
 ## Quick Example
 
@@ -99,21 +108,60 @@ flowchart LR
 4. **Combined** — `POST /item-and-query` does ingest + query in one call (recommended for the common per-message pattern)
 5. **Debug** — `POST /query/debug` or `POST /item-and-query/debug` exposes the full retrieval and routing trace
 
-Two production packages run in parallel over the same evidence:
+From stored evidence, Pallium derives typed memory:
 
-- **Work continuity** — decisions, investigation findings, resumed-work
-  checkpoints, thread orientation ("why did we choose this?", "where did we
-  leave off?")
-- **Factual recall** — names, dates, preferences, events, relationships
-  extracted from conversation threads, consolidated by subject and topic
-  for multi-hop recall ("when did Jordan go camping?", "what activities
-  does Melanie partake in?")
+| Type | Example |
+|------|---------|
+| `decision` | "Use event time for ordering — avoids timezone drift" |
+| `investigation_outcome` | "Root cause: stale cache after deploy" |
+| `task_checkpoint` | "Blocked on API rate limit, next: implement backoff" |
+| `atomic_fact` | "Jordan completed a half-marathon in Denver in March 2024" |
+| `thread_summary` | "Discussed migration strategy, agreed on staged rollout" |
+| `constraint_memory` | "Must stay on Python 3.12 for compatibility" |
 
-Retrieval combines lexical search, vector similarity, and hybrid RRF fusion.
-The query path is deterministic by default, with selective LLM-assisted
-disambiguation only for bounded ambiguous cases.
+Every memory object stays linked to its supporting source evidence.
 
-### Multilingual by Design
+Retrieval combines lexical search (FTS5 + BM25), vector similarity, and
+hybrid RRF fusion. The query path is deterministic by default, with selective
+LLM-assisted disambiguation only for bounded ambiguous cases.
+
+See [docs/how-it-works.md](docs/how-it-works.md) for the full model.
+
+## Integration
+
+Pallium sits between your agent and its LLM. On each user message, the agent
+calls Pallium once; Pallium stores the message and returns any relevant prior
+memory. After the LLM responds, the agent sends the reply back as evidence.
+
+    User message → Pallium (store + query) → inject memory → LLM → reply → Pallium (store)
+
+Two endpoints cover the full loop:
+- `POST /item-and-query` — store the user message, get memory back
+  (before the LLM call)
+- `POST /items` — store the reply and artifacts (after the LLM call)
+
+Pallium decides what to extract, what to inject, and when to stay silent.
+The agent trusts `should_inject` and passes `injectable_blocks` through.
+
+See [agent-integration.md](docs/agent-integration.md) for the full guide and
+[integration-example.md](docs/integration-example.md) for a Slack agent
+walkthrough.
+
+## MCP Server
+
+Pallium includes an MCP server for direct LLM tool access:
+
+    claude mcp add pallium -- python -m app.run mcp
+
+Three tools: `pallium_query` (search memory), `pallium_query_debug`
+(retrieval trace), `pallium_ingest` (store evidence).
+
+Context defaults (container, thread, actor, visibility) are set via
+environment variables so tool calls don't need to repeat them.
+
+See [agent-integration.md](docs/agent-integration.md) for setup details.
+
+## Multilingual by Design
 
 Pallium is designed to be multilingual. Memory is preserved in the original
 language and cross-language recall works natively — a query in one language
@@ -123,8 +171,6 @@ This is an intentional architectural property, not an undocumented side effect.
 Tokenization, lexical scoring, content-overlap gates, and embedding are all
 built to handle non-Latin scripts (Hebrew, Arabic, CJK, Cyrillic) as
 first-class content.
-
-See [docs/how-it-works.md](docs/how-it-works.md) for the full model.
 
 ## Scope
 
@@ -142,70 +188,39 @@ Not a fit:
 
 ## Benchmarks
 
-### LoCoMo — Conversational Recall (ACL 2024)
+Pallium optimizes for work continuity — carrying forward decisions,
+investigations, and checkpoints across threads. These benchmarks test a
+broader mix including trivia-style factual recall.
 
-Multi-session conversational QA — names, dates, events, relationships.
+Results show both retrieval rate (did Pallium deliver the right memory?) and
+end-to-end accuracy (did the LLM answer correctly?). Retrieval rate isolates
+what Pallium controls; the gap shows what the answering LLM adds or loses.
 
-| Single-hop | Open-domain | Temporal | Multi-hop | Overall |
-|---|---|---|---|---|
-| 61.1% | 61.6% | 44.8% | 43.3% | **57.1%** |
+| Benchmark | Retrieval | End-to-end | Questions |
+|---|---|---|---|
+| **LoCoMo** — conversational recall (ACL 2024) | 51.1% | 62.0% | 1,540 |
+| **LongMemEval** — multi-session memory (ICLR 2025) | 91.7% | 93.2% | 60 (mini) |
+| **FactConsolidation** — contradiction handling (MABench, ICLR 2026) | 64.5% | 29.1% | 200 |
 
-Pallium prioritizes structured memory (decisions, investigations, checkpoints)
-over verbatim fact recall. LoCoMo is heavy on trivia-style questions that
-reward raw transcription — a different design point. The factual recall package
-narrows this gap; temporal and multi-hop are active improvement areas.
-
-### LongMemEval — Multi-Session Memory (ICLR 2025)
-
-Long-term interactive memory — single-session recall, cross-session reasoning,
-temporal ordering, knowledge updates.
-
-| User | Assistant | Preference | Multi-session | Temporal | Knowledge-update | Overall |
-|---|---|---|---|---|---|---|
-| 90% | 100% | 100% | 70% | 100% | 100% | **93.2%** |
-
-Remaining failures are cross-object aggregation questions ("how many total",
-"how much spent") that require counting or summing across multiple independent
-memory objects — a capability gap, not a retrieval miss.
-
-### FactConsolidation — Contradiction Handling (MemoryAgentBench, ICLR 2026)
-
-Tests whether updated facts are retrieved over stale contradictory ones.
-Pallium is a retrieval sidecar — the retrieval rate (did the right fact reach
-the consuming agent?) is the primary metric.
-
-| | Retrieval rate | End-to-end |
-|---|---|---|
-| **Single-hop** | **82%** | 51.5% |
-| **Multi-hop** | **10%** | 7% |
-
-*6k context depth (455 facts). Retrieval rate = gold answer present in
-returned context.*
-
-The end-to-end gap has two causes: (1) the evaluator LLM overrides
-counterfactual test data with its own training knowledge, and (2) older
-memory objects that haven't been superseded outnumber the newer
-contradictory fact in the context. Multi-hop is low because it requires
-chaining two independent facts — an open area for improvement.
-
-### Running Benchmarks
-
-```bash
-python -m evals.locomo_benchmark --download
-python -m evals.locomo_benchmark --mini --cache-dir .local/llm-cache
-python -m evals.longmemeval_benchmark --download
-python -m evals.longmemeval_benchmark --mini --cache-dir .local/llm-cache
-python -m evals.mabench_benchmark --download
-python -m evals.mabench_benchmark --mini --cache-dir .local/llm-cache
-```
+LoCoMo end-to-end exceeds retrieval because the answering LLM compensates
+with its own knowledge on trivia questions. FactConsolidation has the
+opposite gap — the updated fact reaches context but older objects outnumber
+it. Both are active improvement areas. Per-category breakdowns and
+reproduction commands are in [docs/benchmarks.md](docs/benchmarks.md).
 
 ## Documentation
 
+**Using Pallium:**
 - [Getting Started](docs/getting-started.md) — local setup to first query
-- [Demo Session](examples/demo-session.md) — complete walkthrough with real API requests, memory creation, cross-thread recall, and debug trace
-- [How It Works](docs/how-it-works.md) — architecture, memory model, retrieval
-- [HTTP API](docs/http-api.md) — endpoints, request/response shapes, examples
-- [Configuration](docs/configuration.md) — providers, packages, tuning knobs
-- [Agent Integration](docs/agent-integration.md) — wiring Pallium into a runtime, MCP tools
-- [Integration Example](docs/integration-example.md) — Slack agent walkthrough with code
+- [Demo Session](examples/demo-session.md) — complete walkthrough with real requests
+- [HTTP API](docs/http-api.md) — endpoints, shapes, examples
+
+**Integrating Pallium:**
+- [Agent Integration](docs/agent-integration.md) — wiring into a runtime, MCP tools
+- [Integration Example](docs/integration-example.md) — Slack agent walkthrough
 - [Privacy and Visibility](docs/privacy-and-visibility.md) — scoped memory boundaries
+
+**Understanding Pallium:**
+- [How It Works](docs/how-it-works.md) — architecture, memory model, retrieval
+- [Configuration](docs/configuration.md) — providers, packages, tuning
+- [Benchmarks](docs/benchmarks.md) — per-category results, reproduction commands
