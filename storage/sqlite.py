@@ -48,9 +48,11 @@ class SQLiteStorageProvider(
     def _register_sqlite_connect_hooks(engine) -> None:
         """Register connection-level hooks for SQLite engines.
 
-        Sets WAL journal mode on every new connection so concurrent readers
-        and writers (API server, processors, cleaners) can operate without
-        blocking each other.
+        Sets WAL journal mode and busy timeout on every new connection so
+        concurrent readers and writers (API server, processors, cleaners)
+        can operate without blocking each other.  The busy timeout lets
+        writers wait briefly instead of failing immediately when another
+        writer holds the lock.
         """
         if engine.url.get_backend_name() != "sqlite":
             return
@@ -59,6 +61,7 @@ class SQLiteStorageProvider(
         def _set_sqlite_pragma(dbapi_connection, connection_record):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
             cursor.close()
 
     def find_source_item(self, source_type: str, source_id: str) -> SourceItem | None:
