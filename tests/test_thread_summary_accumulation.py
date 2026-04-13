@@ -228,16 +228,22 @@ def test_dual_package_concurrent_workers(monkeypatch, test_db_url: str) -> None:
     def worker_loop(service, worker_id: str):
         try:
             while not stop_event.is_set():
-                result = service.process_next_source_item(
-                    worker_id=worker_id, lease_seconds=60, max_attempts=3
-                )
-                if result is not None:
-                    continue
-                lease = service.process_next_thread_rebuild(
-                    worker_id=worker_id, lease_seconds=60
-                )
-                if lease is not None:
-                    continue
+                try:
+                    result = service.process_next_source_item(
+                        worker_id=worker_id, lease_seconds=60, max_attempts=3
+                    )
+                    if result is not None:
+                        continue
+                    lease = service.process_next_thread_rebuild(
+                        worker_id=worker_id, lease_seconds=60
+                    )
+                    if lease is not None:
+                        continue
+                except Exception as exc:
+                    if "database is locked" in str(exc):
+                        time.sleep(0.1)
+                        continue
+                    raise
                 time.sleep(0.05)
         except Exception as exc:
             errors.append(exc)
@@ -290,16 +296,22 @@ def test_dual_package_concurrent_rapid_fire(monkeypatch, test_db_url: str) -> No
     def worker_loop(service, worker_id: str):
         try:
             while not stop_event.is_set():
-                result = service.process_next_source_item(
-                    worker_id=worker_id, lease_seconds=60, max_attempts=3
-                )
-                if result is not None:
-                    continue
-                lease = service.process_next_thread_rebuild(
-                    worker_id=worker_id, lease_seconds=60
-                )
-                if lease is not None:
-                    continue
+                try:
+                    result = service.process_next_source_item(
+                        worker_id=worker_id, lease_seconds=60, max_attempts=3
+                    )
+                    if result is not None:
+                        continue
+                    lease = service.process_next_thread_rebuild(
+                        worker_id=worker_id, lease_seconds=60
+                    )
+                    if lease is not None:
+                        continue
+                except Exception as exc:
+                    if "database is locked" in str(exc):
+                        time.sleep(0.1)
+                        continue
+                    raise
                 time.sleep(0.02)
         except Exception as exc:
             errors.append(exc)
