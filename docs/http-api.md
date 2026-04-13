@@ -249,11 +249,17 @@ Response fields:
 
 - `should_inject` — whether Pallium recommends injecting memory into the
   agent's prompt
-- `decision_reason` — why: `"carry_forward_available"`,
-  `"same_thread_context_sufficient"`, `"no_relevant_memory"`,
-  `"only_low_value_candidates"`, `"low_injection_confidence"`,
-  `"no_candidates_above_floor"`, `"constraint_supplement"`,
-  `"low_value_query"`, `"lane_ambiguity"`, or `"no_lane_eligible"`
+- `decision_reason` — why injection was approved or declined:
+  - `"carry_forward_available"` — relevant memory found and approved for injection
+  - `"constraint_supplement"` — a user-stated constraint was found and injected
+  - `"same_thread_context_sufficient"` — the agent already has this context in the current thread
+  - `"no_relevant_memory"` — retrieval ran but nothing matched well enough
+  - `"only_low_value_candidates"` — matches found but too low-value to inject
+  - `"low_injection_confidence"` — candidates exist but confidence is below the injection threshold
+  - `"no_candidates_above_floor"` — all candidates scored below the minimum retrieval floor
+  - `"low_value_query"` — the query is a greeting, acknowledgement, or meta-conversation that won't benefit from memory
+  - `"lane_ambiguity"` — the query didn't clearly map to a retrieval strategy; Pallium chose silence over a guess
+  - `"no_lane_eligible"` — no structural retrieval lane (work resumption, evidence trace, residual recall) matched the query shape
 - `injectable_blocks` — ready-to-use blocks for prompt injection, each with
   `block_type`, `title`, `text`, optional `memory_type`, and `evidence` refs
 - `results` — ranked result list (see below)
@@ -266,7 +272,8 @@ Each result in `results[]`:
 - `score` — retrieval score (integer, higher is better)
 - `type` — memory type for `memory_hit` results: `"decision"`,
   `"investigation_outcome"`, `"thread_summary"`, `"task_checkpoint"`,
-  `"interest"`, `"constraint_memory"`, `"pattern_memory"`, `"continuity_memory"`, or `"discussion_summary"`
+  `"atomic_fact"`, `"fact_summary"`, `"interest"`, `"constraint_memory"`,
+  `"pattern_memory"`, `"continuity_memory"`, or `"discussion_summary"`
 - `memory_object_id` — ID of the memory object (for `memory_hit`)
 - `source_item_id` — ID of the source item (for `source_hit`)
 - `excerpt` — text excerpt (for `source_hit`)
@@ -362,6 +369,24 @@ The response includes:
 
 This endpoint is mainly for local debugging, worker troubleshooting, and test
 or benchmark setup checks.
+
+## GET /health
+
+Operational readiness check. Returns whether the service is ready to handle
+requests.
+
+```json
+{
+  "status": "ok",
+  "vector_index_ready": true
+}
+```
+
+- `status` — `"ok"` when ready, `"initializing"` during startup
+- `vector_index_ready` — whether the vector index reconciliation has completed
+
+Returns HTTP 200 when ready, 503 when still initializing. Use this for
+container health probes and startup checks.
 
 ## Common Shapes
 

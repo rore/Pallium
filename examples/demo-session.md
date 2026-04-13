@@ -62,9 +62,10 @@ curl -s -X POST http://localhost:8000/items \
   }]'
 ```
 
-Processing happens in the background. After a few seconds, the background
-worker extracts a `decision` memory object with evidence linking back to both
-messages.
+Processing happens in the background asynchronously. The background worker
+picks up the ingested items, runs LLM extraction, and creates memory objects
+— typically within a few seconds. The just-ingested message won't appear in
+query results until processing completes.
 
 ---
 

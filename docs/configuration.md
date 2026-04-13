@@ -2,6 +2,24 @@
 
 This page explains Pallium's local configuration surface today.
 
+**Contents:**
+[Quick Reference](#quick-reference) ·
+[Configuration Sources](#configuration-sources) ·
+[Minimal Setups](#minimal-local-setups) ·
+[TOML Structure](#toml-structure) ·
+[Storage](#storage) ·
+[Observability](#observability) ·
+[Retention](#retention) ·
+[Provider Blocks](#provider-blocks) ·
+[Semantic Packages](#semantic-packages) ·
+[Prompt Variants](#prompt-variants) ·
+[Model Roles](#model-roles) ·
+[Embedding Providers](#embedding-providers) ·
+[Vector Index](#vector-index) ·
+[Current Defaults](#current-defaults) ·
+[Common Recipes](#common-recipes) ·
+[Troubleshooting](#troubleshooting)
+
 ## Quick Reference
 
 | What | Where | Key fields |

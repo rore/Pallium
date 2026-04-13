@@ -284,16 +284,27 @@ when automatic injection isn't enough.
 
 ### Architecture
 
-The MCP endpoint is served via streamable-http transport on the same port as
-the HTTP API:
+Pallium's MCP server runs in two modes:
+
+**Embedded (production)** — when `mcp[cli]` is installed, the MCP endpoint
+is automatically available at `/mcp` on the same HTTP server:
 
 ```
 http://<pallium-host>:8000/mcp
 ```
 
-No separate process or port. The endpoint is automatically available when
-Pallium starts with `mcp[cli]` installed (`pip install pallium[mcp]` or
-`pip install "mcp[cli]"`).
+No separate process or port. Install with `pip install "pallium[mcp]"`.
+
+**Standalone (local development)** — runs as a separate process, useful for
+local testing with Claude Code:
+
+```bash
+python -m app.run mcp
+```
+
+This starts an MCP server on port 8001 (configurable via `FASTMCP_PORT`).
+Transport defaults to streamable-http; set `PALLIUM_MCP_TRANSPORT=stdio`
+for stdio mode.
 
 ### Tools
 
@@ -304,16 +315,20 @@ Pallium starts with `mcp[cli]` installed (`pip install pallium[mcp]` or
 | `pallium_ingest` | Store an artifact for processing. Goes through the standard extraction pipeline. |
 
 All tools accept optional scope parameters (`container_ref`, `thread_ref`,
-`actor_ref`, `visibility`) for filtering. When omitted, queries search globally.
+`actor_ref`, `visibility`) for filtering. When omitted, defaults come from
+environment variables (`PALLIUM_CONTAINER_REF`, `PALLIUM_THREAD_REF`,
+`PALLIUM_ACTOR_REF`, `PALLIUM_VISIBILITY`).
 
 ### Registration
 
-Register the MCP server with your agent runtime using the streamable-http
-transport. For Claude Code:
+For Claude Code (standalone mode):
 
 ```bash
-claude mcp add --transport http pallium http://<pallium-host>:8000/mcp
+claude mcp add pallium -- python -m app.run mcp
 ```
+
+For a remote Pallium instance (embedded mode), configure your MCP client
+to connect via streamable-http to `http://<pallium-host>:8000/mcp`.
 
 ### Agent Instructions
 

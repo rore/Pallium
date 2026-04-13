@@ -85,19 +85,9 @@ A good session looks like this:
 3. You start a new thread (`/new`) and ask a related question — Pallium returns
    `should_inject: true` with a compact memory card carrying forward the
    decision or finding from the earlier thread
-4. The debug trace shows why: which retrieval method found the match, what
-   routing lane selected it, and why injection was approved
 
-Specifically, you should see:
-
-- user and assistant turns ingested through `POST /items`
-- `should_inject` and `decision_reason` on each query
-- compact memory cards returned when Pallium has useful carry-forward
-- the debug path explaining retrieval, routing, and visibility decisions
-
-You're looking for the shape of the system: selected evidence goes in, compact
-memory and evidence cards come back, and only approved carry-forward gets
-injected into the agent's prompt.
+Use `/debug on` to see the full trace: which retrieval method found the match,
+what routing lane selected it, and why injection was approved or declined.
 
 ## 5. Lower-Level HTTP Example
 

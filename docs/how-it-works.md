@@ -49,11 +49,15 @@ jobs:
 | Investigation findings | `investigation_outcome` | "Root cause: stale cache after deploy" |
 | Thread orientation | `thread_summary` | "Discussed migration strategy, agreed on staged rollout" |
 | Resumed-work state | `task_checkpoint` | "Blocked on API rate limit, next: implement backoff" |
+| Factual knowledge | `atomic_fact` | "Jordan completed a half-marathon in Denver in March 2024" |
+| Consolidated facts | `fact_summary` | Cross-thread factual summary grouped by subject and topic |
 | Expressed interest | `interest` | "Chroma sounds interesting, should check it some time" |
 | Stated constraint | `constraint_memory` | "Must stay on Python 3.12 for compatibility" |
 | Cross-thread carry-forward | `continuity_memory` | Same question answered consistently across threads |
 | Recurring patterns | `pattern_memory` | Repeated architectural preference across conversations |
-| Factual knowledge | `atomic_fact` | "Jordan completed a half-marathon in Denver in March 2024" |
+
+`continuity_memory` and `pattern_memory` are functional but not yet fully
+product-proven — grouping and candidate selection need further hardening.
 
 A fallback `discussion_summary` covers cases that don't match a specific type.
 
@@ -177,21 +181,6 @@ Use `POST /query/debug` to see exactly why Pallium abstained. The trace shows
 which candidates were retrieved, which were excluded by visibility or routing,
 and which decision path was taken.
 
-## Known Limitations
-
-Current areas under active hardening:
-
-- **Thread-level interest extraction** — per-item extraction can lose subject
-  context when interest spans multiple messages. Under investigation.
-- **Lexical retrieval scaling** — the current full-scan approach works well for
-  small-to-medium corpora but won't scale to very large stores without
-  additional indexing.
-- **Semantic gap** — extracted `decision_evidence_text` is not yet validated
-  against source content. The evidence link exists but fidelity isn't checked.
-- **Higher-level consolidation** — `pattern_memory` and `continuity_memory`
-  are promising but not yet fully product-proven. Grouping and candidate
-  selection need further hardening.
-
 ## Privacy Model
 
 Locality is not privacy. `container_ref` identifies where an item belongs, and
@@ -208,6 +197,19 @@ boundaries. Missing visibility on query returns nothing (fail-closed).
 
 See [privacy-and-visibility.md](privacy-and-visibility.md) for the full
 contract.
+
+## Known Limitations
+
+Current areas under active hardening:
+
+- **Thread-level interest extraction** — per-item extraction can lose subject
+  context when interest spans multiple messages. Under investigation.
+- **Semantic gap** — extracted `decision_evidence_text` is not yet validated
+  against source content. The evidence link exists but fidelity isn't checked.
+- **Contradiction supersession** — when a newer fact contradicts an older one,
+  the atomic facts are correctly superseded but thread summaries containing the
+  old fact persist. This can cause stale information to outnumber corrections
+  in retrieval results.
 
 ## Internal Vocabulary
 
