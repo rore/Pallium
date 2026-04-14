@@ -73,6 +73,7 @@ class SemanticExtraction:
     progress_text: str | None = None
     key_finding_text: str | None = None
     subject_hints: tuple[MemorySubjectAnchor, ...] = field(default_factory=tuple)
+    work_refs: tuple[str, ...] = ()
 
 
 def summarize_content(content: str) -> str:

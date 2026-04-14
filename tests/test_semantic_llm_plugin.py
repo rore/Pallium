@@ -68,7 +68,7 @@ def test_grounded_investigation_evidence_tolerates_whitespace_normalization() ->
     assert has_grounded_investigation_evidence(source, "Investigation found that arrival-time ordering missed hold updates.") is True
 from providers.llm.base import LLMCallMetadata, LLMJsonResponse, LLMProviderError
 from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY
-from semantic.llm_agent_memory import LLMAgentMemoryPlugin, build_analysis_request
+from semantic.llm_agent_memory import DEFAULT_PROMPT_VARIANT, LLMAgentMemoryPlugin, build_analysis_request
 from semantic.prompt_roles import get_prompt_role_contract
 
 
@@ -128,7 +128,7 @@ def test_llm_plugin_promotes_decision_memory_from_valid_extraction() -> None:
     assert result.memory_objects[0].payload["semantic_provenance"]["prompt_role"] == WRITE_EXTRACTION_PROMPT_ROLE.role
     assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_id"] == WRITE_EXTRACTION_PROMPT_ROLE.schema_id
     assert result.memory_objects[0].payload["semantic_provenance"]["prompt_schema_version"] == WRITE_EXTRACTION_PROMPT_ROLE.schema_version
-    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_variant"] == "strict_typed_memory_v5_compact_examples"
+    assert result.memory_objects[0].payload["semantic_provenance"]["prompt_variant"] == DEFAULT_PROMPT_VARIANT
     assert result.memory_objects[0].payload["semantic_provenance"]["model_role"] == WRITE_EXTRACTION_PROMPT_ROLE.default_model_role
     assert result.memory_objects[0].payload["semantic_provenance"]["provider_name"] == "stub_provider"
     assert result.memory_objects[0].payload["semantic_provenance"]["provider_kind"] == "stub_kind"

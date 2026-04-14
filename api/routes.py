@@ -24,6 +24,15 @@ from core.turn_inference import resolve_runtime_context
 from core.visibility import QueryVisibilityTrace, VisibilityExclusion
 
 
+def _normalize_query_work_refs(raw: list[str] | None) -> tuple[str, ...]:
+    if not raw:
+        return ()
+    from semantic.llm_agent_memory import _normalize_work_ref
+    return tuple(ref for ref in (
+        _normalize_work_ref(r) for r in raw
+    ) if ref is not None)
+
+
 def _deserialize_runtime_context(payload) -> QueryRuntimeContext | None:
     if payload is None:
         return None
@@ -142,6 +151,7 @@ def _serialize_query_filters(filters) -> dict[str, object] | None:
         "container_ref": filters.container_ref,
         "thread_ref": filters.thread_ref,
         "actor_ref": filters.actor_ref,
+        "work_refs": list(filters.work_refs) if filters.work_refs else [],
     }
 
 
@@ -327,6 +337,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             container_ref=request.container_ref,
             thread_ref=request.thread_ref,
             actor_ref=request.actor_ref,
+            work_refs=_normalize_query_work_refs(request.work_refs),
             visibility=request.visibility_kind(),
             runtime_context=_deserialize_runtime_context(request.runtime_context),
         )
@@ -348,6 +359,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             container_ref=request.container_ref,
             thread_ref=request.thread_ref,
             actor_ref=request.actor_ref,
+            work_refs=_normalize_query_work_refs(request.work_refs),
             visibility=request.visibility_kind(),
             runtime_context=_deserialize_runtime_context(request.runtime_context),
             include_trace=True,
@@ -394,6 +406,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             container_ref=request.container_ref,
             thread_ref=request.thread_ref,
             actor_ref=request.query_actor_ref,
+            work_refs=_normalize_query_work_refs(request.work_refs),
             visibility=request.visibility_kind(),
             runtime_context=runtime_context,
         )
@@ -440,6 +453,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             container_ref=request.container_ref,
             thread_ref=request.thread_ref,
             actor_ref=request.query_actor_ref,
+            work_refs=_normalize_query_work_refs(request.work_refs),
             visibility=request.visibility_kind(),
             runtime_context=runtime_context,
             include_trace=True,

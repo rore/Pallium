@@ -76,12 +76,21 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--consolidation-strategy", default=None)
+    parser.add_argument("--prompt-variant", default=None)
     args = parser.parse_args()
+
+    config = AppConfig.from_env()
+    if args.prompt_variant:
+        from dataclasses import replace as dc_replace
+        acm_pkg = config.semantic_packages.get("agent_conversation_memory")
+        if acm_pkg is not None:
+            overridden_pkg = dc_replace(acm_pkg, prompt_variant=args.prompt_variant)
+            config = dc_replace(config, semantic_packages={**config.semantic_packages, "agent_conversation_memory": overridden_pkg})
 
     run_dir = run_work_resumption_benchmark(
         scenario_file=args.scenario_file,
         output_root=args.output_dir,
-        config=AppConfig.from_env(),
+        config=config,
         run_name=args.run_name,
         consolidation_strategy=args.consolidation_strategy,
     )

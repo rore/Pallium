@@ -74,6 +74,7 @@ class MemorySubjectAnchor:
 class MemoryEnvelopeScope:
     container_ref: str | None = None
     thread_ref: str | None = None
+    work_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -159,6 +160,7 @@ class QueryFilters:
     container_ref: str | None = None
     thread_ref: str | None = None
     actor_ref: str | None = None
+    work_refs: tuple[str, ...] = ()
 
 
 TurnKind = Literal["new_thread", "same_thread", "same_thread_continuation", "resumed_session", "new_session"]

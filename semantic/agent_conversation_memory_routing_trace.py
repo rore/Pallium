@@ -300,6 +300,11 @@ def _build_routing_trace_entry(candidate: dict[str, object]) -> dict[str, object
         entry["same_thread"] = True
     if candidate["same_container"]:
         entry["same_container"] = True
+    if candidate.get("same_work_ref"):
+        entry["same_work_ref"] = True
+        candidate_work_refs = candidate.get("candidate_work_refs")
+        if candidate_work_refs:
+            entry["candidate_work_refs"] = list(candidate_work_refs)
     if candidate["freshness_timestamp"]:
         entry["freshness_timestamp"] = candidate["freshness_timestamp"]
     if candidate["packaging_adjustment"]:

@@ -14,6 +14,7 @@ from semantic.agent_conversation_memory_routing_constants import (
     normalize_lexical_score,
     _candidate_container_refs,
     _candidate_thread_refs,
+    _candidate_work_refs,
     _routing_result_id,
 )
 from semantic.agent_conversation_memory_routing_injection import (
@@ -198,6 +199,14 @@ def _candidate_locality_compatible_for_packaging(
     candidate_thread_refs = set(_candidate_thread_refs(candidate_item))
     if query_filters is not None and query_filters.thread_ref:
         return query_filters.thread_ref in primary_thread_refs and query_filters.thread_ref in candidate_thread_refs
+
+    # Work_ref overlap allows cross-thread packaging — items about the same
+    # work item can be bundled even if they come from different threads.
+    primary_work_refs = set(_candidate_work_refs(primary_item))
+    candidate_work_refs = set(_candidate_work_refs(candidate_item))
+    if primary_work_refs and candidate_work_refs and primary_work_refs.intersection(candidate_work_refs):
+        return True
+
     # When both items have thread context, require thread overlap.
     # Different threads in the same container are different conversations —
     # a source evidence item from thread B should not be packaged alongside

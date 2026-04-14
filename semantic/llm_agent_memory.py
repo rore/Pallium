@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,7 +15,7 @@ from semantic.prompt_provenance import build_prompt_provenance
 from semantic.prompt_roles import get_prompt_role_contract
 
 
-DEFAULT_PROMPT_VARIANT = "strict_typed_memory_v5_compact_examples"
+DEFAULT_PROMPT_VARIANT = "strict_typed_memory_v8b_work_refs_separate"
 WRITE_EXTRACTION_PROMPT_ROLE = get_prompt_role_contract("write_extraction")
 PROMPT_ROLE = WRITE_EXTRACTION_PROMPT_ROLE.role
 PROMPT_SCHEMA_ID = WRITE_EXTRACTION_PROMPT_ROLE.schema_id
@@ -273,6 +274,46 @@ Examples:
 - "The token refresh worked and the sync got through batch 417, but the retry window is exhausted now. Wait 15 minutes and resume from batch 418." -> candidate_type null, progress_text about reaching batch 417, blocker_text about the retry window, next_step_text about waiting 15 minutes and resuming from batch 418.
 - "I can lower concurrency or bump memory, but I need to confirm which worker you mean first." -> candidate_type null, all optional signals null.
 - "The admin toggle wiring is ready, but branch kiosk fallback coverage is still missing before review can pass." -> candidate_type null, progress_text about the admin toggle wiring, blocker_text about the missing branch kiosk fallback coverage.""",
+    "strict_typed_memory_v8b_work_refs_separate": """You extract reusable typed memory and work-state signals from one technical source item. Return exactly one JSON object and no extra prose.
+
+## Typed Memory Classification
+
+Only promote to typed memory when the source contains an explicit proof phrase:
+- decision: requires committed-choice language ("Decision:", "we decided", "we chose", "chosen approach", "we will use").
+- investigation_outcome: requires resolved-finding language ("Root cause:", "Investigation found", "Analysis found", "Findings:", "Outcome:", "We found that", "Verdict:", "Conclusion:", "Investigation concluded", "The conclusion is").
+- interest: the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject. No proof phrase needed. Do NOT classify as interest: assistant responses, follow-up questions without a named subject, backward-looking recall, or restatements of prior content.
+- otherwise candidate_type = null.
+- A non-null type requires the exact proof phrase quoted in the matching evidence field.
+- Fill only decision fields for decision, only investigation fields for investigation_outcome.
+
+REJECT as null: needs, proposals, preferences, recommendations, symptoms, risks, monitoring notes, status updates, and unresolved discussion.
+
+## Work-State Signals
+
+Populate only when the source explicitly states them:
+- next_step_text: a concrete future action. Clarifying questions are NOT next steps.
+- blocker_text: active impediment or failed attempt.
+- progress_text: substantive completed or partial work for later resumption. Not boilerplate completion language.
+- key_finding_text: durable conclusion or verdict. Not monitoring chatter.
+- constraint_text: a definitive operational constraint — the speaker commits to a requirement, prohibition, or hard rule. Hedged or tentative language ("I think", "maybe", "probably", "leaning towards", "not sure") is not a constraint.
+- is_low_value_meta: true only for non-durable orchestration chatter: no-op completion/status messages, greeting/pleasantry chatter ("hello", "thanks", "good morning"), heartbeat/monitoring noise ("still alive", "healthcheck"), and generic capability boilerplate ("I can help with...", "capabilities:"). When true, all signal fields must be null/[].
+- subject_hints: explicit workstream|component|surface only. Return [] if not safely explicit.
+
+Prefer null or [] over weak, speculative, or inferred values.
+
+## Language
+
+All extracted text fields (decision_text, investigation_text, summary, etc.) must be in the same language as the source content. Do not translate.
+
+## External References
+
+work_refs: list of external work identifiers (e.g. PROJ-123, INC-789, org/repo#456) that this message is actively about, regardless of language. NOT work_refs: version numbers (v2.3.1), error codes (401, E-500), port numbers (8080), batch/record counts (batch 313, 312 records), casual historical mentions. [] if none.
+
+## Examples
+- "Verdict: transaction-transformer had the most significant recent ledger changes." -> investigation_outcome, key_finding_text set.
+- "Task complete. No message needed." -> null, is_low_value_meta true, all signals null.
+- "Hello, good morning!" -> null, is_low_value_meta true, all signals null.
+- "I can lower concurrency or bump memory, but I need to confirm which worker first." -> null, all signals null (clarifying question, not actionable state).""",
 }
 
 SCHEMA_DESCRIPTION = json.dumps(
@@ -292,6 +333,7 @@ SCHEMA_DESCRIPTION = json.dumps(
         "progress_text": "string or null",
         "key_finding_text": "string or null",
         "subject_hints": "array of {kind: workstream|component|surface, value: string} or null",
+        "work_refs": "array of string or null",
     },
     indent=2,
 )
@@ -434,6 +476,7 @@ def _normalize_extraction(payload: dict[str, Any]) -> SemanticExtraction:
     progress_text = _normalize_optional_string(payload.get("progress_text"), field_name="progress_text")
     key_finding_text = _normalize_optional_string(payload.get("key_finding_text"), field_name="key_finding_text")
     subject_hints = _normalize_subject_hints(payload.get("subject_hints"))
+    work_refs = _normalize_work_refs(payload.get("work_refs"))
 
     if candidate_type is not None:
         candidate_type = candidate_type.lower()
@@ -456,6 +499,7 @@ def _normalize_extraction(payload: dict[str, Any]) -> SemanticExtraction:
         progress_text=progress_text,
         key_finding_text=key_finding_text,
         subject_hints=subject_hints,
+        work_refs=work_refs,
     )
 
 
@@ -483,6 +527,41 @@ def _normalize_subject_hints(value: Any) -> tuple[MemorySubjectAnchor, ...]:
             continue
         normalized.append(anchor)
     return tuple(normalized)
+
+
+_WORK_REF_SEPARATOR_RE = re.compile(r"[\s_\-]+")
+
+
+def _normalize_work_ref(raw: str) -> str | None:
+    """Normalize a single work reference identifier.
+
+    Casefolds and collapses whitespace/underscores/hyphens to a single hyphen.
+    Returns None if empty or too long.
+    """
+    value = raw.strip().casefold()
+    if not value or len(value) > 128:
+        return None
+    value = _WORK_REF_SEPARATOR_RE.sub("-", value).strip("-")
+    return value if value else None
+
+
+def _normalize_work_refs(value: Any) -> tuple[str, ...]:
+    """Normalize and deduplicate a list of work reference identifiers from LLM output."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        return ()
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        normalized = _normalize_work_ref(item)
+        if normalized is None or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return tuple(result)
 
 
 def _normalize_required_string(value: Any, *, field_name: str) -> str:

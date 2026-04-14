@@ -192,6 +192,7 @@ def build_query_filters(
     container_ref: str | None = None,
     thread_ref: str | None = None,
     actor_ref: str | None = None,
+    work_refs: tuple[str, ...] = (),
 ) -> QueryFilters | None:
     filters = QueryFilters(
         source_type=source_type,
@@ -200,8 +201,9 @@ def build_query_filters(
         container_ref=container_ref,
         thread_ref=thread_ref,
         actor_ref=actor_ref,
+        work_refs=work_refs,
     )
-    if not any(value is not None for value in filters.__dict__.values()):
+    if not any(value is not None for value in (filters.source_type, filters.role, filters.artifact_kind, filters.container_ref, filters.thread_ref, filters.actor_ref)) and not filters.work_refs:
         return None
     return filters
 
@@ -228,6 +230,7 @@ def resolve_query_filters(
     container_ref: str | None = None,
     thread_ref: str | None = None,
     actor_ref: str | None = None,
+    work_refs: tuple[str, ...] = (),
     runtime_context: QueryRuntimeContext | None = None,
 ) -> QueryFilterResolution:
     requested_filters = build_query_filters(
@@ -237,6 +240,7 @@ def resolve_query_filters(
         container_ref=container_ref,
         thread_ref=thread_ref,
         actor_ref=actor_ref,
+        work_refs=work_refs,
     )
     if requested_filters is None or runtime_context is None:
         return QueryFilterResolution(
@@ -262,6 +266,7 @@ def resolve_query_filters(
             container_ref=effective_filters.container_ref,
             thread_ref=effective_filters.thread_ref,
             actor_ref=effective_filters.actor_ref,
+            work_refs=effective_filters.work_refs,
         )
         return QueryFilterResolution(
             requested_filters=requested_filters,
@@ -288,6 +293,7 @@ def resolve_query_filters(
         container_ref=effective_filters.container_ref,
         thread_ref=effective_filters.thread_ref,
         actor_ref=effective_filters.actor_ref,
+        work_refs=effective_filters.work_refs,
     )
     return QueryFilterResolution(
         requested_filters=requested_filters,

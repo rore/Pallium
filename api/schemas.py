@@ -100,6 +100,7 @@ class QueryRequest(BaseModel):
     container_ref: str | None = None
     thread_ref: str | None = None
     actor_ref: str | None = None
+    work_refs: list[str] | None = None
     visibility: Visibility | VisibilityContextModel | None = None
     runtime_context: RuntimeContextModel | None = None
 
@@ -189,6 +190,7 @@ class QueryTraceFiltersResponse(BaseModel):
     container_ref: str | None = None
     thread_ref: str | None = None
     actor_ref: str | None = None
+    work_refs: list[str] = Field(default_factory=list)
 
 
 class RetrievalTraceHitResponse(BaseModel):
@@ -284,6 +286,7 @@ class ItemAndQueryRequest(BaseModel):
     query_text: str | None = None
     query_limit: int = Field(default=5, ge=1, le=50)
     query_actor_ref: str | None = None
+    work_refs: list[str] | None = None
     runtime_context: RuntimeContextModel | None = None
 
     def visibility_kind(self) -> str | None:

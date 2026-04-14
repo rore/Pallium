@@ -55,6 +55,7 @@ class QueryExecutor:
         container_ref: str | None = None,
         thread_ref: str | None = None,
         actor_ref: str | None = None,
+        work_refs: tuple[str, ...] = (),
         visibility: str | None = None,
         runtime_context: QueryRuntimeContext | None = None,
         include_trace: bool = False,
@@ -66,6 +67,7 @@ class QueryExecutor:
             container_ref=container_ref,
             thread_ref=thread_ref,
             actor_ref=actor_ref,
+            work_refs=work_refs,
             runtime_context=runtime_context,
         )
         requested_filters = filter_resolution.requested_filters

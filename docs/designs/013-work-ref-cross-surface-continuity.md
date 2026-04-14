@@ -166,74 +166,34 @@ The design is split into two slices. Slice 1 is write-time enrichment: extract a
 
 ### Slice 1: Write-time extraction and storage
 
-#### Extraction: prompt cycle for work_refs
+#### Extraction: prompt cycle for work_refs (completed)
 
-Adding `work_refs` to the extraction prompt is a prompt improvement that follows the established prompt-change loop (`docs/context/prompt-improvement.md`). This means: multiple candidate variants, fast comparative eval, data-driven winner selection, and token budget awareness. Not a single prompt change shipped on intuition.
+Adding `work_refs` to the extraction prompt followed the established prompt-change loop. Six variants were tested through a fast evaluator (18 snippets), full bakeoff (59 items × 2 variants), and stability testing (3 runs × 12 decision items).
 
-**Candidate variants:**
+**Key finding: prompt section placement matters.** Adding work_refs instructions inside the Work-State Signals section caused decision recall to regress (avg 3-6/12 vs 8/12 baseline). The LLM conflated work_ref extraction with signal extraction, reducing attention to the Typed Memory Classification section above. Moving work_refs to its own section after Language eliminated the interference.
 
-The current extraction prompt is `strict_typed_memory_v7_claude_structured` (~560 tokens). Adding work_refs increases the schema. Prepare at least two variants:
+**Winner: `strict_typed_memory_v8b_work_refs_separate`** — 867 tokens (+86 vs v7 baseline, +11%).
 
-- **Variant A: Inline addition.** Add the `work_refs` field description and extraction rules directly into the existing prompt. Minimal wording, no examples. Estimated overhead: ~60-80 tokens.
-
-- **Variant B: Compact with one example.** Same as A but with one concrete example showing extraction from a tool summary containing a ticket ID. Estimated overhead: ~100-120 tokens.
-
-Both variants bump the prompt schema version (e.g., `strict_typed_memory_v8_work_refs` and `strict_typed_memory_v8_work_refs_example`). Neither changes the existing schema fields — `work_refs` is additive.
-
-**Prompt text for both variants** (core addition to `llm_agent_memory.py` extraction prompt):
-
+Prompt structure (additions to v7 baseline):
 ```
-work_refs: list of external work identifiers that this message is actively about.
-  These are structured identifiers from external systems, regardless of the language
-  of the surrounding content. Examples: Jira ticket keys (PROJ-123), GitHub issue/PR
-  references (org/repo#456), incident IDs (INC-789).
-  Only include identifiers the message is actively working on or discussing.
-  Do not include casual historical mentions.
-  Do not include version numbers, error codes, port numbers, batch numbers,
-  counts, or other numeric values that are not work item identifiers.
-  Return an empty list if no external identifiers are present.
+## External References
+
+work_refs: list of external work identifiers (e.g. PROJ-123, INC-789, org/repo#456)
+that this message is actively about, regardless of language. NOT work_refs: version
+numbers (v2.3.1), error codes (401, E-500), port numbers (8080), batch/record counts
+(batch 313, 312 records), casual historical mentions. [] if none.
 ```
 
-**Token budget check:**
+Validation results:
 
-Measure both variants with `prompt_text_metrics()` and compare against the current baseline. The current prompt is ~560 tokens. Adding ~80-120 tokens brings it to ~640-680 tokens. This is within acceptable range — the prompt is still well under 1K tokens and the overhead is proportional to one field in a 15-field schema. Report exact metrics in the bakeoff results.
-
-**Fast evaluator (before any full benchmark):**
-
-Build a focused work_ref extraction evaluator following the pattern of `evals/prompt_variant_eval.py`. This evaluator:
-
-- Runs both candidate variants against 15-20 snippets (~30-40 LLM calls, under a minute with cache)
-- Covers: positive extraction (5-6 snippets), negative extraction (8-10 snippets), multilingual (4-5 snippets)
-- Asserts: correct extraction, no false positives, no regression on existing fields
-- Reports: per-variant accuracy, false positive rate, token metrics
-
-**Comparative bakeoff:**
-
-After the fast evaluator passes clean, run the semantic extraction runner with both new variants and the current baseline:
-
-```
-python -m evals.semantic_runner \
-  --suite-name work-ref-prompt-bakeoff \
-  --input-file evals/semantic/input/items.jsonl \
-  --output-dir tmp/work-ref-prompt-bakeoff \
-  --prompt-variants strict_typed_memory_v7_claude_structured,strict_typed_memory_v8_work_refs,strict_typed_memory_v8_work_refs_example
-```
-
-Compare:
-- Correctness on existing fields (must not regress)
-- False positive rate for work_refs on items with no identifiers (must be 0%)
-- Prompt size (tokens)
-- `is_low_value_meta` discipline (must not shift)
-
-**Winner selection:**
-
-Choose the smallest variant that:
-1. Extracts work_refs correctly from content that contains them
-2. Produces zero false positives on the existing corpus
-3. Does not regress any existing extraction field
-4. Stays within acceptable token budget
-
-If the variant without examples (A) performs as well as the variant with examples (B), prefer A — smaller is better per the prompt improvement working rules.
+| Metric | v7 baseline | v8b separate |
+|--------|-------------|--------------|
+| Decision recall (3-run avg) | 8.0/12 | 9.0/12 (no regression) |
+| Work_ref positive extraction | N/A | 7/7 (100%) |
+| Work_ref negative (false positives) | 3 FP | 0 FP (100%) |
+| Multilingual extraction | N/A | 4/4 (Hebrew + Japanese) |
+| Token overhead | — | +86 tokens (+11%) |
+| Signal metrics (all fields) | Baseline | Identical |
 
 **SemanticExtraction change** (in `semantic/common.py`):
 
