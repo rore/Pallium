@@ -122,6 +122,13 @@ Implemented semantic behavior now includes:
 - fallback `discussion_summary` for non-typed extraction results
 - prompt provenance attached to LLM-derived memory objects
 - internal-only item semantic signals now extracted in the same item-level LLM call and persisted under `SourceItem.metadata["pallium_semantic_signals"]` for later higher-level synthesis
+- work reference extraction for cross-surface work continuity:
+  - external work identifiers (ticket IDs, PR numbers, incident keys) extracted from content via a dedicated "External References" prompt section
+  - optional runtime hints via `pallium_work_refs` on source item metadata, merged with LLM extraction
+  - normalized identifiers stored on `MemoryEnvelopeScope.work_refs` alongside `container_ref` and `thread_ref`
+  - scoring affinity for continuity_memory with shared work_ref
+  - packaging gate relaxation allows cross-thread bundling when work_refs match
+  - query-time detection matches candidate work_refs as substrings of normalized query text
 
 Current `agent_conversation_memory` evidence now includes selected assistant-originated work artifacts in addition to user messages and final assistant outputs:
 
@@ -341,10 +348,10 @@ Current chosen path:
 
 - provider: Anthropic Claude
 - model: `claude-sonnet-4-6` (write_extraction), `claude-haiku-4-5` (background roles)
-- extraction prompt variant: `strict_typed_memory_v7_claude_structured`
+- extraction prompt variant: `strict_typed_memory_v8b_work_refs_separate`
 - enrichment prompt variant: `search_context_v2_compact`
 - prompt schema: `typed_memory_extraction`
-- prompt schema version: `v7`
+- prompt schema version: `v8`
 - OpenAI-compatible fallback: `gpt-5-mini` with `strict_typed_memory_v6_work_state_examples`
 
 The item-level prompt now carries field-specific internal-signal rules and examples so a single extraction call can also emit low-value-meta, constraint, blocker, progress, next-step, and key-finding state. Higher-level memory objects can also carry write-time `retrieval_enrichment` produced by the separate `write_enrichment` role. Prompt changes should be validated both with stub tests and with comparative eval runners before defaults change; see [prompt-improvement.md](prompt-improvement.md).

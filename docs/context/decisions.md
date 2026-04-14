@@ -595,3 +595,28 @@ Why:
 - individual lock holds are microseconds per batch; writers see negligible contention
 - the backup API produces a raw page copy (no defragmentation), which is acceptable — the goal is
   consistent snapshot, not compaction
+
+### 2026-04-14 - Work reference (work_ref) for cross-surface work continuity
+
+External work identifiers (ticket IDs, PR numbers, incident keys) extracted
+from content via LLM and stored on `MemoryEnvelopeScope.work_refs` as
+normalized structural scoping alongside `container_ref` and `thread_ref`.
+
+Work_refs stored on MemoryEnvelopeScope, not envelope subjects — subject
+anchors use token-overlap matching unsuitable for structural identifiers.
+Query-time detection is data-driven (candidate work_refs matched as
+substrings of normalized query text), not regex — consistent with the
+cue-free control plane. Prompt places work_refs in a separate "External
+References" section to avoid interference with decision classification.
+
+Why:
+
+- real agent work spans multiple threads and containers; structural
+  identifiers provide precise cross-thread retrieval without depending on
+  lexical/semantic similarity alone
+- extracted from content primarily (LLM path), supplemented by optional
+  runtime hints via `pallium_work_refs` metadata key
+- scoring affinity (+40 for continuity_memory) and packaging gate relaxation
+  enable cross-thread bundling when work_refs match
+- does not override visibility rules — private memories stay private
+- prompt schema bumped v7 → v8; default variant: `strict_typed_memory_v8b_work_refs_separate`

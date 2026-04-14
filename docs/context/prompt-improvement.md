@@ -10,7 +10,7 @@ Current live prompt-backed roles:
 
 Current default variants:
 
-- `write_extraction`: `strict_typed_memory_v5_compact_examples`
+- `write_extraction`: `strict_typed_memory_v8b_work_refs_separate`
 - `write_enrichment`: `search_context_v2_compact`
 
 ## Goals
@@ -158,6 +158,8 @@ To run against the live provider, set the same environment/config values used by
 Current extraction decision:
 
 - `strict_typed_memory_v5_compact_examples` won because it stayed much smaller than `strict_typed_memory_v4_evidence_guarded` while preserving the representative live behavior that `strict_typed_memory_v5_compact_contract` lost.
+
+- `strict_typed_memory_v8b_work_refs_separate` replaced v5 as the default. A separate "External References" section in the prompt avoids decision classification interference that occurred when work_refs were inlined with the main fields. Cost: +86 tokens. Benefit: 100% work_ref extraction accuracy.
 
 Current enrichment decision:
 

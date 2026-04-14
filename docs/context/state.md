@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-04-05
+2026-04-14
 
 ## Repo Snapshot
 
@@ -20,7 +20,7 @@
 - current LLM provider: Anthropic Claude (Sonnet + Haiku via per-role model config)
   - Sonnet: write_extraction (quality-critical, 14-field schema)
   - Haiku: thread_aggregation, consolidation, query_ambiguity_resolution (simpler schemas, benchmarked equal or better)
-- current extraction prompt: `strict_typed_memory_v7_claude_structured` (560 tokens, 55/55 on expanded fixture set, perfect signal extraction)
+- current extraction prompt: `strict_typed_memory_v8b_work_refs_separate` (867 tokens, work_ref extraction for cross-surface work continuity, prompt schema v8)
 - normal local runtime goes through `python -m app.run ... --processors N`
 - debug queue health exists at `GET /debug/queue/health`
 - query/debug exposes retrieval trace plus package-owned routing and injection trace
@@ -49,6 +49,15 @@
   - backward compatible — queries without actor_ref work as before
 - reusable thread aggregation and bounded consolidation capabilities are shipped for the current package
 - item-level LLM extraction persists internal semantic signals under `SourceItem.metadata["pallium_semantic_signals"]`
+- work reference (work_ref) support is shipped for cross-surface work continuity:
+  - external work identifiers (ticket IDs, PR numbers, incident keys) extracted from content via LLM prompt
+  - optional runtime hints via `pallium_work_refs` metadata key on source items
+  - normalized identifiers (casefold + separator canonicalization) stored on `MemoryEnvelopeScope.work_refs`
+  - scoring affinity: +40 for continuity_memory with shared work_ref
+  - packaging gate relaxation: cross-thread bundling when work_refs match
+  - query-time detection: candidate work_refs matched as substrings of normalized query text (data-driven, no regex)
+  - `work_refs` field on QueryFilters for agent-provided high-confidence hints
+  - prompt schema version bumped from v7 to v8
 - `agent_conversation_memory` now applies a cue-free control plane above routing:
   - routing uses typed structure and retrieval evidence, not English phrase matching
   - `QuerySignalEnvelope` is the canonical routing authority (Tier 1 structural, Tier 2 candidate evidence, no English cue fallback)

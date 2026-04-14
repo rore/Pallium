@@ -13,6 +13,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-work-ref-cross-surface-continuity
 - investigate-lexical-retrieval-scaling
 - add-fact-consolidation-strategy-for-conversational-knowledge
 - add-multilingual-tokenization-and-embedding-support

@@ -63,6 +63,8 @@ Recommended fields for `agent_conversation_memory`:
 - `visibility` — who can see this item: `"public"`, `"container"`, or
   `"private"`. Default: `"private"`. See [Common Shapes](#visibility)
 - `thread_ref` — which conversation thread within the container
+- `work_refs` — optional list of external work identifiers for cross-thread
+  work continuity (e.g. ticket IDs, PR numbers)
 - `role` — who produced this: `"user"` or `"assistant"`
 - `artifact_kind` — optional hint about the evidence shape (see below)
 
@@ -164,6 +166,9 @@ Additional filters:
 - `source_type` — filter by upstream system
 - `role` — filter by `"user"` or `"assistant"`
 - `artifact_kind` — filter by evidence shape
+- `work_refs` — optional list of external work identifiers. When provided,
+  memories with matching work_refs are prioritized. Format: normalized strings
+  (casefold, separator-canonical). "PROJ-123", "PROJ 123", "proj_123" all match.
 - `actor_ref` — filter by actor identity. When provided, only returns memories
   whose `actor_ref` matches or is null (shared). When omitted, no actor
   filtering is applied. See
@@ -319,6 +324,8 @@ The request body is the same as `POST /items`, plus optional query fields:
 
 - `query_text` — override query text (defaults to `content`)
 - `query_limit` — max results (default: 5, range: 1–50)
+- `work_refs` — optional list of external work identifiers (same behavior as
+  in `POST /query`)
 
 Example:
 

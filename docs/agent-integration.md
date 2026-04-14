@@ -135,6 +135,8 @@ Useful query filters:
   personal memories plus shared evidence. When omitted, no actor filtering is
   applied.
 - `artifact_kind`
+- `work_refs` — external work identifiers (e.g. ticket IDs, PR numbers) for
+  cross-thread work continuity
 - `role`
 - `source_type`
 
@@ -166,9 +168,18 @@ The runtime should send:
   - `container_ref`
   - `visibility`
   - `thread_ref`
+  - `work_refs` (optional)
 
 Pallium infers session lifecycle state (new thread, continuation, resumed
 session) from its own data. Agents do not need to classify turns.
+
+### Runtime Hints for Work References
+
+The integrating agent can provide `pallium_work_refs` in item `metadata` to
+supplement LLM extraction. When present, these refs are merged with any
+work references the semantic layer extracts from content. This is useful
+when the runtime already knows the active ticket or PR but the conversation
+text does not mention it explicitly.
 
 ## Query Result Contract
 

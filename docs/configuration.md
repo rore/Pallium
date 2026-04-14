@@ -240,7 +240,7 @@ Example:
 implementation = "agent_conversation_memory"
 llm_provider = "openai"
 model = "gpt-5-mini"
-prompt_variant = "strict_typed_memory_v6_work_state_examples"
+prompt_variant = "strict_typed_memory_v8b_work_refs_separate"
 resolver_enabled = true
 resolver_timeout_ms = 800
 ```
@@ -261,7 +261,7 @@ Package-scoped env overrides use:
 
 ```dotenv
 PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__MODEL=gpt-5-mini
-PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__PROMPT_VARIANT=strict_typed_memory_v6_work_state_examples
+PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__PROMPT_VARIANT=strict_typed_memory_v8b_work_refs_separate
 PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__RESOLVER_ENABLED=true
 PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__RESOLVER_TIMEOUT_MS=800
 PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__MODEL_ROLES__WRITE_EXTRACTION=claude-sonnet-4-6
@@ -286,7 +286,7 @@ Example:
 
 ```toml
 [semantic_packages.agent_conversation_memory]
-prompt_variant = "strict_typed_memory_v6_work_state_examples"
+prompt_variant = "strict_typed_memory_v8b_work_refs_separate"
 
 [semantic_packages.agent_conversation_memory.prompt_variants]
 query_ambiguity_resolution = "qar_v1_compact_contract"
@@ -472,7 +472,7 @@ The following defaults apply when fields are omitted:
 
 - `default_use_case = "demo_agent_memory"`
 - `agent_conversation_memory.prompt_variant` defaults to
-  `"strict_typed_memory_v6_work_state_examples"`
+  `"strict_typed_memory_v8b_work_refs_separate"`
 - `agent_conversation_memory.resolver_enabled` defaults to `true`
 - `agent_conversation_memory.resolver_timeout_ms` defaults to `800`
 - `model_roles` defaults to empty — all roles use the package `model`
