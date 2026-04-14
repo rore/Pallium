@@ -8,6 +8,7 @@ import pytest
 
 from core.contracts import ProcessResult
 from core.models import SourceItem, MemoryObject, new_id, utc_now
+from core.models import MemoryEnvelope, MemoryEnvelopeScope, MemoryEnvelopeDerivation, MemorySubjectAnchor
 from core.service import PalliumService
 from core.type_registry import TypeRegistry
 from providers.llm.base import LLMProvider, LLMJsonResponse
@@ -17,6 +18,12 @@ from semantic.conversational_knowledge import (
     ConversationalKnowledgePlugin,
     FACT_TYPE,
     FACT_SUMMARY_TYPE,
+    FACT_SCHEMA_ID,
+    FACT_SCHEMA_VERSION,
+    FACT_SUMMARY_SCHEMA_ID,
+    FACT_SUMMARY_SCHEMA_VERSION,
+    FACT_ENVELOPE_SCHEMA_ID,
+    FACT_ENVELOPE_SCHEMA_VERSION,
     _is_eligible_for_fact_extraction,
 )
 from semantic.demo_agent_memory import DemoAgentMemoryPlugin
@@ -1106,3 +1113,282 @@ def test_e2e_reconsolidation_updates_existing_summary(test_db_url):
 
     # The re-consolidation call should have received the previous summary as input
     # (verified by the "previous summary" check in the provider returning "Tokyo")
+
+
+# ── Tests: MemoryEnvelope population ────────────────────────────────────
+
+
+def test_atomic_fact_envelope_has_subject_anchor():
+    """atomic_fact objects should carry a MemoryEnvelope with the subject as a surface anchor."""
+    from capabilities.thread_aggregation import ThreadAggregate
+    facts = [
+        {"subject": "Alice", "statement": "Alice has 3 cats", "category": "personal"},
+    ]
+    plugin = ConversationalKnowledgePlugin(
+        provider=StubFactExtractionProvider(facts=facts),
+    )
+    items = [
+        SourceItem(
+            source_type="chat", source_id="env-1",
+            content_type="text/plain", content="Alice mentioned she has 3 cats.",
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+        SourceItem(
+            source_type="chat", source_id="env-2",
+            content_type="text/plain", content="Nice!",
+            role="assistant", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+    ]
+    aggregate = ThreadAggregate(
+        container_ref="c1", thread_ref="t1",
+        source_items=items, source_item_ids=[i.id for i in items],
+        latest_occurred_at=utc_now(), aggregate_text="", visibility="public",
+    )
+
+    result = plugin.build_thread_summary(aggregate, conclusions=[])
+
+    assert len(result.memory_objects) == 1
+    mo = result.memory_objects[0]
+    assert mo.envelope is not None
+
+    env = mo.envelope
+    assert env.kind == "finding"
+    assert env.confidence == "medium"
+    assert env.schema_id == FACT_ENVELOPE_SCHEMA_ID
+    assert env.schema_version == FACT_ENVELOPE_SCHEMA_VERSION
+
+    # Scope
+    assert env.scope.container_ref == "c1"
+    assert env.scope.thread_ref == "t1"
+
+    # Derivation
+    assert env.derivation.producer_kind == "item_extraction"
+    assert env.derivation.producer_schema_id == FACT_SCHEMA_ID
+    assert env.derivation.producer_schema_version == FACT_SCHEMA_VERSION
+
+    # Subject anchor
+    assert len(env.subjects) == 1
+    assert env.subjects[0].kind == "surface"
+    assert env.subjects[0].value == "Alice"
+
+
+def test_atomic_fact_envelope_empty_subject():
+    """atomic_fact with empty subject should have envelope with empty subjects list."""
+    from capabilities.thread_aggregation import ThreadAggregate
+    facts = [
+        {"subject": "", "statement": "The weather was nice", "category": "event"},
+    ]
+    plugin = ConversationalKnowledgePlugin(
+        provider=StubFactExtractionProvider(facts=facts),
+    )
+    items = [
+        SourceItem(
+            source_type="chat", source_id="env-es1",
+            content_type="text/plain", content="The weather was nice",
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+        SourceItem(
+            source_type="chat", source_id="env-es2",
+            content_type="text/plain", content="Indeed!",
+            role="assistant", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+    ]
+    aggregate = ThreadAggregate(
+        container_ref="c1", thread_ref="t1",
+        source_items=items, source_item_ids=[i.id for i in items],
+        latest_occurred_at=utc_now(), aggregate_text="", visibility="public",
+    )
+
+    result = plugin.build_thread_summary(aggregate, conclusions=[])
+
+    assert len(result.memory_objects) == 1
+    mo = result.memory_objects[0]
+    assert mo.envelope is not None
+    assert mo.envelope.subjects == []
+    assert mo.envelope.kind == "finding"
+    assert mo.envelope.confidence == "medium"
+
+
+def test_atomic_fact_envelope_multiple_facts_different_subjects():
+    """Each atomic_fact gets its own envelope with its own subject anchor."""
+    from capabilities.thread_aggregation import ThreadAggregate
+    facts = [
+        {"subject": "Alice", "statement": "Alice has 3 cats", "category": "personal"},
+        {"subject": "Bob", "statement": "Bob works at the library", "category": "activity"},
+    ]
+    plugin = ConversationalKnowledgePlugin(
+        provider=StubFactExtractionProvider(facts=facts),
+    )
+    items = [
+        SourceItem(
+            source_type="chat", source_id="env-m1",
+            content_type="text/plain", content="Alice has 3 cats, Bob works at the library.",
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+        SourceItem(
+            source_type="chat", source_id="env-m2",
+            content_type="text/plain", content="Interesting!",
+            role="assistant", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+    ]
+    aggregate = ThreadAggregate(
+        container_ref="c1", thread_ref="t1",
+        source_items=items, source_item_ids=[i.id for i in items],
+        latest_occurred_at=utc_now(), aggregate_text="", visibility="public",
+    )
+
+    result = plugin.build_thread_summary(aggregate, conclusions=[])
+
+    assert len(result.memory_objects) == 2
+
+    alice_mo = result.memory_objects[0]
+    assert alice_mo.envelope is not None
+    assert len(alice_mo.envelope.subjects) == 1
+    assert alice_mo.envelope.subjects[0].value == "Alice"
+
+    bob_mo = result.memory_objects[1]
+    assert bob_mo.envelope is not None
+    assert len(bob_mo.envelope.subjects) == 1
+    assert bob_mo.envelope.subjects[0].value == "Bob"
+
+
+def test_fact_summary_envelope_has_subject_anchor():
+    """fact_summary objects should carry a MemoryEnvelope with the subject as a surface anchor."""
+    from capabilities.consolidation import ConsolidationGroup
+    canned_summary = "Alice's personal: cat owner (3 cats); painting enthusiast"
+    plugin = ConversationalKnowledgePlugin(
+        provider=StubFactExtractionProvider(consolidation_summary=canned_summary),
+    )
+    candidates = tuple([
+        _make_fact_candidate(subject="Alice", category="personal", container_ref="c1", thread_ref="t1"),
+        _make_fact_candidate(subject="Alice", category="personal", container_ref="c1", thread_ref="t2"),
+    ])
+    group = ConsolidationGroup(
+        strategy_name="fact_consolidation",
+        strategy_version="v1",
+        group_key="fact_consolidation:public:c1:alice:personal",
+        candidates=candidates,
+        container_ref="c1",
+        thread_ref=None,
+        latest_occurred_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        visibility="public",
+        merge_rationale={"subject": "Alice", "category": "personal"},
+    )
+
+    result = plugin.build_consolidated_memory(group)
+
+    assert len(result.memory_objects) == 1
+    mo = result.memory_objects[0]
+    assert mo.envelope is not None
+
+    env = mo.envelope
+    assert env.kind == "finding"
+    assert env.confidence == "medium"
+    assert env.schema_id == FACT_ENVELOPE_SCHEMA_ID
+    assert env.schema_version == FACT_ENVELOPE_SCHEMA_VERSION
+
+    # Scope — cross-thread, so thread_ref should be None
+    assert env.scope.container_ref == "c1"
+    assert env.scope.thread_ref is None
+
+    # Derivation
+    assert env.derivation.producer_kind == "consolidation"
+    assert env.derivation.producer_schema_id == FACT_SUMMARY_SCHEMA_ID
+    assert env.derivation.producer_schema_version == FACT_SUMMARY_SCHEMA_VERSION
+
+    # Subject anchor
+    assert len(env.subjects) == 1
+    assert env.subjects[0].kind == "surface"
+    assert env.subjects[0].value == "Alice"
+
+
+def test_fact_summary_envelope_empty_subject():
+    """fact_summary with empty subject should have envelope with empty subjects list."""
+    from capabilities.consolidation import ConsolidationGroup
+    canned_summary = "General facts about the project"
+    plugin = ConversationalKnowledgePlugin(
+        provider=StubFactExtractionProvider(consolidation_summary=canned_summary),
+    )
+    candidates = tuple([
+        _make_fact_candidate(subject="", category="general", container_ref="c1", thread_ref="t1"),
+        _make_fact_candidate(subject="", category="general", container_ref="c1", thread_ref="t2"),
+    ])
+    group = ConsolidationGroup(
+        strategy_name="fact_consolidation",
+        strategy_version="v1",
+        group_key="fact_consolidation:public:c1::general",
+        candidates=candidates,
+        container_ref="c1",
+        thread_ref=None,
+        latest_occurred_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        visibility="public",
+        merge_rationale={"subject": "", "category": "general"},
+    )
+
+    result = plugin.build_consolidated_memory(group)
+
+    assert len(result.memory_objects) == 1
+    mo = result.memory_objects[0]
+    assert mo.envelope is not None
+    assert mo.envelope.subjects == []
+    assert mo.envelope.kind == "finding"
+    assert mo.envelope.confidence == "medium"
+
+
+def test_fact_envelope_survives_sqlite_roundtrip(test_db_url):
+    """Envelope on atomic_fact must survive serialization/deserialization in SQLite.
+
+    Regression: a mismatched schema_id caused envelope_json to silently
+    deserialize as None, making facts enter routing as unanchored_legacy.
+    """
+    storage = SQLiteStorageProvider(test_db_url)
+
+    mo = MemoryObject(
+        type=FACT_TYPE,
+        schema_id=FACT_SCHEMA_ID,
+        schema_version=FACT_SCHEMA_VERSION,
+        payload={"subject": "Alice", "statement": "Alice has cats", "category": "personal"},
+        visibility="public",
+        container_ref="c1",
+        freshness_at=utc_now(),
+        envelope=MemoryEnvelope(
+            schema_id=FACT_ENVELOPE_SCHEMA_ID,
+            schema_version=FACT_ENVELOPE_SCHEMA_VERSION,
+            kind="finding",
+            scope=MemoryEnvelopeScope(container_ref="c1", thread_ref="t1"),
+            derivation=MemoryEnvelopeDerivation(
+                producer_kind="item_extraction",
+                producer_schema_id=FACT_SCHEMA_ID,
+                producer_schema_version=FACT_SCHEMA_VERSION,
+            ),
+            subjects=[MemorySubjectAnchor(kind="surface", value="Alice")],
+            confidence="medium",
+        ),
+    )
+
+    storage.create_memory_object(mo)
+    loaded = storage.get_memory_object(mo.id)
+
+    assert loaded.envelope is not None, (
+        "Envelope lost on round-trip — check schema_id matches "
+        "MEMORY_ENVELOPE_SCHEMA_ID in storage/sqlite_codec.py"
+    )
+    assert loaded.envelope.kind == "finding"
+    assert loaded.envelope.confidence == "medium"
+    assert loaded.envelope.scope.container_ref == "c1"
+    assert loaded.envelope.scope.thread_ref == "t1"
+    assert len(loaded.envelope.subjects) == 1
+    assert loaded.envelope.subjects[0].kind == "surface"
+    assert loaded.envelope.subjects[0].value == "Alice"

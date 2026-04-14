@@ -17,7 +17,17 @@ from capabilities.consolidation import ConsolidationGroup, ConsolidationPolicy
 from capabilities.thread_aggregation import ThreadAggregate
 from core.contracts import ProcessResult
 from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
-from core.models import MemoryObject, Relation, SourceItem, new_id, utc_now
+from core.models import (
+    MemoryEnvelope,
+    MemoryEnvelopeDerivation,
+    MemoryEnvelopeScope,
+    MemoryObject,
+    MemorySubjectAnchor,
+    Relation,
+    SourceItem,
+    new_id,
+    utc_now,
+)
 from core.type_registry import TypeRegistration, TypeRegistry
 from providers.llm.base import LLMProvider, LLMJsonResponse
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
@@ -40,6 +50,10 @@ VECTOR_EMBEDDING_PROVIDER_VERSION = "v1"
 
 FACT_LEXICAL_TEXT_VIEW = "memory_object.fact_statement"
 FACT_VECTOR_TEXT_VIEW = "memory_object.fact_embedding"
+
+# Envelope schema constants (shared across fact types in this package)
+FACT_ENVELOPE_SCHEMA_ID = "core.memory_envelope"
+FACT_ENVELOPE_SCHEMA_VERSION = "v1"
 
 # Eligible source artifacts for fact extraction
 ELIGIBLE_ARTIFACT_ROLES = {
@@ -284,13 +298,29 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
         index_entries = []
 
         for fact in raw_facts:
-            subject = str(fact.get("subject", "")).strip()
+            subject = str(fact.get("subject") or "").strip()
             statement = str(fact.get("statement", "")).strip()
             category = str(fact.get("category", "")).strip()
             if not statement:
                 continue
 
             memory_id = new_id()
+            envelope = MemoryEnvelope(
+                schema_id=FACT_ENVELOPE_SCHEMA_ID,
+                schema_version=FACT_ENVELOPE_SCHEMA_VERSION,
+                kind="finding",
+                scope=MemoryEnvelopeScope(
+                    container_ref=container_ref,
+                    thread_ref=aggregate.thread_ref,
+                ),
+                derivation=MemoryEnvelopeDerivation(
+                    producer_kind="item_extraction",
+                    producer_schema_id=FACT_SCHEMA_ID,
+                    producer_schema_version=FACT_SCHEMA_VERSION,
+                ),
+                subjects=[MemorySubjectAnchor(kind="surface", value=subject)] if subject else [],
+                confidence="medium",
+            )
             memory_objects.append(
                 MemoryObject(
                     id=memory_id,
@@ -307,6 +337,7 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
                     visibility=visibility or "private",
                     container_ref=container_ref,
                     freshness_at=latest_occurred_at,
+                    envelope=envelope,
                 )
             )
 
@@ -640,6 +671,23 @@ def _build_fact_summary(
         "prompt_variant": prompt_variant,
     }
 
+    summary_envelope = MemoryEnvelope(
+        schema_id=FACT_ENVELOPE_SCHEMA_ID,
+        schema_version=FACT_ENVELOPE_SCHEMA_VERSION,
+        kind="finding",
+        scope=MemoryEnvelopeScope(
+            container_ref=group.container_ref,
+            thread_ref=None,
+        ),
+        derivation=MemoryEnvelopeDerivation(
+            producer_kind="consolidation",
+            producer_schema_id=FACT_SUMMARY_SCHEMA_ID,
+            producer_schema_version=FACT_SUMMARY_SCHEMA_VERSION,
+        ),
+        subjects=[MemorySubjectAnchor(kind="surface", value=subject)] if subject else [],
+        confidence="medium",
+    )
+
     memory_object = MemoryObject(
         id=memory_id,
         type=FACT_SUMMARY_TYPE,
@@ -660,6 +708,7 @@ def _build_fact_summary(
         visibility=group.visibility,
         container_ref=group.container_ref,
         freshness_at=group.latest_occurred_at,
+        envelope=summary_envelope,
     )
 
     index_entries = [
