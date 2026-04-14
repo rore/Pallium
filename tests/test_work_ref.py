@@ -205,6 +205,144 @@ class TestEnvelopeScopeRoundTrip:
 
 
 # ---------------------------------------------------------------------------
+# Pipeline integration: extraction → envelope → metadata
+# ---------------------------------------------------------------------------
+
+from providers.llm.base import LLMCallMetadata, LLMJsonResponse
+from semantic.llm_agent_memory import LLMAgentMemoryPlugin
+from semantic.agent_conversation_memory_memory import (
+    _apply_direct_memory_envelopes,
+)
+from semantic.common import SemanticExtraction
+from core.models import SourceItem
+
+
+class _StubLLMProvider:
+    def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+        return LLMJsonResponse(
+            raw_text="{}",
+            metadata=LLMCallMetadata(provider_name="stub", provider_kind="stub", model="stub"),
+            parsed_json={
+                "summary": "Decision about LIB-241 schema change",
+                "candidate_type": "decision",
+                "decision_text": "use event-time ordering for LIB-241",
+                "decision_evidence_text": "Decision: use event-time ordering for LIB-241 to avoid duplicate holds.",
+                "investigation_text": None,
+                "investigation_evidence_text": None,
+                "rationale_text": None,
+                "interest_text": None,
+                "is_low_value_meta": False,
+                "constraint_text": None,
+                "next_step_text": None,
+                "blocker_text": None,
+                "progress_text": None,
+                "key_finding_text": None,
+                "subject_hints": [],
+                "work_refs": ["LIB-241"],
+            },
+        )
+
+
+class TestExtractionToEnvelopePipeline:
+    """Integration test: LLM extraction with work_refs → memory envelope → metadata."""
+
+    def test_work_refs_flow_through_extraction_to_envelope(self):
+        plugin = LLMAgentMemoryPlugin(provider=_StubLLMProvider())
+        source_item = SourceItem(
+            source_type="assistant_artifact",
+            source_id="test-decision-001",
+            content_type="text/plain",
+            content="Decision: use event-time ordering for LIB-241 to avoid duplicate holds.",
+            artifact_kind="assistant_output",
+            role="assistant",
+            container_ref="chat:library-help",
+            thread_ref="chat:library-help:thread-001",
+        )
+
+        result = plugin.process_item(source_item)
+
+        # Apply envelopes (same as production pipeline)
+        extraction = SemanticExtraction(
+            summary="Decision about LIB-241",
+            candidate_type="decision",
+            work_refs=("lib-241",),
+        )
+        enveloped = _apply_direct_memory_envelopes(result, source_item=source_item, extraction=extraction)
+
+        # Memory object should have work_refs in envelope scope
+        assert len(enveloped.memory_objects) > 0
+        mem = enveloped.memory_objects[0]
+        assert mem.envelope is not None
+        assert mem.envelope.scope.work_refs == ("lib-241",)
+
+        # Source item metadata should have work_refs persisted
+        metadata_updates = enveloped.source_item_metadata_updates.get(source_item.id, {})
+        assert WORK_REFS_METADATA_KEY in metadata_updates
+        assert "lib-241" in metadata_updates[WORK_REFS_METADATA_KEY]
+
+    def test_runtime_hints_merge_with_extraction(self):
+        plugin = LLMAgentMemoryPlugin(provider=_StubLLMProvider())
+        source_item = SourceItem(
+            source_type="assistant_artifact",
+            source_id="test-decision-002",
+            content_type="text/plain",
+            content="Decision: use event-time ordering for LIB-241.",
+            artifact_kind="assistant_output",
+            role="assistant",
+            container_ref="chat:library-help",
+            thread_ref="chat:library-help:thread-001",
+            metadata={WORK_REFS_METADATA_KEY: ["SYNC-42"]},  # runtime hint
+        )
+
+        result = plugin.process_item(source_item)
+
+        extraction = SemanticExtraction(
+            summary="Decision about LIB-241",
+            candidate_type="decision",
+            work_refs=("lib-241",),  # LLM extracted
+        )
+        enveloped = _apply_direct_memory_envelopes(result, source_item=source_item, extraction=extraction)
+
+        # Should have both LLM-extracted and runtime hint refs
+        mem = enveloped.memory_objects[0]
+        assert "lib-241" in mem.envelope.scope.work_refs
+        assert "sync-42" in mem.envelope.scope.work_refs
+
+    def test_empty_work_refs_no_metadata_entry(self):
+        """When no work_refs extracted, no metadata key should be added."""
+
+        class _EmptyWorkRefsProvider:
+            def generate_json(self, **kwargs) -> LLMJsonResponse:
+                return LLMJsonResponse(
+                    raw_text="{}",
+                    metadata=LLMCallMetadata(provider_name="stub", provider_kind="stub", model="stub"),
+                    parsed_json={
+                        "summary": "General discussion",
+                        "candidate_type": None,
+                        "is_low_value_meta": False,
+                        "work_refs": [],
+                    },
+                )
+
+        plugin = LLMAgentMemoryPlugin(provider=_EmptyWorkRefsProvider())
+        source_item = SourceItem(
+            source_type="chat_message",
+            source_id="test-msg-001",
+            content_type="text/plain",
+            content="The admin toggle wiring is ready.",
+            artifact_kind="message",
+            role="user",
+        )
+
+        result = plugin.process_item(source_item)
+        extraction = SemanticExtraction(summary="General discussion", work_refs=())
+        enveloped = _apply_direct_memory_envelopes(result, source_item=source_item, extraction=extraction)
+
+        metadata_updates = enveloped.source_item_metadata_updates.get(source_item.id, {})
+        assert WORK_REFS_METADATA_KEY not in metadata_updates
+
+
+# ---------------------------------------------------------------------------
 # Slice 2: Routing integration tests
 # ---------------------------------------------------------------------------
 

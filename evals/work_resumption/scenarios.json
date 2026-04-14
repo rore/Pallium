@@ -1731,15 +1731,15 @@
       {
         "role": "user",
         "artifact_kind": "message",
-        "content": "\u05d0\u05e0\u05d9 \u05d7\u05d5\u05d6\u05e8 \u05dc\u05d1\u05d3\u05d5\u05e7 \u05d0\u05ea \u05d1\u05e2\u05d9\u05d9\u05ea \u05d4\u05e1\u05e0\u05db\u05e8\u05d5\u05df \u05e9\u05e2\u05d1\u05d3\u05e0\u05d5 \u05e2\u05dc\u05d9\u05d4 \u05e7\u05d5\u05d3\u05dd"
+        "content": "אני חוזר לבדוק את בעיית הסנכרון שעבדנו עליה קודם"
       }
     ],
     "current_query": {
-      "text": "\u05de\u05d4 \u05de\u05e6\u05d0\u05e0\u05d5 \u05dc\u05d2\u05d1\u05d9 \u05d4\u05d1\u05e2\u05d9\u05d4 \u05d1\u05e1\u05e0\u05db\u05e8\u05d5\u05df \u05d4\u05e7\u05d8\u05dc\u05d5\u05d2",
+      "text": "מה מצאנו לגבי הבעיה בסנכרון הקטלוג",
       "limit": 6,
       "container_ref": "chat:library-help"
     },
-    "target_question": "\u05de\u05d4 \u05de\u05e6\u05d0\u05e0\u05d5 \u05dc\u05d2\u05d1\u05d9 \u05d4\u05d1\u05e2\u05d9\u05d4 \u05d1\u05e1\u05e0\u05db\u05e8\u05d5\u05df \u05d4\u05e7\u05d8\u05dc\u05d5\u05d2",
+    "target_question": "מה מצאנו לגבי הבעיה בסנכרון הקטלוג",
     "should_memory_help": true,
     "expected_intent": "recall",
     "expected_primary_layer": "lower_level_memory",
@@ -1799,7 +1799,7 @@
         "source_type": "chat_message",
         "source_id": "wr-thread-15-msg-1",
         "content_type": "text/plain",
-        "content": "\u05d0\u05e0\u05d7\u05e0\u05d5 \u05e6\u05e8\u05d9\u05db\u05d9\u05dd \u05dc\u05d1\u05d3\u05d5\u05e7 \u05dc\u05de\u05d4 \u05d4\u05d4\u05e9\u05d0\u05dc\u05d5\u05ea \u05dc\u05d0 \u05de\u05ea\u05e2\u05d3\u05db\u05e0\u05d5\u05ea \u05d0\u05d7\u05e8\u05d9 \u05e1\u05e0\u05db\u05e8\u05d5\u05df",
+        "content": "אנחנו צריכים לבדוק למה ההשאלות לא מתעדכנות אחרי סנכרון",
         "artifact_kind": "message",
         "role": "user",
         "container_ref": "chat:library-help",
@@ -1831,7 +1831,7 @@
         "source_type": "chat_message",
         "source_id": "wr-thread-15-msg-2",
         "content_type": "text/plain",
-        "content": "\u05de\u05d4 \u05d4\u05e6\u05e2\u05d3 \u05d4\u05d1\u05d0",
+        "content": "מה הצעד הבא",
         "artifact_kind": "message",
         "role": "user",
         "container_ref": "chat:library-help",
@@ -1864,15 +1864,15 @@
       {
         "role": "user",
         "artifact_kind": "message",
-        "content": "\u05d0\u05e0\u05d9 \u05e4\u05d5\u05ea\u05d7 \u05e9\u05d9\u05d7\u05d4 \u05d7\u05d3\u05e9\u05d4 \u05e2\u05dc \u05d4\u05e0\u05d5\u05e9\u05d0 \u05e9\u05dc \u05e2\u05d3\u05db\u05d5\u05df \u05d4\u05d4\u05e9\u05d0\u05dc\u05d5\u05ea"
+        "content": "אני פותח שיחה חדשה על הנושא של עדכון ההשאלות"
       }
     ],
     "current_query": {
-      "text": "\u05de\u05d4 \u05d4\u05d9\u05d4 \u05d4\u05e6\u05e2\u05d3 \u05d4\u05d1\u05d0 \u05d1\u05e0\u05d5\u05e9\u05d0 \u05e2\u05d3\u05db\u05d5\u05df \u05d4\u05d4\u05e9\u05d0\u05dc\u05d5\u05ea",
+      "text": "מה היה הצעד הבא בנושא עדכון ההשאלות",
       "limit": 6,
       "container_ref": "chat:library-help"
     },
-    "target_question": "\u05de\u05d4 \u05d4\u05d9\u05d4 \u05d4\u05e6\u05e2\u05d3 \u05d4\u05d1\u05d0 \u05d1\u05e0\u05d5\u05e9\u05d0 \u05e2\u05d3\u05db\u05d5\u05df \u05d4\u05d4\u05e9\u05d0\u05dc\u05d5\u05ea",
+    "target_question": "מה היה הצעד הבא בנושא עדכון ההשאלות",
     "should_memory_help": true,
     "expected_intent": "work_resumption",
     "expected_primary_layer": "lower_level_memory",
@@ -1927,6 +1927,364 @@
       "next_step_guidance",
       "evidence"
     ],
+    "must_not_introduce": [
+      "higher_level_overreach"
+    ],
+    "guard_terms": {},
+    "forbidden_terms": []
+  },
+  {
+    "scenario_id": "work-ref-cross-thread-resumption",
+    "scenario_family": "implementation_continuity",
+    "description": "Cross-thread work resumption using work_ref: investigation and decision from Thread A about LIB-241 should be retrieved and packaged together when queried from Thread B with work_refs.",
+    "prior_events": [
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-wref-thread-a-1",
+        "content_type": "text/plain",
+        "content": "Investigation found that arrival-time ordering missed hold updates during catalog sync delays for LIB-241.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wref-a",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wref/thread-a-1",
+        "occurred_at": "2026-03-20T10:00:00Z",
+        "metadata": {
+          "topic": "ticket_lib_241"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-wref-thread-a-2",
+        "content_type": "text/plain",
+        "content": "Decision: use item event time for reservation ordering to fix LIB-241 duplicate holds.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wref-a",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wref/thread-a-2",
+        "occurred_at": "2026-03-20T10:01:00Z",
+        "metadata": {
+          "topic": "ticket_lib_241"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-wref-thread-a-3",
+        "content_type": "text/plain",
+        "content": "Partial progress: ticket LIB-241 has the schema change done but retry-path coverage is missing.",
+        "artifact_kind": "tool_use_summary",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wref-a",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wref/thread-a-3",
+        "occurred_at": "2026-03-20T10:02:00Z",
+        "metadata": {
+          "topic": "ticket_lib_241"
+        }
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "What state were we in on ticket LIB-241 and what should I do next?"
+      }
+    ],
+    "current_query": {
+      "text": "What state were we in on ticket LIB-241 and what should I do next?",
+      "limit": 6,
+      "container_ref": "chat:library-help",
+      "work_refs": [
+        "lib-241"
+      ]
+    },
+    "target_question": "What state were we in on ticket LIB-241 and what should I do next?",
+    "should_memory_help": true,
+    "expected_intent": "work_resumption",
+    "expected_primary_layer": "task_checkpoint",
+    "acceptable_fallback_layers": [
+      "lower_level_memory",
+      "source_evidence"
+    ],
+    "forbidden_layers": [
+      "pattern_memory",
+      "continuity_memory"
+    ],
+    "expected_memory_types": [
+      "decision",
+      "investigation_outcome",
+      "task_checkpoint"
+    ],
+    "expected_dimensions": {
+      "task_orientation": [
+        "LIB-241",
+        "reservation ordering"
+      ],
+      "blocker_state": [
+        "retry-path coverage"
+      ],
+      "preserved_progress": [
+        "schema change"
+      ]
+    },
+    "must_not_introduce": [
+      "higher_level_overreach"
+    ],
+    "guard_terms": {},
+    "forbidden_terms": []
+  },
+  {
+    "scenario_id": "work-ref-tool-summary-ticket-chain",
+    "scenario_family": "implementation_continuity",
+    "description": "Tool summary creating a ticket (SYNC-42) should be retrievable by work_ref when queried later.",
+    "prior_events": [
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-wref-tool-1",
+        "content_type": "text/plain",
+        "content": "Tool summary: jira_create_issue [done]: Created SYNC-42 for the catalog sync retry failure.",
+        "artifact_kind": "tool_use_summary",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wref-tool",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wref/tool-1",
+        "occurred_at": "2026-03-21T09:00:00Z",
+        "metadata": {
+          "topic": "catalog_sync"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-wref-tool-2",
+        "content_type": "text/plain",
+        "content": "Decision: keep the catalog sync retry paused on SYNC-42 until the token refresh path is hardened.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wref-tool",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wref/tool-2",
+        "occurred_at": "2026-03-21T09:01:00Z",
+        "metadata": {
+          "topic": "catalog_sync"
+        }
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "What was the outcome of SYNC-42?"
+      }
+    ],
+    "current_query": {
+      "text": "What was the outcome of SYNC-42?",
+      "limit": 6,
+      "container_ref": "chat:library-help",
+      "work_refs": [
+        "sync-42"
+      ]
+    },
+    "target_question": "What was the outcome of SYNC-42?",
+    "should_memory_help": true,
+    "expected_intent": "work_resumption",
+    "expected_primary_layer": "task_checkpoint",
+    "acceptable_fallback_layers": [
+      "lower_level_memory",
+      "source_evidence"
+    ],
+    "forbidden_layers": [
+      "pattern_memory",
+      "continuity_memory"
+    ],
+    "expected_memory_types": [
+      "decision",
+      "task_checkpoint"
+    ],
+    "expected_dimensions": {
+      "task_orientation": [
+        "SYNC-42",
+        "catalog sync"
+      ],
+      "blocker_state": [
+        "token refresh"
+      ]
+    },
+    "must_not_introduce": [
+      "higher_level_overreach"
+    ],
+    "guard_terms": {},
+    "forbidden_terms": []
+  },
+  {
+    "scenario_id": "work-ref-candidate-detection-no-explicit-refs",
+    "scenario_family": "implementation_continuity",
+    "description": "Query mentions LIB-241 in text but does NOT pass work_refs explicitly. Candidate-side detection should infer work_refs from candidate envelope data matching query text.",
+    "prior_events": [
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-wref-detect-1",
+        "content_type": "text/plain",
+        "content": "Investigation found that the hold dedup logic for LIB-241 was skipping batch boundaries.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wref-detect",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wref/detect-1",
+        "occurred_at": "2026-03-22T14:00:00Z",
+        "metadata": {
+          "topic": "ticket_lib_241"
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-wref-detect-2",
+        "content_type": "text/plain",
+        "content": "Partial progress: LIB-241 batch boundary fix is coded but needs integration test coverage.",
+        "artifact_kind": "tool_use_summary",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wref-detect",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wref/detect-2",
+        "occurred_at": "2026-03-22T14:01:00Z",
+        "metadata": {
+          "topic": "ticket_lib_241"
+        }
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "What state were we in on LIB-241?"
+      }
+    ],
+    "current_query": {
+      "text": "What state were we in on LIB-241?",
+      "limit": 6,
+      "container_ref": "chat:library-help"
+    },
+    "target_question": "What state were we in on LIB-241?",
+    "should_memory_help": true,
+    "expected_intent": "work_resumption",
+    "expected_primary_layer": "task_checkpoint",
+    "acceptable_fallback_layers": [
+      "lower_level_memory",
+      "source_evidence"
+    ],
+    "forbidden_layers": [
+      "pattern_memory",
+      "continuity_memory"
+    ],
+    "expected_memory_types": [
+      "investigation_outcome",
+      "task_checkpoint"
+    ],
+    "expected_dimensions": {
+      "task_orientation": [
+        "LIB-241"
+      ],
+      "preserved_progress": [
+        "batch boundary"
+      ]
+    },
+    "must_not_introduce": [
+      "higher_level_overreach"
+    ],
+    "guard_terms": {},
+    "forbidden_terms": []
+  },
+  {
+    "scenario_id": "work-ref-runtime-hints-path",
+    "scenario_family": "implementation_continuity",
+    "description": "Runtime hints provide work_refs via pallium_work_refs metadata, not LLM extraction. Memories should carry work_refs from hints and be retrievable.",
+    "prior_events": [
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-wref-hints-1",
+        "content_type": "text/plain",
+        "content": "Decision: use the retry-safe catalog sync path for the reservation fix.",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wref-hints",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wref/hints-1",
+        "occurred_at": "2026-03-23T08:00:00Z",
+        "metadata": {
+          "topic": "catalog_sync",
+          "pallium_work_refs": [
+            "LIB-500"
+          ]
+        }
+      },
+      {
+        "source_type": "assistant_artifact",
+        "source_id": "wr-wref-hints-2",
+        "content_type": "text/plain",
+        "content": "Partial progress: retry-safe path implemented, needs load test.",
+        "artifact_kind": "tool_use_summary",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-wref-hints",
+        "actor_ref": "agent:assistant",
+        "source_ref": "memory://wref/hints-2",
+        "occurred_at": "2026-03-23T08:01:00Z",
+        "metadata": {
+          "topic": "catalog_sync",
+          "pallium_work_refs": [
+            "LIB-500"
+          ]
+        }
+      }
+    ],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "What is the status of LIB-500?"
+      }
+    ],
+    "current_query": {
+      "text": "What is the status of LIB-500?",
+      "limit": 6,
+      "container_ref": "chat:library-help",
+      "work_refs": [
+        "lib-500"
+      ]
+    },
+    "target_question": "What is the status of LIB-500?",
+    "should_memory_help": true,
+    "expected_intent": "work_resumption",
+    "expected_primary_layer": "task_checkpoint",
+    "acceptable_fallback_layers": [
+      "lower_level_memory",
+      "source_evidence"
+    ],
+    "forbidden_layers": [
+      "pattern_memory",
+      "continuity_memory"
+    ],
+    "expected_memory_types": [
+      "decision",
+      "task_checkpoint"
+    ],
+    "expected_dimensions": {
+      "task_orientation": [
+        "retry-safe",
+        "catalog sync"
+      ],
+      "preserved_progress": [
+        "load test"
+      ]
+    },
     "must_not_introduce": [
       "higher_level_overreach"
     ],
