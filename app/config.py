@@ -101,12 +101,12 @@ def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
         "llm_agent_memory": SemanticPackageConfig(
             name="llm_agent_memory",
             implementation="llm_agent_memory",
-            prompt_variant="strict_typed_memory_v5_compact_examples",
+            prompt_variant="strict_typed_memory_v8b_work_refs_separate",
         ),
         "agent_conversation_memory": SemanticPackageConfig(
             name="agent_conversation_memory",
             implementation="agent_conversation_memory",
-            prompt_variant="strict_typed_memory_v6_work_state_examples",
+            prompt_variant="strict_typed_memory_v8b_work_refs_separate",
             consolidation=DEFAULT_AGENT_CONVERSATION_CONSOLIDATION,
         ),
         "conversational_knowledge": SemanticPackageConfig(

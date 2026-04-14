@@ -13,7 +13,8 @@ from semantic.prompt_roles import get_prompt_role_contract
 
 
 WRITE_EXTRACTION_PROMPT_ROLE = get_prompt_role_contract("write_extraction")
-DEFAULT_VARIANT = "strict_typed_memory_v5_compact_examples"
+
+from semantic.llm_agent_memory import DEFAULT_PROMPT_VARIANT as DEFAULT_VARIANT
 
 
 class VariantAwareStubLLMProvider:

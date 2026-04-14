@@ -15,7 +15,7 @@ from semantic.prompt_provenance import build_prompt_provenance
 from semantic.prompt_roles import get_prompt_role_contract
 
 
-DEFAULT_PROMPT_VARIANT = "strict_typed_memory_v5_compact_examples"
+DEFAULT_PROMPT_VARIANT = "strict_typed_memory_v8b_work_refs_separate"
 WRITE_EXTRACTION_PROMPT_ROLE = get_prompt_role_contract("write_extraction")
 PROMPT_ROLE = WRITE_EXTRACTION_PROMPT_ROLE.role
 PROMPT_SCHEMA_ID = WRITE_EXTRACTION_PROMPT_ROLE.schema_id
