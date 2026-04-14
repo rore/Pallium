@@ -20,6 +20,7 @@ from semantic.agent_conversation_memory_routing_constants import (
     ROUTING_SUPPORT_THRESHOLD,
     PolicySelectedContext,
     RoutingOverrides,
+    _candidate_work_refs,
     _routing_query_tokens,
     _routing_result_id,
 )
@@ -90,6 +91,43 @@ from semantic.agent_conversation_memory_routing_policy import (  # noqa: F401
     _classify_query_policy_family,
 )
 
+from dataclasses import replace as _dc_replace
+from semantic.llm_agent_memory import _normalize_work_ref
+
+
+def _detect_query_work_refs(
+    query_text: str,
+    candidates: list[QueryResultItem],
+    query_filters: QueryFilters | None,
+) -> QueryFilters | None:
+    """Data-driven work_ref detection: check if candidate work_refs appear in query text.
+
+    If query_filters already has work_refs (provided by integrating agent), return as-is.
+    Otherwise, collect work_refs from candidates and check which ones appear as substrings
+    in the normalized query text. Augment query_filters with detected refs.
+    """
+    if query_filters is not None and query_filters.work_refs:
+        return query_filters
+    # Collect all distinct work_refs from candidates
+    candidate_refs: set[str] = set()
+    for item in candidates:
+        candidate_refs.update(_candidate_work_refs(item))
+    if not candidate_refs:
+        return query_filters
+    # Normalize query text with the same separator collapse used for work_refs
+    normalized_query = _normalize_work_ref(query_text) or ""
+    if not normalized_query:
+        return query_filters
+    # Check which candidate work_refs appear as substrings in normalized query
+    detected: list[str] = [ref for ref in candidate_refs if ref in normalized_query]
+    if not detected:
+        return query_filters
+    # Augment query_filters with detected work_refs
+    if query_filters is None:
+        return QueryFilters(work_refs=tuple(sorted(detected)))
+    return _dc_replace(query_filters, work_refs=tuple(sorted(detected)))
+
+
 def route_query_results(
     *,
     text: str,
@@ -137,6 +175,8 @@ def route_query_results(
                 sharp_candidate_diagnostics=[],
             )
         floor_candidates = floor_result.survivors if floor_result.survivors else retrieval_result.results
+        # Step 0b: Detect work_refs from candidates if not provided by integrating agent
+        query_filters = _detect_query_work_refs(text, floor_candidates, query_filters)
         # Step 1: Family-independent anchor prefilter
         anchor_prefiltered_candidates, anchor_prefilter_summary, anchor_prefilter_states = _anchor_prefilter_candidates(
             floor_candidates,

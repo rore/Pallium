@@ -32,6 +32,7 @@ from semantic.agent_conversation_memory_routing_constants import (
     _candidate_freshness_timestamp,
     _candidate_matches_container,
     _candidate_matches_thread,
+    _candidate_matches_work_ref,
     _result_layer,
     _routing_query_tokens,
     _routing_result_id,
@@ -545,6 +546,7 @@ def _score_routed_candidate(
     retrieval_score = item.score
     same_thread = _candidate_matches_thread(item, query_filters)
     same_container = _candidate_matches_container(item, query_filters)
+    same_work_ref = _candidate_matches_work_ref(item, query_filters)
     evidence_shape_score = _candidate_evidence_shape_score(
         item,
         layer=layer,
@@ -561,7 +563,7 @@ def _score_routed_candidate(
         + _specificity_bonus(item, intent)
         + evidence_shape_score
         + _higher_level_retrieval_floor_adjustment(layer, retrieval_score, quality_score=quality_score)
-        + _locality_adjustment(intent=intent, layer=layer, same_thread=same_thread, same_container=same_container)
+        + _locality_adjustment(intent=intent, layer=layer, same_thread=same_thread, same_container=same_container, same_work_ref=same_work_ref)
     )
     support_grade = _routing_support_grade(evidence_shape_score, support_threshold=support_threshold)
     # Compute work resumption signals unconditionally (was previously in _apply_work_resumption_packaging)
@@ -588,6 +590,7 @@ def _score_routed_candidate(
         "evidence_count": len(item.evidence),
         "same_thread": same_thread,
         "same_container": same_container,
+        "same_work_ref": same_work_ref,
         "freshness_timestamp_value": _freshness_ts_value,
         "freshness_timestamp": _freshness_ts,
         "packaging_adjustment": 0,
@@ -614,20 +617,20 @@ def _locality_adjustment(
     layer: str,
     same_thread: bool,
     same_container: bool,
+    same_work_ref: bool = False,
 ) -> int:
     """Structural locality bonus for continuity_memory candidates.
 
-    Replaces the former topic-overlap-gated continuity compatibility
-    adjustment.  Uses only structural thread/container affinity, no tokens.
-
-    The same-container bonus (+20) is gated on recall intent to
-    avoid boosting cross-topic carry-forward when the query isn't a repeated
-    question.
+    Uses structural thread/container/work_ref affinity, no tokens.
+    Work_ref affinity gives a cross-thread bonus when the candidate
+    is about the same work item, even if threads differ.
     """
     if layer != "continuity_memory":
         return 0
     if same_thread:
         return 60
+    if same_work_ref:
+        return 40
     if same_container and intent == "recall":
         return 20
     if same_container:

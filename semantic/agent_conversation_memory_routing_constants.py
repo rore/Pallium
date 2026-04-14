@@ -289,6 +289,19 @@ def _candidate_container_refs(item: QueryResultItem) -> tuple[str, ...]:
     refs.extend(evidence.container_ref for evidence in item.evidence if evidence.container_ref)
     return tuple(dict.fromkeys(refs))
 
+def _candidate_work_refs(item: QueryResultItem) -> tuple[str, ...]:
+    """Extract work_refs from candidate's envelope scope."""
+    if item.envelope is not None and item.envelope.scope.work_refs:
+        return item.envelope.scope.work_refs
+    return ()
+
+def _candidate_matches_work_ref(item: QueryResultItem, query_filters: QueryFilters | None) -> bool:
+    """Return True when candidate shares at least one work_ref with query filters."""
+    if query_filters is None or not query_filters.work_refs:
+        return False
+    candidate_refs = set(_candidate_work_refs(item))
+    return bool(candidate_refs & set(query_filters.work_refs))
+
 def _candidate_freshness_timestamp(item: QueryResultItem) -> datetime | None:
     timestamps: list[datetime] = []
     if item.freshness_at is not None:

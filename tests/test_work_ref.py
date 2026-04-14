@@ -202,3 +202,155 @@ class TestEnvelopeScopeRoundTrip:
         loaded = SQLiteCodecMixin._load_memory_envelope(raw_json)
         assert loaded is not None
         assert loaded.scope.work_refs == ()
+
+
+# ---------------------------------------------------------------------------
+# Slice 2: Routing integration tests
+# ---------------------------------------------------------------------------
+
+from core.models import (
+    EvidenceReference,
+    MemoryEnvelope,
+    MemoryEnvelopeDerivation,
+    QueryFilters,
+    QueryResultItem,
+)
+from semantic.agent_conversation_memory_routing_constants import (
+    _candidate_work_refs,
+    _candidate_matches_work_ref,
+)
+from semantic.agent_conversation_memory_routing import (
+    _detect_query_work_refs,
+)
+
+
+def _make_query_result_item(
+    *,
+    work_refs: tuple[str, ...] = (),
+    thread_ref: str | None = None,
+    container_ref: str | None = None,
+    result_kind: str = "memory_hit",
+    memory_type: str = "decision",
+) -> QueryResultItem:
+    """Create a minimal QueryResultItem for routing tests."""
+    envelope = MemoryEnvelope(
+        schema_id="core.memory_envelope",
+        schema_version="v1",
+        kind="finding",
+        scope=MemoryEnvelopeScope(
+            container_ref=container_ref,
+            thread_ref=thread_ref,
+            work_refs=work_refs,
+        ),
+        derivation=MemoryEnvelopeDerivation(
+            producer_kind="item_extraction",
+            producer_schema_id="test",
+            producer_schema_version="v1",
+        ),
+    )
+    return QueryResultItem(
+        result_kind=result_kind,
+        score=100,
+        evidence=[],
+        result_id="test-id",
+        memory_object_id="test-mem-id",
+        type=memory_type,
+        payload={},
+        envelope=envelope,
+        container_ref=container_ref,
+        thread_ref=thread_ref,
+    )
+
+
+class TestCandidateWorkRefs:
+    def test_extracts_from_envelope(self):
+        item = _make_query_result_item(work_refs=("proj-123", "sync-42"))
+        assert _candidate_work_refs(item) == ("proj-123", "sync-42")
+
+    def test_empty_when_no_envelope(self):
+        item = QueryResultItem(
+            result_kind="memory_hit",
+            score=100,
+            evidence=[],
+            result_id="test",
+            type="decision",
+            payload={},
+            envelope=None,
+        )
+        assert _candidate_work_refs(item) == ()
+
+    def test_empty_when_no_work_refs(self):
+        item = _make_query_result_item(work_refs=())
+        assert _candidate_work_refs(item) == ()
+
+
+class TestCandidateMatchesWorkRef:
+    def test_matches_when_shared(self):
+        item = _make_query_result_item(work_refs=("proj-123",))
+        filters = QueryFilters(work_refs=("proj-123",))
+        assert _candidate_matches_work_ref(item, filters) is True
+
+    def test_no_match_when_different(self):
+        item = _make_query_result_item(work_refs=("proj-123",))
+        filters = QueryFilters(work_refs=("sync-42",))
+        assert _candidate_matches_work_ref(item, filters) is False
+
+    def test_no_match_when_filters_empty(self):
+        item = _make_query_result_item(work_refs=("proj-123",))
+        filters = QueryFilters()
+        assert _candidate_matches_work_ref(item, filters) is False
+
+    def test_no_match_when_no_filters(self):
+        item = _make_query_result_item(work_refs=("proj-123",))
+        assert _candidate_matches_work_ref(item, None) is False
+
+    def test_partial_overlap_matches(self):
+        item = _make_query_result_item(work_refs=("proj-123", "sync-42"))
+        filters = QueryFilters(work_refs=("sync-42", "other-99"))
+        assert _candidate_matches_work_ref(item, filters) is True
+
+
+class TestDetectQueryWorkRefs:
+    def test_detects_from_query_text(self):
+        item = _make_query_result_item(work_refs=("lib-241",))
+        result = _detect_query_work_refs(
+            "What state were we in on ticket LIB-241?",
+            [item],
+            None,
+        )
+        assert result is not None
+        assert "lib-241" in result.work_refs
+
+    def test_preserves_existing_work_refs(self):
+        item = _make_query_result_item(work_refs=("lib-241",))
+        filters = QueryFilters(work_refs=("already-set",))
+        result = _detect_query_work_refs(
+            "What about LIB-241?",
+            [item],
+            filters,
+        )
+        assert result is not None
+        assert result.work_refs == ("already-set",)
+
+    def test_no_detection_when_no_candidates(self):
+        result = _detect_query_work_refs("What about LIB-241?", [], None)
+        assert result is None
+
+    def test_no_detection_when_ref_not_in_query(self):
+        item = _make_query_result_item(work_refs=("lib-241",))
+        result = _detect_query_work_refs(
+            "What is the status of the catalog sync?",
+            [item],
+            None,
+        )
+        assert result is None
+
+    def test_detection_case_insensitive(self):
+        item = _make_query_result_item(work_refs=("proj-123",))
+        result = _detect_query_work_refs(
+            "Continue work on PROJ 123",
+            [item],
+            None,
+        )
+        assert result is not None
+        assert "proj-123" in result.work_refs
