@@ -208,6 +208,7 @@ Response:
       "title": "decision",
       "text": "Use event timestamps for ordering — avoids timezone drift.",
       "memory_type": "decision",
+      "memory_object_id": "mo-001",
       "evidence": [
         {
           "source_item_id": "si-001",
@@ -261,7 +262,10 @@ Response fields:
   - `"lane_ambiguity"` — the query didn't clearly map to a retrieval strategy; Pallium chose silence over a guess
   - `"no_lane_eligible"` — no structural retrieval lane (work resumption, evidence trace, residual recall) matched the query shape
 - `injectable_blocks` — ready-to-use blocks for prompt injection, each with
-  `block_type`, `title`, `text`, optional `memory_type`, and `evidence` refs
+  `block_type`, `title`, `text`, optional `memory_type`, optional
+  `memory_object_id`, and `evidence` refs. `memory_object_id` can be used
+  with `GET /memory/{id}/evidence` to retrieve the source conversation items
+  that the memory was derived from
 - `results` — ranked result list (see below)
 
 Each result in `results[]`:
@@ -351,6 +355,51 @@ relevant to the `content` (or `query_text` if provided).
 
 `POST /item-and-query/debug` returns the same plus `trace` (same as
 `POST /query/debug`).
+
+## GET /memory/{memory_object_id}/evidence
+
+Use this endpoint to retrieve the source conversation items that a memory
+object was derived from. This enables drill-down from a compact memory card
+to the full original context.
+
+Required query parameter:
+
+- `container_ref` — the container to validate access against. The endpoint
+  returns 404 if the memory object doesn't belong to this container.
+
+Example:
+
+```
+GET /memory/63119911-e39d-4b51-b804-8cbecd0522b3/evidence?container_ref=slack:channel:C123
+```
+
+Response:
+
+```json
+{
+  "memory_object_id": "63119911-e39d-4b51-b804-8cbecd0522b3",
+  "items": [
+    {
+      "source_item_id": "si-001",
+      "source_type": "chat_message",
+      "source_id": "slack-message:C123:1700000001.000100",
+      "content": "We decided to use event timestamps for ordering because of timezone drift.",
+      "role": "user",
+      "actor_ref": "slack:user:U01XYZ789",
+      "occurred_at": "2026-04-09T10:30:00Z",
+      "thread_ref": "slack:thread:C123:1700000001"
+    }
+  ]
+}
+```
+
+Security:
+
+- The memory object must belong to the requested `container_ref` (404 otherwise)
+- Each evidence item is filtered through visibility rules — private items from
+  other containers are excluded
+- Returns 404 (not 403) for both missing and unauthorized access to avoid
+  confirming ID existence
 
 ## GET /debug/queue/health
 

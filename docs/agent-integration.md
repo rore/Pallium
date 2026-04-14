@@ -180,7 +180,8 @@ The key fields for integration:
 - `should_inject` — whether to inject memory into the agent's prompt
 - `decision_reason` — why (e.g. `"carry_forward_available"`,
   `"no_relevant_memory"`)
-- `injectable_blocks` — ready-to-use blocks with title, text, and evidence
+- `injectable_blocks` — ready-to-use blocks with title, text, evidence, and
+  optional `memory_object_id` for drill-down via `GET /memory/{id}/evidence`
 
 The downstream agent should not need to decide:
 
@@ -313,11 +314,19 @@ for stdio mode.
 | `pallium_query` | Search memory explicitly. Use when auto-injection is missing something. |
 | `pallium_query_debug` | Investigate retrieval — scores, stages, filtering. Use when memory seems missing. |
 | `pallium_ingest` | Store an artifact for processing. Goes through the standard extraction pipeline. |
+| `pallium_get_evidence` | Retrieve the source conversation items behind a memory card. Use when a memory summary isn't enough and the agent needs the original context. |
 
 All tools accept optional scope parameters (`container_ref`, `thread_ref`,
 `actor_ref`, `visibility`) for filtering. When omitted, defaults come from
 environment variables (`PALLIUM_CONTAINER_REF`, `PALLIUM_THREAD_REF`,
 `PALLIUM_ACTOR_REF`, `PALLIUM_VISIBILITY`).
+
+Note: when using the embedded HTTP transport (`/mcp`), the MCP server runs
+in the Pallium process, not the agent process. Environment variables set in
+the agent's process are not visible to the MCP server. In this mode, the
+agent must pass scope parameters explicitly on each tool call. The
+integrating runtime should include `container_ref` in the injected memory
+header so the agent can read and pass it.
 
 ### Registration
 
@@ -344,11 +353,19 @@ Example instruction block:
 
 ```markdown
 You have access to a memory system. Relevant memories are automatically
-injected into your context. For explicit access:
+injected into your context — each block may include a [ref: <id>]
+annotation linking to the original conversation.
+
+When using Pallium tools, pass the container_ref from the memory header.
+
 - pallium_query — search when auto-injection is missing something
+- pallium_get_evidence — get the original conversation behind a memory
+  card when the summary isn't enough (pass the id from [ref: ...])
 - pallium_query_debug — investigate why a memory wasn't found
 - pallium_ingest — store something for future recall
+
 Don't query on every turn. Don't re-query injected context.
+Don't fetch evidence for every memory — only when you need more detail.
 ```
 
 ### Responses
