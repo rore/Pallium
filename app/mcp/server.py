@@ -103,9 +103,16 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     @server.tool()
     async def pallium_get_evidence(
         memory_object_id: str,
+        container_ref: str | None = None,
+        actor_ref: str | None = None,
+        visibility: str | None = None,
     ) -> str:
         """Retrieve the source conversation items that a memory card was derived from. Use when an injected memory block's summary isn't enough and you need the original conversation context. Pass the memory_object_id from the [ref: ...] annotation on a memory block."""
-        ctx = resolve_context()
+        ctx = resolve_context(
+            container_ref=container_ref,
+            actor_ref=actor_ref,
+            visibility=visibility,
+        )
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         client = PalliumMcpClient(ctx)
