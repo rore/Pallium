@@ -380,7 +380,7 @@ class LLMAgentMemoryPlugin(SemanticPlugin):
             user_prompt=request.user_prompt,
             schema_description=request.schema_description,
         )
-        extraction = _normalize_extraction(response.parsed_json)
+        extraction = _normalize_extraction(response.parsed_json, source_id=source_item.source_id)
         semantic_metadata = build_prompt_provenance(
             semantic_plugin=self.name,
             contract=WRITE_EXTRACTION_PROMPT_ROLE,
@@ -460,7 +460,7 @@ def resolve_prompt_variant_for_role(
     return default
 
 
-def _normalize_extraction(payload: dict[str, Any]) -> SemanticExtraction:
+def _normalize_extraction(payload: dict[str, Any], *, source_id: str | None = None) -> SemanticExtraction:
     summary = _normalize_required_string(payload.get("summary"), field_name="summary")
     candidate_type = _normalize_optional_string(payload.get("candidate_type"), field_name="candidate_type")
     decision_text = _normalize_optional_string(payload.get("decision_text"), field_name="decision_text")
@@ -477,6 +477,12 @@ def _normalize_extraction(payload: dict[str, Any]) -> SemanticExtraction:
     key_finding_text = _normalize_optional_string(payload.get("key_finding_text"), field_name="key_finding_text")
     subject_hints = _normalize_subject_hints(payload.get("subject_hints"))
     work_refs = _normalize_work_refs(payload.get("work_refs"))
+    # Filter out work_refs that match the source_id — prevents the LLM from
+    # extracting metadata header values (e.g., "investigation-003") as work refs.
+    if source_id and work_refs:
+        normalized_sid = _normalize_work_ref(source_id)
+        if normalized_sid:
+            work_refs = tuple(ref for ref in work_refs if ref != normalized_sid)
 
     if candidate_type is not None:
         candidate_type = candidate_type.lower()

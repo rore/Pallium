@@ -7,6 +7,7 @@ import pytest
 
 from core.models import MemoryEnvelopeScope
 from semantic.llm_agent_memory import (
+    _normalize_extraction,
     _normalize_work_ref,
     _normalize_work_refs,
 )
@@ -88,6 +89,37 @@ class TestNormalizeWorkRefs:
 
     def test_empty_strings_skipped(self):
         assert _normalize_work_refs(["", "  ", "PROJ-123"]) == ("proj-123",)
+
+
+class TestSourceIdFilter:
+    """Verify that _normalize_extraction filters work_refs matching the source_id."""
+
+    def test_source_id_filtered_from_work_refs(self):
+        extraction = _normalize_extraction(
+            {"summary": "Test", "work_refs": ["investigation-003", "PROJ-123"]},
+            source_id="investigation-003",
+        )
+        assert extraction.work_refs == ("proj-123",)
+
+    def test_source_id_not_filtered_when_different(self):
+        extraction = _normalize_extraction(
+            {"summary": "Test", "work_refs": ["PROJ-123"]},
+            source_id="investigation-003",
+        )
+        assert extraction.work_refs == ("proj-123",)
+
+    def test_no_source_id_no_filtering(self):
+        extraction = _normalize_extraction(
+            {"summary": "Test", "work_refs": ["investigation-003"]},
+        )
+        assert extraction.work_refs == ("investigation-003",)
+
+    def test_source_id_case_insensitive_match(self):
+        extraction = _normalize_extraction(
+            {"summary": "Test", "work_refs": ["INVESTIGATION-003"]},
+            source_id="investigation-003",
+        )
+        assert extraction.work_refs == ()
 
 
 class TestMergeWorkRefs:
