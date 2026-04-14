@@ -16,12 +16,36 @@ from semantic.agent_conversation_memory_constraints import (
     _merge_subject_anchors,
     _serialize_subject_anchors,
 )
+from semantic.llm_agent_memory import _normalize_work_refs
 
 MEMORY_ENVELOPE_SCHEMA_ID = "core.memory_envelope"
 
 MEMORY_ENVELOPE_SCHEMA_VERSION = "v1"
 
 WRITE_TIME_MODEL_ROLE = "write_time_extraction"
+
+WORK_REFS_METADATA_KEY = "pallium_work_refs"
+
+
+def _work_refs_from_metadata(metadata: dict[str, object] | None) -> tuple[str, ...]:
+    """Read and normalize work_refs from source item metadata (runtime hints)."""
+    if not isinstance(metadata, dict):
+        return ()
+    raw = metadata.get(WORK_REFS_METADATA_KEY)
+    return _normalize_work_refs(raw)
+
+
+def _merge_work_refs(*groups: tuple[str, ...]) -> tuple[str, ...]:
+    """Union and deduplicate work_refs from multiple sources."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for group in groups:
+        for ref in group:
+            if ref not in seen:
+                seen.add(ref)
+                result.append(ref)
+    return tuple(result)
+
 
 def _has_explicit_semantic_signals(extraction: SemanticExtraction) -> bool:
     return any(
@@ -65,6 +89,7 @@ def _build_memory_envelope(
     prompt_variant: str | None,
     kind_basis: str,
     subjects: list[MemorySubjectAnchor],
+    work_refs: tuple[str, ...] = (),
 ) -> MemoryEnvelope:
     return MemoryEnvelope(
         schema_id=MEMORY_ENVELOPE_SCHEMA_ID,
@@ -73,6 +98,7 @@ def _build_memory_envelope(
         scope=MemoryEnvelopeScope(
             container_ref=container_ref,
             thread_ref=thread_ref,
+            work_refs=work_refs,
         ),
         subjects=list(subjects),
         confidence=confidence,
@@ -201,6 +227,14 @@ def _apply_direct_memory_envelopes(
         source_updates = dict(updated_metadata.get(source_item.id, {}))
         source_updates[SUBJECT_HINT_METADATA_KEY] = _serialize_subject_anchors(extraction.subject_hints)
         updated_metadata[source_item.id] = source_updates
+    # Merge work_refs from LLM extraction and runtime metadata hints
+    metadata_work_refs = _work_refs_from_metadata(source_item.metadata)
+    merged_work_refs = _merge_work_refs(extraction.work_refs, metadata_work_refs)
+    # Persist merged work_refs back to source item metadata
+    if merged_work_refs:
+        source_updates = dict(updated_metadata.get(source_item.id, {}))
+        source_updates[WORK_REFS_METADATA_KEY] = list(merged_work_refs)
+        updated_metadata[source_item.id] = source_updates
     if not result.memory_objects:
         return replace(result, source_item_metadata_updates=updated_metadata)
     direct_subjects = _merge_subject_anchors(extraction.subject_hints)
@@ -228,6 +262,7 @@ def _apply_direct_memory_envelopes(
                     prompt_variant=str(prompt_variant) if isinstance(prompt_variant, str) and prompt_variant else None,
                     kind_basis=kind_basis,
                     subjects=direct_subjects,
+                    work_refs=merged_work_refs,
                 ),
             )
         )

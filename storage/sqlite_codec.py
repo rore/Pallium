@@ -228,6 +228,10 @@ class SQLiteCodecMixin:
             scope_payload,
             "thread_ref",
         )
+        raw_work_refs = scope_payload.get("work_refs") if isinstance(scope_payload, dict) else None
+        work_refs: tuple[str, ...] = ()
+        if isinstance(raw_work_refs, list):
+            work_refs = tuple(str(v) for v in raw_work_refs if isinstance(v, str) and v.strip())
         prompt_variant, prompt_variant_valid = SQLiteCodecMixin._load_optional_envelope_string(
             derivation_payload,
             "prompt_variant",
@@ -257,6 +261,7 @@ class SQLiteCodecMixin:
             scope=MemoryEnvelopeScope(
                 container_ref=container_ref,
                 thread_ref=thread_ref,
+                work_refs=work_refs,
             ),
             derivation=MemoryEnvelopeDerivation(
                 producer_kind=producer_kind,

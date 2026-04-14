@@ -74,6 +74,7 @@ class MemorySubjectAnchor:
 class MemoryEnvelopeScope:
     container_ref: str | None = None
     thread_ref: str | None = None
+    work_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

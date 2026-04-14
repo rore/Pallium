@@ -16,10 +16,12 @@ from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY, normalize_for_index
 from semantic.agent_conversation_memory_constraints import CONSTRAINT_MARKERS, CONSTRAINT_TOOL_MARKERS, _merge_subject_anchors, _subject_anchors_from_memory_objects, _subject_anchors_from_source_items
 from semantic.agent_conversation_memory_embedding import VECTOR_EMBEDDING_PROVIDER_NAME, VECTOR_EMBEDDING_PROVIDER_VERSION, build_embedding_text
 from semantic.agent_conversation_memory_enrichment import ENRICHABLE_MEMORY_TYPES, WRITE_ENRICHMENT_PROMPT_ROLE, WRITE_ENRICHMENT_TEXT_VIEW
-from semantic.agent_conversation_memory_memory import _build_memory_envelope, _memory_confidence_for_type, _memory_kind_for_type
+from semantic.agent_conversation_memory_memory import _build_memory_envelope, _memory_confidence_for_type, _memory_kind_for_type, _merge_work_refs, _work_refs_from_metadata
 from semantic.prompt_provenance import build_prompt_provenance
 
 THREAD_SUMMARY_PROMPT_SCHEMA_ID = "thread_summary_extraction"
+
+MAX_THREAD_WORK_REFS = 5
 
 THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v4"
 
@@ -283,6 +285,12 @@ THREAD_SUMMARY_WITH_CHECKPOINT_SYSTEM_PROMPT = (
     "Write the summary and retrieval_context in the same language as the thread items. The thread items are the source content — match their language exactly. Do not translate to English."
 )
 
+
+def _work_refs_from_source_items(source_items: Iterable[SourceItem]) -> tuple[str, ...]:
+    """Union work_refs from source item metadata, capped to prevent signal dilution."""
+    return _merge_work_refs(*(_work_refs_from_metadata(item.metadata) for item in source_items))[:MAX_THREAD_WORK_REFS]
+
+
 def _finalize_memory_builder(
     *,
     memory_object: MemoryObject,
@@ -293,6 +301,7 @@ def _finalize_memory_builder(
     producer_schema_version: str,
     prompt_variant: str,
     subjects: list,
+    work_refs: tuple[str, ...] = (),
     index_source: str,
     text_view_name: str,
     retrieval_context: str | None,
@@ -313,6 +322,7 @@ def _finalize_memory_builder(
             prompt_variant=prompt_variant,
             kind_basis="inherited_from_children" if subjects else "type_map",
             subjects=subjects,
+            work_refs=work_refs,
         ),
     )
     index_entry = build_index_entry(
@@ -416,6 +426,7 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
         }
         conclusion_payload = _build_conclusion_payload(carried_conclusions)
         thread_subjects = _merge_subject_anchors(_subject_anchors_from_memory_objects(carried_conclusions), _subject_anchors_from_source_items(aggregate.source_items))
+        thread_work_refs = _work_refs_from_source_items(aggregate.source_items)
         thread_summary_memory = MemoryObject(
             type="thread_summary",
             schema_id=thread_summary_schema_id,
@@ -470,6 +481,7 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
             producer_schema_version=THREAD_SUMMARY_PROMPT_SCHEMA_VERSION,
             prompt_variant=prompt_variant,
             subjects=thread_subjects,
+            work_refs=thread_work_refs,
             index_source=index_source,
             text_view_name=THREAD_SUMMARY_TEXT_VIEW,
             retrieval_context=str(response.parsed_json.get("retrieval_context") or "").strip() or None,
@@ -506,6 +518,7 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                     prompt_variant=prompt_variant,
                     kind_basis="inherited_from_children" if thread_subjects else "type_map",
                     subjects=thread_subjects,
+                    work_refs=thread_work_refs,
                 ),
             )
             memory_objects.append(task_checkpoint_memory)
