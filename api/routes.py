@@ -10,6 +10,8 @@ from api.schemas import (
     ItemAndQueryResponse,
     ItemCreateRequest,
     ItemCreateResponse,
+    MemoryEvidenceItemResponse,
+    MemoryEvidenceResponse,
     ProcessingStatusResponse,
     QueryDebugResponse,
     QueryRequest,
@@ -81,6 +83,7 @@ def _serialize_injectable_block(block: InjectableBlock) -> dict[str, object]:
         "title": block.title,
         "text": block.text,
         "memory_type": block.memory_type,
+        "memory_object_id": block.memory_object_id,
         "evidence": [_serialize_evidence(evidence) for evidence in block.evidence],
     }
 
@@ -453,6 +456,30 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             decision_reason=query_result.decision_reason,
             injectable_blocks=[_serialize_injectable_block(block) for block in query_result.injectable_blocks],
             trace=_serialize_trace(query_result.trace),
+        )
+
+    @router.get("/memory/{memory_object_id}/evidence", response_model=MemoryEvidenceResponse)
+    def get_memory_evidence(memory_object_id: str, container_ref: str) -> MemoryEvidenceResponse:
+        try:
+            items = service.get_memory_evidence(memory_object_id, container_ref=container_ref)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="memory object not found")
+        return MemoryEvidenceResponse(
+            memory_object_id=memory_object_id,
+            items=[
+                MemoryEvidenceItemResponse(
+                    source_item_id=item.id,
+                    source_type=item.source_type,
+                    source_id=item.source_id,
+                    content=item.content,
+                    role=item.role,
+                    actor_ref=item.actor_ref,
+                    occurred_at=item.occurred_at,
+                    thread_ref=item.thread_ref,
+                    artifact_kind=item.artifact_kind,  # type: ignore[arg-type]
+                )
+                for item in items
+            ],
         )
 
     return router

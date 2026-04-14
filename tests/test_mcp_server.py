@@ -104,4 +104,4 @@ class TestToolDescriptions:
         server = create_server()
         tools = await server.list_tools()
         tool_names = {t.name for t in tools}
-        assert tool_names == {"pallium_query", "pallium_query_debug", "pallium_ingest"}
+        assert tool_names == {"pallium_query", "pallium_query_debug", "pallium_ingest", "pallium_get_evidence"}

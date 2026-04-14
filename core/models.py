@@ -219,6 +219,7 @@ class InjectableBlock:
     text: str
     evidence: list[EvidenceReference]
     memory_type: str | None = None
+    memory_object_id: str | None = None
 
 
 @dataclass(frozen=True)

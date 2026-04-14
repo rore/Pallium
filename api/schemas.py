@@ -154,6 +154,7 @@ class InjectableBlockResponse(BaseModel):
     title: str
     text: str
     memory_type: str | None = None
+    memory_object_id: str | None = None
     evidence: list[EvidenceResponse] = Field(default_factory=list)
 
 
@@ -162,6 +163,23 @@ class QueryResponse(BaseModel):
     should_inject: bool
     decision_reason: str
     injectable_blocks: list[InjectableBlockResponse] = Field(default_factory=list)
+
+
+class MemoryEvidenceItemResponse(BaseModel):
+    source_item_id: str
+    source_type: str
+    source_id: str
+    content: str
+    role: str | None = None
+    actor_ref: str | None = None
+    occurred_at: datetime | None = None
+    thread_ref: str | None = None
+    artifact_kind: ArtifactKind | None = None
+
+
+class MemoryEvidenceResponse(BaseModel):
+    memory_object_id: str
+    items: list[MemoryEvidenceItemResponse]
 
 
 class QueryTraceFiltersResponse(BaseModel):

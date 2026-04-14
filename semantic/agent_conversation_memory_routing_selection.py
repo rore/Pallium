@@ -478,6 +478,7 @@ def _build_injectable_blocks(
 def _build_injectable_block_from_candidate(candidate: dict[str, object], *, intent: str) -> InjectableBlock:
     item = candidate["item"]
     assert isinstance(item, QueryResultItem)
+    mo_id = item.memory_object_id  # None for source hits
     if item.result_kind == "source_hit":
         return InjectableBlock(
             result_id=str(item.result_id),
@@ -502,6 +503,7 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             text=body,
             evidence=item.evidence,
             memory_type=item.type,
+            memory_object_id=mo_id,
         )
     if item.type == "investigation_outcome":
         text = str(payload.get("investigation_outcome") or "").strip()
@@ -516,6 +518,7 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             text=body,
             evidence=item.evidence,
             memory_type=item.type,
+            memory_object_id=mo_id,
         )
     if item.type == "task_checkpoint":
         return InjectableBlock(
@@ -525,6 +528,7 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             text=_task_checkpoint_injection_text(payload),
             evidence=item.evidence,
             memory_type=item.type,
+            memory_object_id=mo_id,
         )
     if item.type == CONSTRAINT_MEMORY_TYPE:
         constraint_text = str(payload.get("constraint_text") or payload.get("summary") or "").strip()
@@ -540,6 +544,7 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             text=_join_unique_text_parts([constraint_line, summary_line]),
             evidence=item.evidence,
             memory_type=item.type,
+            memory_object_id=mo_id,
         )
     if item.type == "continuity_memory":
         return InjectableBlock(
@@ -549,6 +554,7 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             text=str(payload.get("carry_forward_answer") or payload.get("summary") or "").strip(),
             evidence=item.evidence,
             memory_type=item.type,
+            memory_object_id=mo_id,
         )
     if item.type == "pattern_memory":
         return InjectableBlock(
@@ -558,6 +564,7 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             text=str(payload.get("summary") or "").strip(),
             evidence=item.evidence,
             memory_type=item.type,
+            memory_object_id=mo_id,
         )
     if item.type == "interest":
         interest_text = str(payload.get("interest_text") or payload.get("summary") or "").strip()
@@ -568,6 +575,7 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             text=interest_text,
             evidence=item.evidence,
             memory_type=item.type,
+            memory_object_id=mo_id,
         )
     if item.type == "atomic_fact":
         return InjectableBlock(
@@ -577,6 +585,7 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             text=str(payload.get("statement") or "").strip(),
             evidence=item.evidence,
             memory_type=item.type,
+            memory_object_id=mo_id,
         )
     if item.type in {"thread_summary", "discussion_summary"}:
         summary_text = str(payload.get("summary") or "").strip()
@@ -587,6 +596,7 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             text=summary_text,
             evidence=item.evidence,
             memory_type=item.type,
+            memory_object_id=mo_id,
         )
     return InjectableBlock(
         result_id=str(item.result_id),
@@ -595,6 +605,7 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
         text=str(payload.get("summary") or "").strip(),
         evidence=item.evidence,
         memory_type=item.type,
+        memory_object_id=mo_id,
     )
 
 def _task_checkpoint_injection_text(payload: dict[str, object]) -> str:

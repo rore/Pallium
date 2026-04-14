@@ -24,6 +24,7 @@ from core.type_registry import TypeRegistry
 from core.vector_embed import VectorEmbedder
 from core.models import InjectableBlock, QueryRuntimeContext, Relation, SourceItem, utc_now
 from core.observability import IntegrationDebugLogger
+from core.visibility import is_visible
 from providers.embedding.base import EmbeddingProvider
 from retrieval.base import RetrievalProvider
 from semantic.base import SemanticPlugin
@@ -532,3 +533,27 @@ class PalliumService:
             self._storage.create_relation(relation)
         for index_entry in result.index_entries:
             self._storage.create_index_entry(index_entry)
+
+    def get_memory_evidence(
+        self, memory_object_id: str, *, container_ref: str,
+    ) -> list[SourceItem]:
+        """Return source items linked to a memory object, with access control.
+
+        Validates that the memory object belongs to the requested container,
+        then filters individual evidence items through visibility rules.
+        Raises KeyError if the memory object doesn't exist or doesn't belong
+        to the requested container (404-safe: no existence confirmation).
+        """
+        memory_object = self._storage.get_memory_object(memory_object_id)
+        if memory_object.container_ref != container_ref:
+            raise KeyError(memory_object_id)
+        refs = self._storage.get_evidence_for_memory_object(memory_object_id)
+        items: list[SourceItem] = []
+        for ref in refs:
+            try:
+                item = self._storage.get_source_item(ref.source_item_id)
+            except KeyError:
+                continue
+            if is_visible(item.visibility, item.container_ref, container_ref, item.actor_ref):
+                items.append(item)
+        return items
