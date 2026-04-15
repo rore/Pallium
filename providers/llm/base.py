@@ -70,6 +70,15 @@ class LLMProviderError(RuntimeError):
         )
         self.response_text = response_text
 
+    def __str__(self) -> str:
+        parts = [super().__str__()]
+        if self.metadata.request_id:
+            parts.append(f"request_id={self.metadata.request_id}")
+        if self.response_text:
+            body = self.response_text[:500]
+            parts.append(f"response_body={body}")
+        return " | ".join(parts)
+
 
 @dataclass(frozen=True)
 class LLMJsonResponse:
