@@ -165,6 +165,7 @@ class TestStatusResponseShape:
             "total_source_items",
             "total_memory_objects",
             "snapshot",
+            "storage",
             "vector_index_ready",
             "uptime_seconds",
         }
@@ -176,6 +177,16 @@ class TestStatusResponseShape:
             body = client.get("/status").json()
         snapshot = body["snapshot"]
         assert set(snapshot.keys()) == {"enabled", "last_snapshot_at", "snapshot_count"}
+
+    def test_status_storage_sub_keys(self, tmp_path: Path) -> None:
+        app = create_app(_file_db_config(tmp_path))
+        with TestClient(app) as client:
+            body = client.get("/status").json()
+        storage = body["storage"]
+        assert set(storage.keys()) == {"sqlite_mb", "vector_index_mb"}
+        # SQLite file exists after DB init — size is reported (may be 0.0 for an empty DB)
+        assert storage["sqlite_mb"] is not None
+        assert isinstance(storage["sqlite_mb"], float)
 
 
 class TestStatusEmptyDatabase:

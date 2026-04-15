@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 
 from app.config import AppConfig
 from app.dependencies import build_router, build_service
+from app.snapshot import resolve_live_db_path
 from core.service import PalliumService
 from semantic.agent_conversation_memory_routing import RoutingOverrides
 from storage.sqlite import SQLiteStorageProvider
@@ -125,64 +126,94 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         storage = service._storage
         if not isinstance(storage, SQLiteStorageProvider):
             return JSONResponse(content={"error": "status requires SQLite backend"}, status_code=501)
-        session_factory = storage._session_factory
 
-        with session_factory() as session:
-            pending_count = session.scalar(
-                select(func.count()).select_from(SourceItemRecord).where(
-                    SourceItemRecord.processing_status == "pending"
-                )
-            ) or 0
-
-            oldest_pending_created = session.scalar(
-                select(func.min(SourceItemRecord.created_at)).where(
-                    SourceItemRecord.processing_status == "pending"
-                )
-            )
-
-            total_source = session.scalar(
-                select(func.count()).select_from(SourceItemRecord)
-            ) or 0
-
-            total_memory = session.scalar(
-                select(func.count()).select_from(MemoryObjectRecord)
-            ) or 0
-
+        # --- DB counts (best-effort) ---
+        pending_count: int | None = None
         oldest_pending_age: float | None = None
-        if oldest_pending_created is not None:
-            now_utc = datetime.now(timezone.utc)
-            if oldest_pending_created.tzinfo is None:
-                oldest_pending_created = oldest_pending_created.replace(tzinfo=timezone.utc)
-            oldest_pending_age = round((now_utc - oldest_pending_created).total_seconds(), 1)
+        total_source: int | None = None
+        total_memory: int | None = None
+        try:
+            session_factory = storage._session_factory
+            with session_factory() as session:
+                pending_count = session.scalar(
+                    select(func.count()).select_from(SourceItemRecord).where(
+                        SourceItemRecord.processing_status == "pending"
+                    )
+                ) or 0
 
-        # Snapshot status
-        snapshot_config = resolved_config.snapshot
-        snapshot_info: dict = {"enabled": snapshot_config.enabled}
-        if snapshot_config.enabled and snapshot_config.snapshot_path:
-            snapshot_dir = Path(snapshot_config.snapshot_path)
-            snapshots = sorted(
-                snapshot_dir.glob("pallium-*.db"),
-                key=lambda p: p.name,
-                reverse=True,
-            ) if snapshot_dir.is_dir() else []
-            snapshot_info["snapshot_count"] = len(snapshots)
-            if snapshots:
-                mtime = snapshots[0].stat().st_mtime
-                snapshot_info["last_snapshot_at"] = (
-                    datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+                oldest_pending_created = session.scalar(
+                    select(func.min(SourceItemRecord.created_at)).where(
+                        SourceItemRecord.processing_status == "pending"
+                    )
                 )
+
+                total_source = session.scalar(
+                    select(func.count()).select_from(SourceItemRecord)
+                ) or 0
+
+                total_memory = session.scalar(
+                    select(func.count()).select_from(MemoryObjectRecord)
+                ) or 0
+
+            if oldest_pending_created is not None:
+                now_utc = datetime.now(timezone.utc)
+                if oldest_pending_created.tzinfo is None:
+                    oldest_pending_created = oldest_pending_created.replace(tzinfo=timezone.utc)
+                oldest_pending_age = round((now_utc - oldest_pending_created).total_seconds(), 1)
+        except Exception:
+            logger.warning("status: db query failed", exc_info=True)
+
+        # --- Snapshot status (best-effort) ---
+        snapshot_info: dict = {"enabled": resolved_config.snapshot.enabled}
+        try:
+            snapshot_config = resolved_config.snapshot
+            if snapshot_config.enabled and snapshot_config.snapshot_path:
+                snapshot_dir = Path(snapshot_config.snapshot_path)
+                snapshots = sorted(
+                    snapshot_dir.glob("pallium-*.db"),
+                    key=lambda p: p.name,
+                    reverse=True,
+                ) if snapshot_dir.is_dir() else []
+                snapshot_info["snapshot_count"] = len(snapshots)
+                if snapshots:
+                    mtime = snapshots[0].stat().st_mtime
+                    snapshot_info["last_snapshot_at"] = (
+                        datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+                    )
+                else:
+                    snapshot_info["last_snapshot_at"] = None
             else:
                 snapshot_info["last_snapshot_at"] = None
-        else:
-            snapshot_info["last_snapshot_at"] = None
-            snapshot_info["snapshot_count"] = 0
+                snapshot_info["snapshot_count"] = 0
+        except Exception:
+            logger.warning("status: snapshot info failed", exc_info=True)
+            snapshot_info.setdefault("last_snapshot_at", None)
+            snapshot_info.setdefault("snapshot_count", None)
 
+        # --- Vector index readiness ---
         vector_index_configured = service._vector_index is not None
         reconcile_done_event = getattr(app.state, "_reconcile_done", None)
         vector_index_ready = (
             not vector_index_configured
             or (reconcile_done_event is not None and reconcile_done_event.is_set())
         )
+
+        # --- Storage sizes (best-effort) ---
+        def _file_size_mb(path: str) -> float | None:
+            try:
+                p = Path(path)
+                return round(p.stat().st_size / (1024 * 1024), 2) if p.exists() else None
+            except Exception:
+                return None
+
+        storage_info: dict = {"sqlite_mb": None, "vector_index_mb": None}
+        try:
+            sqlite_path = resolve_live_db_path(resolved_config.sqlite_url)
+            storage_info["sqlite_mb"] = _file_size_mb(sqlite_path)
+            vector_path = resolved_config.vector_index.index_path
+            storage_info["vector_index_mb"] = _file_size_mb(vector_path) if vector_index_configured else None
+        except Exception:
+            logger.warning("status: storage size failed", exc_info=True)
 
         uptime = round(time.monotonic() - app.state._start_time, 1)
 
@@ -192,6 +223,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "total_source_items": total_source,
             "total_memory_objects": total_memory,
             "snapshot": snapshot_info,
+            "storage": storage_info,
             "vector_index_ready": vector_index_ready,
             "uptime_seconds": uptime,
         })
