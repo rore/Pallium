@@ -52,6 +52,41 @@ from semantic.agent_conversation_memory_anchors import (
 
 
 # ---------------------------------------------------------------------------
+# Subject match scoring (experimental — toggle via module-level flag)
+# ---------------------------------------------------------------------------
+
+SUBJECT_MATCH_ENABLED = False
+SUBJECT_MATCH_BONUS = 30
+SUBJECT_MISMATCH_PENALTY = 20
+
+
+def _subject_match_adjustment(item: QueryResultItem, query_text: str) -> int:
+    """Score adjustment based on whether the candidate's subject matches the query.
+
+    Only active when SUBJECT_MATCH_ENABLED is True (for experiments).
+    """
+    if not SUBJECT_MATCH_ENABLED:
+        return 0
+    if item.result_kind != "memory_hit":
+        return 0
+    subject = (item.payload or {}).get("subject", "")
+    if not subject:
+        return 0
+
+    query_tokens = set(query_text.lower().split())
+    subject_tokens = [
+        t.strip()
+        for t in subject.lower().replace(" and ", " ").replace("(", " ").replace(")", " ").split()
+        if t.strip() and len(t.strip()) > 1
+    ]
+    if not subject_tokens:
+        return 0
+
+    matched = any(token in query_tokens for token in subject_tokens)
+    return SUBJECT_MATCH_BONUS if matched else -SUBJECT_MISMATCH_PENALTY
+
+
+# ---------------------------------------------------------------------------
 # Quality score
 # ---------------------------------------------------------------------------
 
@@ -565,6 +600,7 @@ def _score_routed_candidate(
         + evidence_shape_score
         + _higher_level_retrieval_floor_adjustment(layer, retrieval_score, quality_score=quality_score)
         + _locality_adjustment(intent=intent, layer=layer, same_thread=same_thread, same_container=same_container, same_work_ref=same_work_ref)
+        + _subject_match_adjustment(item, query_text)
     )
     support_grade = _routing_support_grade(evidence_shape_score, support_threshold=support_threshold)
     # Compute work resumption signals unconditionally (was previously in _apply_work_resumption_packaging)

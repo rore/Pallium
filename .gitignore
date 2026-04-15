@@ -67,6 +67,8 @@ evals/locomo/output/
 evals/locomo/db_cache/
 evals/locomo/db_cache_retarget/
 evals/locomo/experiments/
+evals/locomo/*_cases.json
+evals/locomo/*_test_cases.json
 evals/mabench/datasets/
 evals/mabench/output/
 evals/mabench/db_cache/
