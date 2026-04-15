@@ -57,7 +57,6 @@ class AICoreAnthropicLLMProvider(ResilientLLMProvider):
 
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
-            "model": self._model,
             "system": system_prompt,
             "messages": [
                 {
