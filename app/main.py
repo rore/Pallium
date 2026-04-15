@@ -61,7 +61,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     try:
         from app.mcp.server import create_server as create_mcp_server
         mcp_available = True
-        mcp_server = create_mcp_server()
+        mcp_server = create_mcp_server(host="0.0.0.0")
         mcp_app = mcp_server.streamable_http_app()
         session_manager = mcp_server._session_manager
     except ImportError:
