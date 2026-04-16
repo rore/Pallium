@@ -134,6 +134,246 @@ def test_evidence_trace_injection_keeps_source_evidence_injectable() -> None:
     block_types = {b.block_type for b in outcome.injectable_blocks}
     assert block_types  # at least one block injected
 
+
+def test_exact_finding_query_recall_uses_source_evidence_override() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help')
+    evidence_time = datetime(2026, 3, 10, 16, 1, tzinfo=timezone.utc)
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='investigation-exact-finding',
+                type='investigation_outcome',
+                payload={
+                    'investigation_outcome': 'Arrival-time ordering applied stale hold updates during catalog sync delays.',
+                },
+                score=19,
+                lexical_score=0.000001,
+                vector_score=911,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='artifact-exact-finding',
+                        source_type='assistant_artifact',
+                        source_id='artifact-exact-finding',
+                        occurred_at=evidence_time,
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-evidence-exact',
+                        artifact_kind='assistant_output',
+                    )
+                ],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-evidence-exact',
+                envelope=_memory_envelope('finding'),
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='artifact-exact-finding',
+                source_type='assistant_artifact',
+                source_id='artifact-exact-finding',
+                excerpt='Investigation found that arrival-time ordering applied stale hold updates during catalog sync delays.',
+                occurred_at=evidence_time,
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-evidence-exact',
+                artifact_kind='assistant_output',
+                score=18,
+                lexical_score=0.000001,
+                vector_score=915,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='artifact-exact-finding',
+                        source_type='assistant_artifact',
+                        source_id='artifact-exact-finding',
+                        occurred_at=evidence_time,
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-evidence-exact',
+                        artifact_kind='assistant_output',
+                    )
+                ],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='artifact-exact-decision',
+                source_type='assistant_artifact',
+                source_id='artifact-exact-decision',
+                excerpt='Decision: use item event time for reservation ordering to prevent duplicate holds after sync delays.',
+                occurred_at=datetime(2026, 3, 10, 16, 2, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-evidence-exact',
+                artifact_kind='assistant_output',
+                score=18,
+                lexical_score=0.000001,
+                vector_score=904,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='artifact-exact-decision',
+                        source_type='assistant_artifact',
+                        source_id='artifact-exact-decision',
+                        occurred_at=datetime(2026, 3, 10, 16, 2, tzinfo=timezone.utc),
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-evidence-exact',
+                        artifact_kind='assistant_output',
+                    )
+                ],
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What exact finding supported the ordering change?',
+            query_tokens=('what', 'exact', 'finding', 'supported', 'the', 'ordering', 'change'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='What exact finding supported the ordering change?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.should_inject is True
+    assert outcome.decision_reason == 'carry_forward_available'
+    assert outcome.injectable_blocks
+    assert {block.block_type for block in outcome.injectable_blocks} == {'source_evidence'}
+
+
+def test_prior_message_query_recall_prefers_source_evidence_blocks() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='investigation-prior-message',
+                type='investigation_outcome',
+                payload={
+                    'investigation_outcome': 'Arrival-time ordering applied stale hold updates during catalog sync delays.',
+                },
+                score=19,
+                lexical_score=0.000001,
+                vector_score=907,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='artifact-prior-message-finding',
+                        source_type='assistant_artifact',
+                        source_id='artifact-prior-message-finding',
+                        occurred_at=datetime(2026, 3, 10, 17, 1, tzinfo=timezone.utc),
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-evidence-paraphrase',
+                        artifact_kind='assistant_output',
+                    )
+                ],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-evidence-paraphrase',
+                envelope=_memory_envelope('finding'),
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-prior-message',
+                type='decision',
+                payload={'decision': 'Use item event time for reservation ordering to prevent duplicate holds after sync delays.'},
+                score=18,
+                lexical_score=0.000001,
+                vector_score=896,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='artifact-prior-message-decision',
+                        source_type='assistant_artifact',
+                        source_id='artifact-prior-message-decision',
+                        occurred_at=datetime(2026, 3, 10, 17, 2, tzinfo=timezone.utc),
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-evidence-paraphrase',
+                        artifact_kind='assistant_output',
+                    )
+                ],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-evidence-paraphrase',
+                envelope=_memory_envelope('finding'),
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='artifact-prior-message-finding',
+                source_type='assistant_artifact',
+                source_id='artifact-prior-message-finding',
+                excerpt='Investigation found that arrival-time ordering applied stale hold updates during catalog sync delays.',
+                occurred_at=datetime(2026, 3, 10, 17, 1, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-evidence-paraphrase',
+                artifact_kind='assistant_output',
+                score=18,
+                lexical_score=0.000001,
+                vector_score=909,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='artifact-prior-message-finding',
+                        source_type='assistant_artifact',
+                        source_id='artifact-prior-message-finding',
+                        occurred_at=datetime(2026, 3, 10, 17, 1, tzinfo=timezone.utc),
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-evidence-paraphrase',
+                        artifact_kind='assistant_output',
+                    )
+                ],
+            ),
+            QueryResultItem(
+                result_kind='source_hit',
+                source_item_id='artifact-prior-message-decision',
+                source_type='assistant_artifact',
+                source_id='artifact-prior-message-decision',
+                excerpt='Decision: use item event time for reservation ordering to prevent duplicate holds after sync delays.',
+                occurred_at=datetime(2026, 3, 10, 17, 2, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-evidence-paraphrase',
+                artifact_kind='assistant_output',
+                score=18,
+                lexical_score=0.000001,
+                vector_score=903,
+                evidence=[
+                    EvidenceReference(
+                        source_item_id='artifact-prior-message-decision',
+                        source_type='assistant_artifact',
+                        source_id='artifact-prior-message-decision',
+                        occurred_at=datetime(2026, 3, 10, 17, 2, tzinfo=timezone.utc),
+                        container_ref='chat:library-help',
+                        thread_ref='chat:library-help:thread-evidence-paraphrase',
+                        artifact_kind='assistant_output',
+                    )
+                ],
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='Which prior message backed the ordering change?',
+            query_tokens=('which', 'prior', 'message', 'backed', 'the', 'ordering', 'change'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+
+    outcome = plugin.route_query_results(
+        text='Which prior message backed the ordering change?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.should_inject is True
+    assert outcome.decision_reason == 'carry_forward_available'
+    assert outcome.injectable_blocks
+    assert {block.block_type for block in outcome.injectable_blocks} == {'source_evidence'}
+
 def test_investigative_conclusion_injection_can_include_source_evidence_when_intended() -> None:
     plugin = AgentConversationMemoryPlugin(
         provider=TieredMemorySemanticProvider(),

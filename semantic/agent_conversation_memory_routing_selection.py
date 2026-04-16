@@ -307,6 +307,37 @@ def _build_injectable_blocks(
                 "expansion_added_count": 0,
                 "same_thread_context_evaluation": same_thread_context,
             }
+        source_evidence_override = _source_evidence_provenance_override_candidates(
+            final_candidates,
+            intent=intent,
+            query_text=query_text,
+        )
+        if source_evidence_override:
+            blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in source_evidence_override]
+            returned_ids = [b.result_id for b in blocks]
+            eligible_ids = [_routing_result_id(c["item"]) for c in source_evidence_override]
+            if _INJECTION_VERBOSE:
+                _injection_verbose(
+                    f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
+                    "should_inject=True reason=carry_forward_available "
+                    "(source_evidence provenance override after low-confidence gate)"
+                )
+            return blocks, {
+                "should_inject": True,
+                "decision_reason": "carry_forward_available",
+                "injection_method": "source_evidence_provenance_override",
+                "returned_block_ids": returned_ids,
+                "eligible_result_ids": eligible_ids,
+                "dropped_by_cap_result_ids": [],
+                "cap": INJECTION_HARD_CEILING,
+                "dedup_applied": False,
+                "dedup_removed_count": 0,
+                "dedup_removed_result_ids": [],
+                "dedup_kept_map": {},
+                "expansion_applied": False,
+                "expansion_added_count": 0,
+                "same_thread_context_evaluation": same_thread_context,
+            }
         fact_summary_override = _fact_summary_low_confidence_override_candidates(
             final_candidates,
             intent=intent,
@@ -375,6 +406,37 @@ def _build_injectable_blocks(
             allow_source_companion=False,
         )
     ]
+    source_evidence_override = _source_evidence_provenance_override_candidates(
+        final_candidates,
+        intent=intent,
+        query_text=query_text,
+    )
+    if source_evidence_override:
+        blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in source_evidence_override]
+        returned_ids = [b.result_id for b in blocks]
+        eligible_ids = [_routing_result_id(c["item"]) for c in source_evidence_override]
+        if _INJECTION_VERBOSE:
+            _injection_verbose(
+                f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
+                "should_inject=True reason=carry_forward_available "
+                "(source_evidence provenance override)"
+            )
+        return blocks, {
+            "should_inject": True,
+            "decision_reason": "carry_forward_available",
+            "injection_method": "source_evidence_provenance_override",
+            "returned_block_ids": returned_ids,
+            "eligible_result_ids": eligible_ids,
+            "dropped_by_cap_result_ids": [],
+            "cap": INJECTION_HARD_CEILING,
+            "dedup_applied": False,
+            "dedup_removed_count": 0,
+            "dedup_removed_result_ids": [],
+            "dedup_kept_map": {},
+            "expansion_applied": False,
+            "expansion_added_count": 0,
+            "same_thread_context_evaluation": same_thread_context,
+        }
     primary_eligible_candidates = [
         candidate
         for candidate in final_candidates
@@ -1041,6 +1103,13 @@ def _source_candidate_is_primary_injection_eligible(candidate: dict[str, object]
         return True
     if intent == "structured_recall":
         return True
+    if intent == "recall" and _query_requests_quote_grade_source(query_text):
+        item = candidate["item"]
+        assert isinstance(item, QueryResultItem)
+        excerpt = str(item.excerpt or "")
+        if _source_excerpt_disclaims_exact_evidence(excerpt):
+            return False
+        return True
     return False
 
 def _source_candidate_is_companion_injection_eligible(intent: str) -> bool:
@@ -1061,6 +1130,38 @@ def _source_candidate_has_quote_grade_support(candidate: dict[str, object], *, q
     )
     support_grade = str(candidate.get("support_grade") or "weak")
     return support_grade in {"supported", "strong"} and proof_like_excerpt
+
+
+def _source_evidence_provenance_override_candidates(
+    candidates: list[dict[str, object]],
+    *,
+    intent: str,
+    query_text: str,
+) -> list[dict[str, object]]:
+    if intent == "work_resumption" or not _query_requests_quote_grade_source(query_text):
+        return []
+
+    query_ct = content_tokens(query_text)
+    override_candidates: list[dict[str, object]] = []
+    for candidate in candidates:
+        item = candidate["item"]
+        assert isinstance(item, QueryResultItem)
+        if item.result_kind != "source_hit":
+            continue
+        if candidate.get("suppression_reason_code"):
+            continue
+        if _candidate_is_low_value(candidate):
+            continue
+        if normalize_for_index(str(item.excerpt or "")) == normalize_for_index(query_text):
+            continue
+        if _source_excerpt_disclaims_exact_evidence(str(item.excerpt or "")):
+            continue
+        if len(query_ct) > 2 and not _candidate_has_content_overlap(item, query_text, query_ct=query_ct):
+            continue
+        if float(candidate.get("retrieval_score", 0) or 0) <= 0:
+            continue
+        override_candidates.append(candidate)
+    return override_candidates[:INJECTION_HARD_CEILING]
 
 
 def _source_excerpt_disclaims_exact_evidence(excerpt: str) -> bool:
@@ -1096,6 +1197,8 @@ def _query_requests_quote_grade_source(query_text: str) -> bool:
         for cue in (
             "exact line",
             "exact log line",
+            "exact finding",
+            "exact evidence",
             "proof line",
             "smoking gun",
             "exact wording",
@@ -1103,6 +1206,14 @@ def _query_requests_quote_grade_source(query_text: str) -> bool:
             "quote the",
             "quote that",
         )
+    ):
+        return True
+    if ("which message" in lowered or "what message" in lowered or "prior message" in lowered) and any(
+        cue in lowered for cue in ("backed", "support", "supported", "justified", "led to")
+    ):
+        return True
+    if "finding" in lowered and any(
+        cue in lowered for cue in ("backed", "support", "supported", "justified", "exact")
     ):
         return True
     if ("which line" in lowered or "what line" in lowered) and any(
