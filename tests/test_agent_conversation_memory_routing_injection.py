@@ -2071,6 +2071,29 @@ def test_retrieval_relevance_floor_trace_shows_reason() -> None:
     assert 'injection_method' in injection_decision
 
 
+def test_continuity_preference_bypasses_low_confidence_gate_when_continuity_memory_exists() -> None:
+    result = _build_floor_test_retrieval_result(
+        score=19,
+        retrieval_source='both',
+        lexical_score=1,
+        vector_score=923,
+        memory_type='continuity_memory',
+        payload={
+            'summary': 'Process status summaries are published in 30-minute batches to reduce downstream noise.',
+            'carry_forward_answer': 'Publish process status summaries in 30-minute batches.',
+        },
+    )
+
+    outcome = _run_floor_test(
+        result,
+        query_text='What prior answer should we reuse for process status batching?',
+    )
+
+    assert outcome.should_inject is True
+    assert outcome.decision_reason == 'carry_forward_available'
+    assert [block.memory_type for block in outcome.injectable_blocks] == ['continuity_memory']
+
+
 def test_vector_cosine_escape_hatch_passes_high_similarity() -> None:
     """Vector-only match with high cosine similarity should pass the floor."""
     result = _build_floor_test_retrieval_result(
@@ -2510,6 +2533,96 @@ def test_dedup_detects_cross_package_duplicate_via_evidence_and_text() -> None:
     assert retained[0]["item"].memory_object_id == "decision-1"
     assert len(removed) == 1
     assert removed[0]["item"].memory_object_id == "fact-1"
+
+
+def test_dedup_prefers_decision_over_continuity_in_sharp_fact_mode() -> None:
+    from semantic.agent_conversation_memory_routing_selection import _dedup_eligible_candidates
+
+    continuity_candidate = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="continuity-precise",
+            type="continuity_memory",
+            payload={
+                "carry_forward_answer": "Use sequence number ordering instead of arrival ordering for replay updates.",
+                "summary": "Use sequence number ordering instead of arrival ordering for replay updates.",
+            },
+            score=20,
+            evidence=[EvidenceReference(source_item_id='precise-1', source_type='message', source_id='precise-1')],
+            container_ref="chat:test",
+        ),
+        "routing_score": 500,
+    }
+    decision_candidate = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="decision-precise",
+            type="decision",
+            payload={
+                "decision": "Use sequence number ordering instead of arrival ordering for replay updates.",
+                "rationale": "Avoid duplicate state changes after sync lag.",
+            },
+            score=18,
+            evidence=[EvidenceReference(source_item_id='precise-2', source_type='message', source_id='precise-2')],
+            container_ref="chat:test",
+        ),
+        "routing_score": 420,
+    }
+
+    retained, removed = _dedup_eligible_candidates(
+        [continuity_candidate, decision_candidate],
+        recall_mode='sharp_fact_preference',
+    )
+
+    assert len(retained) == 1
+    assert retained[0]["item"].memory_object_id == "decision-precise"
+    assert len(removed) == 1
+    assert removed[0]["item"].memory_object_id == "continuity-precise"
+
+
+def test_dedup_prefers_continuity_in_continuity_preference_mode() -> None:
+    from semantic.agent_conversation_memory_routing_selection import _dedup_eligible_candidates
+
+    continuity_candidate = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="continuity-carry-forward",
+            type="continuity_memory",
+            payload={
+                "carry_forward_answer": "Publish process status summaries in 30-minute batches to reduce downstream noise.",
+                "summary": "Publish process status summaries in 30-minute batches to reduce downstream noise.",
+            },
+            score=18,
+            evidence=[EvidenceReference(source_item_id='carry-1', source_type='message', source_id='carry-1')],
+            container_ref="chat:test",
+        ),
+        "routing_score": 410,
+    }
+    decision_candidate = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="decision-carry-forward",
+            type="decision",
+            payload={
+                "decision": "Publish process status summaries in 30-minute batches to reduce downstream noise.",
+                "rationale": "Reduce downstream noise.",
+            },
+            score=20,
+            evidence=[EvidenceReference(source_item_id='carry-2', source_type='message', source_id='carry-2')],
+            container_ref="chat:test",
+        ),
+        "routing_score": 500,
+    }
+
+    retained, removed = _dedup_eligible_candidates(
+        [decision_candidate, continuity_candidate],
+        recall_mode='continuity_preference',
+    )
+
+    assert len(retained) == 1
+    assert retained[0]["item"].memory_object_id == "continuity-carry-forward"
+    assert len(removed) == 1
+    assert removed[0]["item"].memory_object_id == "decision-carry-forward"
 
 
 def test_dedup_preserves_same_thread_different_topic_memories() -> None:

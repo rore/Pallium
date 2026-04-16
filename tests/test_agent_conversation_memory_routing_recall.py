@@ -64,16 +64,12 @@ def test_precise_fact_routes_sharp_decision_ahead_of_higher_level_memory(monkeyp
 
         # envelope-first routing: recall mode from candidate evidence, not English text.
         # Mixed candidates -> default recall mode -> broad_recall.
-        # investigation_outcome has higher broad_recall layer weight (330) than decision (310).
-        # With quality_score * QUALITY_WEIGHT (capped at 100), the layer weight difference
-        # dominates over retrieval-score differences, so investigation_outcome wins.
-        # BM25 in small corpora produces near-zero quality scores for all candidates,
-        # so ranking depends primarily on layer weights and evidence shape. The top
-        # result should be a memory_hit (not source_hit) from the structured layers.
+        # Exact factual lookup should keep lower-level exact memory ahead of any
+        # higher-level carry-forward memory synthesized from the same thread.
         assert routing['query_intent'] == 'recall'
         assert routing['preferred_layers'][0] == 'pattern_memory'
         assert payload['results'][0]['result_kind'] == 'memory_hit'
-        assert payload['results'][0]['type'] in ('decision', 'investigation_outcome', 'continuity_memory')
+        assert payload['results'][0]['type'] == 'decision'
         # broad_recall allows constraint, summary, finding — no kind exclusions for thread_summary
         assert kind_prefilter['allowed_kinds'] == ['constraint', 'summary', 'finding']
         # thread_summary no longer excluded (summary kind is allowed in broad_recall)

@@ -367,6 +367,7 @@ def route_query_results(
             _score_routed_candidate(
                 item,
                 intent,
+                recall_mode=recall_mode,
                 query_text=text,
                 query_tokens=query_tokens,
                 lexical_rank=index,
@@ -453,6 +454,7 @@ def route_query_results(
         _envelope_selection_tags: list[str] = []
         final_candidates, packaging_summary = _select_final_candidates(
             intent=intent,
+            recall_mode=recall_mode,
             ranked_candidates=ranked_candidates,
             requested_limit=requested_limit,
             query_filters=query_filters,
@@ -465,6 +467,7 @@ def route_query_results(
             final_candidates,
             ranked_candidates=ranked_candidates,
             intent=intent,
+            recall_mode=recall_mode,
             query_text=text,
             query_filters=query_filters,
             runtime_context=runtime_context,

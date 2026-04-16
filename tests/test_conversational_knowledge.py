@@ -637,6 +637,60 @@ def test_fact_consolidation_strategy_selects_facts_and_summaries():
     assert selected_types == {"atomic_fact", "fact_summary"}
 
 
+def test_thread_summary_anchored_strategy_accepts_same_thread_atomic_fact_support():
+    from capabilities.consolidation import ThreadSummaryAnchoredStrategy, ConsolidationCandidate, ConsolidationPolicy
+
+    strategy = ThreadSummaryAnchoredStrategy()
+    policy = ConsolidationPolicy(max_candidates_per_run=50)
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    thread_summary = ConsolidationCandidate(
+        memory_object=MemoryObject(
+            id=new_id(), type="thread_summary",
+            schema_id="test", schema_version="v1",
+            payload={
+                "summary": "Batch publishing decision recorded for process status summaries.",
+                "conclusions": [{"type": "atomic_fact", "text": "Process status summaries go out in 30-minute batches."}],
+            },
+            lifecycle="active", visibility="public", container_ref="c1",
+        ),
+        evidence=(),
+        text_view="batch publishing decision recorded",
+        tokens=frozenset(["batch", "publishing", "decision", "recorded"]),
+        container_ref="c1",
+        thread_ref="t1",
+        latest_occurred_at=ts,
+        visibility="public",
+    )
+    atomic_fact = ConsolidationCandidate(
+        memory_object=MemoryObject(
+            id=new_id(), type="atomic_fact",
+            schema_id="test.atomic_fact", schema_version="v1",
+            payload={
+                "subject": "summary publishing policy",
+                "statement": "30-minute batches reduce downstream noise",
+                "category": "decision",
+                "thread_ref": "t1",
+            },
+            lifecycle="active", visibility="public", container_ref="c1",
+        ),
+        evidence=(),
+        text_view="30-minute batches reduce downstream noise",
+        tokens=frozenset(["30-minute", "batches", "reduce", "downstream", "noise"]),
+        container_ref="c1",
+        thread_ref="t1",
+        latest_occurred_at=ts,
+        visibility="public",
+    )
+
+    selected = strategy.select_candidates([thread_summary, atomic_fact], policy)
+    groups = strategy.group_candidates(selected, policy)
+
+    assert len(groups) == 1
+    grouped_types = {candidate.memory_object.type for candidate in groups[0].candidates}
+    assert grouped_types == {"thread_summary", "atomic_fact"}
+
+
 # ── Tests: consolidation — plugin interface ─────────────────────────────
 
 def test_consolidation_policy_present():

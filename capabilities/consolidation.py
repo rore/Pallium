@@ -299,12 +299,12 @@ class ThreadSummaryAnchoredStrategy(ConsolidationStrategy):
 
     def select_candidates(self, candidates: list[ConsolidationCandidate], policy: ConsolidationPolicy) -> list[ConsolidationCandidate]:
         thread_summaries = [candidate for candidate in candidates if candidate.memory_object.type == "thread_summary"]
-        typed = [candidate for candidate in candidates if candidate.memory_object.type in {"decision", "investigation_outcome"}]
+        typed = [candidate for candidate in candidates if candidate.memory_object.type in {"decision", "investigation_outcome", "atomic_fact"}]
         return _limit_candidates(_sort_candidates(thread_summaries) + _sort_candidates(typed), policy.max_candidates_per_run)
 
     def group_candidates(self, candidates: list[ConsolidationCandidate], policy: ConsolidationPolicy) -> list[ConsolidationGroup]:
         anchors = [candidate for candidate in candidates if candidate.memory_object.type == "thread_summary"]
-        typed = [candidate for candidate in candidates if candidate.memory_object.type in {"decision", "investigation_outcome"}]
+        typed = [candidate for candidate in candidates if candidate.memory_object.type in {"decision", "investigation_outcome", "atomic_fact"}]
         groups: list[ConsolidationGroup] = []
 
         for anchor in _sort_candidates(anchors):
@@ -318,7 +318,12 @@ class ThreadSummaryAnchoredStrategy(ConsolidationStrategy):
                 if _hours_between(anchor.latest_occurred_at, candidate.latest_occurred_at) > policy.time_window_hours:
                     continue
                 overlap_score = _lexical_overlap(anchor.tokens, candidate.tokens)
-                if overlap_score < policy.lexical_overlap_threshold:
+                same_thread_support = bool(anchor.thread_ref and candidate.thread_ref and anchor.thread_ref == candidate.thread_ref)
+                if candidate.memory_object.type == "atomic_fact" and same_thread_support:
+                    overlap_ok = True
+                else:
+                    overlap_ok = overlap_score >= policy.lexical_overlap_threshold
+                if not overlap_ok:
                     continue
                 if len(members) >= policy.max_group_size:
                     break
@@ -513,7 +518,9 @@ def _sort_candidates(candidates: Iterable[ConsolidationCandidate]) -> list[Conso
 
 def _group_has_pattern_signal(candidates: Iterable[ConsolidationCandidate]) -> bool:
     types = {candidate.memory_object.type for candidate in candidates}
-    return ("thread_summary" in types and len(types.intersection({"decision", "investigation_outcome"})) >= 1) or len(types.intersection({"decision", "investigation_outcome"})) >= 2
+    return (
+        "thread_summary" in types and len(types.intersection({"decision", "investigation_outcome", "atomic_fact"})) >= 1
+    ) or len(types.intersection({"decision", "investigation_outcome"})) >= 2
 
 
 def _lexical_overlap(left: frozenset[str], right: frozenset[str]) -> int:

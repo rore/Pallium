@@ -130,7 +130,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         return _supports_thread_aggregation(source_item)
 
     def supports_consolidation(self, memory_object: MemoryObject) -> bool:
-        return memory_object.type in {'thread_summary', 'decision', 'investigation_outcome'}
+        return memory_object.type in {'thread_summary', 'decision', 'investigation_outcome', 'atomic_fact'}
 
     def build_thread_summary(self, aggregate: ThreadAggregate, conclusions: list[MemoryObject]) -> ProcessResult:
         return build_thread_summary(

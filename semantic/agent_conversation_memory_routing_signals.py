@@ -335,6 +335,11 @@ def _select_recall_mode(candidate_evidence: dict[str, object]) -> str:
         info = per_layer.get(layer, {})
         return int(info.get("best_support_score", 0)) if isinstance(info, dict) else 0
 
+    investigation_support = _layer_support("investigation_outcome")
+    decision_support = _layer_support("decision")
+    continuity_support = _layer_support("continuity_memory")
+    exact_layer_count = sum(1 for score in (decision_support, investigation_support) if score > 0)
+
     def _has_competing_layers(target_layers: set[str]) -> bool:
         """True if any memory layer outside target_layers has multiple candidates.
 
@@ -353,16 +358,25 @@ def _select_recall_mode(candidate_evidence: dict[str, object]) -> str:
     # investigation_preference: dominant investigation_outcome, no competing recall layers
     if (
         dominant == "investigation_outcome"
-        and _layer_support("investigation_outcome") >= POLICY_SUPPORT_THRESHOLD
+        and investigation_support >= POLICY_SUPPORT_THRESHOLD
+        and investigation_support >= decision_support + 16
         and not _has_competing_layers({"investigation_outcome", "decision"})
     ):
         return "investigation_preference"
 
     # sharp_fact_preference: dominant decision/investigation, no competing recall layers
     if dominant in {"decision", "investigation_outcome"}:
-        combined = _layer_support("decision") + _layer_support("investigation_outcome")
+        combined = decision_support + investigation_support
         if combined >= POLICY_SUPPORT_THRESHOLD and not _has_competing_layers({"decision", "investigation_outcome"}):
             return "sharp_fact_preference"
+
+    combined_sharp_support = decision_support + investigation_support
+    if (
+        combined_sharp_support >= POLICY_SUPPORT_THRESHOLD
+        and exact_layer_count >= 2
+        and not _has_competing_layers({"decision", "investigation_outcome", "continuity_memory"})
+    ):
+        return "sharp_fact_preference"
 
     # continuity_preference: dominant continuity_memory + same-thread, no competing layers
     if (

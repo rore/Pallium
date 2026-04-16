@@ -162,8 +162,18 @@ LANE_POLICY_FAMILY_MAPPING: dict[str, str] = {
 # Recall mode constants — modes only change weights and shaping, not selection path or gates
 RECALL_MODE_WEIGHTS: dict[str, dict[str, int]] = {
     "default": ROUTING_LAYER_WEIGHTS["recall"],
-    "continuity_preference": ROUTING_LAYER_WEIGHTS["recall"],
-    "sharp_fact_preference": ROUTING_LAYER_WEIGHTS["structured_recall"],
+    "continuity_preference": {
+        **ROUTING_LAYER_WEIGHTS["recall"],
+        "continuity_memory": 215,
+        "decision": 120,
+        "investigation_outcome": 125,
+    },
+    "sharp_fact_preference": {
+        **ROUTING_LAYER_WEIGHTS["structured_recall"],
+        "decision": 235,
+        "investigation_outcome": 220,
+        "continuity_memory": 40,
+    },
     "investigation_preference": ROUTING_LAYER_WEIGHTS["structured_recall"],
 }
 

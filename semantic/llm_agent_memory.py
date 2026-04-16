@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from core.contracts import ProcessResult
@@ -381,6 +381,7 @@ class LLMAgentMemoryPlugin(SemanticPlugin):
             schema_description=request.schema_description,
         )
         extraction = _normalize_extraction(response.parsed_json, source_id=source_item.source_id)
+        extraction = _apply_grounded_candidate_type_fallback(extraction)
         semantic_metadata = build_prompt_provenance(
             semantic_plugin=self.name,
             contract=WRITE_EXTRACTION_PROMPT_ROLE,
@@ -507,6 +508,18 @@ def _normalize_extraction(payload: dict[str, Any], *, source_id: str | None = No
         subject_hints=subject_hints,
         work_refs=work_refs,
     )
+
+
+def _apply_grounded_candidate_type_fallback(extraction: SemanticExtraction) -> SemanticExtraction:
+    if extraction.candidate_type is not None:
+        return extraction
+    if extraction.decision_text and extraction.decision_evidence_text:
+        return replace(extraction, candidate_type="decision")
+    if extraction.investigation_text and extraction.investigation_evidence_text:
+        return replace(extraction, candidate_type="investigation_outcome")
+    if extraction.interest_text:
+        return replace(extraction, candidate_type="interest")
+    return extraction
 
 
 def _normalize_subject_anchor(value: Any) -> MemorySubjectAnchor | None:

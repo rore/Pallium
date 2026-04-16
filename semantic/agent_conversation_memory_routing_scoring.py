@@ -571,6 +571,7 @@ def _score_routed_candidate(
     item: QueryResultItem,
     intent: str,
     *,
+    recall_mode: str = "default",
     query_text: str,
     query_tokens: tuple[str, ...],
     lexical_rank: int,
@@ -602,6 +603,19 @@ def _score_routed_candidate(
         + _locality_adjustment(intent=intent, layer=layer, same_thread=same_thread, same_container=same_container, same_work_ref=same_work_ref)
         + _subject_match_adjustment(item, query_text)
     )
+    if intent == "recall" and item.result_kind == "memory_hit":
+        if recall_mode == "sharp_fact_preference":
+            if item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+                base_routing_score += 70
+                if item.type == "decision":
+                    base_routing_score += 24
+            elif item.type == "continuity_memory":
+                base_routing_score -= 90
+        elif recall_mode == "continuity_preference":
+            if item.type == "continuity_memory":
+                base_routing_score += 65
+            elif item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+                base_routing_score -= 35
     support_grade = _routing_support_grade(evidence_shape_score, support_threshold=support_threshold)
     # Compute work resumption signals unconditionally (was previously in _apply_work_resumption_packaging)
     _signal_types = _work_resumption_signal_types(item)

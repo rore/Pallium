@@ -9,6 +9,7 @@ from semantic.agent_conversation_memory_threads import (
     _is_low_value_meta_text,
 )
 from semantic.agent_conversation_memory_routing_constants import (
+    ROUTING_LOWER_LEVEL_EXACT_TYPES,
     ROUTING_SUPPORT_THRESHOLD,
     WORK_RESUMPTION_SIGNAL_PRIORITY,
     normalize_lexical_score,
@@ -32,6 +33,7 @@ from semantic.agent_conversation_memory_routing_scoring import (
 def _select_final_candidates(
     *,
     intent: str,
+    recall_mode: str = "default",
     ranked_candidates: list[dict[str, object]],
     requested_limit: int,
     query_filters: QueryFilters | None,
@@ -230,6 +232,7 @@ def _build_injectable_blocks(
     *,
     ranked_candidates: list[dict[str, object]],
     intent: str,
+    recall_mode: str = "default",
     query_text: str,
     query_filters: QueryFilters | None,
     runtime_context: QueryRuntimeContext | None,
@@ -297,6 +300,37 @@ def _build_injectable_blocks(
                 "injection_method": "simplified",
                 "returned_block_ids": returned_ids,
                 "eligible_result_ids": returned_ids,
+                "dropped_by_cap_result_ids": [],
+                "cap": INJECTION_HARD_CEILING,
+                "dedup_applied": False,
+                "dedup_removed_count": 0,
+                "dedup_removed_result_ids": [],
+                "dedup_kept_map": {},
+                "expansion_applied": False,
+                "expansion_added_count": 0,
+                "same_thread_context_evaluation": same_thread_context,
+            }
+        carry_forward_override = _carry_forward_low_confidence_override_candidates(
+            final_candidates,
+            intent=intent,
+            recall_mode=recall_mode,
+        )
+        if carry_forward_override:
+            blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in carry_forward_override]
+            returned_ids = [b.result_id for b in blocks]
+            eligible_ids = [_routing_result_id(c["item"]) for c in carry_forward_override]
+            if _INJECTION_VERBOSE:
+                _injection_verbose(
+                    f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
+                    "should_inject=True reason=carry_forward_available "
+                    "(carry-forward low-confidence override)"
+                )
+            return blocks, {
+                "should_inject": True,
+                "decision_reason": "carry_forward_available",
+                "injection_method": "carry_forward_low_confidence_override",
+                "returned_block_ids": returned_ids,
+                "eligible_result_ids": eligible_ids,
                 "dropped_by_cap_result_ids": [],
                 "cap": INJECTION_HARD_CEILING,
                 "dedup_applied": False,
@@ -472,7 +506,10 @@ def _build_injectable_blocks(
         }
 
     # --- Dedup + dynamic cap (replaces static [:3] cap) ---
-    deduped_candidates, dedup_removed = _dedup_eligible_candidates(primary_eligible_candidates)
+    deduped_candidates, dedup_removed = _dedup_eligible_candidates(
+        primary_eligible_candidates,
+        recall_mode=recall_mode,
+    )
     dedup_removed_ids = [_routing_result_id(c["item"]) for c in dedup_removed]
 
     dedup_kept_map: dict[str, str] = {}
@@ -1038,6 +1075,38 @@ def _fact_summary_low_confidence_override_candidates(
     return override_candidates
 
 
+def _carry_forward_low_confidence_override_candidates(
+    candidates: list[dict[str, object]],
+    *,
+    intent: str,
+    recall_mode: str,
+) -> list[dict[str, object]]:
+    if intent != "recall" or recall_mode != "continuity_preference":
+        return []
+
+    continuity_candidates: list[dict[str, object]] = []
+    fallback_candidates: list[dict[str, object]] = []
+    for candidate in candidates:
+        item = candidate["item"]
+        assert isinstance(item, QueryResultItem)
+        if item.result_kind != "memory_hit":
+            continue
+        if candidate.get("suppression_reason_code"):
+            continue
+        if _candidate_is_low_value(candidate):
+            continue
+        if float(candidate.get("retrieval_score", 0) or 0) <= 0:
+            continue
+        if item.type == "continuity_memory":
+            continuity_candidates.append(candidate)
+        elif item.type == "decision":
+            fallback_candidates.append(candidate)
+
+    if continuity_candidates:
+        return continuity_candidates[:1]
+    return fallback_candidates[:1]
+
+
 def _candidate_is_injection_eligible(
     candidate: dict[str, object],
     *,
@@ -1222,6 +1291,7 @@ def _query_requests_quote_grade_source(query_text: str) -> bool:
         return True
     return False
 
+
 def _annotate_excluded_candidates(
     *,
     ranked_candidates: list[dict[str, object]],
@@ -1325,6 +1395,8 @@ DEDUP_MIN_TOKENS = 2
 def _prefer_duplicate_candidate(
     candidate_a: dict[str, object],
     candidate_b: dict[str, object],
+    *,
+    recall_mode: str = "default",
 ) -> dict[str, object]:
     """Choose which duplicate candidate to retain.
 
@@ -1335,6 +1407,22 @@ def _prefer_duplicate_candidate(
     item_b = candidate_b["item"]
     assert isinstance(item_a, QueryResultItem)
     assert isinstance(item_b, QueryResultItem)
+
+    if recall_mode == "sharp_fact_preference":
+        if item_a.type in ROUTING_LOWER_LEVEL_EXACT_TYPES and item_b.type in {"continuity_memory", "atomic_fact", "thread_summary"}:
+            return candidate_a
+        if item_b.type in ROUTING_LOWER_LEVEL_EXACT_TYPES and item_a.type in {"continuity_memory", "atomic_fact", "thread_summary"}:
+            return candidate_b
+    elif recall_mode == "continuity_preference":
+        if item_a.type == "continuity_memory" and item_b.type in {"decision", "investigation_outcome", "atomic_fact", "thread_summary"}:
+            return candidate_a
+        if item_b.type == "continuity_memory" and item_a.type in {"decision", "investigation_outcome", "atomic_fact", "thread_summary"}:
+            return candidate_b
+    elif recall_mode == "investigation_preference":
+        if item_a.type == "investigation_outcome" and item_b.type == "decision":
+            return candidate_a
+        if item_b.type == "investigation_outcome" and item_a.type == "decision":
+            return candidate_b
 
     if item_a.type == FACT_SUMMARY_TYPE and item_b.type != FACT_SUMMARY_TYPE:
         return candidate_b
@@ -1430,6 +1518,8 @@ def _is_content_duplicate(
 
 def _dedup_eligible_candidates(
     candidates: list[dict[str, object]],
+    *,
+    recall_mode: str = "default",
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     """Greedy dedup sweep: retain candidates in routing_score order, skip duplicates.
 
@@ -1449,7 +1539,7 @@ def _dedup_eligible_candidates(
                 break
         if duplicate_index is not None:
             kept = retained[duplicate_index]
-            preferred = _prefer_duplicate_candidate(candidate, kept)
+            preferred = _prefer_duplicate_candidate(candidate, kept, recall_mode=recall_mode)
             if preferred is kept:
                 removed.append(candidate)
             else:
