@@ -113,13 +113,27 @@ CONTENT_STOPWORDS: frozenset[str] = frozenset({
 })
 
 
+def _is_low_information_content_token(token: str) -> bool:
+    """Return True for tokens that are too weak to ground overlap checks.
+
+    Keep this conservative: content_tokens powers multilingual overlap and
+    duplicate checks, so only suppress fragments that are almost certainly
+    punctuation fallout rather than meaningful content.
+    """
+    return token.isascii() and token.isalpha() and len(token) == 1
+
+
 def content_tokens(text: str) -> set[str]:
     """Tokenize text and remove stopwords, returning content words only.
 
     Includes basic plural-stem variants (same rules as lexical retrieval)
     so that "batches" matches "batch" and vice versa.
     """
-    raw = set(normalize_for_index(text).split()) - CONTENT_STOPWORDS
+    raw = {
+        token
+        for token in set(normalize_for_index(text).split()) - CONTENT_STOPWORDS
+        if not _is_low_information_content_token(token)
+    }
     expanded: set[str] = set()
     for token in raw:
         expanded.add(token)

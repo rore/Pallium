@@ -943,6 +943,100 @@
       }
     ]
   },
+  {
+    "scenario_id": "interaction-public-shared-off-topic-within-container",
+    "description": "Public shared memories exist in the same container but an off-topic query in a new thread must not inject them. Shared-channel visibility does not bypass topic relevance.",
+    "expected_status": "known_fail",
+    "expected_status_reason": "Same-container public off-topic query can still route as structured recall when sharp technical memories exist in the shared channel.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"container_relation": "same_container", "visibility": "public", "topic_pattern": "switch", "injection_outcome": "suppress"},
+      "invariant_assertions": ["INV-03", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_public_decision",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "ps-offtopic-001-msg-1",
+            "content_type": "text/plain",
+            "content": "I've been going back and forth on the analytics DB. DynamoDB is simpler but we really need joins for the reporting queries. Let's go with Postgres.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "slack:channel:CLOCAL001",
+            "thread_ref": "slack:thread:CLOCAL001:thread-a",
+            "actor_ref": "slack:user:ULOCAL001",
+            "source_ref": "memory://test/ps-offtopic-001-msg-1",
+            "occurred_at": "2026-04-04T12:43:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "seed_public_investigation",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "ps-offtopic-001-msg-2",
+            "content_type": "text/plain",
+            "content": "Figured it out — the OOM was because SQLAlchemy's connection pool has no cap by default. Once the DB got slow, connections piled up and ate all the memory. Setting max_overflow to 10 fixed it.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "slack:channel:CLOCAL001",
+            "thread_ref": "slack:thread:CLOCAL001:thread-b",
+            "actor_ref": "slack:user:ULOCAL001",
+            "source_ref": "memory://test/ps-offtopic-001-msg-2",
+            "occurred_at": "2026-04-04T12:52:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "seed_public_environment_constraint",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "ps-offtopic-001-msg-3",
+            "content_type": "text/plain",
+            "content": "No Jira connection in this environment, so don't try to open it or rely on browser auth.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "slack:channel:CLOCAL001",
+            "thread_ref": "slack:thread:CLOCAL001:thread-c",
+            "actor_ref": "slack:user:ULOCAL001",
+            "source_ref": "memory://test/ps-offtopic-001-msg-3",
+            "occurred_at": "2026-04-04T12:55:00Z",
+            "visibility": "public"
+          }
+        ]
+      },
+      {
+        "step_id": "off_topic_query_same_shared_container",
+        "action": "query",
+        "query": {
+          "text": "Can you help me draft a meeting agenda for tomorrow's standup?",
+          "limit": 6,
+          "container_ref": "slack:channel:CLOCAL001",
+          "thread_ref": "slack:thread:CLOCAL001:thread-z",
+          "actor_ref": "slack:user:ULOCAL001",
+          "visibility": "public"
+        },
+        "invariant_assertions": ["INV-03", "INV-07"],
+        "quality_expectations": {
+          "should_inject": false
+        },
+        "soft_expectations": {
+          "must_not_include": ["postgres", "dynamodb", "analytics", "oom", "sqlalchemy", "connection pool", "jira"]
+        }
+      }
+    ]
+  },
 
   {
     "scenario_id": "cs-container-scoped-within-container-recall",

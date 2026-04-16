@@ -74,6 +74,27 @@ class TestContentTokens:
         assert "שלום" in tokens
         assert "עולם" in tokens
 
+    def test_cjk_single_character_tokens_preserved(self):
+        """CJK tokens are single characters by design and must survive content filtering."""
+        tokens = content_tokens("今天天气很好")
+        assert "今" in tokens
+        assert "天" in tokens
+        assert "气" in tokens
+
+    def test_possessive_suffix_fragment_removed(self):
+        """Possessive apostrophes must not leave a junk overlap token like 's'."""
+        tokens = content_tokens("tomorrow's SQLAlchemy's")
+        assert "tomorrow" in tokens
+        assert "sqlalchemy" in tokens
+        assert "s" not in tokens
+
+    def test_two_character_technical_tokens_preserved(self):
+        """Short technical tokens still matter for overlap and must remain available."""
+        tokens = content_tokens("AI DB S3")
+        assert "ai" in tokens
+        assert "db" in tokens
+        assert "s3" in tokens
+
     def test_all_stopwords_returns_empty_set(self):
         """Input consisting solely of stopwords produces an empty set."""
         assert content_tokens("is a the") == set()
@@ -174,6 +195,24 @@ class TestCandidateHasContentOverlap:
 
         item = self._make_item(payload={"summary": "the quick brown fox"})
         result = _candidate_has_content_overlap(item, "database migration plan")
+        assert result is False
+
+    def test_possessive_fragment_does_not_count_as_overlap(self):
+        """Apostrophe suffix fragments like 's' must not satisfy overlap on their own."""
+        from semantic.agent_conversation_memory_routing_selection import (
+            _candidate_has_content_overlap,
+        )
+
+        item = self._make_item(
+            payload={
+                "investigation_outcome": "SQLAlchemy's connection pool caused the OOM.",
+                "rationale": "The fix capped max_overflow after the database slowed down.",
+            }
+        )
+        result = _candidate_has_content_overlap(
+            item,
+            "Can you help me draft tomorrow's standup agenda?",
+        )
         assert result is False
 
 
