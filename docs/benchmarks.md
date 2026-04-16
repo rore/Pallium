@@ -16,27 +16,27 @@ conversational QA — names, dates, events, relationships across long
 conversations.
 
 - **Dataset**: 10 conversations, 1,540 questions
-- **Run date**: 2026-04-12
+- **Run date**: 2026-04-15
 
 ### Per-Category Results
 
 | Category | Retrieval | End-to-end | Questions |
 |---|---|---|---|
-| Single-hop | 55.1% | 71.7% | — |
-| Open-domain | 54.5% | 63.9% | — |
-| Temporal | 38.5% | 41.7% | — |
-| Multi-hop | 40.8% | 48.9% | — |
-| **Overall** | **51.1%** | **62.0%** | **1,540** |
+| Single-hop | 56.1% | 72.5% | — |
+| Open-domain | 55.4% | 66.3% | — |
+| Temporal | 39.5% | 43.2% | — |
+| Multi-hop | 40.3% | 49.0% | — |
+| **Overall** | **51.8%** | **63.0%** | **1,540** |
 
 ### Analysis
 
-End-to-end (62%) exceeds retrieval (51.1%) because the answering LLM
+End-to-end (63%) exceeds retrieval (51.8%) because the answering LLM
 compensates with its own knowledge on trivia-style questions — names, dates,
 and events that overlap with its training data. About 11% of correct answers
 come from the LLM, not from Pallium's retrieval. Retrieval rate is the number
 that measures what Pallium actually contributes.
 
-Temporal (38.5% retrieval) and multi-hop (40.8% retrieval) are the weakest
+Temporal (39.5% retrieval) and multi-hop (40.3% retrieval) are the weakest
 categories. Temporal questions require ordering events in time; multi-hop
 requires combining facts from different sources. Both are active improvement
 areas.
