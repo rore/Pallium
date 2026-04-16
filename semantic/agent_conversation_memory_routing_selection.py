@@ -307,6 +307,44 @@ def _build_injectable_blocks(
                 "expansion_added_count": 0,
                 "same_thread_context_evaluation": same_thread_context,
             }
+        fact_summary_override = _fact_summary_low_confidence_override_candidates(
+            final_candidates,
+            intent=intent,
+            query_text=query_text,
+        )
+        if fact_summary_override:
+            selected_override: list[dict[str, object]] = []
+            for candidate in fact_summary_override:
+                if not _can_select_candidate_under_fact_summary_limit(candidate, selected_override):
+                    continue
+                selected_override.append(candidate)
+            if selected_override:
+                blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in selected_override]
+                returned_ids = [b.result_id for b in blocks]
+                eligible_ids = [_routing_result_id(c["item"]) for c in fact_summary_override]
+                dropped_ids = [rid for rid in eligible_ids if rid not in returned_ids]
+                if _INJECTION_VERBOSE:
+                    _injection_verbose(
+                        f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
+                        "should_inject=True reason=carry_forward_available "
+                        "(fact_summary low-confidence override)"
+                    )
+                return blocks, {
+                    "should_inject": True,
+                    "decision_reason": "carry_forward_available",
+                    "injection_method": "fact_summary_low_confidence_override",
+                    "returned_block_ids": returned_ids,
+                    "eligible_result_ids": eligible_ids,
+                    "dropped_by_cap_result_ids": dropped_ids,
+                    "cap": INJECTION_HARD_CEILING,
+                    "dedup_applied": False,
+                    "dedup_removed_count": 0,
+                    "dedup_removed_result_ids": [],
+                    "dedup_kept_map": {},
+                    "expansion_applied": False,
+                    "expansion_added_count": 0,
+                    "same_thread_context_evaluation": same_thread_context,
+                }
         return [], {
             "should_inject": False,
             "decision_reason": "low_injection_confidence",
@@ -384,17 +422,27 @@ def _build_injectable_blocks(
                 break
 
     floor = min(INJECTION_MIN_FLOOR, len(deduped_candidates))
-    selected_candidates = list(deduped_candidates[:floor])
+    selected_candidates: list[dict[str, object]] = []
+    for candidate in deduped_candidates:
+        if len(selected_candidates) >= floor:
+            break
+        if not _can_select_candidate_under_fact_summary_limit(candidate, selected_candidates):
+            continue
+        selected_candidates.append(candidate)
 
     # Expand beyond floor if candidates score well relative to top
     expansion_added = 0
-    if deduped_candidates and floor > 0:
+    if deduped_candidates and selected_candidates:
         top_score = int(deduped_candidates[0].get("routing_score") or 0)
-        if top_score > 0 and len(deduped_candidates) > floor:
+        if top_score > 0 and len(deduped_candidates) > len(selected_candidates):
             expansion_floor_score = top_score * INJECTION_EXPANSION_RATIO
-            for candidate in deduped_candidates[floor:]:
+            for candidate in deduped_candidates:
+                if candidate in selected_candidates:
+                    continue
                 if len(selected_candidates) >= INJECTION_HARD_CEILING:
                     break
+                if not _can_select_candidate_under_fact_summary_limit(candidate, selected_candidates):
+                    continue
                 if int(candidate.get("routing_score") or 0) >= expansion_floor_score:
                     selected_candidates.append(candidate)
                     expansion_added += 1
@@ -418,6 +466,8 @@ def _build_injectable_blocks(
         for candidate in companion_candidates:
             if len(selected_candidates) >= INJECTION_HARD_CEILING:
                 break
+            if not _can_select_candidate_under_fact_summary_limit(candidate, selected_candidates):
+                continue
             selected_candidates.append(candidate)
             used_result_ids.add(_routing_result_id(candidate["item"]))
 
@@ -431,6 +481,8 @@ def _build_injectable_blocks(
         )
         for cs in constraint_supplements:
             if _is_duplicate_of_selected(cs, selected_candidates):
+                continue
+            if not _can_select_candidate_under_fact_summary_limit(cs, selected_candidates):
                 continue
             selected_candidates.append(cs)
 
@@ -592,6 +644,16 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             block_type="memory",
             title="Known Fact",
             text=str(payload.get("statement") or "").strip(),
+            evidence=item.evidence,
+            memory_type=item.type,
+            memory_object_id=mo_id,
+        )
+    if item.type == FACT_SUMMARY_TYPE:
+        return InjectableBlock(
+            result_id=str(item.result_id),
+            block_type="memory",
+            title="Fact Summary",
+            text=str(payload.get("summary") or "").strip(),
             evidence=item.evidence,
             memory_type=item.type,
             memory_object_id=mo_id,
@@ -864,6 +926,56 @@ def _candidate_has_content_overlap(
     return bool(query_ct & candidate_ct)
 
 
+FACT_SUMMARY_TYPE = "fact_summary"
+_SHARED_FACT_SUMMARY_VISIBILITIES = frozenset({"container", "public"})
+
+
+def _fact_summary_is_injection_eligible(
+    candidate: dict[str, object],
+    *,
+    intent: str,
+) -> bool:
+    if intent != "recall":
+        return False
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    if item.visibility in _SHARED_FACT_SUMMARY_VISIBILITIES:
+        return str(candidate.get("anchor_prefilter_status") or "") == "aligned"
+    return True
+
+
+def _fact_summary_low_confidence_override_candidates(
+    candidates: list[dict[str, object]],
+    *,
+    intent: str,
+    query_text: str,
+) -> list[dict[str, object]]:
+    """Allow isolated fact_summary recall to bypass the generic confidence gate."""
+    if intent != "recall" or not candidates:
+        return []
+    items = [candidate["item"] for candidate in candidates]
+    if not all(isinstance(item, QueryResultItem) and item.type == FACT_SUMMARY_TYPE for item in items):
+        return []
+
+    query_ct = content_tokens(query_text)
+    override_candidates: list[dict[str, object]] = []
+    for candidate in candidates:
+        item = candidate["item"]
+        assert isinstance(item, QueryResultItem)
+        if candidate.get("suppression_reason_code"):
+            continue
+        if _candidate_is_low_value(candidate):
+            continue
+        if len(query_ct) > 2 and not _candidate_has_content_overlap(item, query_text, query_ct=query_ct):
+            continue
+        if not _fact_summary_is_injection_eligible(candidate, intent=intent):
+            continue
+        if float(candidate.get("retrieval_score", 0) or 0) <= 0:
+            continue
+        override_candidates.append(candidate)
+    return override_candidates
+
+
 def _candidate_is_injection_eligible(
     candidate: dict[str, object],
     *,
@@ -898,6 +1010,8 @@ def _candidate_is_injection_eligible(
         if _source_candidate_is_primary_injection_eligible(candidate, intent, query_text=query_text):
             return True
         return allow_source_companion and _source_candidate_is_companion_injection_eligible(intent)
+    if item.type == FACT_SUMMARY_TYPE:
+        return _fact_summary_is_injection_eligible(candidate, intent=intent)
     if item.type in {"decision", "investigation_outcome", "task_checkpoint", "continuity_memory", "pattern_memory", "interest", "thread_summary", "atomic_fact", CONSTRAINT_MEMORY_TYPE}:
         # Note: atomic_fact injection relies on the content-overlap gate for topical
         # precision (see "Injection precision over recall" decision in decisions.md).
@@ -1097,6 +1211,53 @@ DEDUP_TEXT_ONLY_THRESHOLD = 0.7
 DEDUP_MIN_TOKENS = 2
 
 
+def _prefer_duplicate_candidate(
+    candidate_a: dict[str, object],
+    candidate_b: dict[str, object],
+) -> dict[str, object]:
+    """Choose which duplicate candidate to retain.
+
+    First-rollout rule: a synthesized fact_summary must not displace a sharper
+    lower-level memory when both carry the same content.
+    """
+    item_a = candidate_a["item"]
+    item_b = candidate_b["item"]
+    assert isinstance(item_a, QueryResultItem)
+    assert isinstance(item_b, QueryResultItem)
+
+    if item_a.type == FACT_SUMMARY_TYPE and item_b.type != FACT_SUMMARY_TYPE:
+        return candidate_b
+    if item_b.type == FACT_SUMMARY_TYPE and item_a.type != FACT_SUMMARY_TYPE:
+        return candidate_a
+
+    score_a = int(candidate_a.get("routing_score") or 0)
+    score_b = int(candidate_b.get("routing_score") or 0)
+    if score_a != score_b:
+        return candidate_a if score_a > score_b else candidate_b
+
+    tokens_a = content_tokens(_candidate_content_surface(item_a))
+    tokens_b = content_tokens(_candidate_content_surface(item_b))
+    if len(tokens_a) != len(tokens_b):
+        return candidate_a if len(tokens_a) > len(tokens_b) else candidate_b
+
+    return candidate_a
+
+
+def _can_select_candidate_under_fact_summary_limit(
+    candidate: dict[str, object],
+    selected: list[dict[str, object]],
+) -> bool:
+    item = candidate["item"]
+    assert isinstance(item, QueryResultItem)
+    if item.type != FACT_SUMMARY_TYPE:
+        return True
+    return not any(
+        isinstance(kept.get("item"), QueryResultItem)
+        and kept["item"].type == FACT_SUMMARY_TYPE
+        for kept in selected
+    )
+
+
 def _candidate_evidence_ids(candidate: dict[str, object]) -> set[str]:
     """Extract source_item_ids from a candidate's evidence references."""
     item = candidate["item"]
@@ -1170,13 +1331,19 @@ def _dedup_eligible_candidates(
     retained: list[dict[str, object]] = []
     removed: list[dict[str, object]] = []
     for candidate in candidates:
-        is_dup = False
-        for kept in retained:
+        duplicate_index: int | None = None
+        for index, kept in enumerate(retained):
             if _is_content_duplicate(candidate, kept):
-                is_dup = True
+                duplicate_index = index
                 break
-        if is_dup:
-            removed.append(candidate)
+        if duplicate_index is not None:
+            kept = retained[duplicate_index]
+            preferred = _prefer_duplicate_candidate(candidate, kept)
+            if preferred is kept:
+                removed.append(candidate)
+            else:
+                removed.append(kept)
+                retained[duplicate_index] = candidate
         else:
             retained.append(candidate)
     return retained, removed

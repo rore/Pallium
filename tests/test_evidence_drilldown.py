@@ -298,6 +298,7 @@ class TestInjectableBlockMemoryObjectId:
             ("pattern_memory", {"summary": "x"}),
             ("interest", {"interest_text": "x"}),
             ("atomic_fact", {"statement": "x"}),
+            ("fact_summary", {"summary": "x"}),
             ("thread_summary", {"summary": "x"}),
             ("discussion_summary", {"summary": "x"}),
         ]
@@ -313,3 +314,28 @@ class TestInjectableBlockMemoryObjectId:
             candidate = {"item": item, "support": 80, "same_thread": False}
             block = _build_injectable_block_from_candidate(candidate, intent="recall")
             assert block.memory_object_id == f"mo-{mem_type}", f"Failed for type {mem_type}"
+
+    def test_fact_summary_block_uses_explicit_title_and_summary_text(self) -> None:
+        from core.models import QueryResultItem
+        from semantic.agent_conversation_memory_routing_selection import (
+            _build_injectable_block_from_candidate,
+        )
+
+        item = QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="mo-fact-summary",
+            type="fact_summary",
+            payload={
+                "subject": "Alice",
+                "category": "travel",
+                "summary": "Alice's travel: planning trips to Rome and Madrid this summer.",
+            },
+            score=100,
+            evidence=[],
+        )
+        candidate = {"item": item, "support": 80, "same_thread": False}
+        block = _build_injectable_block_from_candidate(candidate, intent="recall")
+
+        assert block.title == "Fact Summary"
+        assert block.text == "Alice's travel: planning trips to Rome and Madrid this summer."
+        assert block.memory_object_id == "mo-fact-summary"

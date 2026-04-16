@@ -1,0 +1,186 @@
+[
+  {
+    "scenario_id": "fact-summary-shared-anchor-aligned",
+    "description": "A shared fact_summary may carry forward for recall when the query anchor matches the summarized subject.",
+    "steps": [
+      {
+        "action": "seed_memory_objects",
+        "memory_objects": [
+          {
+            "id": "explore-fact-summary-alice-travel",
+            "type": "fact_summary",
+            "schema_id": "conversational_knowledge.fact_summary",
+            "schema_version": "v1",
+            "visibility": "container",
+            "container_ref": "chat:travel-notes",
+            "freshness_at": "2026-03-12T08:30:00Z",
+            "payload": {
+              "subject": "Alice",
+              "category": "travel",
+              "summary": "Alice will take a train to Madrid for a family trip and plans to leave early on Friday.",
+              "consolidation_provenance": {
+                "memory_kind": "fact_summary"
+              }
+            },
+            "envelope": {
+              "schema_id": "core.memory_envelope",
+              "schema_version": "v1",
+              "kind": "finding",
+              "confidence": "high",
+              "scope": {
+                "container_ref": "chat:travel-notes"
+              },
+              "derivation": {
+                "producer_kind": "consolidation",
+                "producer_schema_id": "conversational_knowledge.fact_summary",
+                "producer_schema_version": "v1",
+                "kind_basis": "summary_rollup"
+              },
+              "subjects": [
+                {
+                  "kind": "surface",
+                  "value": "Alice"
+                }
+              ]
+            },
+            "index_text": "Alice travel plans Madrid train family trip Friday departure",
+            "evidence": [
+              {
+                "id": "explore-fact-summary-alice-travel-evidence",
+                "source_id": "explore-fact-summary-alice-travel-evidence",
+                "source_type": "assistant_artifact",
+                "content_type": "text/plain",
+                "content": "Alice will take a train to Madrid for a family trip and plans to leave early on Friday.",
+                "artifact_kind": "assistant_output",
+                "role": "assistant",
+                "container_ref": "chat:travel-notes",
+                "thread_ref": "chat:travel-notes:thread-travel-001",
+                "visibility": "container",
+                "occurred_at": "2026-03-12T08:30:00Z"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "step_id": "aligned-recall",
+        "action": "query",
+        "query": {
+          "text": "What do we know about Alice travel plans?",
+          "limit": 6,
+          "container_ref": "chat:travel-notes",
+          "visibility": "container",
+          "runtime_context": {
+            "turn_kind": "new_session",
+            "session_has_sufficient_local_context": false
+          }
+        },
+        "quality_expectations": {
+          "should_inject": true,
+          "decision_reason": "carry_forward_available",
+          "required_block_labels": [
+            "Fact Summary"
+          ],
+          "required_block_content": [
+            "Madrid",
+            "train"
+          ],
+          "max_injectable_blocks": 1
+        }
+      }
+    ],
+    "_generation_metadata": {
+      "priority_tier": "P0"
+    }
+  },
+  {
+    "scenario_id": "fact-summary-shared-anchor-misaligned",
+    "description": "A shared fact_summary must not carry forward when the query anchor points at a different subject.",
+    "steps": [
+      {
+        "action": "seed_memory_objects",
+        "memory_objects": [
+          {
+            "id": "explore-fact-summary-alice-travel-negative",
+            "type": "fact_summary",
+            "schema_id": "conversational_knowledge.fact_summary",
+            "schema_version": "v1",
+            "visibility": "container",
+            "container_ref": "chat:travel-notes",
+            "freshness_at": "2026-03-12T08:30:00Z",
+            "payload": {
+              "subject": "Alice",
+              "category": "travel",
+              "summary": "Alice will take a train to Madrid for a family trip and plans to leave early on Friday.",
+              "consolidation_provenance": {
+                "memory_kind": "fact_summary"
+              }
+            },
+            "envelope": {
+              "schema_id": "core.memory_envelope",
+              "schema_version": "v1",
+              "kind": "finding",
+              "confidence": "high",
+              "scope": {
+                "container_ref": "chat:travel-notes"
+              },
+              "derivation": {
+                "producer_kind": "consolidation",
+                "producer_schema_id": "conversational_knowledge.fact_summary",
+                "producer_schema_version": "v1",
+                "kind_basis": "summary_rollup"
+              },
+              "subjects": [
+                {
+                  "kind": "surface",
+                  "value": "Alice"
+                }
+              ]
+            },
+            "index_text": "Alice travel plans Madrid train family trip Friday departure",
+            "evidence": [
+              {
+                "id": "explore-fact-summary-alice-travel-negative-evidence",
+                "source_id": "explore-fact-summary-alice-travel-negative-evidence",
+                "source_type": "assistant_artifact",
+                "content_type": "text/plain",
+                "content": "Alice will take a train to Madrid for a family trip and plans to leave early on Friday.",
+                "artifact_kind": "assistant_output",
+                "role": "assistant",
+                "container_ref": "chat:travel-notes",
+                "thread_ref": "chat:travel-notes:thread-travel-001",
+                "visibility": "container",
+                "occurred_at": "2026-03-12T08:30:00Z"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "step_id": "misaligned-recall",
+        "action": "query",
+        "query": {
+          "text": "What do we know about Bob's travel plans?",
+          "limit": 6,
+          "container_ref": "chat:travel-notes",
+          "visibility": "container",
+          "runtime_context": {
+            "turn_kind": "new_session",
+            "session_has_sufficient_local_context": false
+          }
+        },
+        "quality_expectations": {
+          "should_inject": false,
+          "forbidden_block_content": [
+            "Alice",
+            "Madrid"
+          ],
+          "max_injectable_blocks": 0
+        }
+      }
+    ],
+    "_generation_metadata": {
+      "priority_tier": "P0"
+    }
+  }
+]

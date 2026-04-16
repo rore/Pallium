@@ -2525,6 +2525,256 @@ def test_injection_dedup_removes_cross_package_duplicate_in_pipeline() -> None:
     assert injection.get("dedup_removed_count") >= 1
 
 
+def test_fact_summary_duplicate_does_not_displace_atomic_fact_in_pipeline() -> None:
+    """A duplicate fact_summary should lose to the sharper atomic_fact in the first rollout."""
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help', thread_ref='chat:library-help:thread-fact-summary-dedup')
+    now = datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc)
+    travel_anchor = MemorySubjectAnchor(kind='surface', value='Alice')
+    shared_evidence = [
+        EvidenceReference(source_item_id='msg-fs-1', source_type='message', source_id='msg-fs-1', occurred_at=now),
+    ]
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='fact-summary-dedup-1',
+                type='fact_summary',
+                payload={
+                    'subject': 'Alice',
+                    'category': 'travel',
+                    'summary': "Alice's travel: planning trips to Rome and Madrid this summer.",
+                },
+                score=21,
+                lexical_score=5,
+                vector_score=760,
+                evidence=shared_evidence,
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-fact-summary-dedup',
+                freshness_at=now,
+                envelope=_memory_envelope('finding', subjects=[travel_anchor]),
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='atomic-fact-dedup-1',
+                type='atomic_fact',
+                payload={'statement': 'Alice is planning trips to Rome and Madrid this summer.'},
+                score=18,
+                lexical_score=4,
+                vector_score=720,
+                evidence=shared_evidence,
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-fact-summary-dedup',
+                freshness_at=now,
+                envelope=_memory_envelope('finding', subjects=[travel_anchor]),
+            ),
+        ],
+        trace=QueryTrace(
+            query_text="What do we know about Alice's travel plans?",
+            query_tokens=('what', 'do', 'we', 'know', 'about', 'alice', 'travel', 'plans'),
+            limit=5,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+    outcome = plugin.route_query_results(
+        text="What do we know about Alice's travel plans?",
+        requested_limit=5,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        include_trace=True,
+    )
+
+    assert outcome.should_inject is True
+    injected_ids = {b.result_id for b in outcome.injectable_blocks}
+    assert 'memory_object:atomic-fact-dedup-1' in injected_ids
+    assert 'memory_object:fact-summary-dedup-1' not in injected_ids
+
+
+def test_fact_summary_public_container_requires_anchor_alignment_for_injection() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='slack:channel:CLOCAL001')
+    travel_anchor = MemorySubjectAnchor(kind='surface', value='Alice')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='fact-summary-public-conflict',
+                type='fact_summary',
+                payload={
+                    'subject': 'Alice',
+                    'category': 'travel',
+                    'summary': "Alice's travel: planning trips to Rome and Madrid this summer.",
+                },
+                score=18,
+                lexical_score=4,
+                vector_score=730,
+                evidence=[],
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:travel',
+                visibility='public',
+                envelope=_memory_envelope('finding', subjects=[travel_anchor]),
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What facts do we have about Bob\'s travel plans?',
+            query_tokens=('what', 'facts', 'do', 'we', 'have', 'about', 'bob', 'travel', 'plans'),
+            limit=5,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+    outcome = plugin.route_query_results(
+        text='What facts do we have about Bob\'s travel plans?',
+        requested_limit=5,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.should_inject is False
+    assert outcome.decision_reason in {'no_relevant_memory', 'low_injection_confidence'}
+
+
+def test_fact_summary_recall_injects_single_aligned_block() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='slack:channel:CLOCAL001')
+    travel_anchor = MemorySubjectAnchor(kind='surface', value='Alice')
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='fact-summary-public-1',
+                type='fact_summary',
+                payload={
+                    'subject': 'Alice',
+                    'category': 'travel',
+                    'summary': "Alice's travel: planning trips to Rome and Madrid this summer.",
+                },
+                score=18,
+                lexical_score=4,
+                vector_score=730,
+                evidence=[],
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:travel-a',
+                visibility='public',
+                envelope=_memory_envelope('finding', subjects=[travel_anchor]),
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='fact-summary-public-2',
+                type='fact_summary',
+                payload={
+                    'subject': 'Alice',
+                    'category': 'preference',
+                    'summary': "Alice's preferences: prefers train travel over renting a car in Europe.",
+                },
+                score=17,
+                lexical_score=3,
+                vector_score=710,
+                evidence=[],
+                container_ref='slack:channel:CLOCAL001',
+                thread_ref='slack:thread:CLOCAL001:travel-b',
+                visibility='public',
+                envelope=_memory_envelope('finding', subjects=[travel_anchor]),
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What facts do we have about Alice\'s travel plans?',
+            query_tokens=('what', 'facts', 'do', 'we', 'have', 'about', 'alice', 'travel', 'plans'),
+            limit=5,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+    outcome = plugin.route_query_results(
+        text='What facts do we have about Alice\'s travel plans?',
+        requested_limit=5,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.should_inject is True
+    fact_summary_blocks = [b for b in outcome.injectable_blocks if b.memory_type == 'fact_summary']
+    assert len(fact_summary_blocks) == 1
+    assert fact_summary_blocks[0].title == 'Fact Summary'
+
+
+def test_fact_summary_recall_survives_low_confidence_gate_when_isolated() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:travel-notes')
+    travel_anchor = MemorySubjectAnchor(kind='surface', value='Alice')
+    evidence = [
+        EvidenceReference(
+            source_item_id='fact-summary-low-confidence-evidence',
+            source_type='assistant_artifact',
+            source_id='fact-summary-low-confidence-evidence',
+            occurred_at=datetime(2026, 3, 12, 8, 30, tzinfo=timezone.utc),
+            role='assistant',
+            container_ref='chat:travel-notes',
+            thread_ref='chat:travel-notes:thread-travel-001',
+            artifact_kind='assistant_output',
+            visibility='container',
+        )
+    ]
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='fact-summary-low-confidence-1',
+                type='fact_summary',
+                payload={
+                    'subject': 'Alice',
+                    'category': 'travel',
+                    'summary': 'Alice will take a train to Madrid for a family trip and plans to leave early on Friday.',
+                },
+                score=9,
+                lexical_score=0.000003,
+                evidence=evidence,
+                container_ref='chat:travel-notes',
+                thread_ref='chat:travel-notes:thread-travel-001',
+                visibility='container',
+                envelope=_memory_envelope('finding', subjects=[travel_anchor]),
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What do we know about Alice travel plans?',
+            query_tokens=('what', 'do', 'we', 'know', 'about', 'alice', 'travel', 'plans'),
+            limit=5,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+    outcome = plugin.route_query_results(
+        text='What do we know about Alice travel plans?',
+        requested_limit=5,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(turn_kind='resumed_session', session_has_sufficient_local_context=False),
+        include_trace=True,
+    )
+
+    assert outcome.should_inject is True
+    assert outcome.decision_reason == 'carry_forward_available'
+    assert [block.memory_type for block in outcome.injectable_blocks] == ['fact_summary']
+    assert outcome.injectable_blocks[0].title == 'Fact Summary'
+
+
 def test_sharp_diagnostics_shows_dedup_loss_stage() -> None:
     """A deduped candidate should have loss_stage='dedup' in sharp diagnostics."""
     plugin = AgentConversationMemoryPlugin(

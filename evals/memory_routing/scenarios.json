@@ -1156,6 +1156,110 @@
     ]
   },
   {
+    "scenario_id": "fact-summary-recall-shared-anchor-aligned",
+    "scenario_kind": "broad_recall_value",
+    "description": "A shared fact summary should carry forward for recall when the query anchor aligns with the summarized subject.",
+    "seed_memory_objects": [
+      {
+        "id": "mr-fact-summary-alice-travel",
+        "type": "fact_summary",
+        "schema_id": "conversational_knowledge.fact_summary",
+        "schema_version": "v1",
+        "visibility": "container",
+        "container_ref": "chat:travel-notes",
+        "freshness_at": "2026-03-12T08:30:00Z",
+        "payload": {
+          "subject": "Alice",
+          "category": "travel",
+          "summary": "Alice will take a train to Madrid for a family trip and plans to leave early on Friday.",
+          "consolidation_provenance": {
+            "memory_kind": "fact_summary"
+          }
+        },
+        "envelope": {
+          "schema_id": "core.memory_envelope",
+          "schema_version": "v1",
+          "kind": "finding",
+          "confidence": "high",
+          "scope": {
+            "container_ref": "chat:travel-notes"
+          },
+          "derivation": {
+            "producer_kind": "consolidation",
+            "producer_schema_id": "conversational_knowledge.fact_summary",
+            "producer_schema_version": "v1",
+            "kind_basis": "summary_rollup"
+          },
+          "subjects": [
+            {
+              "kind": "surface",
+              "value": "Alice"
+            }
+          ]
+        },
+        "index_text": "Alice travel plans Madrid train family trip Friday departure",
+        "evidence": [
+          {
+            "id": "mr-fact-summary-alice-travel-evidence",
+            "source_id": "mr-fact-summary-alice-travel-evidence",
+            "source_type": "assistant_artifact",
+            "content_type": "text/plain",
+            "content": "Alice will take a train to Madrid for a family trip and plans to leave early on Friday.",
+            "artifact_kind": "assistant_output",
+            "role": "assistant",
+            "container_ref": "chat:travel-notes",
+            "thread_ref": "chat:travel-notes:thread-travel-001",
+            "visibility": "container",
+            "occurred_at": "2026-03-12T08:30:00Z"
+          }
+        ]
+      }
+    ],
+    "prior_events": [],
+    "current_thread_context": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "We are planning around Alice's trip and need the broad summary again."
+      }
+    ],
+    "current_query": {
+      "text": "What do we know about Alice travel plans?",
+      "limit": 6,
+      "container_ref": "chat:travel-notes",
+      "visibility": "container"
+    },
+    "target_question": "What do we know about Alice travel plans?",
+    "expected_value": true,
+    "expected_intent": "recall",
+    "expected_top_layer": "lower_level_memory",
+    "expected_top_memory_types": [
+      "fact_summary"
+    ],
+    "expected_memory_types": [
+      "fact_summary"
+    ],
+    "expected_primary_injected_block_types": [
+      "fact_summary"
+    ],
+    "acceptable_injected_block_count": {
+      "min": 1,
+      "max": 1
+    },
+    "expected_should_inject": true,
+    "expected_decision_reason": "carry_forward_available",
+    "expected_answer_signals": [
+      "Alice",
+      "Madrid",
+      "train"
+    ],
+    "expected_failures_without_memory": [
+      "Madrid",
+      "train"
+    ],
+    "forbidden_terms": []
+  },
+  {
     "scenario_id": "hebrew-extraction-decision-memory-type",
     "scenario_kind": "answer_continuity_value",
     "description": "Hebrew conversation with explicit decision should extract a decision memory type, not just discussion_summary",

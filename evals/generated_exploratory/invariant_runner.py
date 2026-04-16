@@ -30,6 +30,7 @@ from app.config import AppConfig
 from app.main import create_app
 from evals.generated_exploratory.invariants import ALL_INVARIANTS, run_invariants
 from evals.generated_exploratory.taxonomy import infer_priority_tier
+from evals.scenario_seed import seed_memory_objects
 
 logger = logging.getLogger(__name__)
 
@@ -449,6 +450,9 @@ def _run_simple(
 
     _drain(client)
 
+    if scenario.get("seed_memory_objects"):
+        seed_memory_objects(client, list(scenario.get("seed_memory_objects") or []))
+
     query_request = _with_default_visibility(scenario["current_query"])
     query_payload = _post_query(client, query_request)
     debug_payload = _post_query_debug(client, query_request)
@@ -492,6 +496,9 @@ def _run_multi_step(
                 )
                 response.raise_for_status()
             _drain(client)
+
+        elif action == "seed_memory_objects":
+            seed_memory_objects(client, list(step.get("memory_objects") or []))
 
         elif action == "query":
             query_request = _with_default_visibility(step["query"])

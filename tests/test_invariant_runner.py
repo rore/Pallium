@@ -6,6 +6,7 @@ separate test classes with ``@pytest.mark.slow``.
 """
 from __future__ import annotations
 
+from evals.generated_exploratory import invariant_runner as runner
 from evals.generated_exploratory.invariants import (
     InvariantResult,
     check_idf_discrimination,
@@ -417,3 +418,162 @@ class TestRunInvariants:
         assert len(results) == 1
         assert not results[0].passed
         assert results[0].severity == "error"
+
+
+class TestInvariantRunnerSeededMemorySteps:
+    def test_seed_memory_objects_step_persists_memory_and_index(self, monkeypatch):
+        class FakeStorage:
+            def __init__(self):
+                self.memory_objects = []
+                self.index_entries = []
+                self.source_items = []
+                self.relations = []
+
+            def create_memory_object(self, memory_object):
+                self.memory_objects.append(memory_object)
+
+            def create_index_entry(self, index_entry):
+                self.index_entries.append(index_entry)
+
+            def create_source_item(self, source_item):
+                self.source_items.append(source_item)
+
+            def create_relation(self, relation):
+                self.relations.append(relation)
+
+        class FakeService:
+            def __init__(self):
+                self._storage = FakeStorage()
+
+        class FakeAppState:
+            def __init__(self):
+                self.pallium_service = FakeService()
+
+        class FakeApp:
+            def __init__(self):
+                self.state = FakeAppState()
+
+        class FakeClient:
+            def __init__(self):
+                self.app = FakeApp()
+
+        client = FakeClient()
+        query_payload = {
+            "should_inject": True,
+            "decision_reason": "carry_forward_available",
+            "injectable_blocks": [
+                {
+                    "result_id": "memory_object:fact-summary-alice",
+                    "title": "Fact Summary",
+                    "memory_type": "fact_summary",
+                    "text": "Alice will take a train to Madrid for a family trip.",
+                }
+            ],
+        }
+        debug_payload = {
+            **_EMPTY_DEBUG,
+            "should_inject": True,
+            "decision_reason": "carry_forward_available",
+            "injectable_blocks": list(query_payload["injectable_blocks"]),
+            "results": [
+                {
+                    "result_id": "memory_object:fact-summary-alice",
+                    "result_kind": "memory_hit",
+                    "type": "fact_summary",
+                    "visibility": "container",
+                    "container_ref": "chat:travel-notes",
+                    "payload": {"summary": "Alice will take a train to Madrid for a family trip."},
+                }
+            ],
+        }
+
+        monkeypatch.setattr(runner, "_post_query", lambda client, request: query_payload)
+        monkeypatch.setattr(runner, "_post_query_debug", lambda client, request: debug_payload)
+        monkeypatch.setattr(
+            runner,
+            "run_invariants",
+            lambda *args, **kwargs: [InvariantResult(invariant_id="INV-01", passed=True)],
+        )
+
+        scenario = {
+            "scenario_id": "fact-summary-seeded-memory",
+            "steps": [
+                {
+                    "action": "seed_memory_objects",
+                    "memory_objects": [
+                        {
+                            "id": "fact-summary-alice",
+                            "type": "fact_summary",
+                            "schema_id": "conversational_knowledge.fact_summary",
+                            "schema_version": "v1",
+                            "visibility": "container",
+                            "container_ref": "chat:travel-notes",
+                            "payload": {
+                                "subject": "Alice",
+                                "category": "travel",
+                                "summary": "Alice will take a train to Madrid for a family trip.",
+                            },
+                            "envelope": {
+                                "schema_id": "core.memory_envelope",
+                                "schema_version": "v1",
+                                "kind": "finding",
+                                "confidence": "high",
+                                "scope": {"container_ref": "chat:travel-notes"},
+                                "derivation": {
+                                    "producer_kind": "consolidation",
+                                    "producer_schema_id": "conversational_knowledge.fact_summary",
+                                    "producer_schema_version": "v1",
+                                },
+                                "subjects": [{"kind": "surface", "value": "Alice"}],
+                            },
+                            "index_text": "Alice travel plans Madrid train family trip",
+                            "evidence": [
+                                {
+                                    "id": "alice-travel-evidence",
+                                    "source_id": "alice-travel-evidence",
+                                    "source_type": "assistant_artifact",
+                                    "content": "Alice will take a train to Madrid for a family trip.",
+                                    "container_ref": "chat:travel-notes",
+                                    "visibility": "container",
+                                    "role": "assistant",
+                                    "artifact_kind": "assistant_output",
+                                }
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "step_id": "query",
+                    "action": "query",
+                    "query": {
+                        "text": "What do we know about Alice's travel plans?",
+                        "container_ref": "chat:travel-notes",
+                        "visibility": "container",
+                    },
+                    "quality_expectations": {
+                        "should_inject": True,
+                        "decision_reason": "carry_forward_available",
+                        "required_block_labels": ["Fact Summary"],
+                        "required_block_content": ["Madrid", "train"],
+                        "max_injectable_blocks": 1,
+                    },
+                },
+            ],
+        }
+
+        step_results = runner._run_multi_step(scenario, client)
+        storage = client.app.state.pallium_service._storage
+
+        assert len(storage.memory_objects) == 1
+        assert storage.memory_objects[0].type == "fact_summary"
+        assert storage.memory_objects[0].envelope is not None
+        assert storage.memory_objects[0].envelope.subjects[0].value == "Alice"
+        assert len(storage.index_entries) == 1
+        assert storage.index_entries[0].index_type == "lexical"
+        assert "Madrid" in storage.index_entries[0].text_view
+        assert len(storage.source_items) == 1
+        assert storage.source_items[0].container_ref == "chat:travel-notes"
+        assert len(storage.relations) == 1
+        assert storage.relations[0].relation_type == "supported_by"
+        assert len(step_results) == 1
+        assert step_results[0]["quality_expectation_results"]["passed"] is True

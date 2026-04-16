@@ -17,6 +17,7 @@ from app.main import create_app
 from evals.benchmark_architecture import annotate_result, build_suite_summary
 from evals.continuity_common import default_injection_expectations, evaluate_query_contract, query_family_from_intent
 from evals.recurring_question_benchmark import _compare_answers, _generate_answer, _score_answer
+from evals.scenario_seed import seed_memory_objects
 from providers.llm.base import LLMProvider
 
 DEFAULT_SCENARIO_FILE = Path("evals/memory_routing/scenarios.json")
@@ -106,6 +107,9 @@ def _run_scenario(
                 response = client.post("/items", json=[_with_default_visibility(event)])
                 response.raise_for_status()
             client.app.state.pallium_service.drain_processing_queue(worker_id="memory-routing-runner")
+
+            if scenario.get("seed_memory_objects"):
+                seed_memory_objects(client, list(scenario.get("seed_memory_objects") or []))
 
             consolidation_result = None
             if consolidation_strategy:

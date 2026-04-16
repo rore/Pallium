@@ -8,7 +8,7 @@ from semantic.agent_conversation_memory_routing_injection import (
 from semantic.agent_conversation_memory_routing_selection import (
     _candidate_is_injection_eligible,
 )
-from core.models import QueryResultItem
+from core.models import MemoryEnvelope, MemoryEnvelopeDerivation, MemoryEnvelopeScope, MemorySubjectAnchor, QueryResultItem
 
 
 def _make_candidate(lexical_score=0, vector_score=0):
@@ -100,6 +100,98 @@ class TestCandidateIsInjectionEligible:
             candidate,
             intent="recall",
             query_text="how many cats does Alice have",
+            allow_discussion_fallback=False,
+            allow_source_companion=False,
+        ) is True
+
+    def _make_fact_summary_candidate(
+        self,
+        *,
+        visibility: str = "private",
+        anchor_prefilter_status: str | None = None,
+    ):
+        item = QueryResultItem(
+            result_kind="memory_hit",
+            result_id="fact-summary-1",
+            memory_object_id="mo-summary-1",
+            type="fact_summary",
+            payload={
+                "subject": "Alice",
+                "category": "travel",
+                "summary": "Alice's travel: planning trips to Rome and Madrid this summer.",
+            },
+            score=100,
+            evidence=[],
+            visibility=visibility,
+            envelope=MemoryEnvelope(
+                schema_id="core.memory_envelope",
+                schema_version="v1",
+                kind="finding",
+                scope=MemoryEnvelopeScope(container_ref="slack:channel:CLOCAL001"),
+                derivation=MemoryEnvelopeDerivation(
+                    producer_kind="consolidation",
+                    producer_schema_id="conversational_knowledge.fact_summary",
+                    producer_schema_version="v1",
+                ),
+                subjects=[MemorySubjectAnchor(kind="surface", value="Alice")],
+                confidence="medium",
+            ),
+        )
+        candidate = {
+            "item": item,
+            "layer": "fact_summary",
+            "retrieval_score": 100,
+            "lexical_score": 80,
+            "vector_score": 700,
+            "suppression_reason_code": None,
+        }
+        if anchor_prefilter_status is not None:
+            candidate["anchor_prefilter_status"] = anchor_prefilter_status
+        return candidate
+
+    def test_fact_summary_is_injection_eligible_for_recall(self):
+        candidate = self._make_fact_summary_candidate()
+        assert _candidate_is_injection_eligible(
+            candidate,
+            intent="recall",
+            query_text="what do we know about Alice's travel plans",
+            allow_discussion_fallback=False,
+            allow_source_companion=False,
+        ) is True
+
+    @pytest.mark.parametrize("intent", ["structured_recall", "work_resumption", "evidence_trace"])
+    def test_fact_summary_is_not_injection_eligible_for_non_recall_intents(self, intent: str):
+        candidate = self._make_fact_summary_candidate()
+        assert _candidate_is_injection_eligible(
+            candidate,
+            intent=intent,
+            query_text="what do we know about Alice's travel plans",
+            allow_discussion_fallback=False,
+            allow_source_companion=False,
+        ) is False
+
+    def test_shared_fact_summary_requires_anchor_alignment(self):
+        candidate = self._make_fact_summary_candidate(
+            visibility="public",
+            anchor_prefilter_status="secondary_tier",
+        )
+        assert _candidate_is_injection_eligible(
+            candidate,
+            intent="recall",
+            query_text="what do we know about Alice's travel plans",
+            allow_discussion_fallback=False,
+            allow_source_companion=False,
+        ) is False
+
+    def test_shared_fact_summary_allows_anchor_aligned_recall(self):
+        candidate = self._make_fact_summary_candidate(
+            visibility="public",
+            anchor_prefilter_status="aligned",
+        )
+        assert _candidate_is_injection_eligible(
+            candidate,
+            intent="recall",
+            query_text="what do we know about Alice's travel plans",
             allow_discussion_fallback=False,
             allow_source_companion=False,
         ) is True
