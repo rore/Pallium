@@ -31,6 +31,29 @@ class _NullTypeButTypedFieldsProvider:
         return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
 
 
+class _SummaryOnlyProvider:
+    def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+        payload = {
+            "summary": "Decision: send overdue notices in 30-minute batches to avoid staff inbox spam.",
+            "candidate_type": None,
+            "decision_text": None,
+            "decision_evidence_text": None,
+            "investigation_text": None,
+            "investigation_evidence_text": None,
+            "rationale_text": None,
+            "interest_text": None,
+            "is_low_value_meta": False,
+            "constraint_text": None,
+            "next_step_text": None,
+            "blocker_text": None,
+            "progress_text": None,
+            "key_finding_text": None,
+            "subject_hints": [],
+            "work_refs": [],
+        }
+        return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
+
+
 def test_supports_consolidation_accepts_atomic_fact() -> None:
     plugin = AgentConversationMemoryPlugin(
         provider=TieredMemorySemanticProvider(),
@@ -70,3 +93,27 @@ def test_typed_fields_promote_candidate_type_when_llm_omits_it() -> None:
     decisions = [memory for memory in result.memory_objects if memory.type == "decision"]
     assert len(decisions) == 1
     assert decisions[0].payload["decision"] == "Publish process status summaries in 30-minute batches."
+
+
+def test_explicit_assistant_output_decision_falls_back_when_llm_returns_summary_only() -> None:
+    plugin = AgentConversationMemoryPlugin(
+        provider=_SummaryOnlyProvider(),
+        prompt_variant="strict_typed_memory_v8b_work_refs_separate",
+    )
+    item = SourceItem(
+        source_type="assistant_artifact",
+        source_id="decision-summary-only-1",
+        content_type="text/plain",
+        content="Decision: send overdue notices in 30-minute batches to avoid staff inbox spam.",
+        artifact_kind="assistant_output",
+        role="assistant",
+        container_ref="chat:library-help",
+        thread_ref="chat:library-help:thread-7",
+        visibility="public",
+    )
+
+    result = plugin.process_item(item)
+
+    decisions = [memory for memory in result.memory_objects if memory.type == "decision"]
+    assert len(decisions) == 1
+    assert decisions[0].payload["decision"] == "send overdue notices in 30-minute batches"

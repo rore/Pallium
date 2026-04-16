@@ -341,6 +341,38 @@ def _build_injectable_blocks(
                 "expansion_added_count": 0,
                 "same_thread_context_evaluation": same_thread_context,
             }
+        exact_memory_override = _supported_exact_low_confidence_override_candidates(
+            final_candidates,
+            intent=intent,
+            recall_mode=recall_mode,
+            query_text=query_text,
+        )
+        if exact_memory_override:
+            blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in exact_memory_override]
+            returned_ids = [b.result_id for b in blocks]
+            eligible_ids = [_routing_result_id(c["item"]) for c in exact_memory_override]
+            if _INJECTION_VERBOSE:
+                _injection_verbose(
+                    f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
+                    "should_inject=True reason=carry_forward_available "
+                    "(supported exact-memory override after low-confidence gate)"
+                )
+            return blocks, {
+                "should_inject": True,
+                "decision_reason": "carry_forward_available",
+                "injection_method": "supported_exact_low_confidence_override",
+                "returned_block_ids": returned_ids,
+                "eligible_result_ids": eligible_ids,
+                "dropped_by_cap_result_ids": [],
+                "cap": INJECTION_HARD_CEILING,
+                "dedup_applied": False,
+                "dedup_removed_count": 0,
+                "dedup_removed_result_ids": [],
+                "dedup_kept_map": {},
+                "expansion_applied": False,
+                "expansion_added_count": 0,
+                "same_thread_context_evaluation": same_thread_context,
+            }
         source_evidence_override = _source_evidence_provenance_override_candidates(
             final_candidates,
             intent=intent,
@@ -1107,6 +1139,64 @@ def _carry_forward_low_confidence_override_candidates(
     return fallback_candidates[:1]
 
 
+def _candidate_lexical_rank(candidate: dict[str, object]) -> int:
+    value = candidate.get("lexical_rank")
+    try:
+        if value is None:
+            raise TypeError
+        return int(value)
+    except (TypeError, ValueError):
+        return 1_000_000
+
+
+def _supported_exact_low_confidence_override_candidates(
+    candidates: list[dict[str, object]],
+    *,
+    intent: str,
+    recall_mode: str,
+    query_text: str,
+) -> list[dict[str, object]]:
+    if intent != "recall" or recall_mode == "continuity_preference" or not candidates:
+        return []
+    if _query_requests_quote_grade_source(query_text):
+        return []
+
+    best_lexical_rank = min((_candidate_lexical_rank(candidate) for candidate in candidates), default=1_000_000)
+    override_candidates: list[dict[str, object]] = []
+    for candidate in candidates:
+        item = candidate["item"]
+        assert isinstance(item, QueryResultItem)
+        if item.result_kind != "memory_hit":
+            continue
+        if item.type not in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+            continue
+        if candidate.get("suppression_reason_code"):
+            continue
+        if _candidate_is_low_value(candidate):
+            continue
+        if float(candidate.get("retrieval_score", 0) or 0) <= 0:
+            continue
+        if _candidate_lexical_rank(candidate) > best_lexical_rank + 1:
+            continue
+        if not _candidate_is_injection_eligible(
+            candidate,
+            intent=intent,
+            query_text=query_text,
+            allow_discussion_fallback=False,
+            allow_source_companion=False,
+        ):
+            continue
+        override_candidates.append(candidate)
+
+    override_candidates.sort(
+        key=lambda candidate: (
+            -int(candidate.get("routing_score") or 0),
+            _candidate_lexical_rank(candidate),
+        )
+    )
+    return override_candidates[:1]
+
+
 def _candidate_is_injection_eligible(
     candidate: dict[str, object],
     *,
@@ -1428,6 +1518,26 @@ def _prefer_duplicate_candidate(
         return candidate_b
     if item_b.type == FACT_SUMMARY_TYPE and item_a.type != FACT_SUMMARY_TYPE:
         return candidate_a
+
+    if recall_mode == "default":
+        if item_a.type == "continuity_memory" and item_b.type == "thread_summary":
+            return candidate_a
+        if item_b.type == "continuity_memory" and item_a.type == "thread_summary":
+            return candidate_b
+
+        continuity_candidate: dict[str, object] | None = None
+        exact_candidate: dict[str, object] | None = None
+        if item_a.type == "continuity_memory" and item_b.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+            continuity_candidate = candidate_a
+            exact_candidate = candidate_b
+        elif item_b.type == "continuity_memory" and item_a.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+            continuity_candidate = candidate_b
+            exact_candidate = candidate_a
+        if continuity_candidate is not None and exact_candidate is not None:
+            continuity_rank = _candidate_lexical_rank(continuity_candidate)
+            exact_rank = _candidate_lexical_rank(exact_candidate)
+            if exact_rank >= 5 and continuity_rank + 2 <= exact_rank:
+                return continuity_candidate
 
     score_a = int(candidate_a.get("routing_score") or 0)
     score_b = int(candidate_b.get("routing_score") or 0)

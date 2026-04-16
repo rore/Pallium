@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
 from app.config import AppConfig
+from app.main import create_app
 from evals.memory_routing_benchmark import run_memory_routing_benchmark
 from tests.stub_providers import TieredMemoryAnswerProvider, TieredMemorySemanticProvider
 import pytest
@@ -145,3 +148,43 @@ def test_memory_routing_benchmark_closes_false_merge_guard_routing_gap(monkeypat
     # cue-free: carry_forward_history scoring depends on cross-thread continuity detection (content_overlap removed)
     structured_recall_reasons = family_inference['family_scores']['structured_recall']['reasons']
     assert 'sharp_lower_level_support' in structured_recall_reasons or 'weak_investigative_support' in structured_recall_reasons
+
+
+def test_benchmark_default_visibility_ingests_public_items(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr('app.dependencies.build_llm_provider', lambda config, **_: TieredMemorySemanticProvider())
+
+    config = AppConfig(
+        sqlite_url=f"sqlite:///{tmp_path / 'benchmark-visibility.db'}",
+        default_use_case='agent_conversation_memory',
+        llm_provider='openai_compatible',
+        llm_model='fake-answer-model',
+        llm_base_url='http://fake-provider.local',
+        llm_prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+
+    with TestClient(create_app(config)) as client:
+        response = client.post(
+            '/items',
+            json=[
+                {
+                    'source_type': 'assistant_artifact',
+                    'source_id': 'benchmark-visibility-artifact',
+                    'content_type': 'text/plain',
+                    'content': 'Decision: send overdue notices in 30-minute batches to avoid staff inbox spam.',
+                    'artifact_kind': 'assistant_output',
+                    'role': 'assistant',
+                    'container_ref': 'chat:library-help',
+                    'thread_ref': 'chat:library-help:thread-mr-visibility',
+                    'actor_ref': 'agent:assistant',
+                    'source_ref': 'memory://mr/thread-visibility-artifact-1',
+                    'visibility': {'kind': 'public'},
+                }
+            ],
+        )
+        response.raise_for_status()
+        payload = response.json()[0]
+        assert payload['processing_status'] != 'skipped'
+
+        source_item_id = payload['source_item_id']
+        stored = client.app.state.pallium_service._storage.get_source_item(source_item_id)
+        assert stored.visibility == 'public'

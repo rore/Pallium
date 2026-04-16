@@ -1887,6 +1887,8 @@ def _build_floor_test_retrieval_result(
     vector_score: int | None = None,
     memory_type: str = 'thread_summary',
     payload: dict | None = None,
+    evidence: list[EvidenceReference] | None = None,
+    envelope: MemoryEnvelope | None = None,
 ) -> RetrievalQueryResult:
     """Build a minimal retrieval result for floor-check testing."""
     if payload is None:
@@ -1899,12 +1901,13 @@ def _build_floor_test_retrieval_result(
                 type=memory_type,
                 payload=payload,
                 score=score,
-                evidence=[],
+                evidence=list(evidence or []),
                 container_ref='chat:floor-test',
                 thread_ref='chat:floor-test:thread-A',
                 retrieval_source=retrieval_source,
                 lexical_score=lexical_score,
                 vector_score=vector_score,
+                envelope=envelope,
             ),
         ],
         trace=QueryTrace(
@@ -2092,6 +2095,37 @@ def test_continuity_preference_bypasses_low_confidence_gate_when_continuity_memo
     assert outcome.should_inject is True
     assert outcome.decision_reason == 'carry_forward_available'
     assert [block.memory_type for block in outcome.injectable_blocks] == ['continuity_memory']
+
+
+def test_supported_exact_memory_bypasses_low_confidence_gate() -> None:
+    result = _build_floor_test_retrieval_result(
+        score=19,
+        retrieval_source='both',
+        lexical_score=1,
+        vector_score=922,
+        memory_type='decision',
+        payload={
+            'decision': 'Send overdue notices in 30-minute batches.',
+            'rationale': 'Avoid staff inbox spikes.',
+        },
+        evidence=[
+            EvidenceReference(
+                source_item_id='floor-decision-1',
+                source_type='assistant_artifact',
+                source_id='artifact-floor-decision-1',
+            )
+        ],
+        envelope=_memory_envelope('finding'),
+    )
+
+    outcome = _run_floor_test(
+        result,
+        query_text='What exact batch interval did we choose for overdue notices?',
+    )
+
+    assert outcome.should_inject is True
+    assert outcome.decision_reason == 'carry_forward_available'
+    assert [block.memory_type for block in outcome.injectable_blocks] == ['decision']
 
 
 def test_vector_cosine_escape_hatch_passes_high_similarity() -> None:
@@ -2623,6 +2657,146 @@ def test_dedup_prefers_continuity_in_continuity_preference_mode() -> None:
     assert retained[0]["item"].memory_object_id == "continuity-carry-forward"
     assert len(removed) == 1
     assert removed[0]["item"].memory_object_id == "decision-carry-forward"
+
+
+def test_dedup_default_prefers_continuity_when_it_is_lexically_clearer_than_decision() -> None:
+    from semantic.agent_conversation_memory_routing_selection import _dedup_eligible_candidates
+
+    continuity_candidate = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="continuity-default",
+            type="continuity_memory",
+            payload={
+                "carry_forward_answer": "Send overdue notices in 30-minute batches.",
+                "summary": "Send overdue notices in 30-minute batches.",
+            },
+            score=16,
+            evidence=[EvidenceReference(source_item_id='default-dedup-1', source_type='message', source_id='default-dedup-1')],
+            container_ref="chat:test",
+        ),
+        "routing_score": 380,
+        "lexical_rank": 2,
+    }
+    decision_candidate = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="decision-default",
+            type="decision",
+            payload={
+                "decision": "Send overdue notices in 30-minute batches.",
+                "rationale": "Avoid staff inbox spikes.",
+            },
+            score=20,
+            evidence=[EvidenceReference(source_item_id='default-dedup-1', source_type='message', source_id='default-dedup-1')],
+            container_ref="chat:test",
+        ),
+        "routing_score": 520,
+        "lexical_rank": 5,
+    }
+
+    retained, removed = _dedup_eligible_candidates(
+        [decision_candidate, continuity_candidate],
+        recall_mode='default',
+    )
+
+    assert len(retained) == 1
+    assert retained[0]["item"].memory_object_id == "continuity-default"
+    assert len(removed) == 1
+    assert removed[0]["item"].memory_object_id == "decision-default"
+
+
+def test_dedup_default_keeps_exact_decision_when_it_remains_near_grounded() -> None:
+    from semantic.agent_conversation_memory_routing_selection import _dedup_eligible_candidates
+
+    continuity_candidate = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="continuity-exact-default",
+            type="continuity_memory",
+            payload={
+                "carry_forward_answer": "Overdue notices are sent in 30-minute batches.",
+                "summary": "Overdue notices are sent in 30-minute batches.",
+            },
+            score=19,
+            evidence=[EvidenceReference(source_item_id='exact-dedup-1', source_type='message', source_id='exact-dedup-1')],
+            container_ref="chat:test",
+        ),
+        "routing_score": 432,
+        "lexical_rank": 1,
+    }
+    decision_candidate = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="decision-exact-default",
+            type="decision",
+            payload={
+                "decision": "send overdue notices in 30-minute batches",
+                "rationale": "Avoid staff inbox spam.",
+            },
+            score=18,
+            evidence=[EvidenceReference(source_item_id='exact-dedup-1', source_type='message', source_id='exact-dedup-1')],
+            container_ref="chat:test",
+        ),
+        "routing_score": 477,
+        "lexical_rank": 3,
+    }
+
+    retained, removed = _dedup_eligible_candidates(
+        [decision_candidate, continuity_candidate],
+        recall_mode='default',
+    )
+
+    assert len(retained) == 1
+    assert retained[0]["item"].memory_object_id == "decision-exact-default"
+    assert len(removed) == 1
+    assert removed[0]["item"].memory_object_id == "continuity-exact-default"
+
+
+def test_dedup_default_prefers_continuity_over_thread_summary() -> None:
+    from semantic.agent_conversation_memory_routing_selection import _dedup_eligible_candidates
+
+    continuity_candidate = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="continuity-summary-default",
+            type="continuity_memory",
+            payload={
+                "carry_forward_answer": "Send overdue notices in 30-minute batches.",
+                "summary": "Send overdue notices in 30-minute batches.",
+            },
+            score=15,
+            evidence=[EvidenceReference(source_item_id='default-summary-1', source_type='message', source_id='default-summary-1')],
+            container_ref="chat:test",
+        ),
+        "routing_score": 360,
+        "lexical_rank": 3,
+    }
+    thread_summary_candidate = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="thread-summary-default",
+            type="thread_summary",
+            payload={
+                "summary": "The chosen answer was to send overdue notices in 30-minute batches.",
+            },
+            score=18,
+            evidence=[EvidenceReference(source_item_id='default-summary-1', source_type='message', source_id='default-summary-1')],
+            container_ref="chat:test",
+        ),
+        "routing_score": 470,
+        "lexical_rank": 1,
+    }
+
+    retained, removed = _dedup_eligible_candidates(
+        [thread_summary_candidate, continuity_candidate],
+        recall_mode='default',
+    )
+
+    assert len(retained) == 1
+    assert retained[0]["item"].memory_object_id == "continuity-summary-default"
+    assert len(removed) == 1
+    assert removed[0]["item"].memory_object_id == "thread-summary-default"
 
 
 def test_dedup_preserves_same_thread_different_topic_memories() -> None:

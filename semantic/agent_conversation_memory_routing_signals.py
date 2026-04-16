@@ -339,6 +339,12 @@ def _select_recall_mode(candidate_evidence: dict[str, object]) -> str:
     decision_support = _layer_support("decision")
     continuity_support = _layer_support("continuity_memory")
     exact_layer_count = sum(1 for score in (decision_support, investigation_support) if score > 0)
+    exact_auxiliary_layers = {"decision", "investigation_outcome", "atomic_fact", "continuity_memory"}
+    combined_sharp_support = decision_support + investigation_support
+    sharp_support_outweighs_continuity = (
+        combined_sharp_support >= continuity_support + 16
+        or max(decision_support, investigation_support) >= continuity_support + 8
+    )
 
     def _has_competing_layers(target_layers: set[str]) -> bool:
         """True if any memory layer outside target_layers has multiple candidates.
@@ -360,21 +366,25 @@ def _select_recall_mode(candidate_evidence: dict[str, object]) -> str:
         dominant == "investigation_outcome"
         and investigation_support >= POLICY_SUPPORT_THRESHOLD
         and investigation_support >= decision_support + 16
-        and not _has_competing_layers({"investigation_outcome", "decision"})
+        and investigation_support >= continuity_support + 8
+        and not _has_competing_layers(exact_auxiliary_layers)
     ):
         return "investigation_preference"
 
     # sharp_fact_preference: dominant decision/investigation, no competing recall layers
     if dominant in {"decision", "investigation_outcome"}:
-        combined = decision_support + investigation_support
-        if combined >= POLICY_SUPPORT_THRESHOLD and not _has_competing_layers({"decision", "investigation_outcome"}):
+        if (
+            combined_sharp_support >= POLICY_SUPPORT_THRESHOLD
+            and sharp_support_outweighs_continuity
+            and not _has_competing_layers(exact_auxiliary_layers)
+        ):
             return "sharp_fact_preference"
 
-    combined_sharp_support = decision_support + investigation_support
     if (
         combined_sharp_support >= POLICY_SUPPORT_THRESHOLD
         and exact_layer_count >= 2
-        and not _has_competing_layers({"decision", "investigation_outcome", "continuity_memory"})
+        and sharp_support_outweighs_continuity
+        and not _has_competing_layers(exact_auxiliary_layers)
     ):
         return "sharp_fact_preference"
 

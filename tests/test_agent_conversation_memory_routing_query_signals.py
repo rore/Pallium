@@ -203,6 +203,85 @@ def test_sharp_fact_when_decision_dominant_no_competition():
     assert mode == 'sharp_fact_preference'
 
 
+def test_sharp_fact_when_exact_layers_outweigh_continuity_with_atomic_fact_sidecars():
+    evidence_refs = [
+        EvidenceReference(
+            source_item_id=f'si-exact-{index}',
+            source_type='assistant_artifact',
+            source_id=f'exact-{index}',
+            occurred_at=datetime(2026, 3, 11, 10, 0, tzinfo=timezone.utc),
+            container_ref='chat:test',
+            thread_ref='chat:test:t1',
+            artifact_kind='assistant_output',
+        )
+        for index in range(3)
+    ]
+    decision = QueryResultItem(
+        result_kind='memory_hit',
+        memory_object_id='decision-exact',
+        type='decision',
+        payload={
+            'decision': 'Use sequence-number ordering for replay updates.',
+            'decision_evidence_text': 'Decision: use sequence-number ordering for replay updates.',
+        },
+        freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+        score=20,
+        evidence=evidence_refs,
+        container_ref='chat:test',
+        thread_ref='chat:test:t1',
+        envelope=_memory_envelope('finding'),
+    )
+    investigation = QueryResultItem(
+        result_kind='memory_hit',
+        memory_object_id='investigation-exact',
+        type='investigation_outcome',
+        payload={
+            'investigation_outcome': 'Arrival-order replay applied stale updates after sync lag.',
+            'investigation_evidence_text': 'Investigation found that arrival-order replay applied stale updates after sync lag.',
+        },
+        freshness_at=datetime(2026, 3, 11, 10, 1, tzinfo=timezone.utc),
+        score=19,
+        evidence=evidence_refs,
+        container_ref='chat:test',
+        thread_ref='chat:test:t1',
+        envelope=_memory_envelope('finding'),
+    )
+    continuity = QueryResultItem(
+        result_kind='memory_hit',
+        memory_object_id='continuity-exact',
+        type='continuity_memory',
+        payload={
+            'summary': 'Replay updates should use sequence-number ordering instead of arrival ordering.',
+            'carry_forward_answer': 'Use sequence-number ordering instead of arrival ordering for replay updates.',
+        },
+        freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+        score=21,
+        evidence=evidence_refs,
+        container_ref='chat:test',
+        thread_ref='chat:test:t1',
+        envelope=_memory_envelope('summary'),
+    )
+    atomic_fact = QueryResultItem(
+        result_kind='memory_hit',
+        memory_object_id='atomic-exact',
+        type='atomic_fact',
+        payload={'statement': 'Replay updates use sequence-number ordering.'},
+        freshness_at=datetime(2026, 3, 11, 10, 2, tzinfo=timezone.utc),
+        score=18,
+        evidence=evidence_refs,
+        container_ref='chat:test',
+        thread_ref='chat:test:t1',
+        envelope=_memory_envelope('finding'),
+    )
+
+    ce = _compute_typed_candidate_evidence(
+        [decision, investigation, continuity, atomic_fact],
+        QueryFilters(container_ref='chat:test', thread_ref='chat:test:t1'),
+    )
+
+    assert _select_recall_mode(ce) == 'sharp_fact_preference'
+
+
 # --- Policy family from envelope ---
 
 def test_resume_signal_maps_to_resume_work():

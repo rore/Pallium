@@ -8,6 +8,7 @@ from core.type_registry import TypeRegistration, TypeRegistry
 from providers.llm.base import LLMProvider
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin
+from semantic.common import build_process_result, deterministic_extraction
 from semantic.agent_conversation_memory_memory import _append_typed_constraint_memory_objects, _apply_direct_memory_envelopes, build_supersession_hints
 from semantic.agent_conversation_memory_routing import RoutingOverrides, route_query_results
 from semantic.agent_conversation_memory_threads import _supports_thread_aggregation, build_consolidated_memory, build_pattern_memory, build_thread_summary
@@ -77,10 +78,40 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
     def task_checkpoint_schema_id(self) -> str:
         return 'agent_conversation_memory.task_checkpoint'
 
+    def _apply_explicit_assistant_output_fallback(self, source_item: SourceItem, direct_result: ProcessResult) -> ProcessResult:
+        if any(memory.type in {"decision", "investigation_outcome"} for memory in direct_result.memory_objects):
+            return direct_result
+        if (source_item.role or "").lower() != "assistant":
+            return direct_result
+        if (source_item.artifact_kind or "").lower() != "assistant_output":
+            return direct_result
+
+        fallback_extraction = deterministic_extraction(source_item)
+        if fallback_extraction.candidate_type not in {"decision", "investigation_outcome"}:
+            return direct_result
+
+        fallback_result = build_process_result(
+            source_item,
+            fallback_extraction,
+            schema_prefix="llm",
+        )
+        if not fallback_result.memory_objects:
+            return direct_result
+
+        return ProcessResult(
+            memory_objects=list(direct_result.memory_objects) + list(fallback_result.memory_objects),
+            relations=list(direct_result.relations) + list(fallback_result.relations),
+            index_entries=list(direct_result.index_entries) + list(fallback_result.index_entries),
+            source_item_metadata_updates=dict(direct_result.source_item_metadata_updates),
+            thread_rebuild_requested=direct_result.thread_rebuild_requested or fallback_result.thread_rebuild_requested,
+            supersession_hints=list(direct_result.supersession_hints) + list(fallback_result.supersession_hints),
+        )
+
     def process_item(self, source_item: SourceItem) -> ProcessResult:
         direct_trace = self._delegate.analyze_item(source_item)
+        direct_result = self._apply_explicit_assistant_output_fallback(source_item, direct_trace.process_result)
         direct_result = _append_typed_constraint_memory_objects(
-            direct_trace.process_result,
+            direct_result,
             source_item=source_item,
             extraction=direct_trace.extraction,
         )

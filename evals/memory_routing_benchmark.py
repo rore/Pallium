@@ -338,7 +338,8 @@ def _scenario_runtime_context(scenario: dict[str, Any]) -> dict[str, Any]:
 
 def _with_default_visibility(payload: dict[str, Any]) -> dict[str, Any]:
     updated = dict(payload)
-    updated.setdefault("visibility", "public")
+    if updated.get("visibility") is None:
+        updated["visibility"] = {"kind": "public"}
     return updated
 
 
