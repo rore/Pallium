@@ -22,7 +22,6 @@ from app.main import create_app
 from starlette.testclient import TestClient
 
 DB_CACHE = Path("evals/locomo/db_cache/conv-26.db")
-VECTOR_CACHE = Path("evals/locomo/db_cache/conv-26.vector.index")
 CONV_ID = "conv-26"
 
 # Curated failure cases: queries that failed in the full benchmark
@@ -84,24 +83,35 @@ FAILURE_CASES = [
 
 @pytest.fixture(scope="module")
 def retrieval_client():
-    """Create a test client with conv-26 cached DB."""
+    """Create a test client with conv-26 cached DB and fresh vector index."""
     if not DB_CACHE.exists():
         pytest.skip("conv-26 cached DB not found")
 
+    import tempfile, os
+    tmp_dir = Path(tempfile.mkdtemp(prefix="pallium_test_retrieval_"))
+    db_copy = tmp_dir / "conv-26.db"
+    shutil.copy2(DB_CACHE, db_copy)
+    vec_path = tmp_dir / "conv-26.vector.index"
+
     config = AppConfig.from_env()
-    vector_config = replace(
-        config.vector_index,
-        index_path=str(VECTOR_CACHE) if VECTOR_CACHE.exists() else None,
-    )
+    vector_config = replace(config.vector_index, index_path=str(vec_path))
     scenario_config = replace(
         config,
-        sqlite_url=f"sqlite:///{DB_CACHE}",
+        sqlite_url=f"sqlite:///{db_copy}",
         default_use_case="agent_conversation_memory",
         vector_index=vector_config,
     )
     app = create_app(scenario_config)
     with TestClient(app) as client:
+        # Stop background reconcile daemon to avoid concurrent save() conflicts on Windows
+        stop_event = getattr(client.app.state, "_reconcile_stop", None)
+        if stop_event is not None:
+            stop_event.set()
+        # Build fresh vector index (stale cached vectors would give wrong similarities)
+        while client.app.state.pallium_service.reconcile_vector_index() > 0:
+            pass
         yield client
+    shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def _query_pallium(client, question: str, limit: int = 10) -> dict:
@@ -122,10 +132,17 @@ def _query_pallium(client, question: str, limit: int = 10) -> dict:
 
 def _check_keywords_in_results(results: list[dict], keywords: list[str]) -> tuple[bool, list[str]]:
     """Check if gold keywords appear in retrieved results. Returns (found, missing)."""
-    context = ""
+    parts = []
     for r in results:
-        context += " " + (r.get("text") or "") + " " + (r.get("excerpt") or "")
-    context = context.lower()
+        # source_hit: text is in excerpt
+        parts.append(r.get("excerpt") or "")
+        # memory_hit: text is in payload fields
+        payload = r.get("payload") or {}
+        parts.append(payload.get("summary") or "")
+        parts.append(payload.get("statement") or "")
+        parts.append(payload.get("decision") or "")
+        parts.append(payload.get("description") or "")
+    context = " ".join(parts).lower()
 
     found = []
     missing = []
@@ -139,11 +156,11 @@ def _check_keywords_in_results(results: list[dict], keywords: list[str]) -> tupl
 
 
 def _count_source_hits(results: list[dict]) -> int:
-    return sum(1 for r in results if r.get("kind") == "source_hit")
+    return sum(1 for r in results if r.get("result_kind") == "source_hit")
 
 
 def _count_memory_hits(results: list[dict]) -> int:
-    return sum(1 for r in results if r.get("kind") == "memory_hit")
+    return sum(1 for r in results if r.get("result_kind") == "memory_hit")
 
 
 # =========================================================================

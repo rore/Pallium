@@ -376,7 +376,13 @@ def _evaluate_conversation(
                 client.app.state.pallium_service.drain_processing_queue(
                     worker_id="locomo-runner"
                 )
-                client.app.state.pallium_service.reconcile_vector_index()
+                # Stop background reconcile daemon to avoid concurrent save() on Windows,
+                # then fully reconcile (batch_size=50, may need many iterations for 1000+ entries)
+                stop_event = getattr(client.app.state, "_reconcile_stop", None)
+                if stop_event is not None:
+                    stop_event.set()
+                while client.app.state.pallium_service.reconcile_vector_index() > 0:
+                    pass
                 print("  Processing complete")
 
                 # Cache the processed DB for reuse.

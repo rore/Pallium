@@ -52,10 +52,15 @@ def _check_gold_in_context(gold_answer: str, results: list[dict]) -> bool:
     if not keywords:
         return True  # trivial gold
 
-    context = " ".join(
-        (r.get("text") or "") + " " + (r.get("excerpt") or "")
-        for r in results
-    ).lower()
+    parts = []
+    for r in results:
+        parts.append(r.get("excerpt") or "")
+        payload = r.get("payload") or {}
+        parts.append(payload.get("summary") or "")
+        parts.append(payload.get("statement") or "")
+        parts.append(payload.get("decision") or "")
+        parts.append(payload.get("description") or "")
+    context = " ".join(parts).lower()
 
     found = sum(1 for k in keywords if k in context)
     return found / len(keywords) >= 0.5
