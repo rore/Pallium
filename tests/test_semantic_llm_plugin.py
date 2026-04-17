@@ -93,6 +93,44 @@ def test_build_process_result_rejects_markdown_table_cell_fragment() -> None:
     assert all(memory.type != "investigation_outcome" for memory in result.memory_objects)
 
 
+def test_build_process_result_rejects_markdown_list_item_fragment() -> None:
+    source = SourceItem(
+        source_type="assistant_artifact", source_id="list-fragment-1", content_type="text/plain",
+        content="- If the record is incorrect: delete or correct it via the management endpoint",
+    )
+    extraction = SemanticExtraction(
+        summary="workflow step",
+        candidate_type="investigation_outcome",
+        investigation_text="If the record is incorrect: delete or correct it via the management endpoint",
+        investigation_evidence_text="- If the record is incorrect: delete or correct it via the management endpoint",
+        key_finding_text="If the record is incorrect: delete or correct it via the management endpoint",
+    )
+
+    result = build_process_result(source, extraction, "test")
+
+    assert all(memory.type != "investigation_outcome" for memory in result.memory_objects)
+
+
+def test_build_process_result_rejects_meta_analysis_fragment_via_low_value_meta() -> None:
+    source = SourceItem(
+        source_type="assistant_artifact", source_id="meta-fragment-1", content_type="text/plain",
+        content="The ingestion pipeline failed to recognize the table structure and extracted a cell fragment as a standalone record.",
+    )
+    extraction = SemanticExtraction(
+        summary="triage analysis",
+        candidate_type="investigation_outcome",
+        investigation_text="The ingestion pipeline failed to recognize the table structure",
+        investigation_evidence_text="The ingestion pipeline failed to recognize the table structure and extracted a cell fragment as a standalone record.",
+        key_finding_text="The ingestion pipeline failed to recognize the table structure",
+        is_low_value_meta=True,
+    )
+
+    result = build_process_result(source, extraction, "test")
+
+    assert result.memory_objects == []
+    assert result.thread_rebuild_requested is False
+
+
 def test_build_process_result_strips_markdown_formatting_from_investigation_payload() -> None:
     source = SourceItem(
         source_type="assistant_artifact", source_id="markdown-cleanup-1", content_type="text/plain",
@@ -114,10 +152,10 @@ def test_build_process_result_strips_markdown_formatting_from_investigation_payl
     assert payload["investigation_evidence_text"] == "Root cause: table parsing failed for the status matrix"
 
 
-def test_build_process_result_rejects_control_tagged_meta_verdict() -> None:
+def test_build_process_result_rejects_low_value_meta_investigation() -> None:
     source = SourceItem(
         source_type="assistant_artifact", source_id="meta-verdict-1", content_type="text/plain",
-        content="[quality-flag: review_only] Verdict: the previous finding was too vague to keep as durable memory.",
+        content="Verdict: the previous finding was too vague to keep as durable memory.",
     )
     extraction = SemanticExtraction(
         summary="review verdict",
@@ -125,6 +163,7 @@ def test_build_process_result_rejects_control_tagged_meta_verdict() -> None:
         investigation_text="the previous finding was too vague to keep as durable memory",
         investigation_evidence_text="Verdict: the previous finding was too vague to keep as durable memory.",
         key_finding_text="the previous finding was too vague to keep as durable memory",
+        is_low_value_meta=True,
     )
 
     result = build_process_result(source, extraction, "test")

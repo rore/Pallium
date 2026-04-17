@@ -8,12 +8,11 @@ new product feature.
 Related durable context:
 
 - this plan file
-- `/memories/repo/conversational-knowledge-triage.md`
 
-External working sources:
+External working sources (not committed, local only):
 
-- `C:\Users\I347041\Downloads\Pallium Memory Triage Records`
-- `C:\Users\I347041\Downloads\Pallium Triage Report (Rich)`
+- triage records file (local)
+- triage report file (local)
 
 ## Purpose
 
@@ -39,14 +38,28 @@ Operational rule:
   subject-presence gating, and grounded statement canonicalization.
 - Phase 2b narrow same-thread burst handling is complete with explicit
   regression and eval coverage.
-- Phase 2c deterministic acceptance gating is complete for control-plane meta
-  verdict suppression, question-shaped fact rejection, and subject-prefixed
-  vague-status rejection, with targeted regressions and deterministic eval
-  coverage.
+- Phase 2c deterministic acceptance gating revised: the English-cue
+  `_looks_like_control_plane_meta_artifact` function was removed from
+  `semantic/common.py` because it violated the cue-free architecture decision
+  and encoded the integrating agent's internal `[pallium-flag]` protocol in the shared write
+  path. Replaced with `is_low_value_meta` checks on the decision,
+  investigation_outcome, and interest typed-memory branches — when the LLM
+  classifies content as low-value meta, no typed memory is promoted. The
+  question-shaped fact rejection and subject-prefixed vague-status rejection
+  remain unchanged.
 - Phase 3 lever selection is complete: conversational permission, pending
   status, and momentary debug state should be rejected at write time in
   `conversational_knowledge`, while freshness demotion remains with
   task-checkpoint and routing paths that already model transient work state.
+- Phase 3+4 implementation is complete: the `FACT_EXTRACTION_SYSTEM_PROMPT`
+  skip list was expanded with transient-state categories (hypothetical or
+  conditional future states, current runtime/deployment/debug status, one-off
+  failures, monitoring chatter, generic platform behavior instructions) and a
+  self-contained subject requirement. Validated with 3 new focused LLM eval
+  scenarios in `evals/prompt_variant_eval.py` (transient runtime state,
+  hypothetical future state, conversational approval). All 3 pass: transient
+  content is correctly skipped while durable facts in the same thread are
+  preserved.
 - The repo-local raw triage working copies were removed before the first phase
   commit; use the external working sources above if rehydration is required.
 
@@ -63,7 +76,7 @@ The plan is deliberately phased:
 
 ## Why
 
-The live Pelican session exposed a concentrated set of trust failures in
+A live integrating-agent session exposed a concentrated set of trust failures in
 `conversational_knowledge`:
 
 - markdown list and table fragments were promoted as durable memory
@@ -138,14 +151,14 @@ New information added by the rich report:
   short-lived permission asks, pending-QA status, and temporary MCP/session
   registration state
 - one critical manifestation is outside Pallium's write-time policy boundary:
-  Pelican currently ingests raw assistant output before flag-tag stripping
+  the integrating agent currently ingests raw assistant output before flag-tag stripping
 
 The rich report also exposes one important split:
 
 - Pallium scope: reject or down-rank meta-analysis, vague conversational state,
   fragments, and transient runtime state during extraction, storage, lifecycle,
   and selection
-- external dependency outside this repo: Pelican should stop raw control-plane
+- external dependency outside this repo: the integrating agent should stop raw control-plane
   tags from entering Pallium ingest in the first place
 
 ## Failure Classes
@@ -207,7 +220,7 @@ Out-of-scope external remediation:
 
 Important rule:
 
-- do not implement Pelican changes from this workspace
+- do not implement integrating-agent changes from this workspace
 - do not treat the external raw-output ingestion bug as evidence that
   Pallium's acceptance policy can remain lax; the Pallium-side acceptance seam
   still needs coverage
@@ -245,7 +258,7 @@ Initial regression targets:
 
 External dependency to track separately:
 
-- Pelican raw assistant output should not send flag-tag payloads into Pallium,
+- the integrating agent's raw assistant output should not send flag-tag payloads into Pallium,
   but that work is out of scope for this repo plan
 
 Primary files:
@@ -269,7 +282,7 @@ Expected closures:
 - `00fc1a9e`
 - `117c4594`
 - `ee372fc0` at Pallium acceptance layer as far as this repo can reasonably
-  defend; full prevention also depends on external Pelican ingest sanitization
+  defend; full prevention also depends on external integrating-agent ingest sanitization
 - `66bca613`
 - `bf4df289`
 - initial coverage for `07e192cd`, `1dbf2cd0`, `388d47fc` if package-local
@@ -392,7 +405,7 @@ Workflow requirements:
 
 External follow-up, not verified here:
 
-- Pelican should add an ingest-path regression proving raw flag-tag payloads do
+- the integrating agent should add an ingest-path regression proving raw flag-tag payloads do
   not reach Pallium, but that verification is outside this repo
 
 ## Architect Review
@@ -406,7 +419,7 @@ What the prior plan missed:
   review remarks that remain useless even when grammatical
 - it did not explicitly separate meta-analysis re-ingestion from normal
   fragment cleanup
-- it did not name the cross-repo integration defect in Pelican, so Pallium-only
+- it did not name the cross-repo integration defect in the integrating agent, so Pallium-only
   work would have left one critical feedback loop open
 
 Why the revised plan is now defensible:
@@ -414,7 +427,7 @@ Why the revised plan is now defensible:
 - deterministic structural hardening still remains the smallest valuable slice
 - the new Phase 2c isolates the real acceptance-policy gap without immediately
   widening prompt scope
-- the Pelican seam is called out as integration follow-up rather than being
+- the integrating-agent seam is called out as integration follow-up rather than being
   hidden inside a Pallium-only phase
 - retrieval and ranking changes remain deferred until after write-time and
   consolidation evidence is re-measured
@@ -461,10 +474,9 @@ Places that still need deeper investigation before implementation:
 
 Pre-commit cleanup rule:
 
-- before any Pallium commit for this work, delete
-  `docs/context/pelican-memory-triage-records-2026-04-17.json` and
-  `docs/context/pelican-memory-triage-report-rich-2026-04-17.json` after
-  confirming their coverage has been translated into neutralized repo assets
+- before any commit for this work, confirm that no raw triage artifacts
+  remain in the repo after their coverage has been translated into
+  neutralized repo assets
 
 Structural phase status:
 
@@ -474,9 +486,5 @@ Structural phase status:
 
 ## Source References
 
-- Original external file:
-  `C:\Users\I347041\Downloads\Pallium Memory Triage Records`
-- Rich external file:
-  `C:\Users\I347041\Downloads\Pallium Triage Report (Rich)`
-- Durable distilled notes:
-  `/memories/repo/conversational-knowledge-triage.md`
+- Original triage records: local file (not committed)
+- Rich triage report: local file (not committed)

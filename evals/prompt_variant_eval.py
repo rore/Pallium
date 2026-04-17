@@ -186,6 +186,144 @@ SNIPPETS: list[dict[str, Any]] = [
             "max_facts": 4,
         },
     },
+    {
+        "id": "transient_runtime_state_skipped",
+        "description": "Runtime/deployment status, registration state, and one-off failures not extracted as durable facts",
+        "thread_text": (
+            "Session date: 2024-06-10\n"
+            "[user]: The catalog sync worker is still running the old code from before the deploy.\n"
+            "[assistant]: Right, the worker process was started before the merge. "
+            "It is still on the previous revision. I tried restarting it but the binary was not in PATH. "
+            "Also the search endpoint is not registered for the current session. "
+            "The schema changes are done and pending review before we push to update the pull request. "
+            "Once the container restarts it should pick up the new code.\n"
+            "[user]: OK. By the way, the batch digest runs every 30 minutes and processes about 200 items per run."
+        ),
+        "assertions": {
+            "must_contain_any": [["batch digest", "30 minutes"], ["200 items"]],
+            "must_not_contain": [
+                "still running the old code",
+                "still on the previous revision",
+                "binary was not in PATH",
+                "should pick up the new code",
+                "not registered",
+                "pending review",
+            ],
+            "max_facts": 4,
+        },
+    },
+    {
+        "id": "hypothetical_future_state_skipped",
+        "description": "Hypothetical or conditional future states not extracted as facts",
+        "thread_text": (
+            "Session date: 2024-07-01\n"
+            "[user]: The reservation sync service reads its config at startup "
+            "and connects to the catalog database on port 5432.\n"
+            "[assistant]: Got it.\n"
+            "[user]: Can you check if the fix would resolve the connection issue?\n"
+            "[assistant]: If we deploy the fix, the sync service would have everything "
+            "configured correctly before the API starts. "
+            "You would need to restart the service to pick up config changes mid-session.\n"
+            "[user]: OK, makes sense. The current batch size is 500 items."
+        ),
+        "assertions": {
+            "must_contain_any": [["config", "startup"], ["5432"], ["500", "batch"]],
+            "min_must_contain_hits": 2,
+            "must_not_contain": [
+                "would have everything configured",
+                "would need to restart",
+            ],
+            "max_facts": 5,
+        },
+    },
+    {
+        "id": "conversational_approval_skipped",
+        "description": "Transient permission requests and vague approvals not extracted as facts",
+        "thread_text": (
+            "Session date: 2024-08-15\n"
+            "[user]: You can go ahead and update the catalog schema when it is ready.\n"
+            "[assistant]: Want me to apply the migration once the test suite passes? "
+            "Also, the interlibrary loan agreement with Springfield was signed last Thursday.\n"
+            "[user]: Yes, do that. Is the schema change safe?"
+        ),
+        "assertions": {
+            "must_contain_any": [["Springfield", "interlibrary loan"]],
+            "must_not_contain": [
+                "go ahead",
+                "permission",
+                "approval",
+                "when it is ready",
+                "schema change safe",
+            ],
+            "must_contain_pattern": [r"2024-08-0[8-9]|2024-08-1[0-1]|August\s*(8|9|10|11)"],
+            "max_facts": 3,
+        },
+    },
+    {
+        "id": "control_and_test_text_skipped",
+        "description": "Control-plane instrumentation, test flags, and monitoring chatter not extracted as facts",
+        "thread_text": (
+            "Session date: 2024-09-01\n"
+            "[assistant]: I simulated an incorrect catalog record to verify the detection pipeline works end to end. "
+            "The quality check flagged it correctly.\n"
+            "[user]: Good. The Springfield branch processes about 150 interlibrary loans per month.\n"
+            "[assistant]: Noted. Healthcheck passed, all services nominal. No action needed on my end."
+        ),
+        "assertions": {
+            "must_contain_any": [["Springfield", "150"], ["interlibrary loan"]],
+            "must_not_contain": [
+                "simulated",
+                "detection pipeline",
+                "quality check",
+                "healthcheck",
+                "all services nominal",
+            ],
+            "max_facts": 3,
+        },
+    },
+    {
+        "id": "vague_meta_conversation_skipped",
+        "description": "Vague meta-conversation about review process not extracted as durable facts",
+        "thread_text": (
+            "Session date: 2024-09-15\n"
+            "[user]: Do you have tests for this?\n"
+            "[assistant]: Yes, I added unit tests for the schema migration.\n"
+            "[user]: Is your change safe and defensive?\n"
+            "[assistant]: Yes, the migration uses a three-step rollback guard. "
+            "The Springfield branch catalog has 12,000 active records in the system.\n"
+            "[user]: OK good."
+        ),
+        "assertions": {
+            "must_contain_any": [["Springfield", "12,000"]],
+            "must_not_contain": [
+                "have tests for",
+                "change safe",
+                "change being safe",
+                "concerned about",
+            ],
+            "max_facts": 4,
+        },
+    },
+    {
+        "id": "generic_platform_behavior_skipped",
+        "description": "Generic platform behavior instructions not extracted as conversation-specific facts",
+        "thread_text": (
+            "Session date: 2024-10-01\n"
+            "[user]: Why is the search service not available?\n"
+            "[assistant]: The search service reads its configuration at startup. "
+            "You would need to restart the session to pick up a newly registered service endpoint. "
+            "By the way, the Springfield branch has 3 full-time catalogers and handles about 400 new acquisitions per week."
+        ),
+        "assertions": {
+            "must_contain_any": [["Springfield", "3"], ["400", "acquisitions"]],
+            "must_not_contain": [
+                "reads its configuration at startup",
+                "restart the session",
+                "newly registered service",
+            ],
+            "max_facts": 4,
+        },
+    },
 ]
 
 

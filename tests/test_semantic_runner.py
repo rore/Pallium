@@ -46,7 +46,7 @@ class VariantAwareStubLLMProvider:
                     "key_finding_text": "arrival-time ordering missed hold updates during sync delays",
                 }
             )
-        elif '[quality-flag: review_only] Verdict: the previous finding was too vague to keep as durable memory.' in user_prompt:
+        elif 'Verdict: the previous finding was too vague to keep as durable memory.' in user_prompt:
             parsed_json.update(
                 {
                     "summary": "Review verdict",
@@ -54,6 +54,7 @@ class VariantAwareStubLLMProvider:
                     "investigation_text": "the previous finding was too vague to keep as durable memory",
                     "investigation_evidence_text": "Verdict: the previous finding was too vague to keep as durable memory.",
                     "key_finding_text": "the previous finding was too vague to keep as durable memory",
+                    "is_low_value_meta": True,
                 }
             )
         elif 'Task complete. No Slack message needed. Nothing new to report.' in user_prompt:
@@ -329,15 +330,15 @@ def test_is_low_value_meta_covers_greeting_heartbeat_capability_noise(tmp_path: 
     assert summary["per_variant"][DEFAULT_VARIANT]["signal_metrics"]["is_low_value_meta"]["correct"] == 7
 
 
-def test_run_semantic_eval_rejects_control_tagged_meta_verdict(tmp_path: Path) -> None:
+def test_run_semantic_eval_rejects_low_value_meta_investigation(tmp_path: Path) -> None:
     input_file = tmp_path / "items.jsonl"
     output_dir = tmp_path / "output"
     _write_input_file(
         input_file,
         _signal_record(
             "meta-verdict-1",
-            "[quality-flag: review_only] Verdict: the previous finding was too vague to keep as durable memory.",
-            {},
+            "Verdict: the previous finding was too vague to keep as durable memory.",
+            {"is_low_value_meta": True},
             expected_kind=None,
         ),
     )
