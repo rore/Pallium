@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-04-14
+2026-04-16
 
 ## Repo Snapshot
 
@@ -110,6 +110,12 @@
   - thread summary + task checkpoint combined into single LLM call
   - vector index batch saves — one save per processing cycle instead of per-item
   - thread rebuild storage queries batched from O(N) to O(1)
+- operational scale-hardening slice is shipped for the current SQLite-backed runtime:
+  - hot-path secondary indexes added for source item claims, thread lookups, relation traversals, index-entry scans, thread rebuild leases, and package-claim ordering
+  - vector retrieval now batch-hydrates index entries through storage instead of per-hit lookup loops
+  - worker logging uses a summary-only processing result path; full item-processing hydration remains available for API/tests/debug inspection
+  - package claim ordering now uses denormalized `source_item_created_at` on `package_processing_status`, avoiding a join on every claim and backfilling legacy rows at startup
+  - vector reconciliation is now bounded in both directions: SQLite paging for forward fill and batched stale-usearch cleanup for reverse repair
 - routing module structural refactoring is shipped:
   - `agent_conversation_memory_routing.py` (~168KB) decomposed into 6 focused modules
   - extracted: routing_constants, routing_signals, routing_trace, routing_policy, routing_scoring, routing_selection

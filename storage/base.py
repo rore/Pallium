@@ -409,6 +409,20 @@ class StorageProvider(ABC):
         """Get a single index entry by ID. Used by VectorRetrievalProvider to hydrate hits."""
         raise NotImplementedError
 
+    def get_index_entries(self, index_entry_ids: list[str]) -> dict[str, IndexEntry]:
+        """Batch variant: returns {index_entry_id: IndexEntry} for existing IDs.
+
+        Default implementation calls the single-entry lookup in a loop.
+        Backends may override with a single-query implementation.
+        """
+        result: dict[str, IndexEntry] = {}
+        for index_entry_id in index_entry_ids:
+            try:
+                result[index_entry_id] = self.get_index_entry(index_entry_id)
+            except KeyError:
+                continue
+        return result
+
     @abstractmethod
     def find_index_entry(
         self, target_kind: str, target_id: str, index_type: str, text_view_name: str
@@ -420,6 +434,25 @@ class StorageProvider(ABC):
     def list_index_entries_by_type(self, index_type: str) -> list[IndexEntry]:
         """List all index entries of a given type (e.g., 'vector')."""
         raise NotImplementedError
+
+    def list_index_entries_by_type_page(
+        self,
+        index_type: str,
+        *,
+        after_id: str | None = None,
+        limit: int | None = None,
+    ) -> list[IndexEntry]:
+        """Page through index entries of a given type in stable ID order.
+
+        Default implementation materializes the full list and slices in memory.
+        Backends may override with a single-query implementation.
+        """
+        entries = sorted(self.list_index_entries_by_type(index_type), key=lambda entry: entry.id)
+        if after_id is not None:
+            entries = [entry for entry in entries if entry.id > after_id]
+        if limit is not None:
+            return entries[:limit]
+        return entries
 
     @abstractmethod
     def count_index_entries_by_type(self, index_type: str) -> int:

@@ -86,6 +86,7 @@ class PalliumService:
             persist_fn=self._persist_process_result,
             supersede_fn=self.supersede_memory_object,
             get_item_processing_fn=self.get_item_processing,
+            get_item_processing_summary_fn=self.get_item_processing_summary,
         )
         self._consolidation_runner = ConsolidationRunner(
             storage=storage,
@@ -201,6 +202,9 @@ class PalliumService:
     def get_item_processing(self, source_item_id: str) -> ItemProcessingResult:
         return self._build_processing_result(self._storage.get_source_item(source_item_id))
 
+    def get_item_processing_summary(self, source_item_id: str) -> ItemProcessingResult:
+        return self._build_processing_summary_result(self._storage.get_source_item(source_item_id))
+
     def get_queue_health(
         self,
         *,
@@ -296,6 +300,19 @@ class PalliumService:
         max_attempts: int = DEFAULT_PROCESSING_MAX_ATTEMPTS,
     ) -> ItemProcessingResult | None:
         return self._processor.process_next_source_item(
+            worker_id=worker_id,
+            lease_seconds=lease_seconds,
+            max_attempts=max_attempts,
+        )
+
+    def process_next_source_item_summary(
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: int = DEFAULT_PROCESSING_LEASE_SECONDS,
+        max_attempts: int = DEFAULT_PROCESSING_MAX_ATTEMPTS,
+    ) -> ItemProcessingResult | None:
+        return self._processor.process_next_source_item_summary(
             worker_id=worker_id,
             lease_seconds=lease_seconds,
             max_attempts=max_attempts,
@@ -402,6 +419,26 @@ class PalliumService:
             index_entry_ids=[item.id for item in index_entries],
             failure_category=observability.get("failure_category"),
             memory_object_types=list(observability.get("memory_object_types", [item.type for item in memory_objects])),
+            thread_rebuild_requested=bool(observability.get("thread_rebuild_requested", False)),
+            thread_rebuild_completed=bool(observability.get("thread_rebuild_completed", False)),
+            produced_memory_provenance=list(observability.get("produced_memory_provenance", [])),
+        )
+
+    def _build_processing_summary_result(self, source_item: SourceItem) -> ItemProcessingResult:
+        observability = _observability_state(source_item)
+        return ItemProcessingResult(
+            source_item_id=source_item.id,
+            use_case=source_item.use_case,
+            processing_status=source_item.processing_status,
+            processing_attempts=source_item.processing_attempts,
+            processing_claimed_at=source_item.processing_claimed_at,
+            processing_completed_at=source_item.processing_completed_at,
+            processing_error=source_item.processing_error,
+            memory_object_ids=[],
+            relation_ids=[],
+            index_entry_ids=[],
+            failure_category=observability.get("failure_category"),
+            memory_object_types=list(observability.get("memory_object_types", [])),
             thread_rebuild_requested=bool(observability.get("thread_rebuild_requested", False)),
             thread_rebuild_completed=bool(observability.get("thread_rebuild_completed", False)),
             produced_memory_provenance=list(observability.get("produced_memory_provenance", [])),

@@ -326,6 +326,15 @@ class SQLiteStorageProvider(
                 raise KeyError(index_entry_id)
             return self._to_index_entry(record)
 
+    def get_index_entries(self, index_entry_ids: list[str]) -> dict[str, IndexEntry]:
+        if not index_entry_ids:
+            return {}
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(IndexEntryRecord).where(IndexEntryRecord.id.in_(index_entry_ids))
+            ).all()
+        return {record.id: self._to_index_entry(record) for record in records}
+
     def find_index_entry(self, target_kind, target_id, index_type, text_view_name):
         with self._session_factory() as session:
             row = session.scalars(
@@ -343,6 +352,26 @@ class SQLiteStorageProvider(
             records = session.scalars(
                 select(IndexEntryRecord).where(IndexEntryRecord.index_type == index_type)
             ).all()
+        return [self._to_index_entry(record) for record in records]
+
+    def list_index_entries_by_type_page(
+        self,
+        index_type: str,
+        *,
+        after_id: str | None = None,
+        limit: int | None = None,
+    ) -> list[IndexEntry]:
+        with self._session_factory() as session:
+            statement = (
+                select(IndexEntryRecord)
+                .where(IndexEntryRecord.index_type == index_type)
+                .order_by(IndexEntryRecord.id.asc())
+            )
+            if after_id is not None:
+                statement = statement.where(IndexEntryRecord.id > after_id)
+            if limit is not None:
+                statement = statement.limit(limit)
+            records = session.scalars(statement).all()
         return [self._to_index_entry(record) for record in records]
 
     def count_index_entries_by_type(self, index_type: str) -> int:

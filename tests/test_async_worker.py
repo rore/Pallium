@@ -189,6 +189,39 @@ def test_run_worker_once_processes_pending_item(test_db_url: str, capsys) -> Non
     assert re.search(r'^\d{4}-\d{2}-\d{2}T.+ \[processor\] worker_id=worker-test source_item=', runtime_output, re.MULTILINE)
 
 
+def test_run_worker_uses_processing_summary_path(test_db_url: str, monkeypatch) -> None:
+    service = _build_service(test_db_url)
+    service.ingest_item(
+        source_type='decision_note',
+        source_id='worker-summary-1',
+        content_type='text/plain',
+        content='Decision: summary path should avoid full processing hydration.',
+        metadata=None,
+        use_case='demo_agent_memory',
+        artifact_kind='assistant_output',
+        role='assistant',
+    )
+
+    def fail_if_full_processing_used(_source_item_id: str):
+        raise AssertionError('worker should not call full processing hydration')
+
+    service._processor._get_item_processing = fail_if_full_processing_used
+    monkeypatch.setattr('app.worker.build_service', lambda config, **_kw: service)
+
+    exit_code = run_worker(
+        ['--once', '--worker-id', 'worker-summary-test'],
+        config=AppConfig(
+            storage_backend='sqlite',
+            sqlite_url=test_db_url,
+            default_use_case='demo_agent_memory',
+            vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)),
+        ),
+        install_signal_handlers=False,
+    )
+
+    assert exit_code == 0
+
+
 def test_run_worker_stops_cleanly_when_stop_is_requested(test_db_url: str) -> None:
     exit_code = run_worker(
         ['--worker-id', 'worker-stop-test'],

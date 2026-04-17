@@ -721,6 +721,10 @@ class SQLiteQueueMixin:
         skip_set = set(skip_packages or [])
         now = utc_now()
         with self._session_factory.begin() as session:
+            source_record = session.get(SourceItemRecord, source_item_id)
+            source_item_created_at = None
+            if source_record is not None:
+                source_item_created_at = self._normalize_datetime(source_record.created_at) or source_record.created_at
             for pkg in package_names:
                 status = "skipped" if pkg in skip_set else "pending"
                 session.add(
@@ -729,6 +733,7 @@ class SQLiteQueueMixin:
                         package_name=pkg,
                         status=status,
                         attempts=0,
+                        source_item_created_at=source_item_created_at,
                         created_at=now,
                     )
                 )
@@ -755,7 +760,6 @@ class SQLiteQueueMixin:
             WHERE id = (
                 SELECT pps.id
                 FROM package_processing_status pps
-                JOIN source_items si ON si.id = pps.source_item_id
                 WHERE (
                     (pps.status = 'pending'
                         AND COALESCE(pps.attempts, 0) < :max_attempts
@@ -769,7 +773,9 @@ class SQLiteQueueMixin:
                         AND pps.lease_expires_at IS NOT NULL
                         AND pps.lease_expires_at <= :claimed_at)
                 )
-                ORDER BY si.created_at ASC, si.id ASC, pps.package_name ASC
+                ORDER BY COALESCE(pps.source_item_created_at, pps.created_at) ASC,
+                         pps.source_item_id ASC,
+                         pps.package_name ASC
                 LIMIT 1
             )
             RETURNING id, source_item_id, package_name

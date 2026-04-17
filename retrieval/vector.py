@@ -77,20 +77,23 @@ class VectorRetrievalProvider(RetrievalProvider):
 
         # 3. Resolve entry_ids to IndexEntries, handle stale entries
         resolved_hits: list[tuple[IndexEntry, float]] = []
-        stale_entry_ids: list[str] = []
+        index_entries = self._storage.get_index_entries([entry_id for entry_id, _similarity in raw_hits])
+        if not isinstance(index_entries, dict):
+            index_entries = {}
 
         for entry_id, similarity in raw_hits:
-            try:
-                index_entry = self._storage.get_index_entry(entry_id)
-            except KeyError:
-                # Stale entry: index entry deleted by retention
-                logger.debug("Stale vector index entry %s; scheduling lazy removal", entry_id)
+            index_entry = index_entries.get(entry_id)
+            if index_entry is None:
                 try:
-                    self._vector_index.remove(entry_id)
-                    stale_entry_ids.append(entry_id)
+                    index_entry = self._storage.get_index_entry(entry_id)
                 except KeyError:
-                    pass  # Already removed
-                continue
+                    # Stale entry: index entry deleted by retention
+                    logger.debug("Stale vector index entry %s; scheduling lazy removal", entry_id)
+                    try:
+                        self._vector_index.remove(entry_id)
+                    except KeyError:
+                        pass  # Already removed
+                    continue
             resolved_hits.append((index_entry, similarity))
 
         # Stale entry removal is in-memory only — reconcile handles disk persistence.

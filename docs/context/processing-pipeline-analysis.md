@@ -2,6 +2,27 @@
 
 Date: 2026-03-23
 
+## Update: 2026-04-16
+
+This document is still useful as a latency and architecture analysis, but parts of
+the implementation details below are now historical.
+
+The current runtime has already shipped a first scale-hardening slice:
+
+- processor wrapper default poll interval now matches worker default at `0.2s`
+- worker logging uses a summary-only processing result path instead of always
+  hydrating full `ItemProcessingResult` trees
+- vector retrieval batch-loads index entries via storage when possible
+- vector reconciliation is batch-bounded in both directions instead of doing a
+  full reverse stale scan every mismatch cycle
+- package-task claims now order from denormalized `source_item_created_at`
+  stored on `package_processing_status`
+- SQLite now has matching secondary indexes for queue claims, thread scans,
+  relation traversals, index-entry scans, and thread rebuild scope claims
+
+Read the rest of this document as background on the original bottlenecks and
+tradeoffs, not as an exact statement of the current hot-path implementation.
+
 ## Problem Statement
 
 When a user sends a message and then queries, the previous message's processing may not have completed. Memories aren't available for retrieval until processing finishes. In chat-lite testing, this manifests as `should_inject: False` on turns where relevant memories should exist.
