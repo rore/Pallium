@@ -125,6 +125,7 @@ def _select_final_candidates(
     return selected_candidates, summary
 
 MIN_SOURCE_HIT_SLOTS = 3
+_ACTIVE_TASK_CHECKPOINT_WORK_SIGNALS = frozenset({"blocker", "next_step"})
 
 
 def _select_compatible_recall_candidates(
@@ -1217,7 +1218,15 @@ def _candidate_is_injection_eligible(
     # lower-level memories.
     if intent != "work_resumption":
         query_ct = content_tokens(query_text)
-        if query_ct and not _candidate_has_content_overlap(item, query_text, query_ct=query_ct):
+        has_active_task_checkpoint_signals = (
+            item.type == "task_checkpoint"
+            and bool(set(candidate.get("work_signal_types") or ()) & _ACTIVE_TASK_CHECKPOINT_WORK_SIGNALS)
+        )
+        if (
+            query_ct
+            and not has_active_task_checkpoint_signals
+            and not _candidate_has_content_overlap(item, query_text, query_ct=query_ct)
+        ):
             return False
     if item.result_kind == "source_hit":
         if normalize_for_index(str(item.excerpt or "")) == normalize_for_index(query_text):
