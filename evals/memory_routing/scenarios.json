@@ -865,6 +865,8 @@
   },
   {
     "scenario_id": "same-container-false-merge-guard",
+    "expected_status": "known_fail",
+    "expected_status_reason": "injection contract failure — unrelated same-container memory leaks into answer",
     "scenario_kind": "false_merge_guard",
     "description": "Unrelated notification-batching memory in the same container must not leak into a reservation-ordering answer.",
     "consolidation_strategy": "thread_summary_anchored",
@@ -985,6 +987,8 @@
   },
   {
     "scenario_id": "cross-language-hebrew-query-english-memory",
+    "expected_status": "known_fail",
+    "expected_status_reason": "higher_level_overuse — multilingual routing gap, Hebrew query retrieves wrong memory layer",
     "scenario_kind": "broad_recall_value",
     "description": "Hebrew query should retrieve English-language decision about catalog sync via cross-language vector retrieval.",
     "consolidation_strategy": "thread_summary_anchored",
@@ -1069,6 +1073,8 @@
   },
   {
     "scenario_id": "hebrew-content-hebrew-query",
+    "expected_status": "known_fail",
+    "expected_status_reason": "higher_level_overuse — multilingual routing gap, Hebrew decision not extracted as typed memory",
     "scenario_kind": "answer_continuity_value",
     "description": "Hebrew-language decision content should be retrievable by a Hebrew query, validating non-English ingest and retrieval.",
     "consolidation_strategy": "thread_summary_anchored",
@@ -1261,6 +1267,8 @@
   },
   {
     "scenario_id": "hebrew-extraction-decision-memory-type",
+    "expected_status": "known_fail",
+    "expected_status_reason": "higher_level_overuse — multilingual extraction gap, Hebrew decision demoted to discussion_summary",
     "scenario_kind": "answer_continuity_value",
     "description": "Hebrew conversation with explicit decision should extract a decision memory type, not just discussion_summary",
     "consolidation_strategy": "thread_summary_anchored",

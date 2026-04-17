@@ -315,6 +315,16 @@ def _run_scenario(
         "consolidation_run": _serialize_consolidation_result(consolidation_result),
     }
 
+    expected_status = scenario.get("expected_status", "pass")
+    scenario_failed = not policy_success or not query_contract["injection_contract"]["contract_success"]
+    if expected_status == "known_fail":
+        result["effective_status"] = "known_fail_unexpected_pass" if not scenario_failed else "known_fail_matched"
+    else:
+        result["effective_status"] = "fail" if scenario_failed else "pass"
+    if scenario.get("expected_status_reason"):
+        result["expected_status_reason"] = scenario["expected_status_reason"]
+    return result
+
 def _scenario_runtime_context(scenario: dict[str, Any]) -> dict[str, Any]:
     explicit_runtime_context = scenario.get("runtime_context") or (scenario.get("current_query") or {}).get("runtime_context")
     if isinstance(explicit_runtime_context, dict):
@@ -392,6 +402,9 @@ def _build_summary(*, results: list[dict[str, Any]], scenario_file: Path, config
         "memory_backed_wins": sum(1 for row in results if row["winner"] == "memory_backed"),
         "false_merge_failures": sum(1 for row in results if row["false_merge_occurred"]),
         "higher_level_overuse_failures": sum(1 for row in results if row["higher_level_overuse"]),
+        "known_fail_matched": sum(1 for row in results if row.get("effective_status") == "known_fail_matched"),
+        "known_fail_unexpected_pass": sum(1 for row in results if row.get("effective_status") == "known_fail_unexpected_pass"),
+        "new_failures": sum(1 for row in results if row.get("effective_status") == "fail"),
         "by_intent": [],
     }
     by_intent: dict[str, list[dict[str, Any]]] = defaultdict(list)

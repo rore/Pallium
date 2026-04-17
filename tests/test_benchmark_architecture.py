@@ -67,6 +67,10 @@ def test_aggregate_summary_reports_hard_gate_rollups_and_zero_replay_assets() ->
         'coverage_complete': True,
         'missing_lanes': [],
         'all_green': True,
+        'no_new_regressions': True,
+        'new_failures': 0,
+        'known_fail_matched': 0,
+        'known_fail_unexpected_pass': 0,
         'failing_lanes': [],
     }
     assert summary['lane_aggregates']['contract']['successes'] == 1
@@ -89,6 +93,10 @@ def test_hard_gate_summary_fails_closed_when_required_coverage_is_missing() -> N
         'coverage_complete': False,
         'missing_lanes': ['contract', 'trace'],
         'all_green': False,
+        'no_new_regressions': True,
+        'new_failures': 0,
+        'known_fail_matched': 0,
+        'known_fail_unexpected_pass': 0,
         'failing_lanes': [],
     }
 

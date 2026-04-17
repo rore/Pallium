@@ -160,7 +160,7 @@ def build_suite_summary(
         "hard_gate_lanes": [lane.value for lane in config.hard_gate_lanes],
         "lane_aggregates": lane_aggregates,
         "tier_aggregates": tier_aggregates,
-        "hard_gate_summary": _build_hard_gate_summary(lane_aggregates, config.hard_gate_lanes),
+        "hard_gate_summary": _build_hard_gate_summary(lane_aggregates, config.hard_gate_lanes, results),
         "tuning_summary": _build_tuning_summary(lane_aggregates, config.hard_gate_lanes),
         "operational_summary": _build_operational_summary(results),
         "replay_summary": {
@@ -177,7 +177,7 @@ def build_aggregate_summary(
 ) -> dict[str, Any]:
     lane_aggregates = _build_lane_aggregates(results=results, suite_id=None)
     tier_aggregates = _build_tier_aggregates(results=results, default_tier=None)
-    hard_gate_summary = _build_hard_gate_summary(lane_aggregates, HARD_GATE_LANES)
+    hard_gate_summary = _build_hard_gate_summary(lane_aggregates, HARD_GATE_LANES, results)
     tuning_summary = _build_tuning_summary(lane_aggregates, HARD_GATE_LANES)
     operational_summary = _build_operational_summary(results)
     dominant_lane = _dominant_lane(lane_aggregates)
@@ -245,6 +245,7 @@ def _build_tier_aggregates(
 def _build_hard_gate_summary(
     lane_aggregates: dict[str, dict[str, Any]],
     hard_gate_lanes: tuple[BenchmarkLane, ...],
+    results: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     missing_lanes = [
         lane.value
@@ -257,11 +258,27 @@ def _build_hard_gate_summary(
         if lane_aggregates[lane.value]["failures"] > 0
     ]
     coverage_complete = not missing_lanes
+    known_fail_matched = 0
+    known_fail_unexpected_pass = 0
+    new_failures = 0
+    if results is not None:
+        for row in results:
+            status = row.get("effective_status")
+            if status == "known_fail_matched":
+                known_fail_matched += 1
+            elif status == "known_fail_unexpected_pass":
+                known_fail_unexpected_pass += 1
+            elif status == "fail":
+                new_failures += 1
     return {
         "lanes": [lane.value for lane in hard_gate_lanes],
         "coverage_complete": coverage_complete,
         "missing_lanes": missing_lanes,
         "all_green": coverage_complete and not failing_lanes,
+        "no_new_regressions": new_failures == 0,
+        "new_failures": new_failures,
+        "known_fail_matched": known_fail_matched,
+        "known_fail_unexpected_pass": known_fail_unexpected_pass,
         "failing_lanes": failing_lanes,
     }
 

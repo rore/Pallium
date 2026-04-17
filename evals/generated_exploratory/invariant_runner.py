@@ -740,6 +740,7 @@ def _build_summary(
         "quality_misses": quality_misses,
         "known_fail_matched": known_fail_matched,
         "known_fail_unexpected_pass": known_fail_unexpected_pass,
+        "new_failures": violated - known_fail_matched,
         "by_tier": by_tier,
         "by_invariant": by_invariant,
         "failed_scenarios": failed_scenarios,

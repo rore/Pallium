@@ -398,6 +398,29 @@ def _run_scenario(
         "expected_layer_in_results": expected_layer_in_results,
         "query_topic_tokens_empty": query_topic_tokens_empty,
     }
+
+    expected_status = scenario.get("expected_status", "pass")
+    trace_failure_families = {
+        "retrieval_recall_failure", "routing_layer_choice_failure",
+        "low_value_promotion_failure", "thread_rebuild_churn_failure",
+        "stale_memory_failure", "wrong_memory_selection_failure", "privacy_leak_failure",
+    }
+    contract_failed = not (
+        query_contract["query_contract_consistent"]
+        and query_contract["injection_contract"]["contract_success"]
+        and thin_agent_boundary_success
+    )
+    trace_failed = bool(set(failure_families) & trace_failure_families) if failure_families else not (
+        intent_match and query_family_match and top_layer_match
+    )
+    hard_gate_failed = contract_failed or trace_failed
+    if expected_status == "known_fail":
+        result["effective_status"] = "known_fail_unexpected_pass" if not hard_gate_failed else "known_fail_matched"
+    else:
+        result["effective_status"] = "fail" if hard_gate_failed else "pass"
+    if scenario.get("expected_status_reason"):
+        result["expected_status_reason"] = scenario["expected_status_reason"]
+    return result
 def _generate_continuation(
     *,
     answer_provider: LLMProvider,
@@ -916,6 +939,9 @@ def _build_summary(
         "scoring_dimensions": list(DIMENSION_ORDER),
         "failure_family_counts": family_counts,
         "gap_signal_counts": family_counts,
+        "known_fail_matched": sum(1 for row in results if row.get("effective_status") == "known_fail_matched"),
+        "known_fail_unexpected_pass": sum(1 for row in results if row.get("effective_status") == "known_fail_unexpected_pass"),
+        "new_failures": sum(1 for row in results if row.get("effective_status") == "fail"),
         "dominant_tuning_bottleneck": dominant_bottleneck,
         "biggest_gap": dominant_bottleneck,
         "dominant_bottleneck_implication": dominant_bottleneck_implication(dominant_bottleneck),
