@@ -13,7 +13,7 @@ class _NullTypeButTypedFieldsProvider:
         payload = {
             "summary": "Publish process status summaries in 30-minute batches to reduce downstream noise.",
             "candidate_type": None,
-            "decision_text": "Publish process status summaries in 30-minute batches.",
+            "decision_text": "Publish process status summaries in 30-minute batches",
             "decision_evidence_text": "Publish process status summaries in 30-minute batches to reduce downstream noise.",
             "investigation_text": None,
             "investigation_evidence_text": None,
@@ -92,7 +92,7 @@ def test_typed_fields_promote_candidate_type_when_llm_omits_it() -> None:
 
     decisions = [memory for memory in result.memory_objects if memory.type == "decision"]
     assert len(decisions) == 1
-    assert decisions[0].payload["decision"] == "Publish process status summaries in 30-minute batches."
+    assert decisions[0].payload["decision"] == "Publish process status summaries in 30-minute batches"
 
 
 def test_explicit_assistant_output_decision_falls_back_when_llm_returns_summary_only() -> None:
