@@ -31,7 +31,7 @@ from core.models import (
 from core.type_registry import TypeRegistration, TypeRegistry
 from providers.llm.base import LLMProvider, LLMJsonResponse
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
-from semantic.common import normalize_for_index
+from semantic.common import fact_statement_is_quality_viable, normalize_for_index
 
 
 logger = logging.getLogger(__name__)
@@ -301,7 +301,7 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
             subject = str(fact.get("subject") or "").strip()
             statement = str(fact.get("statement", "")).strip()
             category = str(fact.get("category", "")).strip()
-            if not statement:
+            if not fact_statement_is_quality_viable(statement):
                 continue
 
             memory_id = new_id()

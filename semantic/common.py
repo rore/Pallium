@@ -53,6 +53,7 @@ INVESTIGATION_RATIONALE_SPLITTERS = (
 )
 INVESTIGATION_SOURCE_TYPES = {"investigation_summary", "assistant_artifact", "tool_summary", "incident_note", "assistant_output"}
 INVESTIGATION_ARTIFACT_KINDS = {"assistant_output", "tool_use_summary"}
+MARKDOWN_LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*+]|•)\s+")
 
 
 @dataclass(frozen=True)
@@ -249,6 +250,39 @@ def deterministic_extraction(source_item: SourceItem) -> SemanticExtraction:
     return SemanticExtraction(summary=summary)
 
 
+def _looks_like_markdown_table_cell(text: str) -> bool:
+    stripped = text.strip()
+    return bool(
+        stripped
+        and "\n" not in stripped
+        and stripped.startswith("|")
+        and stripped.endswith("|")
+        and stripped.count("|") >= 2
+    )
+
+
+def _typed_memory_payload_is_quality_viable(*texts: str | None) -> bool:
+    for text in texts:
+        if not text:
+            continue
+        if _looks_like_markdown_table_cell(text):
+            return False
+        if MARKDOWN_LIST_PREFIX_RE.match(text.strip()):
+            return False
+    return True
+
+
+def fact_statement_is_quality_viable(statement: str) -> bool:
+    stripped = statement.strip()
+    if not stripped:
+        return False
+    if _looks_like_markdown_table_cell(stripped):
+        return False
+    if MARKDOWN_LIST_PREFIX_RE.match(stripped):
+        return False
+    return True
+
+
 def _normalize_for_containment(text: str) -> str:
     return " ".join(text.lower().split())
 
@@ -318,6 +352,10 @@ def build_process_result(
         extraction.candidate_type == "decision"
         and extraction.decision_text
         and extraction.decision_evidence_text
+        and _typed_memory_payload_is_quality_viable(
+            extraction.decision_text,
+            extraction.decision_evidence_text,
+        )
         and has_grounded_decision_evidence(source_item, extraction.decision_evidence_text)
     ):
         canonical_key = normalize_for_index(extraction.decision_text)
@@ -355,6 +393,10 @@ def build_process_result(
         extraction.candidate_type == "investigation_outcome"
         and extraction.investigation_text
         and extraction.investigation_evidence_text
+        and _typed_memory_payload_is_quality_viable(
+            extraction.investigation_text,
+            extraction.investigation_evidence_text,
+        )
         and has_grounded_investigation_evidence(source_item, extraction.investigation_evidence_text)
     ):
         canonical_key = normalize_for_index(extraction.investigation_text)

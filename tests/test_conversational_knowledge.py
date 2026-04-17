@@ -457,6 +457,80 @@ def test_dedup_extracted_facts():
     assert result[1]["subject"] == "Bob"
 
 
+def test_build_thread_summary_skips_markdown_fragment_fact() -> None:
+    from capabilities.thread_aggregation import ThreadAggregate
+
+    facts = [
+        {"subject": "", "statement": "| Can do |", "category": "activity"},
+        {"subject": "Alice", "statement": "Alice has 3 cats", "category": "personal"},
+    ]
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider(facts=facts))
+    items = [
+        SourceItem(
+            source_type="chat", source_id="frag-1",
+            content_type="text/plain", content="Capability table discussed.",
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+        SourceItem(
+            source_type="chat", source_id="frag-2",
+            content_type="text/plain", content="Alice has 3 cats.",
+            role="assistant", artifact_kind="assistant_output",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+    ]
+    aggregate = ThreadAggregate(
+        container_ref="c1", thread_ref="t1",
+        source_items=items, source_item_ids=[i.id for i in items],
+        latest_occurred_at=utc_now(), aggregate_text="", visibility="public",
+    )
+
+    result = plugin.build_thread_summary(aggregate, conclusions=[])
+
+    assert [memory.payload["statement"] for memory in result.memory_objects] == ["Alice has 3 cats"]
+
+
+def test_build_thread_summary_skips_markdown_list_fact_in_non_english_text() -> None:
+    from capabilities.thread_aggregation import ThreadAggregate
+
+    facts = [
+        {
+            "subject": "מחזור חיי סשן",
+            "statement": "- צריך סשן חדש כדי לקלוט שרת MCP שנוסף באמצע הסשן",
+            "category": "activity",
+        },
+        {"subject": "Alice", "statement": "Alice has 3 cats", "category": "personal"},
+    ]
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider(facts=facts))
+    items = [
+        SourceItem(
+            source_type="chat", source_id="modal-1",
+            content_type="text/plain", content="התנהגות הסשן נדונה.",
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+        SourceItem(
+            source_type="chat", source_id="modal-2",
+            content_type="text/plain", content="Alice has 3 cats.",
+            role="assistant", artifact_kind="assistant_output",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+    ]
+    aggregate = ThreadAggregate(
+        container_ref="c1", thread_ref="t1",
+        source_items=items, source_item_ids=[i.id for i in items],
+        latest_occurred_at=utc_now(), aggregate_text="", visibility="public",
+    )
+
+    result = plugin.build_thread_summary(aggregate, conclusions=[])
+
+    assert [memory.payload["statement"] for memory in result.memory_objects] == ["Alice has 3 cats"]
+
+
 # ── Tests: thread_ref in payload and reconcile_process_result ─────────────
 
 def test_build_thread_summary_includes_thread_ref_in_payload():

@@ -382,6 +382,90 @@ def test_llm_plugin_uses_discussion_summary_when_typed_output_lacks_evidence_tex
     result = plugin.process_item(source_item)
 
     assert result.memory_objects[0].type == "discussion_summary"
+
+
+def test_llm_plugin_demotes_markdown_table_cell_investigation_fragment() -> None:
+    plugin = LLMAgentMemoryPlugin(
+        provider=StubLLMProvider(
+            response=LLMJsonResponse(
+                raw_text='{"summary":"Capability comparison table.","candidate_type":"investigation_outcome","decision_text":null,"decision_evidence_text":null,"investigation_text":"| Can do |","investigation_evidence_text":"| Can do |","rationale_text":null,"is_low_value_meta":false,"constraint_text":null,"next_step_text":null,"blocker_text":null,"progress_text":null,"key_finding_text":null}',
+                parsed_json={
+                    "summary": "Capability comparison table.",
+                    "candidate_type": "investigation_outcome",
+                    "decision_text": None,
+                    "decision_evidence_text": None,
+                    "investigation_text": "| Can do |",
+                    "investigation_evidence_text": "| Can do |",
+                    "rationale_text": None,
+                    "is_low_value_meta": False,
+                    "constraint_text": None,
+                    "next_step_text": None,
+                    "blocker_text": None,
+                    "progress_text": None,
+                    "key_finding_text": None,
+                },
+            )
+        )
+    )
+    source_item = SourceItem(
+        source_type="assistant_output",
+        source_id="table-fragment-1",
+        content_type="text/plain",
+        content=(
+            "| Action | Can do | Can't yet do |\n"
+            "|--------|--------|-------------|\n"
+            "| Query memory | Yes - pallium_query | - |\n"
+            "| Delete/correct memory | - | No write endpoint yet |"
+        ),
+        artifact_kind="assistant_output",
+        role="assistant",
+    )
+
+    result = plugin.process_item(source_item)
+
+    assert [memory.type for memory in result.memory_objects] == ["discussion_summary"]
+
+
+def test_llm_plugin_demotes_markdown_list_fragment_in_non_english_text() -> None:
+    plugin = LLMAgentMemoryPlugin(
+        provider=StubLLMProvider(
+            response=LLMJsonResponse(
+                raw_text='{"summary":"שלבי בדיקה.","candidate_type":"investigation_outcome","decision_text":null,"decision_evidence_text":null,"investigation_text":"- אם הזיכרון שגוי: מחק או תקן אותו דרך Pallium","investigation_evidence_text":"- אם הזיכרון שגוי: מחק או תקן אותו דרך Pallium","rationale_text":null,"is_low_value_meta":false,"constraint_text":null,"next_step_text":null,"blocker_text":null,"progress_text":null,"key_finding_text":null}',
+                parsed_json={
+                    "summary": "שלבי בדיקה.",
+                    "candidate_type": "investigation_outcome",
+                    "decision_text": None,
+                    "decision_evidence_text": None,
+                    "investigation_text": "- אם הזיכרון שגוי: מחק או תקן אותו דרך Pallium",
+                    "investigation_evidence_text": "- אם הזיכרון שגוי: מחק או תקן אותו דרך Pallium",
+                    "rationale_text": None,
+                    "is_low_value_meta": False,
+                    "constraint_text": None,
+                    "next_step_text": None,
+                    "blocker_text": None,
+                    "progress_text": None,
+                    "key_finding_text": None,
+                },
+            )
+        )
+    )
+    source_item = SourceItem(
+        source_type="assistant_output",
+        source_id="list-fragment-1",
+        content_type="text/plain",
+        content=(
+            "- שאל את Pallium על אובייקט הזיכרון שנשמר\n"
+            "- בדוק את יומן הביקורת כדי לעקוב אחרי המקור\n"
+            "- אם הזיכרון שגוי: מחק או תקן אותו דרך Pallium\n"
+            "- אם הזיכרון נכון אבל מיושן: סמן לרענון"
+        ),
+        artifact_kind="assistant_output",
+        role="assistant",
+    )
+
+    result = plugin.process_item(source_item)
+
+    assert [memory.type for memory in result.memory_objects] == ["discussion_summary"]
     assert result.memory_objects[0].schema_id == "llm.discussion_summary"
 
 
