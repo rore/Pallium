@@ -39,6 +39,10 @@ Operational rule:
   subject-presence gating, and grounded statement canonicalization.
 - Phase 2b narrow same-thread burst handling is complete with explicit
   regression and eval coverage.
+- Phase 2c deterministic acceptance gating is complete for control-plane meta
+  verdict suppression, question-shaped fact rejection, and subject-prefixed
+  vague-status rejection, with targeted regressions and deterministic eval
+  coverage.
 - The repo-local raw triage working copies were removed before the first phase
   commit; use the external working sources above if rehydration is required.
 
@@ -287,6 +291,10 @@ Constraint:
 Goal:
 add deterministic guards for content that is not a pure markdown fragment but
 still should not harden into durable memory.
+
+Status:
+- complete with typed-memory suppression for control-plane/meta verdicts and
+  package-local rejection of question-shaped and subject-prefixed vague facts
 
 Primary questions:
 

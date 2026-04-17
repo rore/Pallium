@@ -32,7 +32,7 @@ from core.models import (
 from core.type_registry import TypeRegistration, TypeRegistry
 from providers.llm.base import LLMProvider, LLMJsonResponse
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
-from semantic.common import clean_markdown_artifacts, fact_statement_is_quality_viable, normalize_for_index
+from semantic.common import clean_markdown_artifacts, content_tokens, fact_statement_is_quality_viable, normalize_for_index
 
 
 logger = logging.getLogger(__name__)
@@ -217,6 +217,24 @@ def _canonicalize_fact_statement(subject: str, statement: str, source_items: lis
     return cleaned_statement
 
 
+def _is_question_like_fact(statement: str) -> bool:
+    return statement.rstrip().endswith("?")
+
+
+def _is_subject_prefixed_vague_fact(subject: str, statement: str) -> bool:
+    prefix = f"{subject}:"
+    if not subject or not statement.startswith(prefix):
+        return False
+    remainder = statement[len(prefix):].strip()
+    if not remainder:
+        return True
+    return len(content_tokens(remainder)) < 2 and not any(char.isdigit() for char in remainder)
+
+
+def _is_durable_fact_statement(subject: str, statement: str) -> bool:
+    return not _is_question_like_fact(statement) and not _is_subject_prefixed_vague_fact(subject, statement)
+
+
 class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, ConsolidationSemanticPlugin):
     """Extracts atomic facts from conversation threads and consolidates them cross-thread."""
 
@@ -370,6 +388,8 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
             if not _fact_subject_is_present(subject):
                 continue
             if not fact_statement_is_quality_viable(statement):
+                continue
+            if not _is_durable_fact_statement(subject, statement):
                 continue
 
             memory_id = new_id()

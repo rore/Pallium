@@ -46,6 +46,16 @@ class VariantAwareStubLLMProvider:
                     "key_finding_text": "arrival-time ordering missed hold updates during sync delays",
                 }
             )
+        elif '[quality-flag: review_only] Verdict: the previous finding was too vague to keep as durable memory.' in user_prompt:
+            parsed_json.update(
+                {
+                    "summary": "Review verdict",
+                    "candidate_type": "investigation_outcome",
+                    "investigation_text": "the previous finding was too vague to keep as durable memory",
+                    "investigation_evidence_text": "Verdict: the previous finding was too vague to keep as durable memory.",
+                    "key_finding_text": "the previous finding was too vague to keep as durable memory",
+                }
+            )
         elif 'Task complete. No Slack message needed. Nothing new to report.' in user_prompt:
             parsed_json.update(
                 {
@@ -317,6 +327,38 @@ def test_is_low_value_meta_covers_greeting_heartbeat_capability_noise(tmp_path: 
     assert summary["per_variant"][DEFAULT_VARIANT]["signal_cases_total"] == 7
     assert summary["per_variant"][DEFAULT_VARIANT]["signal_cases_correct"] == 7
     assert summary["per_variant"][DEFAULT_VARIANT]["signal_metrics"]["is_low_value_meta"]["correct"] == 7
+
+
+def test_run_semantic_eval_rejects_control_tagged_meta_verdict(tmp_path: Path) -> None:
+    input_file = tmp_path / "items.jsonl"
+    output_dir = tmp_path / "output"
+    _write_input_file(
+        input_file,
+        _signal_record(
+            "meta-verdict-1",
+            "[quality-flag: review_only] Verdict: the previous finding was too vague to keep as durable memory.",
+            {},
+            expected_kind=None,
+        ),
+    )
+
+    plugin = LLMAgentMemoryPlugin(provider=VariantAwareStubLLMProvider())
+    run_dir = run_semantic_eval(
+        input_file=input_file,
+        output_root=output_dir,
+        plugin=plugin,
+        config=AppConfig(default_use_case="llm_agent_memory", llm_prompt_variant=DEFAULT_VARIANT),
+        run_name="meta-verdict-run",
+    )
+
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    results = _read_jsonl(run_dir / "results.jsonl")
+
+    assert summary["items_succeeded"] == 1
+    assert summary["promoted_counts"].get("investigation_outcome", 0) == 0
+    assert summary["promoted_counts"].get("discussion_summary", 0) == 0
+    assert results[0]["status"] == "ok"
+    assert results[0]["artifacts"]["memory_objects"] == []
 
 
 def test_run_semantic_eval_parallel_keeps_stable_result_order(tmp_path: Path) -> None:

@@ -56,6 +56,44 @@
     "expected_statements": ["Export worker memory limit was increased to 1 GiB while the request stayed at 512 MiB"]
   },
   {
+    "scenario_id": "review-question-rejected",
+    "kind": "thread_summary",
+    "description": "A review question is rejected while a grounded activity fact remains.",
+    "facts": [
+      {
+        "subject": "release checklist",
+        "statement": "Is the release checklist safe to approve?",
+        "category": "activity"
+      },
+      {
+        "subject": "batch digest",
+        "statement": "Batch digest runs every 30 minutes",
+        "category": "activity"
+      }
+    ],
+    "source_items": [
+      {"role": "user", "artifact_kind": "message", "content": "Is the release checklist safe to approve?"},
+      {"role": "assistant", "artifact_kind": "assistant_output", "content": "Batch digest runs every 30 minutes."}
+    ],
+    "expected_subjects": ["batch digest"],
+    "expected_statements": ["Batch digest runs every 30 minutes."]
+  },
+  {
+    "scenario_id": "subject-prefixed-vague-status-rejected",
+    "kind": "thread_summary",
+    "description": "A subject-prefixed vague status is rejected when the thread never carries the referent-bearing sentence.",
+    "facts": [
+      {"subject": "integration tests", "statement": "ready", "category": "activity"},
+      {"subject": "export worker", "statement": "Export worker uses a 1 GiB memory limit", "category": "activity"}
+    ],
+    "source_items": [
+      {"role": "user", "artifact_kind": "message", "content": "They are ready once the smoke pass finishes."},
+      {"role": "assistant", "artifact_kind": "assistant_output", "content": "Export worker uses a 1 GiB memory limit."}
+    ],
+    "expected_subjects": ["export worker"],
+    "expected_statements": ["Export worker uses a 1 GiB memory limit."]
+  },
+  {
     "scenario_id": "same-thread-burst-grouping",
     "kind": "fact_consolidation_grouping",
     "description": "Four same-thread duplicate facts are grouped as a same-thread burst instead of being dropped.",

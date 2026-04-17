@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from core.contracts import ProcessResult
 from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
@@ -19,6 +19,7 @@ from semantic.agent_conversation_memory_embedding import VECTOR_EMBEDDING_PROVID
 from core.retention import SEMANTIC_SIGNAL_METADATA_KEY  # noqa: F401 — re-export for backward compatibility
 
 MARKDOWN_LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*+]|•)\s+")
+CONTROL_PLANE_TAG_RE = re.compile(r"\[[^\]\r\n]{1,80}:[^\]\r\n]{1,160}\]")
 
 
 @dataclass(frozen=True)
@@ -248,21 +249,39 @@ def build_process_result(
     schema_prefix: str,
     semantic_metadata: dict[str, str] | None = None,
 ) -> ProcessResult:
-    semantic_signals = _build_semantic_signal_payload(extraction, semantic_metadata=semantic_metadata)
+    effective_extraction = extraction
+    if _looks_like_control_plane_meta_artifact(source_item, extraction):
+        effective_extraction = replace(
+            extraction,
+            candidate_type=None,
+            decision_text=None,
+            decision_evidence_text=None,
+            investigation_text=None,
+            investigation_evidence_text=None,
+            rationale_text=None,
+            is_low_value_meta=True,
+            constraint_text=None,
+            next_step_text=None,
+            blocker_text=None,
+            progress_text=None,
+            key_finding_text=None,
+        )
 
-    decision_text = clean_markdown_artifacts(extraction.decision_text)
-    decision_evidence_text = clean_markdown_artifacts(extraction.decision_evidence_text)
-    investigation_text = clean_markdown_artifacts(extraction.investigation_text)
-    investigation_evidence_text = clean_markdown_artifacts(extraction.investigation_evidence_text)
-    rationale_text = clean_markdown_artifacts(extraction.rationale_text)
-    key_finding_text = clean_markdown_artifacts(extraction.key_finding_text)
+    semantic_signals = _build_semantic_signal_payload(effective_extraction, semantic_metadata=semantic_metadata)
+
+    decision_text = clean_markdown_artifacts(effective_extraction.decision_text)
+    decision_evidence_text = clean_markdown_artifacts(effective_extraction.decision_evidence_text)
+    investigation_text = clean_markdown_artifacts(effective_extraction.investigation_text)
+    investigation_evidence_text = clean_markdown_artifacts(effective_extraction.investigation_evidence_text)
+    rationale_text = clean_markdown_artifacts(effective_extraction.rationale_text)
+    key_finding_text = clean_markdown_artifacts(effective_extraction.key_finding_text)
 
     memory_objects: list[MemoryObject] = []
     relations: list[Relation] = []
     index_entries = []
 
     if (
-        extraction.candidate_type == "decision"
+        effective_extraction.candidate_type == "decision"
         and decision_text
         and decision_evidence_text
         and _typed_memory_payload_is_quality_viable(
@@ -304,10 +323,10 @@ def build_process_result(
             if part
         )
     elif (
-        extraction.candidate_type == "investigation_outcome"
+        effective_extraction.candidate_type == "investigation_outcome"
         and investigation_text
         and investigation_evidence_text
-        and _investigation_payload_is_quality_viable(extraction)
+        and _investigation_payload_is_quality_viable(effective_extraction)
         and has_grounded_investigation_evidence(source_item, investigation_evidence_text)
     ):
         canonical_key = normalize_for_index(investigation_text)
@@ -342,7 +361,7 @@ def build_process_result(
             )
             if part
         )
-    elif extraction.candidate_type == "interest" and extraction.interest_text and (
+    elif effective_extraction.candidate_type == "interest" and effective_extraction.interest_text and (
         not source_item.role or source_item.role.lower() == "user"
     ) and source_item.visibility not in ("container", "public"):
         memory_objects.append(
@@ -351,8 +370,8 @@ def build_process_result(
                 schema_id=f"{schema_prefix}.interest",
                 schema_version="v1",
                 payload={
-                    "interest_text": extraction.interest_text,
-                    "summary": extraction.summary,
+                    "interest_text": effective_extraction.interest_text,
+                    "summary": effective_extraction.summary,
                     "source_type": source_item.source_type,
                     "source_id": source_item.source_id,
                     **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
@@ -365,19 +384,19 @@ def build_process_result(
         index_source = " ".join(
             part
             for part in (
-                extraction.summary,
-                extraction.interest_text or "",
+                effective_extraction.summary,
+                effective_extraction.interest_text or "",
             )
             if part
         )
-    elif _should_create_discussion_summary(source_item, extraction):
+    elif _should_create_discussion_summary(source_item, effective_extraction):
         memory_objects.append(
             MemoryObject(
                 type="discussion_summary",
                 schema_id=f"{schema_prefix}.discussion_summary",
                 schema_version="v1",
                 payload={
-                    "summary": extraction.summary,
+                    "summary": effective_extraction.summary,
                     "source_type": source_item.source_type,
                     "source_id": source_item.source_id,
                     **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
@@ -390,12 +409,12 @@ def build_process_result(
         index_source = " ".join(
             part
             for part in (
-                extraction.summary,
-                extraction.constraint_text or "",
-                extraction.blocker_text or "",
-                extraction.progress_text or "",
-                extraction.next_step_text or "",
-                extraction.key_finding_text or "",
+                effective_extraction.summary,
+                effective_extraction.constraint_text or "",
+                effective_extraction.blocker_text or "",
+                effective_extraction.progress_text or "",
+                effective_extraction.next_step_text or "",
+                effective_extraction.key_finding_text or "",
             )
             if part
         )
@@ -436,7 +455,7 @@ def build_process_result(
                 )
             )
 
-    thread_rebuild_requested = _should_request_thread_rebuild(source_item, extraction, memory_objects)
+    thread_rebuild_requested = _should_request_thread_rebuild(source_item, effective_extraction, memory_objects)
     metadata_updates: dict[str, dict[str, object]] = {}
     if semantic_signals:
         metadata_updates[source_item.id] = {SEMANTIC_SIGNAL_METADATA_KEY: semantic_signals}
@@ -470,6 +489,8 @@ def _is_selected_assistant_work_artifact(source_item: SourceItem, extraction: Se
 def _looks_like_low_value_meta_update(source_item: SourceItem, extraction: SemanticExtraction) -> bool:
     if extraction.is_low_value_meta:
         return True
+    if _looks_like_control_plane_meta_artifact(source_item, extraction):
+        return True
     if _has_explicit_thread_signal(extraction):
         return False
     if (source_item.role or "").lower() != "assistant":
@@ -491,6 +512,38 @@ def _looks_like_low_value_meta_update(source_item: SourceItem, extraction: Seman
     return (
         ("local repos only" in normalized_text or "local cache only" in normalized_text)
         and (" auth " in f" {normalized_text} " or "authentication" in normalized_text)
+    )
+
+
+def _looks_like_control_plane_meta_artifact(source_item: SourceItem, extraction: SemanticExtraction) -> bool:
+    text_parts = [
+        source_item.content,
+        extraction.summary,
+        extraction.investigation_text,
+        extraction.investigation_evidence_text,
+        extraction.key_finding_text,
+        extraction.decision_text,
+        extraction.decision_evidence_text,
+    ]
+    raw_text = " ".join(part for part in text_parts if part)
+    if not raw_text:
+        return False
+    normalized_text = normalize_for_index(raw_text)
+    if not normalized_text:
+        return False
+    if any(
+        phrase in normalized_text
+        for phrase in (
+            "previous finding",
+            "durable memory",
+            "memory object",
+            "prior finding",
+        )
+    ):
+        return True
+    return bool(CONTROL_PLANE_TAG_RE.search(raw_text)) and any(
+        token in normalized_text
+        for token in ("memory", "finding", "triage", "control", "flag", "review")
     )
 
 def _is_substantive_summary(source_item: SourceItem, extraction: SemanticExtraction) -> bool:

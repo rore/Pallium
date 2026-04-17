@@ -609,6 +609,86 @@ def test_build_thread_summary_restores_subject_from_grounded_sentence() -> None:
     )
 
 
+def test_build_thread_summary_skips_context_collapsed_review_question() -> None:
+    from capabilities.thread_aggregation import ThreadAggregate
+
+    facts = [
+        {
+            "subject": "release checklist",
+            "statement": "Is the release checklist safe to approve?",
+            "category": "activity",
+        },
+        {
+            "subject": "batch digest",
+            "statement": "Batch digest runs every 30 minutes",
+            "category": "activity",
+        },
+    ]
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider(facts=facts))
+    items = [
+        SourceItem(
+            source_type="chat", source_id="question-1",
+            content_type="text/plain", content="Is the release checklist safe to approve?",
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+        SourceItem(
+            source_type="chat", source_id="question-2",
+            content_type="text/plain", content="Batch digest runs every 30 minutes.",
+            role="assistant", artifact_kind="assistant_output",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+    ]
+    aggregate = ThreadAggregate(
+        container_ref="c1", thread_ref="t1",
+        source_items=items, source_item_ids=[i.id for i in items],
+        latest_occurred_at=utc_now(), aggregate_text="", visibility="public",
+    )
+
+    result = plugin.build_thread_summary(aggregate, conclusions=[])
+
+    assert [memory.payload["subject"] for memory in result.memory_objects] == ["batch digest"]
+    assert [memory.payload["statement"] for memory in result.memory_objects] == ["Batch digest runs every 30 minutes."]
+
+
+def test_build_thread_summary_skips_subject_prefixed_vague_status_fact() -> None:
+    from capabilities.thread_aggregation import ThreadAggregate
+
+    facts = [
+        {"subject": "integration tests", "statement": "ready", "category": "activity"},
+        {"subject": "export worker", "statement": "Export worker uses a 1 GiB memory limit", "category": "activity"},
+    ]
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider(facts=facts))
+    items = [
+        SourceItem(
+            source_type="chat", source_id="vague-1",
+            content_type="text/plain", content="They are ready once the smoke pass finishes.",
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+        SourceItem(
+            source_type="chat", source_id="vague-2",
+            content_type="text/plain", content="Export worker uses a 1 GiB memory limit.",
+            role="assistant", artifact_kind="assistant_output",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+    ]
+    aggregate = ThreadAggregate(
+        container_ref="c1", thread_ref="t1",
+        source_items=items, source_item_ids=[i.id for i in items],
+        latest_occurred_at=utc_now(), aggregate_text="", visibility="public",
+    )
+
+    result = plugin.build_thread_summary(aggregate, conclusions=[])
+
+    assert [memory.payload["subject"] for memory in result.memory_objects] == ["export worker"]
+    assert [memory.payload["statement"] for memory in result.memory_objects] == ["Export worker uses a 1 GiB memory limit."]
+
+
 # ── Tests: thread_ref in payload and reconcile_process_result ─────────────
 
 def test_build_thread_summary_includes_thread_ref_in_payload():

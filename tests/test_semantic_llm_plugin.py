@@ -114,6 +114,25 @@ def test_build_process_result_strips_markdown_formatting_from_investigation_payl
     assert payload["investigation_evidence_text"] == "Root cause: table parsing failed for the status matrix"
 
 
+def test_build_process_result_rejects_control_tagged_meta_verdict() -> None:
+    source = SourceItem(
+        source_type="assistant_artifact", source_id="meta-verdict-1", content_type="text/plain",
+        content="[quality-flag: review_only] Verdict: the previous finding was too vague to keep as durable memory.",
+    )
+    extraction = SemanticExtraction(
+        summary="review verdict",
+        candidate_type="investigation_outcome",
+        investigation_text="the previous finding was too vague to keep as durable memory",
+        investigation_evidence_text="Verdict: the previous finding was too vague to keep as durable memory.",
+        key_finding_text="the previous finding was too vague to keep as durable memory",
+    )
+
+    result = build_process_result(source, extraction, "test")
+
+    assert result.memory_objects == []
+    assert result.thread_rebuild_requested is False
+
+
 # ---------------------------------------------------------------------------
 # Multilingual write-time grounding
 # ---------------------------------------------------------------------------
