@@ -321,9 +321,19 @@ def test_dual_package_concurrent_rapid_fire(monkeypatch, test_db_url: str) -> No
     t1.start()
     t2.start()
 
-    # All messages at once
+    # All messages at once — retry on database-locked under concurrent workers
     for msg in _make_messages("dual-rapid", 12, container_ref, thread_ref):
-        client.post("/items", json=[msg])
+        for _attempt in range(10):
+            try:
+                resp = client.post("/items", json=[msg])
+                if resp.status_code == 200:
+                    break
+            except Exception as exc:
+                if "database is locked" not in str(exc):
+                    raise
+            time.sleep(0.05)
+        else:
+            raise AssertionError("Ingest failed after retries: database is locked")
 
     time.sleep(5.0)
     stop_event.set()
