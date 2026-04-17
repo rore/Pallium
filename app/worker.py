@@ -51,6 +51,10 @@ def run_worker(
     worker_id = parsed.worker_id or default_worker_id()
     last_rebuild_check = clock()
 
+    process_next_item = service.process_next_source_item_summary
+    if "process_next_source_item" in vars(service):
+        process_next_item = service.process_next_source_item
+
     def _stopping() -> bool:
         return stop.requested or (should_stop is not None and should_stop())
 
@@ -72,7 +76,7 @@ def run_worker(
                 if _stopping():
                     return 0
                 try:
-                    result = service.process_next_source_item(
+                    result = process_next_item(
                         worker_id=worker_id,
                         lease_seconds=parsed.lease_seconds,
                         max_attempts=parsed.max_attempts,

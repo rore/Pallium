@@ -123,6 +123,7 @@ class PackageProcessingStatusRecord(Base):
     lease_expires_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     next_attempt_at = Column(DateTime(timezone=True), nullable=True)
+    source_item_created_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
@@ -202,6 +203,11 @@ class SQLiteSchemaMixin:
         "source_scan_cursor_created_at": "ALTER TABLE maintenance_state ADD COLUMN source_scan_cursor_created_at DATETIME",
         "source_scan_cursor_id": "ALTER TABLE maintenance_state ADD COLUMN source_scan_cursor_id VARCHAR",
     }
+    _PACKAGE_PROCESSING_MIGRATIONS = {
+        "source_item_created_at": (
+            "ALTER TABLE package_processing_status ADD COLUMN source_item_created_at DATETIME"
+        ),
+    }
     _UNIQUE_INDEX_MIGRATIONS = {
         "uq_source_items_source_type_source_id": (
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_source_items_source_type_source_id "
@@ -213,6 +219,43 @@ class SQLiteSchemaMixin:
             "CREATE INDEX IF NOT EXISTS idx_memory_objects_subject_lookup "
             "ON memory_objects(container_ref, subject, type) "
             "WHERE lifecycle = 'active' AND subject IS NOT NULL"
+        ),
+        "idx_source_items_thread_lookup": (
+            "CREATE INDEX IF NOT EXISTS idx_source_items_thread_lookup "
+            "ON source_items(container_ref, thread_ref, created_at, id)"
+        ),
+        "idx_source_items_thread_stats": (
+            "CREATE INDEX IF NOT EXISTS idx_source_items_thread_stats "
+            "ON source_items(thread_ref, created_at DESC, id)"
+        ),
+        "idx_source_items_claim_queue": (
+            "CREATE INDEX IF NOT EXISTS idx_source_items_claim_queue "
+            "ON source_items(processing_status, processing_next_attempt_at, processing_lease_expires_at, created_at, id) "
+            "WHERE use_case IS NOT NULL"
+        ),
+        "idx_relations_to_target_lookup": (
+            "CREATE INDEX IF NOT EXISTS idx_relations_to_target_lookup "
+            "ON relations(to_kind, to_id, relation_type, from_kind, from_id)"
+        ),
+        "idx_relations_from_target_lookup": (
+            "CREATE INDEX IF NOT EXISTS idx_relations_from_target_lookup "
+            "ON relations(from_kind, from_id, relation_type, to_kind, to_id)"
+        ),
+        "idx_index_entries_target_lookup": (
+            "CREATE INDEX IF NOT EXISTS idx_index_entries_target_lookup "
+            "ON index_entries(target_kind, target_id, index_type, id)"
+        ),
+        "idx_index_entries_type_lookup": (
+            "CREATE INDEX IF NOT EXISTS idx_index_entries_type_lookup "
+            "ON index_entries(index_type, id)"
+        ),
+        "idx_thread_processing_leases_claim_lookup": (
+            "CREATE INDEX IF NOT EXISTS idx_thread_processing_leases_claim_lookup "
+            "ON thread_processing_leases(requested_at, processing_lease_expires_at, created_at, scope_key)"
+        ),
+        "idx_package_processing_claim_lookup": (
+            "CREATE INDEX IF NOT EXISTS idx_package_processing_claim_lookup "
+            "ON package_processing_status(status, source_item_created_at, source_item_id, package_name, next_attempt_at, lease_expires_at)"
         ),
     }
     _QUERY_AUDIT_LOG_INDEX_MIGRATIONS = {
@@ -237,6 +280,7 @@ class SQLiteSchemaMixin:
             self._ensure_memory_object_columns()
             self._ensure_index_entry_columns()
             self._ensure_maintenance_state_columns()
+            self._ensure_package_processing_columns()
             self._ensure_unique_indexes()
             self._ensure_indexes()
             self._ensure_query_audit_log_indexes()
@@ -318,6 +362,24 @@ class SQLiteSchemaMixin:
             for column_name, migration_sql in self._MAINTENANCE_STATE_MIGRATIONS.items():
                 if column_name not in existing_columns:
                     connection.execute(text(migration_sql))
+
+    def _ensure_package_processing_columns(self) -> None:
+        with self._engine.begin() as connection:
+            existing_columns = {
+                row[1] for row in connection.execute(text("PRAGMA table_info(package_processing_status)"))
+            }
+            for column_name, migration_sql in self._PACKAGE_PROCESSING_MIGRATIONS.items():
+                if column_name not in existing_columns:
+                    connection.execute(text(migration_sql))
+            connection.execute(
+                text(
+                    "UPDATE package_processing_status "
+                    "SET source_item_created_at = ("
+                    "  SELECT created_at FROM source_items WHERE source_items.id = package_processing_status.source_item_id"
+                    ") "
+                    "WHERE source_item_created_at IS NULL"
+                )
+            )
 
     def _ensure_unique_indexes(self) -> None:
         with self._engine.begin() as connection:

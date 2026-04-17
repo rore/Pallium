@@ -5,6 +5,7 @@ import multiprocessing
 
 import pytest
 from pathlib import Path
+from sqlalchemy import text
 
 from core.models import (
     IndexEntry,
@@ -172,6 +173,74 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     assert evidence[0].thread_ref == "thread-a"
     assert evidence[0].source_ref == "https://example.test/thread-1"
     assert evidence[0].visibility == "container"
+
+
+def test_sqlite_storage_provider_operational_indexes_exist(test_db_url: str) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+
+    expected_indexes = {
+        "source_items": {
+            "uq_source_items_source_type_source_id",
+            "idx_source_items_thread_lookup",
+            "idx_source_items_thread_stats",
+            "idx_source_items_claim_queue",
+        },
+        "relations": {
+            "idx_relations_to_target_lookup",
+            "idx_relations_from_target_lookup",
+        },
+        "index_entries": {
+            "idx_index_entries_target_lookup",
+            "idx_index_entries_type_lookup",
+        },
+        "thread_processing_leases": {
+            "idx_thread_processing_leases_claim_lookup",
+        },
+        "package_processing_status": {
+            "idx_package_processing_claim_lookup",
+        },
+    }
+
+    with storage._engine.begin() as connection:
+        for table_name, expected in expected_indexes.items():
+            rows = connection.execute(text(f"PRAGMA index_list({table_name})")).fetchall()
+            actual = {row[1] for row in rows}
+            assert expected <= actual
+
+
+def test_sqlite_storage_provider_batches_index_entry_fetch(test_db_url: str) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+    source_item = SourceItem(
+        source_type="chat_message",
+        source_id="batch-entry-source",
+        content_type="text/plain",
+        content="Batch index entry fetch should use one lookup path.",
+        metadata=None,
+        visibility="public",
+    )
+    storage.create_source_item(source_item)
+    first_entry = IndexEntry(
+        target_kind="source_item",
+        target_id=source_item.id,
+        index_type="vector",
+        text_view="batch entry one",
+        text_view_name="source_content.embedding",
+    )
+    second_entry = IndexEntry(
+        target_kind="source_item",
+        target_id=source_item.id,
+        index_type="vector",
+        text_view="batch entry two",
+        text_view_name="source_content.embedding.alt",
+    )
+    storage.create_index_entry(first_entry)
+    storage.create_index_entry(second_entry)
+
+    entries = storage.get_index_entries([first_entry.id, "missing-entry", second_entry.id])
+
+    assert set(entries.keys()) == {first_entry.id, second_entry.id}
+    assert entries[first_entry.id].text_view == "batch entry one"
+    assert entries[second_entry.id].text_view == "batch entry two"
 
 
 def test_idf_weighted_scoring_downweights_common_tokens(test_db_url: str) -> None:

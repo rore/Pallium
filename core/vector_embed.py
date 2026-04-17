@@ -33,6 +33,8 @@ class VectorEmbedder:
         self._embedding_provider = embedding_provider
         self._vector_index = vector_index
         self._logger = logging.getLogger(__name__)
+        self._reconcile_after_id: str | None = None
+        self._reconcile_stale_after_id: str | None = None
 
     def embed_process_result(self, process_result: ProcessResult, plugin: SemanticPlugin | None = None) -> bool:
         """Add vector index entries to the in-memory index after SQLite commit.
@@ -142,7 +144,7 @@ class VectorEmbedder:
         """Find and fix mismatches between SQLite vector entries and usearch index.
 
         Forward direction: embed SQLite entries missing from usearch (batch-bounded).
-        Reverse direction: remove usearch entries missing from SQLite (unbounded, cheap).
+        Reverse direction: remove usearch entries missing from SQLite (batch-bounded).
         Returns total number of entries changed (embedded + removed).
         """
         if self._embedding_provider is None or self._vector_index is None:
@@ -151,30 +153,48 @@ class VectorEmbedder:
             sqlite_count = self._storage.count_index_entries_by_type("vector")
             index_count = self._vector_index.entry_count()
             if sqlite_count == index_count:
+                self._reconcile_after_id = None
+                self._reconcile_stale_after_id = None
                 return 0
-
-            sqlite_entries = self._storage.list_index_entries_by_type("vector")
-            sqlite_ids = {e.id for e in sqlite_entries}
-            usearch_ids = self._vector_index.known_entry_ids()
 
             total_changed = 0
 
-            # Reverse: remove stale usearch entries (cheap, no batching)
-            stale_ids = usearch_ids - sqlite_ids
-            for entry_id in stale_ids:
-                try:
-                    self._vector_index.remove(entry_id)
-                    total_changed += 1
-                except KeyError:
-                    pass
+            usearch_ids = sorted(self._vector_index.known_entry_ids())
+            if usearch_ids:
+                stale_candidates = usearch_ids
+                if self._reconcile_stale_after_id is not None:
+                    stale_candidates = [
+                        entry_id for entry_id in usearch_ids if entry_id > self._reconcile_stale_after_id
+                    ]
+                if not stale_candidates:
+                    self._reconcile_stale_after_id = None
+                    stale_candidates = usearch_ids
+                stale_batch_ids = stale_candidates[:batch_size]
+                existing_entries = self._storage.get_index_entries(stale_batch_ids)
+                for entry_id in stale_batch_ids:
+                    if entry_id in existing_entries:
+                        continue
+                    try:
+                        self._vector_index.remove(entry_id)
+                        total_changed += 1
+                    except KeyError:
+                        pass
+                if len(stale_candidates) > len(stale_batch_ids):
+                    self._reconcile_stale_after_id = stale_batch_ids[-1]
+                else:
+                    self._reconcile_stale_after_id = None
 
-            # Forward: embed missing entries (batch-bounded)
-            missing_entries = [e for e in sqlite_entries if e.id not in usearch_ids]
-            batch = missing_entries[:batch_size]
-            if batch:
-                texts = [e.text_view for e in batch]
-                vectors = self._embedding_provider.embed(texts, mode="passage")
-                for entry, vector in zip(batch, vectors):
+            sqlite_batch = self._storage.list_index_entries_by_type_page(
+                "vector",
+                after_id=self._reconcile_after_id,
+                limit=batch_size,
+            )
+            if sqlite_batch:
+                usearch_id_set = self._vector_index.known_entry_ids()
+                missing_entries = [entry for entry in sqlite_batch if entry.id not in usearch_id_set]
+                texts = [entry.text_view for entry in missing_entries]
+                vectors = self._embedding_provider.embed(texts, mode="passage") if texts else []
+                for entry, vector in zip(missing_entries, vectors):
                     self._vector_index.add(entry.id, vector)
                     self._storage.update_index_entry_provider(
                         entry.id,
@@ -182,6 +202,9 @@ class VectorEmbedder:
                         provider_version=f"dim={self._embedding_provider.dimensions()}",
                     )
                     total_changed += 1
+                self._reconcile_after_id = sqlite_batch[-1].id
+            else:
+                self._reconcile_after_id = None
 
             if total_changed > 0:
                 self._vector_index.save()

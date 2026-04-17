@@ -6,8 +6,10 @@ source_item state sync, and the multi-package processing loop.
 from __future__ import annotations
 
 from datetime import timedelta
+from datetime import timezone
 
 import pytest
+from sqlalchemy import select, text
 
 from core.contracts import ProcessResult
 from core.models import SourceItem, utc_now
@@ -83,7 +85,6 @@ def test_ingest_creates_package_processing_records(test_db_url):
     assert result.processing_status == "pending"
 
     storage = service._storage
-    from sqlalchemy import select
     from storage.sqlite_schema import PackageProcessingStatusRecord
     with storage._session_factory() as session:
         records = session.scalars(
@@ -94,6 +95,40 @@ def test_ingest_creates_package_processing_records(test_db_url):
     assert len(records) == 1
     assert records[0].package_name == "demo"
     assert records[0].status == "pending"
+    assert records[0].source_item_created_at is not None
+
+
+def test_package_processing_source_item_created_at_backfills_on_startup(test_db_url):
+    service = _build_service(
+        test_db_url,
+        plugins={"demo": DemoAgentMemoryPlugin()},
+        default_use_case="demo",
+    )
+    ingest = _ingest(service, use_case="demo")
+    storage = service._storage
+
+    with storage._engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE package_processing_status "
+                "SET source_item_created_at = NULL "
+                "WHERE source_item_id = :source_item_id"
+            ),
+            {"source_item_id": ingest.source_item_id},
+        )
+
+    reloaded_storage = SQLiteStorageProvider(test_db_url)
+
+    from storage.sqlite_schema import PackageProcessingStatusRecord
+    with reloaded_storage._session_factory() as session:
+        record = session.scalars(
+            select(PackageProcessingStatusRecord).where(
+                PackageProcessingStatusRecord.source_item_id == ingest.source_item_id,
+            )
+        ).one()
+        source_item = reloaded_storage.get_source_item(ingest.source_item_id)
+
+    assert record.source_item_created_at.replace(tzinfo=timezone.utc) == source_item.created_at
 
 
 # ── Tests: claim/complete lifecycle ───────────────────────────────────────

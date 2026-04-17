@@ -67,6 +67,7 @@ class ItemProcessor:
         persist_fn: Callable[[ProcessResult], None],
         supersede_fn: Callable[[str, str], None],
         get_item_processing_fn: Callable[[str], ItemProcessingResult],
+        get_item_processing_summary_fn: Callable[[str], ItemProcessingResult] | None = None,
     ) -> None:
         self._storage = storage
         self._semantic_plugins = semantic_plugins
@@ -77,6 +78,7 @@ class ItemProcessor:
         self._persist_fn = persist_fn
         self._supersede_fn = supersede_fn
         self._get_item_processing = get_item_processing_fn
+        self._get_item_processing_summary = get_item_processing_summary_fn or get_item_processing_fn
         self._logger = logging.getLogger(__name__)
 
     def process_next_source_item(
@@ -86,6 +88,37 @@ class ItemProcessor:
         lease_seconds: int = DEFAULT_PROCESSING_LEASE_SECONDS,
         max_attempts: int = DEFAULT_PROCESSING_MAX_ATTEMPTS,
     ) -> ItemProcessingResult | None:
+        return self._process_next_source_item(
+            worker_id=worker_id,
+            lease_seconds=lease_seconds,
+            max_attempts=max_attempts,
+            summary_only=False,
+        )
+
+    def process_next_source_item_summary(
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: int = DEFAULT_PROCESSING_LEASE_SECONDS,
+        max_attempts: int = DEFAULT_PROCESSING_MAX_ATTEMPTS,
+    ) -> ItemProcessingResult | None:
+        return self._process_next_source_item(
+            worker_id=worker_id,
+            lease_seconds=lease_seconds,
+            max_attempts=max_attempts,
+            summary_only=True,
+        )
+
+    def _process_next_source_item(
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+        max_attempts: int,
+        summary_only: bool,
+    ) -> ItemProcessingResult | None:
+        get_processing_result = self._get_item_processing_summary if summary_only else self._get_item_processing
+
         # Try multi-package task first: process ALL pending packages for one source_item
         first_task = self._storage.claim_next_package_task(
             worker_id=worker_id,
@@ -124,7 +157,7 @@ class ItemProcessor:
                     package_name=next_package,
                     package_attempts=next_attempts,
                 )
-            result = self._get_item_processing(source_item_id)
+            result = get_processing_result(source_item_id)
             return dataclasses.replace(result, packages_processed=packages_processed)
 
         # Legacy path: claim from source_items table (for items without
@@ -141,7 +174,7 @@ class ItemProcessor:
             max_attempts=max_attempts,
             worker_id=worker_id,
         )
-        return self._get_item_processing(source_item.id)
+        return get_processing_result(source_item.id)
 
     def drain_processing_queue(
         self,

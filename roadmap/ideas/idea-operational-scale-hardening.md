@@ -66,6 +66,21 @@ optimizations after integration learning, not as premature redesign now.
 
 ## Notes
 
+2026-04-16 update:
+
+An initial operational-hardening slice has shipped without changing Pallium's
+core evidence-backed memory model:
+
+- additive SQLite indexes for queue, thread, relation, and index-entry hot paths
+- batch vector hit hydration on the retrieval path
+- summary-only worker result construction for runtime logging
+- aligned processor/worker poll defaults
+- bounded incremental vector reconciliation
+- package claim ordering via denormalized `source_item_created_at`
+
+The remaining value of this idea is now in later follow-on work and remeasurement,
+not in proving these first-line optimizations are still hypothetical.
+
 The highest-value likely future levers are:
 
 1. selective/debounced thread rebuilds

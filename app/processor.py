@@ -10,7 +10,7 @@ from app.worker import run_worker
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run Pallium async ingest processor")
     parser.add_argument("--processor-id", default=None)
-    parser.add_argument("--poll-interval-seconds", type=float, default=1.0)
+    parser.add_argument("--poll-interval-seconds", type=float, default=0.2)
     parser.add_argument("--lease-seconds", type=int, default=None)
     parser.add_argument("--max-attempts", type=int, default=None)
     parser.add_argument("--once", action="store_true")

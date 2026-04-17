@@ -183,6 +183,31 @@ def test_reconcile_reverse_removes_stale_entries(test_db_url: str, tmp_path: Pat
 
 
 @requires_usearch
+def test_reconcile_reverse_respects_batch_size(test_db_url: str, tmp_path: Path) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+    embedding_provider = StubEmbeddingProvider()
+    index_path = tmp_path / "reconcile-batch.index"
+    vector_index = VectorIndex.create_empty(index_path, dimensions=4, model_name="test-model")
+
+    vector_embedder = VectorEmbedder(storage, embedding_provider, vector_index)
+
+    for index in range(5):
+        vector_index.add(f"stale-entry-{index}", [0.1, 0.2, 0.3, 0.4])
+
+    reconciled = vector_embedder.reconcile(batch_size=2)
+    assert reconciled == 2
+    assert vector_index.entry_count() == 3
+
+    reconciled = vector_embedder.reconcile(batch_size=2)
+    assert reconciled == 2
+    assert vector_index.entry_count() == 1
+
+    reconciled = vector_embedder.reconcile(batch_size=2)
+    assert reconciled == 1
+    assert vector_index.entry_count() == 0
+
+
+@requires_usearch
 def test_reconcile_noop_when_counts_match(test_db_url: str, tmp_path: Path) -> None:
     """When SQLite and usearch counts match, reconciliation is a no-op."""
     storage = SQLiteStorageProvider(test_db_url)
