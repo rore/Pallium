@@ -483,7 +483,11 @@ def _derive_query_signal_envelope(
                 signals["resume_state"] = True
                 derivation.append("resumed_session_with_supported_decision")
 
-        # evidence_request: NOT derivable from Tier 1 structural signals
+        # evidence_request: NOT derivable from Tier 1 structural signals alone;
+        # respect caller-provided hint when available
+        if runtime_context and runtime_context.evidence_request:
+            signals["evidence_request"] = True
+            derivation.append("caller_evidence_request_hint")
 
         # history_lookup
         history_layers = {"pattern_memory", "continuity_memory"}

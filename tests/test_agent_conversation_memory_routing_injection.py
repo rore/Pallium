@@ -234,7 +234,7 @@ def test_exact_finding_query_recall_uses_source_evidence_override() -> None:
         requested_limit=6,
         retrieval_result=retrieval_result,
         query_filters=query_filters,
-        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False, evidence_request=True),
         include_trace=True,
     )
 
@@ -365,7 +365,7 @@ def test_prior_message_query_recall_prefers_source_evidence_blocks() -> None:
         requested_limit=6,
         retrieval_result=retrieval_result,
         query_filters=query_filters,
-        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False, evidence_request=True),
         include_trace=True,
     )
 
@@ -1331,7 +1331,7 @@ def test_precise_fact_quote_grade_recall_allows_supported_source_evidence() -> N
         requested_limit=4,
         retrieval_result=retrieval_result,
         query_filters=query_filters,
-        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False, evidence_request=True),
         include_trace=True,
     )
 
@@ -1409,7 +1409,7 @@ def test_precise_fact_quote_grade_recall_keeps_weak_source_evidence_non_injectab
         requested_limit=4,
         retrieval_result=retrieval_result,
         query_filters=query_filters,
-        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False),
+        runtime_context=QueryRuntimeContext(turn_kind='new_thread', session_has_sufficient_local_context=False, evidence_request=True),
         include_trace=True,
     )
 

@@ -27,6 +27,7 @@ class VisibilityContextModel(BaseModel):
 class RuntimeContextModel(BaseModel):
     turn_kind: TurnKind | None = None
     session_has_sufficient_local_context: bool | None = None
+    evidence_request: bool | None = None
 
 
 class ItemCreateRequest(BaseModel):

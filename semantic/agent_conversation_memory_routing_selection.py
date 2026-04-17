@@ -237,6 +237,7 @@ def _build_injectable_blocks(
     query_text: str,
     query_filters: QueryFilters | None,
     runtime_context: QueryRuntimeContext | None,
+    evidence_request: bool = False,
 ) -> tuple[list[InjectableBlock], dict[str, object]]:
     same_thread_context = _evaluate_same_thread_local_context(
         ranked_candidates,
@@ -244,6 +245,7 @@ def _build_injectable_blocks(
         query_text=query_text,
         query_filters=query_filters,
         runtime_context=runtime_context,
+        evidence_request=evidence_request,
     )
     if same_thread_context["suppress_injection"]:
         return [], {
@@ -346,7 +348,7 @@ def _build_injectable_blocks(
             final_candidates,
             intent=intent,
             recall_mode=recall_mode,
-            query_text=query_text,
+            evidence_request=evidence_request,
         )
         if exact_memory_override:
             blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in exact_memory_override]
@@ -377,6 +379,7 @@ def _build_injectable_blocks(
         source_evidence_override = _source_evidence_provenance_override_candidates(
             final_candidates,
             intent=intent,
+            evidence_request=evidence_request,
             query_text=query_text,
         )
         if source_evidence_override:
@@ -471,11 +474,13 @@ def _build_injectable_blocks(
             query_text=query_text,
             allow_discussion_fallback=False,
             allow_source_companion=False,
+            evidence_request=evidence_request,
         )
     ]
     source_evidence_override = _source_evidence_provenance_override_candidates(
         final_candidates,
         intent=intent,
+        evidence_request=evidence_request,
         query_text=query_text,
     )
     if source_evidence_override:
@@ -513,6 +518,7 @@ def _build_injectable_blocks(
             query_text=query_text,
             allow_discussion_fallback=not primary_non_discussion_eligible,
             allow_source_companion=False,
+            evidence_request=evidence_request,
         )
     ]
     if not primary_eligible_candidates:
@@ -591,6 +597,7 @@ def _build_injectable_blocks(
                 query_text=query_text,
                 allow_discussion_fallback=False,
                 allow_source_companion=True,
+                evidence_request=evidence_request,
             )
             and candidate["item"].result_kind == "source_hit"
             and _routing_result_id(candidate["item"]) not in used_result_ids
@@ -631,6 +638,7 @@ def _build_injectable_blocks(
                 query_text=query_text,
                 allow_discussion_fallback=False,
                 allow_source_companion=True,
+                evidence_request=evidence_request,
             )
             and candidate["item"].result_kind == "source_hit"
             and _routing_result_id(candidate["item"]) not in {_routing_result_id(item["item"]) for item in eligible_candidates}
@@ -856,6 +864,7 @@ def _evaluate_same_thread_local_context(
     query_text: str,
     query_filters: QueryFilters | None,
     runtime_context: QueryRuntimeContext | None,
+    evidence_request: bool = False,
 ) -> dict[str, object]:
     if not (
         runtime_context is not None
@@ -890,7 +899,7 @@ def _evaluate_same_thread_local_context(
                 continue
             rejected_candidates.append({"result_id": result_id, "reason_code": reason_code})
             continue
-        if _candidate_could_supply_external_carry_forward(candidate, intent=intent, query_text=query_text):
+        if _candidate_could_supply_external_carry_forward(candidate, intent=intent, query_text=query_text, evidence_request=evidence_request):
             external_carry_forward_result_ids.append(result_id)
 
     if qualifying_result_ids:
@@ -912,7 +921,7 @@ def _evaluate_same_thread_local_context(
         "rejected_candidates": rejected_candidates[:6],
     }
 
-def _candidate_could_supply_external_carry_forward(candidate: dict[str, object], *, intent: str, query_text: str) -> bool:
+def _candidate_could_supply_external_carry_forward(candidate: dict[str, object], *, intent: str, query_text: str, evidence_request: bool = False) -> bool:
     if _candidate_is_low_value(candidate):
         return False
     item = candidate["item"]
@@ -924,6 +933,7 @@ def _candidate_could_supply_external_carry_forward(candidate: dict[str, object],
             query_text=query_text,
             allow_discussion_fallback=False,
             allow_source_companion=False,
+            evidence_request=evidence_request,
         )
     return _candidate_is_injection_eligible(
         candidate,
@@ -931,6 +941,7 @@ def _candidate_could_supply_external_carry_forward(candidate: dict[str, object],
         query_text=query_text,
         allow_discussion_fallback=True,
         allow_source_companion=False,
+        evidence_request=evidence_request,
     )
 
 def _candidate_qualifies_as_same_thread_local_state(
@@ -1164,11 +1175,11 @@ def _supported_exact_low_confidence_override_candidates(
     *,
     intent: str,
     recall_mode: str,
-    query_text: str,
+    evidence_request: bool,
 ) -> list[dict[str, object]]:
     if intent != "recall" or recall_mode == "continuity_preference" or not candidates:
         return []
-    if _query_requests_quote_grade_source(query_text):
+    if evidence_request:
         return []
 
     best_lexical_rank = min((_candidate_lexical_rank(candidate) for candidate in candidates), default=1_000_000)
@@ -1208,6 +1219,7 @@ def _candidate_is_injection_eligible(
     query_text: str,
     allow_discussion_fallback: bool,
     allow_source_companion: bool,
+    evidence_request: bool = False,
 ) -> bool:
     # Per-candidate lexical grounding check (from simplified injection module)
     if not candidate_injection_eligible(candidate):
@@ -1240,7 +1252,7 @@ def _candidate_is_injection_eligible(
     if item.result_kind == "source_hit":
         if normalize_for_index(str(item.excerpt or "")) == normalize_for_index(query_text):
             return False
-        if _source_candidate_is_primary_injection_eligible(candidate, intent, query_text=query_text):
+        if _source_candidate_is_primary_injection_eligible(candidate, intent, evidence_request=evidence_request):
             return True
         return allow_source_companion and _source_candidate_is_companion_injection_eligible(intent)
     if item.type == FACT_SUMMARY_TYPE:
@@ -1264,7 +1276,7 @@ def _candidate_is_low_value(candidate: dict[str, object]) -> bool:
         return _is_low_value_meta_text(str(payload.get("summary") or ""))
     return False
 
-def _source_candidate_is_primary_injection_eligible(candidate: dict[str, object], intent: str, *, query_text: str) -> bool:
+def _source_candidate_is_primary_injection_eligible(candidate: dict[str, object], intent: str, *, evidence_request: bool) -> bool:
     if intent == "evidence_trace":
         item = candidate["item"]
         assert isinstance(item, QueryResultItem)
@@ -1274,7 +1286,7 @@ def _source_candidate_is_primary_injection_eligible(candidate: dict[str, object]
         return True
     if intent == "structured_recall":
         return True
-    if intent == "recall" and _query_requests_quote_grade_source(query_text):
+    if intent == "recall" and evidence_request:
         item = candidate["item"]
         assert isinstance(item, QueryResultItem)
         excerpt = str(item.excerpt or "")
@@ -1286,30 +1298,15 @@ def _source_candidate_is_primary_injection_eligible(candidate: dict[str, object]
 def _source_candidate_is_companion_injection_eligible(intent: str) -> bool:
     return intent == "work_resumption"
 
-def _source_candidate_has_quote_grade_support(candidate: dict[str, object], *, query_text: str) -> bool:
-    if not _query_requests_quote_grade_source(query_text):
-        return False
-    item = candidate["item"]
-    assert isinstance(item, QueryResultItem)
-    excerpt = str(item.excerpt or "")
-    excerpt_lower = excerpt.lower()
-    if any(hedge in excerpt_lower for hedge in ("probably", "maybe", "somewhere", "did not keep", "don't have", "not sure")):
-        return False
-    proof_like_excerpt = any(
-        cue in excerpt_lower
-        for cue in ("investigation found", "exact log line", "smoking gun", "showed", "proved", "backed")
-    )
-    support_grade = str(candidate.get("support_grade") or "weak")
-    return support_grade in {"supported", "strong"} and proof_like_excerpt
-
 
 def _source_evidence_provenance_override_candidates(
     candidates: list[dict[str, object]],
     *,
     intent: str,
+    evidence_request: bool,
     query_text: str,
 ) -> list[dict[str, object]]:
-    if intent == "work_resumption" or not _query_requests_quote_grade_source(query_text):
+    if intent == "work_resumption" or not evidence_request:
         return []
 
     query_ct = content_tokens(query_text)
@@ -1359,39 +1356,6 @@ def _source_excerpt_disclaims_exact_evidence(excerpt: str) -> bool:
         "wasn't preserved",
         "was not preserved",
     ))
-
-
-def _query_requests_quote_grade_source(query_text: str) -> bool:
-    lowered = query_text.lower()
-    if any(
-        cue in lowered
-        for cue in (
-            "exact line",
-            "exact log line",
-            "exact finding",
-            "exact evidence",
-            "proof line",
-            "smoking gun",
-            "exact wording",
-            "exact text",
-            "quote the",
-            "quote that",
-        )
-    ):
-        return True
-    if ("which message" in lowered or "what message" in lowered or "prior message" in lowered) and any(
-        cue in lowered for cue in ("backed", "support", "supported", "justified", "led to")
-    ):
-        return True
-    if "finding" in lowered and any(
-        cue in lowered for cue in ("backed", "support", "supported", "justified", "exact")
-    ):
-        return True
-    if ("which line" in lowered or "what line" in lowered) and any(
-        cue in lowered for cue in ("prove", "proved", "proof", "backed", "support", "supported", "log")
-    ):
-        return True
-    return False
 
 
 def _annotate_excluded_candidates(

@@ -170,6 +170,7 @@ TurnKind = Literal["new_thread", "same_thread", "same_thread_continuation", "res
 class QueryRuntimeContext:
     turn_kind: TurnKind | None = None
     session_has_sufficient_local_context: bool | None = None
+    evidence_request: bool | None = None
 
 
 @dataclass(frozen=True)

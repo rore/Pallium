@@ -132,4 +132,5 @@ def resolve_runtime_context(
             if runtime_context.session_has_sufficient_local_context is not None
             else inferred.session_has_sufficient_local_context
         ),
+        evidence_request=runtime_context.evidence_request,
     )

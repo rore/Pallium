@@ -159,7 +159,20 @@ LANE_POLICY_FAMILY_MAPPING: dict[str, str] = {
     "evidence_trace": "recall_fact",
 }
 
-# Recall mode constants — modes only change weights and shaping, not selection path or gates
+# Recall mode constants — modes only change weights and shaping, not selection path or gates.
+#
+# Mode activation (in _select_recall_mode): conservative — only switches from
+# "default" when one memory layer is unambiguously dominant with no competing types.
+#
+# - "default": generic recall, mixed candidate sets, equal layer treatment
+# - "continuity_preference": same-thread continuity_memory dominant, no competing layers
+#     boosts continuity_memory (+70 over base 145), suppresses decision/investigation
+#     skips freshness bonus (preserves recency neutrality for recent-session focus)
+# - "sharp_fact_preference": dominant decision/investigation, structured_recall base weights
+#     minor decision boost (235 vs 220), suppresses continuity_memory (40 vs 60)
+# - "investigation_preference": dominant investigation_outcome only, no competing layers
+#     uses structured_recall weights as-is, strongest freshness bonus (42)
+#     disables fresh_thread_preference (investigation is cross-thread by design)
 RECALL_MODE_WEIGHTS: dict[str, dict[str, int]] = {
     "default": ROUTING_LAYER_WEIGHTS["recall"],
     "continuity_preference": {

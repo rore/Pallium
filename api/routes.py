@@ -39,6 +39,7 @@ def _deserialize_runtime_context(payload) -> QueryRuntimeContext | None:
     return QueryRuntimeContext(
         turn_kind=payload.turn_kind,
         session_has_sufficient_local_context=payload.session_has_sufficient_local_context,
+        evidence_request=payload.evidence_request,
     )
 
 

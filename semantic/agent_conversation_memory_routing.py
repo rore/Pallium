@@ -471,6 +471,7 @@ def route_query_results(
             query_text=text,
             query_filters=query_filters,
             runtime_context=runtime_context,
+            evidence_request=signal_envelope.evidence_request,
         )
         _annotate_excluded_candidates(
             ranked_candidates=ranked_candidates,
