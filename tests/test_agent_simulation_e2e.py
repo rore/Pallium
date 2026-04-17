@@ -524,6 +524,70 @@ def test_greeting_exchange_does_not_inject_source_evidence(monkeypatch, test_db_
         )
 
 
+def test_offtopic_weather_query_does_not_carry_forward_library_memories(monkeypatch, test_db_url: str) -> None:
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: PublicCorpusSemanticProvider())
+    client = TestClient(create_app(build_llm_test_config(default_use_case="agent_conversation_memory", sqlite_url=test_db_url)))
+
+    _seed_history(
+        client,
+        [
+            {
+                "source_type": "chat_message",
+                "source_id": "weather-offtopic-user-1",
+                "content_type": "text/plain",
+                "content": "We need to sort out reservation ordering before the next catalog sync.",
+                "artifact_kind": "message",
+                "role": "user",
+                "container_ref": "chat:library-help",
+                "thread_ref": "chat:library-help:history-weather-offtopic",
+                "visibility": "public",
+            },
+            {
+                "source_type": "assistant_artifact",
+                "source_id": "weather-offtopic-assistant-1",
+                "content_type": "text/plain",
+                "content": "Investigation found that catalog sync delays let arrival-time ordering create duplicate reservation holds.",
+                "artifact_kind": "tool_use_summary",
+                "role": "assistant",
+                "container_ref": "chat:library-help",
+                "thread_ref": "chat:library-help:history-weather-offtopic",
+                "visibility": "public",
+            },
+            {
+                "source_type": "assistant_artifact",
+                "source_id": "weather-offtopic-assistant-2",
+                "content_type": "text/plain",
+                "content": "Decision: use item event time for reservation ordering instead of arrival time during catalog sync retries.",
+                "artifact_kind": "assistant_output",
+                "role": "assistant",
+                "container_ref": "chat:library-help",
+                "thread_ref": "chat:library-help:history-weather-offtopic",
+                "visibility": "public",
+            },
+        ],
+    )
+
+    harness, model = _build_harness(
+        client,
+        container_ref="chat:library-help",
+        thread_ref="chat:library-help:fresh-weather-offtopic",
+        turn_kind="new_thread",
+        session_has_sufficient_local_context=False,
+    )
+
+    harness.process_chat_message("how is the weather today?")
+
+    query_response = harness.session.events[0]["query_debug"]["response"]
+    injectable_blocks = query_response["injectable_blocks"]
+
+    assert query_response["should_inject"] is False, (
+        f"Expected no off-topic injection, got decision_reason={query_response.get('decision_reason')!r}, "
+        f"blocks={injectable_blocks}"
+    )
+    assert injectable_blocks == []
+    assert model.calls[0]["injectable_blocks"] == []
+
+
 def test_same_thread_confirmation_does_not_inject_source_evidence(monkeypatch, test_db_url: str) -> None:
     """A same-thread lightweight confirmation query ('we're talking about export, right?')
     must not receive multiple raw source_evidence injection blocks.

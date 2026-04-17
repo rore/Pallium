@@ -1178,13 +1178,7 @@ def _supported_exact_low_confidence_override_candidates(
             continue
         if _candidate_lexical_rank(candidate) > best_lexical_rank + 1:
             continue
-        if not _candidate_is_injection_eligible(
-            candidate,
-            intent=intent,
-            query_text=query_text,
-            allow_discussion_fallback=False,
-            allow_source_companion=False,
-        ):
+        if not candidate_injection_eligible(candidate):
             continue
         override_candidates.append(candidate)
 
@@ -1218,12 +1212,12 @@ def _candidate_is_injection_eligible(
     # between the query and the candidate's content surface.
     # Skip for work_resumption — directional context is useful even without
     # lexical confirmation (per injection precision principle in decisions.md).
-    # Also skip when the query has very few content tokens (<=2) — too vague
-    # to compute meaningful overlap, and vague queries are often resumption-
-    # like ("what should I do next?") where any active memory is useful.
+    # For fresh-thread recall, short topical queries like "weather today"
+    # still need overlap; otherwise tiny lexical noise can inject unrelated
+    # lower-level memories.
     if intent != "work_resumption":
         query_ct = content_tokens(query_text)
-        if len(query_ct) > 2 and not _candidate_has_content_overlap(item, query_text, query_ct=query_ct):
+        if query_ct and not _candidate_has_content_overlap(item, query_text, query_ct=query_ct):
             return False
     if item.result_kind == "source_hit":
         if normalize_for_index(str(item.excerpt or "")) == normalize_for_index(query_text):

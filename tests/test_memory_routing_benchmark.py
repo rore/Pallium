@@ -150,6 +150,28 @@ def test_memory_routing_benchmark_closes_false_merge_guard_routing_gap(monkeypat
     assert 'sharp_lower_level_support' in structured_recall_reasons or 'weak_investigative_support' in structured_recall_reasons
 
 
+def test_memory_routing_benchmark_keeps_multilingual_exact_recall_out_of_task_checkpoint(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr('app.dependencies.build_llm_provider', lambda config, **_: TieredMemorySemanticProvider())
+
+    run_dir = run_memory_routing_benchmark(
+        scenario_file=SCENARIOS,
+        output_root=tmp_path / 'output',
+        config=_benchmark_config(),
+        run_name='memory-routing-multilingual-recall',
+        answer_provider=TieredMemoryAnswerProvider(),
+    )
+    results = {item['scenario_id']: item for item in _read_jsonl(run_dir / 'results.jsonl')}
+
+    for scenario_id in (
+        'cross-language-hebrew-query-english-memory',
+        'hebrew-content-hebrew-query',
+        'hebrew-extraction-decision-memory-type',
+    ):
+        result = results[scenario_id]
+        assert result['higher_level_overuse'] is False, f"Expected no higher-level overuse for {scenario_id}, got {result}"
+        assert result['top_layer'] != 'task_checkpoint', f"Exact recall should not package as task_checkpoint for {scenario_id}: {result}"
+
+
 def test_benchmark_default_visibility_ingests_public_items(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr('app.dependencies.build_llm_provider', lambda config, **_: TieredMemorySemanticProvider())
 
