@@ -164,7 +164,47 @@ class TestCandidateHasContentOverlap:
             excerpt=excerpt,
         )
 
-    def test_cross_language_bypass_hebrew_query_english_candidate(self):
+    def test_cross_language_bypass_arabic_query_english_candidate(self):
+        """Arabic-only query vs English-only candidate → script bypass."""
+        from semantic.agent_conversation_memory_routing_selection import (
+            _candidate_has_content_overlap,
+        )
+        item = self._make_item(payload={"summary": "use redis for caching"})
+        result = _candidate_has_content_overlap(item, "ماذا قررنا عن التخزين")
+        assert result is True
+
+    def test_same_script_arabic_overlap_succeeds(self):
+        """Arabic query and Arabic candidate sharing a content word → overlap detected."""
+        from semantic.agent_conversation_memory_routing_selection import (
+            _candidate_has_content_overlap,
+        )
+        item = self._make_item(payload={"summary": "استخدام Redis التخزين المؤقت"})
+        result = _candidate_has_content_overlap(item, "ماذا قررنا عن التخزين")
+        assert result is True
+
+    def test_same_script_arabic_no_overlap(self):
+        from semantic.agent_conversation_memory_routing_selection import (
+            _candidate_has_content_overlap,
+        )
+        item = self._make_item(payload={"summary": "استخدام Redis للتخزين المؤقت"})
+        result = _candidate_has_content_overlap(item, "تصميم واجهة المستخدم")
+        assert result is False
+
+    def test_cross_language_bypass_cyrillic_query_english_candidate(self):
+        from semantic.agent_conversation_memory_routing_selection import (
+            _candidate_has_content_overlap,
+        )
+        item = self._make_item(payload={"summary": "use redis for caching"})
+        result = _candidate_has_content_overlap(item, "что решили о кешировании")
+        assert result is True
+
+    def test_same_script_cyrillic_overlap_succeeds(self):
+        from semantic.agent_conversation_memory_routing_selection import (
+            _candidate_has_content_overlap,
+        )
+        item = self._make_item(payload={"summary": "использовать базу данных для хранения"})
+        result = _candidate_has_content_overlap(item, "что решили о хранении данных")
+        assert result is True
         """When query is Hebrew-only and candidate is English-only, the
         script-mismatch bypass defers to vector similarity (returns True)."""
         from semantic.agent_conversation_memory_routing_selection import (
@@ -336,6 +376,28 @@ class TestContentTokensMultilingual:
         # Ensure no spurious variants were created
         assert all(not t.isascii() for t in tokens)
 
+    def test_arabic_tokens_preserved(self):
+        tokens = content_tokens("استخدام قاعدة البيانات")
+        assert "استخدام" in tokens
+        assert "قاعدة" in tokens
+        assert "البيانات" in tokens
+
+    def test_cyrillic_tokens_preserved(self):
+        tokens = content_tokens("использовать базу данных")
+        assert "использовать" in tokens
+        assert "базу" in tokens
+        assert "данных" in tokens
+
+    def test_cjk_content_tokens_preserved(self):
+        tokens = content_tokens("数据库设计")
+        assert "数" in tokens
+        assert "据" in tokens
+
+    def test_french_diacritics_folded_in_content_tokens(self):
+        tokens = content_tokens("décision réservation")
+        assert "decision" in tokens
+        assert "reservation" in tokens
+
 
 # ---------------------------------------------------------------------------
 # TestScriptsDiffer — cross-language bypass in routing selection
@@ -376,6 +438,27 @@ class TestScriptsDiffer:
         from semantic.agent_conversation_memory_routing_selection import _scripts_differ
         assert _scripts_differ(set(), set()) is False
 
+    def test_arabic_vs_english(self):
+        from semantic.agent_conversation_memory_routing_selection import _scripts_differ
+        assert _scripts_differ({"استخدام"}, {"hello"}) is True
+
+    def test_arabic_vs_arabic(self):
+        from semantic.agent_conversation_memory_routing_selection import _scripts_differ
+        assert _scripts_differ({"استخدام"}, {"تخزين"}) is False
+
+    def test_cyrillic_vs_english(self):
+        from semantic.agent_conversation_memory_routing_selection import _scripts_differ
+        assert _scripts_differ({"данных"}, {"hello"}) is True
+
+    def test_cyrillic_vs_cyrillic(self):
+        from semantic.agent_conversation_memory_routing_selection import _scripts_differ
+        assert _scripts_differ({"данных"}, {"хранения"}) is False
+
+    def test_arabic_vs_hebrew(self):
+        """Two non-Latin scripts — both non-ASCII, no shared tokens → differ."""
+        from semantic.agent_conversation_memory_routing_selection import _scripts_differ
+        assert _scripts_differ({"שלום"}, {"مرحبا"}) is False
+
 
 # ---------------------------------------------------------------------------
 # TestTokenizeQueryMultilingual — tokenize_query with multiple scripts
@@ -406,3 +489,26 @@ class TestTokenizeQueryMultilingual:
         # Verify no spurious Hebrew variants were created
         hebrew_tokens = [t for t in tokens if not t.isascii()]
         assert hebrew_tokens == ["שלום"]
+
+    def test_arabic_query_tokens(self):
+        tokens = tokenize_query("استخدام قاعدة البيانات")
+        assert "استخدام" in tokens
+        assert "قاعدة" in tokens
+        assert "البيانات" in tokens
+
+    def test_cyrillic_query_tokens(self):
+        tokens = tokenize_query("использовать базу данных")
+        assert "использовать" in tokens
+        assert "базу" in tokens
+        assert "данных" in tokens
+
+    def test_cjk_query_character_tokens(self):
+        tokens = tokenize_query("数据库")
+        assert "数" in tokens
+        assert "据" in tokens
+        assert "库" in tokens
+
+    def test_mixed_arabic_english_tokens(self):
+        tokens = tokenize_query("استخدام PostgreSQL")
+        assert "استخدام" in tokens
+        assert "postgresql" in tokens

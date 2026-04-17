@@ -524,6 +524,239 @@ class TestHebrewRetrievalIntegration:
         found_ids = [r.memory_object_id for r in result.results]
         assert memory_object.id in found_ids
 
+    def test_hebrew_niqud_query_finds_plain_index_entry(self, test_db_url: str):
+        """Query with niqud finds index text stored without niqud."""
+        from core.text import normalize_for_index
+        storage = SQLiteStorageProvider(test_db_url)
+
+        source_item = SourceItem(
+            source_type="chat_message", source_id="he-niqud-lex-1",
+            content_type="text/plain",
+            content="החלטנו להשתמש בזמן האירוע של הפריט",
+            artifact_kind="message", role="user",
+            container_ref="test:container", thread_ref="test:thread",
+            visibility="container",
+        )
+        storage.create_source_item(source_item)
+
+        memory_object = MemoryObject(
+            type="decision", schema_id="test.decision", schema_version="v1",
+            payload={"decision": "להשתמש בזמן האירוע"},
+            visibility="container", container_ref="test:container",
+        )
+        storage.create_memory_object(memory_object)
+        storage.create_relation(Relation(
+            from_kind="memory_object", from_id=memory_object.id,
+            relation_type="supported_by", to_kind="source_item", to_id=source_item.id,
+        ))
+        storage.create_index_entry(IndexEntry(
+            target_kind="memory_object", target_id=memory_object.id,
+            index_type="lexical",
+            text_view=normalize_for_index("החלטנו להשתמש בזמן האירוע של הפריט"),
+            text_view_name="memory_object.decision_context",
+            provider_name="builtin", provider_version="v1",
+        ))
+
+        provider = LexicalRetrievalProvider(storage)
+        result = provider.query(
+            "הַחְלָטָה לְהִשְׁתַּמֵּשׁ בִּזְמַן",
+            limit=10, query_container_ref="test:container",
+        )
+        found_ids = [r.memory_object_id for r in result.results]
+        assert memory_object.id in found_ids
+
+
+class TestArabicRetrievalIntegration:
+    """End-to-end: Arabic content is indexed and retrieved through the full
+    lexical pipeline."""
+
+    def test_arabic_query_finds_arabic_index_entry(self, test_db_url: str):
+        from core.text import normalize_for_index
+        storage = SQLiteStorageProvider(test_db_url)
+
+        source_item = SourceItem(
+            source_type="chat_message", source_id="ar-msg-1",
+            content_type="text/plain",
+            content="قررنا استخدام PostgreSQL لتخزين البيانات",
+            artifact_kind="message", role="user",
+            container_ref="test:container", thread_ref="test:thread",
+            visibility="container",
+        )
+        storage.create_source_item(source_item)
+
+        memory_object = MemoryObject(
+            type="decision", schema_id="test.decision", schema_version="v1",
+            payload={"decision": "استخدام PostgreSQL لتخزين البيانات"},
+            visibility="container", container_ref="test:container",
+        )
+        storage.create_memory_object(memory_object)
+        storage.create_relation(Relation(
+            from_kind="memory_object", from_id=memory_object.id,
+            relation_type="supported_by", to_kind="source_item", to_id=source_item.id,
+        ))
+
+        index_text = normalize_for_index("قررنا استخدام PostgreSQL لتخزين البيانات")
+        assert "استخدام" in index_text
+        assert "postgresql" in index_text
+
+        storage.create_index_entry(IndexEntry(
+            target_kind="memory_object", target_id=memory_object.id,
+            index_type="lexical", text_view=index_text,
+            text_view_name="memory_object.decision_context",
+            provider_name="builtin", provider_version="v1",
+        ))
+
+        provider = LexicalRetrievalProvider(storage)
+        result = provider.query(
+            "ماذا قررنا بشأن تخزين البيانات",
+            limit=10, query_container_ref="test:container",
+        )
+        assert len(result.results) >= 1
+        found_ids = [r.memory_object_id for r in result.results]
+        assert memory_object.id in found_ids
+
+    def test_arabic_tashkeel_query_finds_plain_index(self, test_db_url: str):
+        """Query with tashkeel finds index stored without tashkeel."""
+        from core.text import normalize_for_index
+        storage = SQLiteStorageProvider(test_db_url)
+
+        source_item = SourceItem(
+            source_type="chat_message", source_id="ar-tash-1",
+            content_type="text/plain",
+            content="استخدام Redis للتخزين المؤقت",
+            artifact_kind="message", role="user",
+            container_ref="test:container", thread_ref="test:thread",
+            visibility="container",
+        )
+        storage.create_source_item(source_item)
+
+        memory_object = MemoryObject(
+            type="decision", schema_id="test.decision", schema_version="v1",
+            payload={"decision": "استخدام Redis للتخزين المؤقت"},
+            visibility="container", container_ref="test:container",
+        )
+        storage.create_memory_object(memory_object)
+        storage.create_relation(Relation(
+            from_kind="memory_object", from_id=memory_object.id,
+            relation_type="supported_by", to_kind="source_item", to_id=source_item.id,
+        ))
+        storage.create_index_entry(IndexEntry(
+            target_kind="memory_object", target_id=memory_object.id,
+            index_type="lexical",
+            text_view=normalize_for_index("استخدام Redis للتخزين المؤقت"),
+            text_view_name="memory_object.decision_context",
+            provider_name="builtin", provider_version="v1",
+        ))
+
+        provider = LexicalRetrievalProvider(storage)
+        result = provider.query(
+            "اِسْتِخْدَامُ Redis",
+            limit=10, query_container_ref="test:container",
+        )
+        found_ids = [r.memory_object_id for r in result.results]
+        assert memory_object.id in found_ids
+
+
+class TestCJKRetrievalIntegration:
+    """End-to-end: CJK content is indexed and retrieved through the full
+    lexical pipeline. CJK uses character-per-token, so shared characters
+    between query and index produce matches."""
+
+    def test_cjk_query_finds_cjk_index_entry(self, test_db_url: str):
+        from core.text import normalize_for_index
+        storage = SQLiteStorageProvider(test_db_url)
+
+        source_item = SourceItem(
+            source_type="chat_message", source_id="cjk-msg-1",
+            content_type="text/plain",
+            content="我们决定使用PostgreSQL存储数据",
+            artifact_kind="message", role="user",
+            container_ref="test:container", thread_ref="test:thread",
+            visibility="container",
+        )
+        storage.create_source_item(source_item)
+
+        memory_object = MemoryObject(
+            type="decision", schema_id="test.decision", schema_version="v1",
+            payload={"decision": "使用PostgreSQL存储数据"},
+            visibility="container", container_ref="test:container",
+        )
+        storage.create_memory_object(memory_object)
+        storage.create_relation(Relation(
+            from_kind="memory_object", from_id=memory_object.id,
+            relation_type="supported_by", to_kind="source_item", to_id=source_item.id,
+        ))
+
+        index_text = normalize_for_index("我们决定使用PostgreSQL存储数据")
+        assert "postgresql" in index_text
+
+        storage.create_index_entry(IndexEntry(
+            target_kind="memory_object", target_id=memory_object.id,
+            index_type="lexical", text_view=index_text,
+            text_view_name="memory_object.decision_context",
+            provider_name="builtin", provider_version="v1",
+        ))
+
+        provider = LexicalRetrievalProvider(storage)
+        result = provider.query(
+            "数据存储",
+            limit=10, query_container_ref="test:container",
+        )
+        assert len(result.results) >= 1
+        found_ids = [r.memory_object_id for r in result.results]
+        assert memory_object.id in found_ids
+
+
+class TestCyrillicRetrievalIntegration:
+    """End-to-end: Cyrillic content is indexed and retrieved through the
+    full lexical pipeline."""
+
+    def test_cyrillic_query_finds_cyrillic_index_entry(self, test_db_url: str):
+        from core.text import normalize_for_index
+        storage = SQLiteStorageProvider(test_db_url)
+
+        source_item = SourceItem(
+            source_type="chat_message", source_id="ru-msg-1",
+            content_type="text/plain",
+            content="Мы решили использовать PostgreSQL для хранения данных",
+            artifact_kind="message", role="user",
+            container_ref="test:container", thread_ref="test:thread",
+            visibility="container",
+        )
+        storage.create_source_item(source_item)
+
+        memory_object = MemoryObject(
+            type="decision", schema_id="test.decision", schema_version="v1",
+            payload={"decision": "использовать PostgreSQL для хранения данных"},
+            visibility="container", container_ref="test:container",
+        )
+        storage.create_memory_object(memory_object)
+        storage.create_relation(Relation(
+            from_kind="memory_object", from_id=memory_object.id,
+            relation_type="supported_by", to_kind="source_item", to_id=source_item.id,
+        ))
+
+        index_text = normalize_for_index("Мы решили использовать PostgreSQL для хранения данных")
+        assert "использовать" in index_text
+        assert "postgresql" in index_text
+
+        storage.create_index_entry(IndexEntry(
+            target_kind="memory_object", target_id=memory_object.id,
+            index_type="lexical", text_view=index_text,
+            text_view_name="memory_object.decision_context",
+            provider_name="builtin", provider_version="v1",
+        ))
+
+        provider = LexicalRetrievalProvider(storage)
+        result = provider.query(
+            "что решили о хранении данных",
+            limit=10, query_container_ref="test:container",
+        )
+        assert len(result.results) >= 1
+        found_ids = [r.memory_object_id for r in result.results]
+        assert memory_object.id in found_ids
+
+
     def test_hebrew_source_item_indexed_by_core_service(self, test_db_url: str):
         """Verify that core/service.py indexes Hebrew source items correctly
         via the centralized normalize_for_index from core/text.py."""
