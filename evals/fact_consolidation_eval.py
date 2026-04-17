@@ -89,19 +89,25 @@ def run_eval(*, db_cache_dir: Path, verbose: bool = False) -> bool:
         )
 
         with TestClient(create_app(scenario_config)) as client:
-            # Step 1: Run fact consolidation
+            # Step 1: Run fact consolidation (or skip if already consolidated)
             print("Running fact consolidation pass...")
             service = client.app.state.pallium_service
-            result = service.run_consolidation_pass(use_case="conversational_knowledge")
 
-            if result is None:
-                print("ERROR: Consolidation returned None — plugin not registered or no policy")
-                return False
-
-            print(f"  Candidates: {result.candidate_count}")
-            print(f"  Groups: {len(result.groups)}")
-            for g in result.groups:
-                print(f"    {g.group_key}: created={len(g.created_memory_ids)} superseded={len(g.superseded_memory_ids)}")
+            existing_fact_summaries = service._storage.list_memory_objects(
+                memory_types=["fact_summary"],
+                lifecycle="active",
+            )
+            if existing_fact_summaries:
+                print(f"  Skipping consolidation — {len(existing_fact_summaries)} active fact_summary objects already exist in cached DB")
+            else:
+                result = service.run_consolidation_pass(use_case="conversational_knowledge")
+                if result is None:
+                    print("ERROR: Consolidation returned None — plugin not registered or no policy")
+                    return False
+                print(f"  Candidates: {result.candidate_count}")
+                print(f"  Groups: {len(result.groups)}")
+                for g in result.groups:
+                    print(f"    {g.group_key}: created={len(g.created_memory_ids)} superseded={len(g.superseded_memory_ids)}")
 
             # Step 2: Reconcile vector index so new objects are searchable
             service.reconcile_vector_index()
