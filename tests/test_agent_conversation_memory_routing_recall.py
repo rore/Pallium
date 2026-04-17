@@ -501,15 +501,15 @@ def test_investigative_conclusion_prefers_sharp_conclusions_over_generic_summari
 
         # envelope-first routing: recall mode from candidate evidence, not English text.
         # Mixed candidates -> default recall mode -> broad_recall.
-        # Sharp conclusions (decision, investigation_outcome) still rank above summaries
-        # because broad_recall weights favor them (310, 330) over thread_summary (130).
-        # BM25 in small corpora produces near-zero quality scores for all candidates,
-        # so routing depends on layer weights and evidence shape rather than retrieval quality.
+        # This scenario currently stores one sharp conclusion (decision) plus a
+        # continuity carry-forward answer. The investigation artifact remains a
+        # discussion_summary, so the top results should stay decision-first and
+        # keep summaries out of the first two slots.
         assert routing['query_intent'] == 'recall'
         assert routing['preferred_layers'][:3] == ['pattern_memory', 'investigation_outcome', 'decision']
         assert payload['results'][0]['result_kind'] == 'memory_hit'
-        assert payload['results'][0]['type'] in {'investigation_outcome', 'decision', 'continuity_memory'}
-        assert payload['results'][1]['type'] in {'investigation_outcome', 'decision'}
+        assert payload['results'][0]['type'] in {'investigation_outcome', 'decision'}
+        assert payload['results'][1]['type'] in {'investigation_outcome', 'decision', 'continuity_memory'}
         assert all(item.get('type') not in {'thread_summary', 'discussion_summary'} for item in payload['results'][:2])
 
 def test_routing_trace_reports_excluded_candidates_and_result_origins(monkeypatch, test_db_url: str) -> None:

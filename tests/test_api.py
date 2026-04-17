@@ -604,7 +604,7 @@ def test_query_debug_exposes_injection_decision_and_sharp_candidate_diagnostics(
             "source_type": "assistant_artifact",
             "source_id": "api-debug-1",
             "content_type": "text/plain",
-            "content": "Investigation found that arrival-time ordering reused stale hold updates during delayed sync.",
+            "content": "Investigation found that arrival-time ordering reused stale hold updates because the sync window exceeded the hold TTL.",
             "artifact_kind": "assistant_output",
             "role": "assistant",
             "container_ref": "chat:api",
