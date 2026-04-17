@@ -41,7 +41,7 @@ def test_processing_endpoint_includes_observability_summary_fields(client, drain
     assert response.status_code == 200
     payload = response.json()
     assert payload["failure_category"] is None
-    assert payload["memory_object_types"] == ["decision"]
+    assert payload["memory_object_types"] == ["discussion_summary"]
     assert payload["thread_rebuild_requested"] is False
     assert payload["thread_rebuild_completed"] is False
     assert payload["produced_memory_provenance"]

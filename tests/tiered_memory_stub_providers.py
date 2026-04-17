@@ -290,6 +290,11 @@ def _build_item_extraction_payload(user_prompt: str) -> dict[str, object]:
     if 'Investigation found' in user_prompt:
         finding = _extract_sentence_containing(user_prompt, 'Investigation found')
         finding = finding.replace('Investigation found that ', '').replace('Investigation found ', '').strip().rstrip('.')
+        rationale = None
+        if ' because ' in finding:
+            core, reason = finding.split(' because ', 1)
+            finding = core.strip()
+            rationale = f"because {reason.strip()}"
         return {
             'summary': 'Investigation outcome recorded in the conversation.',
             'candidate_type': 'investigation_outcome',
@@ -297,7 +302,8 @@ def _build_item_extraction_payload(user_prompt: str) -> dict[str, object]:
             'decision_evidence_text': None,
             'investigation_text': finding,
             'investigation_evidence_text': _extract_sentence_containing(user_prompt, 'Investigation found').strip(),
-            'rationale_text': None,
+            'rationale_text': rationale,
+            'key_finding_text': finding,
         }
 
     if 'got through batch 417' in lower and 'resume from batch 418' in lower:
