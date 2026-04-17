@@ -1060,6 +1060,15 @@ def _candidate_has_content_overlap(
 
 FACT_SUMMARY_TYPE = "fact_summary"
 _SHARED_FACT_SUMMARY_VISIBILITIES = frozenset({"container", "public"})
+_SAME_TYPE_DEDUP_CANONICAL_TYPES = frozenset({"decision", "investigation_outcome"})
+
+
+def _candidate_canonical_key(item: QueryResultItem) -> str:
+    payload = item.payload or {}
+    raw_key = str(payload.get("canonical_key") or "").strip()
+    if not raw_key:
+        return ""
+    return normalize_for_index(raw_key)
 
 
 def _fact_summary_is_injection_eligible(
@@ -1585,11 +1594,12 @@ def _is_content_duplicate(
     """Two-gate duplicate check: evidence+text or text-only.
 
     Returns True when two candidates carry semantically duplicate content.
-    Only applies between memory_hit candidates of different types (the cross-
-    package case: e.g., decision + atomic_fact about the same content).
+    Applies between memory_hit candidates of different types and, narrowly,
+    between same-type decision/investigation memories that share the same
+    canonical key.
     Source hits are never deduped (they are raw evidence, not derived memory).
-    Same-type memories are never deduped (two decisions from the same thread
-    are likely about different things even if they share vocabulary).
+    Same-type memories are otherwise never deduped (two decisions from the same
+    thread are likely about different things even if they share vocabulary).
     Evidence overlap alone is not sufficient (thread-level extractions share
     all source items) — it must be combined with text overlap.
     """
@@ -1601,8 +1611,22 @@ def _is_content_duplicate(
     # Only dedup between memory_hit candidates of different types
     if item_a.result_kind != "memory_hit" or item_b.result_kind != "memory_hit":
         return False
+    same_type_canonical_duplicate = False
     if item_a.type == item_b.type:
-        return False
+        if item_a.type not in _SAME_TYPE_DEDUP_CANONICAL_TYPES:
+            return False
+        canonical_key_a = _candidate_canonical_key(item_a)
+        canonical_key_b = _candidate_canonical_key(item_b)
+        if canonical_key_a != canonical_key_b:
+            return False
+        if not canonical_key_a:
+            return False
+        same_type_canonical_duplicate = True
+
+    evidence_a = _candidate_evidence_ids(candidate_a)
+    evidence_b = _candidate_evidence_ids(candidate_b)
+    if same_type_canonical_duplicate and evidence_a and evidence_b and evidence_a & evidence_b:
+        return True
 
     text_a = _candidate_content_surface(item_a)
     text_b = _candidate_content_surface(item_b)
@@ -1616,8 +1640,6 @@ def _is_content_duplicate(
     overlap = len(tokens_a & tokens_b) / min_size
 
     # Gate 1: evidence overlap + loose text threshold
-    evidence_a = _candidate_evidence_ids(candidate_a)
-    evidence_b = _candidate_evidence_ids(candidate_b)
     if evidence_a and evidence_b and evidence_a & evidence_b:
         if overlap >= DEDUP_EVIDENCE_TEXT_THRESHOLD:
             return True

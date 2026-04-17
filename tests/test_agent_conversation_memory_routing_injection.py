@@ -2870,6 +2870,95 @@ def test_dedup_detects_text_only_duplicate_without_shared_evidence() -> None:
     assert _is_content_duplicate(candidate_a, candidate_b) is True
 
 
+def test_dedup_detects_same_type_decision_duplicate_with_shared_canonical_key() -> None:
+    from semantic.agent_conversation_memory_routing_selection import _is_content_duplicate
+
+    shared_evidence = [
+        EvidenceReference(source_item_id='src-decision-1', source_type='message', source_id='src-decision-1'),
+    ]
+    candidate_a = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="decision-same-type-a",
+            type="decision",
+            payload={
+                "decision": "Use item event time for reservation ordering",
+                "decision_evidence_text": "Decision: use item event time for reservation ordering to avoid duplicate holds.",
+                "canonical_key": "use item event time for reservation ordering",
+                "rationale": "to avoid duplicate holds",
+            },
+            score=18,
+            evidence=shared_evidence,
+            container_ref="chat:test",
+        ),
+        "routing_score": 520,
+    }
+    candidate_b = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="decision-same-type-b",
+            type="decision",
+            payload={
+                "decision": "Use item event time for reservation ordering",
+                "decision_evidence_text": "Decision: use item event time for reservation ordering instead of arrival time during sync retries.",
+                "canonical_key": "use item event time for reservation ordering",
+                "rationale": "to prevent stale replay updates",
+            },
+            score=17,
+            evidence=shared_evidence,
+            container_ref="chat:test",
+        ),
+        "routing_score": 480,
+    }
+
+    assert _is_content_duplicate(candidate_a, candidate_b) is True
+
+
+def test_dedup_preserves_same_type_decisions_with_different_canonical_keys() -> None:
+    from semantic.agent_conversation_memory_routing_selection import _dedup_eligible_candidates, _is_content_duplicate
+
+    shared_evidence = [
+        EvidenceReference(source_item_id='src-decision-2', source_type='message', source_id='src-decision-2'),
+    ]
+    candidate_a = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="decision-different-a",
+            type="decision",
+            payload={
+                "decision": "Use item event time for reservation ordering",
+                "decision_evidence_text": "Decision: use item event time for reservation ordering.",
+                "canonical_key": "use item event time for reservation ordering",
+            },
+            score=18,
+            evidence=shared_evidence,
+            container_ref="chat:test",
+        ),
+        "routing_score": 510,
+    }
+    candidate_b = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="decision-different-b",
+            type="decision",
+            payload={
+                "decision": "Use 30-minute batches for overdue notices",
+                "decision_evidence_text": "Decision: use 30-minute batches for overdue notices.",
+                "canonical_key": "use 30 minute batches for overdue notices",
+            },
+            score=17,
+            evidence=shared_evidence,
+            container_ref="chat:test",
+        ),
+        "routing_score": 500,
+    }
+
+    assert _is_content_duplicate(candidate_a, candidate_b) is False
+    retained, removed = _dedup_eligible_candidates([candidate_a, candidate_b])
+    assert len(retained) == 2
+    assert len(removed) == 0
+
+
 def test_dedup_greedy_sweep_preserves_non_transitive_pair() -> None:
     """A~B and B~C but not A~C → A and C survive, only B removed."""
     from semantic.agent_conversation_memory_routing_selection import _dedup_eligible_candidates
@@ -3050,6 +3139,94 @@ def test_injection_dedup_removes_cross_package_duplicate_in_pipeline() -> None:
     injection = routing.get("injection_decision", {})
     assert injection.get("dedup_applied") is True
     assert injection.get("dedup_removed_count") >= 1
+
+
+def test_injection_dedup_removes_same_type_duplicate_decision_in_pipeline() -> None:
+    """Two decision memories with the same canonical content should inject once."""
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(container_ref='chat:library-help', thread_ref='chat:library-help:thread-same-type-dedup')
+    now = datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc)
+    shared_evidence = [
+        EvidenceReference(source_item_id='msg-same-type-1', source_type='message', source_id='msg-same-type-1', occurred_at=now),
+    ]
+    retrieval_result = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-same-type-1',
+                type='decision',
+                payload={
+                    'decision': 'Use item event time for reservation ordering',
+                    'decision_evidence_text': 'Decision: use item event time for reservation ordering to avoid duplicate holds.',
+                    'canonical_key': 'use item event time for reservation ordering',
+                    'rationale': 'to avoid duplicate holds',
+                },
+                score=20,
+                evidence=shared_evidence,
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-same-type-dedup',
+                freshness_at=now,
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-same-type-2',
+                type='decision',
+                payload={
+                    'decision': 'Use item event time for reservation ordering',
+                    'decision_evidence_text': 'Decision: use item event time for reservation ordering instead of arrival time during sync retries.',
+                    'canonical_key': 'use item event time for reservation ordering',
+                    'rationale': 'to prevent stale replay updates',
+                },
+                score=19,
+                evidence=shared_evidence,
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-same-type-dedup',
+                freshness_at=now,
+            ),
+            QueryResultItem(
+                result_kind='memory_hit',
+                memory_object_id='decision-same-type-3',
+                type='decision',
+                payload={
+                    'decision': 'Use 30-minute batches for overdue notices',
+                    'decision_evidence_text': 'Decision: use 30-minute batches for overdue notices.',
+                    'canonical_key': 'use 30 minute batches for overdue notices',
+                },
+                score=16,
+                evidence=[EvidenceReference(source_item_id='msg-same-type-2', source_type='message', source_id='msg-same-type-2', occurred_at=now)],
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-same-type-dedup',
+                freshness_at=now,
+            ),
+        ],
+        trace=QueryTrace(
+            query_text='What decisions did we make about ordering and notices?',
+            query_tokens=('decisions', 'ordering', 'notices'),
+            limit=5,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+    outcome = plugin.route_query_results(
+        text='What decisions did we make about ordering and notices?',
+        requested_limit=5,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        include_trace=True,
+    )
+
+    assert outcome.should_inject is True
+    injected_ids = {b.result_id for b in outcome.injectable_blocks}
+    assert 'memory_object:decision-same-type-1' in injected_ids
+    assert 'memory_object:decision-same-type-2' not in injected_ids
+    assert 'memory_object:decision-same-type-3' in injected_ids
+    routing = (outcome.trace.routing or {}) if outcome.trace else {}
+    injection = routing.get('injection_decision', {})
+    assert injection.get('dedup_applied') is True
+    assert injection.get('dedup_removed_count') >= 1
 
 
 def test_fact_summary_duplicate_does_not_displace_atomic_fact_in_pipeline() -> None:
