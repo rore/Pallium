@@ -272,6 +272,18 @@ def _typed_memory_payload_is_quality_viable(*texts: str | None) -> bool:
     return True
 
 
+def _investigation_payload_is_quality_viable(extraction: SemanticExtraction) -> bool:
+    if not _typed_memory_payload_is_quality_viable(
+        extraction.investigation_text,
+        extraction.investigation_evidence_text,
+    ):
+        return False
+    return bool(
+        str(extraction.key_finding_text or "").strip()
+        or str(extraction.rationale_text or "").strip()
+    )
+
+
 def fact_statement_is_quality_viable(statement: str) -> bool:
     stripped = statement.strip()
     if not stripped:
@@ -284,7 +296,7 @@ def fact_statement_is_quality_viable(statement: str) -> bool:
 
 
 def _normalize_for_containment(text: str) -> str:
-    return " ".join(text.lower().split())
+    return " ".join(strip_diacritics(text).lower().split())
 
 
 def has_grounded_decision_evidence(source_item: SourceItem, text: str | None) -> bool:
@@ -393,10 +405,7 @@ def build_process_result(
         extraction.candidate_type == "investigation_outcome"
         and extraction.investigation_text
         and extraction.investigation_evidence_text
-        and _typed_memory_payload_is_quality_viable(
-            extraction.investigation_text,
-            extraction.investigation_evidence_text,
-        )
+        and _investigation_payload_is_quality_viable(extraction)
         and has_grounded_investigation_evidence(source_item, extraction.investigation_evidence_text)
     ):
         canonical_key = normalize_for_index(extraction.investigation_text)

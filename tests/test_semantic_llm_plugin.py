@@ -66,6 +66,138 @@ def test_grounded_investigation_evidence_tolerates_whitespace_normalization() ->
         content="Investigation found that\n  arrival-time ordering missed\n  hold updates.",
     )
     assert has_grounded_investigation_evidence(source, "Investigation found that arrival-time ordering missed hold updates.") is True
+
+
+# ---------------------------------------------------------------------------
+# Multilingual write-time grounding
+# ---------------------------------------------------------------------------
+
+def test_grounded_decision_evidence_hebrew_exact_containment() -> None:
+    source = SourceItem(
+        source_type="note", source_id="he-1", content_type="text/plain",
+        content="החלטה: להשתמש בזמן האירוע של הפריט לסידור ההזמנות.",
+    )
+    assert has_grounded_decision_evidence(source, "להשתמש בזמן האירוע של הפריט לסידור ההזמנות") is True
+
+
+def test_grounded_decision_evidence_hebrew_whitespace_variation() -> None:
+    source = SourceItem(
+        source_type="note", source_id="he-ws-1", content_type="text/plain",
+        content="החלטה: להשתמש בזמן\n  האירוע של הפריט\n  לסידור ההזמנות.",
+    )
+    assert has_grounded_decision_evidence(source, "להשתמש בזמן האירוע של הפריט לסידור ההזמנות") is True
+
+
+def test_grounded_decision_evidence_hebrew_niqud_mismatch() -> None:
+    """Source has niqud (vowel marks), evidence does not — grounding should succeed."""
+    source = SourceItem(
+        source_type="note", source_id="he-niqud-1", content_type="text/plain",
+        content="הַחְלָטָה: לְהִשְׁתַּמֵּשׁ בִּזְמַן הָאֵירוּעַ שֶׁל הַפְּרִיט.",
+    )
+    assert has_grounded_decision_evidence(source, "להשתמש בזמן האירוע של הפריט") is True
+
+
+def test_grounded_decision_evidence_mixed_script_literal_grounding() -> None:
+    """Mixed Hebrew + English evidence succeeds when literally grounded."""
+    source = SourceItem(
+        source_type="note", source_id="mixed-1", content_type="text/plain",
+        content="החלטה: להשתמש ב-FastAPI לשרת ה-API.",
+    )
+    assert has_grounded_decision_evidence(source, "להשתמש ב-FastAPI לשרת ה-API") is True
+
+
+def test_grounded_decision_evidence_rejects_translated_evidence() -> None:
+    """English evidence must not match Hebrew source — translation is not grounding."""
+    source = SourceItem(
+        source_type="note", source_id="trans-1", content_type="text/plain",
+        content="החלטה: להשתמש בזמן האירוע של הפריט לסידור ההזמנות.",
+    )
+    assert has_grounded_decision_evidence(source, "use item event time for reservation ordering") is False
+
+
+def test_grounded_decision_evidence_rejects_paraphrased_evidence() -> None:
+    """Paraphrased Hebrew evidence is not grounded even if semantically equivalent."""
+    source = SourceItem(
+        source_type="note", source_id="para-1", content_type="text/plain",
+        content="החלטה: להשתמש בזמן האירוע של הפריט לסידור ההזמנות.",
+    )
+    assert has_grounded_decision_evidence(source, "בחרנו לסדר הזמנות לפי זמן האירוע של הפריט") is False
+
+
+def test_grounded_decision_evidence_arabic_exact_containment() -> None:
+    source = SourceItem(
+        source_type="note", source_id="ar-1", content_type="text/plain",
+        content="القرار: استخدام وقت الحدث للعنصر لترتيب الطلبات.",
+    )
+    assert has_grounded_decision_evidence(source, "استخدام وقت الحدث للعنصر لترتيب الطلبات") is True
+
+
+def test_grounded_decision_evidence_arabic_tashkeel_mismatch() -> None:
+    """Source has tashkeel (vowel marks), evidence does not — grounding should succeed."""
+    source = SourceItem(
+        source_type="note", source_id="ar-tashkeel-1", content_type="text/plain",
+        content="القَرَارُ: اِسْتِخْدَامُ وَقْتِ الحَدَثِ لِلْعُنْصُرِ لِتَرْتِيبِ الطَّلَبَاتِ.",
+    )
+    assert has_grounded_decision_evidence(source, "استخدام وقت الحدث للعنصر لترتيب الطلبات") is True
+
+
+def test_grounded_decision_evidence_arabic_rejects_paraphrase() -> None:
+    source = SourceItem(
+        source_type="note", source_id="ar-para-1", content_type="text/plain",
+        content="القرار: استخدام وقت الحدث للعنصر لترتيب الطلبات.",
+    )
+    assert has_grounded_decision_evidence(source, "اخترنا ترتيب الطلبات بحسب وقت حدث العنصر") is False
+
+
+def test_grounded_decision_evidence_french_exact_containment() -> None:
+    source = SourceItem(
+        source_type="note", source_id="fr-1", content_type="text/plain",
+        content="Décision: utiliser le temps de l'événement pour le tri des réservations.",
+    )
+    assert has_grounded_decision_evidence(source, "utiliser le temps de l'événement pour le tri des réservations") is True
+
+
+def test_grounded_decision_evidence_french_diacritic_mismatch() -> None:
+    """Source has accented characters, evidence drops accents — grounding should succeed."""
+    source = SourceItem(
+        source_type="note", source_id="fr-accent-1", content_type="text/plain",
+        content="Décision: utiliser le temps de l'événement pour le tri des réservations.",
+    )
+    assert has_grounded_decision_evidence(source, "utiliser le temps de l'evenement pour le tri des reservations") is True
+
+
+def test_grounded_decision_evidence_french_rejects_paraphrase() -> None:
+    source = SourceItem(
+        source_type="note", source_id="fr-para-1", content_type="text/plain",
+        content="Décision: utiliser le temps de l'événement pour le tri des réservations.",
+    )
+    assert has_grounded_decision_evidence(source, "on a choisi de trier les réservations par horodatage") is False
+
+
+def test_grounded_investigation_evidence_cyrillic_exact_containment() -> None:
+    source = SourceItem(
+        source_type="note", source_id="ru-1", content_type="text/plain",
+        content="Вывод: использовать время события для сортировки заказов.",
+    )
+    assert has_grounded_investigation_evidence(source, "использовать время события для сортировки заказов") is True
+
+
+def test_grounded_investigation_evidence_cyrillic_whitespace_variation() -> None:
+    source = SourceItem(
+        source_type="note", source_id="ru-ws-1", content_type="text/plain",
+        content="Вывод: использовать время\n  события для\n  сортировки заказов.",
+    )
+    assert has_grounded_investigation_evidence(source, "использовать время события для сортировки заказов") is True
+
+
+def test_grounded_investigation_evidence_cyrillic_rejects_translation() -> None:
+    source = SourceItem(
+        source_type="note", source_id="ru-trans-1", content_type="text/plain",
+        content="Вывод: использовать время события для сортировки заказов.",
+    )
+    assert has_grounded_investigation_evidence(source, "use event time for order sorting") is False
+
+
 from providers.llm.base import LLMCallMetadata, LLMJsonResponse, LLMProviderError
 from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY
 from semantic.llm_agent_memory import DEFAULT_PROMPT_VARIANT, LLMAgentMemoryPlugin, build_analysis_request
@@ -507,8 +639,8 @@ def test_llm_plugin_promotes_decision_when_evidence_is_grounded_in_source() -> N
     assert result.memory_objects[0].type == "decision"
 
 
-def test_llm_plugin_promotes_investigation_when_evidence_is_grounded_in_source() -> None:
-    """When the LLM classifies as investigation and evidence is grounded in source, trust it."""
+def test_llm_plugin_demotes_monitoring_note_with_next_step_from_investigation_outcome() -> None:
+    """Monitoring-only status with a follow-up action should not become durable investigation memory."""
     plugin = LLMAgentMemoryPlugin(
         provider=StubLLMProvider(
             response=LLMJsonResponse(
@@ -542,7 +674,9 @@ def test_llm_plugin_promotes_investigation_when_evidence_is_grounded_in_source()
 
     result = plugin.process_item(source_item)
 
-    assert result.memory_objects[0].type == "investigation_outcome"
+    assert result.memory_objects[0].type == "discussion_summary"
+    semantic_signals = result.source_item_metadata_updates[source_item.id][SEMANTIC_SIGNAL_METADATA_KEY]
+    assert semantic_signals["next_step_text"] == "Watch it closely tonight."
 
 
 def test_llm_plugin_raises_on_invalid_output() -> None:
