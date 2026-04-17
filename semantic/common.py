@@ -18,41 +18,6 @@ from semantic.agent_conversation_memory_embedding import VECTOR_EMBEDDING_PROVID
 
 from core.retention import SEMANTIC_SIGNAL_METADATA_KEY  # noqa: F401 — re-export for backward compatibility
 
-
-DECISION_PATTERNS = (
-    re.compile(r"\bdecision:\s*(?P<body>.+)", re.IGNORECASE),
-    re.compile(r"\bwe decided(?: to)?\s+(?P<body>.+)", re.IGNORECASE),
-    re.compile(r"\bwe chose\s+(?P<body>.+)", re.IGNORECASE),
-    re.compile(r"\bchosen approach[:\s]+(?P<body>.+)", re.IGNORECASE),
-    re.compile(r"\bwe will use\s+(?P<body>.+)", re.IGNORECASE),
-)
-INVESTIGATION_PATTERNS = (
-    re.compile(r"\broot cause[:\s]+(?P<body>.+)", re.IGNORECASE),
-    re.compile(r"\binvestigation found(?: that)?\s+(?P<body>.+)", re.IGNORECASE),
-    re.compile(r"\binvestigation concluded(?: that)?\s+(?P<body>.+)", re.IGNORECASE),
-    re.compile(r"\banalysis found(?: that)?\s+(?P<body>.+)", re.IGNORECASE),
-    re.compile(r"\bfindings?[:\s]+(?P<body>.+)", re.IGNORECASE),
-    re.compile(r"\boutcome[:\s]+(?P<body>.+)", re.IGNORECASE),
-    re.compile(r"\bwe found that\s+(?P<body>.+)", re.IGNORECASE),
-    re.compile(r"\bverdict[:\s]+(?P<body>.+)", re.IGNORECASE),
-    re.compile(r"\bhere's the verdict[:\s]+(?P<body>.+)", re.IGNORECASE),
-    re.compile(r"\bthe verdict is\s+(?P<body>.+)", re.IGNORECASE),
-    re.compile(r"\bconclusion[:\s]+(?P<body>.+)", re.IGNORECASE),
-    re.compile(r"\bthe conclusion is\s+(?P<body>.+)", re.IGNORECASE),
-)
-RATIONALE_SPLITTERS = (
-    " because ",
-    " to avoid ",
-    " to prevent ",
-    " so that ",
-)
-INVESTIGATION_RATIONALE_SPLITTERS = (
-    " caused by ",
-    " due to ",
-    " because ",
-)
-INVESTIGATION_SOURCE_TYPES = {"investigation_summary", "assistant_artifact", "tool_summary", "incident_note", "assistant_output"}
-INVESTIGATION_ARTIFACT_KINDS = {"assistant_output", "tool_use_summary"}
 MARKDOWN_LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*+]|•)\s+")
 
 
@@ -150,104 +115,8 @@ def content_tokens(text: str) -> set[str]:
     return expanded
 
 
-def strip_terminal_punctuation(text: str) -> str:
-    return text.strip().rstrip(" .!?;:")
-
-
-def extract_decision_candidate(content: str) -> dict[str, str | None] | None:
-    for pattern in DECISION_PATTERNS:
-        match = pattern.search(content)
-        if not match:
-            continue
-        body = strip_terminal_punctuation(match.group("body"))
-        if not body:
-            continue
-
-        lowered = body.lower()
-        decision_text = body
-        rationale_text: str | None = None
-
-        for splitter in RATIONALE_SPLITTERS:
-            index = lowered.find(splitter)
-            if index == -1:
-                continue
-            decision_text = strip_terminal_punctuation(body[:index])
-            remainder = strip_terminal_punctuation(body[index + len(splitter) :])
-            rationale_text = f"{splitter.strip()} {remainder}" if remainder else splitter.strip()
-            break
-
-        return {
-            "decision_text": decision_text,
-            "decision_evidence_text": strip_terminal_punctuation(match.group(0)),
-            "rationale_text": rationale_text,
-            "matched_phrase": match.group(0).split(match.group("body"))[0].strip(),
-        }
-
-    return None
-
-
-def extract_investigation_candidate(source_item: SourceItem) -> dict[str, str | None] | None:
-    source_type = source_item.source_type.lower()
-    artifact_kind = (source_item.artifact_kind or "").lower()
-    if source_type not in INVESTIGATION_SOURCE_TYPES and artifact_kind not in INVESTIGATION_ARTIFACT_KINDS:
-        return None
-
-    content = source_item.content
-    for pattern in INVESTIGATION_PATTERNS:
-        match = pattern.search(content)
-        if not match:
-            continue
-        body = strip_terminal_punctuation(match.group("body"))
-        if not body:
-            continue
-
-        lowered = body.lower()
-        investigation_text = body
-        rationale_text: str | None = None
-
-        for splitter in INVESTIGATION_RATIONALE_SPLITTERS:
-            index = lowered.find(splitter)
-            if index == -1:
-                continue
-            investigation_text = strip_terminal_punctuation(body[:index])
-            remainder = strip_terminal_punctuation(body[index + len(splitter) :])
-            rationale_text = f"{splitter.strip()} {remainder}" if remainder else splitter.strip()
-            break
-
-        return {
-            "investigation_text": investigation_text,
-            "investigation_evidence_text": strip_terminal_punctuation(match.group(0)),
-            "rationale_text": rationale_text,
-            "matched_phrase": match.group(0).split(match.group("body"))[0].strip(),
-        }
-
-    return None
-
-
 def deterministic_extraction(source_item: SourceItem) -> SemanticExtraction:
-    summary = summarize_content(source_item.content)
-    decision_candidate = extract_decision_candidate(source_item.content)
-    if decision_candidate is not None:
-        return SemanticExtraction(
-            summary=summary,
-            candidate_type="decision",
-            decision_text=decision_candidate["decision_text"],
-            decision_evidence_text=decision_candidate["decision_evidence_text"],
-            rationale_text=decision_candidate["rationale_text"],
-            matched_phrase=decision_candidate["matched_phrase"],
-        )
-
-    investigation_candidate = extract_investigation_candidate(source_item)
-    if investigation_candidate is not None:
-        return SemanticExtraction(
-            summary=summary,
-            candidate_type="investigation_outcome",
-            investigation_text=investigation_candidate["investigation_text"],
-            investigation_evidence_text=investigation_candidate["investigation_evidence_text"],
-            rationale_text=investigation_candidate["rationale_text"],
-            matched_phrase=investigation_candidate["matched_phrase"],
-        )
-    return SemanticExtraction(summary=summary)
+    return SemanticExtraction(summary=summarize_content(source_item.content))
 
 
 def _looks_like_markdown_table_cell(text: str) -> bool:
@@ -313,6 +182,21 @@ def has_grounded_decision_evidence(source_item: SourceItem, text: str | None) ->
     return _normalize_for_containment(normalized) in _normalize_for_containment(source_item.content)
 
 
+def has_grounded_decision_text(source_item: SourceItem, text: str | None) -> bool:
+    """Check that the extracted decision text itself appears in the source content.
+
+    This keeps typed decision promotion tied to the actual committed choice
+    stated in the source, rather than allowing a paraphrased need statement to
+    harden into durable decision memory.
+    """
+    if not text:
+        return False
+    normalized = text.strip()
+    if not normalized:
+        return False
+    return _normalize_for_containment(normalized) in _normalize_for_containment(source_item.content)
+
+
 def has_grounded_investigation_evidence(source_item: SourceItem, text: str | None) -> bool:
     """Check that investigation evidence text is grounded in the source content.
 
@@ -368,6 +252,7 @@ def build_process_result(
             extraction.decision_text,
             extraction.decision_evidence_text,
         )
+        and has_grounded_decision_text(source_item, extraction.decision_text)
         and has_grounded_decision_evidence(source_item, extraction.decision_evidence_text)
     ):
         canonical_key = normalize_for_index(extraction.decision_text)

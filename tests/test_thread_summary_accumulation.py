@@ -254,7 +254,15 @@ def test_dual_package_concurrent_workers(monkeypatch, test_db_url: str) -> None:
     t2.start()
 
     for msg in _make_messages("dual-conc", 12, container_ref, thread_ref):
-        client.post("/items", json=[msg])
+        for _attempt in range(5):
+            try:
+                client.post("/items", json=[msg])
+                break
+            except Exception as exc:
+                if "database is locked" in str(exc) and _attempt < 4:
+                    time.sleep(0.2)
+                    continue
+                raise
         time.sleep(0.1)
 
     time.sleep(3.0)

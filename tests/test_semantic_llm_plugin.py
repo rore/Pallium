@@ -601,8 +601,8 @@ def test_llm_plugin_demotes_markdown_list_fragment_in_non_english_text() -> None
     assert result.memory_objects[0].schema_id == "llm.discussion_summary"
 
 
-def test_llm_plugin_promotes_decision_when_evidence_is_grounded_in_source() -> None:
-    """When the LLM classifies as decision and evidence is grounded in source, trust it."""
+def test_llm_plugin_demotes_agreed_need_statement_from_decision() -> None:
+    """A grounded need statement should not harden into durable decision memory."""
     plugin = LLMAgentMemoryPlugin(
         provider=StubLLMProvider(
             response=LLMJsonResponse(
@@ -636,7 +636,7 @@ def test_llm_plugin_promotes_decision_when_evidence_is_grounded_in_source() -> N
 
     result = plugin.process_item(source_item)
 
-    assert result.memory_objects[0].type == "decision"
+    assert [memory.type for memory in result.memory_objects] == ["discussion_summary"]
 
 
 def test_llm_plugin_demotes_monitoring_note_with_next_step_from_investigation_outcome() -> None:

@@ -95,7 +95,7 @@ def test_typed_fields_promote_candidate_type_when_llm_omits_it() -> None:
     assert decisions[0].payload["decision"] == "Publish process status summaries in 30-minute batches"
 
 
-def test_explicit_assistant_output_decision_falls_back_when_llm_returns_summary_only() -> None:
+def test_explicit_assistant_output_summary_only_does_not_recover_decision_from_phrase_table() -> None:
     plugin = AgentConversationMemoryPlugin(
         provider=_SummaryOnlyProvider(),
         prompt_variant="strict_typed_memory_v8b_work_refs_separate",
@@ -115,5 +115,5 @@ def test_explicit_assistant_output_decision_falls_back_when_llm_returns_summary_
     result = plugin.process_item(item)
 
     decisions = [memory for memory in result.memory_objects if memory.type == "decision"]
-    assert len(decisions) == 1
-    assert decisions[0].payload["decision"] == "send overdue notices in 30-minute batches"
+    assert decisions == []
+    assert [memory.type for memory in result.memory_objects] == ["discussion_summary"]
