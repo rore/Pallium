@@ -43,6 +43,10 @@ Operational rule:
   verdict suppression, question-shaped fact rejection, and subject-prefixed
   vague-status rejection, with targeted regressions and deterministic eval
   coverage.
+- Phase 3 lever selection is complete: conversational permission, pending
+  status, and momentary debug state should be rejected at write time in
+  `conversational_knowledge`, while freshness demotion remains with
+  task-checkpoint and routing paths that already model transient work state.
 - The repo-local raw triage working copies were removed before the first phase
   commit; use the external working sources above if rehydration is required.
 
@@ -339,6 +343,18 @@ Decision criterion:
 - if the fact is conversational permission, pending status, or momentary debug
   state, default to "should never be promoted as durable" unless evidence shows
   the package explicitly needs that class for later work resumption
+
+Status:
+- lever selected: package-local write-time rejection in
+  `semantic/conversational_knowledge.py`
+
+Decision notes:
+- repo evidence already assigns transient work state and freshness handling to
+  `task_checkpoint` plus routing freshness/demotion logic, so atomic facts do
+  not need to carry pending approvals or momentary runtime/debug state
+- contradiction-based supersession remains the right tool for durable facts
+  that later conflict, not for conversational state that was never durable to
+  begin with
 
 No implementation should start in this phase until the lever is named.
 
