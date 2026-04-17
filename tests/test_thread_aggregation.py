@@ -452,8 +452,8 @@ def test_grounded_decision_candidate_creates_typed_memory_when_evidence_matches_
 
 
 
-def test_grounded_investigation_candidate_creates_typed_memory_when_evidence_matches_source(monkeypatch, test_db_url: str) -> None:
-    """When the LLM classifies as investigation and evidence is grounded in source, trust it."""
+def test_monitoring_note_does_not_create_durable_investigation_memory(monkeypatch, test_db_url: str) -> None:
+    """Monitoring-only notes should stay in summaries or work-state, not durable investigation memory."""
     client = _create_thread_client(monkeypatch, test_db_url)
     response = client.post(
         "/items",
@@ -475,8 +475,9 @@ def test_grounded_investigation_candidate_creates_typed_memory_when_evidence_mat
     processing = client.app.state.pallium_service.get_item_processing(source_item_id)
     memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
 
-    assert any(memory.type == "investigation_outcome" for memory in memory_objects)
-    assert processing.thread_rebuild_requested is True
+    assert all(memory.type != "investigation_outcome" for memory in memory_objects)
+    assert any(memory.type == "discussion_summary" for memory in memory_objects)
+    assert processing.thread_rebuild_requested is False
 
 
 
