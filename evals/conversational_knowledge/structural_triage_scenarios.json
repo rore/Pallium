@@ -1,0 +1,70 @@
+[
+  {
+    "scenario_id": "markdown-table-fragment-filtered",
+    "kind": "thread_summary",
+    "description": "A markdown table cell fragment is rejected while a grounded activity fact remains.",
+    "facts": [
+      {"subject": "", "statement": "| Can do |", "category": "activity"},
+      {"subject": "batch digest", "statement": "Batch digest runs every 30 minutes", "category": "activity"}
+    ],
+    "source_items": [
+      {"role": "user", "artifact_kind": "message", "content": "Capability notes were reviewed."},
+      {"role": "assistant", "artifact_kind": "assistant_output", "content": "Batch digest runs every 30 minutes"}
+    ],
+    "expected_subjects": ["batch digest"],
+    "expected_statements": ["Batch digest runs every 30 minutes"]
+  },
+  {
+    "scenario_id": "subjectless-predicate-rejected",
+    "kind": "thread_summary",
+    "description": "A dangling predicate is rejected unless an explicit subject survives extraction.",
+    "facts": [
+      {"subject": "", "statement": "Configuration set to true", "category": "activity"},
+      {"subject": "digest worker", "statement": "Digest worker runs in replay mode", "category": "activity"}
+    ],
+    "source_items": [
+      {"role": "user", "artifact_kind": "message", "content": "Configuration notes were reviewed."},
+      {"role": "assistant", "artifact_kind": "assistant_output", "content": "Digest worker runs in replay mode"}
+    ],
+    "expected_subjects": ["digest worker"],
+    "expected_statements": ["Digest worker runs in replay mode"]
+  },
+  {
+    "scenario_id": "grounded-sentence-restores-subject",
+    "kind": "thread_summary",
+    "description": "A subjectless predicate fragment is rewritten to the shortest grounded source sentence that carries the subject.",
+    "facts": [
+      {
+        "subject": "export worker memory limit",
+        "statement": "was increased to 1 GiB while the request stayed at 512 MiB",
+        "category": "activity"
+      }
+    ],
+    "source_items": [
+      {
+        "role": "user",
+        "artifact_kind": "message",
+        "content": "Export worker memory limit was increased to 1 GiB while the request stayed at 512 MiB"
+      },
+      {
+        "role": "assistant",
+        "artifact_kind": "assistant_output",
+        "content": "We should keep those values in the rollout note."
+      }
+    ],
+    "expected_subjects": ["export worker memory limit"],
+    "expected_statements": ["Export worker memory limit was increased to 1 GiB while the request stayed at 512 MiB"]
+  },
+  {
+    "scenario_id": "same-thread-burst-grouping",
+    "kind": "fact_consolidation_grouping",
+    "description": "Four same-thread duplicate facts are grouped as a same-thread burst instead of being dropped.",
+    "subject": "batch digest policy",
+    "category": "activity",
+    "container_ref": "c1",
+    "visibility": "public",
+    "thread_refs": ["t1", "t1", "t1", "t1"],
+    "expected_group_count": 1,
+    "expected_grouping_scope": "same_thread_burst"
+  }
+]

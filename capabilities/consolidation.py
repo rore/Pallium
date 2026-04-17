@@ -370,6 +370,7 @@ class FactConsolidationStrategy(ConsolidationStrategy):
     name = "fact_consolidation"
     MIN_GROUP_SIZE = 2
     MIN_DISTINCT_THREADS = 2
+    SAME_THREAD_BURST_MIN_GROUP_SIZE = 4
 
     def select_candidates(self, candidates: list[ConsolidationCandidate], policy: ConsolidationPolicy) -> list[ConsolidationCandidate]:
         facts = [c for c in candidates if c.memory_object.type in {"atomic_fact", "fact_summary"}]
@@ -391,7 +392,8 @@ class FactConsolidationStrategy(ConsolidationStrategy):
             if len(members) < self.MIN_GROUP_SIZE:
                 continue
             distinct_threads = {c.thread_ref for c in members if c.thread_ref}
-            if len(distinct_threads) < self.MIN_DISTINCT_THREADS:
+            distinct_thread_count = len(distinct_threads)
+            if distinct_thread_count < self.MIN_DISTINCT_THREADS and len(members) < self.SAME_THREAD_BURST_MIN_GROUP_SIZE:
                 continue
 
             ordered = tuple(_sort_candidates(members))
@@ -411,11 +413,12 @@ class FactConsolidationStrategy(ConsolidationStrategy):
                     visibility=visibility,
                     merge_rationale={
                         "grouping_mode": "fact_consolidation",
+                        "grouping_scope": "cross_thread" if distinct_thread_count >= self.MIN_DISTINCT_THREADS else "same_thread_burst",
                         "container_ref": container_ref,
                         "subject": original_subject,
                         "category": original_category,
                         "fact_count": len(ordered),
-                        "distinct_thread_count": len(distinct_threads),
+                        "distinct_thread_count": distinct_thread_count,
                         "thread_refs": sorted(distinct_threads),
                     },
                 )

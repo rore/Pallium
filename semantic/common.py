@@ -130,13 +130,22 @@ def _looks_like_markdown_table_cell(text: str) -> bool:
     )
 
 
+def clean_markdown_artifacts(text: str | None) -> str | None:
+    if text is None:
+        return None
+    cleaned = text.replace("**", "").replace("__", "").replace("`", "")
+    normalized = " ".join(cleaned.split())
+    return normalized or None
+
+
 def _typed_memory_payload_is_quality_viable(*texts: str | None) -> bool:
     for text in texts:
         if not text:
             continue
-        if _looks_like_markdown_table_cell(text):
+        cleaned = clean_markdown_artifacts(text) or ""
+        if _looks_like_markdown_table_cell(cleaned):
             return False
-        if MARKDOWN_LIST_PREFIX_RE.match(text.strip()):
+        if MARKDOWN_LIST_PREFIX_RE.match(cleaned.strip()):
             return False
     return True
 
@@ -148,13 +157,13 @@ def _investigation_payload_is_quality_viable(extraction: SemanticExtraction) -> 
     ):
         return False
     return bool(
-        str(extraction.key_finding_text or "").strip()
-        or str(extraction.rationale_text or "").strip()
+        str(clean_markdown_artifacts(extraction.key_finding_text) or "").strip()
+        or str(clean_markdown_artifacts(extraction.rationale_text) or "").strip()
     )
 
 
 def fact_statement_is_quality_viable(statement: str) -> bool:
-    stripped = statement.strip()
+    stripped = (clean_markdown_artifacts(statement) or "").strip()
     if not stripped:
         return False
     if _looks_like_markdown_table_cell(stripped):
@@ -165,7 +174,8 @@ def fact_statement_is_quality_viable(statement: str) -> bool:
 
 
 def _normalize_for_containment(text: str) -> str:
-    return " ".join(strip_diacritics(text).lower().split())
+    cleaned = clean_markdown_artifacts(text) or ""
+    return " ".join(strip_diacritics(cleaned).lower().split())
 
 
 def has_grounded_decision_evidence(source_item: SourceItem, text: str | None) -> bool:
@@ -240,31 +250,38 @@ def build_process_result(
 ) -> ProcessResult:
     semantic_signals = _build_semantic_signal_payload(extraction, semantic_metadata=semantic_metadata)
 
+    decision_text = clean_markdown_artifacts(extraction.decision_text)
+    decision_evidence_text = clean_markdown_artifacts(extraction.decision_evidence_text)
+    investigation_text = clean_markdown_artifacts(extraction.investigation_text)
+    investigation_evidence_text = clean_markdown_artifacts(extraction.investigation_evidence_text)
+    rationale_text = clean_markdown_artifacts(extraction.rationale_text)
+    key_finding_text = clean_markdown_artifacts(extraction.key_finding_text)
+
     memory_objects: list[MemoryObject] = []
     relations: list[Relation] = []
     index_entries = []
 
     if (
         extraction.candidate_type == "decision"
-        and extraction.decision_text
-        and extraction.decision_evidence_text
+        and decision_text
+        and decision_evidence_text
         and _typed_memory_payload_is_quality_viable(
-            extraction.decision_text,
-            extraction.decision_evidence_text,
+            decision_text,
+            decision_evidence_text,
         )
-        and has_grounded_decision_text(source_item, extraction.decision_text)
-        and has_grounded_decision_evidence(source_item, extraction.decision_evidence_text)
+        and has_grounded_decision_text(source_item, decision_text)
+        and has_grounded_decision_evidence(source_item, decision_evidence_text)
     ):
-        canonical_key = normalize_for_index(extraction.decision_text)
+        canonical_key = normalize_for_index(decision_text)
         memory_objects.append(
             MemoryObject(
                 type="decision",
                 schema_id=f"{schema_prefix}.decision",
                 schema_version="v1",
                 payload={
-                    "decision": extraction.decision_text,
-                    "decision_evidence_text": extraction.decision_evidence_text,
-                    "rationale": extraction.rationale_text,
+                    "decision": decision_text,
+                    "decision_evidence_text": decision_evidence_text,
+                    "rationale": rationale_text,
                     "canonical_key": canonical_key,
                     "source_type": source_item.source_type,
                     "source_id": source_item.source_id,
@@ -279,30 +296,30 @@ def build_process_result(
             part
             for part in (
                 extraction.summary,
-                extraction.decision_text or "",
-                extraction.decision_evidence_text or "",
-                extraction.rationale_text or "",
+                decision_text or "",
+                decision_evidence_text or "",
+                rationale_text or "",
                 canonical_key,
             )
             if part
         )
     elif (
         extraction.candidate_type == "investigation_outcome"
-        and extraction.investigation_text
-        and extraction.investigation_evidence_text
+        and investigation_text
+        and investigation_evidence_text
         and _investigation_payload_is_quality_viable(extraction)
-        and has_grounded_investigation_evidence(source_item, extraction.investigation_evidence_text)
+        and has_grounded_investigation_evidence(source_item, investigation_evidence_text)
     ):
-        canonical_key = normalize_for_index(extraction.investigation_text)
+        canonical_key = normalize_for_index(investigation_text)
         memory_objects.append(
             MemoryObject(
                 type="investigation_outcome",
                 schema_id=f"{schema_prefix}.investigation_outcome",
                 schema_version="v1",
                 payload={
-                    "investigation_outcome": extraction.investigation_text,
-                    "investigation_evidence_text": extraction.investigation_evidence_text,
-                    "rationale": extraction.rationale_text,
+                    "investigation_outcome": investigation_text,
+                    "investigation_evidence_text": investigation_evidence_text,
+                    "rationale": rationale_text,
                     "canonical_key": canonical_key,
                     "source_type": source_item.source_type,
                     "source_id": source_item.source_id,
@@ -317,10 +334,10 @@ def build_process_result(
             part
             for part in (
                 extraction.summary,
-                extraction.investigation_text or "",
-                extraction.investigation_evidence_text or "",
-                extraction.rationale_text or "",
-                extraction.key_finding_text or "",
+                investigation_text or "",
+                investigation_evidence_text or "",
+                rationale_text or "",
+                key_finding_text or "",
                 canonical_key,
             )
             if part

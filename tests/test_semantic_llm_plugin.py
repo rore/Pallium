@@ -4,7 +4,10 @@ import pytest
 
 from core.models import MemorySubjectAnchor, SourceItem
 from semantic.common import (
+    SemanticExtraction,
     _normalize_for_containment,
+    build_process_result,
+    clean_markdown_artifacts,
     has_grounded_decision_evidence,
     has_grounded_investigation_evidence,
 )
@@ -66,6 +69,49 @@ def test_grounded_investigation_evidence_tolerates_whitespace_normalization() ->
         content="Investigation found that\n  arrival-time ordering missed\n  hold updates.",
     )
     assert has_grounded_investigation_evidence(source, "Investigation found that arrival-time ordering missed hold updates.") is True
+
+
+def test_clean_markdown_artifacts_strips_inline_formatting() -> None:
+    assert clean_markdown_artifacts("**Root cause:**  `table` parsing failed") == "Root cause: table parsing failed"
+
+
+def test_build_process_result_rejects_markdown_table_cell_fragment() -> None:
+    source = SourceItem(
+        source_type="assistant_artifact", source_id="table-fragment-1", content_type="text/plain",
+        content="| Can do |",
+    )
+    extraction = SemanticExtraction(
+        summary="Capability comparison",
+        candidate_type="investigation_outcome",
+        investigation_text="| Can do |",
+        investigation_evidence_text="| Can do |",
+        key_finding_text="| Can do |",
+    )
+
+    result = build_process_result(source, extraction, "test")
+
+    assert all(memory.type != "investigation_outcome" for memory in result.memory_objects)
+
+
+def test_build_process_result_strips_markdown_formatting_from_investigation_payload() -> None:
+    source = SourceItem(
+        source_type="assistant_artifact", source_id="markdown-cleanup-1", content_type="text/plain",
+        content="**Root cause:** table parsing failed for the status matrix",
+    )
+    extraction = SemanticExtraction(
+        summary="triage note",
+        candidate_type="investigation_outcome",
+        investigation_text="**Root cause:** table parsing failed for the status matrix",
+        investigation_evidence_text="**Root cause:** table parsing failed for the status matrix",
+        key_finding_text="**Root cause:** table parsing failed for the status matrix",
+    )
+
+    result = build_process_result(source, extraction, "test")
+
+    assert len(result.memory_objects) == 1
+    payload = result.memory_objects[0].payload
+    assert payload["investigation_outcome"] == "Root cause: table parsing failed for the status matrix"
+    assert payload["investigation_evidence_text"] == "Root cause: table parsing failed for the status matrix"
 
 
 # ---------------------------------------------------------------------------

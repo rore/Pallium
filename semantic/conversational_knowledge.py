@@ -17,6 +17,7 @@ from capabilities.consolidation import ConsolidationGroup, ConsolidationPolicy
 from capabilities.thread_aggregation import ThreadAggregate
 from core.contracts import ProcessResult
 from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
+from core.text import SENTENCE_PATTERN
 from core.models import (
     MemoryEnvelope,
     MemoryEnvelopeDerivation,
@@ -31,12 +32,10 @@ from core.models import (
 from core.type_registry import TypeRegistration, TypeRegistry
 from providers.llm.base import LLMProvider, LLMJsonResponse
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
-from semantic.common import fact_statement_is_quality_viable, normalize_for_index
+from semantic.common import clean_markdown_artifacts, fact_statement_is_quality_viable, normalize_for_index
 
 
 logger = logging.getLogger(__name__)
-
-# ── Schema constants ──────────────────────────────────────────────────────
 
 FACT_SCHEMA_ID = "conversational_knowledge.atomic_fact"
 FACT_SCHEMA_VERSION = "v1"
@@ -156,6 +155,66 @@ FACT_EXTRACTION_SCHEMA_DESCRIPTION = json.dumps(
     },
     indent=2,
 )
+
+
+def _clean_fact_text(text: str | None) -> str:
+    return str(clean_markdown_artifacts(text) or "").strip()
+
+
+def _fact_subject_is_present(subject: str) -> bool:
+    return bool(normalize_for_index(subject))
+
+
+def _statement_mentions_subject(subject: str, statement: str) -> bool:
+    subject_tokens = set(normalize_for_index(subject).split())
+    statement_tokens = set(normalize_for_index(statement).split())
+    return bool(subject_tokens) and subject_tokens <= statement_tokens
+
+
+def _iter_source_sentences(source_items: list[SourceItem]) -> list[str]:
+    sentences: list[str] = []
+    for source_item in source_items:
+        for line in str(source_item.content or "").splitlines():
+            stripped_line = line.strip()
+            if not stripped_line:
+                continue
+            parts = [part.strip() for part in SENTENCE_PATTERN.split(stripped_line) if part.strip()]
+            if not parts:
+                parts = [stripped_line]
+            sentences.extend(parts)
+    return sentences
+
+
+def _best_grounded_fact_sentence(statement: str, source_items: list[SourceItem]) -> str | None:
+    normalized_statement = normalize_for_index(statement)
+    if not normalized_statement:
+        return None
+    best_sentence: str | None = None
+    for sentence in _iter_source_sentences(source_items):
+        cleaned_sentence = _clean_fact_text(sentence)
+        if not cleaned_sentence:
+            continue
+        if normalized_statement not in normalize_for_index(cleaned_sentence):
+            continue
+        if best_sentence is None or len(cleaned_sentence) < len(best_sentence):
+            best_sentence = cleaned_sentence
+    return best_sentence
+
+
+def _canonicalize_fact_statement(subject: str, statement: str, source_items: list[SourceItem]) -> str:
+    cleaned_subject = _clean_fact_text(subject)
+    cleaned_statement = _clean_fact_text(statement)
+    if not cleaned_statement:
+        return ""
+    grounded_sentence = _best_grounded_fact_sentence(cleaned_statement, source_items)
+    if grounded_sentence:
+        if cleaned_subject and _statement_mentions_subject(cleaned_subject, grounded_sentence):
+            return grounded_sentence
+        if not cleaned_subject and grounded_sentence != cleaned_statement:
+            return grounded_sentence
+    if cleaned_subject and not _statement_mentions_subject(cleaned_subject, cleaned_statement):
+        return f"{cleaned_subject}: {cleaned_statement}"
+    return cleaned_statement
 
 
 class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, ConsolidationSemanticPlugin):
@@ -298,9 +357,18 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
         index_entries = []
 
         for fact in raw_facts:
-            subject = str(fact.get("subject") or "").strip()
-            statement = str(fact.get("statement", "")).strip()
-            category = str(fact.get("category", "")).strip()
+            subject = _clean_fact_text(str(fact.get("subject") or ""))
+            raw_statement = _clean_fact_text(str(fact.get("statement", "")))
+            if not fact_statement_is_quality_viable(raw_statement):
+                continue
+            statement = _canonicalize_fact_statement(
+                subject,
+                raw_statement,
+                aggregate.source_items,
+            )
+            category = _clean_fact_text(str(fact.get("category", ""))).lower()
+            if not _fact_subject_is_present(subject):
+                continue
             if not fact_statement_is_quality_viable(statement):
                 continue
 

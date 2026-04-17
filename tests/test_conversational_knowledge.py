@@ -489,7 +489,7 @@ def test_build_thread_summary_skips_markdown_fragment_fact() -> None:
 
     result = plugin.build_thread_summary(aggregate, conclusions=[])
 
-    assert [memory.payload["statement"] for memory in result.memory_objects] == ["Alice has 3 cats"]
+    assert [memory.payload["statement"] for memory in result.memory_objects] == ["Alice has 3 cats."]
 
 
 def test_build_thread_summary_skips_markdown_list_fact_in_non_english_text() -> None:
@@ -528,7 +528,85 @@ def test_build_thread_summary_skips_markdown_list_fact_in_non_english_text() -> 
 
     result = plugin.build_thread_summary(aggregate, conclusions=[])
 
-    assert [memory.payload["statement"] for memory in result.memory_objects] == ["Alice has 3 cats"]
+    assert [memory.payload["statement"] for memory in result.memory_objects] == ["Alice has 3 cats."]
+
+
+def test_build_thread_summary_skips_subjectless_fact_even_when_statement_is_well_formed() -> None:
+    from capabilities.thread_aggregation import ThreadAggregate
+
+    facts = [
+        {"subject": "", "statement": "Configuration set to true", "category": "activity"},
+        {"subject": "batch digest", "statement": "Batch digest runs every 30 minutes", "category": "activity"},
+    ]
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider(facts=facts))
+    items = [
+        SourceItem(
+            source_type="chat", source_id="subjectless-1",
+            content_type="text/plain", content="Configuration details were discussed.",
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+        SourceItem(
+            source_type="chat", source_id="subjectless-2",
+            content_type="text/plain", content="Batch digest runs every 30 minutes",
+            role="assistant", artifact_kind="assistant_output",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+    ]
+    aggregate = ThreadAggregate(
+        container_ref="c1", thread_ref="t1",
+        source_items=items, source_item_ids=[i.id for i in items],
+        latest_occurred_at=utc_now(), aggregate_text="", visibility="public",
+    )
+
+    result = plugin.build_thread_summary(aggregate, conclusions=[])
+
+    assert [memory.payload["subject"] for memory in result.memory_objects] == ["batch digest"]
+    assert [memory.payload["statement"] for memory in result.memory_objects] == ["Batch digest runs every 30 minutes"]
+
+
+def test_build_thread_summary_restores_subject_from_grounded_sentence() -> None:
+    from capabilities.thread_aggregation import ThreadAggregate
+
+    facts = [
+        {
+            "subject": "export worker memory limit",
+            "statement": "was increased to 1 GiB while the request stayed at 512 MiB",
+            "category": "activity",
+        },
+    ]
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider(facts=facts))
+    items = [
+        SourceItem(
+            source_type="chat", source_id="grounded-1",
+            content_type="text/plain",
+            content="Export worker memory limit was increased to 1 GiB while the request stayed at 512 MiB",
+            role="user", artifact_kind="message",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+        SourceItem(
+            source_type="chat", source_id="grounded-2",
+            content_type="text/plain", content="We should keep those values in the rollout note.",
+            role="assistant", artifact_kind="assistant_output",
+            container_ref="c1", thread_ref="t1",
+            visibility="public", occurred_at=utc_now(),
+        ),
+    ]
+    aggregate = ThreadAggregate(
+        container_ref="c1", thread_ref="t1",
+        source_items=items, source_item_ids=[i.id for i in items],
+        latest_occurred_at=utc_now(), aggregate_text="", visibility="public",
+    )
+
+    result = plugin.build_thread_summary(aggregate, conclusions=[])
+
+    assert len(result.memory_objects) == 1
+    assert result.memory_objects[0].payload["statement"] == (
+        "Export worker memory limit was increased to 1 GiB while the request stayed at 512 MiB"
+    )
 
 
 # ── Tests: thread_ref in payload and reconcile_process_result ─────────────
@@ -670,6 +748,24 @@ def test_fact_consolidation_strategy_skips_small_groups():
     ]
     groups = strategy.group_candidates(strategy.select_candidates(candidates, policy), policy)
     assert len(groups) == 1
+
+
+def test_fact_consolidation_strategy_allows_same_thread_burst_group() -> None:
+    from capabilities.consolidation import FactConsolidationStrategy, ConsolidationPolicy
+
+    strategy = FactConsolidationStrategy()
+    policy = ConsolidationPolicy(max_candidates_per_run=200)
+
+    candidates = [
+        _make_fact_candidate(subject="batch digest policy", category="activity", container_ref="c1", thread_ref="t1")
+        for _ in range(4)
+    ]
+
+    groups = strategy.group_candidates(strategy.select_candidates(candidates, policy), policy)
+
+    assert len(groups) == 1
+    assert groups[0].merge_rationale["grouping_scope"] == "same_thread_burst"
+    assert groups[0].merge_rationale["distinct_thread_count"] == 1
 
 
 def test_fact_consolidation_strategy_selects_facts_and_summaries():
@@ -1305,7 +1401,7 @@ def test_atomic_fact_envelope_has_subject_anchor():
 
 
 def test_atomic_fact_envelope_empty_subject():
-    """atomic_fact with empty subject should have envelope with empty subjects list."""
+    """atomic facts with empty subjects should be dropped before envelope creation."""
     from capabilities.thread_aggregation import ThreadAggregate
     facts = [
         {"subject": "", "statement": "The weather was nice", "category": "event"},
@@ -1337,12 +1433,7 @@ def test_atomic_fact_envelope_empty_subject():
 
     result = plugin.build_thread_summary(aggregate, conclusions=[])
 
-    assert len(result.memory_objects) == 1
-    mo = result.memory_objects[0]
-    assert mo.envelope is not None
-    assert mo.envelope.subjects == []
-    assert mo.envelope.kind == "finding"
-    assert mo.envelope.confidence == "medium"
+    assert result.memory_objects == []
 
 
 def test_atomic_fact_envelope_multiple_facts_different_subjects():
