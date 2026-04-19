@@ -194,6 +194,8 @@ def _judge_prompt_for_question(question_id: str, question_type: str) -> str:
 
 
 def main() -> int:
+    import sys
+    sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(
         description="Run the LongMemEval end-to-end benchmark."
     )

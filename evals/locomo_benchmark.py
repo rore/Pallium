@@ -105,6 +105,8 @@ Return a JSON object with:
 
 
 def main() -> int:
+    import sys
+    sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(
         description="Run the LoCoMo retrieval accuracy benchmark."
     )

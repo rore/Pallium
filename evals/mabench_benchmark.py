@@ -89,6 +89,8 @@ TIMESTAMP_INCREMENT = timedelta(hours=1)
 
 
 def main() -> int:
+    import sys
+    sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(
         description="Run the MABench FactConsolidation benchmark."
     )
