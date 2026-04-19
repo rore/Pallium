@@ -19,7 +19,8 @@ Main layers:
 
 `app/mcp/` provides an MCP server mounted on the FastAPI app at `/mcp` via
 streamable-http transport. Agent runtimes connect to `http://<host>:<port>/mcp`
-to access `pallium_query`, `pallium_query_debug`, and `pallium_ingest` tools.
+to access `pallium_query`, `pallium_query_debug`, `pallium_ingest`,
+`pallium_get_evidence`, and `pallium_flag_memory` tools.
 The MCP module depends only on `mcp[cli]` and `httpx` — no core Pallium imports.
 It proxies tool calls to the HTTP API on the same server. Also available as a
 standalone entry point (`python -m app.run mcp`) for stdio transport.
@@ -31,7 +32,9 @@ Implemented HTTP endpoints:
 - POST /items
 - POST /query
 - POST /query/debug
+- POST /memory/{memory_object_id}/flag
 - GET /items/{source_item_id}/processing
+- GET /memory/{memory_object_id}/evidence
 - GET /debug/queue/health
 
 Implemented abstractions:
@@ -289,17 +292,22 @@ If later downstream usage justifies it, the preferred scale levers are:
 
 ## Lifecycle
 
-Promoted memory now has a minimal lifecycle model:
+Promoted memory now has a lifecycle model:
 
 - `active`
 - `superseded`
+- `suppressed`
 
 Current behavior:
 
 - newly promoted memory defaults to `active`
 - superseded memory remains stored and evidence-backed
-- default retrieval does not surface superseded memory as current
-- raw source evidence remains searchable even when a promoted memory object is superseded
+- suppressed memory is flagged as bad by external feedback (integrating agents)
+- default retrieval does not surface superseded or suppressed memory as current
+- raw source evidence remains searchable even when a promoted memory object is superseded or suppressed
+- suppression is driven by a flag endpoint: integrating agents report bad memories, and after a configurable threshold of independent flags (default: 2 unique sources within 30 days), the memory lifecycle transitions to `suppressed`
+- immediate suppression is available for human-reviewed triage (bypasses threshold)
+- flags are stored for audit in a `memory_flags` table and cascade-deleted when the memory is cleaned by retention
 
 Future lifecycle direction should stay generic rather than package-specific:
 

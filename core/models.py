@@ -115,6 +115,23 @@ class MemoryObject:
 
 
 @dataclass(frozen=True)
+class MemoryFlag:
+    memory_object_id: str
+    reason: str
+    source_ref: str
+    id: str = field(default_factory=new_id)
+    flagged_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass(frozen=True)
+class FlagResult:
+    memory_object_id: str
+    flag_count: int
+    unique_sources: int
+    suppressed: bool
+
+
+@dataclass(frozen=True)
 class Relation:
     from_kind: str
     from_id: str

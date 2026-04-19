@@ -22,7 +22,7 @@ from core.thread_rebuild import ThreadRebuilder, truncate_processing_error
 from core.turn_inference import resolve_runtime_context
 from core.type_registry import TypeRegistry
 from core.vector_embed import VectorEmbedder
-from core.models import InjectableBlock, QueryRuntimeContext, Relation, SourceItem, utc_now
+from core.models import FlagResult, InjectableBlock, MemoryFlag, QueryRuntimeContext, Relation, SourceItem, utc_now
 from core.observability import IntegrationDebugLogger
 from core.visibility import is_visible
 from providers.embedding.base import EmbeddingProvider
@@ -509,6 +509,47 @@ class PalliumService:
                 to_kind="memory_object",
                 to_id=superseded_id,
             )
+        )
+
+    FLAG_SUPPRESSION_THRESHOLD = 2
+    FLAG_WINDOW_DAYS = 30
+
+    def flag_memory_object(
+        self,
+        memory_object_id: str,
+        reason: str,
+        source_ref: str,
+        immediate: bool = False,
+    ) -> FlagResult:
+        flag = MemoryFlag(
+            memory_object_id=memory_object_id,
+            reason=reason,
+            source_ref=source_ref,
+        )
+        self._storage.store_memory_flag(flag)
+
+        memory = self._storage.get_memory_object(memory_object_id)
+        suppressed = memory.lifecycle == "suppressed"
+
+        if not suppressed and memory.lifecycle == "active":
+            if immediate:
+                self._storage.update_memory_object_lifecycle(memory_object_id, "suppressed")
+                suppressed = True
+            else:
+                unique_sources = self._storage.count_unique_flag_sources(
+                    memory_object_id, self.FLAG_WINDOW_DAYS
+                )
+                if unique_sources >= self.FLAG_SUPPRESSION_THRESHOLD:
+                    self._storage.update_memory_object_lifecycle(memory_object_id, "suppressed")
+                    suppressed = True
+
+        return FlagResult(
+            memory_object_id=memory_object_id,
+            flag_count=self._storage.count_total_flags(memory_object_id),
+            unique_sources=self._storage.count_unique_flag_sources(
+                memory_object_id, self.FLAG_WINDOW_DAYS
+            ),
+            suppressed=suppressed,
         )
 
     def _run_targeted_fact_consolidation(self, use_case: str, container_ref: str, subjects: list[str]) -> None:

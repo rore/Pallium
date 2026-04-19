@@ -373,7 +373,11 @@ Need a clearer generic lifecycle model that eventually covers:
 - richer lineage across derivation, consolidation, and supersession
 - confidence as a generic trust signal
 - decay as retrieval-time freshness weighting
-- any later expansion beyond the current `active` and `superseded` states
+
+The `suppressed` lifecycle state has been added (2026-04-17), partially addressing
+expansion beyond `active` and `superseded`. Suppression is driven by external
+feedback from integrating agents via a flag endpoint. Confidence and decay remain
+open for future work.
 
 ### Query contract beyond mixed hits
 

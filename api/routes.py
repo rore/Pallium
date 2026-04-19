@@ -5,6 +5,8 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from api.schemas import (
+    FlagMemoryRequest,
+    FlagMemoryResponse,
     ItemAndQueryDebugResponse,
     ItemAndQueryRequest,
     ItemAndQueryResponse,
@@ -495,6 +497,24 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
                 )
                 for item in items
             ],
+        )
+
+    @router.post("/memory/{memory_object_id}/flag", response_model=FlagMemoryResponse)
+    def flag_memory(memory_object_id: str, request: FlagMemoryRequest) -> FlagMemoryResponse:
+        try:
+            result = service.flag_memory_object(
+                memory_object_id=memory_object_id,
+                reason=request.reason,
+                source_ref=request.source_ref,
+                immediate=request.immediate,
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="memory object not found")
+        return FlagMemoryResponse(
+            memory_object_id=result.memory_object_id,
+            flag_count=result.flag_count,
+            unique_sources=result.unique_sources,
+            suppressed=result.suppressed,
         )
 
     return router

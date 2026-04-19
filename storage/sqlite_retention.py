@@ -24,6 +24,7 @@ from storage.base import (
 from storage.sqlite_schema import (
     IndexEntryRecord,
     MaintenanceStateRecord,
+    MemoryFlagRecord,
     MemoryObjectRecord,
     RelationRecord,
     SourceItemRecord,
@@ -227,7 +228,7 @@ class SQLiteRetentionMixin:
             records = session.scalars(
                 select(MemoryObjectRecord)
                 .where(
-                    MemoryObjectRecord.lifecycle == "superseded",
+                    MemoryObjectRecord.lifecycle.in_(["superseded", "suppressed"]),
                     or_(MemoryObjectRecord.freshness_at == None, MemoryObjectRecord.freshness_at <= superseded_cutoff),
                 )
                 .order_by(MemoryObjectRecord.freshness_at.asc(), MemoryObjectRecord.created_at.asc(), MemoryObjectRecord.id.asc())
@@ -686,10 +687,17 @@ class SQLiteRetentionMixin:
                 IndexEntryRecord.target_id == memory_object_id,
             )
         ).all()
+        flag_records = session.scalars(
+            select(MemoryFlagRecord).where(
+                MemoryFlagRecord.memory_object_id == memory_object_id,
+            )
+        ).all()
         for relation in relation_records:
             session.delete(relation)
         for index_record in index_records:
             self._delete_index_entry_in_session(session, index_record)
+        for flag_record in flag_records:
+            session.delete(flag_record)
         session.delete(memory_record)
         return RetentionRunStats(
             deleted_memory_objects=1,

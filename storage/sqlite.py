@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import create_engine, event, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from core.contracts import ProcessResult
-from core.models import EvidenceReference, IndexEntry, MemoryObject, Relation, SourceItem
+from core.models import EvidenceReference, IndexEntry, MemoryFlag, MemoryObject, Relation, SourceItem, utc_now
 from core.turn_inference import ThreadStats
 from storage.base import StorageProvider
 from storage.sqlite_codec import SQLiteCodecMixin
@@ -18,6 +19,7 @@ from storage.sqlite_schema import (
     Base,
     IndexEntryRecord,
     MaintenanceStateRecord,
+    MemoryFlagRecord,
     MemoryObjectRecord,
     QueryAuditLogRecord,
     RelationRecord,
@@ -169,6 +171,57 @@ class SQLiteStorageProvider(
             if record is None:
                 raise KeyError(memory_object_id)
             record.lifecycle = lifecycle
+
+    def store_memory_flag(self, flag: MemoryFlag) -> None:
+        with self._session_factory.begin() as session:
+            record = session.get(MemoryObjectRecord, flag.memory_object_id)
+            if record is None:
+                raise KeyError(flag.memory_object_id)
+            session.add(MemoryFlagRecord(
+                id=flag.id,
+                memory_object_id=flag.memory_object_id,
+                reason=flag.reason,
+                source_ref=flag.source_ref,
+                flagged_at=flag.flagged_at,
+            ))
+
+    def count_unique_flag_sources(self, memory_object_id: str, window_days: int) -> int:
+        cutoff = utc_now() - timedelta(days=window_days)
+        with self._session_factory() as session:
+            count = session.scalar(
+                select(func.count(func.distinct(MemoryFlagRecord.source_ref))).where(
+                    MemoryFlagRecord.memory_object_id == memory_object_id,
+                    MemoryFlagRecord.flagged_at >= cutoff,
+                )
+            )
+            return count or 0
+
+    def count_total_flags(self, memory_object_id: str) -> int:
+        with self._session_factory() as session:
+            count = session.scalar(
+                select(func.count(MemoryFlagRecord.id)).where(
+                    MemoryFlagRecord.memory_object_id == memory_object_id,
+                )
+            )
+            return count or 0
+
+    def list_memory_flags(self, memory_object_id: str) -> list[MemoryFlag]:
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(MemoryFlagRecord)
+                .where(MemoryFlagRecord.memory_object_id == memory_object_id)
+                .order_by(MemoryFlagRecord.flagged_at.asc())
+            ).all()
+            return [
+                MemoryFlag(
+                    id=r.id,
+                    memory_object_id=r.memory_object_id,
+                    reason=r.reason,
+                    source_ref=r.source_ref,
+                    flagged_at=self._normalize_datetime(r.flagged_at) or r.flagged_at,
+                )
+                for r in records
+            ]
 
     def refresh_memory_object_freshness(self, memory_object_id: str):
         with self._session_factory.begin() as session:

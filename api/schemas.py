@@ -367,3 +367,16 @@ class QueueHealthResponse(BaseModel):
     leased_thread_scopes: list[LeasedThreadScopeResponse] = Field(default_factory=list)
     recent_failures: list[RecentFailureResponse] = Field(default_factory=list)
     retention: RetentionHealthResponse
+
+
+class FlagMemoryRequest(BaseModel):
+    reason: str = Field(min_length=1)
+    source_ref: str = Field(min_length=1)
+    immediate: bool = False
+
+
+class FlagMemoryResponse(BaseModel):
+    memory_object_id: str
+    flag_count: int
+    unique_sources: int
+    suppressed: bool

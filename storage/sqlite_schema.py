@@ -164,6 +164,16 @@ class QueryAuditLogRecord(Base):
     injected_blocks_json = Column(Text, nullable=False, default="[]")
 
 
+class MemoryFlagRecord(Base):
+    __tablename__ = "memory_flags"
+
+    id = Column(String, primary_key=True)
+    memory_object_id = Column(String, nullable=False)
+    reason = Column(Text, nullable=False)
+    source_ref = Column(String, nullable=False)
+    flagged_at = Column(DateTime(timezone=True), nullable=False)
+
+
 class SQLiteSchemaMixin:
     _SOURCE_ITEM_MIGRATIONS = {
         "occurred_at": "ALTER TABLE source_items ADD COLUMN occurred_at DATETIME",
@@ -272,6 +282,12 @@ class SQLiteSchemaMixin:
             "ON query_audit_log(container_ref, created_at)"
         ),
     }
+    _MEMORY_FLAG_INDEX_MIGRATIONS = {
+        "idx_memory_flags_memory_id": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_flags_memory_id "
+            "ON memory_flags(memory_object_id)"
+        ),
+    }
 
     def _initialize_schema(self) -> None:
         with self._schema_initialization_lock():
@@ -284,6 +300,7 @@ class SQLiteSchemaMixin:
             self._ensure_unique_indexes()
             self._ensure_indexes()
             self._ensure_query_audit_log_indexes()
+            self._ensure_memory_flag_indexes()
             self._ensure_fts5_table()
             self._backfill_legacy_memory_freshness()
 
@@ -418,6 +435,11 @@ class SQLiteSchemaMixin:
     def _ensure_query_audit_log_indexes(self) -> None:
         with self._engine.begin() as connection:
             for _index_name, create_sql in self._QUERY_AUDIT_LOG_INDEX_MIGRATIONS.items():
+                connection.execute(text(create_sql))
+
+    def _ensure_memory_flag_indexes(self) -> None:
+        with self._engine.begin() as connection:
+            for _index_name, create_sql in self._MEMORY_FLAG_INDEX_MIGRATIONS.items():
                 connection.execute(text(create_sql))
 
     def _ensure_fts5_available(self, connection) -> None:

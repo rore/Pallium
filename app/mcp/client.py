@@ -99,3 +99,17 @@ class PalliumMcpClient:
             return {"error": str(exc), "detail": body}
         except Exception as exc:
             return {"error": str(exc)}
+
+    async def flag_memory(
+        self,
+        memory_object_id: str,
+        reason: str,
+        source_ref: str,
+        immediate: bool = False,
+    ) -> dict[str, Any]:
+        payload = {
+            "reason": reason,
+            "source_ref": source_ref,
+            "immediate": immediate,
+        }
+        return await self._post(f"/memory/{memory_object_id}/flag", payload)
