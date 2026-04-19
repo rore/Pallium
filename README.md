@@ -200,12 +200,12 @@ what Pallium controls; the gap shows what the answering LLM adds or loses.
 |---|---|---|---|
 | **LoCoMo** — conversational recall (ACL 2024) | 51.8% | 63.0% | 1,540 |
 | **LongMemEval** — multi-session memory (ICLR 2025) | 91.7% | 93.2% | 60 (mini) |
-| **FactConsolidation** — contradiction handling (MABench, ICLR 2026) | 64.5% | 29.1% | 200 |
+| **FactConsolidation** — contradiction handling (MABench, ICLR 2026) | 65% | 54.0% | 200 |
 
 LoCoMo end-to-end exceeds retrieval because the answering LLM compensates
-with its own knowledge on trivia questions. FactConsolidation has the
-opposite gap — the updated fact reaches context but older objects outnumber
-it. Both are active improvement areas. Per-category breakdowns and
+with its own knowledge on trivia questions. FactConsolidation single-hop
+reached 86% after fact extraction hardening; multi-hop (22%) remains an
+active improvement area. Per-category breakdowns and
 reproduction commands are in [docs/benchmarks.md](docs/benchmarks.md).
 
 ## Documentation

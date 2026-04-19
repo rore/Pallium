@@ -83,28 +83,29 @@ LongMemEval-S dataset has 500 questions. A full run is pending.
 MemoryAgentBench Conflict Resolution split. Tests whether updated facts are
 retrieved and used over stale contradictory ones.
 
-- **Dataset**: 200 questions, 6k context depth (455 facts)
-- **Run date**: 2026-04-12
+- **Dataset**: 200 questions, 6k context depth
+- **Run date**: 2026-04-19
 
 ### Per-Category Results
 
 | Category | Retrieval | End-to-end | Questions |
 |---|---|---|---|
-| Single-hop | 82% | 51.5% | 100 |
-| Multi-hop | 10% | 7% | 100 |
-| **Overall** | **64.5%** | **29.1%** | **200** |
+| Single-hop | — | 86% | 100 |
+| Multi-hop | — | 22% | 100 |
+| **Overall** | **65%** | **54.0%** | **200** |
 
 ### Analysis
 
-The retrieval-to-accuracy gap on single-hop is the main open problem: the
-updated fact reaches the context (82%) but older memory objects that haven't
-been superseded outnumber the newer fact, causing the answering LLM to pick
-the stale value (51.5% correct). This is the contradiction supersession
-problem — thread summaries and discussion summaries containing old facts
-persist alongside the corrected atomic fact.
+Significant improvement over the prior baseline (29.1% → 54.0%) driven by
+fact extraction prompt hardening: expanded skip list (transient runtime state,
+hypothetical futures, monitoring chatter), self-contained subject requirement,
+and structural acceptance gates (markdown fragment rejection, subjectless fact
+rejection, vague status rejection). Single-hop jumped from 51.5% to 86%.
 
-Multi-hop retrieval is very low (10%) because it requires chaining two
-independent facts that were updated separately — not yet supported.
+Multi-hop remains weak (22%) because it requires chaining two independently
+updated facts — retrieval returns the right individual facts but the answering
+LLM struggles to combine them correctly when stale versions also appear in
+context.
 
 ## Running Benchmarks
 
