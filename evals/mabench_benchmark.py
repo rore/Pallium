@@ -45,7 +45,9 @@ from evals.eval_common import (
     format_retrieved_context as _format_retrieved_context,
     generate_answer as _generate_answer_common,
     gold_in_context as _gold_in_context,
+    load_completed_ids as _load_completed_ids,
     retrieval_summary as _retrieval_summary,
+    write_progress as _write_progress,
 )
 from evals.eval_rate_limiter import TokenBucketRateLimiter
 
@@ -158,6 +160,7 @@ def main() -> int:
         max_workers=args.max_workers,
         judge_model=args.judge_model,
         rate_limit=args.rate_limit,
+        resume_dir=args.resume,
     )
     print(f"\nResults: {run_dir}")
     return 0
@@ -187,6 +190,7 @@ def run_mabench_benchmark(
     max_workers: int = 4,
     judge_model: str | None = None,
     rate_limit: int = 20,
+    resume_dir: Path | None = None,
 ) -> Path:
     raw_dataset = json.loads(dataset_path.read_text(encoding="utf-8"))
     dataset_ids = dataset_ids or list(DATASET_CONFIGS.keys())
@@ -209,9 +213,26 @@ def run_mabench_benchmark(
     run_dir.mkdir(parents=True, exist_ok=True)
     results_path = run_dir / "results.jsonl"
 
+    completed_ids: set[str] = set()
     all_results: list[dict[str, Any]] = []
+    if resume_dir is not None:
+        completed_ids = _load_completed_ids(resume_dir, "row_id")
+        if completed_ids:
+            prev_results_path = resume_dir / "results.jsonl"
+            for line in prev_results_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line:
+                    all_results.append(json.loads(line))
+            print(f"Resuming: {len(completed_ids)} rows already completed, {len(all_results)} results loaded")
+
     benchmark_start = time.monotonic()
-    with results_path.open("w", encoding="utf-8") as results_file:
+    rows_completed = 0
+    file_mode = "a" if completed_ids else "w"
+    with results_path.open(file_mode, encoding="utf-8") as results_file:
+        if completed_ids and resume_dir != run_dir:
+            for result in all_results:
+                results_file.write(json.dumps(result) + "\n")
+            results_file.flush()
         for dataset_id in dataset_ids:
             ds_config = DATASET_CONFIGS[dataset_id]
             rows = _select_rows(raw_dataset, ds_config, context_depth)
@@ -225,6 +246,10 @@ def run_mabench_benchmark(
 
             for row_index, row in enumerate(rows):
                 row_id = f"{dataset_id}-row{row_index}"
+                if row_id in completed_ids:
+                    print(f"\n  [{row_index + 1}/{len(rows)}] Skipping {row_id} (already completed)")
+                    rows_completed += 1
+                    continue
                 questions = row["questions"]
                 answers = row["answers"]
                 if mini:
@@ -257,9 +282,11 @@ def run_mabench_benchmark(
                     results_file.flush()
 
                 correct = sum(1 for r in row_results if r["correct"])
+                rows_completed += 1
                 row_elapsed = time.monotonic() - row_start
                 total_elapsed = time.monotonic() - benchmark_start
                 print(f"    {row_id}: {correct}/{len(row_results)} correct ({row_elapsed:.0f}s, total {total_elapsed:.0f}s)")
+                _write_progress(run_dir, rows_completed, len(rows), len(all_results), total_elapsed)
 
     summary = _build_summary(
         results=all_results,

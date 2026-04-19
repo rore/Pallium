@@ -52,7 +52,9 @@ from evals.eval_common import (
     generate_answer as _generate_answer_common,
     gold_in_context as _gold_in_context,
     gold_in_context_llm as _gold_in_context_llm,
+    load_completed_ids as _load_completed_ids,
     retrieval_summary as _retrieval_summary,
+    write_progress as _write_progress,
 )
 from evals.eval_rate_limiter import TokenBucketRateLimiter
 
@@ -273,6 +275,7 @@ def main() -> int:
         separate_judge=args.separate_judge,
         judge_model=args.judge_model,
         rate_limit=args.rate_limit,
+        resume_dir=args.resume,
     )
     print(f"\nResults: {run_dir}")
     return 0
@@ -303,6 +306,7 @@ def run_longmemeval_benchmark(
     separate_judge: bool = False,
     judge_model: str | None = None,
     rate_limit: int = 20,
+    resume_dir: Path | None = None,
 ) -> Path:
 
     dataset = _load_dataset(dataset_path)
@@ -344,6 +348,19 @@ def run_longmemeval_benchmark(
     run_dir.mkdir(parents=True, exist_ok=True)
     results_path = run_dir / "results.jsonl"
 
+    # Resume support
+    completed_ids: set[str] = set()
+    resumed_results: list[dict[str, Any]] = []
+    if resume_dir is not None:
+        completed_ids = _load_completed_ids(resume_dir, "question_id")
+        if completed_ids:
+            prev_results_path = resume_dir / "results.jsonl"
+            for line in prev_results_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line:
+                    resumed_results.append(json.loads(line))
+            print(f"Resuming: {len(completed_ids)} questions already completed, {len(resumed_results)} results loaded")
+
     # --- Phase 1: DB work (sequential) ---
     # Ingest, extract, query, and build evidence traces.
     # Each question needs its own isolated DB, so this must be sequential.
@@ -358,6 +375,9 @@ def run_longmemeval_benchmark(
     with TestClient(create_app(initial_config)) as client:
         for q_index, question in enumerate(dataset):
             question_id = question["question_id"]
+            if question_id in completed_ids:
+                print(f"\n[{q_index + 1}/{len(dataset)}] Skipping {question_id} (already completed)")
+                continue
             q_start = time.monotonic()
             print(
                 f"\n[{q_index + 1}/{len(dataset)}] {question_id} "
@@ -400,6 +420,9 @@ def run_longmemeval_benchmark(
 
     all_results: list[dict[str, Any]] = [{}] * len(qa_inputs)
     with results_path.open("w", encoding="utf-8") as results_file:
+        # Write resumed results first.
+        for result in resumed_results:
+            results_file.write(json.dumps(result) + "\n")
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {
                 pool.submit(_eval_one, inp): inp[0]
@@ -419,13 +442,18 @@ def run_longmemeval_benchmark(
                         f"  Eval progress: {done_count}/{len(qa_inputs)} "
                         f"({correct_so_far} correct)"
                     )
+                    total_done = len(resumed_results) + done_count
+                    total_questions = len(resumed_results) + len(qa_inputs)
+                    elapsed = time.monotonic() - phase1_start
+                    _write_progress(run_dir, total_done, total_questions, total_done, elapsed)
 
         # Write results in original order.
         for result in all_results:
             results_file.write(json.dumps(result) + "\n")
 
+    combined_results = resumed_results + all_results
     summary = _build_summary(
-        results=all_results,
+        results=combined_results,
         config=config,
         run_id=run_id,
         dataset_path=dataset_path,

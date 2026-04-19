@@ -52,7 +52,9 @@ from evals.eval_common import (
     generate_answer as _generate_answer_common,
     gold_in_context as _gold_in_context,
     gold_in_context_llm as _gold_in_context_llm,
+    load_completed_ids as _load_completed_ids,
     retrieval_summary as _retrieval_summary,
+    write_progress as _write_progress,
 )
 from evals.eval_rate_limiter import TokenBucketRateLimiter
 
@@ -167,27 +169,10 @@ def main() -> int:
         separate_judge=args.separate_judge,
         judge_model=args.judge_model,
         rate_limit=args.rate_limit,
+        resume_dir=args.resume,
     )
     print(f"\nResults: {run_dir}")
     return 0
-
-
-# ---------------------------------------------------------------------------
-# Progress tracking
-# ---------------------------------------------------------------------------
-
-
-def _write_progress(run_dir: Path, completed: int, total: int, results_so_far: int, elapsed_secs: float) -> None:
-    avg_per_item = elapsed_secs / completed if completed else 0
-    remaining = (total - completed) * avg_per_item
-    progress = {
-        "completed": completed,
-        "total": total,
-        "results_so_far": results_so_far,
-        "elapsed_secs": round(elapsed_secs, 1),
-        "estimated_remaining_secs": round(remaining, 1),
-    }
-    (run_dir / "progress.json").write_text(json.dumps(progress), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +200,7 @@ def run_locomo_benchmark(
     separate_judge: bool = False,
     judge_model: str | None = None,
     rate_limit: int = 20,
+    resume_dir: Path | None = None,
 ) -> Path:
     dataset = _load_dataset(dataset_path)
     if conversation_ids:
@@ -244,11 +230,31 @@ def run_locomo_benchmark(
     run_dir.mkdir(parents=True, exist_ok=True)
     results_path = run_dir / "results.jsonl"
 
+    # Resume support: load already-completed conversation IDs and their results.
+    completed_ids: set[str] = set()
     all_results: list[dict[str, Any]] = []
+    if resume_dir is not None:
+        completed_ids = _load_completed_ids(resume_dir, "sample_id")
+        if completed_ids:
+            prev_results_path = resume_dir / "results.jsonl"
+            for line in prev_results_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line:
+                    all_results.append(json.loads(line))
+            print(f"Resuming: {len(completed_ids)} conversations already completed, {len(all_results)} results loaded")
+
     benchmark_start = time.monotonic()
-    with results_path.open("w", encoding="utf-8") as results_file:
+    file_mode = "a" if completed_ids else "w"
+    with results_path.open(file_mode, encoding="utf-8") as results_file:
+        if completed_ids and resume_dir != run_dir:
+            for result in all_results:
+                results_file.write(json.dumps(result) + "\n")
+            results_file.flush()
         for conv_index, conversation in enumerate(dataset):
             sample_id = conversation["sample_id"]
+            if sample_id in completed_ids:
+                print(f"\n[{conv_index + 1}/{len(dataset)}] Skipping {sample_id} (already completed)")
+                continue
             conv_start = time.monotonic()
             print(
                 f"\n[{conv_index + 1}/{len(dataset)}] Processing {sample_id}..."

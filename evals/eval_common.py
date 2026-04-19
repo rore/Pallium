@@ -498,6 +498,52 @@ def add_common_benchmark_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Model for judge/gold-in-context calls. Defaults to the main model.",
     )
+    parser.add_argument(
+        "--resume",
+        type=Path,
+        default=None,
+        metavar="RUN_DIR",
+        help="Resume a previous run from its output directory. Skips already-completed items.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Resume and progress helpers
+# ---------------------------------------------------------------------------
+
+
+def load_completed_ids(run_dir: Path, id_field: str) -> set[str]:
+    """Load IDs of already-completed items from a previous run's results.jsonl."""
+    results_path = run_dir / "results.jsonl"
+    if not results_path.exists():
+        return set()
+    completed: set[str] = set()
+    for line in results_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+            item_id = record.get(id_field)
+            if item_id:
+                completed.add(str(item_id))
+        except json.JSONDecodeError:
+            continue
+    return completed
+
+
+def write_progress(run_dir: Path, completed: int, total: int, results_so_far: int, elapsed_secs: float) -> None:
+    """Write a progress.json file for external monitoring."""
+    avg_per_item = elapsed_secs / completed if completed else 0
+    remaining = (total - completed) * avg_per_item
+    progress = {
+        "completed": completed,
+        "total": total,
+        "results_so_far": results_so_far,
+        "elapsed_secs": round(elapsed_secs, 1),
+        "estimated_remaining_secs": round(remaining, 1),
+    }
+    (run_dir / "progress.json").write_text(json.dumps(progress), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
