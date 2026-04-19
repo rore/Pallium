@@ -19,6 +19,7 @@ import argparse
 import json
 import re
 import shutil
+import time
 import urllib.request
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -353,9 +354,11 @@ def run_longmemeval_benchmark(
         default_use_case="agent_conversation_memory",
     )
     qa_inputs: list[tuple[int, dict[str, Any], dict[str, Any], dict[str, Any]]] = []
+    phase1_start = time.monotonic()
     with TestClient(create_app(initial_config)) as client:
         for q_index, question in enumerate(dataset):
             question_id = question["question_id"]
+            q_start = time.monotonic()
             print(
                 f"\n[{q_index + 1}/{len(dataset)}] {question_id} "
                 f"({question.get('question_type', '?')})..."
@@ -371,6 +374,9 @@ def run_longmemeval_benchmark(
                 rebuild_db_cache=rebuild_db_cache,
             )
             qa_inputs.append((q_index, question, memory_payload, evidence_trace))
+            q_elapsed = time.monotonic() - q_start
+            total_elapsed = time.monotonic() - phase1_start
+            print(f"  Done ({q_elapsed:.0f}s, total {total_elapsed:.0f}s)")
 
     # --- Phase 2: LLM evaluation (parallel) ---
     # Answer generation + judging are pure LLM calls, parallelized across questions.
@@ -574,6 +580,7 @@ def _process_question(
 
         if not use_cached_db:
             # --- ingest all sessions ---
+            ingest_start = time.monotonic()
             has_answer_source_ids = _ingest_sessions(
                 service=service,
                 question_id=question_id,
@@ -583,15 +590,16 @@ def _process_question(
             )
             print(
                 f"  Ingested {sum(len(s) for s in sessions)} turns "
-                f"across {len(sessions)} sessions"
+                f"across {len(sessions)} sessions ({time.monotonic() - ingest_start:.0f}s)"
             )
 
             # --- semantic extraction ---
+            extract_start = time.monotonic()
             print("  Processing semantic extraction...")
             service.drain_processing_queue(worker_id="longmemeval-runner")
             service.reconcile_vector_index()
 
-            print("  Processing complete")
+            print(f"  Processing complete ({time.monotonic() - extract_start:.0f}s)")
         else:
             # Reconcile the vector index loaded from cache so vector retrieval
             # can find entries that were indexed during the original extraction.

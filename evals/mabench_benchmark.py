@@ -18,6 +18,7 @@ import argparse
 import json
 import re
 import shutil
+import time
 import urllib.request
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -209,6 +210,7 @@ def run_mabench_benchmark(
     results_path = run_dir / "results.jsonl"
 
     all_results: list[dict[str, Any]] = []
+    benchmark_start = time.monotonic()
     with results_path.open("w", encoding="utf-8") as results_file:
         for dataset_id in dataset_ids:
             ds_config = DATASET_CONFIGS[dataset_id]
@@ -230,6 +232,7 @@ def run_mabench_benchmark(
                     answers = answers[:5]
 
                 print(f"\n  [{row_index + 1}/{len(rows)}] {row_id}: {len(questions)} questions")
+                row_start = time.monotonic()
 
                 row_results = _evaluate_row(
                     row=row,
@@ -254,7 +257,9 @@ def run_mabench_benchmark(
                     results_file.flush()
 
                 correct = sum(1 for r in row_results if r["correct"])
-                print(f"    {row_id}: {correct}/{len(row_results)} correct")
+                row_elapsed = time.monotonic() - row_start
+                total_elapsed = time.monotonic() - benchmark_start
+                print(f"    {row_id}: {correct}/{len(row_results)} correct ({row_elapsed:.0f}s, total {total_elapsed:.0f}s)")
 
     summary = _build_summary(
         results=all_results,
@@ -367,20 +372,22 @@ def _evaluate_row(
                 _wrap_providers_with_cache(client, cache_dir)
 
             if not use_cached_db:
+                ingest_start = time.monotonic()
                 chunks = _chunk_text(context)
                 item_count = _ingest_chunks(
                     client=client,
                     row_id=row_id,
                     chunks=chunks,
                 )
-                print(f"    Ingested {item_count} items across {_thread_count(len(chunks))} threads")
+                print(f"    Ingested {item_count} items across {_thread_count(len(chunks))} threads ({time.monotonic() - ingest_start:.0f}s)")
 
+                extract_start = time.monotonic()
                 print("    Processing semantic extraction...")
                 client.app.state.pallium_service.drain_processing_queue(
                     worker_id="mabench-runner"
                 )
                 client.app.state.pallium_service.reconcile_vector_index()
-                print("    Processing complete")
+                print(f"    Processing complete ({time.monotonic() - extract_start:.0f}s)")
 
 
                 if cached_db_path is not None:

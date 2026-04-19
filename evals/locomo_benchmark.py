@@ -19,6 +19,7 @@ import argparse
 import json
 import logging
 import shutil
+import time
 import urllib.request
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -172,6 +173,24 @@ def main() -> int:
 
 
 # ---------------------------------------------------------------------------
+# Progress tracking
+# ---------------------------------------------------------------------------
+
+
+def _write_progress(run_dir: Path, completed: int, total: int, results_so_far: int, elapsed_secs: float) -> None:
+    avg_per_item = elapsed_secs / completed if completed else 0
+    remaining = (total - completed) * avg_per_item
+    progress = {
+        "completed": completed,
+        "total": total,
+        "results_so_far": results_so_far,
+        "elapsed_secs": round(elapsed_secs, 1),
+        "estimated_remaining_secs": round(remaining, 1),
+    }
+    (run_dir / "progress.json").write_text(json.dumps(progress), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -226,9 +245,11 @@ def run_locomo_benchmark(
     results_path = run_dir / "results.jsonl"
 
     all_results: list[dict[str, Any]] = []
+    benchmark_start = time.monotonic()
     with results_path.open("w", encoding="utf-8") as results_file:
         for conv_index, conversation in enumerate(dataset):
             sample_id = conversation["sample_id"]
+            conv_start = time.monotonic()
             print(
                 f"\n[{conv_index + 1}/{len(dataset)}] Processing {sample_id}..."
             )
@@ -255,7 +276,10 @@ def run_locomo_benchmark(
                 results_file.flush()
 
             correct = sum(1 for r in conv_results if r["correct"])
-            print(f"  {sample_id}: {correct}/{len(conv_results)} correct")
+            conv_elapsed = time.monotonic() - conv_start
+            total_elapsed = time.monotonic() - benchmark_start
+            print(f"  {sample_id}: {correct}/{len(conv_results)} correct ({conv_elapsed:.0f}s, total {total_elapsed:.0f}s)")
+            _write_progress(run_dir, conv_index + 1, len(dataset), len(all_results), total_elapsed)
 
     summary = _build_summary(
         results=all_results,
@@ -360,6 +384,7 @@ def _evaluate_conversation(
 
             if not use_cached_db:
                 # --- ingest all turns ---
+                ingest_start = time.monotonic()
                 turn_count = _ingest_conversation(
                     client=client,
                     sample_id=sample_id,
@@ -368,10 +393,11 @@ def _evaluate_conversation(
                     speaker_b=speaker_b,
                 )
                 print(
-                    f"  Ingested {turn_count} turns across {len(sessions)} sessions"
+                    f"  Ingested {turn_count} turns across {len(sessions)} sessions ({time.monotonic() - ingest_start:.0f}s)"
                 )
 
                 # --- semantic extraction ---
+                extract_start = time.monotonic()
                 print("  Processing semantic extraction...")
                 client.app.state.pallium_service.drain_processing_queue(
                     worker_id="locomo-runner"
@@ -383,7 +409,7 @@ def _evaluate_conversation(
                     stop_event.set()
                 while client.app.state.pallium_service.reconcile_vector_index() > 0:
                     pass
-                print("  Processing complete")
+                print(f"  Processing complete ({time.monotonic() - extract_start:.0f}s)")
 
                 # Cache the processed DB for reuse.
                 if cached_db_path is not None:
