@@ -198,7 +198,7 @@ what Pallium controls; the gap shows what the answering LLM adds or loses.
 
 | Benchmark | Retrieval | End-to-end | Questions |
 |---|---|---|---|
-| **LoCoMo** — conversational recall (ACL 2024) | 51.8% | 63.0% | 1,540 |
+| **LoCoMo** — conversational recall (ACL 2024) | 45.5% | 61.0% | 1,540 |
 | **LongMemEval** — multi-session memory (ICLR 2025) | 91.7% | 93.2% | 60 (mini) |
 | **FactConsolidation** — contradiction handling (MABench, ICLR 2026) | 65% | 54.0% | 200 |
 

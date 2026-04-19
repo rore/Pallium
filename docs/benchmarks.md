@@ -16,30 +16,30 @@ conversational QA — names, dates, events, relationships across long
 conversations.
 
 - **Dataset**: 10 conversations, 1,540 questions
-- **Run date**: 2026-04-15
+- **Run date**: 2026-04-17
 
 ### Per-Category Results
 
-| Category | Retrieval | End-to-end | Questions |
-|---|---|---|---|
-| Single-hop | 56.1% | 72.5% | — |
-| Open-domain | 55.4% | 66.3% | — |
-| Temporal | 39.5% | 43.2% | — |
-| Multi-hop | 40.3% | 49.0% | — |
-| **Overall** | **51.8%** | **63.0%** | **1,540** |
+| Category | End-to-end | Questions |
+|---|---|---|
+| Single-hop | 66.7% | 321 |
+| Open-domain | 63.6% | 841 |
+| Multi-hop | 56.0% | 282 |
+| Temporal | 34.4% | 96 |
+| **Overall** | **61.0%** | **1,540** |
+
+Retrieval rate (gold answer in retrieved context): 45.5%.
 
 ### Analysis
 
-End-to-end (63%) exceeds retrieval (51.8%) because the answering LLM
+End-to-end (61%) exceeds retrieval (45.5%) because the answering LLM
 compensates with its own knowledge on trivia-style questions — names, dates,
-and events that overlap with its training data. About 11% of correct answers
-come from the LLM, not from Pallium's retrieval. Retrieval rate is the number
+and events that overlap with its training data. Retrieval rate is the number
 that measures what Pallium actually contributes.
 
-Temporal (39.5% retrieval) and multi-hop (40.3% retrieval) are the weakest
-categories. Temporal questions require ordering events in time; multi-hop
-requires combining facts from different sources. Both are active improvement
-areas.
+This result is stable across three independent full runs (61.1% Apr 7,
+61.4% Apr 12, 61.0% Apr 17). Multi-hop improved from 48.9% to 56.0% after
+fact extraction hardening. Temporal (34.4%) remains the weakest category.
 
 Pallium prioritizes structured memory (decisions, investigations, checkpoints)
 over verbatim fact recall. LoCoMo is weighted toward trivia-style questions
