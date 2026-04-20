@@ -100,6 +100,15 @@ class PalliumMcpClient:
         except Exception as exc:
             return {"error": str(exc)}
 
+    async def get_status(self) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(base_url=self._base_url, timeout=30.0) as http:
+                response = await http.get("/status")
+                response.raise_for_status()
+                return response.json()
+        except Exception as exc:
+            return {"error": str(exc)}
+
     async def flag_memory(
         self,
         memory_object_id: str,

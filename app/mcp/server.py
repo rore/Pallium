@@ -139,6 +139,16 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         )
         return json.dumps(result, indent=2, default=str)
 
+    @server.tool()
+    async def pallium_status() -> str:
+        """Check Pallium system health and stats. Shows ingestion metrics (pending queue, source items, memory objects, storage) and injection/query stats (total queries, injection rate, skip reasons, flags). Use to diagnose whether memory is being stored and returned correctly."""
+        ctx = resolve_context()
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        client = PalliumMcpClient(ctx)
+        result = await client.get_status()
+        return json.dumps(result, indent=2, default=str)
+
     return server
 
 
