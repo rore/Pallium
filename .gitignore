@@ -65,6 +65,7 @@ evals/cosine_escape_hatch_validation_results.json
 .env.pelican-wsl
 evals/locomo/datasets/
 evals/locomo/output/
+evals/locomo/retrieval_eval_output/
 evals/locomo/db_cache/
 evals/locomo/db_cache_retarget/
 evals/locomo/experiments/
