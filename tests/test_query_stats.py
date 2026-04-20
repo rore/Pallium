@@ -158,3 +158,46 @@ class TestQueryStatsExceptionSafety:
         stats.record_flag(suppressed=True)
         assert stats.snapshot()["total_flags"] == 1
         assert stats.snapshot()["total_suppressions"] == 1
+
+
+from concurrent.futures import ThreadPoolExecutor
+
+
+class TestQueryStatsThreadSafety:
+    def test_concurrent_record_query_no_lost_increments(self):
+        stats = QueryStats()
+        n_threads = 8
+        n_per_thread = 500
+
+        def record_batch():
+            for _ in range(n_per_thread):
+                stats.record_query(_make_result(should_inject=True, decision_reason="inject", block_count=1))
+
+        with ThreadPoolExecutor(max_workers=n_threads) as pool:
+            futures = [pool.submit(record_batch) for _ in range(n_threads)]
+            for f in futures:
+                f.result()
+
+        snap = stats.snapshot()
+        expected = n_threads * n_per_thread
+        assert snap["total_queries"] == expected
+        assert snap["total_injections"] == expected
+        assert snap["total_blocks_injected"] == expected
+
+    def test_concurrent_record_flag_no_lost_increments(self):
+        stats = QueryStats()
+        n_threads = 8
+        n_per_thread = 500
+
+        def flag_batch():
+            for i in range(n_per_thread):
+                stats.record_flag(suppressed=(i % 2 == 0))
+
+        with ThreadPoolExecutor(max_workers=n_threads) as pool:
+            futures = [pool.submit(flag_batch) for _ in range(n_threads)]
+            for f in futures:
+                f.result()
+
+        snap = stats.snapshot()
+        assert snap["total_flags"] == n_threads * n_per_thread
+        assert snap["total_suppressions"] == n_threads * (n_per_thread // 2)
