@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from app.config import AppConfig
 from app.dependencies import build_router, build_service
 from app.snapshot import resolve_live_db_path
+from core.observability import QueryStats
 from core.service import PalliumService
 from semantic.agent_conversation_memory_routing import RoutingOverrides
 from storage.sqlite import SQLiteStorageProvider
@@ -69,7 +70,8 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         logger.warning("MCP endpoint not available: mcp[cli] not installed. Run: pip install 'mcp[cli]'")
 
     resolved_config = config or AppConfig.from_env()
-    service = build_service(resolved_config, routing_overrides=routing_overrides)
+    query_stats = QueryStats()
+    service = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats)
 
     @contextlib.asynccontextmanager
     async def app_lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
@@ -217,6 +219,13 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
 
         uptime = round(time.monotonic() - app.state._start_time, 1)
 
+        # --- Query stats (best-effort) ---
+        query_info: dict | None = None
+        try:
+            query_info = query_stats.snapshot()
+        except Exception:
+            logger.warning("status: query stats failed", exc_info=True)
+
         return JSONResponse(content={
             "pending_items": pending_count,
             "oldest_pending_age_seconds": oldest_pending_age,
@@ -226,6 +235,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "storage": storage_info,
             "vector_index_ready": vector_index_ready,
             "uptime_seconds": uptime,
+            "query": query_info,
         })
 
     app.include_router(build_router(

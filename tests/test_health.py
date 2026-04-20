@@ -168,6 +168,7 @@ class TestStatusResponseShape:
             "storage",
             "vector_index_ready",
             "uptime_seconds",
+            "query",
         }
         assert set(body.keys()) == expected_keys
 

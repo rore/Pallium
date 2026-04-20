@@ -291,3 +291,27 @@ class TestServiceFlagStatsIntegration:
         snap = query_stats.snapshot()
         assert snap["total_flags"] == 1
         assert snap["total_suppressions"] == 1
+
+
+from fastapi.testclient import TestClient
+
+
+class TestStatusEndpointQueryStats:
+    def test_status_includes_query_key(self):
+        from app.main import create_app
+        app = create_app()
+        client = TestClient(app)
+        resp = client.get("/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "query" in data
+        query = data["query"]
+        assert query["total_queries"] == 0
+        assert query["total_injections"] == 0
+        assert query["total_skips"] == 0
+        assert query["total_blocks_injected"] == 0
+        assert query["total_flags"] == 0
+        assert query["total_suppressions"] == 0
+        assert query["skip_reasons"] == {}
+        assert query["last_query_at"] is None
+        assert "stats_since" in query

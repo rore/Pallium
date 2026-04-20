@@ -5,7 +5,7 @@ from pathlib import Path
 
 from api.routes import create_router
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
-from core.observability import IntegrationDebugLogger
+from core.observability import IntegrationDebugLogger, QueryStats
 from core.service import PalliumService
 from providers.embedding.base import EmbeddingProvider
 from providers.llm.aicore_anthropic import AICoreAnthropicLLMProvider
@@ -248,6 +248,7 @@ def build_service(
     routing_overrides: RoutingOverrides | None = None,
     *,
     enable_vector: bool = True,
+    query_stats: QueryStats | None = None,
 ) -> PalliumService:
     resolved_config = config or AppConfig.from_env()
     storage = build_storage_provider(resolved_config)
@@ -343,6 +344,7 @@ def build_service(
         vector_index=vector_index,
         type_registry=type_registry if len(type_registry) > 0 else None,
         routing_overrides=routing_overrides,
+        query_stats=query_stats,
     )
 
 
