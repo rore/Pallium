@@ -29,6 +29,7 @@ Add a `QueryStats` class with thread-safe in-memory counters, updated on every q
 | `total_suppressions` | `int` | Flag calls where result is suppressed |
 | `skip_reasons` | `dict[str, int]` | Keyed by `decision_reason` when `should_inject=False` |
 | `last_query_at` | `str \| None` | ISO timestamp of most recent query |
+| `stats_since` | `str` | ISO timestamp of when `QueryStats` was created (boot time) |
 
 ### Bounds
 
@@ -86,7 +87,8 @@ The `/status` handler in `app/main.py` adds a `"query"` key with `stats.snapshot
     "total_flags": 7,
     "total_suppressions": 2,
     "skip_reasons": {"gate_blocked": 95, "no_relevant_memory": 80},
-    "last_query_at": "2026-04-20T14:30:00Z"
+    "last_query_at": "2026-04-20T14:30:00Z",
+    "stats_since": "2026-04-20T10:00:00Z"
   }
 }
 ```
