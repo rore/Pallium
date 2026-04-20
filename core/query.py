@@ -7,6 +7,7 @@ from typing import Any
 from core.contracts import PackageQueryOutcome, QueryResult, resolve_query_filters
 from core.filters import matches_filters
 from core.models import QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace
+from core.observability import QueryStats
 from core.type_registry import TypeRegistry
 from core.visibility import QueryVisibilityTrace, is_visible
 from retrieval.base import RetrievalProvider
@@ -36,6 +37,7 @@ class QueryExecutor:
         default_use_case: str,
         type_registry: TypeRegistry | None = None,
         routing_overrides=None,
+        query_stats: QueryStats | None = None,
     ) -> None:
         self._storage = storage
         self._retrieval = retrieval
@@ -43,6 +45,7 @@ class QueryExecutor:
         self._default_use_case = default_use_case
         self._type_registry = type_registry
         self._routing_overrides = routing_overrides
+        self._query_stats = query_stats
 
     def query(
         self,
@@ -92,13 +95,16 @@ class QueryExecutor:
                     ),
                 )
                 trace = replace(trace, result_summary=_build_query_result_summary([]))
-            return QueryResult(
+            result = QueryResult(
                 results=[],
                 trace=trace,
                 should_inject=False,
                 decision_reason="no_relevant_memory",
                 injectable_blocks=[],
             )
+            if self._query_stats is not None:
+                self._query_stats.record_query(result)
+            return result
 
         # Routing is a core responsibility. Call it directly when a
         # routing-capable plugin is the default (requires visibility context).
@@ -149,23 +155,29 @@ class QueryExecutor:
             routed_trace = outcome.trace
             if routed_trace is not None:
                 routed_trace = replace(routed_trace, result_summary=_build_query_result_summary(outcome.results))
-            return QueryResult(
+            result = QueryResult(
                 results=outcome.results,
                 trace=routed_trace,
                 should_inject=outcome.should_inject,
                 decision_reason=outcome.decision_reason,
                 injectable_blocks=outcome.injectable_blocks,
             )
+            if self._query_stats is not None:
+                self._query_stats.record_query(result)
+            return result
         trace = retrieval_result.trace
         if trace is not None:
             trace = replace(trace, result_summary=_build_query_result_summary(retrieval_result.results))
-        return QueryResult(
+        result = QueryResult(
             results=retrieval_result.results,
             trace=trace,
             should_inject=False,
             decision_reason="injection_policy_unavailable",
             injectable_blocks=[],
         )
+        if self._query_stats is not None:
+            self._query_stats.record_query(result)
+        return result
 
     def _make_debug_candidate_loader(
         self,

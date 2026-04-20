@@ -201,3 +201,28 @@ class TestQueryStatsThreadSafety:
         snap = stats.snapshot()
         assert snap["total_flags"] == n_threads * n_per_thread
         assert snap["total_suppressions"] == n_threads * (n_per_thread // 2)
+
+
+from core.query import QueryExecutor
+
+
+class TestQueryExecutorStatsIntegration:
+    def test_query_executor_records_stats_on_no_visibility_path(self):
+        """QueryExecutor.query() calls stats.record_query() on the visibility fail-closed path."""
+        from unittest.mock import MagicMock
+
+        storage = MagicMock()
+        retrieval = MagicMock()
+        plugin = MagicMock()
+        plugin.requires_visibility_context = True
+        plugins = {"test": plugin}
+
+        query_stats = QueryStats()
+        executor = QueryExecutor(
+            storage, retrieval, plugins, "test", query_stats=query_stats,
+        )
+        result = executor.query("hello", 5, container_ref=None, visibility=None)
+        assert result.should_inject is False
+        snap = query_stats.snapshot()
+        assert snap["total_queries"] == 1
+        assert snap["total_skips"] == 1
