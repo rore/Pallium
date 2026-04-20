@@ -86,3 +86,75 @@ class TestQueryStatsSkipReasons:
         assert counts == sorted(counts, reverse=True)
         # Highest count reason should be reason_29 (count=30)
         assert list(reasons.keys())[0] == "reason_29"
+
+
+class TestQueryStatsFlagCounting:
+    def test_flag_without_suppression(self):
+        stats = QueryStats()
+        stats.record_flag(suppressed=False)
+        stats.record_flag(suppressed=False)
+        snap = stats.snapshot()
+        assert snap["total_flags"] == 2
+        assert snap["total_suppressions"] == 0
+
+    def test_flag_with_suppression(self):
+        stats = QueryStats()
+        stats.record_flag(suppressed=False)
+        stats.record_flag(suppressed=True)
+        stats.record_flag(suppressed=True)
+        snap = stats.snapshot()
+        assert snap["total_flags"] == 3
+        assert snap["total_suppressions"] == 2
+
+
+class TestQueryStatsSnapshotIsolation:
+    def test_mutating_snapshot_does_not_affect_internal_state(self):
+        stats = QueryStats()
+        stats.record_query(_make_result(should_inject=False, decision_reason="gate_blocked"))
+        snap1 = stats.snapshot()
+        snap1["total_queries"] = 999
+        snap1["skip_reasons"]["gate_blocked"] = 999
+        snap2 = stats.snapshot()
+        assert snap2["total_queries"] == 1
+        assert snap2["skip_reasons"]["gate_blocked"] == 1
+
+
+class TestQueryStatsTimestamps:
+    def test_last_query_at_none_before_any_query(self):
+        stats = QueryStats()
+        assert stats.snapshot()["last_query_at"] is None
+
+    def test_last_query_at_set_after_query(self):
+        stats = QueryStats()
+        stats.record_query(_make_result(should_inject=False, decision_reason="test"))
+        snap = stats.snapshot()
+        assert snap["last_query_at"] is not None
+        assert "T" in snap["last_query_at"]  # ISO format
+
+    def test_stats_since_set_at_construction(self):
+        stats = QueryStats()
+        snap = stats.snapshot()
+        assert snap["stats_since"] is not None
+        assert "T" in snap["stats_since"]
+
+
+class TestQueryStatsExceptionSafety:
+    def test_record_query_with_none_does_not_raise(self):
+        stats = QueryStats()
+        stats.record_query(None)
+        # getattr(None, ...) returns defaults, so it counts as a skip — harmless
+        snap = stats.snapshot()
+        assert snap["total_queries"] >= 0  # key invariant: no exception raised
+
+    def test_record_query_with_bad_object_does_not_raise(self):
+        stats = QueryStats()
+        stats.record_query("not a result")
+        snap = stats.snapshot()
+        assert snap["total_queries"] >= 0  # key invariant: no exception raised
+
+    def test_record_flag_still_works_after_bad_record_query(self):
+        stats = QueryStats()
+        stats.record_query(None)
+        stats.record_flag(suppressed=True)
+        assert stats.snapshot()["total_flags"] == 1
+        assert stats.snapshot()["total_suppressions"] == 1
