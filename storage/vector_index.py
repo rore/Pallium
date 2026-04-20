@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,12 +29,24 @@ def _require_usearch():
     return Index
 
 
+def _replace_with_retry(src: str, dst: str, retries: int = 5, delay: float = 0.2) -> None:
+    """os.replace with retry for Windows transient file locks (WinError 5 / WinError 32)."""
+    for attempt in range(retries):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == retries - 1 or sys.platform != "win32":
+                raise
+            time.sleep(delay * (attempt + 1))
+
+
 def _atomic_write_json(path: Path, data: dict) -> None:
     """Write JSON to a file atomically via temp file + os.replace."""
     tmp = path.with_suffix(f".{uuid.uuid4().hex[:8]}.tmp")
     try:
         tmp.write_text(json.dumps(data), encoding="utf-8")
-        os.replace(str(tmp), str(path))
+        _replace_with_retry(str(tmp), str(path))
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
@@ -122,7 +136,7 @@ class VectorIndex:
         tmp_index = self._index_path.with_suffix(f".{uuid.uuid4().hex[:8]}.tmp")
         try:
             self._index.save(str(tmp_index))
-            os.replace(str(tmp_index), str(self._index_path))
+            _replace_with_retry(str(tmp_index), str(self._index_path))
         except BaseException:
             tmp_index.unlink(missing_ok=True)
             raise
