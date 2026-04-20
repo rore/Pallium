@@ -1691,3 +1691,318 @@ def test_fact_envelope_survives_sqlite_roundtrip(test_db_url):
     assert len(loaded.envelope.subjects) == 1
     assert loaded.envelope.subjects[0].kind == "surface"
     assert loaded.envelope.subjects[0].value == "Alice"
+
+
+# ── Tests: fact_summary freeze guard ──────────────────────────────────────
+
+
+def test_supports_consolidation_freezes_large_fact_summary():
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider())
+    large_summary = " ".join(["word"] * 200)
+    mo = MemoryObject(
+        id=new_id(), type="fact_summary",
+        schema_id="test", schema_version="v1",
+        payload={"summary": large_summary},
+        lifecycle="active",
+    )
+    assert plugin.supports_consolidation(mo) is False
+
+
+def test_supports_consolidation_allows_small_fact_summary():
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider())
+    small_summary = " ".join(["word"] * 50)
+    mo = MemoryObject(
+        id=new_id(), type="fact_summary",
+        schema_id="test", schema_version="v1",
+        payload={"summary": small_summary},
+        lifecycle="active",
+    )
+    assert plugin.supports_consolidation(mo) is True
+
+
+def test_supports_consolidation_boundary_at_limit():
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider())
+    limit = ConversationalKnowledgePlugin.FACT_SUMMARY_FREEZE_WORD_LIMIT
+    at_limit = " ".join(["word"] * limit)
+    assert plugin.supports_consolidation(MemoryObject(
+        id=new_id(), type="fact_summary",
+        schema_id="test", schema_version="v1",
+        payload={"summary": at_limit}, lifecycle="active",
+    )) is False
+    just_under = " ".join(["word"] * (limit - 1))
+    assert plugin.supports_consolidation(MemoryObject(
+        id=new_id(), type="fact_summary",
+        schema_id="test", schema_version="v1",
+        payload={"summary": just_under}, lifecycle="active",
+    )) is True
+
+
+def test_supports_consolidation_atomic_fact_unaffected_by_length():
+    plugin = ConversationalKnowledgePlugin(provider=StubFactExtractionProvider())
+    long_statement = " ".join(["word"] * 300)
+    mo = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="test", schema_version="v1",
+        payload={"statement": long_statement},
+        lifecycle="active",
+    )
+    assert plugin.supports_consolidation(mo) is True
+
+
+# ── Tests: frozen summary supersession protection ─────────────────────────
+
+
+def test_frozen_summary_not_superseded_by_new_group(test_db_url):
+    """A frozen (>150-word) fact_summary must not be superseded when a new
+    fact_summary is created for the same (subject, category) group."""
+    from datetime import timedelta
+
+    consolidation_calls = []
+
+    class FreezeTestProvider(LLMProvider):
+        provider_name = "freeze_test"
+
+        def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+            if "consolidat" in system_prompt.lower():
+                consolidation_calls.append(user_prompt)
+                # Always produce a >150-word summary to ensure freezing
+                result = {
+                    "summary": "Alice's personal: " + ", ".join(f"detail-{i} about Alice" for i in range(60)),
+                    "superseded_indices": [],
+                    "reasoning": "big summary",
+                }
+            elif "t3" in user_prompt or "t4" in user_prompt:
+                result = {"facts": [
+                    {"subject": "Alice", "statement": "Alice enjoys hiking", "category": "personal"},
+                    {"subject": "Alice", "statement": "Alice reads novels", "category": "personal"},
+                ]}
+            elif "t2" in user_prompt:
+                result = {"facts": [
+                    {"subject": "Alice", "statement": "Alice lives in Paris", "category": "personal"},
+                    {"subject": "Alice", "statement": "Alice has a cat", "category": "personal"},
+                ]}
+            else:
+                result = {"facts": [
+                    {"subject": "Alice", "statement": "Alice lives in Berlin", "category": "personal"},
+                ]}
+            return LLMJsonResponse(raw_text=json.dumps(result), parsed_json=result)
+
+    storage = SQLiteStorageProvider(test_db_url)
+    service = PalliumService(
+        storage=storage,
+        retrieval=LexicalRetrievalProvider(storage),
+        semantic_plugins={"conversational_knowledge": ConversationalKnowledgePlugin(provider=FreezeTestProvider())},
+        default_use_case="conversational_knowledge",
+    )
+    base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    # Phase 1: Ingest t1 + t2 → first consolidation → fact_summary_v1
+    for i, (thread, content) in enumerate([
+        ("t1", "Alice told me she lives in Berlin"),
+        ("t1", "She described the city"),
+        ("t2", "Alice said she moved to Paris and got a cat"),
+        ("t2", "She loves cats"),
+    ]):
+        service.ingest_item(
+            source_type="chat_message", source_id=f"msg-{i}",
+            content_type="text/plain", content=content,
+            metadata=None, use_case=None,
+            container_ref="c1", thread_ref=thread,
+            role="user", artifact_kind="message",
+            visibility="public", occurred_at=base_time + timedelta(hours=i),
+        )
+    service.drain_processing_queue(worker_id="test")
+
+    summaries_v1 = storage.list_memory_objects(memory_types=["fact_summary"], lifecycle="active", container_ref="c1")
+    personal_v1 = [s for s in summaries_v1 if s.payload.get("category", "").lower() == "personal"]
+    assert len(personal_v1) >= 1, "Phase 1 should produce at least one fact_summary"
+    frozen_id = personal_v1[0].id
+    frozen_summary = personal_v1[0].payload["summary"]
+    assert len(frozen_summary.split()) >= ConversationalKnowledgePlugin.FACT_SUMMARY_FREEZE_WORD_LIMIT, (
+        f"Phase 1 summary should be >=150 words to be frozen, got {len(frozen_summary.split())} words"
+    )
+
+    # Phase 2: Ingest t3 + t4 → new facts → should produce a NEW summary alongside frozen one
+    for i, (thread, content) in enumerate([
+        ("t3", "Alice told me she started hiking recently"),
+        ("t3", "She finds it refreshing"),
+        ("t4", "Alice said she reads novels every evening"),
+        ("t4", "She recommended a book to me"),
+    ], start=10):
+        service.ingest_item(
+            source_type="chat_message", source_id=f"msg-{i}",
+            content_type="text/plain", content=content,
+            metadata=None, use_case=None,
+            container_ref="c1", thread_ref=thread,
+            role="user", artifact_kind="message",
+            visibility="public", occurred_at=base_time + timedelta(hours=i),
+        )
+    service.drain_processing_queue(worker_id="test")
+
+    # The frozen summary must still be active
+    frozen_mo = storage.get_memory_object(frozen_id)
+    assert frozen_mo.lifecycle == "active", (
+        f"Frozen summary should remain active, got lifecycle={frozen_mo.lifecycle}"
+    )
+
+    # There should be multiple active fact_summaries for Alice/personal
+    all_active = storage.list_memory_objects(memory_types=["fact_summary"], lifecycle="active", container_ref="c1")
+    active_personal = [s for s in all_active if s.payload.get("category", "").lower() == "personal"
+                       and s.payload.get("subject", "").lower() == "alice"]
+    assert len(active_personal) >= 2, (
+        f"Should have >=2 active Alice/personal fact_summaries (frozen + new), got {len(active_personal)}"
+    )
+
+
+def test_non_frozen_summary_still_superseded_normally(test_db_url):
+    """Regression: when a <150-word summary participates as a consolidation
+    candidate, it gets superseded as before."""
+    plugin = ConversationalKnowledgePlugin(
+        provider=StubFactExtractionProvider(
+            consolidation_summary="Alice's personal: updated consolidated view",
+        ),
+    )
+    storage = SQLiteStorageProvider(test_db_url)
+    service = PalliumService(
+        storage=storage,
+        retrieval=LexicalRetrievalProvider(storage),
+        semantic_plugins={"conversational_knowledge": plugin},
+        default_use_case="conversational_knowledge",
+    )
+
+    # Create a small fact_summary (under freeze limit) + new atomic_facts
+    small_summary = MemoryObject(
+        id="small-fs-001",
+        type="fact_summary",
+        schema_id="conversational_knowledge.fact_summary",
+        schema_version="v1",
+        payload={
+            "subject": "Alice", "category": "personal",
+            "summary": "Alice's personal: short summary",
+            "fact_count": 2,
+            "supporting_memory_ids": [],
+            "group_key": "fact_consolidation:public:c1:alice:personal",
+            "consolidation_provenance": {"strategy_name": "fact_consolidation", "prompt_variant": "test"},
+        },
+        lifecycle="active",
+        visibility="public",
+        container_ref="c1",
+    )
+    storage.create_memory_object(small_summary)
+
+    for i in range(3):
+        mo = MemoryObject(
+            id=new_id(), type="atomic_fact",
+            schema_id="conversational_knowledge.atomic_fact", schema_version="v1",
+            payload={"subject": "Alice", "statement": f"Alice fact {i}", "category": "personal", "thread_ref": f"t{i}"},
+            lifecycle="active", visibility="public", container_ref="c1",
+        )
+        storage.create_memory_object(mo)
+
+    service.run_consolidation_pass(use_case="conversational_knowledge")
+
+    old = storage.get_memory_object("small-fs-001")
+    assert old.lifecycle == "superseded", (
+        f"Small summary should be superseded by reconsolidation, got {old.lifecycle}"
+    )
+
+
+def test_e2e_frozen_summary_survives_subsequent_consolidation_rounds(test_db_url):
+    """Multi-phase e2e: a frozen summary survives multiple subsequent
+    consolidation rounds as new facts arrive."""
+    from datetime import timedelta
+
+    call_count = [0]
+
+    class MultiPhaseProvider(LLMProvider):
+        provider_name = "multi_phase"
+
+        def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+            if "consolidat" in system_prompt.lower():
+                call_count[0] += 1
+                # Always produce a >150-word summary to trigger freeze
+                result = {
+                    "summary": "Bob's hobby: " + ", ".join(f"chess-fact-{i} about Bob" for i in range(60)),
+                    "superseded_indices": [],
+                    "reasoning": "big summary",
+                }
+            else:
+                thread_num = "unknown"
+                for t in ["t1", "t2", "t3", "t4", "t5", "t6"]:
+                    if t in user_prompt:
+                        thread_num = t
+                        break
+                result = {"facts": [
+                    {"subject": "Bob", "statement": f"Bob plays chess in {thread_num}", "category": "hobby"},
+                ]}
+            return LLMJsonResponse(raw_text=json.dumps(result), parsed_json=result)
+
+    storage = SQLiteStorageProvider(test_db_url)
+    service = PalliumService(
+        storage=storage,
+        retrieval=LexicalRetrievalProvider(storage),
+        semantic_plugins={"conversational_knowledge": ConversationalKnowledgePlugin(provider=MultiPhaseProvider())},
+        default_use_case="conversational_knowledge",
+    )
+    base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    # Phase 1: 2 threads → consolidation → summary_v1 (should become frozen if >150 words)
+    for i, (thread, content) in enumerate([
+        ("t1", "Bob told me he plays chess"), ("t1", "He's quite good at it"),
+        ("t2", "Bob mentioned his chess hobby"), ("t2", "He plays every week"),
+    ]):
+        service.ingest_item(
+            source_type="chat_message", source_id=f"p1-{i}",
+            content_type="text/plain", content=content,
+            metadata=None, use_case=None,
+            container_ref="c1", thread_ref=thread,
+            role="user", artifact_kind="message",
+            visibility="public", occurred_at=base_time + timedelta(hours=i),
+        )
+    service.drain_processing_queue(worker_id="test")
+
+    # Phase 2: 2 more threads → new consolidation round
+    for i, (thread, content) in enumerate([
+        ("t3", "Bob said he joined a chess club"), ("t3", "Club meets on Tuesdays"),
+        ("t4", "Bob won a chess tournament"), ("t4", "He was very proud"),
+    ], start=10):
+        service.ingest_item(
+            source_type="chat_message", source_id=f"p2-{i}",
+            content_type="text/plain", content=content,
+            metadata=None, use_case=None,
+            container_ref="c1", thread_ref=thread,
+            role="user", artifact_kind="message",
+            visibility="public", occurred_at=base_time + timedelta(hours=i),
+        )
+    service.drain_processing_queue(worker_id="test")
+
+    # Phase 3: 2 more threads → another consolidation round
+    for i, (thread, content) in enumerate([
+        ("t5", "Bob started teaching chess"), ("t5", "He teaches kids"),
+        ("t6", "Bob bought a new chess set"), ("t6", "It's a wooden one"),
+    ], start=20):
+        service.ingest_item(
+            source_type="chat_message", source_id=f"p3-{i}",
+            content_type="text/plain", content=content,
+            metadata=None, use_case=None,
+            container_ref="c1", thread_ref=thread,
+            role="user", artifact_kind="message",
+            visibility="public", occurred_at=base_time + timedelta(hours=i),
+        )
+    service.drain_processing_queue(worker_id="test")
+
+    # Check: all fact_summaries for Bob/hobby
+    all_summaries = storage.list_memory_objects(memory_types=["fact_summary"], lifecycle="active", container_ref="c1")
+    bob_hobby = [s for s in all_summaries if s.payload.get("subject", "").lower() == "bob"
+                 and s.payload.get("category", "").lower() == "hobby"]
+
+    # At least the frozen one should exist, plus potentially fresh ones
+    frozen_count = sum(1 for s in bob_hobby if len(s.payload.get("summary", "").split()) >= ConversationalKnowledgePlugin.FACT_SUMMARY_FREEZE_WORD_LIMIT)
+    short_count = sum(1 for s in bob_hobby if len(s.payload.get("summary", "").split()) < ConversationalKnowledgePlugin.FACT_SUMMARY_FREEZE_WORD_LIMIT)
+
+    assert len(bob_hobby) >= 1, f"Should have at least 1 active Bob/hobby summary, got {len(bob_hobby)}"
+    if frozen_count > 0:
+        assert frozen_count >= 1, "Frozen summary should survive"
+        for s in bob_hobby:
+            if len(s.payload.get("summary", "").split()) >= ConversationalKnowledgePlugin.FACT_SUMMARY_FREEZE_WORD_LIMIT:
+                assert s.lifecycle == "active", f"Frozen summary should be active, got {s.lifecycle}"

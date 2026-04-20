@@ -144,6 +144,8 @@ class ConsolidationRunner:
         for group in groups:
             self._process_consolidation_group(plugin, group)
 
+    TARGETED_MAX_GROUP_SIZE = 8
+
     def _build_targeted_groups(
         self,
         candidates: list,
@@ -166,30 +168,96 @@ class ConsolidationRunner:
         for (subject, category, visibility), members in grouped.items():
             if len(members) < 2:
                 continue
-            ordered = tuple(_sort_candidates(members))
-            latest = max(c.latest_occurred_at for c in ordered)
+            ordered = list(_sort_candidates(members))
             original_subject = str(ordered[0].memory_object.payload.get("subject", "")).strip()
             original_category = str(ordered[0].memory_object.payload.get("category", "")).strip()
             group_key = f"fact_consolidation:{visibility_label(visibility)}:{container_ref or 'none'}:{subject}:{category}"
-            groups.append(
-                ConsolidationGroup(
-                    strategy_name="fact_consolidation",
-                    strategy_version="v1",
-                    group_key=group_key,
-                    candidates=ordered,
-                    container_ref=container_ref,
-                    thread_ref=None,
-                    latest_occurred_at=latest,
-                    visibility=visibility,
-                    merge_rationale={
-                        "grouping_mode": "fact_consolidation",
-                        "container_ref": container_ref,
-                        "subject": original_subject,
-                        "category": original_category,
-                        "fact_count": len(ordered),
-                    },
+
+            if len(ordered) <= self.TARGETED_MAX_GROUP_SIZE:
+                latest = max(c.latest_occurred_at for c in ordered)
+                groups.append(
+                    ConsolidationGroup(
+                        strategy_name="fact_consolidation",
+                        strategy_version="v1",
+                        group_key=group_key,
+                        candidates=tuple(ordered),
+                        container_ref=container_ref,
+                        thread_ref=None,
+                        latest_occurred_at=latest,
+                        visibility=visibility,
+                        merge_rationale={
+                            "grouping_mode": "fact_consolidation",
+                            "container_ref": container_ref,
+                            "subject": original_subject,
+                            "category": original_category,
+                            "fact_count": len(ordered),
+                        },
+                    )
                 )
-            )
+            else:
+                # Split oversized groups: exclude prior fact_summaries, split
+                # atomic_facts into sub-groups by recency.
+                atomic_facts = [c for c in ordered if c.memory_object.type != "fact_summary"]
+                prior_summaries = [c for c in ordered if c.memory_object.type == "fact_summary"]
+                # First sub-group: prior summaries + as many atomic_facts as fit
+                if prior_summaries:
+                    first_batch_size = max(1, self.TARGETED_MAX_GROUP_SIZE - len(prior_summaries))
+                    first_batch = prior_summaries + atomic_facts[:first_batch_size]
+                    remaining_facts = atomic_facts[first_batch_size:]
+                else:
+                    first_batch = atomic_facts[:self.TARGETED_MAX_GROUP_SIZE]
+                    remaining_facts = atomic_facts[self.TARGETED_MAX_GROUP_SIZE:]
+
+                if len(first_batch) >= 2:
+                    latest = max(c.latest_occurred_at for c in first_batch)
+                    groups.append(
+                        ConsolidationGroup(
+                            strategy_name="fact_consolidation",
+                            strategy_version="v1",
+                            group_key=group_key,
+                            candidates=tuple(first_batch),
+                            container_ref=container_ref,
+                            thread_ref=None,
+                            latest_occurred_at=latest,
+                            visibility=visibility,
+                            merge_rationale={
+                                "grouping_mode": "fact_consolidation",
+                                "grouping_note": "split_first_batch",
+                                "container_ref": container_ref,
+                                "subject": original_subject,
+                                "category": original_category,
+                                "fact_count": len(first_batch),
+                            },
+                        )
+                    )
+
+                # Remaining sub-groups: atomic_facts only, max_group_size each
+                for i in range(0, len(remaining_facts), self.TARGETED_MAX_GROUP_SIZE):
+                    batch = remaining_facts[i:i + self.TARGETED_MAX_GROUP_SIZE]
+                    if len(batch) < 2:
+                        continue
+                    latest = max(c.latest_occurred_at for c in batch)
+                    groups.append(
+                        ConsolidationGroup(
+                            strategy_name="fact_consolidation",
+                            strategy_version="v1",
+                            group_key=group_key,
+                            candidates=tuple(batch),
+                            container_ref=container_ref,
+                            thread_ref=None,
+                            latest_occurred_at=latest,
+                            visibility=visibility,
+                            merge_rationale={
+                                "grouping_mode": "fact_consolidation",
+                                "grouping_note": "split_overflow_batch",
+                                "container_ref": container_ref,
+                                "subject": original_subject,
+                                "category": original_category,
+                                "fact_count": len(batch),
+                            },
+                        )
+                    )
+
         return groups
 
     def _process_consolidation_group(
@@ -297,6 +365,7 @@ class ConsolidationRunner:
         group,
         created_memory_object: MemoryObject,
     ) -> list[str]:
+        group_candidate_ids = set(group.candidate_ids)
         ids: list[str] = []
         for memory_object in self._storage.list_memory_objects(
             memory_types=[created_memory_object.type],
@@ -311,6 +380,12 @@ class ConsolidationRunner:
             if provenance.get("strategy_name") != group.strategy_name:
                 continue
             if memory_object.payload.get("group_key") != group.group_key:
+                continue
+            # For fact_consolidation, only supersede summaries that were
+            # candidates in this group. This protects frozen summaries that
+            # were excluded from candidacy by the package's
+            # supports_consolidation guard.
+            if group.strategy_name == "fact_consolidation" and memory_object.id not in group_candidate_ids:
                 continue
             ids.append(memory_object.id)
         return ids

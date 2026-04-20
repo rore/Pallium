@@ -285,8 +285,15 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
             lexical_overlap_threshold=0,
         )
 
+    FACT_SUMMARY_FREEZE_WORD_LIMIT = 150
+
     def supports_consolidation(self, memory_object: MemoryObject) -> bool:
-        return memory_object.type in {FACT_TYPE, FACT_SUMMARY_TYPE}
+        if memory_object.type == FACT_TYPE:
+            return True
+        if memory_object.type == FACT_SUMMARY_TYPE:
+            summary_text = str(memory_object.payload.get("summary", ""))
+            return len(summary_text.split()) < self.FACT_SUMMARY_FREEZE_WORD_LIMIT
+        return False
 
     def build_consolidated_memory(self, group: ConsolidationGroup) -> ProcessResult:
         return _build_fact_summary(
