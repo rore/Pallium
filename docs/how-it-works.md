@@ -204,8 +204,11 @@ Current areas under active hardening:
 
 - **Thread-level interest extraction** — per-item extraction can lose subject
   context when interest spans multiple messages. Under investigation.
-- **Semantic gap** — extracted `decision_evidence_text` is not yet validated
-  against source content. The evidence link exists but fidelity isn't checked.
+- **Extraction confidence** — promoted memory objects carry a type-based
+  confidence label but no instance-level support signal. Grounding checks
+  exist for decision and investigation evidence fields (substring containment
+  against source), but synthesized fields (interest, constraint, summaries)
+  have no post-extraction quality signal.
 - **Contradiction supersession** — when a newer fact contradicts an older one,
   the atomic facts are correctly superseded but thread summaries containing the
   old fact persist. This can cause stale information to outnumber corrections
