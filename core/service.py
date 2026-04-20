@@ -23,7 +23,7 @@ from core.turn_inference import resolve_runtime_context
 from core.type_registry import TypeRegistry
 from core.vector_embed import VectorEmbedder
 from core.models import FlagResult, InjectableBlock, MemoryFlag, QueryRuntimeContext, Relation, SourceItem, utc_now
-from core.observability import IntegrationDebugLogger
+from core.observability import IntegrationDebugLogger, QueryStats
 from core.visibility import is_visible
 from providers.embedding.base import EmbeddingProvider
 from retrieval.base import RetrievalProvider
@@ -49,6 +49,7 @@ class PalliumService:
         vector_index: VectorIndex | None = None,
         type_registry: TypeRegistry | None = None,
         routing_overrides=None,
+        query_stats: QueryStats | None = None,
     ) -> None:
         self._storage = storage
         self._retrieval = retrieval
@@ -62,10 +63,12 @@ class PalliumService:
         self._vector_index = vector_index
         self._type_registry = type_registry
         self._vector_embedder = VectorEmbedder(storage, embedding_provider, vector_index)
+        self._query_stats = query_stats
         self._query_executor = QueryExecutor(
             storage, retrieval, semantic_plugins, default_use_case,
             type_registry=type_registry,
             routing_overrides=routing_overrides,
+            query_stats=query_stats,
         )
         self._thread_rebuilder = ThreadRebuilder(
             storage=storage,
@@ -543,7 +546,7 @@ class PalliumService:
                     self._storage.update_memory_object_lifecycle(memory_object_id, "suppressed")
                     suppressed = True
 
-        return FlagResult(
+        result = FlagResult(
             memory_object_id=memory_object_id,
             flag_count=self._storage.count_total_flags(memory_object_id),
             unique_sources=self._storage.count_unique_flag_sources(
@@ -551,6 +554,9 @@ class PalliumService:
             ),
             suppressed=suppressed,
         )
+        if self._query_stats is not None:
+            self._query_stats.record_flag(suppressed=result.suppressed)
+        return result
 
     def _run_targeted_fact_consolidation(self, use_case: str, container_ref: str, subjects: list[str]) -> None:
         """Callback for ThreadRebuilder: run fact consolidation for specific subjects."""

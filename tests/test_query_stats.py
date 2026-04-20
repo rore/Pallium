@@ -226,3 +226,68 @@ class TestQueryExecutorStatsIntegration:
         snap = query_stats.snapshot()
         assert snap["total_queries"] == 1
         assert snap["total_skips"] == 1
+
+
+class TestServiceFlagStatsIntegration:
+    def test_flag_memory_object_records_stats(self):
+        from core.observability import QueryStats
+        from storage.sqlite import SQLiteStorageProvider
+        from core.models import MemoryObject, SourceItem, Relation
+        from core.service import PalliumService
+        from datetime import datetime, timezone
+        from uuid import uuid4
+
+        storage = SQLiteStorageProvider("sqlite:///:memory:")
+        source = SourceItem(
+            source_type="chat_message",
+            source_id=f"src-{uuid4().hex[:8]}",
+            content_type="text/plain",
+            content="test",
+            processing_status="completed",
+            created_at=datetime.now(timezone.utc),
+        )
+        storage.create_source_item(source)
+        memory = MemoryObject(
+            type="decision",
+            schema_id="test",
+            schema_version="v1",
+            payload={"summary": "test"},
+            lifecycle="active",
+            created_at=datetime.now(timezone.utc),
+        )
+        storage.create_memory_object(memory)
+        storage.create_relation(
+            Relation(
+                from_kind="memory_object",
+                from_id=memory.id,
+                relation_type="supported_by",
+                to_kind="source_item",
+                to_id=source.id,
+            )
+        )
+
+        from semantic.demo_agent_memory import DemoAgentMemoryPlugin
+        from retrieval.lexical import LexicalRetrievalProvider
+
+        plugin = DemoAgentMemoryPlugin()
+        retrieval = LexicalRetrievalProvider(storage)
+        query_stats = QueryStats()
+
+        service = PalliumService(
+            storage=storage,
+            retrieval=retrieval,
+            semantic_plugins={plugin.name: plugin},
+            default_use_case=plugin.name,
+            query_stats=query_stats,
+        )
+
+        service.flag_memory_object(
+            memory_object_id=memory.id,
+            reason="wrong",
+            source_ref="user-1",
+            immediate=True,
+        )
+
+        snap = query_stats.snapshot()
+        assert snap["total_flags"] == 1
+        assert snap["total_suppressions"] == 1
