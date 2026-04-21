@@ -430,6 +430,7 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
                         "statement": statement,
                         "category": category,
                         "thread_ref": aggregate.thread_ref,
+                        "container_ref": container_ref,
                         "extraction_watermark": new_watermark,
                     },
                     visibility=visibility or "private",

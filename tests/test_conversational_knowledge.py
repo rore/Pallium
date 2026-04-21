@@ -202,7 +202,9 @@ def test_build_thread_summary_extracts_facts():
     assert result.memory_objects[0].type == FACT_TYPE
     assert result.memory_objects[0].payload["subject"] == "Alice"
     assert result.memory_objects[0].payload["statement"] == "Alice has 3 cats"
+    assert result.memory_objects[0].payload["container_ref"] == "c1"
     assert result.memory_objects[1].payload["subject"] == "Bob"
+    assert result.memory_objects[1].payload["container_ref"] == "c1"
 
     # Each fact should have evidence to both source items
     assert len(result.relations) == 4  # 2 facts × 2 source items
@@ -1179,6 +1181,103 @@ def test_derive_text_view_atomic_fact_empty():
         lifecycle="active",
     )
     assert _derive_text_view(mo) == ""
+
+
+# ── Tests: consolidation — _derive_container_ref / _derive_thread_ref ────
+
+
+def test_derive_container_ref_prefers_memory_object_field():
+    from capabilities.consolidation import _derive_container_ref
+    mo = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="test", schema_version="v1",
+        payload={"statement": "Alice has 3 cats"},
+        container_ref="container-from-object",
+    )
+    assert _derive_container_ref(mo, evidence=()) == "container-from-object"
+
+
+def test_derive_container_ref_falls_back_to_payload():
+    from capabilities.consolidation import _derive_container_ref
+    mo = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="test", schema_version="v1",
+        payload={"statement": "x", "container_ref": "container-from-payload"},
+    )
+    assert _derive_container_ref(mo, evidence=()) == "container-from-payload"
+
+
+def test_derive_container_ref_memory_object_wins_over_payload():
+    from capabilities.consolidation import _derive_container_ref
+    mo = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="test", schema_version="v1",
+        payload={"statement": "x", "container_ref": "from-payload"},
+        container_ref="from-object",
+    )
+    assert _derive_container_ref(mo, evidence=()) == "from-object"
+
+
+def test_derive_thread_ref_prefers_envelope_scope():
+    from capabilities.consolidation import _derive_thread_ref
+    mo = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="test", schema_version="v1",
+        payload={"statement": "x", "thread_ref": "from-payload"},
+        envelope=MemoryEnvelope(
+            schema_id="test", schema_version="v1",
+            kind="finding",
+            scope=MemoryEnvelopeScope(thread_ref="from-envelope"),
+            derivation=MemoryEnvelopeDerivation(
+                producer_kind="item_extraction",
+                producer_schema_id="test",
+                producer_schema_version="v1",
+            ),
+        ),
+    )
+    assert _derive_thread_ref(mo, evidence=()) == "from-envelope"
+
+
+def test_derive_thread_ref_falls_back_to_payload():
+    from capabilities.consolidation import _derive_thread_ref
+    mo = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="test", schema_version="v1",
+        payload={"statement": "x", "thread_ref": "from-payload"},
+    )
+    assert _derive_thread_ref(mo, evidence=()) == "from-payload"
+
+
+def test_derive_container_ref_falls_back_to_evidence():
+    from capabilities.consolidation import _derive_container_ref
+    from core.models import EvidenceReference
+    mo = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="test", schema_version="v1",
+        payload={"statement": "x"},
+    )
+    evidence = (EvidenceReference(source_item_id="s1", source_type="chat", source_id="m1", container_ref="from-evidence"),)
+    assert _derive_container_ref(mo, evidence=evidence) == "from-evidence"
+
+
+def test_derive_thread_ref_envelope_with_null_thread_ref_falls_to_payload():
+    from capabilities.consolidation import _derive_thread_ref
+    mo = MemoryObject(
+        id=new_id(), type="atomic_fact",
+        schema_id="test", schema_version="v1",
+        payload={"statement": "x", "thread_ref": "from-payload"},
+        envelope=MemoryEnvelope(
+            schema_id="test", schema_version="v1",
+            kind="finding",
+            scope=MemoryEnvelopeScope(),
+            derivation=MemoryEnvelopeDerivation(
+                producer_kind="item_extraction",
+                producer_schema_id="test",
+                producer_schema_version="v1",
+            ),
+        ),
+    )
+    assert _derive_thread_ref(mo, evidence=()) == "from-payload"
 
 
 # ── Tests: end-to-end fact lifecycle (ingest → extract → consolidation) ──

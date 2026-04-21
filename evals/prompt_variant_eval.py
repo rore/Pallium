@@ -324,6 +324,52 @@ SNIPPETS: list[dict[str, Any]] = [
             "max_facts": 4,
         },
     },
+    {
+        "id": "session_lifecycle_skipped",
+        "description": "Session restart and revision update events not extracted as durable facts",
+        "thread_text": (
+            "Session date: 2024-10-15\n"
+            "[assistant]: Session restarted. Now running on the latest revision from the merged deploy.\n"
+            "[user]: OK. The downtown branch catalog has about 45,000 records and processes "
+            "around 300 patron requests per day.\n"
+            "[assistant]: Got it."
+        ),
+        "assertions": {
+            "must_contain_any": [["45,000"], ["300", "patron"]],
+            "must_not_contain": [
+                "session restarted",
+                "Session restarted",
+                "latest revision",
+                "merged deploy",
+            ],
+            "max_facts": 3,
+        },
+    },
+    {
+        "id": "monitoring_heartbeat_skipped",
+        "description": "Periodic monitoring check-ins reporting no change not extracted as facts",
+        "thread_text": (
+            "Session date: 2024-11-01\n"
+            "[assistant]: No changes on either thread. The catalog update announcement "
+            "still has no replies. The sync worker thread is unchanged. "
+            "Still waiting on confirmation from the branch coordinator before the scheduled update.\n"
+            "[user]: OK keep watching. By the way, the interlibrary loan agreement with Riverside "
+            "covers 5 branches and was renewed last March."
+        ),
+        "assertions": {
+            "must_contain_any": [["Riverside"], ["5 branches"], ["March"]],
+            "must_not_contain": [
+                "no changes",
+                "No changes",
+                "still has no replies",
+                "unchanged",
+                "still waiting",
+                "Still waiting",
+                "keep watching",
+            ],
+            "max_facts": 3,
+        },
+    },
 ]
 
 

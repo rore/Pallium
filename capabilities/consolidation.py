@@ -536,6 +536,8 @@ def _hours_between(left: datetime, right: datetime) -> float:
 
 
 def _derive_container_ref(memory_object: MemoryObject, evidence: tuple[EvidenceReference, ...]) -> str | None:
+    if memory_object.container_ref is not None:
+        return memory_object.container_ref
     payload = memory_object.payload
     if isinstance(payload.get("container_ref"), str):
         return payload["container_ref"]
@@ -546,6 +548,8 @@ def _derive_container_ref(memory_object: MemoryObject, evidence: tuple[EvidenceR
 
 
 def _derive_thread_ref(memory_object: MemoryObject, evidence: tuple[EvidenceReference, ...]) -> str | None:
+    if memory_object.envelope and memory_object.envelope.scope and memory_object.envelope.scope.thread_ref:
+        return memory_object.envelope.scope.thread_ref
     payload = memory_object.payload
     if isinstance(payload.get("thread_ref"), str):
         return payload["thread_ref"]
