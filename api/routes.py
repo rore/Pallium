@@ -476,7 +476,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
         )
 
     @router.get("/memory/{memory_object_id}/evidence", response_model=MemoryEvidenceResponse)
-    def get_memory_evidence(memory_object_id: str, container_ref: str) -> MemoryEvidenceResponse:
+    def get_memory_evidence(memory_object_id: str, container_ref: str | None = None) -> MemoryEvidenceResponse:
         try:
             items = service.get_memory_evidence(memory_object_id, container_ref=container_ref)
         except KeyError:

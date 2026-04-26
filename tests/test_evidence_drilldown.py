@@ -99,6 +99,27 @@ class TestGetMemoryEvidence:
         with pytest.raises(KeyError):
             service.get_memory_evidence("nonexistent-id", container_ref="container-a")
 
+    def test_no_container_ref_uses_memory_object_container(self, test_db_url: str) -> None:
+        """When container_ref is omitted, evidence is returned using the
+        memory object's own container_ref for visibility filtering."""
+        app = create_app(_config(test_db_url))
+        service = app.state.pallium_service
+        storage = service._storage
+
+        si = _make_source_item("ev-no-cref", "container-a", content="accessible without container")
+        storage.create_source_item(si)
+        mo = _make_memory_object("container-a")
+        storage.create_memory_object(mo)
+        storage.create_relation(Relation(
+            from_kind="memory_object", from_id=mo.id,
+            relation_type="supported_by",
+            to_kind="source_item", to_id=si.id,
+        ))
+
+        items = service.get_memory_evidence(mo.id)
+        assert len(items) == 1
+        assert items[0].content == "accessible without container"
+
     def test_filters_private_cross_container_evidence(self, test_db_url: str) -> None:
         """A memory object in container-a links to a private source item in container-b.
         The private item should be filtered out by visibility rules."""
@@ -211,6 +232,30 @@ class TestMemoryEvidenceEndpoint:
             response = client.get("/memory/nonexistent-id/evidence", params={"container_ref": "container-a"})
 
         assert response.status_code == 404
+
+    def test_no_container_ref_returns_evidence(self, test_db_url: str) -> None:
+        """Endpoint returns evidence when container_ref is omitted, using
+        the memory object's own container for visibility."""
+        app = create_app(_config(test_db_url))
+        storage = app.state.pallium_service._storage
+
+        si = _make_source_item("ep-no-cref", "container-a", content="no scope needed")
+        storage.create_source_item(si)
+        mo = _make_memory_object("container-a")
+        storage.create_memory_object(mo)
+        storage.create_relation(Relation(
+            from_kind="memory_object", from_id=mo.id,
+            relation_type="supported_by",
+            to_kind="source_item", to_id=si.id,
+        ))
+
+        with TestClient(app) as client:
+            response = client.get(f"/memory/{mo.id}/evidence")
+
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert len(items) == 1
+        assert items[0]["content"] == "no scope needed"
 
     def test_visibility_filtering_in_response(self, test_db_url: str) -> None:
         app = create_app(_config(test_db_url))
