@@ -62,6 +62,18 @@ class ThreadAggregationSemanticPlugin(SemanticPlugin):
         """
         return True
 
+    @property
+    def supports_container_aggregation(self) -> bool:
+        """Whether this plugin should receive container-level aggregation scopes.
+
+        Container-level scopes aggregate top-level messages across all threads
+        in a container, enabling extraction from standalone messages that fall
+        below the per-thread item minimum.
+
+        Default: False — only thread-level scopes are created.
+        """
+        return False
+
     @abstractmethod
     def supports_thread_aggregation(self, source_item: SourceItem) -> bool:
         raise NotImplementedError

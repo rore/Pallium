@@ -106,8 +106,20 @@ class SQLiteStorageProvider(
             processing_next_attempt_at=source_item.processing_next_attempt_at,
             created_at=source_item.created_at,
         )
-        with self._session_factory.begin() as session:
+        with self._begin_immediate() as session:
+            if source_item.thread_ref is not None and source_item.container_ref is not None:
+                count = session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM source_items "
+                        "WHERE container_ref = :container_ref AND thread_ref = :thread_ref"
+                    ),
+                    {"container_ref": source_item.container_ref, "thread_ref": source_item.thread_ref},
+                ).scalar()
+                record.thread_position = count + 1
+            else:
+                record.thread_position = 1
             session.add(record)
+            session.flush()
 
     def get_source_item(self, source_item_id: str) -> SourceItem:
         with self._session_factory() as session:
@@ -126,6 +138,37 @@ class SQLiteStorageProvider(
                 )
                 .order_by(SourceItemRecord.created_at.asc(), SourceItemRecord.id.asc())
             ).all()
+        return [self._to_source_item(record) for record in records]
+
+    def list_top_level_messages_for_container(
+        self,
+        container_ref: str,
+        after_created_at: datetime | None = None,
+        max_items: int | None = None,
+    ) -> list[SourceItem]:
+        with self._session_factory() as session:
+            query = (
+                select(SourceItemRecord)
+                .where(
+                    SourceItemRecord.container_ref == container_ref,
+                    SourceItemRecord.thread_position == 1,
+                )
+            )
+            if after_created_at is not None:
+                query = query.where(SourceItemRecord.created_at > after_created_at)
+            if max_items is not None:
+                query = query.order_by(
+                    SourceItemRecord.created_at.desc(),
+                    SourceItemRecord.id.desc(),
+                ).limit(max_items)
+                records = list(session.scalars(query).all())
+                records.sort(key=lambda r: (r.created_at, r.id))
+            else:
+                query = query.order_by(
+                    SourceItemRecord.created_at.asc(),
+                    SourceItemRecord.id.asc(),
+                )
+                records = list(session.scalars(query).all())
         return [self._to_source_item(record) for record in records]
 
     def get_thread_stats(self, thread_ref: str, *, exclude_item_id: str | None = None) -> ThreadStats:

@@ -271,6 +271,10 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
     def rebuild_supersedes_prior(self) -> bool:
         return False
 
+    @property
+    def supports_container_aggregation(self) -> bool:
+        return True
+
     # ── Consolidation interface ──────────────────────────────────────────
 
     @property
@@ -334,7 +338,8 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
         On subsequent calls, only processes source items newer than the
         extraction watermark stored in existing facts.
         """
-        if len(aggregate.source_items) < 2:
+        is_container_scope = aggregate.thread_ref is None
+        if not is_container_scope and len(aggregate.source_items) < 2:
             return ProcessResult(memory_objects=[], relations=[], index_entries=[])
 
         # Determine which items are new since the last extraction
@@ -570,7 +575,7 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
 
 def _is_eligible_for_fact_extraction(source_item: SourceItem) -> bool:
     """Check if a source item is eligible for fact extraction."""
-    if not source_item.container_ref or not source_item.thread_ref:
+    if not source_item.container_ref:
         return False
     role = (source_item.role or "").lower()
     artifact_kind = (source_item.artifact_kind or "").lower() or None

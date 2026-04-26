@@ -107,12 +107,22 @@ def test_eligible_assistant_output():
     assert _is_eligible_for_fact_extraction(item) is True
 
 
-def test_ineligible_no_thread():
+def test_eligible_without_thread_ref():
+    """Items without thread_ref are eligible when container_ref is present."""
     item = SourceItem(
         source_type="chat", source_id="3",
         content_type="text/plain", content="Hello",
         role="user", artifact_kind="message",
         container_ref="c1",
+    )
+    assert _is_eligible_for_fact_extraction(item) is True
+
+
+def test_ineligible_no_container():
+    item = SourceItem(
+        source_type="chat", source_id="3b",
+        content_type="text/plain", content="Hello",
+        role="user", artifact_kind="message",
     )
     assert _is_eligible_for_fact_extraction(item) is False
 

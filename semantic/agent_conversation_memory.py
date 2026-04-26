@@ -126,7 +126,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         )
 
     def supports_thread_aggregation(self, source_item: SourceItem) -> bool:
-        if not source_item.thread_ref or not source_item.container_ref:
+        if not source_item.container_ref:
             return False
         return _supports_thread_aggregation(source_item)
 

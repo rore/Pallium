@@ -322,13 +322,10 @@ class TestStandaloneMessageExtractionGap:
     def test_standalone_user_messages_produce_no_facts(
         self, monkeypatch, test_db_url: str,
     ) -> None:
-        """Real Slack DM pattern: each top-level user message has its own
-        thread_ref.  No assistant messages share these threads.  Despite
-        substantive design discussion, no facts are extracted because each
-        thread has only 1 item.
-
-        This test should FAIL once container-level extraction is implemented,
-        at which point the assertion should be flipped to expect facts.
+        """Container-level extraction picks up standalone user messages that
+        each have their own thread_ref.  Even though each thread has only 1
+        item (below the thread-level 2-item minimum), the container scope
+        aggregates them and produces atomic_facts.
         """
         monkeypatch.setattr(
             "app.dependencies.build_llm_provider",
@@ -347,16 +344,16 @@ class TestStandaloneMessageExtractionGap:
         )
 
         facts = _collect_facts(service._storage, CONTAINER_REF)
-        assert len(facts) == 0, (
-            "Standalone user messages currently produce no atomic_facts — "
-            "each thread has only 1 item, below the 2-item extraction minimum"
+        assert len(facts) >= 1, (
+            "Container-level extraction should produce atomic_facts "
+            "from standalone user messages"
         )
 
         unextracted = _collect_source_items_without_fact_extraction(
             service._storage, CONTAINER_REF,
         )
-        assert len(unextracted) == len(STANDALONE_USER_MESSAGES), (
-            "All standalone messages should be identifiable as unextracted"
+        assert len(unextracted) == 0, (
+            "All standalone messages should have fact extraction via container scope"
         )
 
     def test_mixed_container_thread_extracts_but_standalones_do_not(
@@ -365,11 +362,9 @@ class TestStandaloneMessageExtractionGap:
         """Real DM channel pattern: a working multi-item thread coexists
         with standalone orphan messages in the same container.
 
-        Matches production data: Apr 26 thread (18 items, facts extracted)
-        alongside Apr 17 shadow mode messages (singletons, no extraction).
-
-        The thread produces facts; the standalone messages are silently dropped.
-        After container-level extraction, both should produce facts.
+        Both the thread and the standalone messages produce facts: the thread
+        via thread-level extraction, the standalone messages via container-level
+        extraction.
         """
         monkeypatch.setattr(
             "app.dependencies.build_llm_provider",
@@ -398,9 +393,9 @@ class TestStandaloneMessageExtractionGap:
         unextracted = _collect_source_items_without_fact_extraction(
             service._storage, CONTAINER_REF,
         )
-        assert len(unextracted) >= len(STANDALONE_USER_MESSAGES), (
-            f"At least {len(STANDALONE_USER_MESSAGES)} standalone messages "
-            "should have no fact extraction"
+        assert len(unextracted) == 0, (
+            "All messages should have fact extraction — thread-level for the "
+            "multi-item thread, container-level for standalone messages"
         )
 
     def test_standalone_user_and_assistant_both_orphaned(
@@ -409,12 +404,8 @@ class TestStandaloneMessageExtractionGap:
         """Both user messages and assistant artifacts are singletons when
         they have separate thread_refs.
 
-        Matches real Pelican pattern: user DM messages each get own thread_ref,
-        assistant responses also route to their own separate thread_refs.
-        All are singletons, all get zero extraction.
-
-        After container-level extraction, the container scope should pick up
-        both user and assistant top-level messages.
+        Container-level extraction picks up both user and assistant top-level
+        messages and produces atomic_facts from the aggregated content.
         """
         monkeypatch.setattr(
             "app.dependencies.build_llm_provider",
@@ -435,23 +426,17 @@ class TestStandaloneMessageExtractionGap:
         )
 
         facts = _collect_facts(service._storage, CONTAINER_REF)
-        assert len(facts) == 0, (
-            "All messages are singletons — no extraction from either user or assistant"
-        )
-
-        unextracted = _collect_source_items_without_fact_extraction(
-            service._storage, CONTAINER_REF,
-        )
-        assert len(unextracted) == total_messages, (
-            "Both user and assistant standalone messages should be unextracted"
+        assert len(facts) >= 1, (
+            "Container-level extraction should produce atomic_facts "
+            "from standalone user and assistant messages"
         )
 
     def test_standalone_messages_create_completed_scopes(
         self, monkeypatch, test_db_url: str,
     ) -> None:
         """Thread processing scopes are created and completed for each
-        standalone message, but they complete without producing any memory.
-        This confirms the 2-item guard is the specific cause."""
+        standalone message's thread, plus a container-level scope that
+        aggregates them for extraction."""
         monkeypatch.setattr(
             "app.dependencies.build_llm_provider",
             lambda config, **_: FactExtractionStubProvider(),
@@ -486,3 +471,8 @@ class TestStandaloneMessageExtractionGap:
             assert scope.processing_completed_at is not None, (
                 f"Scope {scope.scope_key} was never processed"
             )
+
+        container_scopes = [s for s in scopes if '"thread_ref":null' in s.scope_key]
+        assert len(container_scopes) >= 1, (
+            "Container scope should be created for the container"
+        )

@@ -166,6 +166,7 @@ class SQLiteQueueMixin:
         source_item_id: str,
         result: ProcessResult,
         thread_rebuild_scope: ThreadProcessingScope | None = None,
+        container_rebuild_scope: ThreadProcessingScope | None = None,
         completed_at: datetime | None = None,
     ) -> list[tuple[str, str]]:
         finished_at = completed_at or utc_now()
@@ -179,6 +180,12 @@ class SQLiteQueueMixin:
                 self._upsert_thread_processing_scope_in_session(
                     session,
                     scope=thread_rebuild_scope,
+                    requested_at=finished_at,
+                )
+            if container_rebuild_scope is not None:
+                self._upsert_thread_processing_scope_in_session(
+                    session,
+                    scope=container_rebuild_scope,
                     requested_at=finished_at,
                 )
             self._after_commit_processed_source_item_persist(
@@ -223,6 +230,7 @@ class SQLiteQueueMixin:
         worker_id: str,
         claimed_at: datetime,
         completed_at: datetime | None = None,
+        collection_watermark_at: datetime | None = None,
     ) -> bool:
         finished_at = completed_at or utc_now()
         normalized_claimed_at = self._normalize_datetime(claimed_at) or claimed_at
@@ -248,6 +256,8 @@ class SQLiteQueueMixin:
             record.processing_claimed_by = None
             record.processing_claimed_at = None
             record.processing_lease_expires_at = None
+            if collection_watermark_at is not None:
+                record.collection_watermark_at = collection_watermark_at
             record.updated_at = finished_at
             return pending_after
 
@@ -961,6 +971,7 @@ class SQLiteQueueMixin:
         source_item_id: str,
         result: ProcessResult,
         thread_rebuild_scope: ThreadProcessingScope | None = None,
+        container_rebuild_scope: ThreadProcessingScope | None = None,
         completed_at: datetime | None = None,
     ) -> list[tuple[str, str]]:
         """Commit a process result from multi-package processing.
@@ -979,6 +990,12 @@ class SQLiteQueueMixin:
                 self._upsert_thread_processing_scope_in_session(
                     session,
                     scope=thread_rebuild_scope,
+                    requested_at=finished_at,
+                )
+            if container_rebuild_scope is not None:
+                self._upsert_thread_processing_scope_in_session(
+                    session,
+                    scope=container_rebuild_scope,
                     requested_at=finished_at,
                 )
             self._after_commit_processed_source_item_persist(

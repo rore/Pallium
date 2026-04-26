@@ -64,6 +64,7 @@ class SQLiteCodecMixin:
             processing_completed_at=SQLiteCodecMixin._normalize_datetime(record.processing_completed_at),
             processing_error=record.processing_error,
             processing_next_attempt_at=SQLiteCodecMixin._normalize_datetime(record.processing_next_attempt_at),
+            thread_position=getattr(record, 'thread_position', None),
             created_at=SQLiteCodecMixin._normalize_datetime(record.created_at) or utc_now(),
         )
 
@@ -142,6 +143,9 @@ class SQLiteCodecMixin:
             processing_claimed_by=record.processing_claimed_by,
             processing_claimed_at=claimed_at,
             processing_lease_expires_at=lease_expires_at,
+            collection_watermark_at=SQLiteCodecMixin._normalize_datetime(
+                getattr(record, "collection_watermark_at", None)
+            ),
         )
 
     @staticmethod

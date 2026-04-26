@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from typing import Any, Callable
 
 from capabilities.thread_aggregation import build_thread_aggregate
@@ -29,6 +30,8 @@ FAILURE_CATEGORY_STORAGE_COMMIT = "storage_commit_failure"
 FAILURE_CATEGORY_UNEXPECTED = "unexpected_runtime_failure"
 
 MAX_PROCESSING_ERROR_LENGTH = 1000
+
+CONTAINER_SCOPE_RECENT_ITEMS = 200
 
 
 # ── Shared module-level helpers ─────────────────────────────────────────────
@@ -185,6 +188,39 @@ class ThreadRebuilder:
             visibility=source_item.visibility,
         )
 
+    def build_container_processing_scope(
+        self,
+        *,
+        plugin_name: str,
+        plugin: SemanticPlugin,
+        source_item: SourceItem,
+    ) -> ThreadProcessingScope | None:
+        if not isinstance(plugin, ThreadAggregationSemanticPlugin):
+            return None
+        if not plugin.supports_container_aggregation:
+            return None
+        if not plugin.supports_thread_aggregation(source_item):
+            return None
+        if not source_item.container_ref:
+            return None
+        scope_key = json.dumps(
+            {
+                "use_case": plugin_name,
+                "container_ref": source_item.container_ref,
+                "thread_ref": None,
+                "visibility": source_item.visibility,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return ThreadProcessingScope(
+            scope_key=scope_key,
+            use_case=plugin_name,
+            container_ref=source_item.container_ref,
+            thread_ref=None,
+            visibility=source_item.visibility,
+        )
+
     def _process_thread_rebuild_lease(
         self,
         lease: ThreadProcessingLease,
@@ -202,6 +238,7 @@ class ThreadRebuilder:
                 thread_result, supersede_plan, thread_items = self._maybe_rebuild_thread_summary(
                     plugin=plugin,
                     thread_scope=current_lease.as_scope(),
+                    collection_watermark_at=current_lease.collection_watermark_at,
                 )
                 if thread_result is not None:
                     supersession_pairs = [
@@ -241,6 +278,11 @@ class ThreadRebuilder:
                 return
 
             if thread_result is not None:
+                is_container_scope = current_lease.thread_ref is None
+                items_watermark = (
+                    max((item.created_at for item in thread_items), default=None)
+                    if is_container_scope and thread_items else None
+                )
                 try:
                     has_pending = self._storage.commit_process_result_and_complete_scope(
                         result=thread_result,
@@ -248,6 +290,7 @@ class ThreadRebuilder:
                         scope_key=current_lease.scope_key,
                         worker_id=worker_id,
                         claimed_at=current_lease.processing_claimed_at,
+                        collection_watermark_at=items_watermark,
                     )
                 except Exception:
                     self._logger.warning(
@@ -300,7 +343,7 @@ class ThreadRebuilder:
         thread_result: ProcessResult,
         use_case: str,
         container_ref: str,
-        current_thread_ref: str,
+        current_thread_ref: str | None,
     ) -> None:
         """After thread rebuild, check if any extracted subjects need cross-thread consolidation."""
         if self._consolidation_fn is None:
@@ -352,29 +395,57 @@ class ThreadRebuilder:
         *,
         plugin: SemanticPlugin,
         thread_scope: ThreadProcessingScope,
+        collection_watermark_at: datetime | None = None,
     ) -> tuple[ProcessResult | None, dict[str, list[str]], list[SourceItem]]:
         if not isinstance(plugin, ThreadAggregationSemanticPlugin):
             return None, {}, []
 
-        thread_items = [
-            item
-            for item in self._storage.list_source_items_for_thread(thread_scope.container_ref, thread_scope.thread_ref)
-            if plugin.supports_thread_aggregation(item)
-        ]
+        is_container_scope = thread_scope.thread_ref is None
+
+        if is_container_scope:
+            is_incremental = not plugin.rebuild_supersedes_prior
+            if is_incremental and collection_watermark_at is not None:
+                thread_items = [
+                    item
+                    for item in self._storage.list_top_level_messages_for_container(
+                        thread_scope.container_ref,
+                        after_created_at=collection_watermark_at,
+                    )
+                    if plugin.supports_thread_aggregation(item)
+                ]
+            else:
+                thread_items = [
+                    item
+                    for item in self._storage.list_top_level_messages_for_container(
+                        thread_scope.container_ref,
+                        max_items=CONTAINER_SCOPE_RECENT_ITEMS,
+                    )
+                    if plugin.supports_thread_aggregation(item)
+                ]
+        else:
+            thread_items = [
+                item
+                for item in self._storage.list_source_items_for_thread(thread_scope.container_ref, thread_scope.thread_ref)
+                if plugin.supports_thread_aggregation(item)
+            ]
+
         if plugin.requires_visibility_context:
             thread_items = [
                 item
                 for item in thread_items
                 if visibility_matches_exact(item.visibility, thread_scope.visibility)
             ]
-        if len(thread_items) < 2:
+
+        if not is_container_scope and len(thread_items) < 2:
+            return None, {}, thread_items
+        if is_container_scope and len(thread_items) < 1:
             return None, {}, thread_items
 
         memory_by_source = self._storage.list_memory_objects_for_source_items(
             [item.id for item in thread_items],
         )
         active_thread_memory_ids = self._find_active_thread_memory_ids(thread_items, memory_by_source)
-        aggregate = build_thread_aggregate(thread_items)
+        aggregate = build_thread_aggregate(thread_items, container_scope=is_container_scope)
         conclusions = self._collect_thread_conclusions(thread_items, memory_by_source, conclusion_types=plugin.thread_conclusion_types)
         thread_result = plugin.build_thread_summary(aggregate, conclusions)
         reconcile_process_result = getattr(plugin, "reconcile_process_result", None)
@@ -386,7 +457,7 @@ class ThreadRebuilder:
                 visibility=thread_scope.visibility,
             )
         supersede_plan: dict[str, list[str]] = {}
-        if getattr(plugin, 'rebuild_supersedes_prior', True):
+        if plugin.rebuild_supersedes_prior:
             for memory_object in thread_result.memory_objects:
                 key = (memory_object.type, memory_object.schema_id)
                 supersede_plan[memory_object.id] = [

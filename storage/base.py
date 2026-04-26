@@ -36,7 +36,7 @@ class ThreadProcessingScope:
     scope_key: str
     use_case: str
     container_ref: str
-    thread_ref: str
+    thread_ref: str | None
     visibility: str = "private"
 
 
@@ -45,12 +45,13 @@ class ThreadProcessingLease:
     scope_key: str
     use_case: str
     container_ref: str
-    thread_ref: str
+    thread_ref: str | None
     visibility: str = "private"
     requested_at: datetime | None = None
     processing_claimed_by: str | None = None
     processing_claimed_at: datetime | None = None
     processing_lease_expires_at: datetime | None = None
+    collection_watermark_at: datetime | None = None
 
     def as_scope(self) -> ThreadProcessingScope:
         return ThreadProcessingScope(
@@ -108,11 +109,12 @@ class LeasedThreadScopeInfo:
     scope_key: str
     use_case: str
     container_ref: str
-    thread_ref: str
+    thread_ref: str | None
     visibility: str = "private"
     processing_claimed_by: str | None = None
     processing_claimed_at: datetime | None = None
     processing_lease_expires_at: datetime | None = None
+    collection_watermark_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -217,6 +219,7 @@ class StorageProvider(ABC):
         source_item_id: str,
         result: ProcessResult,
         thread_rebuild_scope: ThreadProcessingScope | None = None,
+        container_rebuild_scope: ThreadProcessingScope | None = None,
         completed_at: datetime | None = None,
     ) -> list[tuple[str, str]]:
         """Commit a processed source item result, resolving supersession hints atomically.
@@ -251,6 +254,7 @@ class StorageProvider(ABC):
         worker_id: str,
         claimed_at: datetime,
         completed_at: datetime | None = None,
+        collection_watermark_at: datetime | None = None,
     ) -> bool:
         """Atomically commit a process result and complete the thread processing scope.
 
@@ -347,6 +351,15 @@ class StorageProvider(ABC):
 
     @abstractmethod
     def list_source_items_for_thread(self, container_ref: str, thread_ref: str) -> list[SourceItem]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_top_level_messages_for_container(
+        self,
+        container_ref: str,
+        after_created_at: datetime | None = None,
+        max_items: int | None = None,
+    ) -> list[SourceItem]:
         raise NotImplementedError
 
     @abstractmethod
@@ -582,6 +595,7 @@ class StorageProvider(ABC):
         source_item_id: str,
         result: ProcessResult,
         thread_rebuild_scope: ThreadProcessingScope | None = None,
+        container_rebuild_scope: ThreadProcessingScope | None = None,
         completed_at: datetime | None = None,
     ) -> list[tuple[str, str]]:
         """Commit a process result from multi-package processing.

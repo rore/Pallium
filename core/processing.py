@@ -283,8 +283,14 @@ class ItemProcessor:
                     visibility=source_item.visibility,
                 )
             thread_rebuild_scope = None
+            container_rebuild_scope = None
             if direct_result.thread_rebuild_requested:
                 thread_rebuild_scope = self._thread_rebuilder.build_thread_processing_scope(
+                    plugin_name=plugin_name,
+                    plugin=plugin,
+                    source_item=source_item,
+                )
+                container_rebuild_scope = self._thread_rebuilder.build_container_processing_scope(
                     plugin_name=plugin_name,
                     plugin=plugin,
                     source_item=source_item,
@@ -332,6 +338,7 @@ class ItemProcessor:
                     source_item_id=source_item.id,
                     result=direct_result,
                     thread_rebuild_scope=thread_rebuild_scope,
+                    container_rebuild_scope=container_rebuild_scope,
                 )
                 self._storage.complete_package_task(source_item.id, plugin_name)
             else:
@@ -339,6 +346,7 @@ class ItemProcessor:
                     source_item_id=source_item.id,
                     result=direct_result,
                     thread_rebuild_scope=thread_rebuild_scope,
+                    container_rebuild_scope=container_rebuild_scope,
                 )
             memory_vectors_added = self._vector_embedder.embed_process_result(direct_result)
             memory_provenance = build_memory_provenance(

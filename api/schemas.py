@@ -330,7 +330,7 @@ class LeasedThreadScopeResponse(BaseModel):
     scope_key: str
     use_case: str
     container_ref: str
-    thread_ref: str
+    thread_ref: str | None = None
     visibility: str = "private"
     processing_claimed_by: str | None = None
     processing_claimed_at: datetime | None = None

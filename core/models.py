@@ -54,6 +54,7 @@ class SourceItem:
     processing_completed_at: datetime | None = None
     processing_error: str | None = None
     processing_next_attempt_at: datetime | None = None
+    thread_position: int | None = None
     id: str = field(default_factory=new_id)
     created_at: datetime = field(default_factory=utc_now)
 

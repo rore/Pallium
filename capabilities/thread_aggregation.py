@@ -10,7 +10,7 @@ from core.visibility import visibility_matches_exact
 @dataclass(frozen=True)
 class ThreadAggregate:
     container_ref: str
-    thread_ref: str
+    thread_ref: str | None
     source_items: list[SourceItem]
     source_item_ids: list[str]
     latest_occurred_at: datetime | None
@@ -18,7 +18,11 @@ class ThreadAggregate:
     visibility: str = "private"
 
 
-def build_thread_aggregate(source_items: list[SourceItem]) -> ThreadAggregate:
+def build_thread_aggregate(
+    source_items: list[SourceItem],
+    *,
+    container_scope: bool = False,
+) -> ThreadAggregate:
     if not source_items:
         raise ValueError("Thread aggregation requires at least one source item")
 
@@ -31,13 +35,16 @@ def build_thread_aggregate(source_items: list[SourceItem]) -> ThreadAggregate:
         ),
     )
     first = ordered_items[0]
-    if not first.container_ref or not first.thread_ref:
-        raise ValueError("Thread aggregation requires container_ref and thread_ref")
-    if any(
-        not visibility_matches_exact(item.visibility, first.visibility)
-        for item in ordered_items[1:]
-    ):
-        raise ValueError("Thread aggregation requires exact visibility match")
+    if not first.container_ref:
+        raise ValueError("Thread aggregation requires container_ref")
+    if not container_scope:
+        if not first.thread_ref:
+            raise ValueError("Thread aggregation requires thread_ref (use container_scope=True for container-level)")
+        if any(
+            not visibility_matches_exact(item.visibility, first.visibility)
+            for item in ordered_items[1:]
+        ):
+            raise ValueError("Thread aggregation requires exact visibility match")
 
     latest_item = ordered_items[-1]
     aggregate_text = "\n".join(
@@ -48,7 +55,7 @@ def build_thread_aggregate(source_items: list[SourceItem]) -> ThreadAggregate:
 
     return ThreadAggregate(
         container_ref=first.container_ref,
-        thread_ref=first.thread_ref,
+        thread_ref=None if container_scope else first.thread_ref,
         source_items=ordered_items,
         source_item_ids=[item.id for item in ordered_items],
         latest_occurred_at=latest_item.occurred_at or latest_item.created_at,

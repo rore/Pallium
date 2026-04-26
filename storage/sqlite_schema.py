@@ -47,6 +47,7 @@ class SourceItemRecord(Base):
     processing_completed_at = Column(DateTime(timezone=True), nullable=True)
     processing_error = Column(Text, nullable=True)
     processing_next_attempt_at = Column(DateTime(timezone=True), nullable=True)
+    thread_position = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 
@@ -98,13 +99,14 @@ class ThreadProcessingLeaseRecord(Base):
     scope_key = Column(String, primary_key=True)
     use_case = Column(String, nullable=False)
     container_ref = Column(String, nullable=False)
-    thread_ref = Column(String, nullable=False)
+    thread_ref = Column(String, nullable=True)
     visibility = Column(String, nullable=True, default="private")
     requested_at = Column(DateTime(timezone=True), nullable=True)
     processing_claimed_by = Column(String, nullable=True)
     processing_claimed_at = Column(DateTime(timezone=True), nullable=True)
     processing_lease_expires_at = Column(DateTime(timezone=True), nullable=True)
     processing_completed_at = Column(DateTime(timezone=True), nullable=True)
+    collection_watermark_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
 
@@ -194,6 +196,7 @@ class SQLiteSchemaMixin:
         "processing_completed_at": "ALTER TABLE source_items ADD COLUMN processing_completed_at DATETIME",
         "processing_error": "ALTER TABLE source_items ADD COLUMN processing_error TEXT",
         "processing_next_attempt_at": "ALTER TABLE source_items ADD COLUMN processing_next_attempt_at DATETIME",
+        "thread_position": "ALTER TABLE source_items ADD COLUMN thread_position INTEGER",
     }
     _MEMORY_OBJECT_MIGRATIONS = {
         "lifecycle": "ALTER TABLE memory_objects ADD COLUMN lifecycle VARCHAR DEFAULT 'active'",
@@ -217,6 +220,9 @@ class SQLiteSchemaMixin:
         "source_item_created_at": (
             "ALTER TABLE package_processing_status ADD COLUMN source_item_created_at DATETIME"
         ),
+    }
+    _THREAD_PROCESSING_LEASE_MIGRATIONS = {
+        "collection_watermark_at": "ALTER TABLE thread_processing_leases ADD COLUMN collection_watermark_at DATETIME",
     }
     _UNIQUE_INDEX_MIGRATIONS = {
         "uq_source_items_source_type_source_id": (
@@ -267,6 +273,10 @@ class SQLiteSchemaMixin:
             "CREATE INDEX IF NOT EXISTS idx_package_processing_claim_lookup "
             "ON package_processing_status(status, source_item_created_at, source_item_id, package_name, next_attempt_at, lease_expires_at)"
         ),
+        "idx_source_items_container_top_level": (
+            "CREATE INDEX IF NOT EXISTS idx_source_items_container_top_level "
+            "ON source_items(container_ref, thread_position, created_at)"
+        ),
     }
     _QUERY_AUDIT_LOG_INDEX_MIGRATIONS = {
         "idx_query_audit_log_thread": (
@@ -292,6 +302,8 @@ class SQLiteSchemaMixin:
     def _initialize_schema(self) -> None:
         with self._schema_initialization_lock():
             Base.metadata.create_all(self._engine)
+            self._ensure_thread_processing_lease_nullable_thread_ref()
+            self._ensure_thread_processing_lease_columns()
             self._ensure_source_item_columns()
             self._ensure_memory_object_columns()
             self._ensure_index_entry_columns()
@@ -303,6 +315,7 @@ class SQLiteSchemaMixin:
             self._ensure_memory_flag_indexes()
             self._ensure_fts5_table()
             self._backfill_legacy_memory_freshness()
+            self._backfill_thread_position()
 
     @contextmanager
     def _schema_initialization_lock(self):
@@ -351,6 +364,57 @@ class SQLiteSchemaMixin:
             msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
             return
         raise RuntimeError("no supported file-locking implementation available for sqlite schema initialization")
+
+    def _ensure_thread_processing_lease_nullable_thread_ref(self) -> None:
+        """Migrate thread_processing_leases.thread_ref from NOT NULL to nullable."""
+        with self._engine.begin() as connection:
+            columns = connection.execute(text("PRAGMA table_info(thread_processing_leases)")).fetchall()
+            thread_ref_col = next((col for col in columns if col[1] == "thread_ref"), None)
+            if thread_ref_col is None:
+                return
+            notnull = thread_ref_col[3]
+            if not notnull:
+                return
+            connection.execute(text(
+                "CREATE TABLE thread_processing_leases_new ("
+                "  scope_key VARCHAR PRIMARY KEY,"
+                "  use_case VARCHAR NOT NULL,"
+                "  container_ref VARCHAR NOT NULL,"
+                "  thread_ref VARCHAR,"
+                "  visibility VARCHAR DEFAULT 'private',"
+                "  requested_at DATETIME,"
+                "  processing_claimed_by VARCHAR,"
+                "  processing_claimed_at DATETIME,"
+                "  processing_lease_expires_at DATETIME,"
+                "  processing_completed_at DATETIME,"
+                "  collection_watermark_at DATETIME,"
+                "  created_at DATETIME NOT NULL,"
+                "  updated_at DATETIME NOT NULL"
+                ")"
+            ))
+            connection.execute(text(
+                "INSERT INTO thread_processing_leases_new "
+                "(scope_key, use_case, container_ref, thread_ref, visibility, "
+                " requested_at, processing_claimed_by, processing_claimed_at, "
+                " processing_lease_expires_at, processing_completed_at, "
+                " created_at, updated_at) "
+                "SELECT scope_key, use_case, container_ref, thread_ref, visibility, "
+                "  requested_at, processing_claimed_by, processing_claimed_at, "
+                "  processing_lease_expires_at, processing_completed_at, "
+                "  created_at, updated_at "
+                "FROM thread_processing_leases"
+            ))
+            connection.execute(text("DROP TABLE thread_processing_leases"))
+            connection.execute(text(
+                "ALTER TABLE thread_processing_leases_new RENAME TO thread_processing_leases"
+            ))
+
+    def _ensure_thread_processing_lease_columns(self) -> None:
+        with self._engine.begin() as connection:
+            existing_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(thread_processing_leases)"))}
+            for column_name, migration_sql in self._THREAD_PROCESSING_LEASE_MIGRATIONS.items():
+                if column_name not in existing_columns:
+                    connection.execute(text(migration_sql))
 
     def _ensure_source_item_columns(self) -> None:
         with self._engine.begin() as connection:
@@ -469,6 +533,28 @@ class SQLiteSchemaMixin:
                 "container_ref UNINDEXED, "
                 "tokenize='unicode61 remove_diacritics 2'"
                 ")"
+            ))
+
+    def _backfill_thread_position(self) -> None:
+        """Set thread_position for existing source items that don't have it."""
+        with self._engine.begin() as connection:
+            needs_backfill = connection.execute(text(
+                "SELECT COUNT(*) FROM source_items WHERE thread_position IS NULL LIMIT 1"
+            )).scalar()
+            if not needs_backfill:
+                return
+            connection.execute(text(
+                "UPDATE source_items SET thread_position = ("
+                "  SELECT COUNT(*) FROM source_items s2"
+                "  WHERE s2.container_ref = source_items.container_ref"
+                "    AND s2.thread_ref = source_items.thread_ref"
+                "    AND (s2.created_at < source_items.created_at"
+                "         OR (s2.created_at = source_items.created_at AND s2.id <= source_items.id))"
+                ") WHERE thread_ref IS NOT NULL AND thread_position IS NULL"
+            ))
+            connection.execute(text(
+                "UPDATE source_items SET thread_position = 1 "
+                "WHERE thread_ref IS NULL AND thread_position IS NULL"
             ))
 
 
