@@ -553,3 +553,183 @@ class TestContainerScopeVisibility:
             container_ref=container,
         )
         assert len(facts) >= 1, "At least one visibility group should produce facts"
+
+
+# ── Scale: large container bounding ──────────────────────────────────────────
+
+class LLMCallCounter:
+    """Stub LLM that counts calls and returns a single fact per call."""
+
+    def __init__(self):
+        self.call_count = 0
+
+    def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+        self.call_count += 1
+        payload = {"facts": [
+            {"subject": "scale test", "statement": f"Fact from call {self.call_count}.", "category": "preference"},
+        ]}
+        return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
+
+
+class TestLargeContainerBounding:
+    def test_first_run_caps_at_200_items(self, test_db_url: str) -> None:
+        """With 300 top-level messages, list_top_level_messages_for_container
+        with max_items=200 returns exactly 200 (the most recent)."""
+        app = create_app(_app_config(test_db_url))
+        storage = app.state.pallium_service._storage
+
+        for i in range(300):
+            storage.create_source_item(_make_item(
+                f"big-{i:04d}",
+                f"Message number {i} about catalog sync configuration",
+                thread_ref=f"thread-{i:04d}",
+                container_ref="big-container",
+            ))
+
+        all_top = storage.list_top_level_messages_for_container("big-container")
+        assert len(all_top) == 300
+
+        capped = storage.list_top_level_messages_for_container(
+            "big-container", max_items=CONTAINER_SCOPE_RECENT_ITEMS,
+        )
+        assert len(capped) == CONTAINER_SCOPE_RECENT_ITEMS
+        capped_ids = {item.source_id for item in capped}
+        for i in range(100):
+            assert f"big-{i:04d}" not in capped_ids, (
+                f"Oldest item big-{i:04d} should NOT be in capped result"
+            )
+        for i in range(200, 300):
+            assert f"big-{i:04d}" in capped_ids, (
+                f"Recent item big-{i:04d} should be in capped result"
+            )
+
+    def test_first_run_llm_calls_bounded_by_chunk_size(
+        self, monkeypatch, test_db_url: str,
+    ) -> None:
+        """With 50 standalone messages, the LLM call count is bounded by
+        FACT_EXTRACTION_MAX_ITEMS_PER_CHUNK (10 items/chunk → ~5 calls)."""
+        counter = LLMCallCounter()
+        monkeypatch.setattr(
+            "app.dependencies.build_llm_provider",
+            lambda config, **_: counter,
+        )
+        app = create_app(_app_config_with_llm(test_db_url))
+        client = TestClient(app)
+        service = app.state.pallium_service
+        container = "slack:dm:scale-llm-test"
+
+        for i in range(50):
+            client.post("/items", json=[{
+                "source_type": "conversation_agent_event",
+                "source_id": f"scale-{i:03d}",
+                "content_type": "text/plain",
+                "content": f"Message {i}: catalog sync shadow mode evaluation for branch {i}.",
+                "artifact_kind": "message",
+                "role": "user",
+                "container_ref": container,
+                "thread_ref": f"slack:thread:scale:{i:03d}",
+                "visibility": "private",
+            }])
+
+        service.drain_processing_queue(worker_id="drain")
+
+        assert counter.call_count <= 10, (
+            f"Expected ≤10 LLM calls for 50 items (10/chunk), got {counter.call_count}"
+        )
+        assert counter.call_count >= 3, (
+            f"Expected ≥3 LLM calls (50 items / 10 per chunk = 5), got {counter.call_count}"
+        )
+
+        facts = service._storage.list_memory_objects(
+            memory_types=["atomic_fact"],
+            lifecycle="active",
+            container_ref=container,
+        )
+        assert len(facts) >= 1, "Should produce facts from 50-message container"
+
+    def test_incremental_run_only_processes_delta(
+        self, monkeypatch, test_db_url: str,
+    ) -> None:
+        """After first run with 30 messages, adding 5 more should only trigger
+        LLM calls for the new 5 (1 chunk), not re-process all 30."""
+        counter = LLMCallCounter()
+        monkeypatch.setattr(
+            "app.dependencies.build_llm_provider",
+            lambda config, **_: counter,
+        )
+        app = create_app(_app_config_with_llm(test_db_url))
+        client = TestClient(app)
+        service = app.state.pallium_service
+        container = "slack:dm:incremental-scale-test"
+
+        for i in range(30):
+            client.post("/items", json=[{
+                "source_type": "conversation_agent_event",
+                "source_id": f"incr-scale-a-{i:03d}",
+                "content_type": "text/plain",
+                "content": f"First batch msg {i}: catalog sync configuration detail {i}.",
+                "artifact_kind": "message",
+                "role": "user",
+                "container_ref": container,
+                "thread_ref": f"slack:thread:incr-scale:{i:03d}",
+                "visibility": "private",
+            }])
+        service.drain_processing_queue(worker_id="drain")
+
+        first_run_calls = counter.call_count
+        assert first_run_calls >= 1, "First run should make LLM calls"
+
+        watermark_before = _get_container_scope_watermark(service, container)
+        assert watermark_before is not None
+
+        counter.call_count = 0
+        for i in range(5):
+            client.post("/items", json=[{
+                "source_type": "conversation_agent_event",
+                "source_id": f"incr-scale-b-{i:03d}",
+                "content_type": "text/plain",
+                "content": f"Second batch msg {i}: shadow mode rollback procedure {i}.",
+                "artifact_kind": "message",
+                "role": "user",
+                "container_ref": container,
+                "thread_ref": f"slack:thread:incr-scale:late-{i:03d}",
+                "visibility": "private",
+            }])
+        service.drain_processing_queue(worker_id="drain")
+
+        second_run_calls = counter.call_count
+        assert second_run_calls <= 3, (
+            f"Incremental run with 5 new items should need ≤3 LLM calls "
+            f"(1 chunk of 5), got {second_run_calls}. "
+            f"First run used {first_run_calls} calls for 30 items."
+        )
+        assert second_run_calls >= 1, (
+            "Should make at least 1 LLM call for the 5 new items"
+        )
+
+        watermark_after = _get_container_scope_watermark(service, container)
+        assert watermark_after is not None
+        assert watermark_after > watermark_before, "Watermark should advance"
+
+    def test_thread_position_correct_at_scale(self, test_db_url: str) -> None:
+        """100 items in the same thread get sequential positions 1..100."""
+        app = create_app(_app_config(test_db_url))
+        storage = app.state.pallium_service._storage
+
+        for i in range(100):
+            storage.create_source_item(_make_item(
+                f"scale-pos-{i:03d}",
+                f"Message {i}",
+                thread_ref="big-thread",
+                container_ref="pos-container",
+            ))
+
+        for i in range(100):
+            item = _find(storage, f"scale-pos-{i:03d}")
+            assert item.thread_position == i + 1, (
+                f"Item {i} should have position {i + 1}, got {item.thread_position}"
+            )
+
+        top_level = storage.list_top_level_messages_for_container("pos-container")
+        assert len(top_level) == 1, "Only first item should be top-level"
+        assert top_level[0].source_id == "scale-pos-000"
