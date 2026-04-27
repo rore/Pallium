@@ -1,0 +1,446 @@
+[
+  {
+    "scenario_id": "container-extraction-singleton-threads",
+    "description": "Standalone DM messages (singleton thread_refs) should produce retrievable memory via container-level extraction.",
+    "_generation_metadata": {
+      "invariant_assertions": ["INV-03", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored",
+      "soft_expectations": {
+        "must_include": ["Elasticsearch", "catalog"]
+      },
+      "quality_expectations": {
+        "should_inject": true
+      }
+    },
+    "steps": [
+      {
+        "step_id": "ingest_standalone_messages",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "singleton-001-msg-1",
+            "content_type": "text/plain",
+            "content": "We decided to migrate the catalog index from Solr to Elasticsearch. The main driver is better support for faceted search across branch collections.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-dm-catalog",
+            "thread_ref": "chat:library-dm-catalog:thread-1001",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://seed/singleton-001-msg-1",
+            "occurred_at": "2026-04-20T09:00:00Z",
+            "visibility": "container"
+          },
+          {
+            "source_type": "chat_message",
+            "source_id": "singleton-001-msg-2",
+            "content_type": "text/plain",
+            "content": "The Elasticsearch cluster will run three nodes behind the existing load balancer. We need to provision the staging environment first before touching production.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-dm-catalog",
+            "thread_ref": "chat:library-dm-catalog:thread-1002",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://seed/singleton-001-msg-2",
+            "occurred_at": "2026-04-20T10:30:00Z",
+            "visibility": "container"
+          },
+          {
+            "source_type": "chat_message",
+            "source_id": "singleton-001-msg-3",
+            "content_type": "text/plain",
+            "content": "Target date for the catalog migration cutover is May 15th. The downtown branch will go first as the pilot, then we roll out to the other branches over the following week.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-dm-catalog",
+            "thread_ref": "chat:library-dm-catalog:thread-1003",
+            "actor_ref": "user:catalog-admin",
+            "source_ref": "memory://seed/singleton-001-msg-3",
+            "occurred_at": "2026-04-20T14:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_migration",
+        "action": "query",
+        "query": {
+          "text": "What do we know about the catalog migration plan?",
+          "limit": 6,
+          "container_ref": "chat:library-dm-catalog",
+          "visibility": "container",
+          "runtime_context": {
+            "turn_kind": "new_session",
+            "session_has_sufficient_local_context": false
+          }
+        },
+        "invariant_assertions": ["INV-03", "INV-07"],
+        "soft_expectations": {
+          "must_include": ["Elasticsearch", "catalog"]
+        },
+        "quality_expectations": {
+          "should_inject": true
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "container-extraction-threadless-items",
+    "description": "Items with no thread_ref should produce retrievable memory via container-level extraction.",
+    "_generation_metadata": {
+      "invariant_assertions": ["INV-03", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored",
+      "soft_expectations": {
+        "must_include": ["reading program", "summer"]
+      },
+      "quality_expectations": {
+        "should_inject": true
+      }
+    },
+    "steps": [
+      {
+        "step_id": "ingest_threadless_items",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "threadless-001-msg-1",
+            "content_type": "text/plain",
+            "content": "The summer reading program starts June 1st and runs through August 15th. Registration opens two weeks before the start date.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-programs",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/threadless-001-msg-1",
+            "occurred_at": "2026-04-18T08:00:00Z",
+            "visibility": "container"
+          },
+          {
+            "source_type": "chat_message",
+            "source_id": "threadless-001-msg-2",
+            "content_type": "text/plain",
+            "content": "We ordered 500 reading logs and 200 completion certificates for the summer program. The ocean-themed bookmark prizes arrive next week.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-programs",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/threadless-001-msg-2",
+            "occurred_at": "2026-04-18T10:00:00Z",
+            "visibility": "container"
+          },
+          {
+            "source_type": "chat_message",
+            "source_id": "threadless-001-msg-3",
+            "content_type": "text/plain",
+            "content": "The summer reading goal is 20 books per participant. Kids who finish early get entered into a raffle for a library tote bag.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-programs",
+            "actor_ref": "user:branch-librarian",
+            "source_ref": "memory://seed/threadless-001-msg-3",
+            "occurred_at": "2026-04-18T14:30:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_reading_program",
+        "action": "query",
+        "query": {
+          "text": "What are the details of the summer reading program?",
+          "limit": 6,
+          "container_ref": "chat:library-programs",
+          "visibility": "container",
+          "runtime_context": {
+            "turn_kind": "new_session",
+            "session_has_sufficient_local_context": false
+          }
+        },
+        "invariant_assertions": ["INV-03", "INV-07"],
+        "soft_expectations": {
+          "must_include": ["reading", "summer"]
+        },
+        "quality_expectations": {
+          "should_inject": true
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "container-extraction-mixed-threads",
+    "description": "Mixed container with multi-item thread and singleton threads — both extraction scopes produce retrievable memory.",
+    "_generation_metadata": {
+      "invariant_assertions": ["INV-03", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored",
+      "soft_expectations": {
+        "must_include": ["vendor", "shelving"]
+      },
+      "quality_expectations": {
+        "should_inject": true
+      }
+    },
+    "steps": [
+      {
+        "step_id": "ingest_multi_item_thread",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "mixed-001-thread-msg-1",
+            "content_type": "text/plain",
+            "content": "We need to finalize the quarterly budget for branch operations. The main line items are staffing, materials acquisition, and facility maintenance.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-ops-room",
+            "thread_ref": "chat:library-ops-room:thread-budget",
+            "actor_ref": "user:ops-manager",
+            "source_ref": "memory://seed/mixed-001-thread-msg-1",
+            "occurred_at": "2026-04-15T09:00:00Z",
+            "visibility": "container"
+          },
+          {
+            "source_type": "chat_message",
+            "source_id": "mixed-001-thread-msg-2",
+            "content_type": "text/plain",
+            "content": "Staffing is allocated at 60% of total budget. Materials acquisition gets 25%, and facility maintenance takes the remaining 15%.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-ops-room",
+            "thread_ref": "chat:library-ops-room:thread-budget",
+            "actor_ref": "user:ops-manager",
+            "source_ref": "memory://seed/mixed-001-thread-msg-2",
+            "occurred_at": "2026-04-15T09:15:00Z",
+            "visibility": "container"
+          },
+          {
+            "source_type": "chat_message",
+            "source_id": "mixed-001-thread-msg-3",
+            "content_type": "text/plain",
+            "content": "The total quarterly budget is $340,000 across all four branches. Downtown gets the largest share at $120,000 due to higher foot traffic.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-ops-room",
+            "thread_ref": "chat:library-ops-room:thread-budget",
+            "actor_ref": "user:ops-manager",
+            "source_ref": "memory://seed/mixed-001-thread-msg-3",
+            "occurred_at": "2026-04-15T09:30:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "ingest_singleton_messages",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "mixed-001-singleton-1",
+            "content_type": "text/plain",
+            "content": "We selected LibraryFurnishings Co as the vendor for the new shelving units. They quoted $8,500 for 12 adjustable steel shelving bays with a 6-week lead time.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-ops-room",
+            "thread_ref": "chat:library-ops-room:thread-vendor-1",
+            "actor_ref": "user:ops-manager",
+            "source_ref": "memory://seed/mixed-001-singleton-1",
+            "occurred_at": "2026-04-16T11:00:00Z",
+            "visibility": "container"
+          },
+          {
+            "source_type": "chat_message",
+            "source_id": "mixed-001-singleton-2",
+            "content_type": "text/plain",
+            "content": "The old shelving from the downtown reading room will be donated to the community center. We need to coordinate pickup before the new units arrive in late May.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-ops-room",
+            "thread_ref": "chat:library-ops-room:thread-vendor-2",
+            "actor_ref": "user:ops-manager",
+            "source_ref": "memory://seed/mixed-001-singleton-2",
+            "occurred_at": "2026-04-16T14:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_vendor_selection",
+        "action": "query",
+        "query": {
+          "text": "Which vendor did we pick for the shelving and what were the details?",
+          "limit": 6,
+          "container_ref": "chat:library-ops-room",
+          "visibility": "container",
+          "runtime_context": {
+            "turn_kind": "new_session",
+            "session_has_sufficient_local_context": false
+          }
+        },
+        "invariant_assertions": ["INV-03", "INV-07"],
+        "soft_expectations": {
+          "must_include": ["shelving"]
+        },
+        "quality_expectations": {
+          "should_inject": true
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "container-extraction-no-cross-container-leak",
+    "description": "Container-scope facts from singleton threads must not leak to queries in a different container.",
+    "_generation_metadata": {
+      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "priority_tier": "P0",
+      "tier_reason": "correctness_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "ingest_container_a",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "leak-001-msg-1",
+            "content_type": "text/plain",
+            "content": "The archival digitization project will scan 15,000 periodicals from the downtown branch basement. We contracted ScanPro Services for $2.50 per page.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-archives-dm",
+            "thread_ref": "chat:library-archives-dm:thread-scan-1",
+            "actor_ref": "user:archivist",
+            "source_ref": "memory://seed/leak-001-msg-1",
+            "occurred_at": "2026-04-19T08:00:00Z",
+            "visibility": "container"
+          },
+          {
+            "source_type": "chat_message",
+            "source_id": "leak-001-msg-2",
+            "content_type": "text/plain",
+            "content": "ScanPro will start with the 1920s newspaper collection since those are the most fragile. They estimate 3 months for the full periodical backlog.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-archives-dm",
+            "thread_ref": "chat:library-archives-dm:thread-scan-2",
+            "actor_ref": "user:archivist",
+            "source_ref": "memory://seed/leak-001-msg-2",
+            "occurred_at": "2026-04-19T10:00:00Z",
+            "visibility": "container"
+          },
+          {
+            "source_type": "chat_message",
+            "source_id": "leak-001-msg-3",
+            "content_type": "text/plain",
+            "content": "The digitized periodicals will be hosted on the library portal with full-text search. Public access launches after the quality review in September.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-archives-dm",
+            "thread_ref": "chat:library-archives-dm:thread-scan-3",
+            "actor_ref": "user:archivist",
+            "source_ref": "memory://seed/leak-001-msg-3",
+            "occurred_at": "2026-04-19T14:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_from_different_container",
+        "action": "query",
+        "query": {
+          "text": "What do we know about the digitization project and ScanPro?",
+          "limit": 6,
+          "container_ref": "chat:library-general",
+          "visibility": "container"
+        },
+        "invariant_assertions": ["INV-01", "INV-04", "INV-07"]
+      }
+    ]
+  },
+  {
+    "scenario_id": "container-extraction-singleton-not-injected-offtopic",
+    "description": "Container-scope facts from singleton threads must not inject when the query is on an unrelated topic.",
+    "_generation_metadata": {
+      "invariant_assertions": ["INV-03", "INV-07"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored",
+      "soft_expectations": {
+        "must_not_include": ["Elasticsearch", "catalog", "migration", "Solr"]
+      }
+    },
+    "steps": [
+      {
+        "step_id": "ingest_catalog_messages",
+        "action": "ingest",
+        "events": [
+          {
+            "source_type": "chat_message",
+            "source_id": "offtopic-001-msg-1",
+            "content_type": "text/plain",
+            "content": "The catalog reindexing from Solr to Elasticsearch is scheduled for next Tuesday. We need to freeze catalog writes during the 4-hour migration window.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-tech-dm",
+            "thread_ref": "chat:library-tech-dm:thread-reindex-1",
+            "actor_ref": "user:sysadmin",
+            "source_ref": "memory://seed/offtopic-001-msg-1",
+            "occurred_at": "2026-04-21T09:00:00Z",
+            "visibility": "container"
+          },
+          {
+            "source_type": "chat_message",
+            "source_id": "offtopic-001-msg-2",
+            "content_type": "text/plain",
+            "content": "The Elasticsearch mapping uses custom analyzers for ISBN and call number fields. We tested with 50,000 records and search latency dropped from 800ms to 120ms.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-tech-dm",
+            "thread_ref": "chat:library-tech-dm:thread-reindex-2",
+            "actor_ref": "user:sysadmin",
+            "source_ref": "memory://seed/offtopic-001-msg-2",
+            "occurred_at": "2026-04-21T11:00:00Z",
+            "visibility": "container"
+          },
+          {
+            "source_type": "chat_message",
+            "source_id": "offtopic-001-msg-3",
+            "content_type": "text/plain",
+            "content": "After migration, the old Solr cluster can be decommissioned. We should keep a snapshot backup for 90 days in case we need to roll back.",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "chat:library-tech-dm",
+            "thread_ref": "chat:library-tech-dm:thread-reindex-3",
+            "actor_ref": "user:sysadmin",
+            "source_ref": "memory://seed/offtopic-001-msg-3",
+            "occurred_at": "2026-04-21T15:00:00Z",
+            "visibility": "container"
+          }
+        ]
+      },
+      {
+        "step_id": "query_unrelated_topic",
+        "action": "query",
+        "query": {
+          "text": "What badge designs did we discuss for the volunteer appreciation event?",
+          "limit": 6,
+          "container_ref": "chat:library-tech-dm",
+          "visibility": "container",
+          "runtime_context": {
+            "turn_kind": "new_session",
+            "session_has_sufficient_local_context": false
+          }
+        },
+        "invariant_assertions": ["INV-03", "INV-07"],
+        "soft_expectations": {
+          "must_not_include": ["Elasticsearch", "catalog", "migration", "Solr"]
+        }
+      }
+    ]
+  }
+]
