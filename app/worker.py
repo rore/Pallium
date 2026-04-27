@@ -145,7 +145,7 @@ def _log_result(worker_id: str, result: ItemProcessingResult) -> None:
 def _log_thread_rebuild(worker_id: str, lease: ThreadProcessingLease) -> None:
     emit_runtime_log(
         "processor",
-        f"worker_id={worker_id} thread_scope={lease.container_ref}:{lease.thread_ref} status=completed",
+        f"worker_id={worker_id} thread_scope={lease.container_ref}:{lease.thread_ref or 'container'} status=completed",
     )
 
 if __name__ == "__main__":
