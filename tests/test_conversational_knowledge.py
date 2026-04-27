@@ -764,7 +764,7 @@ def test_reconcile_is_noop():
 
 # ── Tests: consolidation — strategy grouping ────────────────────────────
 
-def _make_fact_candidate(*, subject: str, category: str, container_ref: str, thread_ref: str, visibility: str = "public"):
+def _make_fact_candidate(*, subject: str, category: str, container_ref: str, thread_ref: str | None, visibility: str = "public"):
     """Helper to build a ConsolidationCandidate for an atomic_fact."""
     from capabilities.consolidation import ConsolidationCandidate
     ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -857,7 +857,27 @@ def test_fact_consolidation_strategy_allows_same_thread_burst_group() -> None:
 
     assert len(groups) == 1
     assert groups[0].merge_rationale["grouping_scope"] == "same_thread_burst"
-    assert groups[0].merge_rationale["distinct_thread_count"] == 1
+    assert groups[0].merge_rationale["distinct_source_count"] == 1
+
+
+def test_fact_consolidation_groups_container_scope_with_thread_scope():
+    """Container-scope fact (thread_ref=None) + thread-scope fact count as 2 distinct sources."""
+    from capabilities.consolidation import FactConsolidationStrategy, ConsolidationPolicy
+
+    strategy = FactConsolidationStrategy()
+    policy = ConsolidationPolicy(max_candidates_per_run=200)
+
+    candidates = [
+        _make_fact_candidate(subject="shadow mode", category="deployment", container_ref="c1", thread_ref="t1"),
+        _make_fact_candidate(subject="shadow mode", category="deployment", container_ref="c1", thread_ref=None),
+    ]
+
+    groups = strategy.group_candidates(strategy.select_candidates(candidates, policy), policy)
+
+    assert len(groups) == 1
+    assert groups[0].merge_rationale["distinct_source_count"] == 2
+    assert groups[0].merge_rationale["has_container_scope_facts"] is True
+    assert groups[0].merge_rationale["grouping_scope"] == "cross_thread"
 
 
 def test_fact_consolidation_strategy_selects_facts_and_summaries():

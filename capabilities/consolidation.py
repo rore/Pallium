@@ -256,7 +256,9 @@ class ContainerTopicWindowStrategy(ConsolidationStrategy):
                 group_members.append(candidate)
                 overlap_scores[candidate.memory_object.id] = overlap_score
 
-            if len(group_members) < 2 or len({item.thread_ref for item in group_members if item.thread_ref}) < 2:
+            thread_refs = {item.thread_ref for item in group_members}
+            distinct_sources = len(thread_refs - {None}) + (1 if None in thread_refs else 0)
+            if len(group_members) < 2 or distinct_sources < 2:
                 continue
             if not _group_has_pattern_signal(group_members):
                 continue
@@ -391,9 +393,11 @@ class FactConsolidationStrategy(ConsolidationStrategy):
         for (container_ref, subject, category, visibility), members in grouped.items():
             if len(members) < self.MIN_GROUP_SIZE:
                 continue
-            distinct_threads = {c.thread_ref for c in members if c.thread_ref}
-            distinct_thread_count = len(distinct_threads)
-            if distinct_thread_count < self.MIN_DISTINCT_THREADS and len(members) < self.SAME_THREAD_BURST_MIN_GROUP_SIZE:
+            thread_ref_set = {c.thread_ref for c in members}
+            has_container_scope = None in thread_ref_set
+            distinct_threads = thread_ref_set - {None}
+            distinct_source_count = len(distinct_threads) + (1 if has_container_scope else 0)
+            if distinct_source_count < self.MIN_DISTINCT_THREADS and len(members) < self.SAME_THREAD_BURST_MIN_GROUP_SIZE:
                 continue
 
             ordered = tuple(_sort_candidates(members))
@@ -413,12 +417,13 @@ class FactConsolidationStrategy(ConsolidationStrategy):
                     visibility=visibility,
                     merge_rationale={
                         "grouping_mode": "fact_consolidation",
-                        "grouping_scope": "cross_thread" if distinct_thread_count >= self.MIN_DISTINCT_THREADS else "same_thread_burst",
+                        "grouping_scope": "cross_thread" if distinct_source_count >= self.MIN_DISTINCT_THREADS else "same_thread_burst",
                         "container_ref": container_ref,
                         "subject": original_subject,
                         "category": original_category,
                         "fact_count": len(ordered),
-                        "distinct_thread_count": distinct_thread_count,
+                        "distinct_source_count": distinct_source_count,
+                        "has_container_scope_facts": has_container_scope,
                         "thread_refs": sorted(distinct_threads),
                     },
                 )
