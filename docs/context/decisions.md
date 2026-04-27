@@ -360,6 +360,32 @@ Why:
   had no mechanism for query vs passage mode
 - four duplicated TOKEN_PATTERN definitions were a maintenance hazard
 
+### 2026-04-27 - Container as virtual thread with intentional scope overlap
+
+Container-level extraction treats the container as a virtual thread: all
+top-level messages (first item per thread_ref + threadless items) form a
+coherent main-channel conversation. A thread parent appearing in both thread
+and container extraction is intentional — the two scopes represent different
+conversational contexts that may yield different facts. Thread scope extracts
+within the sub-conversation context; container scope extracts within the
+main-channel conversation context.
+
+This means the first message of a multi-item thread is collected by both
+scopes. Dedup via existing-facts context in the LLM prompt prevents redundant
+extraction in the common case, and fact consolidation merges any remaining
+overlap. Omitting multi-item thread parents from container scope would leave
+gaps in the main-channel conversation.
+
+Why:
+
+- the container IS the main conversation — removing messages that happen to
+  have replies would break the conversational flow at the container level
+- different extraction contexts (sub-thread vs main-channel) can yield
+  different facts from the same message
+- dedup and consolidation handle overlap without special-case filtering
+- the alternative (filtering out messages with replies) introduces fragile
+  coupling between scope collection and thread item counts
+
 ## Open
 
 ### Ingestion policy
