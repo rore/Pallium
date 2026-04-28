@@ -66,7 +66,32 @@ def mount_dashboard(app: FastAPI) -> None:
 
             total = session.scalar(count_stmt) or 0
 
-            stmt = stmt.order_by(MemoryObjectRecord.created_at.desc())
+            if sort == "most_negative":
+                # Left-join feedback counts so we can order by not_relevant count descending
+                from sqlalchemy import Integer, case, literal_column, outerjoin
+                neg_count = (
+                    select(
+                        MemoryFeedbackRecord.memory_object_id,
+                        func.count().label("cnt"),
+                    )
+                    .where(MemoryFeedbackRecord.rating == "not_relevant")
+                    .group_by(MemoryFeedbackRecord.memory_object_id)
+                    .subquery()
+                )
+                stmt = (
+                    select(MemoryObjectRecord)
+                    .outerjoin(neg_count, MemoryObjectRecord.id == neg_count.c.memory_object_id)
+                    .order_by(func.coalesce(neg_count.c.cnt, 0).desc(), MemoryObjectRecord.created_at.desc())
+                )
+                if type is not None:
+                    stmt = stmt.where(MemoryObjectRecord.type == type)
+                if lifecycle is not None:
+                    stmt = stmt.where(MemoryObjectRecord.lifecycle == lifecycle)
+                if container_ref is not None:
+                    stmt = stmt.where(MemoryObjectRecord.container_ref == container_ref)
+            else:
+                stmt = stmt.order_by(MemoryObjectRecord.created_at.desc())
+
             stmt = stmt.offset(offset).limit(limit)
             records = session.scalars(stmt).all()
 
@@ -113,14 +138,6 @@ def mount_dashboard(app: FastAPI) -> None:
                 "payload": payload,
                 "feedback": fb,
             })
-
-        if sort == "most_negative" and memories:
-            def neg_score(m):
-                fb = m.get("feedback")
-                if not fb:
-                    return 0
-                return fb.get("not_relevant", 0)
-            memories.sort(key=neg_score, reverse=True)
 
         return JSONResponse(content={
             "memories": memories,

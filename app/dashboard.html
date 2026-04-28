@@ -825,10 +825,10 @@ function renderMemTable() {
               (meta ? '<div class="detail-meta">' + meta + '</div>' : '') +
               '<div class="detail-text">' + escapeHtml(m.display_text || '') + '</div>' +
               payloadHtml +
-              '<div class="evidence-section-title">Evidence</div>' +
-              '<div id="ev-' + escapeHtml(m.id) + '" class="evidence-loading">Loading evidence…</div>' +
-              '<div class="evidence-section-title" style="margin-top:12px">Feedback ' + fbBadge + '</div>' +
+              '<div class="evidence-section-title">Feedback ' + fbBadge + '</div>' +
               '<div id="fb-' + escapeHtml(m.id) + '" class="evidence-loading">Loading feedback…</div>' +
+              '<div class="evidence-section-title" style="margin-top:12px">Evidence</div>' +
+              '<div id="ev-' + escapeHtml(m.id) + '" class="evidence-loading">Loading evidence…</div>' +
             '</div>' +
           '</td>' +
         '</tr>'
