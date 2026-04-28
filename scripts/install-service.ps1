@@ -77,14 +77,24 @@ raise SystemExit(run(["all", "--port", "$Port"]))
 Set-Content -Path $LauncherPath -Value $LauncherContent -Encoding UTF8
 Write-Host "  Wrote launcher: $LauncherPath"
 
-# Create the action — use pythonw.exe for windowless execution
+# VBScript wrapper — wscript.exe + SW_HIDE (0) guarantees no console window,
+# more reliable than pythonw.exe on Windows venvs.
 $PythonwPath = Join-Path (Split-Path $PythonPath) "pythonw.exe"
 if (-not (Test-Path $PythonwPath)) {
     $PythonwPath = $PythonPath
 }
+$VbsPath = Join-Path $LauncherDir "service_launcher.vbs"
+$VbsContent = @"
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run """$PythonwPath"" ""$LauncherPath""", 0, False
+"@
+Set-Content -Path $VbsPath -Value $VbsContent -Encoding UTF8
+Write-Host "  Wrote VBS launcher: $VbsPath"
+
+# Task action: wscript.exe runs the VBS silently (SW_HIDE is baked into the VBS)
 $Action = New-ScheduledTaskAction `
-    -Execute $PythonwPath `
-    -Argument "`"$LauncherPath`"" `
+    -Execute "wscript.exe" `
+    -Argument "`"$VbsPath`"" `
     -WorkingDirectory $RepoRoot
 
 # Trigger at logon
