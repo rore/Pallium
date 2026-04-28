@@ -105,4 +105,5 @@ This script shows the ingest and query flow as plain HTTP requests.
 - Full config reference: [configuration.md](configuration.md)
 - API endpoints and shapes: [http-api.md](http-api.md)
 - Wiring into a runtime: [agent-integration.md](agent-integration.md)
+- Claude Code setup: [claude-code-integration.md](claude-code-integration.md)
 - How the system works: [how-it-works.md](how-it-works.md)

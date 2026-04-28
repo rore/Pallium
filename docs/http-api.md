@@ -408,6 +408,63 @@ Security:
 - Returns 404 (not 403) for both missing and unauthorized access to avoid
   confirming ID existence
 
+## POST /memory/{memory_object_id}/flag
+
+Flag a memory as incorrect, outdated, or low quality. After enough independent
+flags from different sources, the memory is suppressed and excluded from
+retrieval.
+
+Request body:
+
+```json
+{
+  "reason": "Outdated: PR was merged hours ago",
+  "source_ref": "agent-session:f890d298",
+  "immediate": false
+}
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `reason` | string | yes | — | Why the memory is bad |
+| `source_ref` | string | yes | — | Identifies who flagged it (used for dedup) |
+| `immediate` | bool | no | `false` | When `true`, suppress immediately without waiting for threshold |
+
+Response (200):
+
+```json
+{
+  "memory_object_id": "a8efd630-2a64-497f-a80d-c238825981d3",
+  "flag_count": 2,
+  "unique_sources": 2,
+  "suppressed": true
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `flag_count` | int | Total flags on this memory (all time) |
+| `unique_sources` | int | Distinct `source_ref` values within the 30-day window |
+| `suppressed` | bool | Whether the memory is now suppressed |
+
+Suppression rules:
+
+- **Threshold mode** (default): 2 independent sources (distinct `source_ref`
+  values) within 30 days triggers suppression. Multiple flags from the same
+  source count as one voice.
+- **Immediate mode** (`immediate: true`): suppress without threshold. Use for
+  confirmed-bad memories from human review.
+- Flagging an already-suppressed or superseded memory is accepted and recorded
+  for audit but doesn't change lifecycle.
+- The endpoint is idempotent — repeated calls return current state.
+
+Error responses:
+
+| Status | Condition |
+|--------|-----------|
+| 404 | Unknown `memory_object_id` |
+| 422 | Missing required fields |
+
 ## GET /debug/queue/health
 
 This is the operational endpoint for the background pipeline.

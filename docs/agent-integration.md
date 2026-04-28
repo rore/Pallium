@@ -326,6 +326,7 @@ for stdio mode.
 | `pallium_query_debug` | Investigate retrieval — scores, stages, filtering. Use when memory seems missing. |
 | `pallium_ingest` | Store an artifact for processing. Goes through the standard extraction pipeline. |
 | `pallium_get_evidence` | Retrieve the source conversation items behind a memory card. Use when a memory summary isn't enough and the agent needs the original context. |
+| `pallium_flag_memory` | Flag a memory as incorrect or outdated. See [Flagging Wrong Memories](#flagging-wrong-memories) below. |
 
 All tools accept optional scope parameters (`container_ref`, `thread_ref`,
 `actor_ref`, `visibility`) for filtering. When omitted, defaults come from
@@ -383,6 +384,74 @@ Don't fetch evidence for every memory — only when you need more detail.
 
 All tools return Pallium's HTTP API responses verbatim as pretty-printed JSON.
 No transformation — the API response is the contract.
+
+## Flagging Wrong Memories
+
+Pallium sometimes extracts bad memories — stale transient state, fragments,
+context-dropped vagueness. The flagging mechanism lets agents and humans
+report these so they stop being injected.
+
+### How It Works
+
+1. The agent (or human) calls `POST /memory/{id}/flag` with a reason and a
+   `source_ref` identifying the flag source
+2. Pallium records the flag and counts distinct sources within a 30-day window
+3. After 2 independent sources flag the same memory, it's suppressed —
+   excluded from retrieval permanently
+
+For confirmed-bad memories (e.g. from manual review), pass `immediate: true`
+to suppress without waiting for a second independent flag.
+
+### When to Flag
+
+Flag a memory when:
+
+- It states something that is now demonstrably incorrect ("PR is blocked" —
+  but it was merged yesterday)
+- It's a meaningless fragment ("| Can do |" extracted from a table cell)
+- It's too vague to be useful ("user is concerned about safety")
+- It contradicts a newer, better-supported memory
+- It's a meta-extraction artifact (triage commentary re-ingested as memory)
+
+Do not flag speculatively. The agent should only flag when it has concrete
+contrary evidence or can see the memory is clearly broken.
+
+### Integration Patterns
+
+**Agent-initiated flagging (MCP tool):**
+
+The agent calls `pallium_flag_memory` directly when it notices a bad memory
+in the injected context. Each injected memory block includes a `memory_object_id`
+that the agent passes to the tool. The `source_ref` parameter is optional in
+the MCP tool — when omitted, it resolves to the agent's actor identity or
+`"local"`.
+
+**Runtime-initiated flagging (HTTP API):**
+
+The integrating runtime calls `POST /memory/{id}/flag` directly. Use a
+stable `source_ref` that identifies the flagging session or review pass
+(e.g. `"agent-session:<session_id>"` or `"triage-review:2026-04-17"`).
+This ensures session-level dedup: a chatty session that flags the same
+memory repeatedly counts as one voice.
+
+**Human triage:**
+
+For batch review of bad memories, call the flag endpoint with
+`immediate: true`. This is appropriate when a human has confirmed the
+memory is garbage — no consensus needed.
+
+### Lifecycle After Flagging
+
+Suppressed memories follow the same retention TTL as superseded memories
+(7 days by default). After TTL, they're permanently deleted along with
+their evidence and flag records.
+
+Suppression is permanent within the TTL — there is no "unflag" mechanism.
+If a memory was incorrectly suppressed, re-ingest the original content to
+let Pallium re-extract it.
+
+See [http-api.md — POST /memory/{id}/flag](http-api.md#post-memorymemory_object_idflag)
+for the full request/response contract.
 
 ## Boundaries
 
