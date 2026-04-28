@@ -47,6 +47,15 @@ Write-Host "  Python: $PythonPath"
 Write-Host "  Repo:   $RepoRoot"
 Write-Host "  Port:   $Port"
 
+# Service data directory — isolated from dev DB
+$DataDir = Join-Path $env:USERPROFILE ".pallium\data"
+if (-not (Test-Path $DataDir)) {
+    New-Item -ItemType Directory -Path $DataDir -Force | Out-Null
+}
+$SqliteUrl = "sqlite:///$DataDir/pallium.db"
+$VectorIndexPath = "$DataDir/vector_index"
+Write-Host "  Data:   $DataDir"
+
 # Remove existing task if present (idempotent)
 $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($existing) {
@@ -55,9 +64,11 @@ if ($existing) {
 }
 
 # Create the action — wrapped in hidden PowerShell to avoid a visible console window
+# Set env vars for service-specific DB location
+$EnvSetup = "`$env:PALLIUM_SQLITE_URL='$SqliteUrl'; `$env:PALLIUM_VECTOR_INDEX_PATH='$VectorIndexPath'; "
 $Action = New-ScheduledTaskAction `
     -Execute "powershell.exe" `
-    -Argument "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command `"& '$PythonPath' -m app.run all --port $Port`"" `
+    -Argument "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command `"$EnvSetup & '$PythonPath' -m app.run all --port $Port`"" `
     -WorkingDirectory $RepoRoot
 
 # Trigger at logon

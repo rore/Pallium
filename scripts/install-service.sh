@@ -52,6 +52,13 @@ echo "  Python: $PYTHON_PATH"
 echo "  Repo:   $REPO_ROOT"
 echo "  Port:   $PORT"
 
+# Service data directory — isolated from dev DB
+DATA_DIR="$HOME/.pallium/data"
+mkdir -p "$DATA_DIR"
+SQLITE_URL="sqlite:///$DATA_DIR/pallium.db"
+VECTOR_INDEX_PATH="$DATA_DIR/vector_index"
+echo "  Data:   $DATA_DIR"
+
 SERVICE_DIR="$HOME/.config/systemd/user"
 SERVICE_FILE="$SERVICE_DIR/pallium.service"
 
@@ -69,6 +76,8 @@ WorkingDirectory=$REPO_ROOT
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+Environment=PALLIUM_SQLITE_URL=$SQLITE_URL
+Environment=PALLIUM_VECTOR_INDEX_PATH=$VECTOR_INDEX_PATH
 
 [Install]
 WantedBy=default.target
