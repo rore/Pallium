@@ -82,3 +82,4 @@ evals/longmemeval/db_cache/
 evals/multilingual_quality/output/
 evals/fragment_embedding_experiment.py
 evals/locomo/*.log
+.superpowers/
