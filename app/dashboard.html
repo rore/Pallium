@@ -47,7 +47,7 @@
     max-width: 1400px; margin: 0 auto;
     display: flex; align-items: center; gap: 16px;
   }
-  .header-logo { height: 28px; display: block; }
+  .header-title { font-size: 18px; font-weight: 700; color: var(--blue); letter-spacing: 0.02em; }
   .health-badge {
     padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: bold;
     text-transform: uppercase; letter-spacing: 0.05em;
@@ -195,9 +195,24 @@
     border-bottom: 1px solid var(--border);
   }
   .detail-inner { padding: 12px 14px 14px; }
+  .detail-meta {
+    font-size: 11px; color: var(--muted); margin-bottom: 8px;
+    display: flex; gap: 12px; flex-wrap: wrap;
+  }
+  .detail-meta b { color: var(--text); }
   .detail-text {
     color: var(--text); margin-bottom: 12px;
     white-space: pre-wrap; word-break: break-word; font-size: 12px;
+  }
+  .payload-details { margin-bottom: 12px; }
+  .payload-details summary {
+    font-size: 10px; text-transform: uppercase; color: var(--muted);
+    cursor: pointer; letter-spacing: 0.06em;
+  }
+  .payload-pre {
+    font-size: 11px; color: var(--text); margin-top: 6px;
+    background: rgba(0,0,0,0.3); padding: 8px 10px; border-radius: 4px;
+    overflow-x: auto; max-height: 200px;
   }
   .evidence-section-title {
     font-size: 10px; text-transform: uppercase; color: var(--muted);
@@ -215,6 +230,14 @@
   .evidence-content { font-size: 12px; color: var(--text); white-space: pre-wrap; word-break: break-word; }
   .evidence-loading { color: var(--muted); font-size: 12px; }
   .evidence-error   { color: var(--red);   font-size: 12px; }
+
+  .fb-badge {
+    font-size: 10px; padding: 2px 6px; border-radius: 4px; margin-left: 8px;
+  }
+  .fb-badge.has-negative { background: rgba(231,76,60,0.2); color: var(--red); }
+  .fb-badge.all-positive { background: rgba(46,204,113,0.2); color: var(--green); }
+  .fb-relevant { color: var(--green); font-weight: bold; }
+  .fb-not-relevant { color: var(--red); font-weight: bold; }
 
   .pagination {
     display: flex; align-items: center; justify-content: space-between;
@@ -270,8 +293,7 @@
 <!-- ── Header ──────────────────────────────────── -->
 <header class="header">
   <div class="header-inner">
-    <img class="header-logo" src="/static/logo/pallium_header.png" alt="Pallium"
-         onerror="this.style.display='none'">
+    <span class="header-title">Pallium</span>
     <span id="health-badge" class="health-badge init">initializing</span>
     <span id="header-uptime" class="header-uptime">uptime: —</span>
     <span id="header-refresh" class="header-refresh">refresh in 10s</span>
@@ -303,6 +325,11 @@
       <div class="metric-label">Pending Queue</div>
       <div id="m-pending" class="metric-value">—</div>
       <div id="m-pending-sub" class="metric-sub">awaiting processing</div>
+    </div>
+    <div class="card metric-card">
+      <div class="metric-label">Feedback</div>
+      <div id="m-feedback" class="metric-value">—</div>
+      <div id="m-feedback-sub" class="metric-sub">not-relevant rate: —</div>
     </div>
   </div>
 
@@ -432,6 +459,10 @@
         <option value="superseded">superseded</option>
         <option value="suppressed">suppressed</option>
       </select>
+      <select id="sort-filter" onchange="reloadMemories()">
+        <option value="">Newest first</option>
+        <option value="most_negative">Most negatively rated</option>
+      </select>
       <button class="btn primary" onclick="reloadMemories()">Reload</button>
     </div>
 
@@ -560,12 +591,31 @@ async function fetchQueueHealth() {
   }
 }
 
+async function fetchFeedbackStats() {
+  try {
+    const r = await fetch('/dashboard/api/feedback/stats');
+    if (!r.ok) return;
+    const data = await r.json();
+    document.getElementById('m-feedback').textContent = fmtNum(data.total);
+    if (data.not_relevant_rate != null) {
+      document.getElementById('m-feedback-sub').textContent =
+        'not-relevant rate: ' + Math.round(data.not_relevant_rate * 100) + '%';
+    } else {
+      document.getElementById('m-feedback-sub').textContent = 'no ratings yet';
+    }
+  } catch (e) {
+    // non-fatal
+  }
+}
+
 async function fetchMemories() {
   const type = document.getElementById('type-filter').value;
   const lc   = document.getElementById('lc-filter').value;
+  const sort = document.getElementById('sort-filter').value;
   const params = new URLSearchParams({ limit: PAGE_SIZE, offset: _offset });
   if (type) params.set('type', type);
   if (lc)   params.set('lifecycle', lc);
+  if (sort) params.set('sort', sort);
 
   try {
     const r = await fetch('/dashboard/api/memories?' + params.toString());
@@ -750,22 +800,47 @@ function renderMemTable() {
     );
 
     if (isExpanded) {
+      const meta = [
+        m.subject     ? '<span><b>subject:</b> ' + escapeHtml(m.subject) + '</span>' : null,
+        m.visibility  ? '<span><b>visibility:</b> ' + escapeHtml(m.visibility) + '</span>' : null,
+        m.schema_id   ? '<span><b>schema:</b> ' + escapeHtml(m.schema_id) + '</span>' : null,
+      ].filter(Boolean).join(' &middot; ');
+
+      const payloadKeys = Object.keys(m.payload || {}).filter(k => k !== '_display_text');
+      const payloadHtml = payloadKeys.length > 0
+        ? '<details class="payload-details"><summary>payload (' + payloadKeys.length + ' fields)</summary>' +
+          '<pre class="payload-pre">' + escapeHtml(JSON.stringify(m.payload, null, 2)) + '</pre></details>'
+        : '';
+
+      const fbBadge = m.feedback
+        ? '<span class="fb-badge ' + (m.feedback.not_relevant > 0 ? 'has-negative' : 'all-positive') + '">' +
+          (m.feedback.relevant || 0) + ' relevant · ' + (m.feedback.not_relevant || 0) + ' not_relevant</span>'
+        : '';
+
       rows.push(
         '<tr class="detail-row" id="detail-' + escapeHtml(m.id) + '">' +
           '<td colspan="7">' +
             '<div class="detail-inner" id="detail-inner-' + escapeHtml(m.id) + '">' +
+              (meta ? '<div class="detail-meta">' + meta + '</div>' : '') +
               '<div class="detail-text">' + escapeHtml(m.display_text || '') + '</div>' +
+              payloadHtml +
               '<div class="evidence-section-title">Evidence</div>' +
               '<div id="ev-' + escapeHtml(m.id) + '" class="evidence-loading">Loading evidence…</div>' +
+              '<div class="evidence-section-title" style="margin-top:12px">Feedback ' + fbBadge + '</div>' +
+              '<div id="fb-' + escapeHtml(m.id) + '" class="evidence-loading">Loading feedback…</div>' +
             '</div>' +
           '</td>' +
         '</tr>'
       );
-      loadEvidence(m.id);
     }
   }
 
   tbody.innerHTML = rows.join('');
+
+  if (_expandedId) {
+    loadEvidence(_expandedId);
+    loadFeedback(_expandedId);
+  }
 }
 
 // ──────────────────────────────────────────────────
@@ -809,6 +884,44 @@ async function loadEvidence(id) {
   } catch (e) {
     if (container) {
       container.innerHTML = '<span class="evidence-error">Failed to load evidence: ' +
+        escapeHtml(String(e)) + '</span>';
+    }
+  }
+}
+
+async function loadFeedback(id) {
+  const container = document.getElementById('fb-' + id);
+  if (!container) return;
+  try {
+    const r = await fetch('/dashboard/api/memories/' + encodeURIComponent(id) + '/feedback');
+    if (!r.ok) throw new Error('feedback ' + r.status);
+    const data = await r.json();
+    const items = data.items || [];
+    if (items.length === 0) {
+      container.innerHTML = '<span style="color:var(--muted)">No feedback recorded.</span>';
+      return;
+    }
+    const html = '<ul class="evidence-list">' +
+      items.map(fb => {
+        const ratingClass = fb.rating === 'not_relevant' ? 'fb-not-relevant' : 'fb-relevant';
+        const meta = [
+          '<span class="' + ratingClass + '">' + escapeHtml(fb.rating) + '</span>',
+          fb.rater_ref ? escapeHtml(fb.rater_ref) : null,
+          fb.created_at ? timeAgo(fb.created_at) : null,
+        ].filter(Boolean).join(' · ');
+        const parts = [];
+        if (fb.reason) parts.push(escapeHtml(fb.reason));
+        if (fb.query_context) parts.push('<span style="color:var(--muted)">query: ' + escapeHtml(fb.query_context) + '</span>');
+        return '<li class="evidence-item">' +
+          '<div class="evidence-meta">' + meta + '</div>' +
+          (parts.length ? '<div class="evidence-content">' + parts.join('<br>') + '</div>' : '') +
+          '</li>';
+      }).join('') +
+    '</ul>';
+    container.innerHTML = html;
+  } catch (e) {
+    if (container) {
+      container.innerHTML = '<span class="evidence-error">Failed to load feedback: ' +
         escapeHtml(String(e)) + '</span>';
     }
   }
@@ -862,6 +975,7 @@ function startCountdown() {
       _countdown = 10;
       fetchStatus();
       fetchQueueHealth();
+      fetchFeedbackStats();
     }
   }, 1000);
 }

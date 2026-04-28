@@ -130,7 +130,7 @@ class TestDashboardIntegration:
             resp = client.get("/dashboard")
         html = resp.text
         assert "Pallium Dashboard" in html
-        assert "/static/logo/pallium_header.png" in html
+        assert "Pallium" in html
         assert "fetchStatus" in html
         assert "/dashboard/api/memories" in html
 
