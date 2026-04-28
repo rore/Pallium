@@ -166,8 +166,14 @@ After setup, every Claude Code session automatically:
 One Pallium instance serves all your repos (isolated by git remote). It runs
 at login via a system service — no per-session startup needed.
 
+Pallium also exposes an **MCP server** (`/mcp` endpoint or standalone via
+`python -m app.run mcp`) for direct tool access from any MCP-compatible
+client. Tools: `pallium_query`, `pallium_ingest`, `pallium_get_evidence`,
+`pallium_flag_memory`, `pallium_query_debug`, `pallium_status`.
+
 See [docs/claude-code-integration.md](docs/claude-code-integration.md) for
-the full setup guide.
+the full setup guide and [docs/agent-integration.md](docs/agent-integration.md)
+for MCP details.
 
 ## Multilingual by Design
 
