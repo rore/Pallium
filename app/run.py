@@ -39,7 +39,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(args: list[str] | None = None) -> int:
-    parsed = build_parser().parse_args(args)
+    parsed, remaining = build_parser().parse_known_args(args)
+    if parsed.mode != "setup" and remaining:
+        build_parser().error(f"unrecognized arguments: {' '.join(remaining)}")
     if parsed.mode == "serve":
         # Auto-set PALLIUM_BASE_URL if not already set — needed by the MCP endpoint
         # which is mounted on this server and calls back to the HTTP API
@@ -97,8 +99,7 @@ def run(args: list[str] | None = None) -> int:
         return _run_download_embedding_model()
     if parsed.mode == "setup":
         from app.cli.setup_claude_code import main as setup_main
-        setup_argv = sys.argv[2:] if len(sys.argv) > 2 else []
-        return setup_main(setup_argv)
+        return setup_main(remaining)
     supervisor_args = [
         "--host",
         parsed.host,

@@ -54,10 +54,10 @@ if ($existing) {
     Write-Host "  Removed existing scheduled task."
 }
 
-# Create the action
+# Create the action — wrapped in hidden PowerShell to avoid a visible console window
 $Action = New-ScheduledTaskAction `
-    -Execute $PythonPath `
-    -Argument "-m app.run all --port $Port" `
+    -Execute "powershell.exe" `
+    -Argument "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command `"& '$PythonPath' -m app.run all --port $Port`"" `
     -WorkingDirectory $RepoRoot
 
 # Trigger at logon
