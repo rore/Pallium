@@ -123,18 +123,19 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     async def pallium_flag_memory(
         memory_object_id: str,
         reason: str,
-        source_ref: str,
+        source_ref: str | None = None,
         immediate: bool = False,
     ) -> str:
         """Flag a Pallium memory as bad. Use when an injected memory is incorrect, outdated, a meaningless fragment, or contradicts known facts. Pass the memory_object_id from the [ref: ...] annotation on the memory block. After enough independent flags, the memory is suppressed and stops being injected."""
         ctx = resolve_context()
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
+        resolved_source_ref = source_ref or ctx.actor_ref or "local"
         client = PalliumMcpClient(ctx)
         result = await client.flag_memory(
             memory_object_id=memory_object_id,
             reason=reason,
-            source_ref=source_ref,
+            source_ref=resolved_source_ref,
             immediate=immediate,
         )
         return json.dumps(result, indent=2, default=str)
