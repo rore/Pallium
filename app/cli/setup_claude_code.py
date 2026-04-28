@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -57,14 +58,15 @@ def _hook_command(script_name: str) -> str:
     return f"{python} {script}"
 
 
-def _register_mcp(settings: dict, port: int) -> dict:
-    if "mcpServers" not in settings:
-        settings["mcpServers"] = {}
-    settings["mcpServers"]["pallium"] = {
-        "type": "http",
-        "url": f"http://localhost:{port}/mcp"
-    }
-    return settings
+def _register_mcp(port: int) -> None:
+    subprocess.run(
+        ["claude", "mcp", "add", "--transport", "http", "--scope", "user", "pallium", f"http://localhost:{port}/mcp"],
+        check=True,
+    )
+
+
+def _unregister_mcp() -> None:
+    subprocess.run(["claude", "mcp", "remove", "--scope", "user", "pallium"], check=False)
 
 
 def _register_hooks(settings: dict) -> dict:
@@ -96,14 +98,6 @@ def _register_hooks(settings: dict) -> dict:
                 "hooks": [{"type": "command", "command": command, "timeout": timeout}],
             })
 
-    return settings
-
-
-def _unregister_mcp(settings: dict) -> dict:
-    if "mcpServers" in settings:
-        settings["mcpServers"].pop("pallium", None)
-        if not settings["mcpServers"]:
-            del settings["mcpServers"]
     return settings
 
 
@@ -193,13 +187,14 @@ def _verify_service(port: int) -> bool:
 def install(port: int = 19836) -> int:
     print(f"Setting up Pallium Claude Code integration (port {port})...")
 
+    _register_mcp(port)
+    print(f"  Registered MCP server (user scope)")
+
     settings_path = _claude_settings_path()
     settings = _read_json(settings_path)
-
-    settings = _register_mcp(settings, port)
     settings = _register_hooks(settings)
     _write_json(settings_path, settings)
-    print(f"  Registered MCP server and hooks in {settings_path}")
+    print(f"  Registered hooks in {settings_path}")
 
     _append_claude_md_block()
     print(f"  Appended Pallium instructions to {_claude_md_path()}")
@@ -220,13 +215,14 @@ def install(port: int = 19836) -> int:
 def uninstall() -> int:
     print("Removing Pallium Claude Code integration...")
 
+    _unregister_mcp()
+    print("  Removed MCP server")
+
     settings_path = _claude_settings_path()
     settings = _read_json(settings_path)
-
-    settings = _unregister_mcp(settings)
     settings = _unregister_hooks(settings)
     _write_json(settings_path, settings)
-    print(f"  Removed MCP server and hooks from {settings_path}")
+    print(f"  Removed hooks from {settings_path}")
 
     _remove_claude_md_block()
     print(f"  Removed Pallium instructions from {_claude_md_path()}")
