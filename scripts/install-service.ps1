@@ -88,7 +88,7 @@ $VbsContent = @"
 Set WshShell = CreateObject("WScript.Shell")
 WshShell.Run """$PythonwPath"" ""$LauncherPath""", 0, False
 "@
-Set-Content -Path $VbsPath -Value $VbsContent -Encoding UTF8
+[System.IO.File]::WriteAllText($VbsPath, $VbsContent, [System.Text.Encoding]::ASCII)
 Write-Host "  Wrote VBS launcher: $VbsPath"
 
 # Task action: wscript.exe runs the VBS silently (SW_HIDE is baked into the VBS)
