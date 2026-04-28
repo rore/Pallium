@@ -1,0 +1,86 @@
+<#
+.SYNOPSIS
+    Install Pallium as a Windows scheduled task that starts at logon.
+
+.PARAMETER Port
+    Port for Pallium HTTP server (default: 19836).
+
+.PARAMETER PythonPath
+    Path to Python executable. Auto-detected from current environment if not specified.
+
+.EXAMPLE
+    .\install-service.ps1
+    .\install-service.ps1 -Port 19837
+#>
+
+param(
+    [int]$Port = 19836,
+    [string]$PythonPath = ""
+)
+
+$ErrorActionPreference = "Stop"
+$TaskName = "Pallium"
+
+# Detect Python
+if (-not $PythonPath) {
+    $PythonPath = (Get-Command python -ErrorAction SilentlyContinue).Source
+    if (-not $PythonPath) {
+        $PythonPath = (Get-Command python3 -ErrorAction SilentlyContinue).Source
+    }
+    if (-not $PythonPath) {
+        Write-Error "Python not found. Specify -PythonPath or ensure Python is on PATH."
+        exit 1
+    }
+}
+
+# Detect repo root (directory containing this script's parent)
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot = Split-Path -Parent $ScriptDir
+
+if (-not (Test-Path (Join-Path $RepoRoot "app\run.py"))) {
+    Write-Error "Cannot find app\run.py in $RepoRoot. Run this script from the Pallium repo."
+    exit 1
+}
+
+Write-Host "Installing Pallium service..."
+Write-Host "  Python: $PythonPath"
+Write-Host "  Repo:   $RepoRoot"
+Write-Host "  Port:   $Port"
+
+# Remove existing task if present (idempotent)
+$existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($existing) {
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    Write-Host "  Removed existing scheduled task."
+}
+
+# Create the action
+$Action = New-ScheduledTaskAction `
+    -Execute $PythonPath `
+    -Argument "-m app.run all --port $Port" `
+    -WorkingDirectory $RepoRoot
+
+# Trigger at logon
+$Trigger = New-ScheduledTaskTrigger -AtLogOn
+
+# Settings: restart on failure, don't stop on idle, run indefinitely
+$Settings = New-ScheduledTaskSettingsSet `
+    -RestartCount 3 `
+    -RestartInterval (New-TimeSpan -Minutes 1) `
+    -DontStopOnIdleEnd `
+    -ExecutionTimeLimit (New-TimeSpan -Days 0) `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries
+
+# Register the task (runs as current user)
+Register-ScheduledTask `
+    -TaskName $TaskName `
+    -Action $Action `
+    -Trigger $Trigger `
+    -Settings $Settings `
+    -RunLevel Limited `
+    -Description "Pallium memory sidecar service" | Out-Null
+
+Write-Host ""
+Write-Host "Pallium scheduled task installed. It will start at next logon."
+Write-Host "To start now: Start-ScheduledTask -TaskName '$TaskName'"

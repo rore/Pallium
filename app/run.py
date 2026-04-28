@@ -19,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "mode",
         nargs="?",
-        choices=("all", "serve", "mcp", "processor", "cleaner", "snapshot", "rebuild-vector-index", "download-embedding-model"),
+        choices=("all", "serve", "mcp", "processor", "cleaner", "snapshot", "rebuild-vector-index", "download-embedding-model", "setup"),
         default="all",
     )
     parser.add_argument("--host", default="127.0.0.1")
@@ -95,6 +95,10 @@ def run(args: list[str] | None = None) -> int:
         return _run_rebuild_vector_index()
     if parsed.mode == "download-embedding-model":
         return _run_download_embedding_model()
+    if parsed.mode == "setup":
+        from app.cli.setup_claude_code import main as setup_main
+        setup_argv = sys.argv[2:] if len(sys.argv) > 2 else []
+        return setup_main(setup_argv)
     supervisor_args = [
         "--host",
         parsed.host,
