@@ -120,3 +120,44 @@ class TestDashboardPage:
             resp = client.get("/static/logo/pallium_header.png")
         assert resp.status_code == 200
         assert "image" in resp.headers["content-type"]
+
+
+class TestDashboardIntegration:
+
+    def test_dashboard_html_contains_key_elements(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            resp = client.get("/dashboard")
+        html = resp.text
+        assert "Pallium Dashboard" in html
+        assert "/static/logo/pallium_header.png" in html
+        assert "fetchStatus" in html
+        assert "/dashboard/api/memories" in html
+
+    def test_memories_display_text_extraction(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            service = app.state.pallium_service
+            mo = MemoryObject(
+                type="investigation_outcome",
+                schema_id="test",
+                schema_version="1.0",
+                payload={"investigation_outcome": "Found root cause in parser", "other": "data"},
+                lifecycle="active",
+                created_at=datetime(2026, 4, 28, 10, 0, 0, tzinfo=timezone.utc),
+            )
+            service._storage.create_memory_object(mo)
+            resp = client.get("/dashboard/api/memories")
+        body = resp.json()
+        assert body["memories"][0]["display_text"] == "Found root cause in parser"
+
+    def test_memories_default_lifecycle_shows_all(self, tmp_path: Path) -> None:
+        """When no lifecycle filter is passed, all lifecycles are returned."""
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            _seed_memory(app, type="decision", lifecycle="active")
+            _seed_memory(app, type="decision", lifecycle="suppressed")
+            _seed_memory(app, type="decision", lifecycle="superseded")
+            resp = client.get("/dashboard/api/memories")
+        body = resp.json()
+        assert body["total"] == 3
