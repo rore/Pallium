@@ -147,19 +147,27 @@ See [agent-integration.md](docs/agent-integration.md) for the full guide and
 [integration-example.md](docs/integration-example.md) for a Slack agent
 walkthrough.
 
-## MCP Server
+## Use with Claude Code
 
-Pallium includes an MCP server for direct LLM tool access:
+Pallium works as a **local memory layer for Claude Code** — decisions,
+findings, and context carry forward across sessions without manual copy-paste
+or `.claude/` file maintenance.
 
-    claude mcp add pallium -- python -m app.run mcp
+```bash
+python -m app.run all --port 19836          # start Pallium
+python -m app.run setup claude-code         # register hooks + MCP tools
+```
 
-Three tools: `pallium_query` (search memory), `pallium_query_debug`
-(retrieval trace), `pallium_ingest` (store evidence).
+After setup, every Claude Code session automatically:
+- receives relevant memory from past sessions on the same repo
+- ingests conversation turns for future recall
+- gives Claude tools to query, flag, or store memories explicitly
 
-Context defaults (container, thread, actor, visibility) are set via
-environment variables so tool calls don't need to repeat them.
+One Pallium instance serves all your repos (isolated by git remote). It runs
+at login via a system service — no per-session startup needed.
 
-See [agent-integration.md](docs/agent-integration.md) for setup details.
+See [docs/claude-code-integration.md](docs/claude-code-integration.md) for
+the full setup guide.
 
 ## Multilingual by Design
 
