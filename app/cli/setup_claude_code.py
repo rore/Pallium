@@ -61,6 +61,7 @@ def _register_mcp(settings: dict, port: int) -> dict:
     if "mcpServers" not in settings:
         settings["mcpServers"] = {}
     settings["mcpServers"]["pallium"] = {
+        "type": "http",
         "url": f"http://localhost:{port}/mcp"
     }
     return settings
