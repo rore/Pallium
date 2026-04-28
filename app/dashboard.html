@@ -801,6 +801,7 @@ function renderMemTable() {
 
     if (isExpanded) {
       const meta = [
+        '<span><b>id:</b> ' + escapeHtml(m.id) + '</span>',
         m.subject     ? '<span><b>subject:</b> ' + escapeHtml(m.subject) + '</span>' : null,
         m.visibility  ? '<span><b>visibility:</b> ' + escapeHtml(m.visibility) + '</span>' : null,
         m.schema_id   ? '<span><b>schema:</b> ' + escapeHtml(m.schema_id) + '</span>' : null,
