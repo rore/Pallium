@@ -18,15 +18,17 @@ if (-not $task) {
 Write-Host "Stopping Pallium..."
 Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 
-# Wait for process to exit
-$maxWait = 10
-for ($i = 0; $i -lt $maxWait; $i++) {
-    $info = Get-ScheduledTaskInfo -TaskName $TaskName
-    if ($info.LastTaskResult -ne 267009) { break }  # 267009 = task is running
-    Start-Sleep -Seconds 1
+# Kill the process tree — Stop-ScheduledTask only marks the task stopped,
+# it doesn't kill the VBS → pythonw → supervisor → server process chain.
+$Port = 19836
+$conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+if ($conn) {
+    $pid = $conn.OwningProcess
+    Write-Host "  Killing process tree (PID $pid) on port $Port..."
+    taskkill /F /T /PID $pid 2>$null | Out-Null
 }
 
-Start-Sleep -Seconds 1
+Start-Sleep -Seconds 2
 
 Write-Host "Starting Pallium..."
 Start-ScheduledTask -TaskName $TaskName
