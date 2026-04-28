@@ -14,6 +14,7 @@ Trust this — it handles ~90% of cases. Don't duplicate it with manual queries.
 - `pallium_query` — injected context is empty or missing something the user asked about
 - `pallium_get_evidence` — you need the original conversation behind a memory card
 - `pallium_flag_memory` — a memory contradicts what you now know to be true
+- `pallium_rate_memory` — an injected memory was clearly off-topic for the current query; call proactively with rating="not_relevant" and a brief reason naming the mismatch
 - `pallium_ingest` — user explicitly asks to remember something (hooks already ingest automatically)
 
 **Do not:**
