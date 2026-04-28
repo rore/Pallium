@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 
 from app.config import AppConfig
+from app.dashboard import mount_dashboard
 from app.dependencies import build_router, build_service
 from app.snapshot import resolve_live_db_path
 from core.observability import QueryStats
@@ -238,6 +239,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "query": query_info,
         })
 
+    mount_dashboard(app)
     app.include_router(build_router(
         service, audit_log_enabled=resolved_config.observability.query_audit_log,
     ))
