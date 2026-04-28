@@ -1,4 +1,882 @@
 <!DOCTYPE html>
-<html><head><title>Pallium Dashboard</title></head>
-<body><h1>Pallium Dashboard</h1><p>Loading...</p></body>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pallium Dashboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #1a1a2e;
+    --card:     #16213e;
+    --border:   #2a2a4a;
+    --text:     #ccd6f6;
+    --muted:    #7a8ab2;
+    --green:    #00ff33;
+    --blue:     #66aaff;
+    --purple:   #aa66ff;
+    --yellow:   #aaaa66;
+    --red:      #ff6666;
+    --teal:     #66aa66;
+    --orange:   #cc8844;
+    --radius:   8px;
+    --font:     "Consolas", "Menlo", "Monaco", "Courier New", monospace;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* ── Layout ───────────────────────────────────── */
+  .content-wrap { max-width: 1400px; margin: 0 auto; padding: 0 20px 40px; }
+
+  /* ── Header ───────────────────────────────────── */
+  .header {
+    position: sticky; top: 0; z-index: 100;
+    background: #0f0f20;
+    border-bottom: 1px solid var(--border);
+    padding: 10px 20px;
+  }
+  .header-inner {
+    max-width: 1400px; margin: 0 auto;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .header-logo { height: 32px; display: block; }
+  .header-title { font-size: 16px; font-weight: bold; color: var(--blue); flex: 1; }
+  .health-badge {
+    padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: bold;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    border: 1px solid;
+  }
+  .health-badge.ok     { color: var(--green);  border-color: var(--green);  background: rgba(0,255,51,0.08);  }
+  .health-badge.init   { color: var(--yellow); border-color: var(--yellow); background: rgba(170,170,102,0.1); }
+  .health-badge.error  { color: var(--red);    border-color: var(--red);    background: rgba(255,102,102,0.1); }
+  .header-uptime  { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .header-refresh { color: var(--muted); font-size: 11px; white-space: nowrap; }
+
+  /* ── Error banner ────────────────────────────── */
+  .error-banner {
+    display: none;
+    background: rgba(255,102,102,0.12);
+    border: 1px solid var(--red);
+    color: var(--red);
+    padding: 8px 16px;
+    border-radius: var(--radius);
+    margin-top: 16px;
+  }
+  .error-banner.visible { display: block; }
+
+  /* ── Section headings ────────────────────────── */
+  .section-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted); margin: 24px 0 10px;
+  }
+
+  /* ── Cards ───────────────────────────────────── */
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px;
+  }
+
+  /* ── Metrics row ─────────────────────────────── */
+  .metrics-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+  .metric-card { }
+  .metric-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .metric-value { font-size: 28px; font-weight: bold; color: var(--blue); margin: 4px 0 2px; }
+  .metric-value.green  { color: var(--green); }
+  .metric-value.yellow { color: var(--yellow); }
+  .metric-value.red    { color: var(--red); }
+  .metric-sub  { font-size: 11px; color: var(--muted); }
+
+  /* ── Two-column panels ───────────────────────── */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  /* ── Storage panel ───────────────────────────── */
+  .storage-item { margin-bottom: 12px; }
+  .storage-item:last-child { margin-bottom: 0; }
+  .storage-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .storage-value { font-size: 18px; color: var(--text); margin-bottom: 4px; }
+  .storage-bar-wrap {
+    height: 6px; border-radius: 3px;
+    background: var(--border); overflow: hidden;
+  }
+  .storage-bar {
+    height: 100%; border-radius: 3px;
+    transition: width 0.4s ease;
+  }
+  .storage-bar.sqlite { background: var(--blue); }
+  .storage-bar.vector { background: var(--purple); }
+
+  /* ── Query panel ─────────────────────────────── */
+  .query-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+    margin-bottom: 12px;
+  }
+  .stat-item { }
+  .stat-label { font-size: 10px; text-transform: uppercase; color: var(--muted); }
+  .stat-value { font-size: 20px; font-weight: bold; color: var(--text); }
+  .stat-value.green  { color: var(--green); }
+  .stat-value.red    { color: var(--red); }
+  .stat-value.yellow { color: var(--yellow); }
+  .stat-value.blue   { color: var(--blue); }
+  .stat-value.purple { color: var(--purple); }
+  .last-query { font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 8px; }
+
+  /* ── Skip reasons table ─────────────────────── */
+  .skip-table { width: 100%; border-collapse: collapse; }
+  .skip-table th, .skip-table td {
+    padding: 6px 10px; text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .skip-table th { color: var(--muted); font-weight: normal; font-size: 10px; text-transform: uppercase; }
+  .skip-table td.count { color: var(--yellow); text-align: right; }
+  .skip-table tbody tr:hover { background: rgba(255,255,255,0.03); }
+
+  /* ── Queue panel ─────────────────────────────── */
+  .queue-grid {
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px;
+    margin-bottom: 12px;
+  }
+  .retention-info { font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 8px; }
+  .retention-info span { color: var(--text); }
+
+  /* ── Memory Browser ──────────────────────────── */
+  .browser-controls {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .browser-controls input,
+  .browser-controls select {
+    background: #0f0f20; border: 1px solid var(--border);
+    color: var(--text); font-family: var(--font); font-size: 12px;
+    padding: 5px 10px; border-radius: 4px;
+    outline: none;
+  }
+  .browser-controls input:focus,
+  .browser-controls select:focus { border-color: var(--blue); }
+  .browser-controls input { flex: 1; min-width: 180px; }
+  .browser-controls select { min-width: 140px; }
+  .btn {
+    background: #0f0f20; border: 1px solid var(--border);
+    color: var(--blue); font-family: var(--font); font-size: 12px;
+    padding: 5px 12px; border-radius: 4px; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--blue); background: rgba(102,170,255,0.08); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn.primary { color: var(--green); border-color: var(--green); }
+  .btn.primary:hover { background: rgba(0,255,51,0.07); }
+
+  .mem-table { width: 100%; border-collapse: collapse; }
+  .mem-table th {
+    padding: 6px 10px; text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px; text-transform: uppercase; color: var(--muted); font-weight: normal;
+    white-space: nowrap;
+  }
+  .mem-table td {
+    padding: 7px 10px; border-bottom: 1px solid rgba(42,42,74,0.5);
+    font-size: 12px; vertical-align: top;
+  }
+  .mem-table tbody tr.mem-row { cursor: pointer; }
+  .mem-table tbody tr.mem-row:hover td { background: rgba(255,255,255,0.025); }
+  .mem-table tbody tr.mem-row.expanded td { background: rgba(102,170,255,0.05); }
+  .mem-table tbody tr.detail-row td {
+    padding: 0; background: rgba(15,15,32,0.6);
+    border-bottom: 1px solid var(--border);
+  }
+  .detail-inner { padding: 12px 14px 14px; }
+  .detail-text {
+    color: var(--text); margin-bottom: 12px;
+    white-space: pre-wrap; word-break: break-word; font-size: 12px;
+  }
+  .evidence-section-title {
+    font-size: 10px; text-transform: uppercase; color: var(--muted);
+    margin-bottom: 6px; letter-spacing: 0.06em;
+  }
+  .evidence-list { list-style: none; }
+  .evidence-item {
+    padding: 8px 10px; margin-bottom: 6px;
+    border-radius: 4px; border-left: 3px solid var(--border);
+    background: rgba(15,15,32,0.8);
+  }
+  .evidence-item.role-user      { border-left-color: var(--blue); }
+  .evidence-item.role-assistant { border-left-color: var(--purple); }
+  .evidence-meta { font-size: 10px; color: var(--muted); margin-bottom: 3px; }
+  .evidence-content { font-size: 12px; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+  .evidence-loading { color: var(--muted); font-size: 12px; }
+  .evidence-error   { color: var(--red);   font-size: 12px; }
+
+  .pagination {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 12px;
+  }
+  .pagination-info { font-size: 11px; color: var(--muted); }
+  .pagination-btns { display: flex; gap: 8px; }
+
+  /* ── Memory type color chips ─────────────────── */
+  .type-chip {
+    display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10px;
+    border: 1px solid; white-space: nowrap;
+  }
+  .type-chip.decision              { color: var(--blue);   border-color: var(--blue);   background: rgba(102,170,255,0.1); }
+  .type-chip.investigation_outcome { color: var(--purple); border-color: var(--purple); background: rgba(170,102,255,0.1); }
+  .type-chip.thread_summary        { color: var(--teal);   border-color: var(--teal);   background: rgba(102,170,102,0.1); }
+  .type-chip.task_checkpoint       { color: var(--orange); border-color: var(--orange); background: rgba(204,136,68,0.1); }
+  .type-chip.interest              { color: var(--yellow); border-color: var(--yellow); background: rgba(170,170,102,0.1); }
+  .type-chip.constraint_memory     { color: var(--red);    border-color: var(--red);    background: rgba(255,102,102,0.1); }
+  .type-chip.pattern_memory        { color: #b0a0ff;       border-color: #b0a0ff;       background: rgba(176,160,255,0.1); }
+  .type-chip.continuity_memory     { color: #8fd0ff;       border-color: #8fd0ff;       background: rgba(143,208,255,0.1); }
+  .type-chip.atomic_fact           { color: #aaffcc;       border-color: #aaffcc;       background: rgba(170,255,204,0.1); }
+  .type-chip.fact_summary          { color: var(--green);  border-color: var(--green);  background: rgba(0,255,51,0.08); }
+  .type-chip.discussion_summary    { color: var(--muted);  border-color: var(--border); background: transparent; }
+
+  .lc-chip {
+    display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px;
+    color: var(--muted); border: 1px solid var(--border); background: transparent;
+  }
+  .lc-chip.active      { color: var(--green);  border-color: var(--teal); }
+  .lc-chip.superseded  { color: var(--yellow); border-color: var(--yellow); }
+  .lc-chip.suppressed  { color: var(--red);    border-color: var(--red); }
+
+  .conf-high   { color: var(--green); }
+  .conf-medium { color: var(--yellow); }
+  .conf-low    { color: var(--red); }
+  .conf-unk    { color: var(--muted); }
+
+  .toggle-icon { color: var(--muted); font-size: 10px; user-select: none; }
+  .no-mem { color: var(--muted); padding: 20px; text-align: center; }
+
+  /* ── Responsive hint ────────────────────────── */
+  @media (max-width: 900px) {
+    .metrics-row { grid-template-columns: repeat(2, 1fr); }
+    .two-col     { grid-template-columns: 1fr; }
+    .queue-grid  { grid-template-columns: repeat(3, 1fr); }
+    .query-grid  { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────── -->
+<header class="header">
+  <div class="header-inner">
+    <img class="header-logo" src="/static/logo/pallium_header.png" alt="Pallium"
+         onerror="this.style.display='none'">
+    <div class="header-title">Pallium</div>
+    <span id="health-badge" class="health-badge init">initializing</span>
+    <span id="header-uptime" class="header-uptime">uptime: —</span>
+    <span id="header-refresh" class="header-refresh">refresh in 10s</span>
+  </div>
+</header>
+
+<div class="content-wrap">
+  <div id="error-banner" class="error-banner">API unreachable — server may be down.</div>
+
+  <!-- ── Metrics row ──────────────────────────── -->
+  <div class="section-title">Overview</div>
+  <div class="metrics-row">
+    <div class="card metric-card">
+      <div class="metric-label">Memory Objects</div>
+      <div id="m-memory" class="metric-value">—</div>
+      <div class="metric-sub">stored memory cards</div>
+    </div>
+    <div class="card metric-card">
+      <div class="metric-label">Source Items</div>
+      <div id="m-source" class="metric-value">—</div>
+      <div class="metric-sub">ingested conversation items</div>
+    </div>
+    <div class="card metric-card">
+      <div class="metric-label">Queries</div>
+      <div id="m-queries" class="metric-value">—</div>
+      <div id="m-inject-rate" class="metric-sub">injection rate: —</div>
+    </div>
+    <div class="card metric-card">
+      <div class="metric-label">Pending Queue</div>
+      <div id="m-pending" class="metric-value">—</div>
+      <div id="m-pending-sub" class="metric-sub">awaiting processing</div>
+    </div>
+  </div>
+
+  <!-- ── Storage + Query ──────────────────────── -->
+  <div class="section-title">Storage &amp; Queries</div>
+  <div class="two-col">
+    <div class="card" id="storage-panel">
+      <div class="storage-item">
+        <div class="storage-label">SQLite Database</div>
+        <div id="s-sqlite" class="storage-value">— MB</div>
+        <div class="storage-bar-wrap">
+          <div id="s-sqlite-bar" class="storage-bar sqlite" style="width:0%"></div>
+        </div>
+      </div>
+      <div class="storage-item">
+        <div class="storage-label">Vector Index</div>
+        <div id="s-vector" class="storage-value">— MB</div>
+        <div class="storage-bar-wrap">
+          <div id="s-vector-bar" class="storage-bar vector" style="width:0%"></div>
+        </div>
+      </div>
+      <div style="margin-top:8px; font-size:11px; color:var(--muted)">
+        Vector index: <span id="s-vector-status">—</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="query-grid">
+        <div class="stat-item">
+          <div class="stat-label">Queries</div>
+          <div id="q-total" class="stat-value blue">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Injections</div>
+          <div id="q-injections" class="stat-value green">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Skips</div>
+          <div id="q-skips" class="stat-value">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Blocks injected</div>
+          <div id="q-blocks" class="stat-value purple">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Flags</div>
+          <div id="q-flags" class="stat-value yellow">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Suppressions</div>
+          <div id="q-suppress" class="stat-value">—</div>
+        </div>
+      </div>
+      <div class="last-query">
+        Last query: <span id="q-last">—</span>
+        <span id="q-since" style="margin-left:12px">stats since: —</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Skip Reasons + Queue ─────────────────── -->
+  <div class="section-title">Skip Reasons &amp; Processing Queue</div>
+  <div class="two-col">
+    <div class="card">
+      <table class="skip-table">
+        <thead>
+          <tr><th>Reason</th><th style="text-align:right">Count</th></tr>
+        </thead>
+        <tbody id="skip-tbody">
+          <tr><td colspan="2" style="color:var(--muted)">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <div class="queue-grid">
+        <div class="stat-item">
+          <div class="stat-label">Pending</div>
+          <div id="qs-pending" class="stat-value yellow">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Processing</div>
+          <div id="qs-processing" class="stat-value blue">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Completed</div>
+          <div id="qs-completed" class="stat-value green">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Failed</div>
+          <div id="qs-failed" class="stat-value red">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Skipped</div>
+          <div id="qs-skipped" class="stat-value">—</div>
+        </div>
+      </div>
+      <div class="retention-info" id="retention-info">
+        Retention: <span id="r-enabled">—</span>
+        &nbsp;|&nbsp; Last run: <span id="r-last-run">—</span>
+        &nbsp;|&nbsp; Deleted source: <span id="r-del-src">—</span>
+        &nbsp;|&nbsp; Deleted memory: <span id="r-del-mem">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Memory Browser ───────────────────────── -->
+  <div class="section-title">Memory Browser</div>
+  <div class="card">
+    <div class="browser-controls">
+      <input type="text" id="search-input" placeholder="Filter loaded…" oninput="applyClientFilter()">
+      <select id="type-filter" onchange="reloadMemories()">
+        <option value="">All types</option>
+        <option value="decision">decision</option>
+        <option value="investigation_outcome">investigation_outcome</option>
+        <option value="thread_summary">thread_summary</option>
+        <option value="task_checkpoint">task_checkpoint</option>
+        <option value="interest">interest</option>
+        <option value="constraint_memory">constraint_memory</option>
+        <option value="pattern_memory">pattern_memory</option>
+        <option value="continuity_memory">continuity_memory</option>
+        <option value="atomic_fact">atomic_fact</option>
+        <option value="fact_summary">fact_summary</option>
+        <option value="discussion_summary">discussion_summary</option>
+      </select>
+      <select id="lc-filter" onchange="reloadMemories()">
+        <option value="">All lifecycles</option>
+        <option value="active">active</option>
+        <option value="superseded">superseded</option>
+        <option value="suppressed">suppressed</option>
+      </select>
+      <button class="btn primary" onclick="reloadMemories()">Reload</button>
+    </div>
+
+    <table class="mem-table">
+      <thead>
+        <tr>
+          <th style="width:22px"></th>
+          <th>Type</th>
+          <th>Lifecycle</th>
+          <th>Conf</th>
+          <th>Container</th>
+          <th style="width:130px">Created</th>
+          <th>Summary</th>
+        </tr>
+      </thead>
+      <tbody id="mem-tbody">
+        <tr><td colspan="7" class="no-mem">Loading…</td></tr>
+      </tbody>
+    </table>
+
+    <div class="pagination">
+      <div id="pagination-info" class="pagination-info">—</div>
+      <div class="pagination-btns">
+        <button class="btn" id="btn-prev" onclick="goPrev()" disabled>&#8592; Prev</button>
+        <button class="btn" id="btn-next" onclick="goNext()" disabled>Next &#8594;</button>
+      </div>
+    </div>
+  </div>
+</div><!-- /content-wrap -->
+
+<script>
+// ──────────────────────────────────────────────────
+// State
+// ──────────────────────────────────────────────────
+let _memories = [];         // full page data
+let _filteredMemories = []; // after client-side search
+let _total = 0;
+let _offset = 0;
+const PAGE_SIZE = 50;
+
+let _expandedId = null;     // currently expanded memory id
+let _evidenceCache = {};    // id → items array
+
+let _countdown = 10;
+let _countdownInterval = null;
+
+// ──────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function timeAgo(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  const diff = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (diff < 5)   return 'just now';
+  if (diff < 60)  return diff + 's ago';
+  if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+  return Math.floor(diff/86400) + 'd ago';
+}
+
+function formatUptime(s) {
+  if (s == null) return '—';
+  s = Math.floor(s);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return h + 'h ' + m + 'm ' + sec + 's';
+  if (m > 0) return m + 'm ' + sec + 's';
+  return sec + 's';
+}
+
+function fmtNum(n) {
+  if (n == null) return '—';
+  return n.toLocaleString();
+}
+
+function fmtMb(n) {
+  if (n == null) return '—';
+  return n.toFixed(2) + ' MB';
+}
+
+function confClass(c) {
+  if (!c || c === 'unknown') return 'conf-unk';
+  if (c === 'high')   return 'conf-high';
+  if (c === 'medium') return 'conf-medium';
+  if (c === 'low')    return 'conf-low';
+  return 'conf-unk';
+}
+
+// ──────────────────────────────────────────────────
+// API calls
+// ──────────────────────────────────────────────────
+async function fetchStatus() {
+  try {
+    const r = await fetch('/status');
+    if (!r.ok) throw new Error('status ' + r.status);
+    const data = await r.json();
+    document.getElementById('error-banner').classList.remove('visible');
+    renderStatus(data);
+  } catch (e) {
+    document.getElementById('error-banner').classList.add('visible');
+    const badge = document.getElementById('health-badge');
+    badge.textContent = 'unreachable';
+    badge.className = 'health-badge error';
+  }
+}
+
+async function fetchQueueHealth() {
+  try {
+    const r = await fetch('/debug/queue/health');
+    if (!r.ok) throw new Error('queue ' + r.status);
+    const data = await r.json();
+    renderQueue(data);
+  } catch (e) {
+    // non-fatal, leave existing values
+  }
+}
+
+async function fetchMemories() {
+  const type = document.getElementById('type-filter').value;
+  const lc   = document.getElementById('lc-filter').value;
+  const params = new URLSearchParams({ limit: PAGE_SIZE, offset: _offset });
+  if (type) params.set('type', type);
+  if (lc)   params.set('lifecycle', lc);
+
+  try {
+    const r = await fetch('/dashboard/api/memories?' + params.toString());
+    if (!r.ok) throw new Error('mem ' + r.status);
+    const data = await r.json();
+    renderMemories(data);
+  } catch (e) {
+    document.getElementById('mem-tbody').innerHTML =
+      '<tr><td colspan="7" class="no-mem" style="color:var(--red)">Failed to load memories: ' +
+      escapeHtml(String(e)) + '</td></tr>';
+  }
+}
+
+async function fetchEvidence(id) {
+  if (_evidenceCache[id]) return _evidenceCache[id];
+  const r = await fetch('/memory/' + encodeURIComponent(id) + '/evidence');
+  if (!r.ok) throw new Error('evidence ' + r.status);
+  const data = await r.json();
+  _evidenceCache[id] = data.items || [];
+  return _evidenceCache[id];
+}
+
+// ──────────────────────────────────────────────────
+// Render: status
+// ──────────────────────────────────────────────────
+function renderStatus(data) {
+  // Health badge
+  const badge = document.getElementById('health-badge');
+  const vready = data.vector_index_ready;
+  if (vready) {
+    badge.textContent = 'healthy';
+    badge.className = 'health-badge ok';
+  } else {
+    badge.textContent = 'initializing';
+    badge.className = 'health-badge init';
+  }
+
+  // Uptime
+  document.getElementById('header-uptime').textContent =
+    'uptime: ' + formatUptime(data.uptime_seconds);
+
+  // Metric cards
+  document.getElementById('m-memory').textContent = fmtNum(data.total_memory_objects);
+  document.getElementById('m-source').textContent = fmtNum(data.total_source_items);
+
+  const q = data.query || {};
+  document.getElementById('m-queries').textContent = fmtNum(q.total_queries);
+  const rate = (q.total_queries > 0)
+    ? Math.round((q.total_injections / q.total_queries) * 100) + '%'
+    : '—';
+  document.getElementById('m-inject-rate').textContent = 'injection rate: ' + rate;
+
+  const pending = data.pending_items;
+  const pendingEl = document.getElementById('m-pending');
+  pendingEl.textContent = fmtNum(pending);
+  pendingEl.className = 'metric-value' +
+    (pending > 50 ? ' yellow' : pending > 200 ? ' red' : '');
+
+  if (data.oldest_pending_age_seconds != null) {
+    document.getElementById('m-pending-sub').textContent =
+      'oldest: ' + formatUptime(data.oldest_pending_age_seconds);
+  } else {
+    document.getElementById('m-pending-sub').textContent = 'awaiting processing';
+  }
+
+  // Storage
+  const stor = data.storage || {};
+  document.getElementById('s-sqlite').textContent = fmtMb(stor.sqlite_mb);
+  document.getElementById('s-vector').textContent = fmtMb(stor.vector_index_mb);
+
+  // bars — scale relative to each other (max 100MB for bar scale)
+  const SCALE_MB = 100;
+  const sqlPct = Math.min(100, ((stor.sqlite_mb || 0) / SCALE_MB) * 100);
+  const vecPct = Math.min(100, ((stor.vector_index_mb || 0) / SCALE_MB) * 100);
+  document.getElementById('s-sqlite-bar').style.width = sqlPct + '%';
+  document.getElementById('s-vector-bar').style.width = vecPct + '%';
+
+  document.getElementById('s-vector-status').textContent =
+    data.vector_index_ready ? 'ready' : 'initializing…';
+
+  // Query panel
+  document.getElementById('q-total').textContent    = fmtNum(q.total_queries);
+  document.getElementById('q-injections').textContent = fmtNum(q.total_injections);
+  document.getElementById('q-skips').textContent    = fmtNum(q.total_skips);
+  document.getElementById('q-blocks').textContent   = fmtNum(q.total_blocks_injected);
+
+  const flagEl = document.getElementById('q-flags');
+  flagEl.textContent = fmtNum(q.total_flags);
+  flagEl.className = 'stat-value' + ((q.total_flags > 0) ? ' yellow' : '');
+
+  document.getElementById('q-suppress').textContent = fmtNum(q.total_suppressions);
+  document.getElementById('q-last').textContent = timeAgo(q.last_query_at);
+  document.getElementById('q-since').textContent =
+    'stats since: ' + (q.stats_since ? timeAgo(q.stats_since) : '—');
+
+  // Skip reasons
+  const tbody = document.getElementById('skip-tbody');
+  const reasons = q.skip_reasons || {};
+  const entries = Object.entries(reasons).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="2" style="color:var(--muted)">No skips recorded</td></tr>';
+  } else {
+    tbody.innerHTML = entries.map(([reason, count]) =>
+      '<tr><td>' + escapeHtml(reason) + '</td><td class="count">' + fmtNum(count) + '</td></tr>'
+    ).join('');
+  }
+}
+
+// ──────────────────────────────────────────────────
+// Render: queue
+// ──────────────────────────────────────────────────
+function renderQueue(data) {
+  const sc = data.status_counts || {};
+  document.getElementById('qs-pending').textContent    = fmtNum(sc.pending    || 0);
+  document.getElementById('qs-processing').textContent = fmtNum(sc.processing || 0);
+  document.getElementById('qs-completed').textContent  = fmtNum(sc.completed  || 0);
+  document.getElementById('qs-failed').textContent     = fmtNum(sc.failed     || 0);
+  document.getElementById('qs-skipped').textContent    = fmtNum(sc.skipped    || 0);
+
+  const ret = data.retention || {};
+  document.getElementById('r-enabled').innerHTML =
+    ret.enabled
+      ? '<span style="color:var(--green)">enabled</span>'
+      : '<span style="color:var(--muted)">disabled</span>';
+  document.getElementById('r-last-run').textContent = timeAgo(ret.last_run_completed_at);
+  document.getElementById('r-del-src').textContent  = fmtNum(ret.last_deleted_source_items || 0);
+  document.getElementById('r-del-mem').textContent  = fmtNum(ret.last_deleted_memory_objects || 0);
+}
+
+// ──────────────────────────────────────────────────
+// Render: memories
+// ──────────────────────────────────────────────────
+function renderMemories(data) {
+  _memories = data.memories || [];
+  _total    = data.total    || 0;
+  _offset   = data.offset   || 0;
+  _expandedId = null;
+
+  applyClientFilter();
+  updatePagination();
+}
+
+function applyClientFilter() {
+  const q = document.getElementById('search-input').value.trim().toLowerCase();
+  if (q) {
+    _filteredMemories = _memories.filter(m => {
+      const txt = (m.display_text + ' ' + m.type + ' ' + (m.container_ref || '') + ' ' + m.id).toLowerCase();
+      return txt.includes(q);
+    });
+  } else {
+    _filteredMemories = _memories;
+  }
+  renderMemTable();
+}
+
+function renderMemTable() {
+  const tbody = document.getElementById('mem-tbody');
+  if (_filteredMemories.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="no-mem">No memories found.</td></tr>';
+    return;
+  }
+
+  const rows = [];
+  for (const m of _filteredMemories) {
+    const typeSlug  = (m.type || 'unknown').replace(/[^a-z_]/g, '_');
+    const lcSlug    = (m.lifecycle || 'unknown').replace(/[^a-z_]/g, '_');
+    const isExpanded = (m.id === _expandedId);
+
+    rows.push(
+      '<tr class="mem-row' + (isExpanded ? ' expanded' : '') + '" onclick="toggleRow(\'' + escapeHtml(m.id) + '\')">' +
+        '<td class="toggle-icon">' + (isExpanded ? '&#9660;' : '&#9654;') + '</td>' +
+        '<td><span class="type-chip ' + typeSlug + '">' + escapeHtml(m.type || '?') + '</span></td>' +
+        '<td><span class="lc-chip ' + lcSlug + '">' + escapeHtml(m.lifecycle || '?') + '</span></td>' +
+        '<td><span class="' + confClass(m.confidence) + '">' + escapeHtml(String(m.confidence || '?')) + '</span></td>' +
+        '<td style="color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(m.container_ref || '') + '">' +
+          escapeHtml(m.container_ref || '—') + '</td>' +
+        '<td style="color:var(--muted);white-space:nowrap" title="' + escapeHtml(m.created_at || '') + '">' +
+          timeAgo(m.created_at) + '</td>' +
+        '<td style="max-width:500px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(m.display_text || '') + '">' +
+          escapeHtml(m.display_text || '<no summary>') + '</td>' +
+      '</tr>'
+    );
+
+    if (isExpanded) {
+      rows.push(
+        '<tr class="detail-row" id="detail-' + escapeHtml(m.id) + '">' +
+          '<td colspan="7">' +
+            '<div class="detail-inner" id="detail-inner-' + escapeHtml(m.id) + '">' +
+              '<div class="detail-text">' + escapeHtml(m.display_text || '') + '</div>' +
+              '<div class="evidence-section-title">Evidence</div>' +
+              '<div id="ev-' + escapeHtml(m.id) + '" class="evidence-loading">Loading evidence…</div>' +
+            '</div>' +
+          '</td>' +
+        '</tr>'
+      );
+      loadEvidence(m.id);
+    }
+  }
+
+  tbody.innerHTML = rows.join('');
+}
+
+// ──────────────────────────────────────────────────
+// Toggle row expand/collapse
+// ──────────────────────────────────────────────────
+function toggleRow(id) {
+  if (_expandedId === id) {
+    _expandedId = null;
+  } else {
+    _expandedId = id;
+  }
+  renderMemTable();
+}
+
+async function loadEvidence(id) {
+  const container = document.getElementById('ev-' + id);
+  if (!container) return;
+  try {
+    const items = await fetchEvidence(id);
+    if (!items || items.length === 0) {
+      container.innerHTML = '<span style="color:var(--muted)">No evidence items linked.</span>';
+      return;
+    }
+    const html = '<ul class="evidence-list">' +
+      items.map(ev => {
+        const roleSlug = (ev.role || '').replace(/[^a-z_]/g, '_');
+        const meta = [
+          ev.role      ? 'role: ' + escapeHtml(ev.role) : null,
+          ev.actor_ref ? 'actor: ' + escapeHtml(ev.actor_ref) : null,
+          ev.thread_ref ? 'thread: ' + escapeHtml(ev.thread_ref) : null,
+          ev.occurred_at ? timeAgo(ev.occurred_at) : null,
+          ev.source_type ? ev.source_type : null,
+        ].filter(Boolean).join(' · ');
+        return '<li class="evidence-item role-' + roleSlug + '">' +
+          '<div class="evidence-meta">' + meta + '</div>' +
+          '<div class="evidence-content">' + escapeHtml(ev.content || '') + '</div>' +
+          '</li>';
+      }).join('') +
+    '</ul>';
+    container.innerHTML = html;
+  } catch (e) {
+    if (container) {
+      container.innerHTML = '<span class="evidence-error">Failed to load evidence: ' +
+        escapeHtml(String(e)) + '</span>';
+    }
+  }
+}
+
+// ──────────────────────────────────────────────────
+// Pagination
+// ──────────────────────────────────────────────────
+function updatePagination() {
+  const loaded = _memories.length;
+  const page   = Math.floor(_offset / PAGE_SIZE) + 1;
+  const pages  = Math.ceil(_total / PAGE_SIZE) || 1;
+
+  document.getElementById('pagination-info').textContent =
+    'Showing ' + (_offset + 1) + '–' + (_offset + loaded) +
+    ' of ' + _total + ' (page ' + page + ' of ' + pages + ')';
+
+  document.getElementById('btn-prev').disabled = (_offset <= 0);
+  document.getElementById('btn-next').disabled = (_offset + PAGE_SIZE >= _total);
+}
+
+function goPrev() {
+  if (_offset <= 0) return;
+  _offset = Math.max(0, _offset - PAGE_SIZE);
+  fetchMemories();
+}
+
+function goNext() {
+  if (_offset + PAGE_SIZE >= _total) return;
+  _offset += PAGE_SIZE;
+  fetchMemories();
+}
+
+function reloadMemories() {
+  _offset = 0;
+  _evidenceCache = {};
+  fetchMemories();
+}
+
+// ──────────────────────────────────────────────────
+// Refresh countdown
+// ──────────────────────────────────────────────────
+function startCountdown() {
+  _countdown = 10;
+  if (_countdownInterval) clearInterval(_countdownInterval);
+  _countdownInterval = setInterval(() => {
+    _countdown--;
+    document.getElementById('header-refresh').textContent =
+      'refresh in ' + _countdown + 's';
+    if (_countdown <= 0) {
+      _countdown = 10;
+      fetchStatus();
+      fetchQueueHealth();
+    }
+  }, 1000);
+}
+
+// ──────────────────────────────────────────────────
+// Init
+// ──────────────────────────────────────────────────
+(function init() {
+  fetchStatus();
+  fetchQueueHealth();
+  fetchMemories();
+  startCountdown();
+})();
+</script>
+</body>
 </html>
