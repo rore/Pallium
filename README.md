@@ -217,6 +217,7 @@ reproduction commands are in [docs/benchmarks.md](docs/benchmarks.md).
 
 **Integrating Pallium:**
 - [Agent Integration](docs/agent-integration.md) — wiring into a runtime, MCP tools
+- [Claude Code Integration](docs/claude-code-integration.md) — local memory sidecar for Claude Code
 - [Integration Example](docs/integration-example.md) — Slack agent walkthrough
 - [Privacy and Visibility](docs/privacy-and-visibility.md) — scoped memory boundaries
 
