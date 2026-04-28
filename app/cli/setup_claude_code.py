@@ -53,12 +53,13 @@ def _write_json(path: Path, data: dict) -> None:
 
 
 def _hook_command(script_name: str) -> str:
-    python = _python_executable()
-    script = _hooks_dir() / script_name
+    python = _python_executable().replace("\\", "/")
+    script = str(_hooks_dir() / script_name).replace("\\", "/")
     return f"{python} {script}"
 
 
 def _register_mcp(port: int) -> None:
+    subprocess.run(["claude", "mcp", "remove", "--scope", "user", "pallium"], check=False)
     subprocess.run(
         ["claude", "mcp", "add", "--transport", "http", "--scope", "user", "pallium", f"http://localhost:{port}/mcp"],
         check=True,
@@ -102,7 +103,7 @@ def _register_hooks(settings: dict) -> dict:
 
 
 def _unregister_hooks(settings: dict) -> dict:
-    hooks_dir_str = str(_hooks_dir())
+    hooks_dir_normalized = str(_hooks_dir()).replace("\\", "/")
     if "hooks" not in settings:
         return settings
 
@@ -111,7 +112,7 @@ def _unregister_hooks(settings: dict) -> dict:
         filtered = [
             entry for entry in entries
             if not any(
-                hooks_dir_str in h.get("command", "")
+                hooks_dir_normalized in h.get("command", "").replace("\\", "/")
                 for h in entry.get("hooks", [])
             )
         ]
