@@ -558,6 +558,28 @@ class PalliumService:
             self._query_stats.record_flag(suppressed=result.suppressed)
         return result
 
+    def record_memory_feedback(
+        self,
+        memory_object_id: str,
+        rating: str,
+        reason: str | None,
+        query_context: str | None,
+        query_audit_log_id: str | None,
+        rater_ref: str | None,
+    ) -> str:
+        """Record a relevance feedback judgment for an injected memory.
+
+        Returns the feedback record id. Always succeeds — 200 even for deleted memories.
+        """
+        return self._storage.record_memory_feedback(
+            memory_object_id=memory_object_id,
+            rating=rating,
+            reason=reason,
+            query_context=query_context,
+            query_audit_log_id=query_audit_log_id,
+            rater_ref=rater_ref,
+        )
+
     def _run_targeted_fact_consolidation(self, use_case: str, container_ref: str, subjects: list[str]) -> None:
         """Callback for ThreadRebuilder: run fact consolidation for specific subjects."""
         self._consolidation_runner.run_targeted_consolidation(use_case, container_ref, subjects)

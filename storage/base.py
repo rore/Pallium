@@ -506,6 +506,23 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def record_memory_feedback(
+        self,
+        memory_object_id: str,
+        rating: str,
+        reason: str | None,
+        query_context: str | None,
+        query_audit_log_id: str | None,
+        rater_ref: str | None,
+    ) -> str:
+        """Record a relevance feedback judgment. Returns the feedback record id.
+
+        Does not raise KeyError for missing memory_object_id — feedback survives
+        memory deletion.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def get_queue_health_snapshot(
         self,
         *,

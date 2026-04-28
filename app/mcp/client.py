@@ -124,3 +124,38 @@ class PalliumMcpClient:
             "immediate": immediate,
         }
         return await self._post(f"/memory/{memory_object_id}/flag", payload)
+
+    async def rate_memory(
+        self,
+        memory_object_id: str,
+        rating: str,
+        reason: str | None = None,
+        query_context: str | None = None,
+        query_audit_log_id: str | None = None,
+        rater_ref: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"rating": rating}
+        if reason is not None:
+            payload["reason"] = reason
+        if query_context is not None:
+            payload["query_context"] = query_context
+        if query_audit_log_id is not None:
+            payload["query_audit_log_id"] = query_audit_log_id
+        if rater_ref is not None:
+            payload["rater_ref"] = rater_ref
+        try:
+            async with httpx.AsyncClient(base_url=self._base_url, timeout=30.0) as http:
+                response = await http.post(
+                    f"/memory/{memory_object_id}/feedback",
+                    json=payload,
+                )
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPStatusError as exc:
+            try:
+                body = exc.response.json()
+            except Exception:
+                body = exc.response.text
+            return {"error": str(exc), "detail": body}
+        except Exception as exc:
+            return {"error": str(exc)}

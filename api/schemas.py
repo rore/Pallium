@@ -380,3 +380,17 @@ class FlagMemoryResponse(BaseModel):
     flag_count: int
     unique_sources: int
     suppressed: bool
+
+
+class MemoryFeedbackRequest(BaseModel):
+    rating: Literal["relevant", "not_relevant"]
+    reason: str | None = None
+    query_context: str | None = None
+    query_audit_log_id: str | None = None
+    rater_ref: str | None = None
+
+
+class MemoryFeedbackResponse(BaseModel):
+    memory_object_id: str
+    rating: str
+    recorded: bool

@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, event, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from core.contracts import ProcessResult
-from core.models import EvidenceReference, IndexEntry, MemoryFlag, MemoryObject, Relation, SourceItem, utc_now
+from core.models import EvidenceReference, IndexEntry, MemoryFeedback, MemoryFlag, MemoryObject, Relation, SourceItem, utc_now
 from core.turn_inference import ThreadStats
 from storage.base import StorageProvider
 from storage.sqlite_codec import SQLiteCodecMixin
@@ -19,6 +19,7 @@ from storage.sqlite_schema import (
     Base,
     IndexEntryRecord,
     MaintenanceStateRecord,
+    MemoryFeedbackRecord,
     MemoryFlagRecord,
     MemoryObjectRecord,
     QueryAuditLogRecord,
@@ -227,6 +228,36 @@ class SQLiteStorageProvider(
                 source_ref=flag.source_ref,
                 flagged_at=flag.flagged_at,
             ))
+
+    def record_memory_feedback(
+        self,
+        memory_object_id: str,
+        rating: str,
+        reason: str | None,
+        query_context: str | None,
+        query_audit_log_id: str | None,
+        rater_ref: str | None,
+    ) -> str:
+        """Record a relevance feedback judgment for an injected memory.
+
+        Unlike store_memory_flag, this does NOT check for memory existence —
+        feedback is an analytics record and should succeed even for deleted memories.
+        Returns the feedback record id.
+        """
+        from core.models import new_id
+        feedback_id = new_id()
+        with self._session_factory.begin() as session:
+            session.add(MemoryFeedbackRecord(
+                id=feedback_id,
+                memory_object_id=memory_object_id,
+                rating=rating,
+                reason=reason,
+                query_context=query_context,
+                query_audit_log_id=query_audit_log_id,
+                rater_ref=rater_ref,
+                created_at=utc_now(),
+            ))
+        return feedback_id
 
     def count_unique_flag_sources(self, memory_object_id: str, window_days: int) -> int:
         cutoff = utc_now() - timedelta(days=window_days)

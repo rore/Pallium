@@ -125,6 +125,18 @@ class MemoryFlag:
 
 
 @dataclass(frozen=True)
+class MemoryFeedback:
+    memory_object_id: str
+    rating: str  # "relevant" | "not_relevant"
+    reason: str | None = None
+    query_context: str | None = None
+    query_audit_log_id: str | None = None
+    rater_ref: str | None = None
+    id: str = field(default_factory=new_id)
+    created_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass(frozen=True)
 class FlagResult:
     memory_object_id: str
     flag_count: int

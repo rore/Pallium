@@ -176,6 +176,19 @@ class MemoryFlagRecord(Base):
     flagged_at = Column(DateTime(timezone=True), nullable=False)
 
 
+class MemoryFeedbackRecord(Base):
+    __tablename__ = "memory_feedback"
+
+    id = Column(String, primary_key=True)
+    memory_object_id = Column(String, nullable=False)  # no FK — survives deletion
+    rating = Column(String, nullable=False)             # "relevant" | "not_relevant"
+    reason = Column(Text, nullable=True)
+    query_context = Column(Text, nullable=True)
+    query_audit_log_id = Column(String, nullable=True)  # join to audit log for context
+    rater_ref = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+
 class SQLiteSchemaMixin:
     _SOURCE_ITEM_MIGRATIONS = {
         "occurred_at": "ALTER TABLE source_items ADD COLUMN occurred_at DATETIME",
@@ -298,6 +311,16 @@ class SQLiteSchemaMixin:
             "ON memory_flags(memory_object_id)"
         ),
     }
+    _MEMORY_FEEDBACK_INDEX_MIGRATIONS = {
+        "idx_memory_feedback_memory_object_id": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_feedback_memory_object_id "
+            "ON memory_feedback (memory_object_id)"
+        ),
+        "idx_memory_feedback_created_at": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_feedback_created_at "
+            "ON memory_feedback (created_at)"
+        ),
+    }
 
     def _initialize_schema(self) -> None:
         with self._schema_initialization_lock():
@@ -313,6 +336,7 @@ class SQLiteSchemaMixin:
             self._ensure_indexes()
             self._ensure_query_audit_log_indexes()
             self._ensure_memory_flag_indexes()
+            self._ensure_memory_feedback_indexes()
             self._ensure_fts5_table()
             self._backfill_legacy_memory_freshness()
             self._backfill_thread_position()
@@ -504,6 +528,11 @@ class SQLiteSchemaMixin:
     def _ensure_memory_flag_indexes(self) -> None:
         with self._engine.begin() as connection:
             for _index_name, create_sql in self._MEMORY_FLAG_INDEX_MIGRATIONS.items():
+                connection.execute(text(create_sql))
+
+    def _ensure_memory_feedback_indexes(self) -> None:
+        with self._engine.begin() as connection:
+            for _index_name, create_sql in self._MEMORY_FEEDBACK_INDEX_MIGRATIONS.items():
                 connection.execute(text(create_sql))
 
     def _ensure_fts5_available(self, connection) -> None:

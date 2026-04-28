@@ -14,6 +14,8 @@ from api.schemas import (
     ItemCreateResponse,
     MemoryEvidenceItemResponse,
     MemoryEvidenceResponse,
+    MemoryFeedbackRequest,
+    MemoryFeedbackResponse,
     ProcessingStatusResponse,
     QueryDebugResponse,
     QueryRequest,
@@ -515,6 +517,25 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             flag_count=result.flag_count,
             unique_sources=result.unique_sources,
             suppressed=result.suppressed,
+        )
+
+    @router.post("/memory/{memory_object_id}/feedback", response_model=MemoryFeedbackResponse)
+    def feedback_memory(
+        memory_object_id: str, request: MemoryFeedbackRequest,
+    ) -> MemoryFeedbackResponse:
+        resolved_rater_ref = request.rater_ref or "local"
+        service.record_memory_feedback(
+            memory_object_id=memory_object_id,
+            rating=request.rating,
+            reason=request.reason,
+            query_context=request.query_context,
+            query_audit_log_id=request.query_audit_log_id,
+            rater_ref=resolved_rater_ref,
+        )
+        return MemoryFeedbackResponse(
+            memory_object_id=memory_object_id,
+            rating=request.rating,
+            recorded=True,
         )
 
     return router
