@@ -63,12 +63,28 @@ if ($existing) {
     Write-Host "  Removed existing scheduled task."
 }
 
-# Create the action — wrapped in hidden PowerShell to avoid a visible console window
-# Set env vars for service-specific DB location
-$EnvSetup = "`$env:PALLIUM_SQLITE_URL='$SqliteUrl'; `$env:PALLIUM_VECTOR_INDEX_PATH='$VectorIndexPath'; "
+# Create launcher script that sets env vars and starts Pallium
+$LauncherDir = Join-Path $env:USERPROFILE ".pallium"
+$LauncherPath = Join-Path $LauncherDir "service_launcher.py"
+$LauncherContent = @"
+import os, sys
+os.environ["PALLIUM_SQLITE_URL"] = "$($SqliteUrl -replace '\\', '/')"
+os.environ["PALLIUM_VECTOR_INDEX_PATH"] = "$($VectorIndexPath -replace '\\', '/')"
+sys.path.insert(0, r"$RepoRoot")
+from app.run import run
+raise SystemExit(run(["all", "--port", "$Port"]))
+"@
+Set-Content -Path $LauncherPath -Value $LauncherContent -Encoding UTF8
+Write-Host "  Wrote launcher: $LauncherPath"
+
+# Create the action — use pythonw.exe for windowless execution
+$PythonwPath = Join-Path (Split-Path $PythonPath) "pythonw.exe"
+if (-not (Test-Path $PythonwPath)) {
+    $PythonwPath = $PythonPath
+}
 $Action = New-ScheduledTaskAction `
-    -Execute "powershell.exe" `
-    -Argument "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command `"$EnvSetup & '$PythonPath' -m app.run all --port $Port`"" `
+    -Execute $PythonwPath `
+    -Argument "`"$LauncherPath`"" `
     -WorkingDirectory $RepoRoot
 
 # Trigger at logon
