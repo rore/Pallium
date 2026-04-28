@@ -90,14 +90,15 @@ $Action = New-ScheduledTaskAction `
 # Trigger at logon
 $Trigger = New-ScheduledTaskTrigger -AtLogOn
 
-# Settings: restart on failure, don't stop on idle, run indefinitely
+# Settings: restart on failure, don't stop on idle, run indefinitely, no window
 $Settings = New-ScheduledTaskSettingsSet `
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -DontStopOnIdleEnd `
     -ExecutionTimeLimit (New-TimeSpan -Days 0) `
     -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries
+    -DontStopIfGoingOnBatteries `
+    -Hidden
 
 # Register the task (runs as current user)
 Register-ScheduledTask `
