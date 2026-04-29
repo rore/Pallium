@@ -31,9 +31,6 @@ def _pallium_home(override: str | None = None) -> Path:
     env = os.environ.get("PALLIUM_HOME")
     if env:
         return Path(env).expanduser().resolve()
-    if sys.platform == "win32":
-        base = os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")
-        return Path(base) / "Pallium"
     return Path.home() / ".pallium"
 
 

@@ -30,15 +30,7 @@ class TestPalliumHome:
         result = _pallium_home()
         assert result == tmp_path / "from-env"
 
-    @pytest.mark.skipif(sys.platform != "win32", reason="Windows-specific")
-    def test_windows_default(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.delenv("PALLIUM_HOME", raising=False)
-        monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\Test\AppData\Local")
-        result = _pallium_home()
-        assert result == Path(r"C:\Users\Test\AppData\Local\Pallium")
-
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-specific")
-    def test_linux_default(self, monkeypatch: pytest.MonkeyPatch):
+    def test_default_is_dot_pallium(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv("PALLIUM_HOME", raising=False)
         result = _pallium_home()
         assert result == Path.home() / ".pallium"
