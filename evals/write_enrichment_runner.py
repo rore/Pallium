@@ -61,9 +61,9 @@ def main() -> int:
     args = parser.parse_args()
 
     config = AppConfig.from_env()
-    package = config.package_config("llm_agent_memory")
+    package = config.package_config(config.default_use_case)
     if not package.llm_provider or not package.model:
-        raise ValueError("llm_agent_memory is not configured with a real provider/model")
+        raise ValueError(f"{config.default_use_case} is not configured with a real provider/model")
     provider = build_llm_provider(config, provider_name=package.llm_provider, model=package.model)
     prompt_variants = [item.strip() for item in args.prompt_variants.split(",") if item.strip()] if args.prompt_variants else [DEFAULT_WRITE_ENRICHMENT_PROMPT_VARIANT]
     run_dir = run_write_enrichment_eval(
@@ -98,7 +98,7 @@ def run_write_enrichment_eval(
     if max_concurrency < 1:
         raise ValueError("max_concurrency must be at least 1")
 
-    package = config.package_config("llm_agent_memory")
+    package = config.package_config(config.default_use_case)
     provider_config = config.provider_config(package.llm_provider) if package.llm_provider else None
     resolved_variants = prompt_variants or [DEFAULT_WRITE_ENRICHMENT_PROMPT_VARIANT]
     run_id = run_name or _build_run_id(

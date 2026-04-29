@@ -131,10 +131,6 @@ def build_semantic_plugins(config: AppConfig, routing_overrides: RoutingOverride
         if plugin is not None:
             plugins[package_name] = plugin
 
-    if "demo_agent_memory" not in plugins:
-        demo_plugin = DemoAgentMemoryPlugin()
-        plugins[demo_plugin.name] = demo_plugin
-
     return plugins
 
 
@@ -253,6 +249,10 @@ def build_service(
     resolved_config = config or AppConfig.from_env()
     storage = build_storage_provider(resolved_config)
     plugins = build_semantic_plugins(resolved_config, routing_overrides=routing_overrides)
+
+    active_names = list(plugins.keys())
+    logger.info("Active semantic packages: %s", ", ".join(active_names) if active_names else "(none)")
+
     if resolved_config.default_use_case not in plugins:
         raise ValueError(f"Unsupported default use case: {resolved_config.default_use_case}")
     retrieval = build_retrieval_provider(storage)

@@ -17,7 +17,7 @@ from app.snapshot import resolve_live_db_path, restore_snapshot, create_snapshot
 # bug during model initialization.  CREATE_NEW_PROCESS_GROUP isolates children.
 _POPEN_KWARGS: dict[str, object] = {}
 if sys.platform == "win32":
-    _POPEN_KWARGS = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    _POPEN_KWARGS = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | 0x08000000}
 
 
 def _default_popen(cmd: list[str], **kwargs) -> subprocess.Popen:

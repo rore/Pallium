@@ -98,11 +98,6 @@ class SnapshotConfig:
 def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
     return {
         "demo_agent_memory": SemanticPackageConfig(name="demo_agent_memory", implementation="demo_agent_memory"),
-        "llm_agent_memory": SemanticPackageConfig(
-            name="llm_agent_memory",
-            implementation="llm_agent_memory",
-            prompt_variant="strict_typed_memory_v8b_work_refs_separate",
-        ),
         "agent_conversation_memory": SemanticPackageConfig(
             name="agent_conversation_memory",
             implementation="agent_conversation_memory",
@@ -120,7 +115,7 @@ def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
 class AppConfig:
     storage_backend: str = "sqlite"
     sqlite_url: str = "sqlite:///./pallium.db"
-    default_use_case: str = "demo_agent_memory"
+    default_use_case: str = "agent_conversation_memory"
     llm_providers: dict[str, LLMProviderConfig] = field(default_factory=dict)
     embedding_providers: dict[str, EmbeddingProviderConfig] = field(default_factory=dict)
     semantic_packages: dict[str, SemanticPackageConfig] = field(default_factory=_default_semantic_packages)
@@ -145,14 +140,10 @@ class AppConfig:
         # Auto-create default ONNX embedding provider when none is configured
         embedding = copy.deepcopy(self.embedding_providers)
         if not embedding:
-            logger.warning(
-                "Using default English-only embedding model (BAAI/bge-small-en-v1.5). "
-                "Configure [embedding_providers] in pallium.local.toml for multilingual support."
-            )
             embedding["onnx"] = EmbeddingProviderConfig(
                 name="onnx",
                 kind="onnx",
-                model="BAAI/bge-small-en-v1.5",
+                model="intfloat/multilingual-e5-small",
             )
 
         if self.llm_provider and self.llm_base_url:
@@ -205,8 +196,8 @@ class AppConfig:
             default_use_case=_resolve_global_value(
                 "PALLIUM_DEFAULT_USE_CASE",
                 env_values,
-                config_data.get("default_use_case") or "demo_agent_memory",
-            ) or "demo_agent_memory",
+                config_data.get("default_use_case") or "agent_conversation_memory",
+            ) or "agent_conversation_memory",
             observability=ObservabilityConfig(
                 integration_debug=_resolve_bool_value(
                     "PALLIUM_OBSERVABILITY_INTEGRATION_DEBUG",

@@ -51,6 +51,25 @@ def _ensure_dirs(home: Path) -> None:
         (home / sub).mkdir(parents=True, exist_ok=True)
 
 
+def _seed_config(home: Path) -> None:
+    """Copy pallium.local.toml and .env.local into service home if not already present."""
+    import shutil
+
+    config_dest = home / "config" / "pallium.toml"
+    if not config_dest.exists():
+        local_toml = Path("pallium.local.toml")
+        if local_toml.exists():
+            shutil.copy2(local_toml, config_dest)
+            print(f"  Copied {local_toml} → {config_dest}")
+
+    env_dest = home / "config" / ".env"
+    if not env_dest.exists():
+        local_env = Path(".env.local")
+        if local_env.exists():
+            shutil.copy2(local_env, env_dest)
+            print(f"  Copied {local_env} → {env_dest}")
+
+
 # ---------------------------------------------------------------------------
 # File lock
 # ---------------------------------------------------------------------------
@@ -172,6 +191,16 @@ def _install_windows(pallium_cmd: str, port: int, home: Path) -> None:
     task_name = "Pallium"
     username = os.environ.get("USERDOMAIN", "") + "\\" + os.environ.get("USERNAME", "")
 
+    # Write VBS wrapper that launches service with hidden window.
+    # WshShell.Run with 0 hides the console window regardless of process type.
+    python_exe = sys.executable
+    vbs_path = home / "run" / "pallium_launcher.vbs"
+    vbs_content = (
+        'Set WshShell = CreateObject("WScript.Shell")\n'
+        f'WshShell.Run """{python_exe}"" -m app.run service run --port {port}", 0, False\n'
+    )
+    vbs_path.write_text(vbs_content, encoding="ascii")
+
     xml_content = f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -206,8 +235,8 @@ def _install_windows(pallium_cmd: str, port: int, home: Path) -> None:
   </Settings>
   <Actions>
     <Exec>
-      <Command>{pallium_cmd}</Command>
-      <Arguments>service run --port {port}</Arguments>
+      <Command>wscript.exe</Command>
+      <Arguments>"{vbs_path}"</Arguments>
     </Exec>
   </Actions>
 </Task>"""
@@ -238,10 +267,25 @@ def _uninstall_windows() -> None:
 
 
 def _start_windows() -> None:
-    subprocess.run(
-        ["schtasks", "/run", "/tn", "Pallium"],
-        capture_output=True, text=True,
-    )
+    # Use the VBS wrapper if it exists (written by _install_windows) for truly
+    # invisible launch. Falls back to direct Popen with CREATE_NO_WINDOW.
+    home = _pallium_home()
+    vbs_path = home / "run" / "pallium_launcher.vbs"
+    if vbs_path.exists():
+        subprocess.Popen(
+            ["wscript.exe", str(vbs_path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    else:
+        CREATE_NO_WINDOW = 0x08000000
+        DETACHED_PROCESS = 0x00000008
+        subprocess.Popen(
+            [sys.executable, "-m", "app.run", "service", "run"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +349,9 @@ def _cmd_install(args: argparse.Namespace) -> int:
     print(f"  Port: {port}")
 
     _ensure_dirs(home)
+
+    # Copy local config to service home if none exists there yet
+    _seed_config(home)
 
     pallium_cmd = _find_pallium_cmd()
     print(f"  Command: {pallium_cmd}")
@@ -529,6 +576,21 @@ def _cmd_run(args: argparse.Namespace) -> int:
     # Configure file logging
     from app.runtime_logging import configure_file_logging
     configure_file_logging(home / "logs")
+
+    # Report active configuration
+    import logging as _logging
+    _logging.basicConfig(level=_logging.INFO)
+    from app.config import AppConfig
+    config = AppConfig.from_env()
+    from app.dependencies import build_semantic_plugins
+    plugins = build_semantic_plugins(config)
+    active_names = list(plugins.keys())
+    from app.runtime_logging import emit_runtime_log
+    emit_runtime_log("service", f"Active packages: {', '.join(active_names)}")
+    emit_runtime_log("service", f"Default use case: {config.default_use_case}")
+    embedding_model = next(iter(config.embedding_providers.values()), None)
+    if embedding_model:
+        emit_runtime_log("service", f"Embedding model: {embedding_model.model}")
 
     try:
         from app.supervisor import run_supervisor

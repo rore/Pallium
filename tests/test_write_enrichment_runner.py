@@ -89,7 +89,7 @@ def test_run_write_enrichment_eval_writes_summary_and_results(tmp_path: Path) ->
         input_file=input_file,
         output_root=output_dir,
         provider=VariantAwareEnrichmentStubProvider(),
-        config=AppConfig(default_use_case='llm_agent_memory', llm_prompt_variant='strict_typed_memory_v5_compact_contract'),
+        config=AppConfig(default_use_case='agent_conversation_memory', llm_prompt_variant='strict_typed_memory_v5_compact_contract'),
         run_name='write-enrichment-variant-run',
         prompt_variants=['baseline_v1', 'search_context_v2_compact', 'search_context_v2_handles', 'search_context_v3_precise_record'],
         split_output=True,
@@ -135,7 +135,7 @@ def test_run_write_enrichment_eval_records_errors(tmp_path: Path) -> None:
         input_file=input_file,
         output_root=output_dir,
         provider=ErrorProvider(),
-        config=AppConfig(default_use_case='llm_agent_memory', llm_prompt_variant='strict_typed_memory_v5_compact_contract'),
+        config=AppConfig(default_use_case='agent_conversation_memory', llm_prompt_variant='strict_typed_memory_v5_compact_contract'),
         run_name='write-enrichment-error-run',
         prompt_variants=['search_context_v3_precise_record'],
     )
