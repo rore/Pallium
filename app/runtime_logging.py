@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import logging.handlers
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -72,15 +71,52 @@ def build_uvicorn_log_config(*, component: str = "api") -> dict[str, Any]:
 
 
 def configure_file_logging(log_dir: Path) -> None:
-    """Configure root logger to write to rotating log files (for service mode)."""
+    """Configure root logger to write to a log file (for service mode).
+
+    Rotation happens at startup: if the log exceeds 5MB, old files are
+    shifted before opening a fresh one. This avoids conflicts with child
+    processes that share the same file handle.
+    """
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "pallium.log"
 
-    handler = logging.handlers.RotatingFileHandler(
-        log_file, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8",
-    )
+    _rotate_on_startup(log_file, max_bytes=5 * 1024 * 1024, keep=5)
+
+    handler = logging.FileHandler(log_file, encoding="utf-8")
     handler.setFormatter(RuntimeLogFormatter("service"))
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     root.addHandler(handler)
+
+
+def _rotate_on_startup(log_file: Path, *, max_bytes: int, keep: int) -> None:
+    """Rotate log files at startup if the current log exceeds max_bytes."""
+    if not log_file.exists():
+        return
+    try:
+        if log_file.stat().st_size < max_bytes:
+            return
+    except OSError:
+        return
+
+    # Delete oldest backup if it exists
+    oldest = log_file.parent / f"{log_file.stem}.log.{keep}"
+    if oldest.exists():
+        oldest.unlink(missing_ok=True)
+
+    # Shift backups: .4→.5, .3→.4, ..., .1→.2
+    for i in range(keep - 1, 0, -1):
+        src = log_file.parent / f"{log_file.stem}.log.{i}"
+        dst = log_file.parent / f"{log_file.stem}.log.{i + 1}"
+        if src.exists():
+            try:
+                src.rename(dst)
+            except OSError:
+                pass
+
+    # Current → .1
+    try:
+        log_file.rename(log_file.parent / f"{log_file.stem}.log.1")
+    except OSError:
+        pass
