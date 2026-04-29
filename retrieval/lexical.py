@@ -70,7 +70,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
         require_visibility: bool = False,
     ) -> RetrievalQueryResult:
         tokens = list(tokenize_query(text))
-        if require_visibility and query_container_ref is None and visibility != "public":
+        if require_visibility and query_container_ref is None:
             trace = None
             if include_trace:
                 trace = QueryTrace(

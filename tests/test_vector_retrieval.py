@@ -444,10 +444,23 @@ class TestRequireVisibilityFailClosed:
 
         provider = VectorRetrievalProvider(storage, vector_index, embedding)
         result = provider.query(
-            "test", limit=5, require_visibility=True, visibility="public"
+            "test", limit=5, require_visibility=True, visibility="public",
+            query_container_ref="test-container",
         )
 
         assert len(result.results) == 1
+
+    def test_require_visibility_public_without_container_fails_closed(self) -> None:
+        storage = MagicMock(spec=StorageProvider)
+        vector_index = FakeVectorIndex(hits=[("idx-1", 0.9)])
+        embedding = FakeEmbeddingProvider()
+
+        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        result = provider.query(
+            "test", limit=5, require_visibility=True, visibility="public",
+        )
+
+        assert len(result.results) == 0
 
 
 class TestStaleEntryLazyRemoval:
