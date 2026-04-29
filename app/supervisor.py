@@ -21,7 +21,15 @@ if sys.platform == "win32":
 
 
 def _default_popen(cmd: list[str], **kwargs) -> subprocess.Popen:
-    return subprocess.Popen(cmd, **{**kwargs, **_POPEN_KWARGS})
+    merged = {**kwargs, **_POPEN_KWARGS}
+    if "stdout" not in merged and hasattr(sys.stdout, "name"):
+        try:
+            log_fh = open(sys.stdout.name, "a", encoding="utf-8")  # noqa: SIM115
+            merged.setdefault("stdout", log_fh)
+            merged.setdefault("stderr", log_fh)
+        except (OSError, TypeError):
+            pass
+    return subprocess.Popen(cmd, **merged)
 
 # Supervisor restart policy: if a child crashes more than this many times
 # within the window, the supervisor gives up and shuts everything down.
