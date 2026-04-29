@@ -65,7 +65,7 @@ def build_uvicorn_log_config(*, component: str = "api") -> dict[str, Any]:
         "loggers": {
             "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
             "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
-            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+            "uvicorn.access": {"handlers": ["access"], "level": "WARNING", "propagate": False},
         },
     }
 
