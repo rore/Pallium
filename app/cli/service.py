@@ -626,7 +626,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             "--processors", "1",
             "--cleaners", "1",
         ]
-        return run_supervisor(supervisor_args)
+        return run_supervisor(supervisor_args, log_file=home / "logs" / "pallium.log")
     finally:
         lock.release()
         pid_file = home / "run" / "pallium.pid"

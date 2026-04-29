@@ -21,15 +21,7 @@ if sys.platform == "win32":
 
 
 def _default_popen(cmd: list[str], **kwargs) -> subprocess.Popen:
-    merged = {**kwargs, **_POPEN_KWARGS}
-    if "stdout" not in merged and hasattr(sys.stdout, "name"):
-        try:
-            log_fh = open(sys.stdout.name, "a", encoding="utf-8")  # noqa: SIM115
-            merged.setdefault("stdout", log_fh)
-            merged.setdefault("stderr", log_fh)
-        except (OSError, TypeError):
-            pass
-    return subprocess.Popen(cmd, **merged)
+    return subprocess.Popen(cmd, **{**kwargs, **_POPEN_KWARGS})
 
 # Supervisor restart policy: if a child crashes more than this many times
 # within the window, the supervisor gives up and shuts everything down.
@@ -133,6 +125,7 @@ def run_supervisor(
     sleep_fn: Callable[[float], None] = time.sleep,
     should_stop: Callable[[], bool] | None = None,
     clock: Callable[[], float] = time.monotonic,
+    log_file: Path | None = None,
 ) -> int:
     parsed = build_parser().parse_args(args)
     if parsed.reload:
@@ -170,6 +163,19 @@ def run_supervisor(
     # Each managed slot: (command, label, process, restart_times)
     slots: list[_ManagedSlot] = []
     exit_code = 0
+    _log_fh = None
+
+    if log_file is not None:
+        try:
+            _log_fh = open(log_file, "a", encoding="utf-8")  # noqa: SIM115
+        except OSError:
+            pass
+
+    def _popen_with_log(cmd: list[str], **kwargs) -> subprocess.Popen:
+        if _log_fh is not None:
+            kwargs.setdefault("stdout", _log_fh)
+            kwargs.setdefault("stderr", _log_fh)
+        return popen_factory(cmd, **kwargs)
 
     with graceful_stop(install=True) as stop:
         try:
@@ -179,7 +185,7 @@ def run_supervisor(
             server_cmd = build_server_command(parsed.host, parsed.port)
             server = _start_api_with_retry(
                 server_cmd, parsed.host, parsed.port,
-                popen_factory=popen_factory,
+                popen_factory=_popen_with_log,
                 sleep_fn=sleep_fn,
                 stop=stop,
             )
@@ -196,7 +202,7 @@ def run_supervisor(
 
             for index in range(1, parsed.processors + 1):
                 cmd = build_processor_command(index)
-                proc = popen_factory(cmd, cwd=os.getcwd())
+                proc = _popen_with_log(cmd, cwd=os.getcwd())
                 slots.append(_ManagedSlot(
                     command=cmd,
                     label=f"processor supervisor-processor-{index}",
@@ -207,7 +213,7 @@ def run_supervisor(
                 emit_runtime_log("supervisor", f"started processor pid={proc.pid} processor_id=supervisor-processor-{index}")
             for index in range(1, parsed.cleaners + 1):
                 cmd = build_cleaner_command(index)
-                proc = popen_factory(cmd, cwd=os.getcwd())
+                proc = _popen_with_log(cmd, cwd=os.getcwd())
                 slots.append(_ManagedSlot(
                     command=cmd,
                     label=f"cleaner supervisor-cleaner-{index}",
@@ -219,7 +225,7 @@ def run_supervisor(
 
             if snapshot_config.enabled and snapshot_config.snapshot_path:
                 cmd = build_snapshot_command(snapshot_config.interval_seconds)
-                proc = popen_factory(cmd, cwd=os.getcwd())
+                proc = _popen_with_log(cmd, cwd=os.getcwd())
                 slots.append(_ManagedSlot(
                     command=cmd,
                     label="snapshot",
@@ -264,7 +270,7 @@ def run_supervisor(
                         break
                     # Restart the child
                     slot.restart_times.append(now)
-                    new_proc = popen_factory(slot.command, cwd=os.getcwd())
+                    new_proc = _popen_with_log(slot.command, cwd=os.getcwd())
                     emit_runtime_log(
                         "supervisor",
                         f"restarted {slot.label} old_pid={slot.process.pid} new_pid={new_proc.pid}",
@@ -309,6 +315,8 @@ def run_supervisor(
                         f"shutdown snapshot failed (data loss window ~{snapshot_config.interval_seconds}s): {exc}",
                         stderr=True,
                     )
+    if _log_fh is not None:
+        _log_fh.close()
     return exit_code
 
 

@@ -84,7 +84,3 @@ def configure_file_logging(log_dir: Path) -> None:
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     root.addHandler(handler)
-
-    # Also redirect stdout/stderr to the log file for child process output
-    sys.stdout = open(log_file, "a", encoding="utf-8")  # noqa: SIM115
-    sys.stderr = sys.stdout
