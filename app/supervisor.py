@@ -13,6 +13,16 @@ from app.runtime_logging import emit_runtime_log
 from app.signal_context import graceful_stop
 from app.snapshot import resolve_live_db_path, restore_snapshot, create_snapshot, prune_old_snapshots
 
+# On Windows + Python 3.13, onnxruntime has a non-deterministic heap corruption
+# bug during model initialization.  CREATE_NEW_PROCESS_GROUP isolates children.
+_POPEN_KWARGS: dict[str, object] = {}
+if sys.platform == "win32":
+    _POPEN_KWARGS = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+
+
+def _default_popen(cmd: list[str], **kwargs) -> subprocess.Popen:
+    return subprocess.Popen(cmd, **{**kwargs, **_POPEN_KWARGS})
+
 # Supervisor restart policy: if a child crashes more than this many times
 # within the window, the supervisor gives up and shuts everything down.
 _MAX_RAPID_RESTARTS = 3
@@ -45,10 +55,73 @@ def build_snapshot_command(interval_seconds: int) -> list[str]:
     return [sys.executable, "-m", "app.snapshot", "--interval-seconds", str(interval_seconds)]
 
 
+def _wait_for_api(
+    host: str,
+    port: int,
+    *,
+    timeout: float = 30.0,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    process: subprocess.Popen | None = None,
+) -> bool:
+    """Block until the API server accepts connections, or timeout/crash.
+
+    Returns True if the API became ready, False if it exited or timed out.
+    """
+    import socket as _socket
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process is not None and process.poll() is not None:
+            return False
+        try:
+            with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+                s.settimeout(1)
+                s.connect((host, port))
+                return True
+        except (OSError, ConnectionRefusedError):
+            sleep_fn(0.5)
+    return False
+
+
+_API_START_MAX_ATTEMPTS = 5
+_API_START_BACKOFF_SECONDS = 2.0
+
+
+def _start_api_with_retry(
+    cmd: list[str],
+    host: str,
+    port: int,
+    *,
+    popen_factory: Callable[..., subprocess.Popen] = _default_popen,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    stop: object | None = None,
+) -> subprocess.Popen | None:
+    """Start the API server, retrying on startup crashes."""
+    for attempt in range(1, _API_START_MAX_ATTEMPTS + 1):
+        if stop is not None and getattr(stop, "requested", False):
+            return None
+        proc = popen_factory(cmd, cwd=os.getcwd())
+        emit_runtime_log("supervisor", f"started api pid={proc.pid} host={host} port={port} attempt={attempt}")
+        if _wait_for_api(host, port, timeout=30.0, process=proc):
+            return proc
+        # If process is still alive but didn't bind port (slow startup), proceed
+        if proc.poll() is None:
+            return proc
+        # Process died during startup — retry
+        emit_runtime_log(
+            "supervisor",
+            f"api startup failed attempt={attempt}/{_API_START_MAX_ATTEMPTS} code={proc.returncode}",
+            stderr=True,
+        )
+        if attempt < _API_START_MAX_ATTEMPTS:
+            sleep_fn(_API_START_BACKOFF_SECONDS * attempt)
+    return None
+
+
 def run_supervisor(
     args: list[str] | None = None,
     *,
-    popen_factory: Callable[..., subprocess.Popen] = subprocess.Popen,
+    popen_factory: Callable[..., subprocess.Popen] = _default_popen,
     sleep_fn: Callable[[float], None] = time.sleep,
     should_stop: Callable[[], bool] | None = None,
     clock: Callable[[], float] = time.monotonic,
@@ -92,9 +165,19 @@ def run_supervisor(
 
     with graceful_stop(install=True) as stop:
         try:
-            # Start all children
+            # Start API with retry — onnxruntime on Windows/Python 3.13 has a
+            # non-deterministic heap corruption bug during model initialization.
+            # Once past startup the process is stable, so we retry until healthy.
             server_cmd = build_server_command(parsed.host, parsed.port)
-            server = popen_factory(server_cmd, cwd=os.getcwd())
+            server = _start_api_with_retry(
+                server_cmd, parsed.host, parsed.port,
+                popen_factory=popen_factory,
+                sleep_fn=sleep_fn,
+                stop=stop,
+            )
+            if server is None:
+                emit_runtime_log("supervisor", "api failed to start after retries, giving up", stderr=True)
+                return 1
             slots.append(_ManagedSlot(
                 command=server_cmd,
                 label="api",
@@ -102,7 +185,7 @@ def run_supervisor(
                 restartable=False,
                 restart_times=[],
             ))
-            emit_runtime_log("supervisor", f"started api pid={server.pid} host={parsed.host} port={parsed.port}")
+
             for index in range(1, parsed.processors + 1):
                 cmd = build_processor_command(index)
                 proc = popen_factory(cmd, cwd=os.getcwd())

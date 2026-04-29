@@ -261,17 +261,20 @@ def test_run_processor_once_processes_pending_item(test_db_url: str, capsys) -> 
 
 def test_worker_failure_updates_attempts_and_allows_reclaim(test_db_url: str) -> None:
     service = _build_service(test_db_url, plugins={'always_fail': AlwaysFailPlugin()}, default_use_case='always_fail')
-    ingest = service.ingest_item(
+    storage = service._storage
+
+    # Create source item directly (no package rows) to test legacy claim retry
+    item = build_source_item(
         source_type='decision_note',
         source_id='worker-fail-1',
         content_type='text/plain',
         content='Decision: use item event time for reservation ordering to avoid duplicate holds.',
         metadata=None,
         use_case='always_fail',
+        processing_status='pending',
     )
-    assert ingest.processing_status == 'pending'
+    storage.create_source_item(item)
 
-    storage = service._storage
     first_claim = storage.claim_next_source_item(worker_id='worker-a', lease_seconds=60, max_attempts=2)
     assert first_claim is not None
     service._process_source_item(first_claim, max_attempts=2)
@@ -344,23 +347,34 @@ class FailingCommitStorageProvider(SQLiteStorageProvider):
 def test_transactional_commit_rolls_back_partial_processing_and_retry_stays_clean(test_db_url: str) -> None:
     storage = FailingCommitStorageProvider(test_db_url)
     service = _build_service(test_db_url, storage=storage)
-    ingest = service.ingest_item(
+
+    # Create source item directly (no package rows) to test legacy claim commit behavior
+    from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
+    item = build_source_item(
         source_type='decision_note',
         source_id='worker-commit-fail-1',
         content_type='text/plain',
         content='Decision: use item event time for reservation ordering to avoid duplicate holds.',
         metadata=None,
         use_case='demo_agent_memory',
-        artifact_kind='assistant_output',
-        role='assistant',
+        processing_status='pending',
     )
-    assert ingest.processing_status == 'pending'
+    storage.create_source_item(item)
+    storage.create_index_entry(
+        build_index_entry(
+            target_kind="source_item",
+            target_id=item.id,
+            index_type="lexical",
+            text_view=item.content,
+            text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW,
+        )
+    )
 
     claimed = storage.claim_next_source_item(worker_id='worker-a', lease_seconds=60, max_attempts=2)
     assert claimed is not None
     service._process_source_item(claimed, max_attempts=2)
 
-    after_first = service.get_item_processing(ingest.source_item_id)
+    after_first = service.get_item_processing(item.id)
     assert after_first.processing_status == 'pending'
     assert after_first.processing_attempts == 1
     assert after_first.processing_error == 'commit boom'
@@ -372,12 +386,12 @@ def test_transactional_commit_rolls_back_partial_processing_and_retry_stays_clea
         worker_id='worker-b',
         lease_seconds=60,
         max_attempts=2,
-        now=storage.get_source_item(ingest.source_item_id).processing_next_attempt_at + timedelta(seconds=1),
+        now=storage.get_source_item(item.id).processing_next_attempt_at + timedelta(seconds=1),
     )
     assert reclaimed is not None
     service._process_source_item(reclaimed, max_attempts=2)
 
-    final_state = service.get_item_processing(ingest.source_item_id)
+    final_state = service.get_item_processing(item.id)
     assert final_state.processing_status == 'completed'
     assert final_state.processing_attempts == 2
     assert final_state.processing_error is None

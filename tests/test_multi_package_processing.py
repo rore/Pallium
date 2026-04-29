@@ -376,3 +376,73 @@ def test_no_package_tasks_falls_back_to_legacy_claim(test_db_url):
     result = service.process_next_source_item(worker_id="test")
     assert result is not None
     assert result.processing_status == "completed"
+
+
+# ── Tests: legacy claim excluded when package path is active ─────────────
+
+def test_legacy_claim_excluded_when_packages_pending(test_db_url):
+    """Legacy claim_next_source_item must not return items with pending package rows."""
+    storage = SQLiteStorageProvider(test_db_url)
+    service = PalliumService(
+        storage=storage,
+        retrieval=LexicalRetrievalProvider(storage),
+        semantic_plugins={"demo": DemoAgentMemoryPlugin()},
+        default_use_case="demo",
+    )
+    _ingest(service, use_case="demo")
+
+    # Package rows exist with status='pending' — legacy path must skip this item
+    claimed = storage.claim_next_source_item(
+        worker_id="rival-worker", lease_seconds=60, max_attempts=3,
+    )
+    assert claimed is None
+
+
+def test_legacy_claim_excluded_when_package_processing(test_db_url):
+    """Legacy claim_next_source_item must not return items with in-progress package rows."""
+    storage = SQLiteStorageProvider(test_db_url)
+    service = PalliumService(
+        storage=storage,
+        retrieval=LexicalRetrievalProvider(storage),
+        semantic_plugins={"demo": DemoAgentMemoryPlugin(), "noop": NoOpPlugin()},
+        default_use_case="demo",
+    )
+    ingest = _ingest(service, use_case="demo")
+    storage.create_package_processing_records(ingest.source_item_id, ["noop"])
+
+    # Claim one package (now 'processing'), the other remains 'pending'
+    task = storage.claim_next_package_task(
+        worker_id="worker-1", lease_seconds=60, max_attempts=3,
+    )
+    assert task is not None
+
+    # Legacy path from a second worker must still be blocked
+    claimed = storage.claim_next_source_item(
+        worker_id="worker-2", lease_seconds=60, max_attempts=3,
+    )
+    assert claimed is None
+
+
+def test_legacy_claim_works_without_package_rows(test_db_url):
+    """Items with no package_processing_status rows remain claimable by legacy path."""
+    storage = SQLiteStorageProvider(test_db_url)
+    service = PalliumService(
+        storage=storage,
+        retrieval=LexicalRetrievalProvider(storage),
+        semantic_plugins={"demo": DemoAgentMemoryPlugin()},
+        default_use_case="demo",
+    )
+    from core.contracts import build_source_item
+    item = build_source_item(
+        source_type="test", source_id="pre-migration-1",
+        content_type="text/plain", content="Pre-migration item.",
+        metadata=None, use_case="demo",
+        processing_status="pending",
+    )
+    storage.create_source_item(item)
+
+    claimed = storage.claim_next_source_item(
+        worker_id="worker-1", lease_seconds=60, max_attempts=3,
+    )
+    assert claimed is not None
+    assert claimed.id == item.id

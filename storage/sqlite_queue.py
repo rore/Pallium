@@ -99,6 +99,11 @@ class SQLiteQueueMixin:
                         AND processing_lease_expires_at IS NOT NULL
                         AND processing_lease_expires_at <= :claimed_at)
                   )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM package_processing_status pps
+                    WHERE pps.source_item_id = source_items.id
+                      AND pps.status IN ('pending', 'processing')
+                  )
                 ORDER BY created_at ASC, id ASC
                 LIMIT 1
             )
