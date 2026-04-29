@@ -36,6 +36,7 @@ dependencies = [
 Repository = "https://github.com/rore/Pallium"
 
 [project.scripts]
+pallium = "app.run:run"
 pallium-mcp = "app.mcp.server:main"
 
 [project.optional-dependencies]
@@ -66,6 +67,7 @@ filterwarnings = [
 [tool.setuptools]
 packages = [
     "app",
+    "app.cli",
     "app.mcp",
     "capabilities",
     "api",

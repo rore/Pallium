@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 
@@ -123,6 +123,15 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         }
         status_code = 200 if ready else 503
         return JSONResponse(content=body, status_code=status_code)
+
+    @app.post("/shutdown")
+    def shutdown(request: Request) -> JSONResponse:
+        client = request.client
+        if client is None or client.host not in ("127.0.0.1", "::1"):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        import os, signal
+        os.kill(os.getpid(), signal.SIGINT)
+        return JSONResponse({"status": "shutting_down"})
 
     @app.get("/status")
     def status() -> JSONResponse:

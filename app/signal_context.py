@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import signal
+import sys
 import threading
 from contextlib import contextmanager
 from collections.abc import Generator
@@ -40,12 +41,17 @@ def graceful_stop(
 
     prev_int = None
     prev_term = None
+    prev_break = None
     if install:
         prev_int = signal.signal(signal.SIGINT, _handler)
         prev_term = signal.signal(signal.SIGTERM, _handler)
+        if sys.platform == "win32" and hasattr(signal, "SIGBREAK"):
+            prev_break = signal.signal(signal.SIGBREAK, _handler)
     try:
         yield flag
     finally:
         if install:
             signal.signal(signal.SIGINT, prev_int)
             signal.signal(signal.SIGTERM, prev_term)
+            if prev_break is not None:
+                signal.signal(signal.SIGBREAK, prev_break)

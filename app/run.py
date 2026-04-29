@@ -19,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "mode",
         nargs="?",
-        choices=("all", "serve", "mcp", "processor", "cleaner", "snapshot", "rebuild-vector-index", "download-embedding-model", "setup"),
+        choices=("all", "serve", "mcp", "processor", "cleaner", "snapshot", "rebuild-vector-index", "download-embedding-model", "setup", "service"),
         default="all",
     )
     parser.add_argument("--host", default="127.0.0.1")
@@ -39,8 +39,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(args: list[str] | None = None) -> int:
+    raw_args = args if args is not None else sys.argv[1:]
+    # Intercept 'service' before main argparse (which would consume shared flags like --port)
+    if raw_args and raw_args[0] == "service":
+        from app.cli.service import service_main
+        return service_main(raw_args[1:])
     parsed, remaining = build_parser().parse_known_args(args)
-    if parsed.mode != "setup" and remaining:
+    if parsed.mode not in ("setup", "service") and remaining:
         build_parser().error(f"unrecognized arguments: {' '.join(remaining)}")
     if parsed.mode == "serve":
         # Auto-set PALLIUM_BASE_URL if not already set — needed by the MCP endpoint
@@ -100,6 +105,9 @@ def run(args: list[str] | None = None) -> int:
     if parsed.mode == "setup":
         from app.cli.setup_claude_code import main as setup_main
         return setup_main(remaining)
+    if parsed.mode == "service":
+        from app.cli.service import service_main
+        return service_main(remaining)
     supervisor_args = [
         "--host",
         parsed.host,

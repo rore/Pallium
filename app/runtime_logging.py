@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 
@@ -67,3 +69,22 @@ def build_uvicorn_log_config(*, component: str = "api") -> dict[str, Any]:
             "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
         },
     }
+
+
+def configure_file_logging(log_dir: Path) -> None:
+    """Configure root logger to write to rotating log files (for service mode)."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "pallium.log"
+
+    handler = logging.handlers.RotatingFileHandler(
+        log_file, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8",
+    )
+    handler.setFormatter(RuntimeLogFormatter("service"))
+
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.addHandler(handler)
+
+    # Also redirect stdout/stderr to the log file for child process output
+    sys.stdout = open(log_file, "a", encoding="utf-8")  # noqa: SIM115
+    sys.stderr = sys.stdout
