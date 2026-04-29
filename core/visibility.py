@@ -33,10 +33,17 @@ def is_visible(
     # Public query context: only see public memories, regardless of container.
     if query_visibility == "public":
         return candidate_visibility == "public" and candidate_actor_ref is None
+    # Container query context: see public + same-container non-private memories.
+    if query_visibility == "container":
+        if candidate_visibility == "public" and candidate_actor_ref is None:
+            return True
+        if candidate_container_ref == query_container_ref and candidate_visibility != "private":
+            return True
+        return False
+    # Private query context (or unspecified): see everything in same container.
     if candidate_container_ref is not None and candidate_container_ref == query_container_ref:
         return True
     # Cross-container: only public shared memories (actor_ref=null).
-    # Personal memories (actor_ref set) stay in their own container.
     if candidate_visibility == "public" and candidate_actor_ref is None:
         return True
     return False

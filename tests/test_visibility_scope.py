@@ -307,10 +307,43 @@ def test_is_visible_private_query_sees_same_container() -> None:
     assert is_visible("private", "container-a", "container-a", query_visibility="private") is True
     # Public memory, same container, private query → visible
     assert is_visible("public", "container-a", "container-a", query_visibility="private") is True
+    # Container memory, same container, private query → visible
+    assert is_visible("container", "container-a", "container-a", query_visibility="private") is True
     # Private memory, cross-container, private query → NOT visible
     assert is_visible("private", "container-a", "container-b", query_visibility="private") is False
     # Public memory, cross-container, private query → visible
     assert is_visible("public", "container-a", "container-b", query_visibility="private") is True
+
+
+def test_is_visible_container_query_sees_public_and_container() -> None:
+    """A container query context sees public + container-scoped, but NOT private."""
+    from core.visibility import is_visible
+
+    # Public memory, same container → visible
+    assert is_visible("public", "container-a", "container-a", query_visibility="container") is True
+    # Public memory, cross-container → visible
+    assert is_visible("public", "container-a", "container-b", query_visibility="container") is True
+    # Container memory, same container → visible
+    assert is_visible("container", "container-a", "container-a", query_visibility="container") is True
+    # Container memory, cross-container → NOT visible
+    assert is_visible("container", "container-a", "container-b", query_visibility="container") is False
+    # Private memory, same container → NOT visible
+    assert is_visible("private", "container-a", "container-a", query_visibility="container") is False
+    # Public memory with actor_ref, cross-container → NOT visible (personal)
+    assert is_visible("public", "container-a", "container-b", candidate_actor_ref="user-1", query_visibility="container") is False
+
+
+def test_is_visible_no_query_visibility_uses_private_semantics() -> None:
+    """When query_visibility is None, behaves like private (backwards compat)."""
+    from core.visibility import is_visible
+
+    # Same container sees everything
+    assert is_visible("private", "container-a", "container-a", query_visibility=None) is True
+    assert is_visible("container", "container-a", "container-a", query_visibility=None) is True
+    assert is_visible("public", "container-a", "container-a", query_visibility=None) is True
+    # Cross-container only sees public
+    assert is_visible("private", "container-a", "container-b", query_visibility=None) is False
+    assert is_visible("public", "container-a", "container-b", query_visibility=None) is True
 
 
 def test_public_query_same_container_only_sees_public(monkeypatch, test_db_url: str) -> None:
@@ -323,6 +356,20 @@ def test_public_query_same_container_only_sees_public(monkeypatch, test_db_url: 
         returned_source_ids = {item.get("source_id") for item in payload["results"] if item["result_kind"] == "source_hit"}
         assert "pub-same-1" in returned_source_ids
         assert "priv-same-1" not in returned_source_ids
+
+
+def test_container_query_same_container_excludes_private(monkeypatch, test_db_url: str) -> None:
+    """A container query from the SAME container should see public + container, but NOT private."""
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest(client, source_id="pub-cont-1", content="Decision: use item event time for reservation ordering to avoid duplicate holds.", visibility="public", container_ref="chat:room-a")
+        _ingest(client, source_id="cont-cont-1", content="Decision: use item event time for reservation ordering to avoid duplicate holds.", visibility="container", container_ref="chat:room-a")
+        _ingest(client, source_id="priv-cont-1", content="Decision: use item event time for reservation ordering to avoid duplicate holds.", visibility="private", container_ref="chat:room-a")
+
+        payload = _query(client, visibility="container", container_ref="chat:room-a")
+        returned_source_ids = {item.get("source_id") for item in payload["results"] if item["result_kind"] == "source_hit"}
+        assert "pub-cont-1" in returned_source_ids
+        assert "cont-cont-1" in returned_source_ids
+        assert "priv-cont-1" not in returned_source_ids
 
 
 def test_lexical_retrieval_with_require_visibility_and_none_context_returns_empty(monkeypatch, test_db_url: str) -> None:
