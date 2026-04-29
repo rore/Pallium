@@ -1,7 +1,9 @@
 # Dashboard
 
 Pallium includes a browser-based dashboard for inspecting stored memories,
-viewing evidence chains, and checking system health.
+viewing evidence chains, checking system health, and debugging query behavior.
+
+![Dashboard](../assets/dashboard_screenshot.png)
 
 ## Access
 
@@ -14,26 +16,64 @@ No authentication required — the dashboard is localhost-only, same as the API.
 
 ## Features
 
+### Overview
+
+Four metric cards showing at a glance:
+
+- **Memory Objects** — total stored memory cards
+- **Source Items** — total ingested conversation items
+- **Queries** — query count with injection rate (ephemeral, since restart)
+- **Pending Queue** — items awaiting processing
+
+### System Health
+
+- **Storage** — SQLite database and vector index sizes with proportional bars
+- **Processing Queue** — pending/processing/completed/failed/skipped counts
+  plus retention status
+
+### Query Activity
+
+Breakdown of query behavior since last restart:
+
+- Injections, skips, blocks injected, flags, suppressions, feedback totals
+- Skip reasons table showing why queries didn't produce injections
+- Contextual coloring when injection rate is low or failures are present
+
 ### Memory Browser
 
 The main view lists all stored memory objects with:
 
-- **Filtering** by memory type (decision, investigation_outcome, atomic_fact,
-  etc.), lifecycle state, and container
+- **Search** — server-side text search across memory payloads
+- **Filtering** by memory type, lifecycle state, and container
 - **Sorting** by creation date or negative feedback count
 - **Pagination** for large memory stores
+- **Absolute timestamps** (e.g., `Apr 16 17:57`)
 
-Each row shows the memory type, display text, confidence level, container,
-and creation timestamp.
+Each row shows the memory type, lifecycle, confidence level, container,
+creation timestamp, and summary text.
 
 ### Memory Detail
 
 Click any memory to see:
 
-- Full payload (all extracted fields)
-- Envelope metadata (confidence, schema, visibility, subject)
-- Feedback history (relevant/not_relevant ratings with reasons)
-- Source evidence links
+- **ID** with copy-to-clipboard button (for use with `pallium_flag_memory`)
+- **Content fields** — decision, rationale, summary, interest_text, etc.
+  displayed as structured key-value pairs
+- **Technical metadata** — semantic provenance, source info (collapsed)
+- **Feedback history** — relevant/not_relevant ratings with reasons
+- **Evidence** — source conversation items grouped by thread, ordered
+  chronologically
+
+### Query Debug
+
+Collapsible panel at the bottom for testing queries interactively:
+
+- Enter query text and optionally select a container
+- Calls `POST /query/debug` and shows:
+  - Whether injection would occur (INJECT/SKIP)
+  - Decision reason
+  - Injectable memory blocks
+  - Retrieval stage trace (candidates and selections per stage)
 
 ### Feedback
 
@@ -41,21 +81,18 @@ The dashboard shows aggregated feedback counts (relevant vs. not_relevant)
 per memory. Feedback is submitted by agents via the `pallium_rate_memory`
 MCP tool during normal operation — the dashboard surfaces it for inspection.
 
-### Evidence
-
-Each memory links back to its source items — the original conversation turns
-from which it was extracted. The detail view shows these evidence connections.
-
 ## When to Use
 
-- **Debugging retrieval** — check what memories exist for a container and
-  whether the expected content was extracted
-- **Verifying extraction** — inspect the payload fields Pallium derived from
-  a conversation turn
-- **Reviewing feedback** — see which memories have been rated not_relevant
-  by agents, indicating potential quality issues
-- **Monitoring health** — confirm memories are being created and processing
-  is active
+- **Monitoring health** — confirm the service is up, memories are being
+  created, and processing is active
+- **Debugging retrieval** — use Query Debug to test what memories would be
+  injected for a given query
+- **Verifying extraction** — inspect the content fields Pallium derived from
+  conversation turns
+- **Reviewing feedback** — sort by "Most negatively rated" to surface
+  memories that agents consistently find irrelevant
+- **Investigating skips** — check skip reasons to understand why queries
+  aren't producing injections
 
 ## Dark Theme
 
