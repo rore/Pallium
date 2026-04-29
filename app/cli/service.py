@@ -52,20 +52,47 @@ def _ensure_dirs(home: Path) -> None:
 
 
 def _seed_config(home: Path) -> None:
-    """Copy pallium.local.toml and .env.local into service home if not already present."""
-    import shutil
+    """Write minimal service config if none exists.
 
+    Only includes LLM provider and production package settings.
+    Embedding, vector index, and storage all have correct defaults.
+    """
     config_dest = home / "config" / "pallium.toml"
-    if not config_dest.exists():
-        local_toml = Path("pallium.local.toml")
-        if local_toml.exists():
-            shutil.copy2(local_toml, config_dest)
-            print(f"  Copied {local_toml} → {config_dest}")
+    if config_dest.exists():
+        return
+
+    # Read LLM provider and production package settings from dev config
+    local_toml = Path("pallium.local.toml")
+    if local_toml.exists():
+        lines = local_toml.read_text(encoding="utf-8").splitlines()
+        keep_prefixes = (
+            "[llm_providers.",
+            "[semantic_packages.agent_conversation_memory",
+            "[semantic_packages.conversational_knowledge",
+        )
+        output: list[str] = []
+        in_section = False
+        for line in lines:
+            if line.startswith("["):
+                in_section = any(line.startswith(p) for p in keep_prefixes)
+            if in_section:
+                output.append(line)
+            elif output and output[-1] != "":
+                output.append("")
+        while output and output[-1] == "":
+            output.pop()
+        if output:
+            config_dest.write_text("\n".join(output) + "\n", encoding="utf-8")
+            print(f"  Wrote minimal config → {config_dest}")
+            return
+
+    print(f"  No config written (configure LLM provider in {config_dest})")
 
     env_dest = home / "config" / ".env"
     if not env_dest.exists():
         local_env = Path(".env.local")
         if local_env.exists():
+            import shutil
             shutil.copy2(local_env, env_dest)
             print(f"  Copied {local_env} → {env_dest}")
 
