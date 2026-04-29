@@ -30,11 +30,32 @@ See [configuration.md](configuration.md) for the full config surface.
 
 ## 2. Start Pallium
 
+### As a service (recommended)
+
+```bash
+pallium service install
+```
+
+One command — creates `~/.pallium/`, seeds config from your dev setup, downloads
+the embedding model, starts the service on port 19836, and registers it for
+auto-start at login (Windows Task Scheduler or Linux systemd).
+
+Check status:
+
+```bash
+pallium service status
+```
+
+### Development mode
+
+For working on Pallium itself, run from the repo checkout:
+
 ```bash
 python -m app.run --host 127.0.0.1 --port 8000 --processors 1
 ```
 
-This starts the API server, one background processor, and one cleaner.
+This starts the API server, one background processor, and one cleaner using
+CWD-relative config (`pallium.local.toml`, `.env.local`).
 
 For split-mode (separate processes):
 
@@ -99,9 +120,16 @@ python examples/agent_memory_simulation.py
 
 This script shows the ingest and query flow as plain HTTP requests.
 
+## 6. Dashboard
+
+Open http://localhost:19836/dashboard (service mode) or http://localhost:8000/dashboard
+(dev mode) to browse stored memories, view evidence chains, inspect extraction
+results, and check system health — no API calls needed.
+
 ## Next Steps
 
 - Demo walkthrough: [examples/demo-session.md](../examples/demo-session.md) — complete session with real API requests and debug trace
+- Dashboard: [dashboard.md](dashboard.md) — browser-based memory inspector
 - Full config reference: [configuration.md](configuration.md)
 - API endpoints and shapes: [http-api.md](http-api.md)
 - Wiring into a runtime: [agent-integration.md](agent-integration.md)

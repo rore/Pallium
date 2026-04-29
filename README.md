@@ -154,7 +154,7 @@ findings, and context carry forward across sessions without manual copy-paste
 or `.claude/` file maintenance.
 
 ```bash
-python -m app.run all --port 19836          # start Pallium
+pallium service install                     # install + start (runs at login)
 python -m app.run setup claude-code         # register hooks + MCP tools
 ```
 
@@ -226,6 +226,7 @@ reproduction commands are in [docs/benchmarks.md](docs/benchmarks.md).
 
 **Using Pallium:**
 - [Getting Started](docs/getting-started.md) — local setup to first query
+- [Dashboard](docs/dashboard.md) — browser-based memory inspector
 - [Demo Session](examples/demo-session.md) — complete walkthrough with real requests
 - [HTTP API](docs/http-api.md) — endpoints, shapes, examples
 

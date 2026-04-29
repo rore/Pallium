@@ -53,38 +53,35 @@ URL).
 
 ## 1. Start Pallium
 
-One-time manual start:
+Install and start the service (one-time):
 
 ```bash
-python -m app.run all --port 19836
+pallium service install
 ```
 
-This starts the HTTP server, background processor, and cleaner on port 19836.
+This creates `~/.pallium/`, seeds config from your dev setup, downloads the
+embedding model, starts the service on port 19836, and registers it for
+auto-start at login.
 
-### Run at Login (Recommended)
-
-Install Pallium as a system service so it starts automatically:
-
-**Windows (Task Scheduler):**
-
-```powershell
-.\scripts\install-service.ps1
-```
-
-**Linux (systemd):**
+Verify it's running:
 
 ```bash
-./scripts/install-service.sh
+pallium service status
 ```
 
-Both scripts are idempotent — re-running updates rather than duplicates.
-Use `--port` to override the default 19836 if that port is taken.
+To manage the service:
 
-To uninstall:
+| Command | Effect |
+|---------|--------|
+| `pallium service stop` | Stop the running service |
+| `pallium service restart` | Stop and restart |
+| `pallium service uninstall` | Remove OS registration (data preserved) |
+| `pallium service uninstall --remove-data` | Remove registration and all data |
 
-```powershell
-.\scripts\uninstall-service.ps1    # Windows
-./scripts/uninstall-service.sh     # Linux
+For debugging, run in the foreground:
+
+```bash
+pallium service run --port 19836
 ```
 
 ## 2. Register with Claude Code
