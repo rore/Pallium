@@ -12,7 +12,7 @@ from core.contracts import ProcessResult
 from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
 from core.models import MemoryObject, QueryResultItem, Relation, SourceItem
 from providers.llm.base import LLMProvider
-from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY, normalize_for_index
+from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY, normalize_for_index, _normalize_for_containment
 from semantic.agent_conversation_memory_constraints import CONSTRAINT_MARKERS, CONSTRAINT_TOOL_MARKERS, _merge_subject_anchors, _subject_anchors_from_memory_objects, _subject_anchors_from_source_items
 from semantic.agent_conversation_memory_embedding import VECTOR_EMBEDDING_PROVIDER_NAME, VECTOR_EMBEDDING_PROVIDER_VERSION, build_embedding_text
 from semantic.agent_conversation_memory_enrichment import ENRICHABLE_MEMORY_TYPES, WRITE_ENRICHMENT_PROMPT_ROLE, WRITE_ENRICHMENT_TEXT_VIEW
@@ -23,9 +23,9 @@ THREAD_SUMMARY_PROMPT_SCHEMA_ID = "thread_summary_extraction"
 
 MAX_THREAD_WORK_REFS = 5
 
-THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v4"
+THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v5"
 
-THREAD_SUMMARY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "content_quality": "string", "retrieval_context": "string or null"}, indent=2)
+THREAD_SUMMARY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "content_quality": "string", "retrieval_context": "string or null", "decisions": [{"decision_text": "string (exact quote)", "evidence": "string (exact quote)"}]}, indent=2)
 
 THREAD_SUMMARY_SYSTEM_PROMPT = (
     "Summarize one agent-mediated conversation thread for future recall. "
@@ -42,7 +42,12 @@ THREAD_SUMMARY_SYSTEM_PROMPT = (
     '"weak" when the thread is a greeting, phatic exchange, sign-off, or otherwise carries no recallable information. '
     "For retrieval_context: write one short search-friendly context line (12-30 words) that helps this record match later queries, "
     "or null when the summary already has enough search cues. Do not restate the summary. "
-    "Write the summary and retrieval_context in the same language as the thread items. The thread items are the source content — match their language exactly. Do not translate to English."
+    "For decisions: identify choices that were made AND committed during the thread. "
+    "A decision exists when a specific approach was proposed or discussed AND then implemented, confirmed, or accepted. "
+    "For each decision, decision_text and evidence must be EXACT QUOTES copied verbatim from the thread items. Do not paraphrase. "
+    "Not decisions: unresolved discussion, proposals without follow-through, questions, status updates, preferences without implementation. "
+    "Return an empty array if no decisions were committed in this thread. "
+    "Write all text fields in the same language as the thread items. Do not translate to English."
 )
 
 PRIMARY_THREAD_ARTIFACTS = {
@@ -241,13 +246,14 @@ TASK_CHECKPOINT_TEXT_VIEW = "memory_object.task_checkpoint_context"
 
 THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_ID = "thread_summary_with_checkpoint_extraction"
 
-THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v2"
+THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v3"
 
 THREAD_SUMMARY_WITH_CHECKPOINT_SCHEMA_DESCRIPTION = json.dumps(
     {
         "summary": "string",
         "content_quality": "string",
         "retrieval_context": "string or null",
+        "decisions": [{"decision_text": "string (exact quote)", "evidence": "string (exact quote)"}],
         "task_checkpoint": {
             "summary": "string",
             "task": "string",
@@ -278,12 +284,40 @@ THREAD_SUMMARY_WITH_CHECKPOINT_SYSTEM_PROMPT = (
     '"unresolved" when the thread has substantive back-and-forth discussion but no resolved conclusions, decisions, or durable findings; '
     '"weak" when the thread is a greeting, phatic exchange, sign-off, or otherwise carries no recallable information. '
     "For the top-level retrieval_context: write one short search-friendly context line (12-30 words) that helps the summary match later queries, or null when the summary already has enough search cues. Do not restate the summary. "
+    "For decisions: identify choices that were made AND committed during the thread. "
+    "A decision exists when a specific approach was proposed or discussed AND then implemented, confirmed, or accepted. "
+    "For each decision, decision_text and evidence must be EXACT QUOTES copied verbatim from the thread items. Do not paraphrase. "
+    "Not decisions: unresolved discussion, proposals without follow-through, questions, status updates, preferences without implementation. "
+    "Return an empty array if no decisions were committed in this thread. "
     "For the task_checkpoint section: capture the task, the current state, key findings, blocker or failed-attempt state when present, the next supported step when present, and a concise freshness signal. "
     "Do not turn the checkpoint into a workflow graph, transcript replay, or speculative recommendation. "
     "Keep the task_checkpoint summary concise: at most two sentences and roughly 80 words. "
     "For task_checkpoint retrieval_context: write one short search-friendly context line (12-30 words) that helps this checkpoint match later queries, or null when the checkpoint summary already has enough search cues. Do not restate the checkpoint summary. "
-    "Write the summary and retrieval_context in the same language as the thread items. The thread items are the source content — match their language exactly. Do not translate to English."
+    "Write all text fields in the same language as the thread items. Do not translate to English."
 )
+
+
+def _validate_thread_decisions(raw_decisions, thread_text: str) -> list[dict]:
+    """Validate and filter thread decisions by grounding check.
+
+    Both decision_text and evidence must be literal substrings of thread_text.
+    """
+    if not isinstance(raw_decisions, list):
+        return []
+    normalized_thread = _normalize_for_containment(thread_text)
+    grounded = []
+    for d in raw_decisions:
+        if not isinstance(d, dict):
+            continue
+        dt = d.get("decision_text", "")
+        ev = d.get("evidence", "")
+        if (
+            dt and ev
+            and _normalize_for_containment(dt) in normalized_thread
+            and _normalize_for_containment(ev) in normalized_thread
+        ):
+            grounded.append({"decision_text": dt, "evidence": ev})
+    return grounded
 
 
 def _work_refs_from_source_items(source_items: Iterable[SourceItem]) -> tuple[str, ...]:
@@ -489,6 +523,53 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
             llm_metadata=response.metadata,
         )
         memory_objects = [thread_summary_memory]
+
+        raw_decisions = response.parsed_json.get("decisions")
+        thread_decisions = _validate_thread_decisions(raw_decisions, thread_material)
+        for td in thread_decisions:
+            decision_memory = MemoryObject(
+                type="decision",
+                schema_id=f"{plugin_name}.thread_decision",
+                schema_version="v1",
+                payload={
+                    "decision": td["decision_text"],
+                    "decision_evidence_text": td["evidence"],
+                    "rationale": None,
+                    "canonical_key": normalize_for_index(td["decision_text"]),
+                    "source_type": "thread_detection",
+                    "source_id": f"thread:{aggregate.thread_ref}",
+                    "semantic_provenance": semantic_provenance,
+                },
+                visibility=aggregate.visibility,
+                container_ref=aggregate.container_ref,
+                freshness_at=aggregate.latest_occurred_at,
+            )
+            decision_memory, decision_index_entries = _finalize_memory_builder(
+                memory_object=decision_memory,
+                container_ref=aggregate.container_ref,
+                thread_ref=aggregate.thread_ref,
+                producer_kind="thread_aggregation",
+                producer_schema_id=THREAD_SUMMARY_PROMPT_SCHEMA_ID,
+                producer_schema_version=THREAD_SUMMARY_PROMPT_SCHEMA_VERSION,
+                prompt_variant=prompt_variant,
+                subjects=thread_subjects,
+                work_refs=thread_work_refs,
+                index_source=f"{td['decision_text']} {td['evidence']}",
+                text_view_name=THREAD_SUMMARY_TEXT_VIEW,
+                retrieval_context=None,
+                plugin_name=plugin_name,
+                llm_metadata=response.metadata,
+            )
+            memory_objects.append(decision_memory)
+            index_entries.extend(decision_index_entries)
+            for source_item_id in aggregate.source_item_ids:
+                relations.append(Relation(
+                    from_kind="memory_object",
+                    from_id=decision_memory.id,
+                    relation_type="supported_by",
+                    to_kind="source_item",
+                    to_id=source_item_id,
+                ))
 
         if use_merged_call:
             checkpoint_parsed = response.parsed_json.get("task_checkpoint", {})

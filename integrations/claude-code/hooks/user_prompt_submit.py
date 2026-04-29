@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -16,6 +17,16 @@ from common import (
     pallium_request,
     read_hook_input,
 )
+
+_IDE_TAG_RE = re.compile(
+    r"<ide_(?:opened_file|selection)>.*?</ide_(?:opened_file|selection)>",
+    re.DOTALL,
+)
+
+
+def _strip_ide_context(text: str) -> str:
+    """Remove IDE context tags injected by the extension before ingestion."""
+    return _IDE_TAG_RE.sub("", text).strip()
 
 
 def main() -> None:
@@ -35,19 +46,24 @@ def main() -> None:
         container_ref = derive_container_ref(cwd)
         actor_ref = derive_actor_ref()
 
-        query_text = prompt[:500] if len(prompt) > 500 else prompt
+        content = _strip_ide_context(prompt)
+        if not content:
+            return
+
+        query_text = content[:500] if len(content) > 500 else content
 
         response = pallium_request("POST", "/item-and-query", {
             "source_type": "claude-code",
             "source_id": f"cc-{uuid.uuid4().hex[:12]}",
             "content_type": "text/plain",
-            "content": prompt,
+            "content": content,
             "role": "user",
             "agent_ref": "claude-code",
             "container_ref": container_ref,
             "thread_ref": session_id,
             "actor_ref": actor_ref,
             "visibility": "private",
+            "artifact_kind": "message",
             "query_text": query_text,
             "query_limit": 5,
         })

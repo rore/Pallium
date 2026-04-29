@@ -88,7 +88,7 @@ Examples:
 Only promote to typed memory when the source contains an explicit proof phrase:
 - decision: requires committed-choice language ("Decision:", "we decided", "we chose", "chosen approach", "we will use").
 - investigation_outcome: requires resolved-finding language ("Root cause:", "Investigation found", "Analysis found", "Findings:", "Outcome:", "We found that", "Verdict:", "Conclusion:", "Investigation concluded", "The conclusion is").
-- interest: the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject. No proof phrase needed. Do NOT classify as interest: assistant responses, follow-up questions without a named subject, backward-looking recall, or restatements of prior content.
+- interest: the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject. No proof phrase needed. Do NOT classify as interest: assistant responses, follow-up questions without a named subject, backward-looking recall, restatements of prior content, or task instructions/commands directed at the assistant (one-shot requests to perform, fix, review, or change something are immediate tasks, not durable subjects for future attention).
 - otherwise candidate_type = null.
 - A non-null type requires the exact proof phrase quoted in the matching evidence field.
 - Fill only decision fields for decision, only investigation fields for investigation_outcome.
@@ -124,7 +124,7 @@ All extracted text fields (decision_text, investigation_text, summary, etc.) mus
 Only promote to typed memory when the source contains an explicit proof phrase:
 - decision: requires committed-choice language ("Decision:", "we decided", "we chose", "chosen approach", "we will use").
 - investigation_outcome: requires resolved-finding language ("Root cause:", "Investigation found", "Analysis found", "Findings:", "Outcome:", "We found that", "Verdict:", "Conclusion:", "Investigation concluded", "The conclusion is").
-- interest: the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject. No proof phrase needed. Do NOT classify as interest: assistant responses, follow-up questions without a named subject, backward-looking recall, or restatements of prior content.
+- interest: the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject. No proof phrase needed. Do NOT classify as interest: assistant responses, follow-up questions without a named subject, backward-looking recall, restatements of prior content, or task instructions/commands directed at the assistant (one-shot requests to perform, fix, review, or change something are immediate tasks, not durable subjects for future attention).
 - otherwise candidate_type = null.
 - A non-null type requires the exact proof phrase quoted in the matching evidence field.
 - Fill only decision fields for decision, only investigation fields for investigation_outcome.
@@ -173,7 +173,7 @@ If is_low_value_meta is true, all signals must be null/[]. Prefer null over weak
 Only create a typed record when the source contains an explicit proof phrase:
 - decision: the source records a concrete choice already made, using language like "Decision:", "we decided", "we chose", "chosen approach", or "we will use".
 - investigation_outcome: the source records a resolved finding, root cause, or conclusion, using language like "Root cause:", "Investigation found", "Analysis found", "We found that", "Verdict:", "Conclusion:", or "Investigation concluded".
-- interest: the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject. No proof phrase needed. Do NOT classify as interest: assistant responses, follow-up questions without a named subject, backward-looking recall, or restatements of prior content.
+- interest: the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject. No proof phrase needed. Do NOT classify as interest: assistant responses, follow-up questions without a named subject, backward-looking recall, restatements of prior content, or task instructions/commands directed at the assistant (one-shot requests to perform, fix, review, or change something are immediate tasks, not durable subjects for future attention).
 - otherwise candidate_type = null.
 - A non-null type requires the exact proof phrase quoted in the matching evidence field.
 - Fill only decision fields for a decision, only investigation fields for a finding.
@@ -283,7 +283,7 @@ Only promote to typed memory when the source contains explicit evidence:
   - Explicit: "Decision:", "we decided", "we chose", "chosen approach", "we will use".
   - Implementation-confirms-choice: the assistant reports completing a specific technical approach ("Done. I've implemented X using Y", "Switched to X", "Fixed. Now uses Y", "Removed X from Y"). The implementation report IS the decision evidence — the choice was made and executed.
 - investigation_outcome: requires resolved-finding language ("Root cause:", "Investigation found", "Analysis found", "Findings:", "Outcome:", "We found that", "Verdict:", "Conclusion:", "Investigation concluded", "The conclusion is").
-- interest: the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject. No proof phrase needed. Do NOT classify as interest: assistant responses, follow-up questions without a named subject, backward-looking recall, or restatements of prior content.
+- interest: the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject. No proof phrase needed. Do NOT classify as interest: assistant responses, follow-up questions without a named subject, backward-looking recall, restatements of prior content, or task instructions/commands directed at the assistant (one-shot requests to perform, fix, review, or change something are immediate tasks, not durable subjects for future attention).
 - otherwise candidate_type = null.
 
 CRITICAL GROUNDING RULE: decision_text, decision_evidence_text, investigation_text, and investigation_evidence_text must be EXACT QUOTES copied from the source text. Do not paraphrase or rewrite. Copy a substring of the source verbatim (you may trim to the essential fragment but never rephrase).

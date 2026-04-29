@@ -49,6 +49,7 @@ def main() -> None:
             "thread_ref": session_id,
             "actor_ref": actor_ref,
             "visibility": "private",
+            "artifact_kind": "message",
         }])
 
     except Exception as exc:
