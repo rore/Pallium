@@ -242,6 +242,10 @@ def _resolve_actor_ref(source_item: SourceItem) -> str | None:
     return None
 
 
+_MINIMUM_SUBSTANTIVE_SOURCE_TOKENS = 6
+_MINIMUM_INTEREST_SOURCE_TOKENS = 10
+
+
 def build_process_result(
     source_item: SourceItem,
     extraction: SemanticExtraction,
@@ -346,7 +350,9 @@ def build_process_result(
         )
     elif not extraction.is_low_value_meta and extraction.candidate_type == "interest" and extraction.interest_text and (
         not source_item.role or source_item.role.lower() == "user"
-    ) and source_item.visibility not in ("container", "public"):
+    ) and source_item.visibility not in ("container", "public") and (
+        len(tokenize_text(source_item.content)) >= _MINIMUM_INTEREST_SOURCE_TOKENS
+    ):
         memory_objects.append(
             MemoryObject(
                 type="interest",
@@ -471,9 +477,6 @@ def _is_selected_assistant_work_artifact(source_item: SourceItem, extraction: Se
 
 def _looks_like_low_value_meta_update(extraction: SemanticExtraction) -> bool:
     return extraction.is_low_value_meta
-
-
-_MINIMUM_SUBSTANTIVE_SOURCE_TOKENS = 6
 
 
 def _is_substantive_summary(source_item: SourceItem, extraction: SemanticExtraction) -> bool:
