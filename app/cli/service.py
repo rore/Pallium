@@ -84,9 +84,8 @@ def _seed_config(home: Path) -> None:
         if output:
             config_dest.write_text("\n".join(output) + "\n", encoding="utf-8")
             print(f"  Wrote minimal config → {config_dest}")
-            return
-
-    print(f"  No config written (configure LLM provider in {config_dest})")
+    else:
+        print(f"  No config written (configure LLM provider in {config_dest})")
 
     env_dest = home / "config" / ".env"
     if not env_dest.exists():
