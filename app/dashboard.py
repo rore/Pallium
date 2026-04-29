@@ -52,6 +52,23 @@ def mount_dashboard(app: FastAPI) -> None:
 
         return JSONResponse(content={"containers": list(rows)})
 
+    @app.get("/dashboard/api/actors")
+    def dashboard_actors() -> JSONResponse:
+        service = app.state.pallium_service
+        storage = service._storage
+        if not isinstance(storage, SQLiteStorageProvider):
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+
+        with storage._session_factory() as session:
+            rows = session.execute(
+                select(MemoryObjectRecord.actor_ref)
+                .where(MemoryObjectRecord.actor_ref.isnot(None))
+                .distinct()
+                .order_by(MemoryObjectRecord.actor_ref)
+            ).scalars().all()
+
+        return JSONResponse(content={"actors": list(rows)})
+
     @app.get("/dashboard/api/activity")
     def dashboard_activity(limit: int = Query(10, ge=1, le=50)) -> JSONResponse:
         service = app.state.pallium_service

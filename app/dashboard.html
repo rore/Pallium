@@ -505,8 +505,10 @@
   </div>
 
   <!-- ── Memory Browser ───────────────────────── -->
-  <div class="section-title">Memory Browser</div>
-  <div class="card">
+  <div class="section-title debug-toggle" onclick="toggleMemoryBrowser()">
+    <span id="membrowser-arrow">&#9660;</span> Memory Browser
+  </div>
+  <div class="card" id="membrowser-panel">
     <div class="browser-controls">
       <input type="text" id="search-input" placeholder="Search memories…">
       <select id="type-filter">
@@ -576,6 +578,15 @@
         <select id="debug-container">
           <option value="">No container</option>
         </select>
+        <select id="debug-actor">
+          <option value="">No actor</option>
+        </select>
+        <select id="debug-visibility">
+          <option value="public">public</option>
+          <option value="private">private</option>
+          <option value="container">container</option>
+        </select>
+        <input type="text" id="debug-thread" placeholder="thread_ref (optional)">
         <button class="btn primary" onclick="runQueryDebug()">Test Query</button>
       </div>
       <div id="debug-result"></div>
@@ -595,6 +606,7 @@ const PAGE_SIZE = 50;
 let _expandedId = null;
 let _evidenceCache = {};
 let _containers = [];
+let _actors = [];
 
 let _countdown = 10;
 let _countdownInterval = null;
@@ -731,6 +743,16 @@ async function fetchContainers() {
   } catch (e) { /* non-fatal */ }
 }
 
+async function fetchActors() {
+  try {
+    const r = await fetch('/dashboard/api/actors');
+    if (!r.ok) return;
+    const data = await r.json();
+    _actors = data.actors || [];
+    populateActorDropdown();
+  } catch (e) { /* non-fatal */ }
+}
+
 
 async function fetchMemories() {
   const type = document.getElementById('type-filter').value;
@@ -786,6 +808,19 @@ function populateContainerDropdowns() {
     }
     sel.value = current;
   }
+}
+
+function populateActorDropdown() {
+  const sel = document.getElementById('debug-actor');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">No actor</option>';
+  for (const a of _actors) {
+    const opt = document.createElement('option');
+    opt.value = a;
+    opt.textContent = a;
+    sel.appendChild(opt);
+  }
+  sel.value = current;
 }
 
 // ──────────────────────────────────────────────────
@@ -1199,16 +1234,30 @@ function toggleDebugPanel() {
   arrow.innerHTML = visible ? '&#9660;' : '&#9654;';
 }
 
+function toggleMemoryBrowser() {
+  const panel = document.getElementById('membrowser-panel');
+  const arrow = document.getElementById('membrowser-arrow');
+  const hidden = panel.style.display === 'none';
+  panel.style.display = hidden ? '' : 'none';
+  arrow.innerHTML = hidden ? '&#9660;' : '&#9654;';
+}
+
 async function runQueryDebug() {
   const text = document.getElementById('debug-query-input').value.trim();
   if (!text) return;
   const container = document.getElementById('debug-container').value;
+  const actor = document.getElementById('debug-actor').value.trim();
+  const thread = document.getElementById('debug-thread').value.trim();
+  const visibility = document.getElementById('debug-visibility').value;
   const resultEl = document.getElementById('debug-result');
   resultEl.innerHTML = '<span style="color:var(--muted)">Running query…</span>';
 
   try {
     const body = { text: text, limit: 5 };
     if (container) body.container_ref = container;
+    if (actor) body.actor_ref = actor;
+    if (thread) body.thread_ref = thread;
+    body.visibility = visibility;
 
     const r = await fetch('/query/debug', {
       method: 'POST',
@@ -1252,6 +1301,23 @@ async function runQueryDebug() {
       html += '</div>';
     }
 
+    // Routing info
+    if (trace.routing) {
+      html += '<div class="debug-stages"><div class="evidence-section-title" style="margin-top:8px">Routing</div>';
+      html += '<pre class="payload-pre" style="max-height:150px">' + escapeHtml(JSON.stringify(trace.routing, null, 2)) + '</pre></div>';
+    }
+
+    // Visibility info
+    if (trace.visibility) {
+      html += '<div class="debug-stages"><div class="evidence-section-title" style="margin-top:8px">Visibility</div>';
+      html += '<pre class="payload-pre" style="max-height:150px">' + escapeHtml(JSON.stringify(trace.visibility, null, 2)) + '</pre></div>';
+    }
+
+    // Filters
+    if (trace.filter_scope_relaxed) {
+      html += '<div class="debug-stage" style="color:var(--yellow)">Filter scope relaxed: ' + escapeHtml(trace.filter_scope_reason || '') + '</div>';
+    }
+
     resultEl.innerHTML = html;
   } catch (e) {
     resultEl.innerHTML = '<span class="evidence-error">Error: ' + escapeHtml(String(e)) + '</span>';
@@ -1285,6 +1351,7 @@ function startCountdown() {
   fetchQueueHealth();
   fetchFeedbackStats();
   fetchContainers();
+  fetchActors();
   fetchMemories();
   startCountdown();
 })();
