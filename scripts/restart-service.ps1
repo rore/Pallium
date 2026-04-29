@@ -23,9 +23,9 @@ Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 $Port = 19836
 $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
 if ($conn) {
-    $pid = $conn.OwningProcess
-    Write-Host "  Killing process tree (PID $pid) on port $Port..."
-    taskkill /F /T /PID $pid 2>$null | Out-Null
+    $procId = $conn.OwningProcess
+    Write-Host "  Killing process tree (PID $procId) on port $Port..."
+    taskkill /F /T /PID $procId 2>$null | Out-Null
 }
 
 Start-Sleep -Seconds 2
