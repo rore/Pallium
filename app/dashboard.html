@@ -320,6 +320,7 @@
       <div class="metric-label">Queries</div>
       <div id="m-queries" class="metric-value">—</div>
       <div id="m-inject-rate" class="metric-sub">injection rate: —</div>
+      <div id="m-queries-since" class="metric-sub" style="font-size:10px; opacity:0.6">since restart</div>
     </div>
     <div class="card metric-card">
       <div class="metric-label">Pending Queue</div>
@@ -667,6 +668,8 @@ function renderStatus(data) {
     ? Math.round((q.total_injections / q.total_queries) * 100) + '%'
     : '—';
   document.getElementById('m-inject-rate').textContent = 'injection rate: ' + rate;
+  document.getElementById('m-queries-since').textContent =
+    'since restart ' + formatUptime(data.uptime_seconds) + ' ago';
 
   const pending = data.pending_items;
   const pendingEl = document.getElementById('m-pending');
