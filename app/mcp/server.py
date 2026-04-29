@@ -144,11 +144,11 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     async def pallium_rate_memory(
         memory_object_id: str,
         rating: Literal["relevant", "not_relevant"],
+        query_context: str,
         reason: str | None = None,
-        query_context: str | None = None,
         query_audit_log_id: str | None = None,
     ) -> str:
-        """Rate an injected Pallium memory as relevant or not_relevant. Call proactively when a memory injected into this session is clearly off-topic for the current user message. rating must be 'relevant' or 'not_relevant'. reason should name the mismatch (1-2 sentences). query_context is the user message text. query_audit_log_id links to the audit log entry for this injection if available."""
+        """Rate an injected Pallium memory as relevant or not_relevant. Call proactively when a memory injected into this session is clearly off-topic for the current user message. rating must be 'relevant' or 'not_relevant'. reason should name the mismatch (1-2 sentences). query_context is the user message text that triggered the injection (required). query_audit_log_id links to the audit log entry for this injection if available."""
         ctx = resolve_context()
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
