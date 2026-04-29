@@ -21,22 +21,22 @@ def _make_extraction(summary: str, **kwargs) -> SemanticExtraction:
 
 
 class TestDiscussionSummaryQualityGate:
-    def test_suppresses_very_short_summary(self):
+    def test_suppresses_very_short_source(self):
         source = _make_source("what?")
         extraction = _make_extraction("what?")
         assert not _should_create_discussion_summary(source, extraction)
 
-    def test_suppresses_bare_user_question(self):
+    def test_suppresses_short_user_question(self):
         source = _make_source("why is it like that?")
         extraction = _make_extraction("User asks why it is like that.")
         assert not _should_create_discussion_summary(source, extraction)
 
-    def test_suppresses_user_instructs_short(self):
+    def test_suppresses_short_instruction(self):
         source = _make_source("ok, delete it")
         extraction = _make_extraction("User instructs to confirm deletion.")
         assert not _should_create_discussion_summary(source, extraction)
 
-    def test_suppresses_user_opened_file(self):
+    def test_suppresses_short_ide_event(self):
         source = _make_source("User opened foo.py")
         extraction = _make_extraction("User opened the file foo.py in the IDE.")
         assert not _should_create_discussion_summary(source, extraction)
@@ -58,10 +58,11 @@ class TestDiscussionSummaryQualityGate:
         )
         assert _should_create_discussion_summary(source, extraction)
 
-    def test_allows_long_user_asks_with_outcome(self):
-        """Longer 'User asks...' summaries that also contain the answer should pass."""
-        source = _make_source("Does the install create the directory structure?")
+    def test_allows_substantive_question_with_context(self):
+        source = _make_source(
+            "Does the install process create the full directory structure including config, logs, and run directories?"
+        )
         extraction = _make_extraction(
-            "User asking whether the install process creates the directory structure and files. The service install creates the full layout including config, logs, and run directories."
+            "User asking about directory structure creation during install."
         )
         assert _should_create_discussion_summary(source, extraction)
