@@ -385,7 +385,7 @@
       </div>
       <div class="last-query">
         Last query: <span id="q-last">—</span>
-        <span id="q-since" style="margin-left:12px">stats since: —</span>
+        <span id="q-since" style="margin-left:12px; font-size:10px; opacity:0.6">since restart</span>
       </div>
     </div>
   </div>
@@ -402,6 +402,7 @@
           <tr><td colspan="2" style="color:var(--muted)">Loading…</td></tr>
         </tbody>
       </table>
+      <div id="skip-since" style="margin-top:6px; font-size:10px; opacity:0.6; color:var(--muted)">since restart</div>
     </div>
     <div class="card">
       <div class="queue-grid">
@@ -668,8 +669,8 @@ function renderStatus(data) {
     ? Math.round((q.total_injections / q.total_queries) * 100) + '%'
     : '—';
   document.getElementById('m-inject-rate').textContent = 'injection rate: ' + rate;
-  document.getElementById('m-queries-since').textContent =
-    'since restart ' + formatUptime(data.uptime_seconds) + ' ago';
+  const sinceRestart = 'since restart ' + formatUptime(data.uptime_seconds) + ' ago';
+  document.getElementById('m-queries-since').textContent = sinceRestart;
 
   const pending = data.pending_items;
   const pendingEl = document.getElementById('m-pending');
@@ -711,8 +712,8 @@ function renderStatus(data) {
 
   document.getElementById('q-suppress').textContent = fmtNum(q.total_suppressions);
   document.getElementById('q-last').textContent = timeAgo(q.last_query_at);
-  document.getElementById('q-since').textContent =
-    'stats since: ' + (q.stats_since ? timeAgo(q.stats_since) : '—');
+  document.getElementById('q-since').textContent = sinceRestart;
+  document.getElementById('skip-since').textContent = sinceRestart;
 
   // Skip reasons
   const tbody = document.getElementById('skip-tbody');
