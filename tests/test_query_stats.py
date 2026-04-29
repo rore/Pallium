@@ -298,8 +298,10 @@ from fastapi.testclient import TestClient
 
 class TestStatusEndpointQueryStats:
     def test_status_includes_query_key(self):
+        from app.config import AppConfig
         from app.main import create_app
-        app = create_app()
+        config = AppConfig(default_use_case="demo_agent_memory")
+        app = create_app(config)
         client = TestClient(app)
         resp = client.get("/status")
         assert resp.status_code == 200
