@@ -278,15 +278,22 @@ Examples:
 
 ## Typed Memory Classification
 
-Only promote to typed memory when the source contains an explicit proof phrase:
-- decision: requires committed-choice language ("Decision:", "we decided", "we chose", "chosen approach", "we will use").
+Only promote to typed memory when the source contains explicit evidence:
+- decision: requires committed-choice language:
+  - Explicit: "Decision:", "we decided", "we chose", "chosen approach", "we will use".
+  - Implementation-confirms-choice: the assistant reports completing a specific technical approach ("Done. I've implemented X using Y", "Switched to X", "Fixed. Now uses Y", "Removed X from Y"). The implementation report IS the decision evidence — the choice was made and executed.
 - investigation_outcome: requires resolved-finding language ("Root cause:", "Investigation found", "Analysis found", "Findings:", "Outcome:", "We found that", "Verdict:", "Conclusion:", "Investigation concluded", "The conclusion is").
 - interest: the user (not the assistant) identifies a specific named subject as worth future attention but does not commit to a concrete action or timeline. Fill interest_text with the subject. No proof phrase needed. Do NOT classify as interest: assistant responses, follow-up questions without a named subject, backward-looking recall, or restatements of prior content.
 - otherwise candidate_type = null.
-- A non-null type requires the exact proof phrase quoted in the matching evidence field.
-- Fill only decision fields for decision, only investigation fields for investigation_outcome.
+
+CRITICAL GROUNDING RULE: decision_text, decision_evidence_text, investigation_text, and investigation_evidence_text must be EXACT QUOTES copied from the source text. Do not paraphrase or rewrite. Copy a substring of the source verbatim (you may trim to the essential fragment but never rephrase).
+
+For implementation-confirms-choice decisions:
+- decision_text: quote the fragment naming the chosen approach (e.g., "implemented the dashboard using vanilla HTML/CSS/JS")
+- decision_evidence_text: quote the broader context confirming it's a committed choice (e.g., "I've implemented the dashboard using vanilla HTML/CSS/JS — no framework, no build step")
 
 REJECT as null: needs, proposals, preferences, recommendations, symptoms, risks, monitoring notes, status updates, and unresolved discussion.
+REJECT as null for decision: progress updates that don't name a specific chosen approach ("Fixed the bug", "Tests pass now"), partial implementations that haven't committed to a design, and generic completions without a named technical choice.
 
 ## Work-State Signals
 
