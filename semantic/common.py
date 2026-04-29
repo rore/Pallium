@@ -497,11 +497,28 @@ def _looks_like_low_value_meta_update(source_item: SourceItem, extraction: Seman
 
 
 
+_BARE_RESTATEMENT_PREFIXES = (
+    "user asks",
+    "user asking",
+    "user requests",
+    "user requesting",
+    "user instructs",
+    "user opened",
+    "user is asking",
+    "user is requesting",
+)
+
+
 def _is_substantive_summary(source_item: SourceItem, extraction: SemanticExtraction) -> bool:
     if _looks_like_low_value_meta_update(source_item, extraction):
         return False
     if _has_explicit_thread_signal(extraction):
         return True
+    summary = extraction.summary.strip()
+    summary_lower = summary.lower()
+    if any(summary_lower.startswith(prefix) for prefix in _BARE_RESTATEMENT_PREFIXES):
+        if len(summary) < 100:
+            return False
     summary_tokens = tokenize_text(extraction.summary)
     content_tokens_list = tokenize_text(source_item.content)
     if len(summary_tokens) >= 4:
