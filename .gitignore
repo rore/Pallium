@@ -83,3 +83,4 @@ evals/multilingual_quality/output/
 evals/fragment_embedding_experiment.py
 evals/locomo/*.log
 .superpowers/
+evals/memory_quality_corpus.jsonl
