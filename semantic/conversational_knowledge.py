@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from datetime import datetime
 from typing import Any
 
@@ -173,28 +172,6 @@ FACT_EXTRACTION_SCHEMA_DESCRIPTION = json.dumps(
     },
     indent=2,
 )
-
-
-_EPHEMERAL_PATTERNS = [
-    re.compile(r"\bport \d{4,5}\b", re.IGNORECASE),
-    re.compile(r"\bPID \d+\b"),
-    re.compile(r"\ball \d+ tests? pass", re.IGNORECASE),
-    re.compile(r"\d+ tests? (?:pass|green|succeed)", re.IGNORECASE),
-    re.compile(r"commit(?:ted)? (?:hash |with hash )?[0-9a-f]{7,}", re.IGNORECASE),
-    re.compile(r"\buptime (?:is|of|was) ", re.IGNORECASE),
-    re.compile(r"running (?:as|for|on|with) (?:PID|port|\d)", re.IGNORECASE),
-    re.compile(r"\d+\s*(?:MB|GB|KB)\s*(?:memory|RAM|disk|each)", re.IGNORECASE),
-    re.compile(r"\b\d+ (?:small |wrapper )?processes?\b", re.IGNORECASE),
-]
-
-
-def _is_ephemeral_fact(fact: dict) -> bool:
-    """Return True if a fact describes transient runtime state."""
-    category = fact.get("category", "")
-    if category in ("preference", "relationship", "personal"):
-        return False
-    statement = fact.get("statement", "")
-    return any(p.search(statement) for p in _EPHEMERAL_PATTERNS)
 
 
 def _clean_fact_text(text: str | None) -> str:
@@ -442,8 +419,6 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
             if not fact_statement_is_quality_viable(statement):
                 continue
             if not _is_durable_fact_statement(subject, statement):
-                continue
-            if _is_ephemeral_fact(fact):
                 continue
 
             memory_id = new_id()
