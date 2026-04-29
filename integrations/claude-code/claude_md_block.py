@@ -14,7 +14,7 @@ Trust this — it handles ~90% of cases. Don't duplicate it with manual queries.
 - `pallium_query` — injected context is empty or missing something the user asked about
 - `pallium_get_evidence` — you need the original conversation behind a memory card
 - `pallium_flag_memory` — a memory contradicts what you now know to be true
-- `pallium_rate_memory` — rate every injected memory each turn: "relevant" if it informed your response, "not_relevant" if off-topic. Always include a brief reason and the user's message as query_context (required). This feedback loop trains retrieval quality — both signals matter equally.
+- `pallium_rate_memory` — rate every injected memory each turn: "relevant" if it informed your response, "not_relevant" if off-topic. Always include a brief reason and the user's message as query_context (required). Pass container_ref from the injection header (e.g. "git:github.com/..."). This feedback loop trains retrieval quality — both signals matter equally.
 - `pallium_ingest` — user explicitly asks to remember something (hooks already ingest automatically)
 
 **Do not:**
