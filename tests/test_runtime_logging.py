@@ -21,7 +21,7 @@ class FakeRetentionService:
 
 
 def test_cleaner_runtime_logs_are_timestamped_and_labeled(monkeypatch, capsys) -> None:
-    monkeypatch.setattr("app.cleaner.build_service", lambda config: FakeRetentionService())
+    monkeypatch.setattr("app.cleaner.build_service", lambda config, **kw: FakeRetentionService())
 
     exit_code = run_cleaner(
         ["--once", "--cleaner-id", "cleaner-test"],
