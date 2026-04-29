@@ -531,6 +531,8 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             query_context=request.query_context,
             query_audit_log_id=request.query_audit_log_id,
             rater_ref=resolved_rater_ref,
+            thread_ref=request.thread_ref,
+            container_ref=request.container_ref,
         )
         return MemoryFeedbackResponse(
             memory_object_id=memory_object_id,

@@ -207,6 +207,126 @@ class TestRecordMemoryFeedbackStorage:
         assert id1 != id2
 
 
+class TestFeedbackDenormalization:
+    """Verify memory_type, memory_text, thread_ref, container_ref are captured."""
+
+    def test_memory_type_and_text_populated_from_existing_memory(self):
+        storage = _make_storage()
+        memory = _make_memory(storage, memory_type="decision")
+        # Update payload to have a decision field
+        from sqlalchemy import update
+        from storage.sqlite_schema import MemoryObjectRecord
+        import json
+        with storage._session_factory.begin() as session:
+            session.execute(
+                update(MemoryObjectRecord)
+                .where(MemoryObjectRecord.id == memory.id)
+                .values(payload_json=json.dumps({"decision": "Use PostgreSQL for production"}))
+            )
+
+        feedback_id = storage.record_memory_feedback(
+            memory_object_id=memory.id,
+            rating="relevant",
+            reason="matched query",
+            query_context="which database should we use?",
+            query_audit_log_id=None,
+            rater_ref="local",
+        )
+
+        from storage.sqlite_schema import MemoryFeedbackRecord
+        with storage._session_factory() as session:
+            record = session.get(MemoryFeedbackRecord, feedback_id)
+        assert record.memory_type == "decision"
+        assert record.memory_text == "Use PostgreSQL for production"
+
+    def test_memory_type_and_text_null_for_missing_memory(self):
+        storage = _make_storage()
+        feedback_id = storage.record_memory_feedback(
+            memory_object_id="nonexistent-id",
+            rating="not_relevant",
+            reason="memory gone",
+            query_context="some query",
+            query_audit_log_id=None,
+            rater_ref="local",
+        )
+
+        from storage.sqlite_schema import MemoryFeedbackRecord
+        with storage._session_factory() as session:
+            record = session.get(MemoryFeedbackRecord, feedback_id)
+        assert record.memory_type is None
+        assert record.memory_text is None
+
+    def test_thread_ref_stored(self):
+        storage = _make_storage()
+        memory = _make_memory(storage)
+        feedback_id = storage.record_memory_feedback(
+            memory_object_id=memory.id,
+            rating="relevant",
+            reason=None,
+            query_context="test query",
+            query_audit_log_id=None,
+            rater_ref="local",
+            thread_ref="session-abc-123",
+        )
+
+        from storage.sqlite_schema import MemoryFeedbackRecord
+        with storage._session_factory() as session:
+            record = session.get(MemoryFeedbackRecord, feedback_id)
+        assert record.thread_ref == "session-abc-123"
+
+    def test_container_ref_stored(self):
+        storage = _make_storage()
+        memory = _make_memory(storage)
+        feedback_id = storage.record_memory_feedback(
+            memory_object_id=memory.id,
+            rating="not_relevant",
+            reason="wrong container",
+            query_context="test query",
+            query_audit_log_id=None,
+            rater_ref="local",
+            container_ref="git:github.com/example/repo",
+        )
+
+        from storage.sqlite_schema import MemoryFeedbackRecord
+        with storage._session_factory() as session:
+            record = session.get(MemoryFeedbackRecord, feedback_id)
+        assert record.container_ref == "git:github.com/example/repo"
+
+    def test_all_denormalized_fields_together(self):
+        storage = _make_storage()
+        memory = _make_memory(storage, memory_type="constraint_memory")
+        import json
+        from sqlalchemy import update
+        from storage.sqlite_schema import MemoryObjectRecord
+        with storage._session_factory.begin() as session:
+            session.execute(
+                update(MemoryObjectRecord)
+                .where(MemoryObjectRecord.id == memory.id)
+                .values(payload_json=json.dumps({"constraint_text": "Never deploy on Fridays"}))
+            )
+
+        feedback_id = storage.record_memory_feedback(
+            memory_object_id=memory.id,
+            rating="not_relevant",
+            reason="not about deployment",
+            query_context="how do I format dates?",
+            query_audit_log_id=None,
+            rater_ref="agent:claude",
+            thread_ref="session-xyz",
+            container_ref="git:github.com/test/project",
+        )
+
+        from storage.sqlite_schema import MemoryFeedbackRecord
+        with storage._session_factory() as session:
+            record = session.get(MemoryFeedbackRecord, feedback_id)
+        assert record.memory_type == "constraint_memory"
+        assert record.memory_text == "Never deploy on Fridays"
+        assert record.thread_ref == "session-xyz"
+        assert record.container_ref == "git:github.com/test/project"
+        assert record.query_context == "how do I format dates?"
+        assert record.reason == "not about deployment"
+
+
 class TestFeedbackAPIEndpoint:
     @pytest.fixture
     def client(self, tmp_path):

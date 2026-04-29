@@ -10,20 +10,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
 
-from storage.sqlite import SQLiteStorageProvider
+from storage.sqlite import SQLiteStorageProvider, _extract_display_text
 from storage.sqlite_schema import MemoryFeedbackRecord, MemoryObjectRecord
 
 logger = logging.getLogger(__name__)
 
 _DASHBOARD_HTML_PATH = Path(__file__).parent / "dashboard.html"
-
-
-def _extract_display_text(payload: dict) -> str:
-    for key in ("summary", "statement", "decision", "investigation_outcome", "interest_text", "constraint_text", "carry_forward_answer"):
-        val = payload.get(key)
-        if val:
-            return str(val)
-    return ""
 
 
 def mount_dashboard(app: FastAPI) -> None:

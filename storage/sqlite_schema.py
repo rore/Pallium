@@ -187,6 +187,10 @@ class MemoryFeedbackRecord(Base):
     query_audit_log_id = Column(String, nullable=True)  # join to audit log for context
     rater_ref = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
+    memory_type = Column(String, nullable=True)
+    memory_text = Column(Text, nullable=True)
+    thread_ref = Column(String, nullable=True)
+    container_ref = Column(String, nullable=True)
 
 
 class SQLiteSchemaMixin:
@@ -321,6 +325,12 @@ class SQLiteSchemaMixin:
             "ON memory_feedback (created_at)"
         ),
     }
+    _MEMORY_FEEDBACK_COLUMN_MIGRATIONS = {
+        "memory_type": "ALTER TABLE memory_feedback ADD COLUMN memory_type VARCHAR",
+        "memory_text": "ALTER TABLE memory_feedback ADD COLUMN memory_text TEXT",
+        "thread_ref": "ALTER TABLE memory_feedback ADD COLUMN thread_ref VARCHAR",
+        "container_ref": "ALTER TABLE memory_feedback ADD COLUMN container_ref VARCHAR",
+    }
 
     def _initialize_schema(self) -> None:
         with self._schema_initialization_lock():
@@ -336,6 +346,7 @@ class SQLiteSchemaMixin:
             self._ensure_indexes()
             self._ensure_query_audit_log_indexes()
             self._ensure_memory_flag_indexes()
+            self._ensure_memory_feedback_columns()
             self._ensure_memory_feedback_indexes()
             self._ensure_fts5_table()
             self._backfill_legacy_memory_freshness()
@@ -529,6 +540,13 @@ class SQLiteSchemaMixin:
         with self._engine.begin() as connection:
             for _index_name, create_sql in self._MEMORY_FLAG_INDEX_MIGRATIONS.items():
                 connection.execute(text(create_sql))
+
+    def _ensure_memory_feedback_columns(self) -> None:
+        with self._engine.begin() as connection:
+            existing_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(memory_feedback)"))}
+            for column_name, migration_sql in self._MEMORY_FEEDBACK_COLUMN_MIGRATIONS.items():
+                if column_name not in existing_columns:
+                    connection.execute(text(migration_sql))
 
     def _ensure_memory_feedback_indexes(self) -> None:
         with self._engine.begin() as connection:

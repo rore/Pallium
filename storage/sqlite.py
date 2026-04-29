@@ -31,6 +31,16 @@ from storage.sqlite_schema import (
 )
 from storage.sqlite_search import SQLiteSearchMixin
 
+_DISPLAY_TEXT_KEYS = ("summary", "statement", "decision", "investigation_outcome", "interest_text", "constraint_text", "carry_forward_answer")
+
+
+def _extract_display_text(payload: dict) -> str:
+    for key in _DISPLAY_TEXT_KEYS:
+        val = payload.get(key)
+        if val:
+            return str(val)
+    return ""
+
 
 class SQLiteStorageProvider(
     SQLiteSearchMixin,
@@ -237,6 +247,8 @@ class SQLiteStorageProvider(
         query_context: str | None,
         query_audit_log_id: str | None,
         rater_ref: str | None,
+        thread_ref: str | None = None,
+        container_ref: str | None = None,
     ) -> str:
         """Record a relevance feedback judgment for an injected memory.
 
@@ -247,6 +259,13 @@ class SQLiteStorageProvider(
         from core.models import new_id
         feedback_id = new_id()
         with self._session_factory.begin() as session:
+            memory_type = None
+            memory_text = None
+            mem_record = session.get(MemoryObjectRecord, memory_object_id)
+            if mem_record:
+                memory_type = mem_record.type
+                payload = json.loads(mem_record.payload_json) if mem_record.payload_json else {}
+                memory_text = _extract_display_text(payload)
             session.add(MemoryFeedbackRecord(
                 id=feedback_id,
                 memory_object_id=memory_object_id,
@@ -256,6 +275,10 @@ class SQLiteStorageProvider(
                 query_audit_log_id=query_audit_log_id,
                 rater_ref=rater_ref,
                 created_at=utc_now(),
+                memory_type=memory_type,
+                memory_text=memory_text,
+                thread_ref=thread_ref,
+                container_ref=container_ref,
             ))
         return feedback_id
 

@@ -388,6 +388,8 @@ class MemoryFeedbackRequest(BaseModel):
     query_context: str | None = None
     query_audit_log_id: str | None = None
     rater_ref: str | None = None
+    thread_ref: str | None = None
+    container_ref: str | None = None
 
 
 class MemoryFeedbackResponse(BaseModel):

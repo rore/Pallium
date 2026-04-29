@@ -566,6 +566,8 @@ class PalliumService:
         query_context: str | None,
         query_audit_log_id: str | None,
         rater_ref: str | None,
+        thread_ref: str | None = None,
+        container_ref: str | None = None,
     ) -> str:
         """Record a relevance feedback judgment for an injected memory.
 
@@ -578,6 +580,8 @@ class PalliumService:
             query_context=query_context,
             query_audit_log_id=query_audit_log_id,
             rater_ref=rater_ref,
+            thread_ref=thread_ref,
+            container_ref=container_ref,
         )
 
     def _run_targeted_fact_consolidation(self, use_case: str, container_ref: str, subjects: list[str]) -> None:

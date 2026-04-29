@@ -514,6 +514,8 @@ class StorageProvider(ABC):
         query_context: str | None,
         query_audit_log_id: str | None,
         rater_ref: str | None,
+        thread_ref: str | None = None,
+        container_ref: str | None = None,
     ) -> str:
         """Record a relevance feedback judgment. Returns the feedback record id.
 

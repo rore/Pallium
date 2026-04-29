@@ -133,6 +133,8 @@ class PalliumMcpClient:
         query_context: str | None = None,
         query_audit_log_id: str | None = None,
         rater_ref: str | None = None,
+        thread_ref: str | None = None,
+        container_ref: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {"rating": rating}
         if reason is not None:
@@ -143,6 +145,10 @@ class PalliumMcpClient:
             payload["query_audit_log_id"] = query_audit_log_id
         if rater_ref is not None:
             payload["rater_ref"] = rater_ref
+        if thread_ref is not None:
+            payload["thread_ref"] = thread_ref
+        if container_ref is not None:
+            payload["container_ref"] = container_ref
         try:
             async with httpx.AsyncClient(base_url=self._base_url, timeout=30.0) as http:
                 response = await http.post(
