@@ -89,12 +89,12 @@
     grid-template-columns: repeat(4, 1fr);
     gap: 12px;
   }
-  .metric-card { }
   .metric-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
   .metric-value { font-size: 28px; font-weight: bold; color: var(--blue); margin: 4px 0 2px; }
   .metric-value.green  { color: var(--green); }
   .metric-value.yellow { color: var(--yellow); }
   .metric-value.red    { color: var(--red); }
+  .metric-value.muted  { color: var(--muted); font-size: 22px; }
   .metric-sub  { font-size: 11px; color: var(--muted); }
 
   /* ── Two-column panels ───────────────────────── */
@@ -165,7 +165,7 @@
   .browser-controls input:focus,
   .browser-controls select:focus { border-color: var(--blue); }
   .browser-controls input { flex: 1; min-width: 180px; }
-  .browser-controls select { min-width: 140px; }
+  .browser-controls select { min-width: 120px; }
   .btn {
     background: #0f0f20; border: 1px solid var(--border);
     color: var(--blue); font-family: var(--font); font-size: 12px;
@@ -176,7 +176,7 @@
   .btn.primary { color: var(--green); border-color: var(--green); }
   .btn.primary:hover { background: rgba(0,255,51,0.07); }
 
-  .mem-table { width: 100%; border-collapse: collapse; }
+  .mem-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   .mem-table th {
     padding: 6px 10px; text-align: left;
     border-bottom: 1px solid var(--border);
@@ -186,24 +186,47 @@
   .mem-table td {
     padding: 7px 10px; border-bottom: 1px solid rgba(42,42,74,0.5);
     font-size: 12px; vertical-align: top;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  .mem-table .col-expand { width: 22px; }
+  .mem-table .col-type { width: 130px; }
+  .mem-table .col-lc { width: 80px; }
+  .mem-table .col-conf { width: 60px; }
+  .mem-table .col-container { width: 140px; }
+  .mem-table .col-created { width: 120px; }
+  .mem-table .col-summary { width: auto; }
+
   .mem-table tbody tr.mem-row { cursor: pointer; }
   .mem-table tbody tr.mem-row:hover td { background: rgba(255,255,255,0.025); }
   .mem-table tbody tr.mem-row.expanded td { background: rgba(102,170,255,0.05); }
   .mem-table tbody tr.detail-row td {
     padding: 0; background: rgba(15,15,32,0.6);
     border-bottom: 1px solid var(--border);
+    white-space: normal; overflow: visible;
   }
   .detail-inner { padding: 12px 14px 14px; }
   .detail-meta {
     font-size: 11px; color: var(--muted); margin-bottom: 8px;
-    display: flex; gap: 12px; flex-wrap: wrap;
+    display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
   }
   .detail-meta b { color: var(--text); }
-  .detail-text {
-    color: var(--text); margin-bottom: 12px;
-    white-space: pre-wrap; word-break: break-word; font-size: 12px;
+  .copy-btn {
+    display: inline-block; cursor: pointer; padding: 1px 5px;
+    border-radius: 3px; border: 1px solid var(--border); font-size: 10px;
+    color: var(--muted); background: transparent; font-family: var(--font);
   }
+  .copy-btn:hover { border-color: var(--blue); color: var(--blue); }
+
+  /* ── Content fields (structured payload) ────── */
+  .content-fields { margin-bottom: 12px; }
+  .content-field { margin-bottom: 8px; }
+  .content-field-label { font-size: 10px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.04em; }
+  .content-field-value {
+    color: var(--text); font-size: 12px;
+    white-space: pre-wrap; word-break: break-word;
+    padding: 4px 0;
+  }
+
   .payload-details { margin-bottom: 12px; }
   .payload-details summary {
     font-size: 10px; text-transform: uppercase; color: var(--muted);
@@ -214,13 +237,20 @@
     background: rgba(0,0,0,0.3); padding: 8px 10px; border-radius: 4px;
     overflow-x: auto; max-height: 200px;
   }
+
   .evidence-section-title {
     font-size: 10px; text-transform: uppercase; color: var(--muted);
     margin-bottom: 6px; letter-spacing: 0.06em;
   }
   .evidence-list { list-style: none; }
+  .evidence-thread-group { margin-bottom: 10px; }
+  .evidence-thread-label {
+    font-size: 10px; color: var(--muted); margin-bottom: 4px;
+    padding: 2px 6px; background: rgba(0,0,0,0.2); border-radius: 3px;
+    display: inline-block;
+  }
   .evidence-item {
-    padding: 8px 10px; margin-bottom: 6px;
+    padding: 8px 10px; margin-bottom: 4px;
     border-radius: 4px; border-left: 3px solid var(--border);
     background: rgba(15,15,32,0.8);
   }
@@ -279,7 +309,51 @@
   .toggle-icon { color: var(--muted); font-size: 10px; user-select: none; }
   .no-mem { color: var(--muted); padding: 20px; text-align: center; }
 
-  /* ── Responsive hint ────────────────────────── */
+  /* ── Query Debug ────────────────────────────── */
+  .debug-section { margin-top: 8px; }
+  .debug-toggle {
+    font-size: 11px; color: var(--muted); cursor: pointer;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    user-select: none; display: flex; align-items: center; gap: 6px;
+  }
+  .debug-toggle:hover { color: var(--blue); }
+  .debug-panel { display: none; margin-top: 12px; }
+  .debug-panel.visible { display: block; }
+  .debug-controls {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .debug-controls input { flex: 1; min-width: 300px; }
+  .debug-controls input, .debug-controls select {
+    background: #0f0f20; border: 1px solid var(--border);
+    color: var(--text); font-family: var(--font); font-size: 12px;
+    padding: 5px 10px; border-radius: 4px; outline: none;
+  }
+  .debug-controls input:focus, .debug-controls select:focus { border-color: var(--blue); }
+  .debug-result { margin-top: 8px; }
+  .debug-result-header {
+    font-size: 12px; margin-bottom: 8px; padding: 8px 10px;
+    border-radius: 4px; background: rgba(0,0,0,0.2);
+  }
+  .debug-result-header .inject-yes { color: var(--green); font-weight: bold; }
+  .debug-result-header .inject-no  { color: var(--muted); }
+  .debug-blocks { margin-top: 8px; }
+  .debug-block {
+    padding: 8px 10px; margin-bottom: 6px;
+    border-radius: 4px; border-left: 3px solid var(--blue);
+    background: rgba(15,15,32,0.8); font-size: 12px;
+  }
+  .debug-stages { margin-top: 8px; }
+  .debug-stage {
+    font-size: 11px; color: var(--muted); padding: 2px 0;
+  }
+
+  /* ── Responsive ────────────────────────────── */
+  @media (max-width: 1200px) {
+    .mem-table .col-container { display: none; }
+    .mem-table td:nth-child(5) { display: none; }
+    .mem-table th:nth-child(5) { display: none; }
+  }
   @media (max-width: 900px) {
     .metrics-row { grid-template-columns: repeat(2, 1fr); }
     .two-col     { grid-template-columns: 1fr; }
@@ -303,7 +377,7 @@
 <div class="content-wrap">
   <div id="error-banner" class="error-banner">API unreachable — server may be down.</div>
 
-  <!-- ── Metrics row ──────────────────────────── -->
+  <!-- ── Overview (4 cards) ───────────────────── -->
   <div class="section-title">Overview</div>
   <div class="metrics-row">
     <div class="card metric-card">
@@ -327,15 +401,10 @@
       <div id="m-pending" class="metric-value">—</div>
       <div id="m-pending-sub" class="metric-sub">awaiting processing</div>
     </div>
-    <div class="card metric-card">
-      <div class="metric-label">Feedback</div>
-      <div id="m-feedback" class="metric-value">—</div>
-      <div id="m-feedback-sub" class="metric-sub">not-relevant rate: —</div>
-    </div>
   </div>
 
-  <!-- ── Storage + Query ──────────────────────── -->
-  <div class="section-title">Storage &amp; Queries</div>
+  <!-- ── System Health ────────────────────────── -->
+  <div class="section-title">System Health</div>
   <div class="two-col">
     <div class="card" id="storage-panel">
       <div class="storage-item">
@@ -355,54 +424,6 @@
       <div style="margin-top:8px; font-size:11px; color:var(--muted)">
         Vector index: <span id="s-vector-status">—</span>
       </div>
-    </div>
-    <div class="card">
-      <div class="query-grid">
-        <div class="stat-item">
-          <div class="stat-label">Queries</div>
-          <div id="q-total" class="stat-value blue">—</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Injections</div>
-          <div id="q-injections" class="stat-value green">—</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Skips</div>
-          <div id="q-skips" class="stat-value">—</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Blocks injected</div>
-          <div id="q-blocks" class="stat-value purple">—</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Flags</div>
-          <div id="q-flags" class="stat-value yellow">—</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Suppressions</div>
-          <div id="q-suppress" class="stat-value">—</div>
-        </div>
-      </div>
-      <div class="last-query">
-        Last query: <span id="q-last">—</span>
-        <span id="q-since" style="margin-left:12px; font-size:10px; opacity:0.6">since restart</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── Skip Reasons + Queue ─────────────────── -->
-  <div class="section-title">Skip Reasons &amp; Processing Queue</div>
-  <div class="two-col">
-    <div class="card">
-      <table class="skip-table">
-        <thead>
-          <tr><th>Reason</th><th style="text-align:right">Count</th></tr>
-        </thead>
-        <tbody id="skip-tbody">
-          <tr><td colspan="2" style="color:var(--muted)">Loading…</td></tr>
-        </tbody>
-      </table>
-      <div id="skip-since" style="margin-top:6px; font-size:10px; opacity:0.6; color:var(--muted)">since restart</div>
     </div>
     <div class="card">
       <div class="queue-grid">
@@ -436,12 +457,59 @@
     </div>
   </div>
 
+  <!-- ── Query Activity ───────────────────────── -->
+  <div class="section-title">Query Activity <span id="qa-since" style="font-size:10px; opacity:0.6; text-transform:none; letter-spacing:0"></span></div>
+  <div class="two-col">
+    <div class="card">
+      <div class="query-grid">
+        <div class="stat-item">
+          <div class="stat-label">Injections</div>
+          <div id="q-injections" class="stat-value green">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Skips</div>
+          <div id="q-skips" class="stat-value">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Blocks Injected</div>
+          <div id="q-blocks" class="stat-value purple">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Flags</div>
+          <div id="q-flags" class="stat-value yellow">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Suppressions</div>
+          <div id="q-suppress" class="stat-value">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Feedback</div>
+          <div id="q-feedback" class="stat-value">—</div>
+          <div id="q-feedback-sub" class="stat-label" style="margin-top:2px"></div>
+        </div>
+      </div>
+      <div class="last-query">
+        Last query: <span id="q-last">—</span>
+      </div>
+    </div>
+    <div class="card">
+      <table class="skip-table">
+        <thead>
+          <tr><th>Skip Reason</th><th style="text-align:right">Count</th></tr>
+        </thead>
+        <tbody id="skip-tbody">
+          <tr><td colspan="2" style="color:var(--muted)">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- ── Memory Browser ───────────────────────── -->
   <div class="section-title">Memory Browser</div>
   <div class="card">
     <div class="browser-controls">
-      <input type="text" id="search-input" placeholder="Filter loaded…" oninput="applyClientFilter()">
-      <select id="type-filter" onchange="reloadMemories()">
+      <input type="text" id="search-input" placeholder="Search memories…">
+      <select id="type-filter">
         <option value="">All types</option>
         <option value="decision">decision</option>
         <option value="investigation_outcome">investigation_outcome</option>
@@ -455,13 +523,16 @@
         <option value="fact_summary">fact_summary</option>
         <option value="discussion_summary">discussion_summary</option>
       </select>
-      <select id="lc-filter" onchange="reloadMemories()">
+      <select id="lc-filter">
         <option value="">All lifecycles</option>
         <option value="active">active</option>
         <option value="superseded">superseded</option>
         <option value="suppressed">suppressed</option>
       </select>
-      <select id="sort-filter" onchange="reloadMemories()">
+      <select id="container-filter">
+        <option value="">All containers</option>
+      </select>
+      <select id="sort-filter">
         <option value="">Newest first</option>
         <option value="most_negative">Most negatively rated</option>
       </select>
@@ -471,13 +542,13 @@
     <table class="mem-table">
       <thead>
         <tr>
-          <th style="width:22px"></th>
-          <th>Type</th>
-          <th>Lifecycle</th>
-          <th>Conf</th>
-          <th>Container</th>
-          <th style="width:130px">Created</th>
-          <th>Summary</th>
+          <th class="col-expand"></th>
+          <th class="col-type">Type</th>
+          <th class="col-lc">Lifecycle</th>
+          <th class="col-conf">Conf</th>
+          <th class="col-container">Container</th>
+          <th class="col-created">Created</th>
+          <th class="col-summary">Summary</th>
         </tr>
       </thead>
       <tbody id="mem-tbody">
@@ -493,23 +564,41 @@
       </div>
     </div>
   </div>
+
+  <!-- ── Query Debug ──────────────────────────── -->
+  <div class="section-title debug-toggle" onclick="toggleDebugPanel()">
+    <span id="debug-arrow">&#9654;</span> Query Debug
+  </div>
+  <div class="card debug-section">
+    <div id="debug-panel" class="debug-panel">
+      <div class="debug-controls">
+        <input type="text" id="debug-query-input" placeholder="Enter query text to test…">
+        <select id="debug-container">
+          <option value="">No container</option>
+        </select>
+        <button class="btn primary" onclick="runQueryDebug()">Test Query</button>
+      </div>
+      <div id="debug-result"></div>
+    </div>
+  </div>
 </div><!-- /content-wrap -->
 
 <script>
 // ──────────────────────────────────────────────────
 // State
 // ──────────────────────────────────────────────────
-let _memories = [];         // full page data
-let _filteredMemories = []; // after client-side search
+let _memories = [];
 let _total = 0;
 let _offset = 0;
 const PAGE_SIZE = 50;
 
-let _expandedId = null;     // currently expanded memory id
-let _evidenceCache = {};    // id → items array
+let _expandedId = null;
+let _evidenceCache = {};
+let _containers = [];
 
 let _countdown = 10;
 let _countdownInterval = null;
+let _searchTimeout = null;
 
 // ──────────────────────────────────────────────────
 // Helpers
@@ -533,6 +622,22 @@ function timeAgo(iso) {
   if (diff < 3600) return Math.floor(diff/60) + 'm ago';
   if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
   return Math.floor(diff/86400) + 'd ago';
+}
+
+function formatDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  const mon = d.toLocaleString('en', { month: 'short' });
+  const day = d.getDate();
+  const hr = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  return mon + ' ' + day + ' ' + hr + ':' + min;
+}
+
+function formatDateWithRelative(iso) {
+  if (!iso) return '—';
+  return formatDate(iso) + ' <span style="opacity:0.6">(' + timeAgo(iso) + ')</span>';
 }
 
 function formatUptime(s) {
@@ -564,6 +669,13 @@ function confClass(c) {
   return 'conf-unk';
 }
 
+function shortContainer(ref) {
+  if (!ref) return '—';
+  const parts = ref.split(':');
+  if (parts.length > 2) return parts.slice(-1)[0];
+  return ref;
+}
+
 // ──────────────────────────────────────────────────
 // API calls
 // ──────────────────────────────────────────────────
@@ -588,9 +700,7 @@ async function fetchQueueHealth() {
     if (!r.ok) throw new Error('queue ' + r.status);
     const data = await r.json();
     renderQueue(data);
-  } catch (e) {
-    // non-fatal, leave existing values
-  }
+  } catch (e) { /* non-fatal */ }
 }
 
 async function fetchFeedbackStats() {
@@ -598,26 +708,43 @@ async function fetchFeedbackStats() {
     const r = await fetch('/dashboard/api/feedback/stats');
     if (!r.ok) return;
     const data = await r.json();
-    document.getElementById('m-feedback').textContent = fmtNum(data.total);
+    document.getElementById('q-feedback').textContent = fmtNum(data.total);
     if (data.not_relevant_rate != null) {
-      document.getElementById('m-feedback-sub').textContent =
-        'not-relevant rate: ' + Math.round(data.not_relevant_rate * 100) + '%';
+      document.getElementById('q-feedback-sub').textContent =
+        Math.round(data.not_relevant_rate * 100) + '% not-relevant';
+      if (data.not_relevant_rate > 0.3) {
+        document.getElementById('q-feedback-sub').style.color = 'var(--red)';
+      }
     } else {
-      document.getElementById('m-feedback-sub').textContent = 'no ratings yet';
+      document.getElementById('q-feedback-sub').textContent = '';
     }
-  } catch (e) {
-    // non-fatal
-  }
+  } catch (e) { /* non-fatal */ }
 }
+
+async function fetchContainers() {
+  try {
+    const r = await fetch('/dashboard/api/containers');
+    if (!r.ok) return;
+    const data = await r.json();
+    _containers = data.containers || [];
+    populateContainerDropdowns();
+  } catch (e) { /* non-fatal */ }
+}
+
 
 async function fetchMemories() {
   const type = document.getElementById('type-filter').value;
   const lc   = document.getElementById('lc-filter').value;
   const sort = document.getElementById('sort-filter').value;
+  const container = document.getElementById('container-filter').value;
+  const search = document.getElementById('search-input').value.trim();
+
   const params = new URLSearchParams({ limit: PAGE_SIZE, offset: _offset });
   if (type) params.set('type', type);
   if (lc)   params.set('lifecycle', lc);
   if (sort) params.set('sort', sort);
+  if (container) params.set('container_ref', container);
+  if (search) params.set('search', search);
 
   try {
     const r = await fetch('/dashboard/api/memories?' + params.toString());
@@ -641,13 +768,32 @@ async function fetchEvidence(id) {
 }
 
 // ──────────────────────────────────────────────────
+// Populate container dropdowns
+// ──────────────────────────────────────────────────
+function populateContainerDropdowns() {
+  const selects = [
+    document.getElementById('container-filter'),
+    document.getElementById('debug-container'),
+  ];
+  for (const sel of selects) {
+    const current = sel.value;
+    sel.innerHTML = '<option value="">' + (sel.id === 'debug-container' ? 'No container' : 'All containers') + '</option>';
+    for (const c of _containers) {
+      const opt = document.createElement('option');
+      opt.value = c;
+      opt.textContent = c;
+      sel.appendChild(opt);
+    }
+    sel.value = current;
+  }
+}
+
+// ──────────────────────────────────────────────────
 // Render: status
 // ──────────────────────────────────────────────────
 function renderStatus(data) {
-  // Health badge
   const badge = document.getElementById('health-badge');
-  const vready = data.vector_index_ready;
-  if (vready) {
+  if (data.vector_index_ready) {
     badge.textContent = 'healthy';
     badge.className = 'health-badge ok';
   } else {
@@ -655,28 +801,44 @@ function renderStatus(data) {
     badge.className = 'health-badge init';
   }
 
-  // Uptime
   document.getElementById('header-uptime').textContent =
     'uptime: ' + formatUptime(data.uptime_seconds);
 
-  // Metric cards
+  // Overview metrics
   document.getElementById('m-memory').textContent = fmtNum(data.total_memory_objects);
   document.getElementById('m-source').textContent = fmtNum(data.total_source_items);
 
   const q = data.query || {};
-  document.getElementById('m-queries').textContent = fmtNum(q.total_queries);
-  const rate = (q.total_queries > 0)
-    ? Math.round((q.total_injections / q.total_queries) * 100) + '%'
-    : '—';
-  document.getElementById('m-inject-rate').textContent = 'injection rate: ' + rate;
-  const sinceRestart = 'since restart ' + formatUptime(data.uptime_seconds) + ' ago';
-  document.getElementById('m-queries-since').textContent = sinceRestart;
+  const totalQ = q.total_queries || 0;
 
-  const pending = data.pending_items;
+  if (totalQ === 0) {
+    document.getElementById('m-queries').textContent = '0';
+    document.getElementById('m-queries').className = 'metric-value muted';
+    document.getElementById('m-inject-rate').textContent = 'no activity yet';
+  } else {
+    document.getElementById('m-queries').textContent = fmtNum(totalQ);
+    document.getElementById('m-queries').className = 'metric-value';
+    const rate = Math.round((q.total_injections / totalQ) * 100);
+    const rateEl = document.getElementById('m-inject-rate');
+    rateEl.textContent = 'injection rate: ' + rate + '%';
+    if (totalQ > 5 && rate < 20) {
+      rateEl.style.color = 'var(--yellow)';
+    } else {
+      rateEl.style.color = '';
+    }
+  }
+
+  // Pending
+  const pending = data.pending_items || 0;
   const pendingEl = document.getElementById('m-pending');
   pendingEl.textContent = fmtNum(pending);
-  pendingEl.className = 'metric-value' +
-    (pending > 50 ? ' yellow' : pending > 200 ? ' red' : '');
+  if (pending > 200) {
+    pendingEl.className = 'metric-value red';
+  } else if (pending > 50) {
+    pendingEl.className = 'metric-value yellow';
+  } else {
+    pendingEl.className = 'metric-value';
+  }
 
   if (data.oldest_pending_age_seconds != null) {
     document.getElementById('m-pending-sub').textContent =
@@ -687,21 +849,20 @@ function renderStatus(data) {
 
   // Storage
   const stor = data.storage || {};
-  document.getElementById('s-sqlite').textContent = fmtMb(stor.sqlite_mb);
-  document.getElementById('s-vector').textContent = fmtMb(stor.vector_index_mb);
+  const sqlMb = stor.sqlite_mb || 0;
+  const vecMb = stor.vector_index_mb || 0;
+  document.getElementById('s-sqlite').textContent = fmtMb(sqlMb);
+  document.getElementById('s-vector').textContent = fmtMb(vecMb);
 
-  // bars — scale relative to each other (max 100MB for bar scale)
-  const SCALE_MB = 100;
-  const sqlPct = Math.min(100, ((stor.sqlite_mb || 0) / SCALE_MB) * 100);
-  const vecPct = Math.min(100, ((stor.vector_index_mb || 0) / SCALE_MB) * 100);
-  document.getElementById('s-sqlite-bar').style.width = sqlPct + '%';
-  document.getElementById('s-vector-bar').style.width = vecPct + '%';
+  // Auto-scale bars relative to max
+  const maxMb = Math.max(sqlMb, vecMb, 0.01) * 1.5;
+  document.getElementById('s-sqlite-bar').style.width = Math.min(100, (sqlMb / maxMb) * 100) + '%';
+  document.getElementById('s-vector-bar').style.width = Math.min(100, (vecMb / maxMb) * 100) + '%';
 
   document.getElementById('s-vector-status').textContent =
     data.vector_index_ready ? 'ready' : 'initializing…';
 
-  // Query panel
-  document.getElementById('q-total').textContent    = fmtNum(q.total_queries);
+  // Query Activity panel
   document.getElementById('q-injections').textContent = fmtNum(q.total_injections);
   document.getElementById('q-skips').textContent    = fmtNum(q.total_skips);
   document.getElementById('q-blocks').textContent   = fmtNum(q.total_blocks_injected);
@@ -711,9 +872,11 @@ function renderStatus(data) {
   flagEl.className = 'stat-value' + ((q.total_flags > 0) ? ' yellow' : '');
 
   document.getElementById('q-suppress').textContent = fmtNum(q.total_suppressions);
-  document.getElementById('q-last').textContent = timeAgo(q.last_query_at);
-  document.getElementById('q-since').textContent = sinceRestart;
-  document.getElementById('skip-since').textContent = sinceRestart;
+  document.getElementById('q-last').textContent = q.last_query_at ? timeAgo(q.last_query_at) : 'never';
+
+  const sinceRestart = 'since restart ' + formatUptime(data.uptime_seconds) + ' ago';
+  document.getElementById('qa-since').textContent = '(' + sinceRestart + ')';
+  document.getElementById('m-queries-since').textContent = sinceRestart;
 
   // Skip reasons
   const tbody = document.getElementById('skip-tbody');
@@ -736,7 +899,12 @@ function renderQueue(data) {
   document.getElementById('qs-pending').textContent    = fmtNum(sc.pending    || 0);
   document.getElementById('qs-processing').textContent = fmtNum(sc.processing || 0);
   document.getElementById('qs-completed').textContent  = fmtNum(sc.completed  || 0);
-  document.getElementById('qs-failed').textContent     = fmtNum(sc.failed     || 0);
+
+  const failedEl = document.getElementById('qs-failed');
+  const failedCount = sc.failed || 0;
+  failedEl.textContent = fmtNum(failedCount);
+  failedEl.className = 'stat-value' + (failedCount > 0 ? ' red' : '');
+
   document.getElementById('qs-skipped').textContent    = fmtNum(sc.skipped    || 0);
 
   const ret = data.retention || {};
@@ -749,6 +917,7 @@ function renderQueue(data) {
   document.getElementById('r-del-mem').textContent  = fmtNum(ret.last_deleted_memory_objects || 0);
 }
 
+
 // ──────────────────────────────────────────────────
 // Render: memories
 // ──────────────────────────────────────────────────
@@ -757,33 +926,19 @@ function renderMemories(data) {
   _total    = data.total    || 0;
   _offset   = data.offset   || 0;
   _expandedId = null;
-
-  applyClientFilter();
-  updatePagination();
-}
-
-function applyClientFilter() {
-  const q = document.getElementById('search-input').value.trim().toLowerCase();
-  if (q) {
-    _filteredMemories = _memories.filter(m => {
-      const txt = (m.display_text + ' ' + m.type + ' ' + (m.container_ref || '') + ' ' + m.id).toLowerCase();
-      return txt.includes(q);
-    });
-  } else {
-    _filteredMemories = _memories;
-  }
   renderMemTable();
+  updatePagination();
 }
 
 function renderMemTable() {
   const tbody = document.getElementById('mem-tbody');
-  if (_filteredMemories.length === 0) {
+  if (_memories.length === 0) {
     tbody.innerHTML = '<tr><td colspan="7" class="no-mem">No memories found.</td></tr>';
     return;
   }
 
   const rows = [];
-  for (const m of _filteredMemories) {
+  for (const m of _memories) {
     const typeSlug  = (m.type || 'unknown').replace(/[^a-z_]/g, '_');
     const lcSlug    = (m.lifecycle || 'unknown').replace(/[^a-z_]/g, '_');
     const isExpanded = (m.id === _expandedId);
@@ -794,49 +949,16 @@ function renderMemTable() {
         '<td><span class="type-chip ' + typeSlug + '">' + escapeHtml(m.type || '?') + '</span></td>' +
         '<td><span class="lc-chip ' + lcSlug + '">' + escapeHtml(m.lifecycle || '?') + '</span></td>' +
         '<td><span class="' + confClass(m.confidence) + '">' + escapeHtml(String(m.confidence || '?')) + '</span></td>' +
-        '<td style="color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(m.container_ref || '') + '">' +
-          escapeHtml(m.container_ref || '—') + '</td>' +
-        '<td style="color:var(--muted);white-space:nowrap" title="' + escapeHtml(m.created_at || '') + '">' +
-          timeAgo(m.created_at) + '</td>' +
-        '<td style="max-width:500px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(m.display_text || '') + '">' +
+        '<td title="' + escapeHtml(m.container_ref || '') + '">' +
+          escapeHtml(shortContainer(m.container_ref)) + '</td>' +
+        '<td title="' + escapeHtml(m.created_at || '') + '">' + formatDate(m.created_at) + '</td>' +
+        '<td title="' + escapeHtml(m.display_text || '') + '">' +
           escapeHtml(m.display_text || '<no summary>') + '</td>' +
       '</tr>'
     );
 
     if (isExpanded) {
-      const meta = [
-        '<span><b>id:</b> ' + escapeHtml(m.id) + '</span>',
-        m.subject     ? '<span><b>subject:</b> ' + escapeHtml(m.subject) + '</span>' : null,
-        m.visibility  ? '<span><b>visibility:</b> ' + escapeHtml(m.visibility) + '</span>' : null,
-        m.schema_id   ? '<span><b>schema:</b> ' + escapeHtml(m.schema_id) + '</span>' : null,
-      ].filter(Boolean).join(' &middot; ');
-
-      const payloadKeys = Object.keys(m.payload || {}).filter(k => k !== '_display_text');
-      const payloadHtml = payloadKeys.length > 0
-        ? '<details class="payload-details"><summary>payload (' + payloadKeys.length + ' fields)</summary>' +
-          '<pre class="payload-pre">' + escapeHtml(JSON.stringify(m.payload, null, 2)) + '</pre></details>'
-        : '';
-
-      const fbBadge = m.feedback
-        ? '<span class="fb-badge ' + (m.feedback.not_relevant > 0 ? 'has-negative' : 'all-positive') + '">' +
-          (m.feedback.relevant || 0) + ' relevant · ' + (m.feedback.not_relevant || 0) + ' not_relevant</span>'
-        : '';
-
-      rows.push(
-        '<tr class="detail-row" id="detail-' + escapeHtml(m.id) + '">' +
-          '<td colspan="7">' +
-            '<div class="detail-inner" id="detail-inner-' + escapeHtml(m.id) + '">' +
-              (meta ? '<div class="detail-meta">' + meta + '</div>' : '') +
-              '<div class="detail-text">' + escapeHtml(m.display_text || '') + '</div>' +
-              payloadHtml +
-              '<div class="evidence-section-title">Feedback ' + fbBadge + '</div>' +
-              '<div id="fb-' + escapeHtml(m.id) + '" class="evidence-loading">Loading feedback…</div>' +
-              '<div class="evidence-section-title" style="margin-top:12px">Evidence</div>' +
-              '<div id="ev-' + escapeHtml(m.id) + '" class="evidence-loading">Loading evidence…</div>' +
-            '</div>' +
-          '</td>' +
-        '</tr>'
-      );
+      rows.push(buildDetailRow(m));
     }
   }
 
@@ -848,16 +970,75 @@ function renderMemTable() {
   }
 }
 
+function buildDetailRow(m) {
+  const meta = [
+    '<span><b>id:</b> ' + escapeHtml(m.id) + ' <button class="copy-btn" onclick="event.stopPropagation();copyToClipboard(\'' + escapeHtml(m.id) + '\')">copy</button></span>',
+    m.visibility  ? '<span><b>visibility:</b> ' + escapeHtml(m.visibility) + '</span>' : null,
+    m.schema_id   ? '<span><b>schema:</b> ' + escapeHtml(m.schema_id) + '</span>' : null,
+    m.subject     ? '<span><b>subject:</b> ' + escapeHtml(m.subject) + '</span>' : null,
+  ].filter(Boolean).join(' &middot; ');
+
+  // Separate content fields from technical metadata
+  const contentKeys = ['summary', 'statement', 'decision', 'decision_evidence_text', 'rationale',
+    'investigation_outcome', 'interest_text', 'constraint_text', 'carry_forward_answer',
+    'carry_forward_question', 'pattern_description', 'evidence_text', 'canonical_key'];
+  const techKeys = ['semantic_provenance', 'source_type', 'source_id'];
+  const payload = m.payload || {};
+
+  let contentHtml = '';
+  const contentEntries = Object.entries(payload).filter(([k]) => contentKeys.includes(k) && payload[k]);
+  if (contentEntries.length > 0) {
+    contentHtml = '<div class="content-fields">' +
+      contentEntries.map(([k, v]) =>
+        '<div class="content-field"><div class="content-field-label">' + escapeHtml(k) +
+        '</div><div class="content-field-value">' + escapeHtml(String(v)) + '</div></div>'
+      ).join('') + '</div>';
+  }
+
+  // Technical metadata (collapsed)
+  const techEntries = Object.entries(payload).filter(([k]) => techKeys.includes(k) && payload[k]);
+  const otherEntries = Object.entries(payload).filter(([k]) =>
+    !contentKeys.includes(k) && !techKeys.includes(k));
+  const allTech = [...techEntries, ...otherEntries];
+  let techHtml = '';
+  if (allTech.length > 0) {
+    const techObj = Object.fromEntries(allTech);
+    techHtml = '<details class="payload-details"><summary>Technical metadata (' + allTech.length + ' fields)</summary>' +
+      '<pre class="payload-pre">' + escapeHtml(JSON.stringify(techObj, null, 2)) + '</pre></details>';
+  }
+
+  const fbBadge = m.feedback
+    ? '<span class="fb-badge ' + (m.feedback.not_relevant > 0 ? 'has-negative' : 'all-positive') + '">' +
+      (m.feedback.relevant || 0) + ' relevant · ' + (m.feedback.not_relevant || 0) + ' not_relevant</span>'
+    : '';
+
+  return '<tr class="detail-row" id="detail-' + escapeHtml(m.id) + '">' +
+    '<td colspan="7">' +
+      '<div class="detail-inner" onclick="event.stopPropagation()">' +
+        '<div class="detail-meta">' + meta + '</div>' +
+        contentHtml +
+        techHtml +
+        '<div class="evidence-section-title">Feedback ' + fbBadge + '</div>' +
+        '<div id="fb-' + escapeHtml(m.id) + '" class="evidence-loading">Loading feedback…</div>' +
+        '<div class="evidence-section-title" style="margin-top:12px">Evidence</div>' +
+        '<div id="ev-' + escapeHtml(m.id) + '" class="evidence-loading">Loading evidence…</div>' +
+      '</div>' +
+    '</td>' +
+  '</tr>';
+}
+
 // ──────────────────────────────────────────────────
 // Toggle row expand/collapse
 // ──────────────────────────────────────────────────
 function toggleRow(id) {
-  if (_expandedId === id) {
-    _expandedId = null;
-  } else {
-    _expandedId = id;
-  }
+  _expandedId = (_expandedId === id) ? null : id;
   renderMemTable();
+}
+
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    // Brief visual feedback could be added here
+  }).catch(() => {});
 }
 
 async function loadEvidence(id) {
@@ -869,22 +1050,48 @@ async function loadEvidence(id) {
       container.innerHTML = '<span style="color:var(--muted)">No evidence items linked.</span>';
       return;
     }
-    const html = '<ul class="evidence-list">' +
-      items.map(ev => {
+
+    // Group by thread_ref, sort chronologically within each group
+    const groups = {};
+    for (const ev of items) {
+      const thread = ev.thread_ref || '_no_thread';
+      if (!groups[thread]) groups[thread] = [];
+      groups[thread].push(ev);
+    }
+    // Sort each group by occurred_at
+    for (const thread of Object.keys(groups)) {
+      groups[thread].sort((a, b) => {
+        const ta = a.occurred_at ? new Date(a.occurred_at).getTime() : 0;
+        const tb = b.occurred_at ? new Date(b.occurred_at).getTime() : 0;
+        return ta - tb;
+      });
+    }
+
+    let html = '';
+    const threadKeys = Object.keys(groups).sort();
+    for (const thread of threadKeys) {
+      if (threadKeys.length > 1 && thread !== '_no_thread') {
+        html += '<div class="evidence-thread-group"><span class="evidence-thread-label">' +
+          escapeHtml(thread) + '</span>';
+      } else {
+        html += '<div class="evidence-thread-group">';
+      }
+      html += '<ul class="evidence-list">';
+      for (const ev of groups[thread]) {
         const roleSlug = (ev.role || '').replace(/[^a-z_]/g, '_');
         const meta = [
           ev.role      ? 'role: ' + escapeHtml(ev.role) : null,
           ev.actor_ref ? 'actor: ' + escapeHtml(ev.actor_ref) : null,
-          ev.thread_ref ? 'thread: ' + escapeHtml(ev.thread_ref) : null,
-          ev.occurred_at ? timeAgo(ev.occurred_at) : null,
+          ev.occurred_at ? formatDate(ev.occurred_at) : null,
           ev.source_type ? ev.source_type : null,
         ].filter(Boolean).join(' · ');
-        return '<li class="evidence-item role-' + roleSlug + '">' +
+        html += '<li class="evidence-item role-' + roleSlug + '">' +
           '<div class="evidence-meta">' + meta + '</div>' +
           '<div class="evidence-content">' + escapeHtml(ev.content || '') + '</div>' +
           '</li>';
-      }).join('') +
-    '</ul>';
+      }
+      html += '</ul></div>';
+    }
     container.innerHTML = html;
   } catch (e) {
     if (container) {
@@ -912,7 +1119,7 @@ async function loadFeedback(id) {
         const meta = [
           '<span class="' + ratingClass + '">' + escapeHtml(fb.rating) + '</span>',
           fb.rater_ref ? escapeHtml(fb.rater_ref) : null,
-          fb.created_at ? timeAgo(fb.created_at) : null,
+          fb.created_at ? formatDate(fb.created_at) : null,
         ].filter(Boolean).join(' · ');
         const parts = [];
         if (fb.reason) parts.push(escapeHtml(fb.reason));
@@ -967,6 +1174,91 @@ function reloadMemories() {
 }
 
 // ──────────────────────────────────────────────────
+// Search with debounce
+// ──────────────────────────────────────────────────
+document.getElementById('search-input').addEventListener('input', function() {
+  clearTimeout(_searchTimeout);
+  _searchTimeout = setTimeout(() => {
+    _offset = 0;
+    fetchMemories();
+  }, 400);
+});
+
+// Filter dropdowns trigger reload
+['type-filter', 'lc-filter', 'container-filter', 'sort-filter'].forEach(id => {
+  document.getElementById(id).addEventListener('change', reloadMemories);
+});
+
+// ──────────────────────────────────────────────────
+// Query Debug
+// ──────────────────────────────────────────────────
+function toggleDebugPanel() {
+  const panel = document.getElementById('debug-panel');
+  const arrow = document.getElementById('debug-arrow');
+  const visible = panel.classList.toggle('visible');
+  arrow.innerHTML = visible ? '&#9660;' : '&#9654;';
+}
+
+async function runQueryDebug() {
+  const text = document.getElementById('debug-query-input').value.trim();
+  if (!text) return;
+  const container = document.getElementById('debug-container').value;
+  const resultEl = document.getElementById('debug-result');
+  resultEl.innerHTML = '<span style="color:var(--muted)">Running query…</span>';
+
+  try {
+    const body = { text: text, limit: 5 };
+    if (container) body.container_ref = container;
+
+    const r = await fetch('/query/debug', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error('query/debug returned ' + r.status);
+    const data = await r.json();
+
+    let html = '<div class="debug-result-header">';
+    if (data.should_inject) {
+      html += '<span class="inject-yes">INJECT</span> — ';
+    } else {
+      html += '<span class="inject-no">SKIP</span> — ';
+    }
+    html += 'reason: <b>' + escapeHtml(data.decision_reason || '?') + '</b>';
+    html += '</div>';
+
+    // Injectable blocks
+    const blocks = data.injectable_blocks || [];
+    if (blocks.length > 0) {
+      html += '<div class="debug-blocks">';
+      for (const block of blocks) {
+        html += '<div class="debug-block">' + escapeHtml(block.text || block.content || JSON.stringify(block)) + '</div>';
+      }
+      html += '</div>';
+    }
+
+    // Trace stages summary
+    const trace = data.trace || {};
+    const stages = trace.stages || [];
+    if (stages.length > 0) {
+      html += '<div class="debug-stages"><div class="evidence-section-title" style="margin-top:8px">Retrieval Stages</div>';
+      for (const stage of stages) {
+        const hits = stage.candidate_hits ? stage.candidate_hits.length : 0;
+        const selected = stage.selected_hits ? stage.selected_hits.length : 0;
+        html += '<div class="debug-stage">' +
+          escapeHtml(stage.stage_name || '?') +
+          ' — ' + hits + ' candidates, ' + selected + ' selected</div>';
+      }
+      html += '</div>';
+    }
+
+    resultEl.innerHTML = html;
+  } catch (e) {
+    resultEl.innerHTML = '<span class="evidence-error">Error: ' + escapeHtml(String(e)) + '</span>';
+  }
+}
+
+// ──────────────────────────────────────────────────
 // Refresh countdown
 // ──────────────────────────────────────────────────
 function startCountdown() {
@@ -991,6 +1283,8 @@ function startCountdown() {
 (function init() {
   fetchStatus();
   fetchQueueHealth();
+  fetchFeedbackStats();
+  fetchContainers();
   fetchMemories();
   startCountdown();
 })();

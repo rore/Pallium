@@ -161,3 +161,62 @@ class TestDashboardIntegration:
             resp = client.get("/dashboard/api/memories")
         body = resp.json()
         assert body["total"] == 3
+
+    def test_search_filters_by_payload(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            service = app.state.pallium_service
+            from core.models import MemoryObject
+            mo1 = MemoryObject(
+                type="decision", schema_id="test", schema_version="1.0",
+                payload={"summary": "Use PostgreSQL for the database"},
+                lifecycle="active",
+                created_at=datetime(2026, 4, 28, 10, 0, 0, tzinfo=timezone.utc),
+            )
+            mo2 = MemoryObject(
+                type="decision", schema_id="test", schema_version="1.0",
+                payload={"summary": "Deploy to Kubernetes"},
+                lifecycle="active",
+                created_at=datetime(2026, 4, 28, 11, 0, 0, tzinfo=timezone.utc),
+            )
+            service._storage.create_memory_object(mo1)
+            service._storage.create_memory_object(mo2)
+            resp = client.get("/dashboard/api/memories?search=PostgreSQL")
+        body = resp.json()
+        assert body["total"] == 1
+        assert "PostgreSQL" in body["memories"][0]["display_text"]
+
+
+class TestDashboardContainersEndpoint:
+
+    def test_returns_distinct_containers(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            _seed_memory(app, container_ref="container-a")
+            _seed_memory(app, container_ref="container-b")
+            _seed_memory(app, container_ref="container-a")
+            resp = client.get("/dashboard/api/containers")
+        body = resp.json()
+        assert set(body["containers"]) == {"container-a", "container-b"}
+
+    def test_empty_when_no_containers(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            resp = client.get("/dashboard/api/containers")
+        body = resp.json()
+        assert body["containers"] == []
+
+
+class TestDashboardActivityEndpoint:
+
+    def test_returns_recent_memories(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            _seed_memory(app, type="decision")
+            _seed_memory(app, type="atomic_fact")
+            resp = client.get("/dashboard/api/activity?limit=5")
+        body = resp.json()
+        assert len(body["items"]) == 2
+        assert body["items"][0]["event"] == "memory_created"
+        assert "type" in body["items"][0]
+        assert "display_text" in body["items"][0]

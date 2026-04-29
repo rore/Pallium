@@ -35,11 +35,59 @@ def mount_dashboard(app: FastAPI) -> None:
         html = _DASHBOARD_HTML_PATH.read_text(encoding="utf-8")
         return HTMLResponse(content=html)
 
+    @app.get("/dashboard/api/containers")
+    def dashboard_containers() -> JSONResponse:
+        service = app.state.pallium_service
+        storage = service._storage
+        if not isinstance(storage, SQLiteStorageProvider):
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+
+        with storage._session_factory() as session:
+            rows = session.execute(
+                select(MemoryObjectRecord.container_ref)
+                .where(MemoryObjectRecord.container_ref.isnot(None))
+                .distinct()
+                .order_by(MemoryObjectRecord.container_ref)
+            ).scalars().all()
+
+        return JSONResponse(content={"containers": list(rows)})
+
+    @app.get("/dashboard/api/activity")
+    def dashboard_activity(limit: int = Query(10, ge=1, le=50)) -> JSONResponse:
+        service = app.state.pallium_service
+        storage = service._storage
+        if not isinstance(storage, SQLiteStorageProvider):
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+
+        with storage._session_factory() as session:
+            records = session.scalars(
+                select(MemoryObjectRecord)
+                .order_by(MemoryObjectRecord.created_at.desc())
+                .limit(limit)
+            ).all()
+
+        items = []
+        for rec in records:
+            payload = json.loads(rec.payload_json) if rec.payload_json else {}
+            created_at = rec.created_at
+            if created_at and created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            items.append({
+                "event": "memory_created",
+                "type": rec.type,
+                "display_text": _extract_display_text(payload),
+                "container_ref": rec.container_ref,
+                "created_at": created_at.isoformat() if created_at else None,
+            })
+
+        return JSONResponse(content={"items": items})
+
     @app.get("/dashboard/api/memories")
     def dashboard_memories(
         type: str | None = Query(None),
         lifecycle: str | None = Query(None),
         container_ref: str | None = Query(None),
+        search: str | None = Query(None),
         limit: int = Query(50, ge=1),
         offset: int = Query(0, ge=0),
         sort: str | None = Query(None),
@@ -63,6 +111,10 @@ def mount_dashboard(app: FastAPI) -> None:
             if container_ref is not None:
                 stmt = stmt.where(MemoryObjectRecord.container_ref == container_ref)
                 count_stmt = count_stmt.where(MemoryObjectRecord.container_ref == container_ref)
+            if search is not None and search.strip():
+                like_pattern = f"%{search.strip()}%"
+                stmt = stmt.where(MemoryObjectRecord.payload_json.ilike(like_pattern))
+                count_stmt = count_stmt.where(MemoryObjectRecord.payload_json.ilike(like_pattern))
 
             total = session.scalar(count_stmt) or 0
 
@@ -89,6 +141,9 @@ def mount_dashboard(app: FastAPI) -> None:
                     stmt = stmt.where(MemoryObjectRecord.lifecycle == lifecycle)
                 if container_ref is not None:
                     stmt = stmt.where(MemoryObjectRecord.container_ref == container_ref)
+                if search is not None and search.strip():
+                    like_pattern = f"%{search.strip()}%"
+                    stmt = stmt.where(MemoryObjectRecord.payload_json.ilike(like_pattern))
             else:
                 stmt = stmt.order_by(MemoryObjectRecord.created_at.desc())
 
