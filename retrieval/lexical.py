@@ -111,6 +111,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
             limit=limit * 4,
             filters=filters,
             query_container_ref=query_container_ref,
+            query_visibility=visibility,
             include_visibility_trace=include_trace,
         )
         hits = search_result.hits

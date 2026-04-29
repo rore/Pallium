@@ -195,7 +195,7 @@ class QueryExecutor:
         def load_candidates(*, memory_types: list[str] | None = None) -> list[QueryResultItem]:
             results: list[QueryResultItem] = []
             for memory_object in self._storage.list_memory_objects(memory_types=memory_types, lifecycle="active"):
-                if require_visibility and not is_visible(memory_object.visibility, memory_object.container_ref, query_container_ref, getattr(memory_object, 'actor_ref', None)):
+                if require_visibility and not is_visible(memory_object.visibility, memory_object.container_ref, query_container_ref, getattr(memory_object, 'actor_ref', None), query_visibility=visibility):
                     continue
                 # Use the canonical matches_filters to stay consistent with
                 # the retrieval path (handles lifecycle, thread_ref relaxation,

@@ -125,6 +125,7 @@ def test_cross_thread_query_surfaces_user_intent(monkeypatch, test_db_url: str) 
             'limit': 6,
             'container_ref': CONTAINER_REF,
             'thread_ref': THREAD_B,
+            'visibility': 'private',
         })
         assert query_response.status_code == 200
         payload = query_response.json()

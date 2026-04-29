@@ -25,6 +25,7 @@ class SQLiteSearchMixin:
         filters: QueryFilters | None = None,
         *,
         query_container_ref: str | None = None,
+        query_visibility: str | None = None,
         include_visibility_trace: bool = False,
     ) -> IndexSearchResult:
         if not tokens:
@@ -99,6 +100,7 @@ class SQLiteSearchMixin:
                 candidate_container_ref,
                 query_container_ref,
                 candidate_actor_ref,
+                query_visibility=query_visibility,
             ):
                 if include_visibility_trace:
                     reason = (

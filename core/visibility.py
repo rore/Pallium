@@ -26,9 +26,13 @@ def is_visible(
     candidate_container_ref: str | None,
     query_container_ref: str | None,
     candidate_actor_ref: str | None = None,
+    query_visibility: str | None = None,
 ) -> bool:
     if query_container_ref is None:
         return True
+    # Public query context: only see public memories, regardless of container.
+    if query_visibility == "public":
+        return candidate_visibility == "public" and candidate_actor_ref is None
     if candidate_container_ref is not None and candidate_container_ref == query_container_ref:
         return True
     # Cross-container: only public shared memories (actor_ref=null).

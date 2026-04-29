@@ -147,7 +147,7 @@ class VectorRetrievalProvider(RetrievalProvider):
                 self._storage.get_source_item, self._storage.get_memory_object,
                 index_entry.target_kind, index_entry.target_id,
             )
-            if not is_visible(candidate_visibility, candidate_container_ref, query_container_ref, candidate_actor_ref):
+            if not is_visible(candidate_visibility, candidate_container_ref, query_container_ref, candidate_actor_ref, query_visibility=visibility):
                 continue
 
             hits_after_visibility += 1
