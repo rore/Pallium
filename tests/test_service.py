@@ -14,6 +14,7 @@ from app.cli.service import (
     _pallium_home,
     _apply_home_env,
     _ensure_dirs,
+    _seed_config,
     _PalliumLock,
     _find_pallium_cmd,
     service_main,
@@ -148,3 +149,108 @@ class TestServiceMain:
         assert result == 0
         captured = capsys.readouterr()
         assert "not running" in captured.out
+
+
+class TestSeedConfig:
+    def test_copies_env_file_when_toml_written(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """The .env file must be copied even when the toml config is successfully written."""
+        home = tmp_path / "home"
+        (home / "config").mkdir(parents=True)
+
+        # Create a dev config with an LLM provider section
+        dev_toml = tmp_path / "pallium.local.toml"
+        dev_toml.write_text(
+            "[llm_providers.test_provider]\n"
+            'kind = "anthropic_claude"\n'
+            'api_key_env = "TEST_KEY"\n'
+        )
+
+        # Create a dev env file with a secret
+        dev_env = tmp_path / ".env.local"
+        dev_env.write_text("TEST_KEY=secret123\n")
+
+        monkeypatch.chdir(tmp_path)
+        _seed_config(home)
+
+        # Both files should exist
+        assert (home / "config" / "pallium.toml").exists()
+        assert (home / "config" / ".env").exists()
+        assert "TEST_KEY=secret123" in (home / "config" / ".env").read_text()
+
+    def test_skips_if_config_already_exists(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """If config already exists, don't overwrite it."""
+        home = tmp_path / "home"
+        (home / "config").mkdir(parents=True)
+        (home / "config" / "pallium.toml").write_text("[existing]\n")
+
+        dev_toml = tmp_path / "pallium.local.toml"
+        dev_toml.write_text("[llm_providers.x]\nkind = \"test\"\n")
+
+        monkeypatch.chdir(tmp_path)
+        _seed_config(home)
+
+        assert (home / "config" / "pallium.toml").read_text() == "[existing]\n"
+
+    def test_filters_only_production_sections(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Only LLM providers and production packages are kept."""
+        home = tmp_path / "home"
+        (home / "config").mkdir(parents=True)
+
+        dev_toml = tmp_path / "pallium.local.toml"
+        dev_toml.write_text(
+            "[llm_providers.my_llm]\n"
+            'kind = "anthropic_claude"\n'
+            "\n"
+            "[semantic_packages.demo_agent_memory]\n"
+            'implementation = "demo_agent_memory"\n'
+            "\n"
+            "[semantic_packages.agent_conversation_memory]\n"
+            'implementation = "agent_conversation_memory"\n'
+            'llm_provider = "my_llm"\n'
+            "\n"
+            "[semantic_packages.conversational_knowledge]\n"
+            'implementation = "conversational_knowledge"\n'
+            "\n"
+            "[embedding_providers.onnx]\n"
+            'kind = "onnx"\n'
+        )
+
+        monkeypatch.chdir(tmp_path)
+        _seed_config(home)
+
+        content = (home / "config" / "pallium.toml").read_text()
+        assert "[llm_providers.my_llm]" in content
+        assert "[semantic_packages.agent_conversation_memory]" in content
+        assert "[semantic_packages.conversational_knowledge]" in content
+        assert "[semantic_packages.demo_agent_memory]" not in content
+        assert "[embedding_providers.onnx]" not in content
+
+    def test_no_env_copy_when_env_already_exists(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Don't overwrite existing .env in service home."""
+        home = tmp_path / "home"
+        (home / "config").mkdir(parents=True)
+        (home / "config" / ".env").write_text("EXISTING=yes\n")
+
+        dev_toml = tmp_path / "pallium.local.toml"
+        dev_toml.write_text("[llm_providers.x]\nkind = \"test\"\n")
+        dev_env = tmp_path / ".env.local"
+        dev_env.write_text("NEW_KEY=no\n")
+
+        monkeypatch.chdir(tmp_path)
+        _seed_config(home)
+
+        assert (home / "config" / ".env").read_text() == "EXISTING=yes\n"
+
+    def test_no_dev_env_file_does_not_crash(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """If no .env.local exists, seed_config still works (just no .env copy)."""
+        home = tmp_path / "home"
+        (home / "config").mkdir(parents=True)
+
+        dev_toml = tmp_path / "pallium.local.toml"
+        dev_toml.write_text("[llm_providers.x]\nkind = \"test\"\n")
+
+        monkeypatch.chdir(tmp_path)
+        _seed_config(home)
+
+        assert (home / "config" / "pallium.toml").exists()
+        assert not (home / "config" / ".env").exists()
