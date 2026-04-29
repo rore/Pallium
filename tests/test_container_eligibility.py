@@ -5,7 +5,7 @@ def _make_item(*, thread_ref=None, container_ref="container-a", role="user", art
         source_type="chat_message",
         source_id="test-1",
         content_type="text/plain",
-        content="test content",
+        content="This is a test message with enough tokens to pass the minimum extraction gate",
         role=role,
         artifact_kind=artifact_kind,
         container_ref=container_ref,

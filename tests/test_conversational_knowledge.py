@@ -90,7 +90,7 @@ def _build_service(
 def test_eligible_user_message():
     item = SourceItem(
         source_type="chat", source_id="1",
-        content_type="text/plain", content="Hello",
+        content_type="text/plain", content="Hello there, I wanted to discuss the project timeline and deliverables with you",
         role="user", artifact_kind="message",
         container_ref="c1", thread_ref="t1",
     )
@@ -100,7 +100,7 @@ def test_eligible_user_message():
 def test_eligible_assistant_output():
     item = SourceItem(
         source_type="chat", source_id="2",
-        content_type="text/plain", content="Sure",
+        content_type="text/plain", content="Sure, I can help you with that task and provide the details you need",
         role="assistant", artifact_kind="assistant_output",
         container_ref="c1", thread_ref="t1",
     )
@@ -111,7 +111,7 @@ def test_eligible_without_thread_ref():
     """Items without thread_ref are eligible when container_ref is present."""
     item = SourceItem(
         source_type="chat", source_id="3",
-        content_type="text/plain", content="Hello",
+        content_type="text/plain", content="Hello there, I wanted to discuss the project timeline and deliverables with you",
         role="user", artifact_kind="message",
         container_ref="c1",
     )
@@ -145,7 +145,7 @@ def test_process_item_eligible_requests_thread_rebuild():
     )
     item = SourceItem(
         source_type="chat", source_id="5",
-        content_type="text/plain", content="I have 3 cats",
+        content_type="text/plain", content="I have 3 cats and they are all very fluffy and playful around the house",
         role="user", artifact_kind="message",
         container_ref="c1", thread_ref="t1",
     )
@@ -1363,9 +1363,9 @@ def test_e2e_cross_thread_facts_consolidated_automatically(test_db_url):
     base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
     for i, (thread, content) in enumerate([
         ("t1", "Alice told me she lives in Berlin and likes painting"),
-        ("t1", "She showed me her artwork"),
+        ("t1", "She showed me her artwork collection from last summer in the studio"),
         ("t2", "Alice said she moved to Paris and got a cat"),
-        ("t2", "She loves her new apartment"),
+        ("t2", "She loves her new apartment in the city center near the park"),
     ]):
         item = SourceItem(
             id=new_id(),
@@ -1484,10 +1484,10 @@ def test_e2e_reconsolidation_updates_existing_summary(test_db_url):
 
     # Phase 1: Ingest threads t1 and t2, triggering first consolidation
     for i, (thread, content) in enumerate([
-        ("t1", "Alice told me she lives in Berlin"),
-        ("t1", "We talked about her life there"),
+        ("t1", "Alice told me that she currently lives in Berlin and has been there for years"),
+        ("t1", "We talked about her life there and all the things she has been doing"),
         ("t2", "Alice said she moved to Paris and got a cat"),
-        ("t2", "She loves the city"),
+        ("t2", "She loves the city and has been exploring all the neighborhoods around"),
     ]):
         service.ingest_item(
             source_type="chat_message", source_id=f"msg-{i}",
@@ -1509,7 +1509,7 @@ def test_e2e_reconsolidation_updates_existing_summary(test_db_url):
     # Phase 2: Ingest thread t3 with new facts about Alice
     for i, (thread, content) in enumerate([
         ("t3", "Alice told me she moved to Tokyo and is learning Japanese"),
-        ("t3", "She's really enjoying the new city"),
+        ("t3", "She is really enjoying the new city and all the amazing food there"),
     ], start=10):
         service.ingest_item(
             source_type="chat_message", source_id=f"msg-{i}",
@@ -1927,10 +1927,10 @@ def test_frozen_summary_not_superseded_by_new_group(test_db_url):
 
     # Phase 1: Ingest t1 + t2 → first consolidation → fact_summary_v1
     for i, (thread, content) in enumerate([
-        ("t1", "Alice told me she lives in Berlin"),
-        ("t1", "She described the city"),
+        ("t1", "Alice told me that she currently lives in Berlin and has been there for years"),
+        ("t1", "She described the city in great detail and told me about her favorite places"),
         ("t2", "Alice said she moved to Paris and got a cat"),
-        ("t2", "She loves cats"),
+        ("t2", "She loves cats and has been volunteering at the local animal shelter every week"),
     ]):
         service.ingest_item(
             source_type="chat_message", source_id=f"msg-{i}",
@@ -1953,10 +1953,10 @@ def test_frozen_summary_not_superseded_by_new_group(test_db_url):
 
     # Phase 2: Ingest t3 + t4 → new facts → should produce a NEW summary alongside frozen one
     for i, (thread, content) in enumerate([
-        ("t3", "Alice told me she started hiking recently"),
-        ("t3", "She finds it refreshing"),
-        ("t4", "Alice said she reads novels every evening"),
-        ("t4", "She recommended a book to me"),
+        ("t3", "Alice told me she started hiking recently and goes out every weekend"),
+        ("t3", "She finds it really refreshing and wants to try more outdoor activities"),
+        ("t4", "Alice said she reads novels every evening before going to sleep"),
+        ("t4", "She recommended a book to me and said it was her favorite this year"),
     ], start=10):
         service.ingest_item(
             source_type="chat_message", source_id=f"msg-{i}",
@@ -2077,8 +2077,10 @@ def test_e2e_frozen_summary_survives_subsequent_consolidation_rounds(test_db_url
 
     # Phase 1: 2 threads → consolidation → summary_v1 (should become frozen if >150 words)
     for i, (thread, content) in enumerate([
-        ("t1", "Bob told me he plays chess"), ("t1", "He's quite good at it"),
-        ("t2", "Bob mentioned his chess hobby"), ("t2", "He plays every week"),
+        ("t1", "Bob told me that he plays chess regularly at the community center every weekend"),
+        ("t1", "He is quite good at it and has been playing for many years now"),
+        ("t2", "Bob mentioned his chess hobby and how much he enjoys the strategic thinking"),
+        ("t2", "He plays every single week without fail and never misses a session"),
     ]):
         service.ingest_item(
             source_type="chat_message", source_id=f"p1-{i}",
@@ -2092,8 +2094,10 @@ def test_e2e_frozen_summary_survives_subsequent_consolidation_rounds(test_db_url
 
     # Phase 2: 2 more threads → new consolidation round
     for i, (thread, content) in enumerate([
-        ("t3", "Bob said he joined a chess club"), ("t3", "Club meets on Tuesdays"),
-        ("t4", "Bob won a chess tournament"), ("t4", "He was very proud"),
+        ("t3", "Bob said he joined a chess club downtown and is really enjoying the experience"),
+        ("t3", "The club meets on Tuesdays and they have tournaments every other month"),
+        ("t4", "Bob won a chess tournament last weekend and was really excited about it"),
+        ("t4", "He was very proud of his achievement and wants to compete more often"),
     ], start=10):
         service.ingest_item(
             source_type="chat_message", source_id=f"p2-{i}",
@@ -2107,8 +2111,10 @@ def test_e2e_frozen_summary_survives_subsequent_consolidation_rounds(test_db_url
 
     # Phase 3: 2 more threads → another consolidation round
     for i, (thread, content) in enumerate([
-        ("t5", "Bob started teaching chess"), ("t5", "He teaches kids"),
-        ("t6", "Bob bought a new chess set"), ("t6", "It's a wooden one"),
+        ("t5", "Bob started teaching chess to young students at the local community center"),
+        ("t5", "He teaches kids every Saturday morning and they are making great progress"),
+        ("t6", "Bob bought a new chess set from the antique store on main street"),
+        ("t6", "It is a beautiful wooden one with hand carved pieces and a felt board"),
     ], start=20):
         service.ingest_item(
             source_type="chat_message", source_id=f"p3-{i}",

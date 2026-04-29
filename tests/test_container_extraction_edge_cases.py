@@ -77,7 +77,7 @@ class FactStub:
 
 def _make_item(
     source_id: str,
-    content: str = "test content",
+    content: str = "This is a test message with enough tokens to pass the minimum extraction gate",
     *,
     thread_ref: str | None = None,
     container_ref: str = "container-a",
@@ -278,7 +278,7 @@ class TestContainerScopeOptIn:
         service = app.state.pallium_service
         rebuilder = service._thread_rebuilder
 
-        item = _make_item("msg-1", "test content", thread_ref="t-1")
+        item = _make_item("msg-1", thread_ref="t-1")
         ck_plugin = service._semantic_plugins.get("conversational_knowledge")
         assert ck_plugin is not None
 
@@ -364,7 +364,7 @@ class TestIncrementalWatermarkFlow:
                 "source_type": "conversation_agent_event",
                 "source_id": f"wm-msg-{i}",
                 "content_type": "text/plain",
-                "content": f"Watermark test message {i} about catalog sync configuration.",
+                "content": f"Watermark test message number {i} about the catalog sync configuration settings and options.",
                 "artifact_kind": "message",
                 "role": "user",
                 "container_ref": "slack:dm:watermark-test",
@@ -402,7 +402,7 @@ class TestIncrementalWatermarkFlow:
                 "source_type": "conversation_agent_event",
                 "source_id": f"incr-batch1-{i}",
                 "content_type": "text/plain",
-                "content": f"First batch message {i} about catalog deployment.",
+                "content": f"First batch message number {i} about the catalog deployment process and configuration settings.",
                 "artifact_kind": "message",
                 "role": "user",
                 "container_ref": "slack:dm:incremental-test",
@@ -428,7 +428,7 @@ class TestIncrementalWatermarkFlow:
                 "source_type": "conversation_agent_event",
                 "source_id": f"incr-batch2-{i}",
                 "content_type": "text/plain",
-                "content": f"Second batch message {i} about shadow mode evaluation.",
+                "content": f"Second batch message number {i} about the shadow mode evaluation strategy and rollout plan.",
                 "artifact_kind": "message",
                 "role": "user",
                 "container_ref": "slack:dm:incremental-test",
@@ -470,7 +470,7 @@ class TestContainerScopeReentrancy:
                 "source_type": "conversation_agent_event",
                 "source_id": f"reent-first-{i}",
                 "content_type": "text/plain",
-                "content": f"First batch message {i} about catalog sync monitoring.",
+                "content": f"First batch message number {i} about the catalog sync monitoring service and dashboard alerts.",
                 "artifact_kind": "message",
                 "role": "user",
                 "container_ref": container,
@@ -487,7 +487,7 @@ class TestContainerScopeReentrancy:
                 "source_type": "conversation_agent_event",
                 "source_id": f"reent-second-{i}",
                 "content_type": "text/plain",
-                "content": f"Second batch message {i} about deployment rollback strategy.",
+                "content": f"Second batch message number {i} about the deployment rollback strategy and incident response procedures.",
                 "artifact_kind": "message",
                 "role": "user",
                 "container_ref": container,
@@ -527,7 +527,7 @@ class TestContainerScopeVisibility:
             "source_type": "conversation_agent_event",
             "source_id": "vis-private",
             "content_type": "text/plain",
-            "content": "Private message about catalog sync design.",
+            "content": "Private message about the catalog sync design process and the deployment configuration strategy.",
             "artifact_kind": "message",
             "role": "user",
             "container_ref": container,
@@ -538,7 +538,7 @@ class TestContainerScopeVisibility:
             "source_type": "conversation_agent_event",
             "source_id": "vis-shared",
             "content_type": "text/plain",
-            "content": "Shared message about catalog sync design.",
+            "content": "Shared message about the catalog sync design process and the deployment configuration strategy.",
             "artifact_kind": "message",
             "role": "user",
             "container_ref": container,
@@ -667,7 +667,7 @@ class TestLargeContainerBounding:
                 "source_type": "conversation_agent_event",
                 "source_id": f"incr-scale-a-{i:03d}",
                 "content_type": "text/plain",
-                "content": f"First batch msg {i}: catalog sync configuration detail {i}.",
+                "content": f"First batch msg {i}: catalog sync configuration detail and settings for branch {i}.",
                 "artifact_kind": "message",
                 "role": "user",
                 "container_ref": container,
@@ -688,7 +688,7 @@ class TestLargeContainerBounding:
                 "source_type": "conversation_agent_event",
                 "source_id": f"incr-scale-b-{i:03d}",
                 "content_type": "text/plain",
-                "content": f"Second batch msg {i}: shadow mode rollback procedure {i}.",
+                "content": f"Second batch msg {i}: shadow mode rollback procedure and recovery steps for incident {i}.",
                 "artifact_kind": "message",
                 "role": "user",
                 "container_ref": container,

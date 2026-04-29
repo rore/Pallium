@@ -17,7 +17,7 @@ from capabilities.consolidation import ConsolidationGroup, ConsolidationPolicy
 from capabilities.thread_aggregation import ThreadAggregate
 from core.contracts import ProcessResult
 from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
-from core.text import SENTENCE_PATTERN
+from core.text import SENTENCE_PATTERN, tokenize_text
 from core.models import (
     MemoryEnvelope,
     MemoryEnvelopeDerivation,
@@ -587,13 +587,20 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
         return result
 
 
+_MINIMUM_FACT_EXTRACTION_TOKENS = 10
+
+
 def _is_eligible_for_fact_extraction(source_item: SourceItem) -> bool:
     """Check if a source item is eligible for fact extraction."""
     if not source_item.container_ref:
         return False
     role = (source_item.role or "").lower()
     artifact_kind = (source_item.artifact_kind or "").lower() or None
-    return (artifact_kind, role) in ELIGIBLE_ARTIFACT_ROLES
+    if (artifact_kind, role) not in ELIGIBLE_ARTIFACT_ROLES:
+        return False
+    if len(tokenize_text(source_item.content)) < _MINIMUM_FACT_EXTRACTION_TOKENS:
+        return False
+    return True
 
 
 def _resolve_extraction_watermark(existing_facts: list[MemoryObject]) -> datetime | None:
