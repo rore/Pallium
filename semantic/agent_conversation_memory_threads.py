@@ -297,10 +297,17 @@ THREAD_SUMMARY_WITH_CHECKPOINT_SYSTEM_PROMPT = (
 )
 
 
+_THREAD_DECISION_USER_LINE_RE = re.compile(
+    r"^user/[^:]+:\s*", re.IGNORECASE
+)
+
+
 def _validate_thread_decisions(raw_decisions, thread_text: str) -> list[dict]:
-    """Validate and filter thread decisions by grounding check.
+    """Validate and filter thread decisions by grounding and substance checks.
 
     Both decision_text and evidence must be literal substrings of thread_text.
+    Rejects decisions whose evidence is a user-role thread line (indicating
+    the LLM quoted a user command rather than extracting a committed decision).
     """
     if not isinstance(raw_decisions, list):
         return []
@@ -311,13 +318,27 @@ def _validate_thread_decisions(raw_decisions, thread_text: str) -> list[dict]:
             continue
         dt = d.get("decision_text", "")
         ev = d.get("evidence", "")
-        if (
-            dt and ev
-            and _normalize_for_containment(dt) in normalized_thread
+        if not (dt and ev):
+            continue
+        if not (
+            _normalize_for_containment(dt) in normalized_thread
             and _normalize_for_containment(ev) in normalized_thread
         ):
-            grounded.append({"decision_text": dt, "evidence": ev})
+            continue
+        if _thread_decision_evidence_is_user_only(ev, thread_text):
+            continue
+        grounded.append({"decision_text": dt, "evidence": ev})
     return grounded
+
+
+def _thread_decision_evidence_is_user_only(evidence: str, thread_text: str) -> bool:
+    """Reject when the evidence quotes a user-role thread line verbatim.
+
+    Detects when the LLM lazily copied a full thread line (including the
+    structural 'user/artifact_kind: ' prefix) as evidence — indicating it
+    quoted a user command rather than extracting a committed decision.
+    """
+    return bool(_THREAD_DECISION_USER_LINE_RE.match(evidence.strip()))
 
 
 def _work_refs_from_source_items(source_items: Iterable[SourceItem]) -> tuple[str, ...]:
