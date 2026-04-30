@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
 
 from storage.sqlite import SQLiteStorageProvider, _extract_display_text
-from storage.sqlite_schema import MemoryFeedbackRecord, MemoryObjectRecord
+from storage.sqlite_schema import MemoryFeedbackRecord, MemoryFlagRecord, MemoryObjectRecord
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,12 @@ def mount_dashboard(app: FastAPI) -> None:
             if type is not None:
                 stmt = stmt.where(MemoryObjectRecord.type == type)
                 count_stmt = count_stmt.where(MemoryObjectRecord.type == type)
-            if lifecycle is not None:
+            if lifecycle == "flagged":
+                # Pseudo-lifecycle: memories with at least one flag entry
+                flagged_ids = select(MemoryFlagRecord.memory_object_id).distinct().scalar_subquery()
+                stmt = stmt.where(MemoryObjectRecord.id.in_(flagged_ids))
+                count_stmt = count_stmt.where(MemoryObjectRecord.id.in_(flagged_ids))
+            elif lifecycle is not None:
                 stmt = stmt.where(MemoryObjectRecord.lifecycle == lifecycle)
                 count_stmt = count_stmt.where(MemoryObjectRecord.lifecycle == lifecycle)
             if container_ref is not None:
@@ -146,7 +151,10 @@ def mount_dashboard(app: FastAPI) -> None:
                 )
                 if type is not None:
                     stmt = stmt.where(MemoryObjectRecord.type == type)
-                if lifecycle is not None:
+                if lifecycle == "flagged":
+                    flagged_ids = select(MemoryFlagRecord.memory_object_id).distinct().scalar_subquery()
+                    stmt = stmt.where(MemoryObjectRecord.id.in_(flagged_ids))
+                elif lifecycle is not None:
                     stmt = stmt.where(MemoryObjectRecord.lifecycle == lifecycle)
                 if container_ref is not None:
                     stmt = stmt.where(MemoryObjectRecord.container_ref == container_ref)

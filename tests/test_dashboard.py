@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.config import AppConfig
 from app.main import create_app
 from core.models import MemoryObject
+from storage.sqlite_schema import MemoryFlagRecord
 from storage.vector_index import VectorIndexConfig
 
 
@@ -84,6 +85,28 @@ class TestDashboardMemoriesEndpoint:
         body = resp.json()
         assert body["total"] == 1
         assert body["memories"][0]["lifecycle"] == "suppressed"
+
+    def test_filters_by_flagged_lifecycle(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            mo_flagged = _seed_memory(app, type="decision", lifecycle="active")
+            _seed_memory(app, type="decision", lifecycle="active")
+            # Insert a flag record for the first memory
+            storage = app.state.pallium_service._storage
+            with storage._session_factory() as session:
+                flag = MemoryFlagRecord(
+                    id="test-flag-1",
+                    memory_object_id=mo_flagged.id,
+                    reason="test flag",
+                    source_ref="test",
+                    flagged_at=datetime(2026, 4, 28, 10, 0, 0, tzinfo=timezone.utc),
+                )
+                session.add(flag)
+                session.commit()
+            resp = client.get("/dashboard/api/memories?lifecycle=flagged")
+        body = resp.json()
+        assert body["total"] == 1
+        assert body["memories"][0]["id"] == mo_flagged.id
 
     def test_pagination_limit_and_offset(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
