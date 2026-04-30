@@ -8,6 +8,7 @@ pallium.db
 pallium.db-wal
 pallium.db-shm
 tmp*.db
+scripts/retroactive_decision_eval.py
 pallium.egg-info/
 build/
 .env.local
