@@ -798,12 +798,12 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
             memory_type=item.type,
             memory_object_id=mo_id,
         )
-    if item.type in {"thread_summary", "discussion_summary"}:
+    if item.type in {"thread_summary", "turn_summary"}:
         summary_text = str(payload.get("summary") or "").strip()
         return InjectableBlock(
             result_id=str(item.result_id),
             block_type="memory",
-            title="Thread Summary" if item.type == "thread_summary" else "Discussion Summary",
+            title="Thread Summary" if item.type == "thread_summary" else "Turn Summary",
             text=summary_text,
             evidence=item.evidence,
             memory_type=item.type,
@@ -978,7 +978,7 @@ def _candidate_qualifies_as_same_thread_local_state(
             return True, ""
         return False, "weak_same_thread_structured_state"
 
-    if item.type in {"thread_summary", "discussion_summary"}:
+    if item.type in {"thread_summary", "turn_summary"}:
         payload = item.payload or {}
         summary_text = str(payload.get("summary") or "").strip()
         summary_rejection = _summary_low_value_reason(
@@ -1261,7 +1261,7 @@ def _candidate_is_injection_eligible(
         # Note: atomic_fact injection relies on the content-overlap gate for topical
         # precision (see "Injection precision over recall" decision in decisions.md).
         return True
-    if item.type == "discussion_summary":
+    if item.type == "turn_summary":
         return allow_discussion_fallback
     return False
 
@@ -1271,7 +1271,7 @@ def _candidate_is_low_value(candidate: dict[str, object]) -> bool:
     if item.result_kind == "source_hit":
         excerpt = str(item.excerpt or "")
         return _is_low_value_meta_text(excerpt)
-    if item.type in {"discussion_summary", "thread_summary"}:
+    if item.type in {"turn_summary", "thread_summary"}:
         payload = item.payload or {}
         return _is_low_value_meta_text(str(payload.get("summary") or ""))
     return False

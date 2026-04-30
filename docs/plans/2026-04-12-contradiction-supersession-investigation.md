@@ -22,7 +22,7 @@ SF-SH (single-hop) results:
 Example: "What is the official language of Japan?"
 - Gold answer: "Swedish" (counterfactual injected as newer fact)
 - Retrieved context contains: 4 objects saying "Japanese" (thread_summary,
-  discussion_summary, older atomic_facts) + 1 object saying "Swedish" (newer atomic_fact)
+  turn_summary, older atomic_facts) + 1 object saying "Swedish" (newer atomic_fact)
 - Evaluator picks "Japanese" because it appears in more objects and has higher-priority
   types (thread_summary, consolidated facts)
 
@@ -105,7 +105,7 @@ types, timestamps, and which thread they came from.
 
 The 31 SF-SH misses break down into:
 - **Consolidation created summaries with old facts**: thread_summary and
-  discussion_summary objects are generated from the full thread, which contains
+  turn_summary objects are generated from the full thread, which contains
   many facts with original (true) values. The one counterfactual (newer value)
   gets drowned out in the summary.
 - **Multiple atomic_facts with old value**: The same true fact may appear in

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Improve memory extraction quality from D/F to B+/A across all dimensions: decision extraction, noise filtering, type classification, discussion_summary quality, interest durability, and atomic_fact relevance.
+**Goal:** Improve memory extraction quality from D/F to B+/A across all dimensions: decision extraction, noise filtering, type classification, turn_summary quality, interest durability, and atomic_fact relevance.
 
 **Architecture:** Four layers of improvement, in priority order:
 
@@ -31,7 +31,7 @@ Quoted decision_text: "implemented the dashboard using vanilla HTML/CSS/JS" → 
 |------|---------------|
 | `semantic/llm_agent_memory.py` | Extraction prompt — decision quoting rules, implicit-decision detection |
 | `semantic/conversational_knowledge.py` | Fact extraction prompt — stronger ephemeral negatives + post-filter |
-| `semantic/common.py` | Quality gates: discussion_summary suppression, interest durability, source pre-filter |
+| `semantic/common.py` | Quality gates: turn_summary suppression, interest durability, source pre-filter |
 | `semantic/agent_conversation_memory_threads.py` | Thread-level decision detection from conversational flow |
 | `tests/test_extraction_quality_gates.py` | Unit tests for all new quality gates |
 | `evals/memory_quality_eval.py` | Corpus-backed dimension scorer (measures before/after) |
@@ -299,7 +299,7 @@ Add to `tests/test_extraction_quality_gates.py`:
 
 ```python
 from core.models import SourceItem
-from semantic.common import SemanticExtraction, _should_create_discussion_summary
+from semantic.common import SemanticExtraction, _should_create_turn_summary
 
 
 def _make_source(content: str, role: str = "user") -> SourceItem:
@@ -322,22 +322,22 @@ class TestDiscussionSummaryQualityGate:
     def test_suppresses_very_short_summary(self):
         source = _make_source("what?")
         extraction = _make_extraction("what?")
-        assert not _should_create_discussion_summary(source, extraction)
+        assert not _should_create_turn_summary(source, extraction)
 
     def test_suppresses_bare_user_question(self):
         source = _make_source("why is it like that?")
         extraction = _make_extraction("User asks why it is like that.")
-        assert not _should_create_discussion_summary(source, extraction)
+        assert not _should_create_turn_summary(source, extraction)
 
     def test_suppresses_user_instructs_short(self):
         source = _make_source("ok, delete it")
         extraction = _make_extraction("User instructs to confirm deletion.")
-        assert not _should_create_discussion_summary(source, extraction)
+        assert not _should_create_turn_summary(source, extraction)
 
     def test_suppresses_user_opened_file(self):
         source = _make_source("User opened foo.py")
         extraction = _make_extraction("User opened the file foo.py in the IDE.")
-        assert not _should_create_discussion_summary(source, extraction)
+        assert not _should_create_turn_summary(source, extraction)
 
     def test_allows_substantive_outcome(self):
         source = _make_source(
@@ -346,7 +346,7 @@ class TestDiscussionSummaryQualityGate:
         extraction = _make_extraction(
             "Root cause analysis and fixes for duplicate memory items: SQL race condition in claim_next_source_item, vector index corruption from killed process"
         )
-        assert _should_create_discussion_summary(source, extraction)
+        assert _should_create_turn_summary(source, extraction)
 
     def test_allows_summary_with_explicit_signal(self):
         source = _make_source("We fixed the race condition and all tests pass now.")
@@ -354,7 +354,7 @@ class TestDiscussionSummaryQualityGate:
             "Fixed race condition, tests passing.",
             progress_text="Race condition fixed in claim_next_source_item",
         )
-        assert _should_create_discussion_summary(source, extraction)
+        assert _should_create_turn_summary(source, extraction)
 
     def test_allows_long_user_asks_with_outcome(self):
         """Longer 'User asks...' summaries that also contain the answer should pass."""
@@ -362,7 +362,7 @@ class TestDiscussionSummaryQualityGate:
         extraction = _make_extraction(
             "User asking whether the install process creates the directory structure and files. The service install creates the full layout including config, logs, and run directories."
         )
-        assert _should_create_discussion_summary(source, extraction)
+        assert _should_create_turn_summary(source, extraction)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -427,7 +427,7 @@ Expected: All pass
 
 ```bash
 git add semantic/common.py tests/test_extraction_quality_gates.py
-git commit -m "feat: strengthen discussion_summary quality gate — suppress short/question-only summaries"
+git commit -m "feat: strengthen turn_summary quality gate — suppress short/question-only summaries"
 ```
 
 ---
@@ -962,7 +962,7 @@ if __name__ == "__main__":
 Scores:
 1. noise_suppression: % of expected_suppress items that produce NO memory
 2. false_negative_protection: % of must_not_suppress items that DO produce memory
-3. discussion_summary_quality: % of discussion_summaries with summary >= 50 chars
+3. turn_summary_quality: % of discussion_summaries with summary >= 50 chars
 4. interest_durability: % of interests with specific, reusable subjects
 5. ephemeral_filtering: % of ephemeral-pattern facts that are NOT in active state
 """
@@ -1033,14 +1033,14 @@ def main():
     dims["false_negative_protection"] = d
 
     # 3. Discussion summary quality
-    d = Dimension("discussion_summary_quality")
+    d = Dimension("turn_summary_quality")
     for mems in memories_by_source.values():
         for m in mems:
-            if m["type"] == "discussion_summary":
+            if m["type"] == "turn_summary":
                 d.total += 1
                 if len(m["payload"].get("summary", "")) >= 50:
                     d.passed += 1
-    dims["discussion_summary_quality"] = d
+    dims["turn_summary_quality"] = d
 
     # 4. Interest durability
     d = Dimension("interest_durability")
@@ -1091,7 +1091,7 @@ Run: `python -m evals.semantic_runner --variants strict_typed_memory_v8b_work_re
 Verify:
 - All 10 original explicit-decision items still produce `decision`
 - The 4 new implicit-decision items also produce `decision`
-- Discussion items still produce `discussion_summary` (no false promotions)
+- Discussion items still produce `turn_summary` (no false promotions)
 
 - [ ] **Step 2: Run memory quality eval**
 
@@ -1100,7 +1100,7 @@ Run: `python evals/memory_quality_eval.py`
 Verify:
 - `noise_suppression` ≥ 80% (B+)
 - `false_negative_protection` = 100% (no valuable content accidentally suppressed)
-- `discussion_summary_quality` ≥ 80% (B+)
+- `turn_summary_quality` ≥ 80% (B+)
 - `interest_durability` ≥ 80% (B+)
 
 - [ ] **Step 3: If any dimension below B+, iterate**
@@ -1109,7 +1109,7 @@ Verify:
 |-----------|-------------|
 | noise_suppression | Add more patterns to `should_skip_extraction` |
 | false_negative_protection | Relax the gate that's causing false suppression |
-| discussion_summary_quality | Adjust `_MINIMUM_SUBSTANTIVE_SUMMARY_LENGTH` or prefix list |
+| turn_summary_quality | Adjust `_MINIMUM_SUBSTANTIVE_SUMMARY_LENGTH` or prefix list |
 | interest_durability | Adjust `_is_durable_interest` thresholds |
 
 - [ ] **Step 4: Final commit**

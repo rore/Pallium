@@ -221,7 +221,7 @@ class TestEndToEndMultilingualVectorRetrieval:
             storage, vector_index,
             source_id="irr-1",
             content="I made chocolate cake last night for the birthday party.",
-            memory_type="discussion_summary",
+            memory_type="turn_summary",
             memory_payload={"summary": "chocolate cake for the birthday party"},
         )
 

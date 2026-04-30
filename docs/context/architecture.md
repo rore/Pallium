@@ -122,7 +122,7 @@ Implemented semantic behavior now includes:
 - item-level typed memory for:
   - `interest`
   - `constraint_memory`
-- fallback `discussion_summary` for non-typed extraction results
+- fallback `turn_summary` for non-typed extraction results (per-item fallback, always single-source — not thread-level)
 - prompt provenance attached to LLM-derived memory objects
 - internal-only item semantic signals now extracted in the same item-level LLM call and persisted under `SourceItem.metadata["pallium_semantic_signals"]` for later higher-level synthesis
 - work reference extraction for cross-surface work continuity:
@@ -257,7 +257,7 @@ For resumed-work queries, that same package-owned path adds explicit usefulness 
 
 Actor scoping extends the visibility model with per-memory attribution:
 
-- personal memory types (`interest`, `constraint_memory`) are only created in private containers; in shared containers they fall through to `discussion_summary`
+- personal memory types (`interest`, `constraint_memory`) are only created in private containers; in shared containers they fall through to `turn_summary`
 - `constraint_memory` has a role guard — only user messages can create it (same pattern as `interest`)
 - `actor_ref` on `MemoryObject` tracks who the memory is about, not who created it; set from source item in private containers, null in shared containers
 - thread-level memories (`thread_summary`, `task_checkpoint`) always have `actor_ref = null` regardless of container type

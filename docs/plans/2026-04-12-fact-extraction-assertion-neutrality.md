@@ -326,7 +326,7 @@ This takes ~25 minutes. Record the SF-SH results.
 
 Baseline (from the investigation):
 - SF-SH: 51/100 correct, 82/100 gold_in_context, 51/82 correct when gold present
-- 31 gold-in-context misses, 24 with gold only in discussion_summary
+- 31 gold-in-context misses, 24 with gold only in turn_summary
 
 Check:
 1. Did overall accuracy improve?

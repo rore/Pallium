@@ -130,7 +130,7 @@ def _make_messages(prefix: str, count: int, container_ref: str, thread_ref: str)
             "source_type": source_type,
             "source_id": f"{prefix}-{i}",
             "content_type": "text/plain",
-            "content": f"Message {i} about reservation ordering and catalog sync delays.",
+            "content": f"Message {i} about reservation ordering and catalog sync delays affecting hold updates during concurrent processing across all background worker instances.",
             "artifact_kind": artifact_kind,
             "role": role,
             "container_ref": container_ref,

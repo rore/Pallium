@@ -5,7 +5,7 @@
 A major routing simplification reduced Pallium's query routing pipeline from 17 stages to 10:
 
 - **Scoring:** `retrieval_score * 10` (flat RRF) replaced with `quality_score * 200` (normalized raw lexical/vector). Layer weights compressed from 40-490 to 20-245 so retrieval quality matters ~1.5x vs type preference (was ~5x).
-- **Suppression:** 3 cascading suppression stages replaced with 1 unified pass using composable `SuppressionRule` list in `routing_suppression.py`. Includes source echo, meta-text, weak summary, and discussion_summary echo rules.
+- **Suppression:** 3 cascading suppression stages replaced with 1 unified pass using composable `SuppressionRule` list in `routing_suppression.py`. Includes source echo, meta-text, weak summary, and turn_summary echo rules.
 - **Intent families:** 6 merged to 4: `recall`, `structured_recall`, `work_resumption`, `evidence_trace`.
 - **Injection check:** QPP 4-gate justification replaced with simplified 2-level check in `routing_injection.py` (set-level gate + per-candidate eligibility). Type-aware: structured memory gets lower bar than source hits.
 - **Resolver:** Evidence trace LLM resolver removed, replaced with deterministic source_ratio >= 0.75 check.

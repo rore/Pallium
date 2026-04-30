@@ -2,7 +2,7 @@
 
 For each failed question where gold is NOT in context:
 1. Does the gold keyword exist in any active memory object?
-2. If yes, what type? (fact_summary, atomic_fact, discussion_summary, etc.)
+2. If yes, what type? (fact_summary, atomic_fact, turn_summary, etc.)
 3. What types DID get retrieved instead?
 """
 from __future__ import annotations

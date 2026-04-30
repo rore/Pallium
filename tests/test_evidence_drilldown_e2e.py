@@ -36,7 +36,7 @@ class TestEvidenceDrilldownE2E:
                 "source_type": "chat_message",
                 "source_id": "e2e-decision-1",
                 "content_type": "text/plain",
-                "content": "We decided to use PostgreSQL for the analytics pipeline because of low latency requirements",
+                "content": "We decided to use PostgreSQL for the analytics pipeline because of low latency requirements and the need for complex joins across multiple event tables",
                 "artifact_kind": "message",
                 "role": "user",
                 "container_ref": "e2e:container:test",

@@ -1060,7 +1060,7 @@
     "expected_top_layer": "lower_level_memory",
     "expected_top_memory_types": [
       "decision",
-      "discussion_summary"
+      "turn_summary"
     ],
     "expected_answer_signals": [
       "catalog sync",
@@ -1146,7 +1146,7 @@
     "expected_top_layer": "lower_level_memory",
     "expected_top_memory_types": [
       "decision",
-      "discussion_summary"
+      "turn_summary"
     ],
     "expected_answer_signals": [
       "8:00-14:00",
@@ -1268,9 +1268,9 @@
   {
     "scenario_id": "hebrew-extraction-decision-memory-type",
     "expected_status": "known_fail",
-    "expected_status_reason": "higher_level_overuse — multilingual extraction gap, Hebrew decision demoted to discussion_summary",
+    "expected_status_reason": "higher_level_overuse — multilingual extraction gap, Hebrew decision demoted to turn_summary",
     "scenario_kind": "answer_continuity_value",
-    "description": "Hebrew conversation with explicit decision should extract a decision memory type, not just discussion_summary",
+    "description": "Hebrew conversation with explicit decision should extract a decision memory type, not just turn_summary",
     "consolidation_strategy": "thread_summary_anchored",
     "prior_events": [
       {

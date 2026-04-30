@@ -53,7 +53,7 @@ PRIMARY_TEXT_FIELD = {
     "investigation_outcome": "investigation_text",
     "interest": "interest_text",
     "constraint_memory": "constraint_text",
-    "discussion_summary": "summary",
+    "turn_summary": "summary",
     "thread_summary": "summary",
     "task_checkpoint": "summary",
     "pattern_memory": "summary",
@@ -74,7 +74,7 @@ TYPE_BASED_CONFIDENCE = {
     "continuity_memory": "medium",
     "pattern_memory": "medium",
     "interest": "medium",
-    "discussion_summary": "low",
+    "turn_summary": "low",
 }
 
 
@@ -147,7 +147,7 @@ def analyze_record(record: dict) -> list[SupportSignals]:
         mtype = mo.get("type", "unknown")
         primary_field = PRIMARY_TEXT_FIELD.get(mtype, "summary")
         primary_text = extraction.get(primary_field) or mo.get("payload", {}).get(primary_field, "")
-        if mtype == "discussion_summary" and not primary_text:
+        if mtype == "turn_summary" and not primary_text:
             primary_text = extraction.get("summary", "")
 
         evidence_field = EVIDENCE_TEXT_FIELD.get(mtype)
@@ -158,7 +158,7 @@ def analyze_record(record: dict) -> list[SupportSignals]:
         density_bucket, signal_count = compute_signal_density(extraction)
 
         type_conf = TYPE_BASED_CONFIDENCE.get(mtype, "unknown")
-        if mtype == "discussion_summary" and signal_count > 0:
+        if mtype == "turn_summary" and signal_count > 0:
             type_conf = "medium"
 
         results.append(SupportSignals(

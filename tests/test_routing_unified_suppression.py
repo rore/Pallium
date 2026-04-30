@@ -176,9 +176,9 @@ def test_weak_summary_suppressed_for_structured_recall():
     assert reason == "weak_summary"
 
 
-def test_weak_summary_suppressed_discussion_summary():
-    """discussion_summary type is also covered."""
-    item = _memory_hit_item(item_type="discussion_summary", payload={"content_quality": "unresolved"})
+def test_weak_summary_suppressed_turn_summary():
+    """turn_summary type is also covered."""
+    item = _memory_hit_item(item_type="turn_summary", payload={"content_quality": "unresolved"})
     candidate = _make_candidate(item, same_thread=False, base_routing_score=300)
 
     suppressed, reason = apply_suppression(candidate, intent="recall", query_text="any query")

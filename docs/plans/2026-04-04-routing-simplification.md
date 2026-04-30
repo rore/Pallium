@@ -240,7 +240,7 @@ from semantic.agent_conversation_memory_routing_constants import (
 STRUCTURED_LAYERS = frozenset({
     "decision", "investigation_outcome", "task_checkpoint",
     "pattern_memory", "continuity_memory", "interest", "constraint_memory",
-    "thread_summary", "discussion_summary",
+    "thread_summary", "turn_summary",
 })
 
 

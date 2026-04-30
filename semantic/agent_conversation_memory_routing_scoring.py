@@ -399,7 +399,7 @@ def _query_family_candidate_score(
     continuity_same_thread_hits = _query_family_layer_metric(candidate_signals, "continuity_memory", "same_thread_hits")
     checkpoint_support = _query_family_layer_metric(candidate_signals, "task_checkpoint", "best_support")
     thread_summary_support = _query_family_layer_metric(candidate_signals, "thread_summary", "best_support")
-    discussion_summary_support = _query_family_layer_metric(candidate_signals, "discussion_summary", "best_support")
+    turn_summary_support = _query_family_layer_metric(candidate_signals, "turn_summary", "best_support")
     checkpoint_same_thread_hits = _query_family_layer_metric(candidate_signals, "task_checkpoint", "same_thread_hits")
     checkpoint_work_usefulness = _query_family_layer_metric(candidate_signals, "task_checkpoint", "best_work_usefulness")
     source_support = _query_family_layer_metric(candidate_signals, "source_evidence", "best_support")
@@ -429,7 +429,7 @@ def _query_family_candidate_score(
         continuity_support,
         checkpoint_support,
         thread_summary_support,
-        discussion_summary_support,
+        turn_summary_support,
         sharp_lower_level_support,
     )
     fresh_thread_cross_thread_recall = _runtime_context_prefers_cross_thread_recall(runtime_context)
@@ -439,7 +439,7 @@ def _query_family_candidate_score(
         and sharp_lower_level_support >= supported_floor
     )
     constraint_recall = "constraint_recall" in query_shape_tags
-    structured_summary_support = max(checkpoint_support, thread_summary_support, discussion_summary_support)
+    structured_summary_support = max(checkpoint_support, thread_summary_support, turn_summary_support)
     score = 0
     reasons: list[str] = []
 
@@ -978,7 +978,7 @@ def _summarize_routing_layers(scored_candidates: list[dict[str, object]]) -> dic
         "decision",
         "investigation_outcome",
         "thread_summary",
-        "discussion_summary",
+        "turn_summary",
     }
     lower_level_layers = {"lower_level_memory", "decision", "investigation_outcome"}
     for layer in sorted(all_layers):
@@ -1037,7 +1037,7 @@ def _select_routing_focus(
             structured_fallback = [
                 (layer, summary)
                 for layer, summary in fallback_candidates
-                if layer in {"task_checkpoint", "thread_summary", "discussion_summary", "lower_level_memory"}
+                if layer in {"task_checkpoint", "thread_summary", "turn_summary", "lower_level_memory"}
                 and str(summary.get("best_support_grade", "weak")) in {"supported", "strong"}
             ]
             supported_lower_level = next(

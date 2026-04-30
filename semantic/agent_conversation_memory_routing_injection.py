@@ -77,7 +77,7 @@ def should_allow_injection(
     )
 
     if has_any_score:
-        # Exclude discussion_summary from best_lexical: a discussion_summary's
+        # Exclude turn_summary from best_lexical: a turn_summary's
         # lexical overlap with the query is circular — it was derived from content
         # that shares the query's words by construction (e.g., an ingested copy of
         # the query text gets summarized, producing a summary that echoes the query).
@@ -85,7 +85,7 @@ def should_allow_injection(
         # independent evidence of topical relevance.
         _non_summary_candidates = [
             c for c in candidates
-            if getattr(c.get("item"), "type", None) != "discussion_summary"
+            if getattr(c.get("item"), "type", None) != "turn_summary"
         ]
         _lex_candidates = _non_summary_candidates or candidates
         best_lexical = max(normalize_lexical_score(c.get("lexical_score")) for c in _lex_candidates)

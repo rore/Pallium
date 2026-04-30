@@ -173,7 +173,7 @@ objects are likely:
 
 - decision
 - investigation_outcome
-- discussion_summary
+- turn_summary
 
 Requirement rationale may also be useful, but it overlaps with decisions and
 could be introduced after the first cut if needed.

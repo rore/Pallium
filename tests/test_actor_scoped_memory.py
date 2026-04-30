@@ -70,13 +70,13 @@ def test_assistant_response_does_not_produce_constraint_memory(monkeypatch, test
 
 
 def test_interest_not_created_in_public_container(monkeypatch, test_db_url: str) -> None:
-    """User interest in a public container should fall through to discussion_summary."""
+    """User interest in a public container should fall through to turn_summary."""
     events = [
         {
             "source_type": "chat_message",
             "source_id": "pub-interest-1",
             "content_type": "text/plain",
-            "content": "ok, chroma sounds interesting. i should check it some time.",
+            "content": "ok, chroma sounds interesting for our vector storage needs. i should check it out some time to compare with our current solution.",
             "artifact_kind": "message",
             "role": "user",
             "container_ref": CONTAINER_PUBLIC,
@@ -97,10 +97,10 @@ def test_interest_not_created_in_public_container(monkeypatch, test_db_url: str)
             f"Interest should not be created in public containers, "
             f"but found: {[m.payload for m in interest_memories]}"
         )
-        # Should have a discussion_summary instead
-        discussion_summaries = [m for m in active_memories if m.type == "discussion_summary"]
+        # Should have a turn_summary instead
+        discussion_summaries = [m for m in active_memories if m.type == "turn_summary"]
         assert discussion_summaries, (
-            f"Expected discussion_summary as fallback, but only found: "
+            f"Expected turn_summary as fallback, but only found: "
             f"{[m.type for m in active_memories]}"
         )
 
@@ -136,13 +136,13 @@ def test_interest_created_in_private_container(monkeypatch, test_db_url: str) ->
 
 
 def test_interest_not_created_in_limited_container(monkeypatch, test_db_url: str) -> None:
-    """User interest in a limited (team) container should fall through to discussion_summary."""
+    """User interest in a limited (team) container should fall through to turn_summary."""
     events = [
         {
             "source_type": "chat_message",
             "source_id": "ltd-interest-1",
             "content_type": "text/plain",
-            "content": "ok, chroma sounds interesting. i should check it some time.",
+            "content": "ok, chroma sounds interesting for our vector storage needs. i should check it out some time to compare with our current solution.",
             "artifact_kind": "message",
             "role": "user",
             "container_ref": CONTAINER_LIMITED,
@@ -196,7 +196,7 @@ def test_actor_ref_set_on_memory_from_private_container(monkeypatch, test_db_url
         active_memories = storage.list_memory_objects(lifecycle="active")
         assert active_memories, "Expected at least one memory"
         # Item-level memories should have actor_ref set
-        item_level_types = {"decision", "investigation_outcome", "interest", "discussion_summary", "constraint_memory"}
+        item_level_types = {"decision", "investigation_outcome", "interest", "turn_summary", "constraint_memory"}
         item_memories = [m for m in active_memories if m.type in item_level_types]
         assert item_memories, f"Expected item-level memories, got: {[m.type for m in active_memories]}"
         for memory in item_memories:
@@ -503,11 +503,11 @@ def test_evidence_matches_filters_respects_actor_ref() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_interest_fallthrough_in_shared_container_creates_shared_discussion_summary(monkeypatch, test_db_url: str) -> None:
-    """User A's interest in a shared container falls through to discussion_summary
+def test_interest_fallthrough_in_shared_container_creates_shared_turn_summary(monkeypatch, test_db_url: str) -> None:
+    """User A's interest in a shared container falls through to turn_summary
     with actor_ref=None and visibility=public (shared evidence).
 
-    FINDING: Item-level memories (discussion_summary, decision) in shared containers
+    FINDING: Item-level memories (turn_summary, decision) in shared containers
     have actor_ref=None on the memory object, but their evidence references point to
     the creator's source item which retains actor_ref. This means evidence-path
     filtering at query time may prevent other users from reaching these memories
@@ -515,7 +515,7 @@ def test_interest_fallthrough_in_shared_container_creates_shared_discussion_summ
     shared because thread aggregation includes evidence from all participants.
 
     This test verifies the write-side correctness: interest suppression works,
-    discussion_summary fallback is created, and memory is shared (actor_ref=None).
+    turn_summary fallback is created, and memory is shared (actor_ref=None).
     The query-side cross-user visibility depends on thread aggregation.
     """
     events = [
@@ -523,7 +523,7 @@ def test_interest_fallthrough_in_shared_container_creates_shared_discussion_summ
             "source_type": "chat_message",
             "source_id": "mu-fallthrough-interest-1",
             "content_type": "text/plain",
-            "content": "ok, chroma sounds interesting. i should check it some time.",
+            "content": "ok, chroma sounds interesting for our vector storage needs. i should check it out some time to compare with our current solution.",
             "artifact_kind": "message",
             "role": "user",
             "actor_ref": ACTOR_A,
@@ -546,21 +546,21 @@ def test_interest_fallthrough_in_shared_container_creates_shared_discussion_summ
             "Interest should not be created in public container"
         )
 
-        # discussion_summary must be created as fallback
-        discussion_summaries = [m for m in active_memories if m.type == "discussion_summary"]
-        assert discussion_summaries, "Expected discussion_summary as fallback for interest"
+        # turn_summary must be created as fallback
+        discussion_summaries = [m for m in active_memories if m.type == "turn_summary"]
+        assert discussion_summaries, "Expected turn_summary as fallback for interest"
 
-        # The discussion_summary must be shared (actor_ref=None)
+        # The turn_summary must be shared (actor_ref=None)
         for ds in discussion_summaries:
             assert ds.actor_ref is None, (
-                f"discussion_summary in shared container should have actor_ref=None, "
+                f"turn_summary in shared container should have actor_ref=None, "
                 f"got {ds.actor_ref}"
             )
             assert ds.visibility == "public", (
-                f"discussion_summary should inherit visibility=public, got {ds.visibility}"
+                f"turn_summary should inherit visibility=public, got {ds.visibility}"
             )
 
-        # User A (the creator) can see their own discussion_summary
+        # User A (the creator) can see their own turn_summary
         query_a = client.post("/query", json={
             "text": "what was said about chroma?",
             "limit": 10,
@@ -569,7 +569,7 @@ def test_interest_fallthrough_in_shared_container_creates_shared_discussion_summ
             "actor_ref": ACTOR_A,
         })
         assert query_a.status_code == 200
-        assert query_a.json()["results"], "Creator should see their own discussion_summary"
+        assert query_a.json()["results"], "Creator should see their own turn_summary"
 
 
 def test_shared_memory_visible_to_other_user_through_evidence_path(monkeypatch, test_db_url: str) -> None:

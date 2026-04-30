@@ -503,14 +503,14 @@ def test_investigative_conclusion_prefers_sharp_conclusions_over_generic_summari
         # Mixed candidates -> default recall mode -> broad_recall.
         # This scenario currently stores one sharp conclusion (decision) plus a
         # continuity carry-forward answer. The investigation artifact remains a
-        # discussion_summary, so the top results should stay decision-first and
+        # turn_summary, so the top results should stay decision-first and
         # keep summaries out of the first two slots.
         assert routing['query_intent'] == 'recall'
         assert routing['preferred_layers'][:3] == ['pattern_memory', 'investigation_outcome', 'decision']
         assert payload['results'][0]['result_kind'] == 'memory_hit'
         assert payload['results'][0]['type'] in {'investigation_outcome', 'decision'}
         assert payload['results'][1]['type'] in {'investigation_outcome', 'decision', 'continuity_memory'}
-        assert all(item.get('type') not in {'thread_summary', 'discussion_summary'} for item in payload['results'][:2])
+        assert all(item.get('type') not in {'thread_summary', 'turn_summary'} for item in payload['results'][:2])
 
 def test_routing_trace_reports_excluded_candidates_and_result_origins(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
@@ -855,8 +855,8 @@ def test_discussion_topic_query_classifies_as_broad_recall() -> None:
     )
 
 
-def test_discussion_summary_candidate_selected_via_broad_recall_routing() -> None:
-    # A discussion_summary candidate seeded with known content should be selected
+def test_turn_summary_candidate_selected_via_broad_recall_routing() -> None:
+    # A turn_summary candidate seeded with known content should be selected
     # when the query is a history/topic question routed through broad_recall.
     # This tests routing + injection decision in isolation, bypassing extraction.
     plugin = AgentConversationMemoryPlugin(
@@ -869,7 +869,7 @@ def test_discussion_summary_candidate_selected_via_broad_recall_routing() -> Non
             QueryResultItem(
                 result_kind='memory_hit',
                 memory_object_id='summary-file-size-limit',
-                type='discussion_summary',
+                type='turn_summary',
                 payload={'summary': 'We discussed setting the file size limit to 32G for the ingest pipeline.'},
                 score=14,
                 evidence=[],
@@ -903,7 +903,7 @@ def test_discussion_summary_candidate_selected_via_broad_recall_routing() -> Non
     )
     selected_ids = [r.memory_object_id for r in outcome.results if r.result_kind == 'memory_hit']
     assert 'summary-file-size-limit' in selected_ids, (
-        f"discussion_summary candidate was not selected. Routing trace: {routing}"
+        f"turn_summary candidate was not selected. Routing trace: {routing}"
     )
 
 

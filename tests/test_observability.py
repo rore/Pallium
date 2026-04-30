@@ -28,7 +28,7 @@ def test_processing_endpoint_includes_observability_summary_fields(client, drain
             "source_type": "decision_note",
             "source_id": "decision-observability-1",
             "content_type": "text/plain",
-            "content": "Decision: use item event time ordering so reservation updates are applied deterministically.",
+            "content": "Decision: use item event time ordering so that reservation updates are applied deterministically across all concurrent background worker processes in production.",
             "artifact_kind": "assistant_output",
             "role": "assistant",
         }],
@@ -41,7 +41,7 @@ def test_processing_endpoint_includes_observability_summary_fields(client, drain
     assert response.status_code == 200
     payload = response.json()
     assert payload["failure_category"] is None
-    assert payload["memory_object_types"] == ["discussion_summary"]
+    assert payload["memory_object_types"] == ["turn_summary"]
     assert payload["thread_rebuild_requested"] is False
     assert payload["thread_rebuild_completed"] is False
     assert payload["produced_memory_provenance"]
@@ -145,7 +145,7 @@ def test_query_debug_includes_candidate_flow_and_result_summary(client, drain_qu
             "source_type": "decision_note",
             "source_id": "decision-query-trace-1",
             "content_type": "text/plain",
-            "content": "Decision: use item event time ordering so reservation updates are applied deterministically.",
+            "content": "Decision: use item event time ordering so that reservation updates are applied deterministically across all concurrent background worker processes in production.",
             "artifact_kind": "assistant_output",
             "role": "assistant",
             "visibility": "public",
@@ -202,7 +202,7 @@ def test_integration_debug_logging_is_opt_in(test_db_url: str, capsys) -> None:
         source_type="decision_note",
         source_id="logging-on-1",
         content_type="text/plain",
-        content="Decision: emit logs only when explicitly enabled.",
+        content="Decision: emit debug logs only when explicitly enabled by the operator through the runtime configuration file and verified by the integration health check endpoint.",
         metadata=None,
         use_case="demo_agent_memory",
         artifact_kind="assistant_output",

@@ -30,7 +30,7 @@
           "extracted": true,
           "memory_count": 10,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "task_checkpoint",
             "atomic_fact",
@@ -103,7 +103,7 @@
           "extracted": true,
           "memory_count": 10,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "task_checkpoint",
             "atomic_fact",
@@ -122,7 +122,7 @@
           "extracted": true,
           "memory_count": 13,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "task_checkpoint",
             "atomic_fact",
@@ -175,7 +175,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "task_checkpoint",
             "atomic_fact",
@@ -221,7 +221,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -241,7 +241,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -293,7 +293,7 @@
           "extracted": true,
           "memory_count": 9,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -311,7 +311,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -362,7 +362,7 @@
           "extracted": true,
           "memory_count": 9,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -404,7 +404,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "task_checkpoint",
             "atomic_fact",
@@ -454,7 +454,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -474,7 +474,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -546,7 +546,7 @@
           "extracted": true,
           "memory_count": 8,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -623,7 +623,7 @@
           "extracted": true,
           "memory_count": 9,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "atomic_fact",
             "atomic_fact",
@@ -641,7 +641,7 @@
           "extracted": true,
           "memory_count": 10,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "task_checkpoint",
             "atomic_fact",
@@ -710,7 +710,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -730,7 +730,7 @@
           "extracted": true,
           "memory_count": 9,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -808,7 +808,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -884,7 +884,7 @@
           "extracted": true,
           "memory_count": 13,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "task_checkpoint",
             "atomic_fact",
@@ -960,7 +960,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "task_checkpoint",
             "atomic_fact",
@@ -1048,7 +1048,7 @@
           "extracted": true,
           "memory_count": 9,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -1099,7 +1099,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "task_checkpoint",
             "atomic_fact",
@@ -1119,7 +1119,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "task_checkpoint",
             "atomic_fact",
@@ -1136,7 +1136,7 @@
       ],
       "retrieved_types": [
         "atomic_fact",
-        "discussion_summary"
+        "turn_summary"
       ],
       "judge_reasoning": "The generated answer doesn't mention the key reason (adopting children) why Caroline wouldn't move back, just vaguely says there's no evidence she wants to move back.",
       "evidence_turn_text": [
@@ -1171,7 +1171,7 @@
           "extracted": true,
           "memory_count": 12,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "task_checkpoint",
             "atomic_fact",
@@ -1236,7 +1236,7 @@
       "retrieved_types": [
         "atomic_fact",
         "decision",
-        "discussion_summary",
+        "turn_summary",
         "thread_summary"
       ],
       "judge_reasoning": "The gold answer focuses on Caroline's excitement about creating a family for kids who need one, while the generated answer focuses on passing adoption agency interviews as a specific milestone, which ",
@@ -1265,7 +1265,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -1309,7 +1309,7 @@
           "extracted": true,
           "memory_count": 13,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "task_checkpoint",
             "atomic_fact",
@@ -1329,7 +1329,7 @@
       "retrieved_types": [
         "atomic_fact",
         "decision",
-        "discussion_summary",
+        "turn_summary",
         "thread_summary"
       ],
       "judge_reasoning": "The gold answer specifies that therapeutic methods and working with trans people were discussed, while the generated answer claims no details about the workshop content are available.",
@@ -1358,7 +1358,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "task_checkpoint",
             "atomic_fact",
@@ -1376,7 +1376,7 @@
       "retrieved_types": [
         "atomic_fact",
         "decision",
-        "discussion_summary",
+        "turn_summary",
         "thread_summary"
       ],
       "judge_reasoning": "The gold answer specifies 'lessons on self-acceptance and finding support' as what Caroline took away from the book, but the generated answer says this information is not specified in the context, whi",
@@ -1449,7 +1449,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -1466,7 +1466,7 @@
       ],
       "retrieved_types": [
         "atomic_fact",
-        "discussion_summary"
+        "turn_summary"
       ],
       "judge_reasoning": "The gold answer specifies they made a cup with a dog face on it, but the generated answer claims this information is not available.",
       "evidence_turn_text": [
@@ -1494,7 +1494,7 @@
           "extracted": true,
           "memory_count": 11,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -1587,7 +1587,7 @@
           "extracted": true,
           "memory_count": 8,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -1628,7 +1628,7 @@
           "extracted": true,
           "memory_count": 13,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "task_checkpoint",
             "atomic_fact",
@@ -1648,7 +1648,7 @@
       "retrieved_types": [
         "atomic_fact",
         "decision",
-        "discussion_summary",
+        "turn_summary",
         "thread_summary"
       ],
       "judge_reasoning": "The gold answer provides specific advice Caroline gives for getting started with adoption, while the generated answer claims no such advice exists in the context.",
@@ -1720,7 +1720,7 @@
           "extracted": true,
           "memory_count": 13,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "thread_summary",
             "task_checkpoint",
             "atomic_fact",
@@ -1767,7 +1767,7 @@
           "extracted": true,
           "memory_count": 8,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",
@@ -1808,7 +1808,7 @@
           "extracted": true,
           "memory_count": 8,
           "memory_types": [
-            "discussion_summary",
+            "turn_summary",
             "atomic_fact",
             "atomic_fact",
             "atomic_fact",

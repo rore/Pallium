@@ -3,7 +3,7 @@
 Scores extraction quality across dimensions:
 1. noise_suppression: % of expected_suppress items that produce NO memory
 2. false_negative_protection: % of must_not_suppress items that DO produce memory
-3. discussion_summary_quality: % of discussion_summaries with substantive content
+3. turn_summary_quality: % of discussion_summaries with substantive content
 4. decision_detection: % of source items with decision language that produce decision memories
 5. type_distribution: informational breakdown of memory types produced
 """
@@ -95,17 +95,17 @@ def main():
     dims["false_negative_protection"] = d
 
     # 3. Discussion summary quality
-    d = Dimension("discussion_summary_quality")
+    d = Dimension("turn_summary_quality")
     for mems in memories_by_source.values():
         for m in mems:
-            if m["type"] == "discussion_summary":
+            if m["type"] == "turn_summary":
                 d.total += 1
                 summary = m["payload"].get("summary", "")
                 if len(summary) >= 50:
                     d.passed += 1
                 else:
                     d.failures.append(summary[:80])
-    dims["discussion_summary_quality"] = d
+    dims["turn_summary_quality"] = d
 
     # 4. Decision detection (items that contain decision language → should have decision type)
     d = Dimension("decision_detection")

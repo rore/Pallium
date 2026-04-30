@@ -62,7 +62,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         return MemoryRetentionPolicy(
             durable_types=frozenset({"decision", "investigation_outcome"}),
             working_types=frozenset({"thread_summary", "task_checkpoint", "continuity_memory", "pattern_memory"}),
-            orphan_delete_types=frozenset({"discussion_summary"}),
+            orphan_delete_types=frozenset({"turn_summary"}),
         )
 
     @property
@@ -197,9 +197,9 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 default_weight=60, block_title="Thread Summary", block_text_field="summary", high_value=True,
             ),
             TypeRegistration(
-                type_name="discussion_summary", layer_name="discussion_summary",
+                type_name="turn_summary", layer_name="turn_summary",
                 weight_by_intent={"recall": 40, "structured_recall": 50, "work_resumption": 35, "evidence_trace": 40},
-                default_weight=40, block_title="Discussion Summary", block_text_field="summary", high_value=False,
+                default_weight=40, block_title="Turn Summary", block_text_field="summary", high_value=False,
             ),
             TypeRegistration(
                 type_name="interest", layer_name="interest",

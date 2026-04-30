@@ -998,7 +998,7 @@ def _build_answer_payload(user_prompt: str) -> dict[str, object]:
                 'answer': 'Our verdict was that arrival-time ordering applied stale hold updates during catalog sync delays, so we switched to item event time ordering.',
                 'evidence_used': ['arrival-time ordering applied stale hold updates', 'item event time ordering'],
             }
-        if 'memory/thread_summary' in lower or 'memory/discussion_summary' in lower:
+        if 'memory/thread_summary' in lower or 'memory/turn_summary' in lower:
             return {
                 'answer': 'The thread says the duplicate-hold issue was discussed and later fixed, but the sharp verdict is preserved more clearly in the investigation outcome and decision.',
                 'evidence_used': ['thread summary'],

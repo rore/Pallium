@@ -549,7 +549,7 @@ def check_idf_discrimination(
 
 # Memory types that are inherently personal and should only exist in private
 # containers. In shared containers (container/public) they fall through to
-# discussion_summary. See add-actor-scoped-memory-and-container-visibility-rules.
+# turn_summary. See add-actor-scoped-memory-and-container-visibility-rules.
 _PERSONAL_MEMORY_TYPES = frozenset({"interest", "constraint_memory"})
 
 
@@ -561,7 +561,7 @@ def check_no_personal_memory_in_shared_container(
     """Personal memory types must not exist in shared (container/public) containers.
 
     Interest and constraint_memory are inherently personal. In shared containers
-    they should fall through to discussion_summary at write time. If they appear
+    they should fall through to turn_summary at write time. If they appear
     in results from a shared-container query, it means the write-time guard failed.
     """
     query_vis = _query_visibility(scenario, debug_payload)

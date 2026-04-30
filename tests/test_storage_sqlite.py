@@ -68,8 +68,8 @@ def test_sqlite_storage_provider_contract(test_db_url: str) -> None:
     storage.create_memory_object(memory_object)
 
     legacy_memory_object = MemoryObject(
-        type="discussion_summary",
-        schema_id="demo.discussion_summary",
+        type="turn_summary",
+        schema_id="demo.turn_summary",
         schema_version="v1",
         payload={"summary": "We discussed reservation ordering."},
         visibility="container",

@@ -21,7 +21,7 @@ Lines 11-13 define three frozensets of memory types that are specific to `agent_
 ```python
 DURABLE_MEMORY_TYPES = frozenset({"decision", "investigation_outcome"})
 FRESH_WORKING_MEMORY_TYPES = frozenset({"thread_summary", "task_checkpoint", "continuity_memory", "pattern_memory"})
-ORPHAN_DELETE_MEMORY_TYPES = frozenset({"discussion_summary"})
+ORPHAN_DELETE_MEMORY_TYPES = frozenset({"turn_summary"})
 ```
 
 These are consumed by `storage/sqlite_retention.py` to drive retention policy: durable types are never expired, fresh working types expire after 30 days, orphan discussion summaries can be deleted. If a new semantic package defines different memory types, these constants would be wrong for it.

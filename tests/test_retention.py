@@ -24,7 +24,7 @@ UTC = timezone.utc
 _TEST_RETENTION_POLICY = MemoryRetentionPolicy(
     durable_types=frozenset({"decision", "investigation_outcome"}),
     working_types=frozenset({"thread_summary", "task_checkpoint", "continuity_memory", "pattern_memory"}),
-    orphan_delete_types=frozenset({"discussion_summary"}),
+    orphan_delete_types=frozenset({"turn_summary"}),
 )
 
 

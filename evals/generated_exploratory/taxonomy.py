@@ -25,7 +25,7 @@ DIMENSIONS: dict[str, list[str]] = {
         "task_checkpoint",
         "pattern_memory",
         "continuity_memory",
-        "discussion_summary",
+        "turn_summary",
         "interest",
         "constraint_memory",
     ],

@@ -9,7 +9,7 @@ milestone: Done
 
 ## Summary
 
-Add a second typed memory object for investigation outcomes so important diagnostic or learned information does not collapse into `discussion_summary`.
+Add a second typed memory object for investigation outcomes so important diagnostic or learned information does not collapse into `turn_summary`.
 
 ## Why
 

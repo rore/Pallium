@@ -466,7 +466,7 @@ def fallback_block_types_from_layers(layers: list[str]) -> list[str]:
     for layer in layers:
         if layer == "source_evidence":
             block_types.append("source_evidence")
-        elif layer in HIGHER_LEVEL_LAYERS or layer in {"decision", "investigation_outcome", "thread_summary", "discussion_summary"}:
+        elif layer in HIGHER_LEVEL_LAYERS or layer in {"decision", "investigation_outcome", "thread_summary", "turn_summary"}:
             block_types.append(layer)
     return block_types
 

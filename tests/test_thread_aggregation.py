@@ -99,7 +99,7 @@ class ThreadAwareStubProvider:
                 "progress_text": None,
                 "key_finding_text": None,
             }
-        elif "We might want to monitor whether transaction-transformer changed more than ledger-query." in user_prompt:
+        elif "We might want to monitor whether transaction-transformer changed more than ledger-query in the last few days since the provider restart affected our sync pipeline." in user_prompt:
             payload = {
                 "summary": "Tentative repo comparison.",
                 "candidate_type": "investigation_outcome",
@@ -255,10 +255,10 @@ def _write_public_visibility_scenario(target_path: Path, source_path: Path) -> P
 
 def test_thread_summary_is_created_and_superseded(monkeypatch, test_db_url: str) -> None:
     client = _create_thread_client(monkeypatch, test_db_url)
-    client.post("/items", json=[{"source_type": "chat_message", "source_id": "thread-msg-1", "content_type": "text/plain", "content": "Why are some library holds disappearing after catalog sync delays?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"}])
-    client.post("/items", json=[{"source_type": "assistant_artifact", "source_id": "thread-artifact-1", "content_type": "text/plain", "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"}])
+    client.post("/items", json=[{"source_type": "chat_message", "source_id": "thread-msg-1", "content_type": "text/plain", "content": "Why are some library holds disappearing after catalog sync delays and what is the root cause of the ordering problem?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"}])
+    client.post("/items", json=[{"source_type": "assistant_artifact", "source_id": "thread-artifact-1", "content_type": "text/plain", "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays across all concurrent worker processes in production.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"}])
     # Third item triggers a second thread rebuild that supersedes the first summary
-    client.post("/items", json=[{"source_type": "chat_message", "source_id": "thread-msg-2", "content_type": "text/plain", "content": "Good, that should fix the holds. Will the sync delays also affect due-date calculations?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"}])
+    client.post("/items", json=[{"source_type": "chat_message", "source_id": "thread-msg-2", "content_type": "text/plain", "content": "Good, that should fix the holds problem. Will the sync delays also affect due-date calculations for items on long-term reserve?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"}])
 
     storage = client.app.state.pallium_service._storage
     thread_items = storage.list_source_items_for_thread("chat:library-help", "chat:library-help:thread-agg-001")
@@ -419,7 +419,7 @@ def test_low_value_meta_item_keeps_raw_source_without_durable_memory(monkeypatch
     processing = client.app.state.pallium_service.get_item_processing(source_item_id)
 
     assert source_item.source_id == "thread-meta-1"
-    assert all(memory.type != "discussion_summary" for memory in memory_objects)
+    assert all(memory.type != "turn_summary" for memory in memory_objects)
     assert all(memory.type != "thread_summary" for memory in memory_objects)
     assert processing.thread_rebuild_requested is False
 
@@ -461,7 +461,7 @@ def test_monitoring_note_does_not_create_durable_investigation_memory(monkeypatc
             "source_type": "assistant_artifact",
             "source_id": "thread-weak-investigation-1",
             "content_type": "text/plain",
-            "content": "We might want to monitor whether transaction-transformer changed more than ledger-query.",
+            "content": "We might want to monitor whether transaction-transformer changed more than ledger-query in the last few days since the provider restart affected our sync pipeline.",
             "artifact_kind": "assistant_output",
             "role": "assistant",
             "container_ref": "chat:library-help",
@@ -476,7 +476,7 @@ def test_monitoring_note_does_not_create_durable_investigation_memory(monkeypatc
     memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
 
     assert all(memory.type != "investigation_outcome" for memory in memory_objects)
-    assert any(memory.type == "discussion_summary" for memory in memory_objects)
+    assert any(memory.type == "turn_summary" for memory in memory_objects)
     assert processing.thread_rebuild_requested is False
 
 
@@ -518,7 +518,7 @@ def test_substantive_item_still_requests_thread_rebuild(monkeypatch, test_db_url
             "source_type": "chat_message",
             "source_id": "thread-substantive-1",
             "content_type": "text/plain",
-            "content": "Why are duplicate holds happening after catalog sync delays?",
+            "content": "Why are duplicate holds happening after catalog sync delays and what is causing the reservation ordering logic to skip certain hold update events?",
             "artifact_kind": "message",
             "role": "user",
             "container_ref": "chat:library-help",
@@ -660,8 +660,8 @@ def test_normalize_task_checkpoint_current_state_preserves_richer_active_state_w
 def test_key_finding_only_signal_does_not_create_task_checkpoint(monkeypatch, test_db_url: str) -> None:
     client = _create_thread_client(monkeypatch, test_db_url)
     for payload in (
-        {"source_type": "chat_message", "source_id": "thread-msg-natural-2", "content_type": "text/plain", "content": "What should we remember from this grocery planning thread?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-002", "occurred_at": "2026-03-11T12:00:00Z"},
-        {"source_type": "assistant_artifact", "source_id": "thread-natural-artifact-2", "content_type": "text/plain", "content": "The biggest lesson is that unordered grocery lists cause backtracking through the store.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-002", "occurred_at": "2026-03-11T12:01:00Z"},
+        {"source_type": "chat_message", "source_id": "thread-msg-natural-2", "content_type": "text/plain", "content": "What should we remember from this grocery planning thread about the store layout optimization strategy and the backtracking problem we identified?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-002", "occurred_at": "2026-03-11T12:00:00Z"},
+        {"source_type": "assistant_artifact", "source_id": "thread-natural-artifact-2", "content_type": "text/plain", "content": "The biggest lesson is that unordered grocery lists cause backtracking through the store and wasted time in every aisle visit.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-natural-002", "occurred_at": "2026-03-11T12:01:00Z"},
     ):
         client.post("/items", json=[payload])
 

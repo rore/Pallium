@@ -104,7 +104,7 @@ def test_explicit_assistant_output_summary_only_does_not_recover_decision_from_p
         source_type="assistant_artifact",
         source_id="decision-summary-only-1",
         content_type="text/plain",
-        content="Decision: send overdue notices in 30-minute batches to avoid staff inbox spam.",
+        content="Decision: send overdue notices in 30-minute batches to avoid staff inbox spam and reduce notification fatigue across library branches.",
         artifact_kind="assistant_output",
         role="assistant",
         container_ref="chat:library-help",
@@ -116,4 +116,4 @@ def test_explicit_assistant_output_summary_only_does_not_recover_decision_from_p
 
     decisions = [memory for memory in result.memory_objects if memory.type == "decision"]
     assert decisions == []
-    assert [memory.type for memory in result.memory_objects] == ["discussion_summary"]
+    assert [memory.type for memory in result.memory_objects] == ["turn_summary"]

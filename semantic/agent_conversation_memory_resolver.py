@@ -252,7 +252,7 @@ def build_resolver_packet(
 
 OPTION_FAMILY_PREFERRED_LAYERS: dict[str, tuple[str, ...]] = {
     "resume_work": ("task_checkpoint", "source_evidence"),
-    "latest_status": ("thread_summary", "discussion_summary", "continuity_memory", "pattern_memory"),
+    "latest_status": ("thread_summary", "turn_summary", "continuity_memory", "pattern_memory"),
     "check_constraints": ("constraint_memory", "task_checkpoint"),
     "recall_fact": ("pattern_memory", "investigation_outcome", "decision", "continuity_memory"),
     "evidence_trace": ("source_evidence", "investigation_outcome", "decision"),

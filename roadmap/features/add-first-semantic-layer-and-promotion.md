@@ -36,6 +36,6 @@ The generic core only becomes useful once it can host at least one semantic laye
 
 ## Notes
 
-Status: completed with a deterministic demo plugin that creates summary annotations and discussion_summary memory objects.
+Status: completed with a deterministic demo plugin that creates summary annotations and turn_summary memory objects.
 
 Sources: roadmap/scope.md, docs/context/vision.md, docs/context/architecture.md

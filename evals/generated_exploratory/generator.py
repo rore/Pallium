@@ -186,7 +186,7 @@ _DIMENSION_GUIDANCE: dict[str, dict[str, str]] = {
         "task_checkpoint": "Messages about ongoing work with blockers and next steps.",
         "interest": "User expresses interest: 'X sounds interesting, I should check it'. Only works in private containers.",
         "constraint_memory": "User states a constraint: 'Do not use X, only use Y'. Only works in private containers with role=user.",
-        "discussion_summary": "General discussion that doesn't match other types.",
+        "turn_summary": "General discussion that doesn't match other types.",
         "pattern_memory": "Multiple related discussions across threads to generate pattern memory.",
         "continuity_memory": "Repeated topic across interactions for continuity carry-forward.",
     },

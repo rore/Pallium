@@ -17,7 +17,7 @@ RECALL_INTENTS = frozenset({
 })
 
 WEAK_SUMMARY_QUALITIES = frozenset({"query_only", "weak", "unresolved"})
-SUMMARY_TYPES = frozenset({"thread_summary", "discussion_summary"})
+SUMMARY_TYPES = frozenset({"thread_summary", "turn_summary"})
 
 
 @dataclass(frozen=True)
@@ -69,9 +69,9 @@ def _check_weak_summary(candidate: dict, **kw) -> bool:
 
 
 def _check_summary_echo(candidate: dict, *, query_text: str, **kw) -> bool:
-    """Check if a discussion_summary echoes the query text.
+    """Check if a turn_summary echoes the query text.
 
-    When a query is ingested via /item-and-query, it produces a discussion_summary
+    When a query is ingested via /item-and-query, it produces a turn_summary
     that contains the query text. This summary scores high on lexical search against
     the same query, inflating the injection gate. Suppress it.
 
@@ -80,7 +80,7 @@ def _check_summary_echo(candidate: dict, *, query_text: str, **kw) -> bool:
     item = candidate.get("item")
     if item is None:
         return False
-    if getattr(item, "type", None) != "discussion_summary":
+    if getattr(item, "type", None) != "turn_summary":
         return False
     if not candidate.get("same_thread", False):
         return False
@@ -99,7 +99,7 @@ def _check_summary_echo(candidate: dict, *, query_text: str, **kw) -> bool:
 # Default rules — priority order (echo > summary echo > meta-text > weak summary)
 DEFAULT_RULES: list[SuppressionRule] = [
     SuppressionRule(name="echo", reason_code="current_query_source_echo", intents=None),
-    SuppressionRule(name="summary_echo", reason_code="discussion_summary_query_echo", intents=None),
+    SuppressionRule(name="summary_echo", reason_code="turn_summary_query_echo", intents=None),
     SuppressionRule(name="meta_text", reason_code="low_value_meta_text", intents=None),
     SuppressionRule(name="weak_summary", reason_code="weak_summary", intents=RECALL_INTENTS),
 ]

@@ -242,7 +242,7 @@ def _resolve_actor_ref(source_item: SourceItem) -> str | None:
     return None
 
 
-_MINIMUM_SUBSTANTIVE_SOURCE_TOKENS = 6
+_MINIMUM_SUBSTANTIVE_SOURCE_TOKENS = 20
 _MINIMUM_INTEREST_SOURCE_TOKENS = 10
 
 
@@ -378,11 +378,11 @@ def build_process_result(
             )
             if part
         )
-    elif _should_create_discussion_summary(source_item, extraction):
+    elif _should_create_turn_summary(source_item, extraction):
         memory_objects.append(
             MemoryObject(
-                type="discussion_summary",
-                schema_id=f"{schema_prefix}.discussion_summary",
+                type="turn_summary",
+                schema_id=f"{schema_prefix}.turn_summary",
                 schema_version="v1",
                 payload={
                     "summary": extraction.summary,
@@ -493,7 +493,7 @@ def _is_substantive_summary(source_item: SourceItem, extraction: SemanticExtract
     return len(content_tokens_list) >= 4
 
 
-def _should_create_discussion_summary(source_item: SourceItem, extraction: SemanticExtraction) -> bool:
+def _should_create_turn_summary(source_item: SourceItem, extraction: SemanticExtraction) -> bool:
     if _looks_like_low_value_meta_update(extraction):
         return False
     if _is_selected_assistant_work_artifact(source_item, extraction):

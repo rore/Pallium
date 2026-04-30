@@ -427,7 +427,7 @@
   },
   {
     "scenario_id": "p0-personal-memory-shared-container-001",
-    "description": "User expresses interest in a public channel — must create discussion_summary, not interest. Interest is personal and suppressed in shared containers.",
+    "description": "User expresses interest in a public channel — must create turn_summary, not interest. Interest is personal and suppressed in shared containers.",
     "_generation_metadata": {
       "taxonomy_cell": {"visibility": "public", "memory_type_target": "interest"},
       "invariant_assertions": ["INV-11", "INV-07"],
@@ -471,7 +471,7 @@
   },
   {
     "scenario_id": "p0-personal-memory-shared-container-002",
-    "description": "User states a constraint in a limited (team) channel — must not create constraint_memory. Falls through to discussion_summary.",
+    "description": "User states a constraint in a limited (team) channel — must not create constraint_memory. Falls through to turn_summary.",
     "_generation_metadata": {
       "taxonomy_cell": {"visibility": "container", "memory_type_target": "constraint_memory"},
       "invariant_assertions": ["INV-11", "INV-07"],

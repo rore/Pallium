@@ -163,7 +163,7 @@ These are not design flaws — they are the gaps the benchmark is designed to su
 
 2. **Fact extraction truncation.** The conversational_knowledge package extracts facts per-thread with a 6000-char window. With 10-15 chunks of ~16K chars per thread, most content is truncated. Facts outside the window are missed at the extraction level (but may still be found via source_hit retrieval).
 
-3. **Per-item extraction mismatch.** The agent_conversation_memory per-item extraction sees full chunks but looks for decisions/investigations/interests — not atomic facts in document text. Most chunks produce discussion_summary or nothing.
+3. **Per-item extraction mismatch.** The agent_conversation_memory per-item extraction sees full chunks but looks for decisions/investigations/interests — not atomic facts in document text. Most chunks produce turn_summary or nothing.
 
 4. **Multi-hop reasoning.** SF-MH requires chaining multiple updated facts. Even if individual facts are retrieved correctly, the LLM justifier must combine them — a generation-layer capability beyond Pallium's scope.
 

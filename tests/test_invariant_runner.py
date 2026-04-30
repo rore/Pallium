@@ -304,7 +304,7 @@ class TestINV11NoPersonalMemoryInSharedContainer:
     def test_pass_no_personal_types_in_public(self):
         scenario = {"current_query": {"text": "test", "container_ref": "c", "visibility": "public"}}
         debug = {**_EMPTY_DEBUG, "results": [
-            {"result_kind": "memory_hit", "type": "discussion_summary", "visibility": "public"},
+            {"result_kind": "memory_hit", "type": "turn_summary", "visibility": "public"},
             {"result_kind": "memory_hit", "type": "decision", "visibility": "public"},
         ]}
         result = check_no_personal_memory_in_shared_container(scenario, _EMPTY_QUERY, debug)

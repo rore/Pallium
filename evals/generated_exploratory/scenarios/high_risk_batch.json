@@ -5249,7 +5249,7 @@
     "_generation_metadata": {
       "taxonomy_cell": {
         "source_role": "user",
-        "memory_type_target": "discussion_summary"
+        "memory_type_target": "turn_summary"
       },
       "invariant_assertions": [
         "INV-03",
@@ -6102,7 +6102,7 @@
     "_generation_metadata": {
       "taxonomy_cell": {
         "source_role": "assistant",
-        "memory_type_target": "discussion_summary"
+        "memory_type_target": "turn_summary"
       },
       "invariant_assertions": [
         "INV-02",
@@ -6890,7 +6890,7 @@
     "_generation_metadata": {
       "taxonomy_cell": {
         "source_role": "quoted_user",
-        "memory_type_target": "discussion_summary"
+        "memory_type_target": "turn_summary"
       },
       "invariant_assertions": [
         "INV-03",
@@ -8696,7 +8696,7 @@
     "_generation_metadata": {
       "taxonomy_cell": {
         "thread_relation": "same_thread",
-        "memory_type_target": "discussion_summary"
+        "memory_type_target": "turn_summary"
       },
       "invariant_assertions": [
         "INV-03",
@@ -9397,7 +9397,7 @@
     "_generation_metadata": {
       "taxonomy_cell": {
         "thread_relation": "cross_thread",
-        "memory_type_target": "discussion_summary"
+        "memory_type_target": "turn_summary"
       },
       "invariant_assertions": [
         "INV-03",
@@ -10146,7 +10146,7 @@
     "_generation_metadata": {
       "taxonomy_cell": {
         "thread_relation": "cross_session",
-        "memory_type_target": "discussion_summary"
+        "memory_type_target": "turn_summary"
       },
       "invariant_assertions": [
         "INV-03",
@@ -12838,7 +12838,7 @@
     "_generation_metadata": {
       "taxonomy_cell": {
         "visibility": "private",
-        "memory_type_target": "discussion_summary"
+        "memory_type_target": "turn_summary"
       },
       "invariant_assertions": [
         "INV-03",
@@ -13611,7 +13611,7 @@
     "_generation_metadata": {
       "taxonomy_cell": {
         "visibility": "limited",
-        "memory_type_target": "discussion_summary"
+        "memory_type_target": "turn_summary"
       },
       "invariant_assertions": [
         "INV-03",
@@ -14396,7 +14396,7 @@
     "_generation_metadata": {
       "taxonomy_cell": {
         "visibility": "public",
-        "memory_type_target": "discussion_summary"
+        "memory_type_target": "turn_summary"
       },
       "invariant_assertions": [
         "INV-03",

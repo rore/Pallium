@@ -26,7 +26,7 @@ Promoted counts:
 
 - `decision`: `10`
 - `investigation_outcome`: `10`
-- `discussion_summary`: `10`
+- `turn_summary`: `10`
 
 Per-type metrics:
 

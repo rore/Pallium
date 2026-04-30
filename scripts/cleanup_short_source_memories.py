@@ -2,7 +2,7 @@
 
 Applies the same structural gates that now exist in the ingestion pipeline:
   - interest memories where the source item has < 10 tokens -> supersede
-  - discussion_summary memories where the source item has < 6 tokens -> supersede
+  - turn_summary memories where the source item has < 20 tokens -> supersede
 
 Only updates lifecycle='superseded'; does NOT delete rows or touch relations.
 
@@ -25,7 +25,7 @@ from storage.sqlite_schema import MemoryObjectRecord
 
 # Structural gate thresholds (must match ingestion-time gates)
 INTEREST_MIN_TOKENS = 10
-DISCUSSION_SUMMARY_MIN_TOKENS = 6
+TURN_SUMMARY_MIN_TOKENS = 20
 
 
 def find_short_source_memories(
@@ -122,12 +122,12 @@ def main() -> int:
         print("  (none found)")
     print()
 
-    # --- Discussion summary memories with short source content ---
+    # --- Turn summary memories with short source content ---
     discussion_hits = find_short_source_memories(
-        storage, "discussion_summary", DISCUSSION_SUMMARY_MIN_TOKENS
+        storage, "turn_summary", TURN_SUMMARY_MIN_TOKENS
     )
 
-    print(f"=== Discussion summaries with short source content (<{DISCUSSION_SUMMARY_MIN_TOKENS} tokens) ===")
+    print(f"=== Turn summaries with short source content (<{TURN_SUMMARY_MIN_TOKENS} tokens) ===")
     if discussion_hits:
         for hit in discussion_hits:
             preview = content_preview(hit["source_content"])
@@ -141,7 +141,7 @@ def main() -> int:
     total = len(interest_hits) + len(discussion_hits)
     print("=== Summary ===")
     print(f"  Interest memories to supersede: {len(interest_hits)}")
-    print(f"  Discussion summaries to supersede: {len(discussion_hits)}")
+    print(f"  Turn summaries to supersede: {len(discussion_hits)}")
     print(f"  Total: {total}")
     print()
 

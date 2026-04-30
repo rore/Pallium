@@ -9,7 +9,7 @@ milestone: Phase 3
 
 ## Summary
 
-Add deterministic typed decision memory so the semantic layer can promote `decision` objects instead of only generic `discussion_summary` objects.
+Add deterministic typed decision memory so the semantic layer can promote `decision` objects instead of only generic `turn_summary` objects.
 
 ## Why
 
@@ -20,7 +20,7 @@ The mixed retrieval foundation proved the retrieval shape. The next value step w
 - deterministic decision detection in the demo plugin
 - typed_candidate annotations for decision-like inputs
 - promoted `decision` memory objects with evidence links
-- fallback `discussion_summary` promotion for non-decision inputs
+- fallback `turn_summary` promotion for non-decision inputs
 
 ## Out of Scope
 

@@ -21,7 +21,7 @@ Observed in chat-lite testing: starting a new container still showed memories fr
 
 1. **Separate where the memory is stored from who the memory is about.** Container visibility controls where it's accessible. Actor ref controls who it's personal to.
 2. **Container type drives the rules, not memory type.** Don't try to detect "I" vs "we" in content — it's unreliable.
-3. **Personal memory types don't get created in shared containers.** Interest and constraint are inherently personal — in shared contexts they fall through to discussion_summary (shared evidence).
+3. **Personal memory types don't get created in shared containers.** Interest and constraint are inherently personal — in shared contexts they fall through to turn_summary (shared evidence).
 4. **Simplicity first.** No taxonomy matrices, no scope enums, no consent models. Just actor_ref (nullable) plus container-driven rules.
 
 ## Rules
@@ -36,7 +36,7 @@ These restrict which source roles can produce which memory types (enforced in `s
 | `constraint_memory` | yes | **no** | New — add same role guard as interest |
 | `decision` | yes | yes | Decisions can be stated/confirmed by either role |
 | `investigation_outcome` | yes | yes | Findings can come from either role |
-| `discussion_summary` | yes | yes | Just a summary of what was said |
+| `turn_summary` | yes | yes | Just a summary of what was said |
 | `thread_summary` | n/a | n/a | Built from thread aggregation, both roles |
 | `task_checkpoint` | n/a | n/a | Built from thread aggregation, both roles |
 | `pattern_memory` | n/a | n/a | Built from consolidation |
@@ -51,11 +51,11 @@ Add `actor_ref` field to MemoryObject (nullable). Set based on container visibil
 - Everything is personal to the container owner
 
 **Shared containers (`visibility = 'container'` or `'public'`):**
-- `interest` → **not created**. Falls through to `discussion_summary`. Rationale: interest is inherently personal ("I want to check X"). In shared contexts, this becomes shared evidence ("User mentioned interest in X") via discussion_summary.
-- `constraint_memory` → **not created**. Falls through to `discussion_summary`. Same rationale: personal requirements vs team constraints are ambiguous, safer to treat as shared evidence.
+- `interest` → **not created**. Falls through to `turn_summary`. Rationale: interest is inherently personal ("I want to check X"). In shared contexts, this becomes shared evidence ("User mentioned interest in X") via turn_summary.
+- `constraint_memory` → **not created**. Falls through to `turn_summary`. Same rationale: personal requirements vs team constraints are ambiguous, safer to treat as shared evidence.
 - `decision` → created, `actor_ref = null`. Decisions in shared channels are team decisions, not personal.
 - `investigation_outcome` → created, `actor_ref = null`. Findings in shared channels are shared knowledge.
-- `discussion_summary` → created, `actor_ref = null`. Shared evidence.
+- `turn_summary` → created, `actor_ref = null`. Shared evidence.
 - `thread_summary` → created, `actor_ref = null`. Shared.
 - `task_checkpoint` → created, `actor_ref = null`. Shared.
 
@@ -105,14 +105,14 @@ In `build_process_result()`:
 **a. Role guard for constraint_memory** (same pattern as interest):
 ```
 if source_item.role and source_item.role.lower() != "user":
-    # skip constraint_memory, fall through to discussion_summary
+    # skip constraint_memory, fall through to turn_summary
 ```
 
 **b. Container-driven interest/constraint suppression:**
 ```
 if source_item.visibility in ('container', 'public'):
     # Do not create interest or constraint_memory
-    # Fall through to discussion_summary
+    # Fall through to turn_summary
 ```
 
 **c. Actor_ref propagation:**
@@ -153,7 +153,7 @@ Add optional `actor_ref` field to the query request schema. Pass through to Quer
 ### 9. Tests
 
 - **Constraint role guard**: assistant message with constraint language should not create constraint_memory (same as interest test)
-- **Shared container interest suppression**: user message with interest language in a public container should create discussion_summary, not interest
+- **Shared container interest suppression**: user message with interest language in a public container should create turn_summary, not interest
 - **Actor_ref propagation**: memory created from user message in private container should have actor_ref set; in public container should be null
 - **Actor query filtering**: query with actor_ref=A should see A's personal memories + shared memories; should NOT see actor_ref=B memories
 - **Cross-container isolation**: new container should not see personal memories from old container even if both are public
@@ -187,7 +187,7 @@ Add optional `actor_ref` field to the query request schema. Pass through to Quer
 
 **`docs/context/decisions.md`** — Record the design decision:
 - Container type drives scoping, not memory type detection
-- Interest and constraint suppressed in shared containers (fall through to discussion_summary)
+- Interest and constraint suppressed in shared containers (fall through to turn_summary)
 - Actor_ref propagated from source item only in private containers
 
 ## Out of Scope

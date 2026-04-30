@@ -89,7 +89,7 @@ not only as a retrieval stack.
   - `decision`
   - `task_checkpoint`
   - `thread_summary`
-  - `discussion_summary`
+  - `turn_summary`
   coexist and the benchmark scores whether the right sharp memory wins for the
   query family
 - add a benchmark lane for bounded freshness/conflict handling:

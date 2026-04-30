@@ -69,7 +69,7 @@ Treat message events and assistant artifacts as atomic `SourceItem`s. Keep threa
 ## 2026-03-09 - Investigation memory needs its own typed path
 
 Problem:
-Important findings and root-cause conclusions were collapsing into `discussion_summary` because only `decision` had a first-class typed memory path.
+Important findings and root-cause conclusions were collapsing into `turn_summary` because only `decision` had a first-class typed memory path.
 
 Why:
 Many high-value agent events are explicit findings or diagnostic outcomes rather than committed choices.

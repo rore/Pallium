@@ -75,7 +75,7 @@ settings. Alice's `interest` memory has `actor_ref = "alice"` and
 container, Alice's preference is invisible — it fails both the container
 visibility check and the actor scoping check. If they both work in a shared
 channel and Alice mentions her preference there, it becomes a
-`discussion_summary` (not an `interest`) with `actor_ref = null`, visible to
+`turn_summary` (not an `interest`) with `actor_ref = null`, visible to
 everyone in that channel.
 
 Query-time filtering applies two filters in sequence:
@@ -88,7 +88,7 @@ Query-time filtering applies two filters in sequence:
 
 Personal memory types (`interest`, `constraint_memory`) are not created in
 shared containers (`container` or `public`). They fall through to
-`discussion_summary`. This means personal statements in shared channels become
+`turn_summary`. This means personal statements in shared channels become
 shared evidence, not personal memories that could be injected into another
 user's context.
 

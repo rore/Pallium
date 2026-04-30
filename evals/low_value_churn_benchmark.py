@@ -17,7 +17,7 @@ from evals.continuity_common import CONTINUITY_FAILURE_FAMILIES, failure_family_
 
 DEFAULT_SCENARIO_FILE = Path("evals/low_value_churn/scenarios.json")
 DEFAULT_OUTPUT_DIR = Path("evals/low_value_churn/output")
-SUMMARY_MEMORY_TYPES = ["thread_summary", "discussion_summary"]
+SUMMARY_MEMORY_TYPES = ["thread_summary", "turn_summary"]
 
 
 def main() -> int:

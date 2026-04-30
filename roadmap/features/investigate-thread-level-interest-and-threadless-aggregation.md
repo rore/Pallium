@@ -56,7 +56,7 @@ Many real-world sources don't have threading: Slack channels (main channel), fla
 
 If both per-item and thread-level produce interest about the same subject, need a supersession rule. Options:
 - Thread-level interest supersedes per-item interest for the same thread (cleanest)
-- Per-item interest falls through to discussion_summary when thread aggregation is available
+- Per-item interest falls through to turn_summary when thread aggregation is available
 - Deduplicate on subject+container at creation time
 
 ## Dependencies

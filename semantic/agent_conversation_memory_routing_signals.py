@@ -164,7 +164,7 @@ def _build_policy_evidence(
     constraint_best_support = 0
     constraint_best_kind = ""
     constraint_memory_only_support = 0
-    structured_layers = {"thread_summary", "discussion_summary", "continuity_memory"}
+    structured_layers = {"thread_summary", "turn_summary", "continuity_memory"}
 
     for item in candidates:
         layer = _result_layer(item)
@@ -229,7 +229,7 @@ def _policy_candidate_support_estimate(item: QueryResultItem, layer: str) -> int
         score += 18
         if payload.get("carry_forward_answer"):
             score += 18
-    elif layer in {"thread_summary", "discussion_summary"}:
+    elif layer in {"thread_summary", "turn_summary"}:
         score += 8
     elif item.result_kind == "memory_hit" and item.type == CONSTRAINT_MEMORY_TYPE:
         score += 24

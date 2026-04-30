@@ -345,7 +345,7 @@ class TestInjectableBlockMemoryObjectId:
             ("atomic_fact", {"statement": "x"}),
             ("fact_summary", {"summary": "x"}),
             ("thread_summary", {"summary": "x"}),
-            ("discussion_summary", {"summary": "x"}),
+            ("turn_summary", {"summary": "x"}),
         ]
         for mem_type, payload in types_and_payloads:
             item = QueryResultItem(

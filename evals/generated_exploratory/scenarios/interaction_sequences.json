@@ -489,7 +489,7 @@
   },
   {
     "scenario_id": "interaction-echo-does-not-inflate-injection",
-    "description": "When technical memories exist but the current query is off-topic, the discussion_summary echo of the ingested query text must not inflate justification scores to trigger injection.",
+    "description": "When technical memories exist but the current query is off-topic, the turn_summary echo of the ingested query text must not inflate justification scores to trigger injection.",
     "expected_status": "known_fail",
     "expected_status_reason": "Same off-topic injection bug as interaction-off-topic-guard, compounded by echo inflation of justification scores",
     "_generation_metadata": {

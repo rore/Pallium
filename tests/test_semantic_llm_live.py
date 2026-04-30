@@ -79,7 +79,7 @@ def test_live_llm_extracts_constraint_and_next_step_signals_from_plain_text(live
 
     result = live_plugin.process_item(source_item)
 
-    assert result.memory_objects[0].type == "discussion_summary"
+    assert result.memory_objects[0].type == "turn_summary"
     signals = result.source_item_metadata_updates[source_item.id][SEMANTIC_SIGNAL_METADATA_KEY]
     constraint_text = str(signals.get("constraint_text") or "").lower()
     blocker_text = str(signals.get("blocker_text") or "").lower()
@@ -103,7 +103,7 @@ def test_live_llm_flags_low_value_meta_chatter(live_plugin: LLMAgentMemoryPlugin
 
     result = live_plugin.process_item(source_item)
 
-    assert result.memory_objects[0].type == "discussion_summary"
+    assert result.memory_objects[0].type == "turn_summary"
     signals = result.source_item_metadata_updates[source_item.id][SEMANTIC_SIGNAL_METADATA_KEY]
     assert signals.get("is_low_value_meta") is True
     assert signals.get("constraint_text") is None
@@ -125,6 +125,6 @@ def test_live_llm_does_not_turn_monitoring_status_into_key_finding(live_plugin: 
 
     result = live_plugin.process_item(source_item)
 
-    assert result.memory_objects[0].type == "discussion_summary"
+    assert result.memory_objects[0].type == "turn_summary"
     signals = result.source_item_metadata_updates[source_item.id][SEMANTIC_SIGNAL_METADATA_KEY]
     assert signals.get("key_finding_text") is None

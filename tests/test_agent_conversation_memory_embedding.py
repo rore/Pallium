@@ -156,8 +156,8 @@ class TestBuildEmbeddingTextContinuityMemory:
 
 
 class TestNonEmbeddableTypes:
-    def test_discussion_summary_returns_none(self):
-        mo = _make_memory("discussion_summary", {
+    def test_turn_summary_returns_none(self):
+        mo = _make_memory("turn_summary", {
             "summary": "Just a discussion",
         })
         assert build_embedding_text(mo) is None

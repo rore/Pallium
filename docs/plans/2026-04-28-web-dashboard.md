@@ -523,7 +523,7 @@ body {
 .mem-type-constraint_memory { color: var(--yellow); }
 .mem-type-investigation_outcome { color: var(--blue); }
 .mem-type-thread_summary { color: #8cf; }
-.mem-type-discussion_summary { color: var(--text-dim); }
+.mem-type-turn_summary { color: var(--text-dim); }
 .mem-type-continuity_memory { color: #adf; }
 .mem-type-pattern_memory { color: #daf; }
 

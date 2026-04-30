@@ -804,7 +804,7 @@ def _aggregate_drift_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
         if signals["should_inject"] is True:
             injected_total += 1
             layer = signals["selected_layer"]
-            if layer in {"thread_summary", "discussion_summary"}:
+            if layer in {"thread_summary", "turn_summary"}:
                 generic_summary_win_count += 1
 
     def _rate(numerator: int, denominator: int) -> float | None:

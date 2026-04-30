@@ -4,7 +4,7 @@
 
 When Pallium ingests a user correction that contradicts a previously stated fact, the `conversational_knowledge` package's fact extraction LLM prompt may silently reject the correction because the LLM's world knowledge disagrees with it. The correction never becomes an `atomic_fact`, so it never enters the consolidation pipeline, and the old value persists unchallenged.
 
-MABench SF-SH data: in 77% of misses (24/31), the corrected value did not appear in any retrieved `atomic_fact` or `fact_summary`, and no `fact_summary` existed for any of the 31 missed subjects — indicating consolidation never fired, which implies the corrected value was never extracted as an `atomic_fact`. The corrected value was only captured in `discussion_summary` (produced by the separate `agent_conversation_memory` package). The existing consolidation and supersession infrastructure works correctly when facts enter the pipeline. The gap is that facts don't enter the pipeline.
+MABench SF-SH data: in 77% of misses (24/31), the corrected value did not appear in any retrieved `atomic_fact` or `fact_summary`, and no `fact_summary` existed for any of the 31 missed subjects — indicating consolidation never fired, which implies the corrected value was never extracted as an `atomic_fact`. The corrected value was only captured in `turn_summary` (produced by the separate `agent_conversation_memory` package). The existing consolidation and supersession infrastructure works correctly when facts enter the pipeline. The gap is that facts don't enter the pipeline.
 
 In production, most user corrections are domain-specific ("deployment target is now us-east-2") and wouldn't trigger LLM resistance. But edge cases exist where the LLM's world knowledge conflicts with a legitimate domain correction. Pallium's role is to record what was stated, not judge accuracy.
 
@@ -98,7 +98,7 @@ If MABench shows cases where `atomic_fact` is now correctly created but the `fac
 
 ## Accepted limitations
 
-- `agent_conversation_memory`'s `discussion_summary` may still editorialize ("User states X, which is factually incorrect"). This is out of scope — it's a different package with a different prompt. The `discussion_summary` is a low-trust type that doesn't feed into fact consolidation, so its editorialization doesn't block the correction pipeline.
+- `agent_conversation_memory`'s `turn_summary` may still editorialize ("User states X, which is factually incorrect"). This is out of scope — it's a different package with a different prompt. The `turn_summary` is a low-trust type that doesn't feed into fact consolidation, so its editorialization doesn't block the correction pipeline.
 - The prompt change is defense-in-depth for edge cases. In production, most domain corrections don't trigger LLM world-knowledge resistance.
 
 ## What this does NOT change

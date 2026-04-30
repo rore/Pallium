@@ -138,7 +138,7 @@ def run_semantic_eval(
         "items_total": len(tasks),
         "items_succeeded": 0,
         "items_failed": 0,
-        "promoted_counts": {"decision": 0, "investigation_outcome": 0, "discussion_summary": 0},
+        "promoted_counts": {"decision": 0, "investigation_outcome": 0, "turn_summary": 0},
         "split_outputs": [],
         "per_variant": {},
     }
@@ -312,8 +312,8 @@ def _empty_variant_summary(*, items_total: int, prompt_text_metrics: dict[str, A
         "overall_correct": 0,
         "signal_cases_total": 0,
         "signal_cases_correct": 0,
-        "promoted_counts": {"decision": 0, "investigation_outcome": 0, "discussion_summary": 0},
-        "expected_counts": {"decision": 0, "investigation_outcome": 0, "discussion_summary": 0},
+        "promoted_counts": {"decision": 0, "investigation_outcome": 0, "turn_summary": 0},
+        "expected_counts": {"decision": 0, "investigation_outcome": 0, "turn_summary": 0},
         "type_metrics": {
             kind: {"expected": 0, "predicted": 0, "correct": 0, "false_positive": 0, "false_negative": 0}
             for kind in TRACKED_TYPED_KINDS

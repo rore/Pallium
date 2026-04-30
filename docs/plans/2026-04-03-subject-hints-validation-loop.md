@@ -773,7 +773,7 @@ Open `evals/semantic/output/gate-pass-baseline/summary.json`. Record `per_varian
 ```
 decision: <N>
 investigation_outcome: <N>
-discussion_summary: <N>
+turn_summary: <N>
 ```
 
 - [ ] **Step 2: Run with the winning variant**
@@ -804,7 +804,7 @@ b = base['per_variant'][BASELINE_VARIANT]['promoted_counts']
 w = win['per_variant'][WINNER_VARIANT]['promoted_counts']
 print('Baseline:', b)
 print('Winner:  ', w)
-for key in ('decision', 'investigation_outcome', 'discussion_summary'):
+for key in ('decision', 'investigation_outcome', 'turn_summary'):
     diff = abs(b[key] - w[key])
     status = 'OK' if diff <= 1 else 'FAIL'
     print(f'  {key}: {b[key]} -> {w[key]}  diff={diff}  {status}')

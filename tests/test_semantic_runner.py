@@ -187,7 +187,7 @@ def _investigation_record(source_id: str, content: str, *, expected_kind: str = 
     }
 
 
-def _signal_record(source_id: str, content: str, expected_signal_truths: dict[str, bool], *, expected_kind: str | None = "discussion_summary") -> dict[str, object]:
+def _signal_record(source_id: str, content: str, expected_signal_truths: dict[str, bool], *, expected_kind: str | None = "turn_summary") -> dict[str, object]:
     return {
         "source_type": "assistant_output",
         "source_id": source_id,
@@ -357,7 +357,7 @@ def test_run_semantic_eval_rejects_low_value_meta_investigation(tmp_path: Path) 
 
     assert summary["items_succeeded"] == 1
     assert summary["promoted_counts"].get("investigation_outcome", 0) == 0
-    assert summary["promoted_counts"].get("discussion_summary", 0) == 0
+    assert summary["promoted_counts"].get("turn_summary", 0) == 0
     assert results[0]["status"] == "ok"
     assert results[0]["artifacts"]["memory_objects"] == []
 

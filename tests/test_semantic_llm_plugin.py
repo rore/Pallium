@@ -495,7 +495,7 @@ def test_llm_plugin_returns_internal_signals_and_metadata_patch_from_single_call
 
     trace = plugin.analyze_item(source_item)
 
-    assert trace.process_result.memory_objects[0].type == "discussion_summary"
+    assert trace.process_result.memory_objects[0].type == "turn_summary"
     semantic_signals = trace.process_result.source_item_metadata_updates[source_item.id][SEMANTIC_SIGNAL_METADATA_KEY]
     assert semantic_signals["constraint_text"].startswith("No browser auth")
     assert semantic_signals["next_step_text"].startswith("Compare ledger-query")
@@ -584,7 +584,7 @@ def test_llm_plugin_promotes_investigation_outcome_from_valid_extraction() -> No
     assert result.memory_objects[0].payload["investigation_evidence_text"] == "Investigation found that arrival-time ordering missed hold updates during sync delays"
 
 
-def test_llm_plugin_uses_discussion_summary_when_typed_output_lacks_evidence_text() -> None:
+def test_llm_plugin_uses_turn_summary_when_typed_output_lacks_evidence_text() -> None:
     plugin = LLMAgentMemoryPlugin(
         provider=StubLLMProvider(
             response=LLMJsonResponse(
@@ -612,12 +612,12 @@ def test_llm_plugin_uses_discussion_summary_when_typed_output_lacks_evidence_tex
         source_type="chat_thread",
         source_id="thread-123",
         content_type="text/plain",
-        content="We discussed reservation ordering options today.",
+        content="We discussed reservation ordering options today and considered multiple approaches including arrival time and event time for handling concurrent updates.",
     )
 
     result = plugin.process_item(source_item)
 
-    assert result.memory_objects[0].type == "discussion_summary"
+    assert result.memory_objects[0].type == "turn_summary"
 
 
 def test_llm_plugin_demotes_markdown_table_cell_investigation_fragment() -> None:
@@ -651,7 +651,8 @@ def test_llm_plugin_demotes_markdown_table_cell_investigation_fragment() -> None
             "| Action | Can do | Can't yet do |\n"
             "|--------|--------|-------------|\n"
             "| Query memory | Yes - pallium_query | - |\n"
-            "| Delete/correct memory | - | No write endpoint yet |"
+            "| Delete/correct memory | - | No write endpoint yet |\n"
+            "| Flag memory | Yes - pallium_flag | - |"
         ),
         artifact_kind="assistant_output",
         role="assistant",
@@ -659,7 +660,7 @@ def test_llm_plugin_demotes_markdown_table_cell_investigation_fragment() -> None
 
     result = plugin.process_item(source_item)
 
-    assert [memory.type for memory in result.memory_objects] == ["discussion_summary"]
+    assert [memory.type for memory in result.memory_objects] == ["turn_summary"]
 
 
 def test_llm_plugin_demotes_markdown_list_fragment_in_non_english_text() -> None:
@@ -701,8 +702,8 @@ def test_llm_plugin_demotes_markdown_list_fragment_in_non_english_text() -> None
 
     result = plugin.process_item(source_item)
 
-    assert [memory.type for memory in result.memory_objects] == ["discussion_summary"]
-    assert result.memory_objects[0].schema_id == "llm.discussion_summary"
+    assert [memory.type for memory in result.memory_objects] == ["turn_summary"]
+    assert result.memory_objects[0].schema_id == "llm.turn_summary"
 
 
 def test_llm_plugin_demotes_agreed_need_statement_from_decision() -> None:
@@ -734,13 +735,13 @@ def test_llm_plugin_demotes_agreed_need_statement_from_decision() -> None:
         source_type="meeting_summary",
         source_id="discussion-guard-1",
         content_type="text/plain",
-        content="The team agreed that we need a clearer librarian playbook for catalog sync incidents.",
+        content="The team agreed that we need a clearer librarian playbook for catalog sync incidents including escalation paths and notification procedures for each branch.",
         artifact_kind="assistant_output",
     )
 
     result = plugin.process_item(source_item)
 
-    assert [memory.type for memory in result.memory_objects] == ["discussion_summary"]
+    assert [memory.type for memory in result.memory_objects] == ["turn_summary"]
 
 
 def test_llm_plugin_demotes_monitoring_note_with_next_step_from_investigation_outcome() -> None:
@@ -778,7 +779,7 @@ def test_llm_plugin_demotes_monitoring_note_with_next_step_from_investigation_ou
 
     result = plugin.process_item(source_item)
 
-    assert result.memory_objects[0].type == "discussion_summary"
+    assert result.memory_objects[0].type == "turn_summary"
     semantic_signals = result.source_item_metadata_updates[source_item.id][SEMANTIC_SIGNAL_METADATA_KEY]
     assert semantic_signals["next_step_text"] == "Watch it closely tonight."
 
