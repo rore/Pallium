@@ -310,8 +310,15 @@ Populate only when the source explicitly states them:
 - progress_text: substantive completed or partial work for later resumption. Not boilerplate completion language.
 - key_finding_text: durable conclusion or verdict. Not monitoring chatter.
 - constraint_text: a definitive operational constraint — the speaker commits to a requirement, prohibition, or hard rule. Hedged or tentative language ("I think", "maybe", "probably", "leaning towards", "not sure") is not a constraint.
-- is_low_value_meta: true only for non-durable orchestration chatter: no-op completion/status messages, greeting/pleasantry chatter ("hello", "thanks", "good morning"), heartbeat/monitoring noise ("still alive", "healthcheck"), and generic capability boilerplate ("I can help with...", "capabilities:"). When true, all signal fields must be null/[].
+- is_low_value_meta: true only for non-durable orchestration chatter: no-op completion/status messages, greeting/pleasantry chatter ("hello", "thanks", "good morning"), heartbeat/monitoring noise ("still alive", "healthcheck"), generic capability boilerplate ("I can help with...", "capabilities:"), short user commands/questions that contain no embedded knowledge or constraint (task instructions, bug reports without analysis, questions without answers), and assistant completion reports that describe WHAT was done without stating a durable finding, design choice, or constraint (cosmetic changes, config tweaks, operational actions). When true, all signal fields must be null/[].
 - subject_hints: explicit workstream|component|surface only. Return [] if not safely explicit.
+
+## Summary Field
+
+The summary captures reusable knowledge — conclusions, findings, architectural facts, constraints stated, or durable decisions made. Not what action was taken or what task was completed.
+A summary has recall value when a future session would benefit from knowing it.
+Do NOT start summaries with "User asks", "User instructs", "User requests", or "User states" — these describe the action, not the knowledge.
+If the source describes only a completed action or command without stating a durable finding, design choice, or constraint, set is_low_value_meta=true instead of writing an action-description summary.
 
 Prefer null or [] over weak, speculative, or inferred values.
 
@@ -328,7 +335,13 @@ work_refs: list of external work identifiers (e.g. PROJ-123, INC-789, org/repo#4
 - "Task complete. No message needed." -> null, is_low_value_meta true, all signals null.
 - "Hello, good morning!" -> null, is_low_value_meta true, all signals null.
 - "I can lower concurrency or bump memory, but I need to confirm which worker first." -> null, all signals null (clarifying question, not actionable state).
-- "Done. The worker pool now drains in-flight tasks before shutdown, so items are no longer dropped on restart." -> null, is_low_value_meta true (retrospective completion report, not a decision or investigation finding).""",
+- "Done. The worker pool now drains in-flight tasks before shutdown, so items are no longer dropped on restart." -> null, is_low_value_meta true (retrospective completion report, not a decision or investigation finding).
+- "do an architect review" -> null, is_low_value_meta true (user command, no embedded knowledge).
+- "still says discussion summary" -> null, is_low_value_meta true (user bug report without analysis).
+- "Done. The log now rotates at 5MB with 5 backups (max ~30MB)" -> null, is_low_value_meta true (operational config change, no durable finding or design choice).
+- "first, i don't want us to add any new llm request" -> null, is_low_value_meta FALSE, constraint_text set (user constraint embedded in a command — "no new llm request" is a hard rule).
+- "Fixed. The NOT EXISTS subquery resolves the race condition in claim SQL by checking package_processing_status before claiming." -> null, is_low_value_meta FALSE, summary about NOT EXISTS subquery resolving race condition (completion report WITH root cause/design choice — the HOW is a durable architectural fact).
+- "Done. Switched to FTS5 for lexical search. The old full-scan was O(N) per query." -> null, is_low_value_meta FALSE, summary about FTS5 replacing full-scan (completion report WITH design choice and rationale).""",
 }
 
 SCHEMA_DESCRIPTION = json.dumps(

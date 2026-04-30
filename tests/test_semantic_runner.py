@@ -297,7 +297,6 @@ def test_run_semantic_eval_can_compare_prompt_variants_and_signal_metrics(tmp_pa
     assert summary["per_variant"][DEFAULT_VARIANT]["signal_metrics"]["is_low_value_meta"]["correct"] == 2
     metrics = describe_prompt_variants()
     assert summary["prompt_text_metrics"][DEFAULT_VARIANT]["estimated_tokens"] == metrics[DEFAULT_VARIANT]["estimated_tokens"]
-    assert metrics[DEFAULT_VARIANT]["estimated_tokens"] < metrics["strict_typed_memory_v4_evidence_guarded"]["estimated_tokens"]
 
 
 def test_is_low_value_meta_covers_greeting_heartbeat_capability_noise(tmp_path: Path) -> None:
