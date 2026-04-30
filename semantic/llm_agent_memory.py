@@ -71,6 +71,10 @@ Only create typed memory when the source gives explicit proof.
 - a non-null type requires an exact quoted proof phrase in the matching evidence field (except interest, which needs only a non-empty interest_text).
 - fill only the decision fields for decision and only the investigation fields for investigation_outcome.
 
+REJECT as null: needs, proposals, preferences, recommendations, symptoms, risks, monitoring notes, status updates, and unresolved discussion.
+REJECT as null for decision AND investigation_outcome: retrospective completion reports that only describe fixing a bug or improving existing behavior without naming a new technology, architecture, or design approach that was chosen over an alternative (e.g., "Fixed and pushed. The caching layer no longer evicts entries still referenced by active sessions" — this is a bug fix report, not a choice among approaches). However, if the completion report names a specific new approach adopted in place of a previous one (e.g., "Switched to FTS5", "Now uses Unix domain sockets instead of TCP"), it IS a decision.
+REJECT as null for decision: task instructions and commands directed at the assistant (user requests for the assistant to do something, even when phrased as an approach or method choice).
+
 Populate optional signals only when they are explicitly stated: is_low_value_meta, constraint_text, next_step_text, blocker_text, progress_text, key_finding_text, subject_hints, constraint_candidates. constraint_text and constraint_candidates require a definitive commitment — the speaker states a requirement, prohibition, or hard rule. Hedged or tentative language ("I think", "maybe", "probably", "leaning towards", "not sure") is not a constraint; leave constraint_text null and constraint_candidates []. Never infer anchors or normalized constraints. subject_hints may use only workstream|component|surface. constraint_candidates may use only use_surface|use_source|perform_step with prohibit|prefer|require. Return [] when anchors or constraints are not safely explicit.
 
 If is_low_value_meta is true, all optional text fields must be null and list fields should be []. Prefer null or [] over weak paraphrases. next_step_text must be a future action. progress_text must be substantive resumption state. key_finding_text is only for durable explicit conclusions, not monitoring chatter. Set is_low_value_meta true for: no-op completions, greeting/pleasantry chatter, heartbeat/monitoring noise, generic capability boilerplate, and pure user acknowledgments with no embedded context ("ok", "yes", "continue", "sounds good", "got it").
@@ -80,7 +84,8 @@ Examples:
 - "Investigation found that arrival-time ordering missed hold updates during sync delays." -> investigation_outcome.
 - "We need to decide whether to change ordering." -> null.
 - "Task complete. No message needed. Nothing new to report." -> candidate_type null, is_low_value_meta true.
-- "Constraint: do not open a browser. Next step: compare the local repos." -> candidate_type null, constraint_text and next_step_text populated.""",
+- "Constraint: do not open a browser. Next step: compare the local repos." -> candidate_type null, constraint_text and next_step_text populated.
+- "Done. Cache eviction now skips entries referenced by active sessions." -> null, is_low_value_meta true (retrospective completion report, not a decision or finding).""",
     "strict_typed_memory_v7_claude_structured": """You extract reusable typed memory and work-state signals from one technical source item. Return exactly one JSON object and no extra prose.
 
 ## Typed Memory Classification
@@ -294,6 +299,8 @@ For implementation-confirms-choice decisions:
 
 REJECT as null: needs, proposals, preferences, recommendations, symptoms, risks, monitoring notes, status updates, and unresolved discussion.
 REJECT as null for decision: progress updates that don't name a specific chosen approach ("Fixed the bug", "Tests pass now"), partial implementations that haven't committed to a design, and generic completions without a named technical choice.
+REJECT as null for decision AND investigation_outcome: retrospective completion reports that only describe fixing a bug or improving existing behavior without naming a new technology, architecture, or design approach that was chosen over an alternative (e.g., "Fixed and pushed. The caching layer no longer evicts entries still referenced by active sessions" — this is a bug fix report, not a choice among approaches). However, if the completion report names a specific new approach adopted in place of a previous one (e.g., "Switched to FTS5", "Now uses Unix domain sockets instead of TCP"), it IS a decision.
+REJECT as null for decision: task instructions and commands directed at the assistant (user requests for the assistant to do something, even when phrased as an approach or method choice).
 
 ## Work-State Signals
 
@@ -320,7 +327,8 @@ work_refs: list of external work identifiers (e.g. PROJ-123, INC-789, org/repo#4
 - "Verdict: transaction-transformer had the most significant recent ledger changes." -> investigation_outcome, key_finding_text set.
 - "Task complete. No message needed." -> null, is_low_value_meta true, all signals null.
 - "Hello, good morning!" -> null, is_low_value_meta true, all signals null.
-- "I can lower concurrency or bump memory, but I need to confirm which worker first." -> null, all signals null (clarifying question, not actionable state).""",
+- "I can lower concurrency or bump memory, but I need to confirm which worker first." -> null, all signals null (clarifying question, not actionable state).
+- "Done. The worker pool now drains in-flight tasks before shutdown, so items are no longer dropped on restart." -> null, is_low_value_meta true (retrospective completion report, not a decision or investigation finding).""",
 }
 
 SCHEMA_DESCRIPTION = json.dumps(
