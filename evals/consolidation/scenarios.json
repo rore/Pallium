@@ -15,7 +15,9 @@
         "actor_ref": "user:branch-librarian",
         "source_ref": "memory://consolidation/thread-1-msg-1",
         "occurred_at": "2026-03-10T08:00:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
         "source_type": "assistant_artifact",
@@ -29,21 +31,25 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://consolidation/thread-1-artifact-1",
         "occurred_at": "2026-03-10T08:01:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
-        "source_type": "assistant_artifact",
+        "source_type": "chat_message",
         "source_id": "cons-thread-1-artifact-2",
         "content_type": "text/plain",
         "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.",
-        "artifact_kind": "assistant_output",
-        "role": "assistant",
+        "artifact_kind": "message",
+        "role": "user",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-cons-001",
-        "actor_ref": "agent:assistant",
+        "actor_ref": "user:branch-librarian",
         "source_ref": "memory://consolidation/thread-1-artifact-2",
         "occurred_at": "2026-03-10T08:02:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       }
     ],
     "current_query": {
@@ -68,7 +74,9 @@
         "actor_ref": "user:branch-librarian",
         "source_ref": "memory://consolidation/thread-2-msg-1",
         "occurred_at": "2026-03-10T10:00:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
         "source_type": "assistant_artifact",
@@ -82,7 +90,9 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://consolidation/thread-2-artifact-1",
         "occurred_at": "2026-03-10T10:01:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
         "source_type": "chat_message",
@@ -96,21 +106,25 @@
         "actor_ref": "user:branch-librarian",
         "source_ref": "memory://consolidation/thread-3-msg-1",
         "occurred_at": "2026-03-10T12:00:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
-        "source_type": "assistant_artifact",
+        "source_type": "chat_message",
         "source_id": "cons-thread-3-artifact-1",
         "content_type": "text/plain",
         "content": "Decision: use item event time for reservation ordering to prevent duplicate holds after sync delays.",
-        "artifact_kind": "assistant_output",
-        "role": "assistant",
+        "artifact_kind": "message",
+        "role": "user",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-cons-003",
-        "actor_ref": "agent:assistant",
+        "actor_ref": "user:branch-librarian",
         "source_ref": "memory://consolidation/thread-3-artifact-1",
         "occurred_at": "2026-03-10T12:01:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       }
     ],
     "current_query": {
@@ -135,7 +149,9 @@
         "actor_ref": "user:branch-librarian",
         "source_ref": "memory://consolidation/thread-4-msg-1",
         "occurred_at": "2026-03-10T13:00:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
         "source_type": "assistant_artifact",
@@ -149,21 +165,25 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://consolidation/thread-4-artifact-1",
         "occurred_at": "2026-03-10T13:01:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
-        "source_type": "assistant_artifact",
+        "source_type": "chat_message",
         "source_id": "cons-thread-4-artifact-2",
         "content_type": "text/plain",
         "content": "Decision: use item event time for reservation ordering to prevent duplicate holds after sync delays.",
-        "artifact_kind": "assistant_output",
-        "role": "assistant",
+        "artifact_kind": "message",
+        "role": "user",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-cons-004",
-        "actor_ref": "agent:assistant",
+        "actor_ref": "user:branch-librarian",
         "source_ref": "memory://consolidation/thread-4-artifact-2",
         "occurred_at": "2026-03-10T13:02:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
         "source_type": "chat_message",
@@ -177,21 +197,25 @@
         "actor_ref": "user:circulation-manager",
         "source_ref": "memory://consolidation/thread-5-msg-1",
         "occurred_at": "2026-03-10T13:03:00Z",
-        "metadata": {"topic": "notification_batching"}
+        "metadata": {
+          "topic": "notification_batching"
+        }
       },
       {
-        "source_type": "assistant_artifact",
+        "source_type": "chat_message",
         "source_id": "cons-thread-5-artifact-1",
         "content_type": "text/plain",
         "content": "Decision: send overdue notices in 30-minute batches to avoid staff inbox spam.",
-        "artifact_kind": "assistant_output",
-        "role": "assistant",
+        "artifact_kind": "message",
+        "role": "user",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-cons-005",
-        "actor_ref": "agent:assistant",
+        "actor_ref": "user:branch-librarian",
         "source_ref": "memory://consolidation/thread-5-artifact-1",
         "occurred_at": "2026-03-10T13:04:00Z",
-        "metadata": {"topic": "notification_batching"}
+        "metadata": {
+          "topic": "notification_batching"
+        }
       }
     ],
     "current_query": {
@@ -199,6 +223,9 @@
       "limit": 6,
       "container_ref": "chat:library-help"
     },
-    "unexpected_terms": ["30-minute batches", "staff inbox spam"]
+    "unexpected_terms": [
+      "30-minute batches",
+      "staff inbox spam"
+    ]
   }
 ]

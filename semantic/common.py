@@ -268,6 +268,7 @@ def build_process_result(
     if (
         not extraction.is_low_value_meta
         and extraction.candidate_type == "decision"
+        and (not source_item.role or source_item.role.lower() == "user")
         and decision_text
         and decision_evidence_text
         and _typed_memory_payload_is_quality_viable(

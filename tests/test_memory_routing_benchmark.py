@@ -189,12 +189,12 @@ def test_benchmark_default_visibility_ingests_public_items(monkeypatch, tmp_path
             '/items',
             json=[
                 {
-                    'source_type': 'assistant_artifact',
+                    'source_type': 'chat_message',
                     'source_id': 'benchmark-visibility-artifact',
                     'content_type': 'text/plain',
                     'content': 'Decision: send overdue notices in 30-minute batches to avoid staff inbox spam.',
-                    'artifact_kind': 'assistant_output',
-                    'role': 'assistant',
+                    'artifact_kind': 'message',
+                    'role': 'user',
                     'container_ref': 'chat:library-help',
                     'thread_ref': 'chat:library-help:thread-mr-visibility',
                     'actor_ref': 'agent:assistant',

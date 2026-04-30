@@ -411,12 +411,12 @@ class TestFlagE2EFlow:
         client = self._make_client(monkeypatch, test_db_url)
 
         client.post("/items", json=[{
-            "source_type": "assistant_artifact",
+            "source_type": "chat_message",
             "source_id": "e2e-bad-decision-1",
             "content_type": "text/plain",
             "content": "Decision: use PostgreSQL for the catalog service instead of MongoDB.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
             "container_ref": "chat:e2e",
             "thread_ref": "chat:e2e:thread-1",
         }])
@@ -485,12 +485,12 @@ class TestFlagE2EFlow:
         client = self._make_client(monkeypatch, test_db_url)
 
         client.post("/items", json=[{
-            "source_type": "assistant_artifact",
+            "source_type": "chat_message",
             "source_id": "e2e-stale-decision-1",
             "content_type": "text/plain",
             "content": "Decision: deploy the catalog service to staging on Friday.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
             "container_ref": "chat:e2e2",
             "thread_ref": "chat:e2e2:thread-1",
         }])

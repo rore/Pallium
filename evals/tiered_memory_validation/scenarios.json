@@ -16,7 +16,9 @@
         "actor_ref": "user:branch-librarian",
         "source_ref": "memory://tmv/thread-1-msg-1",
         "occurred_at": "2026-03-10T10:00:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
         "source_type": "assistant_artifact",
@@ -30,7 +32,9 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://tmv/thread-1-artifact-1",
         "occurred_at": "2026-03-10T10:01:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
         "source_type": "chat_message",
@@ -44,21 +48,25 @@
         "actor_ref": "user:branch-librarian",
         "source_ref": "memory://tmv/thread-2-msg-1",
         "occurred_at": "2026-03-10T12:00:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
-        "source_type": "assistant_artifact",
+        "source_type": "chat_message",
         "source_id": "tmv-thread-2-artifact-1",
         "content_type": "text/plain",
         "content": "Decision: use item event time for reservation ordering to prevent duplicate holds after sync delays.",
-        "artifact_kind": "assistant_output",
-        "role": "assistant",
+        "artifact_kind": "message",
+        "role": "user",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-tmv-002",
-        "actor_ref": "agent:assistant",
+        "actor_ref": "user:circulation-manager",
         "source_ref": "memory://tmv/thread-2-artifact-1",
         "occurred_at": "2026-03-10T12:01:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       }
     ],
     "current_thread_context": [
@@ -75,13 +83,24 @@
     },
     "target_question": "What did we previously conclude about duplicate holds after catalog sync delays?",
     "preferred_branch": "tiered",
-    "expected_good_strategies": ["container_topic_window"],
+    "expected_good_strategies": [
+      "container_topic_window"
+    ],
     "expected_higher_level_memory_types_by_strategy": {
-      "container_topic_window": ["pattern_memory"]
+      "container_topic_window": [
+        "pattern_memory"
+      ]
     },
     "expected_pattern_group_count": 1,
-    "expected_answer_signals": ["duplicate holds", "catalog sync delays", "item event time"],
-    "expected_pattern_signals": ["duplicate holds", "item event time"],
+    "expected_answer_signals": [
+      "duplicate holds",
+      "catalog sync delays",
+      "item event time"
+    ],
+    "expected_pattern_signals": [
+      "duplicate holds",
+      "item event time"
+    ],
     "forbidden_terms": []
   },
   {
@@ -101,21 +120,25 @@
         "actor_ref": "user:circulation-manager",
         "source_ref": "memory://tmv/thread-3-msg-1",
         "occurred_at": "2026-03-10T09:00:00Z",
-        "metadata": {"topic": "notification_batching"}
+        "metadata": {
+          "topic": "notification_batching"
+        }
       },
       {
-        "source_type": "assistant_artifact",
+        "source_type": "chat_message",
         "source_id": "tmv-thread-3-artifact-1",
         "content_type": "text/plain",
         "content": "Decision: send overdue notices in 30-minute batches to avoid staff inbox spam.",
-        "artifact_kind": "assistant_output",
-        "role": "assistant",
+        "artifact_kind": "message",
+        "role": "user",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-tmv-003",
-        "actor_ref": "agent:assistant",
+        "actor_ref": "user:circulation-manager",
         "source_ref": "memory://tmv/thread-3-artifact-1",
         "occurred_at": "2026-03-10T09:01:00Z",
-        "metadata": {"topic": "notification_batching"}
+        "metadata": {
+          "topic": "notification_batching"
+        }
       }
     ],
     "current_thread_context": [
@@ -132,14 +155,27 @@
     },
     "target_question": "Have we already answered why overdue notices are batched?",
     "preferred_branch": "tiered",
-    "expected_good_strategies": ["thread_local_carry_forward", "thread_summary_anchored"],
+    "expected_good_strategies": [
+      "thread_local_carry_forward",
+      "thread_summary_anchored"
+    ],
     "expected_higher_level_memory_types_by_strategy": {
-      "thread_local_carry_forward": ["continuity_memory"],
-      "thread_summary_anchored": ["continuity_memory"]
+      "thread_local_carry_forward": [
+        "continuity_memory"
+      ],
+      "thread_summary_anchored": [
+        "continuity_memory"
+      ]
     },
     "expected_pattern_group_count": 1,
-    "expected_answer_signals": ["30-minute batches", "staff inbox spam"],
-    "expected_pattern_signals": ["30-minute batches", "staff inbox spam"],
+    "expected_answer_signals": [
+      "30-minute batches",
+      "staff inbox spam"
+    ],
+    "expected_pattern_signals": [
+      "30-minute batches",
+      "staff inbox spam"
+    ],
     "forbidden_terms": []
   },
   {
@@ -167,7 +203,11 @@
     "target_question": "Why is the rare-book reservation cutoff 48 hours?",
     "preferred_branch": "baseline",
     "expected_good_strategies": [],
-    "expected_answer_signals": ["48-hour cutoff", "no-show holds", "weekend pickups"],
+    "expected_answer_signals": [
+      "48-hour cutoff",
+      "no-show holds",
+      "weekend pickups"
+    ],
     "expected_pattern_signals": [],
     "forbidden_terms": []
   },
@@ -188,7 +228,9 @@
         "actor_ref": "user:branch-librarian",
         "source_ref": "memory://tmv/thread-4-msg-1",
         "occurred_at": "2026-03-10T10:00:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
         "source_type": "assistant_artifact",
@@ -202,21 +244,25 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://tmv/thread-4-artifact-1",
         "occurred_at": "2026-03-10T10:01:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
-        "source_type": "assistant_artifact",
+        "source_type": "chat_message",
         "source_id": "tmv-thread-4-artifact-2",
         "content_type": "text/plain",
         "content": "Decision: use item event time for reservation ordering to prevent duplicate holds after sync delays.",
-        "artifact_kind": "assistant_output",
-        "role": "assistant",
+        "artifact_kind": "message",
+        "role": "user",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-tmv-004",
-        "actor_ref": "agent:assistant",
+        "actor_ref": "user:circulation-manager",
         "source_ref": "memory://tmv/thread-4-artifact-2",
         "occurred_at": "2026-03-10T10:02:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       }
     ],
     "current_thread_context": [
@@ -234,8 +280,12 @@
     "target_question": "What ordering did we choose for reservation updates?",
     "preferred_branch": "lower_level",
     "expected_good_strategies": [],
-    "expected_answer_signals": ["item event time"],
-    "expected_pattern_signals": ["item event time"],
+    "expected_answer_signals": [
+      "item event time"
+    ],
+    "expected_pattern_signals": [
+      "item event time"
+    ],
     "forbidden_terms": []
   },
   {
@@ -255,7 +305,9 @@
         "actor_ref": "user:branch-librarian",
         "source_ref": "memory://tmv/thread-5-msg-1",
         "occurred_at": "2026-03-10T10:00:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
         "source_type": "assistant_artifact",
@@ -269,21 +321,25 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://tmv/thread-5-artifact-1",
         "occurred_at": "2026-03-10T10:01:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
-        "source_type": "assistant_artifact",
+        "source_type": "chat_message",
         "source_id": "tmv-thread-5-artifact-2",
         "content_type": "text/plain",
         "content": "Decision: use item event time for reservation ordering to prevent duplicate holds after sync delays.",
-        "artifact_kind": "assistant_output",
-        "role": "assistant",
+        "artifact_kind": "message",
+        "role": "user",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-tmv-005",
-        "actor_ref": "agent:assistant",
+        "actor_ref": "user:circulation-manager",
         "source_ref": "memory://tmv/thread-5-artifact-2",
         "occurred_at": "2026-03-10T10:02:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       }
     ],
     "current_thread_context": [
@@ -301,8 +357,13 @@
     "target_question": "What exact finding supported the ordering change?",
     "preferred_branch": "lower_level",
     "expected_good_strategies": [],
-    "expected_answer_signals": ["arrival-time ordering", "stale hold updates"],
-    "expected_pattern_signals": ["duplicate holds"],
+    "expected_answer_signals": [
+      "arrival-time ordering",
+      "stale hold updates"
+    ],
+    "expected_pattern_signals": [
+      "duplicate holds"
+    ],
     "forbidden_terms": []
   },
   {
@@ -322,7 +383,9 @@
         "actor_ref": "user:branch-librarian",
         "source_ref": "memory://tmv/thread-6-msg-1",
         "occurred_at": "2026-03-10T13:00:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
         "source_type": "assistant_artifact",
@@ -336,21 +399,25 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://tmv/thread-6-artifact-1",
         "occurred_at": "2026-03-10T13:01:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
-        "source_type": "assistant_artifact",
+        "source_type": "chat_message",
         "source_id": "tmv-thread-6-artifact-2",
         "content_type": "text/plain",
         "content": "Decision: use item event time for reservation ordering to prevent duplicate holds after sync delays.",
-        "artifact_kind": "assistant_output",
-        "role": "assistant",
+        "artifact_kind": "message",
+        "role": "user",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-tmv-006",
-        "actor_ref": "agent:assistant",
+        "actor_ref": "user:circulation-manager",
         "source_ref": "memory://tmv/thread-6-artifact-2",
         "occurred_at": "2026-03-10T13:02:00Z",
-        "metadata": {"topic": "reservation_ordering"}
+        "metadata": {
+          "topic": "reservation_ordering"
+        }
       },
       {
         "source_type": "chat_message",
@@ -364,21 +431,25 @@
         "actor_ref": "user:circulation-manager",
         "source_ref": "memory://tmv/thread-7-msg-1",
         "occurred_at": "2026-03-10T13:03:00Z",
-        "metadata": {"topic": "notification_batching"}
+        "metadata": {
+          "topic": "notification_batching"
+        }
       },
       {
-        "source_type": "assistant_artifact",
+        "source_type": "chat_message",
         "source_id": "tmv-thread-7-artifact-1",
         "content_type": "text/plain",
         "content": "Decision: send overdue notices in 30-minute batches to avoid staff inbox spam.",
-        "artifact_kind": "assistant_output",
-        "role": "assistant",
+        "artifact_kind": "message",
+        "role": "user",
         "container_ref": "chat:library-help",
         "thread_ref": "chat:library-help:thread-tmv-007",
-        "actor_ref": "agent:assistant",
+        "actor_ref": "user:circulation-manager",
         "source_ref": "memory://tmv/thread-7-artifact-1",
         "occurred_at": "2026-03-10T13:04:00Z",
-        "metadata": {"topic": "notification_batching"}
+        "metadata": {
+          "topic": "notification_batching"
+        }
       }
     ],
     "current_thread_context": [
@@ -396,9 +467,17 @@
     "target_question": "What did we previously conclude about duplicate holds after catalog sync delays?",
     "preferred_branch": "lower_level",
     "expected_good_strategies": [],
-    "expected_answer_signals": ["duplicate holds", "catalog sync delays"],
-    "expected_pattern_signals": ["duplicate holds"],
-    "forbidden_terms": ["30-minute batches", "staff inbox spam"]
+    "expected_answer_signals": [
+      "duplicate holds",
+      "catalog sync delays"
+    ],
+    "expected_pattern_signals": [
+      "duplicate holds"
+    ],
+    "forbidden_terms": [
+      "30-minute batches",
+      "staff inbox spam"
+    ]
   },
   {
     "scenario_id": "cross-thread-interest-surfacing",
@@ -417,7 +496,9 @@
         "actor_ref": "user:branch-librarian",
         "source_ref": "memory://tmv/thread-interest-msg-1",
         "occurred_at": "2026-03-11T14:00:00Z",
-        "metadata": {"topic": "job_scheduling"}
+        "metadata": {
+          "topic": "job_scheduling"
+        }
       },
       {
         "source_type": "assistant_artifact",
@@ -431,7 +512,9 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://tmv/thread-interest-artifact-1",
         "occurred_at": "2026-03-11T14:01:00Z",
-        "metadata": {"topic": "job_scheduling"}
+        "metadata": {
+          "topic": "job_scheduling"
+        }
       },
       {
         "source_type": "chat_message",
@@ -445,7 +528,9 @@
         "actor_ref": "user:branch-librarian",
         "source_ref": "memory://tmv/thread-interest-msg-2",
         "occurred_at": "2026-03-11T14:02:00Z",
-        "metadata": {"topic": "job_scheduling"}
+        "metadata": {
+          "topic": "job_scheduling"
+        }
       },
       {
         "source_type": "assistant_artifact",
@@ -459,7 +544,9 @@
         "actor_ref": "agent:assistant",
         "source_ref": "memory://tmv/thread-interest-artifact-2",
         "occurred_at": "2026-03-11T14:03:00Z",
-        "metadata": {"topic": "job_scheduling"}
+        "metadata": {
+          "topic": "job_scheduling"
+        }
       }
     ],
     "current_thread_context": [
@@ -476,14 +563,20 @@
     },
     "target_question": "What was that job queue tool I said I wanted to try for the sync pipeline?",
     "preferred_branch": "tiered",
-    "expected_good_strategies": ["container_topic_window"],
+    "expected_good_strategies": [
+      "container_topic_window"
+    ],
     "expected_higher_level_memory_types_by_strategy": {
-      "container_topic_window": ["interest"]
+      "container_topic_window": [
+        "interest"
+      ]
     },
-    "expected_answer_signals": ["RQ", "job queue", "sync pipeline"],
+    "expected_answer_signals": [
+      "RQ",
+      "job queue",
+      "sync pipeline"
+    ],
     "expected_pattern_signals": [],
     "forbidden_terms": []
   }
 ]
-
-

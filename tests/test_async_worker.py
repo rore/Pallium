@@ -173,8 +173,8 @@ def test_run_worker_once_processes_pending_item(test_db_url: str, capsys) -> Non
         content='Decision: use item event time for reservation ordering to avoid duplicate holds during concurrent sync operations across all background workers.',
         metadata=None,
         use_case='demo_agent_memory',
-        artifact_kind='assistant_output',
-        role='assistant',
+        artifact_kind='message',
+        role='user',
     )
     assert ingest.processing_status == 'pending'
 
@@ -198,8 +198,8 @@ def test_run_worker_uses_processing_summary_path(test_db_url: str, monkeypatch) 
         content='Decision: summary path should avoid full processing hydration.',
         metadata=None,
         use_case='demo_agent_memory',
-        artifact_kind='assistant_output',
-        role='assistant',
+        artifact_kind='message',
+        role='user',
     )
 
     def fail_if_full_processing_used(_source_item_id: str):
@@ -243,8 +243,8 @@ def test_run_processor_once_processes_pending_item(test_db_url: str, capsys) -> 
         content='Decision: use item event time for reservation ordering to avoid duplicate holds during concurrent sync operations across all background workers.',
         metadata=None,
         use_case='demo_agent_memory',
-        artifact_kind='assistant_output',
-        role='assistant',
+        artifact_kind='message',
+        role='user',
     )
     assert ingest.processing_status == 'pending'
 
@@ -569,27 +569,27 @@ def test_two_workers_same_thread_leave_single_active_thread_memory_after_deferre
     plugin.allow_first_build_finish.set()
     visibility = "public"
     first_ingest = service.ingest_item(
-        source_type='assistant_artifact',
+        source_type='chat_message',
         source_id='same-thread-worker-1',
         content_type='text/plain',
         content='Decision: first same-thread worker item.',
         metadata=None,
         use_case='blocking_thread_lease',
-        artifact_kind='assistant_output',
-        role='assistant',
+        artifact_kind='message',
+        role='user',
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-concurrency',
         visibility="public",
     )
     second_ingest = service.ingest_item(
-        source_type='assistant_artifact',
+        source_type='chat_message',
         source_id='same-thread-worker-2',
         content_type='text/plain',
         content='Decision: second same-thread worker item.',
         metadata=None,
         use_case='blocking_thread_lease',
-        artifact_kind='assistant_output',
-        role='assistant',
+        artifact_kind='message',
+        role='user',
         container_ref='chat:library-help',
         thread_ref='chat:library-help:thread-concurrency',
         visibility="public",

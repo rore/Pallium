@@ -256,7 +256,7 @@ def _write_public_visibility_scenario(target_path: Path, source_path: Path) -> P
 def test_thread_summary_is_created_and_superseded(monkeypatch, test_db_url: str) -> None:
     client = _create_thread_client(monkeypatch, test_db_url)
     client.post("/items", json=[{"source_type": "chat_message", "source_id": "thread-msg-1", "content_type": "text/plain", "content": "Why are some library holds disappearing after catalog sync delays and what is the root cause of the ordering problem?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"}])
-    client.post("/items", json=[{"source_type": "assistant_artifact", "source_id": "thread-artifact-1", "content_type": "text/plain", "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays across all concurrent worker processes in production.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"}])
+    client.post("/items", json=[{"source_type": "chat_message", "source_id": "thread-artifact-1", "content_type": "text/plain", "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays across all concurrent worker processes in production.", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"}])
     # Third item triggers a second thread rebuild that supersedes the first summary
     client.post("/items", json=[{"source_type": "chat_message", "source_id": "thread-msg-2", "content_type": "text/plain", "content": "Good, that should fix the holds problem. Will the sync delays also affect due-date calculations for items on long-term reserve?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-001"}])
 
@@ -367,8 +367,8 @@ def test_thread_summary_carries_forward_typed_conclusions(monkeypatch, test_db_u
     client = _create_thread_client(monkeypatch, test_db_url)
     for payload in (
         {"source_type": "chat_message", "source_id": "thread-msg-2", "content_type": "text/plain", "content": "Why are some library holds disappearing after catalog sync delays?", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-002"},
-        {"source_type": "assistant_artifact", "source_id": "thread-artifact-2", "content_type": "text/plain", "content": "Investigation found that arrival-time ordering skipped hold updates during catalog sync delays.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-002"},
-        {"source_type": "assistant_artifact", "source_id": "thread-artifact-3", "content_type": "text/plain", "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.", "artifact_kind": "assistant_output", "role": "assistant", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-002"},
+        {"source_type": "chat_message", "source_id": "thread-artifact-2", "content_type": "text/plain", "content": "Investigation found that arrival-time ordering skipped hold updates during catalog sync delays.", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-002"},
+        {"source_type": "chat_message", "source_id": "thread-artifact-3", "content_type": "text/plain", "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.", "artifact_kind": "message", "role": "user", "container_ref": "chat:library-help", "thread_ref": "chat:library-help:thread-agg-002"},
     ):
         client.post("/items", json=[payload])
 
@@ -430,12 +430,12 @@ def test_grounded_decision_candidate_creates_typed_memory_when_evidence_matches_
     response = client.post(
         "/items",
         json=[{
-            "source_type": "assistant_artifact",
+            "source_type": "chat_message",
             "source_id": "thread-weak-decision-1",
             "content_type": "text/plain",
             "content": "Maybe we should use item event time for reservation ordering if it seems safer.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
             "container_ref": "chat:library-help",
             "thread_ref": "chat:library-help:thread-weak-decision",
         }],
@@ -486,12 +486,12 @@ def test_supported_typed_memory_still_requests_thread_rebuild(monkeypatch, test_
     response = client.post(
         "/items",
         json=[{
-            "source_type": "assistant_artifact",
+            "source_type": "chat_message",
             "source_id": "thread-supported-decision-1",
             "content_type": "text/plain",
             "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
             "container_ref": "chat:library-help",
             "thread_ref": "chat:library-help:thread-supported-decision",
         }],
@@ -571,12 +571,12 @@ def test_single_item_thread_skips_aggregation_second_item_triggers_it(monkeypatc
     response = client.post(
         "/items",
         json=[{
-            "source_type": "assistant_artifact",
+            "source_type": "chat_message",
             "source_id": "threshold-artifact-1",
             "content_type": "text/plain",
             "content": "Decision: use item event time for reservation ordering to avoid skipped holds during sync delays.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
             "container_ref": container_ref,
             "thread_ref": thread_ref,
         }],

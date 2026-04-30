@@ -278,7 +278,7 @@ def test_build_user_prompt_keeps_local_context_separate_from_carry_forward() -> 
         injectable_blocks=[{"title": "Decision", "text": "Use 32G files."}],
         local_thread_context=[
             {"role": "user", "text": "We're discussing export limits."},
-            {"role": "assistant", "text": "Confirmed - limit files to 32G."},
+            {"role": "user", "text": "Confirmed - limit files to 32G."},
         ],
     )
 

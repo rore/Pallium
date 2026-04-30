@@ -82,7 +82,7 @@ def test_typed_fields_promote_candidate_type_when_llm_omits_it() -> None:
         content_type="text/plain",
         content="Publish process status summaries in 30-minute batches to reduce downstream noise.",
         artifact_kind="assistant_output",
-        role="assistant",
+        role="user",
         container_ref="chat:library-help",
         thread_ref="chat:library-help:thread-1",
         visibility="public",

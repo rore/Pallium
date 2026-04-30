@@ -161,12 +161,12 @@ def _read_jsonl(path: Path) -> list[dict[str, object]]:
 
 def _decision_record(source_id: str, content: str, *, expected_kind: str = "decision") -> dict[str, object]:
     return {
-        "source_type": "decision_note",
+        "source_type": "chat_message",
         "source_id": source_id,
         "content_type": "text/plain",
         "content": content,
-        "artifact_kind": "assistant_output",
-        "role": "assistant",
+        "artifact_kind": "message",
+        "role": "user",
         "metadata": {"topic": "reservation ordering", "expected_kind": expected_kind},
     }
 
@@ -193,8 +193,8 @@ def _signal_record(source_id: str, content: str, expected_signal_truths: dict[st
         "source_id": source_id,
         "content_type": "text/plain",
         "content": content,
-        "artifact_kind": "assistant_output",
-        "role": "assistant",
+        "artifact_kind": "message",
+        "role": "user",
         "metadata": {key: value for key, value in {"topic": "ops", "expected_kind": expected_kind, "expected_signal_truths": expected_signal_truths}.items() if value is not None},
     }
 

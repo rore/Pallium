@@ -16,13 +16,14 @@ def _build_client(monkeypatch, test_db_url: str) -> TestClient:
 
 
 def _ingest(client: TestClient, *, source_id: str, content: str, visibility: str | None, container_ref: str = "chat:privacy", thread_ref: str = "chat:privacy:thread-1") -> dict[str, object]:
+    is_decision = content.startswith("Decision:")
     payload: dict[str, object] = {
-        "source_type": "assistant_artifact",
+        "source_type": "chat_message" if is_decision else "assistant_artifact",
         "source_id": source_id,
         "content_type": "text/plain",
         "content": content,
-        "artifact_kind": "assistant_output",
-        "role": "assistant",
+        "artifact_kind": "message" if is_decision else "assistant_output",
+        "role": "user" if is_decision else "assistant",
         "container_ref": container_ref,
         "thread_ref": thread_ref,
     }
@@ -175,12 +176,12 @@ def test_thread_aggregation_stays_within_exact_visibility_context(monkeypatch, t
         client.post(
             "/items",
             json=[{
-                "source_type": "assistant_artifact",
+                "source_type": "chat_message",
                 "source_id": "thread-limited-artifact",
                 "content_type": "text/plain",
                 "content": "Decision: use item event time for reservation ordering to avoid duplicate holds.",
-                "artifact_kind": "assistant_output",
-                "role": "assistant",
+                "artifact_kind": "message",
+                "role": "user",
                 "container_ref": "chat:privacy",
                 "thread_ref": "chat:privacy:mixed-thread",
                 "visibility": "container",

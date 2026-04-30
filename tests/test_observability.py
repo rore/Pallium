@@ -29,8 +29,8 @@ def test_processing_endpoint_includes_observability_summary_fields(client, drain
             "source_id": "decision-observability-1",
             "content_type": "text/plain",
             "content": "Decision: use item event time ordering so that reservation updates are applied deterministically across all concurrent background worker processes in production.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
         }],
     )
     source_item_id = create_response.json()[0]["source_item_id"]
@@ -146,8 +146,8 @@ def test_query_debug_includes_candidate_flow_and_result_summary(client, drain_qu
             "source_id": "decision-query-trace-1",
             "content_type": "text/plain",
             "content": "Decision: use item event time ordering so that reservation updates are applied deterministically across all concurrent background worker processes in production.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
             "visibility": "public",
         }],
     )
@@ -155,7 +155,7 @@ def test_query_debug_includes_candidate_flow_and_result_summary(client, drain_qu
 
     response = client.post(
         "/query/debug",
-        json={"text": "what did we decide about ordering?", "limit": 5, "artifact_kind": "assistant_output"},
+        json={"text": "what did we decide about ordering?", "limit": 5, "artifact_kind": "message"},
     )
     assert response.status_code == 200
     payload = response.json()

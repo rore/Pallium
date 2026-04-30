@@ -61,8 +61,8 @@ def test_post_items_is_idempotent_and_returns_current_processing_snapshot(client
         "source_id": "decision-1",
         "content_type": "text/plain",
         "content": "Decision: use item event time for reservation ordering instead of arrival time to avoid missed hold updates during concurrent sync operations.",
-        "artifact_kind": "assistant_output",
-        "role": "assistant",
+        "artifact_kind": "message",
+        "role": "user",
         "thread_ref": "thread-1",
     }
 
@@ -86,8 +86,8 @@ def test_get_processing_endpoint_reflects_status_after_worker_completion(client,
             "source_id": "decision-status-1",
             "content_type": "text/plain",
             "content": "Decision: use item event time for reservation ordering instead of arrival time to avoid missed hold updates during concurrent sync delay operations.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
         }],
     )
     source_item_id = create_response.json()[0]["source_item_id"]
@@ -116,8 +116,8 @@ def test_raw_source_is_queryable_before_worker_completion_and_memory_after(clien
             "source_id": "decision-query-1",
             "content_type": "text/plain",
             "content": "Decision: use item event time for reservation ordering instead of arrival time to avoid missed hold updates during concurrent sync delay operations.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
             "container_ref": "slack:C123",
             "thread_ref": "thread-query",
         }],
@@ -125,7 +125,7 @@ def test_raw_source_is_queryable_before_worker_completion_and_memory_after(clien
 
     before = client.post(
         "/query/debug",
-        json={"text": "what did we decide about reservation ordering?", "limit": 5, "artifact_kind": "assistant_output"},
+        json={"text": "what did we decide about reservation ordering?", "limit": 5, "artifact_kind": "message"},
     )
     assert before.status_code == 200
     assert any(item["result_kind"] == "source_hit" for item in before.json()["results"])
@@ -135,7 +135,7 @@ def test_raw_source_is_queryable_before_worker_completion_and_memory_after(clien
 
     after = client.post(
         "/query",
-        json={"text": "what did we decide about reservation ordering?", "limit": 5, "artifact_kind": "assistant_output"},
+        json={"text": "what did we decide about reservation ordering?", "limit": 5, "artifact_kind": "message"},
     )
     assert after.status_code == 200
     assert any(item["result_kind"] == "memory_hit" for item in after.json()["results"])
@@ -175,12 +175,12 @@ def test_missing_required_visibility_creates_skipped_not_pending(monkeypatch, te
     response = scoped_client.post(
         "/items",
         json=[{
-            "source_type": "assistant_artifact",
+            "source_type": "chat_message",
             "source_id": "missing-visibility-1",
             "content_type": "text/plain",
             "content": "Decision: use item event time for reservation ordering to avoid duplicate holds.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
         }],
     )
     assert response.status_code == 200
@@ -197,15 +197,15 @@ def test_query_debug_returns_named_text_views_after_processing(client, drain_que
             "source_id": "decision-debug-1",
             "content_type": "text/plain",
             "content": "Decision: use item event time for reservation ordering instead of arrival time to avoid missed hold updates during concurrent sync delay operations.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
         }],
     )
     drain_queue(client)
 
     response = client.post(
         "/query/debug",
-        json={"text": "what did we decide about reservation ordering?", "limit": 5, "artifact_kind": "assistant_output"},
+        json={"text": "what did we decide about reservation ordering?", "limit": 5, "artifact_kind": "message"},
     )
 
     assert response.status_code == 200
@@ -385,12 +385,12 @@ def test_query_returns_injection_contract_with_runtime_context(monkeypatch, test
     client.post(
         "/items",
         json=[{
-            "source_type": "assistant_artifact",
+            "source_type": "chat_message",
             "source_id": "api-decision-1",
             "content_type": "text/plain",
             "content": "Decision: use item event time for reservation ordering to avoid duplicate holds.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
             "container_ref": "chat:api",
             "thread_ref": "chat:api:thread-1",
         }],
@@ -423,12 +423,12 @@ def test_query_same_thread_context_sufficient_suppresses_injection(monkeypatch, 
     client.post(
         "/items",
         json=[{
-            "source_type": "assistant_artifact",
+            "source_type": "chat_message",
             "source_id": "api-decision-2",
             "content_type": "text/plain",
             "content": "Decision: keep the reservation ordering fix behind the use_item_event_time flag.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
             "container_ref": "chat:api",
             "thread_ref": "chat:api:thread-2",
         }],
@@ -561,12 +561,12 @@ def test_query_broad_recall_does_not_inject_raw_source_blocks_by_default(monkeyp
     client.post(
         "/items",
         json=[{
-            "source_type": "assistant_artifact",
+            "source_type": "chat_message",
             "source_id": "api-broad-recall-1",
             "content_type": "text/plain",
             "content": "Decision: use item event time for reservation ordering to avoid duplicate holds during sync delays.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
             "container_ref": "chat:api",
             "thread_ref": "chat:api:thread-broad-recall",
         }],
@@ -810,8 +810,8 @@ def test_post_items_batch_idempotent_returns_current_state(client, drain_queue) 
         "source_id": "batch-idempotent-1",
         "content_type": "text/plain",
         "content": "Decision: use item event time for reservation ordering to avoid missed hold updates during sync delays.",
-        "artifact_kind": "assistant_output",
-        "role": "assistant",
+        "artifact_kind": "message",
+        "role": "user",
         "thread_ref": "thread-batch-idem",
     }
 

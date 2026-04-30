@@ -31,8 +31,8 @@ def test_item_and_query_content_is_used_as_default_query_text(client) -> None:
             "source_id": "iq-seed-1",
             "content_type": "text/plain",
             "content": "Decision: use item event time for reservation ordering to avoid missed hold updates.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
         },
     )
 
@@ -62,8 +62,8 @@ def test_item_and_query_query_text_override(client) -> None:
             "source_id": "iq-seed-2",
             "content_type": "text/plain",
             "content": "Decision: use item event time for reservation ordering to avoid missed hold updates.",
-            "artifact_kind": "assistant_output",
-            "role": "assistant",
+            "artifact_kind": "message",
+            "role": "user",
         },
     )
 
