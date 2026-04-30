@@ -1395,5 +1395,214 @@
         "invariant_assertions": ["INV-02"]
       }
     ]
+  },
+  {
+    "scenario_id": "source-expanded-flag-long-source-001",
+    "description": "Investigation outcome seeded with a long source (1500 chars) must surface with source_expanded_available=true.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"memory_type_target": "investigation_outcome", "source_length": "long"},
+      "invariant_assertions": ["INV-01"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_long_source_investigation",
+        "action": "seed_memory_objects",
+        "memory_objects": [
+          {
+            "id": "mo-src-exp-long-001",
+            "type": "investigation_outcome",
+            "schema_id": "core.memory_object",
+            "schema_version": "v1",
+            "lifecycle": "active",
+            "visibility": "private",
+            "container_ref": "chat:library-ops",
+            "payload": {
+              "investigation_outcome": "Catalog sync failures were traced to stale connection handles in the staging database pool.",
+              "rationale": "Reproducing the failure consistently required exhausting the pool; adding idle timeout fixed it.",
+              "confidence": "high"
+            },
+            "index_text": "catalog sync failure stale connection handles staging database pool",
+            "evidence": [
+              {
+                "id": "si-src-exp-long-001",
+                "container_ref": "chat:library-ops",
+                "visibility": "private",
+                "role": "assistant"
+              }
+            ],
+            "envelope": {
+              "schema_id": "core.memory_envelope",
+              "schema_version": "v1",
+              "kind": "finding",
+              "scope": {
+                "container_ref": "chat:library-ops"
+              },
+              "derivation": {
+                "producer_kind": "item_extraction",
+                "producer_schema_id": "agent_conversation_memory",
+                "producer_schema_version": "v1"
+              },
+              "confidence": "high",
+              "source_content_length": 1500
+            }
+          }
+        ]
+      },
+      {
+        "step_id": "query_for_long_source_flag",
+        "action": "query",
+        "query": {
+          "text": "Why did catalog sync fail?",
+          "limit": 6,
+          "container_ref": "chat:library-ops",
+          "visibility": "private"
+        },
+        "invariant_assertions": ["INV-01"],
+        "quality_expectations": {
+          "should_inject": true,
+          "min_source_expanded_blocks": 1
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "source-expanded-flag-short-source-001",
+    "description": "Investigation outcome seeded with a short source (500 chars) must NOT have source_expanded_available=true.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"memory_type_target": "investigation_outcome", "source_length": "short"},
+      "invariant_assertions": ["INV-01"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_short_source_investigation",
+        "action": "seed_memory_objects",
+        "memory_objects": [
+          {
+            "id": "mo-src-exp-short-001",
+            "type": "investigation_outcome",
+            "schema_id": "core.memory_object",
+            "schema_version": "v1",
+            "lifecycle": "active",
+            "visibility": "private",
+            "container_ref": "chat:library-ops",
+            "payload": {
+              "investigation_outcome": "Reservation queue ordering uses arrival-time to avoid skipped holds.",
+              "rationale": "Short context, minimal investigation.",
+              "confidence": "medium"
+            },
+            "index_text": "reservation queue ordering arrival-time skipped holds",
+            "evidence": [
+              {
+                "id": "si-src-exp-short-001",
+                "container_ref": "chat:library-ops",
+                "visibility": "private",
+                "role": "assistant"
+              }
+            ],
+            "envelope": {
+              "schema_id": "core.memory_envelope",
+              "schema_version": "v1",
+              "kind": "finding",
+              "scope": {
+                "container_ref": "chat:library-ops"
+              },
+              "derivation": {
+                "producer_kind": "item_extraction",
+                "producer_schema_id": "agent_conversation_memory",
+                "producer_schema_version": "v1"
+              },
+              "confidence": "medium",
+              "source_content_length": 500
+            }
+          }
+        ]
+      },
+      {
+        "step_id": "query_for_short_source_no_flag",
+        "action": "query",
+        "query": {
+          "text": "What ordering do we use for reservation queues?",
+          "limit": 6,
+          "container_ref": "chat:library-ops",
+          "visibility": "private"
+        },
+        "invariant_assertions": ["INV-01"],
+        "quality_expectations": {
+          "should_inject": true,
+          "min_source_expanded_blocks": 0,
+          "max_injectable_blocks": 5
+        }
+      }
+    ]
+  },
+  {
+    "scenario_id": "source-expanded-flag-excluded-type-001",
+    "description": "constraint_memory with a long source (2000 chars) must NOT have source_expanded_available=true — type is excluded from the flag whitelist.",
+    "_generation_metadata": {
+      "taxonomy_cell": {"memory_type_target": "constraint_memory", "source_length": "long"},
+      "invariant_assertions": ["INV-01"],
+      "priority_tier": "P1",
+      "tier_reason": "quality_invariant",
+      "review_status": "authored"
+    },
+    "steps": [
+      {
+        "step_id": "seed_constraint_long_source",
+        "action": "seed_memory_objects",
+        "memory_objects": [
+          {
+            "id": "mo-src-exp-constraint-001",
+            "type": "constraint_memory",
+            "schema_id": "core.memory_object",
+            "schema_version": "v1",
+            "lifecycle": "active",
+            "visibility": "private",
+            "container_ref": "chat:library-ops",
+            "actor_ref": "user:catalog-admin",
+            "payload": {
+              "summary": "Catalog sync must never run during peak hours (09:00–17:00 local time).",
+              "constraint_text": "No catalog sync during peak hours 09:00 to 17:00."
+            },
+            "index_text": "catalog sync peak hours constraint schedule",
+            "envelope": {
+              "schema_id": "core.memory_envelope",
+              "schema_version": "v1",
+              "kind": "constraint",
+              "scope": {
+                "container_ref": "chat:library-ops"
+              },
+              "derivation": {
+                "producer_kind": "item_extraction",
+                "producer_schema_id": "agent_conversation_memory",
+                "producer_schema_version": "v1"
+              },
+              "confidence": "high",
+              "source_content_length": 2000
+            }
+          }
+        ]
+      },
+      {
+        "step_id": "query_constraint_no_flag",
+        "action": "query",
+        "query": {
+          "text": "When can catalog sync run?",
+          "limit": 6,
+          "container_ref": "chat:library-ops",
+          "actor_ref": "user:catalog-admin",
+          "visibility": "private"
+        },
+        "invariant_assertions": ["INV-01"],
+        "quality_expectations": {
+          "min_source_expanded_blocks": 0
+        }
+      }
+    ]
   }
 ]

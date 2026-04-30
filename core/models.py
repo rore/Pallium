@@ -97,6 +97,7 @@ class MemoryEnvelope:
     derivation: MemoryEnvelopeDerivation
     subjects: list[MemorySubjectAnchor] = field(default_factory=list)
     confidence: MemoryEnvelopeConfidence = "unknown"
+    source_content_length: int = 0
 
 
 @dataclass(frozen=True)
@@ -253,6 +254,7 @@ class InjectableBlock:
     evidence: list[EvidenceReference]
     memory_type: str | None = None
     memory_object_id: str | None = None
+    source_expanded_available: bool = False
 
 
 @dataclass(frozen=True)

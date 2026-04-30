@@ -258,6 +258,9 @@ class SQLiteCodecMixin:
             )
         ):
             return None
+        source_content_length = payload.get("source_content_length", 0)
+        if not isinstance(source_content_length, int) or isinstance(source_content_length, bool) or source_content_length < 0:
+            source_content_length = 0
         return MemoryEnvelope(
             schema_id=MEMORY_ENVELOPE_SCHEMA_ID,
             schema_version=MEMORY_ENVELOPE_SCHEMA_VERSION,
@@ -277,6 +280,7 @@ class SQLiteCodecMixin:
             ),
             subjects=subjects,
             confidence=confidence,
+            source_content_length=source_content_length,
         )
 
     @staticmethod

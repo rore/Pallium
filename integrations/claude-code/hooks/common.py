@@ -154,6 +154,8 @@ def format_injection(
         memory_object_id = block.get("memory_object_id", "")
         text = block.get("text", "")
         line = f"[{title} | ref:{memory_object_id}] {text}"
+        if block.get("source_expanded_available"):
+            line += " [+source]"
         formatted_blocks.append(line)
 
     total_len = sum(len(b) for b in formatted_blocks) + len(formatted_blocks) - 1

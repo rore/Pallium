@@ -55,6 +55,8 @@ def evaluate_quality_expectations(
       - required_block_labels (list[str]): each must appear in at least one
         block's title/label
       - max_injectable_blocks (int): len(injectable_blocks) must be <= this
+      - min_source_expanded_blocks (int): at least this many injectable blocks
+        must have source_expanded_available == True (0 means none required)
 
     Returns ``{"passed": bool, "checks": [...]}``.
     """
@@ -143,6 +145,18 @@ def evaluate_quality_expectations(
             "expected": max_blocks,
             "actual": actual_count,
             "passed": actual_count <= max_blocks,
+        })
+
+    # min_source_expanded_blocks
+    min_expanded = expectations.get("min_source_expanded_blocks")
+    if min_expanded is not None:
+        blocks = query_response.get("injectable_blocks", [])
+        actual_expanded = sum(1 for b in blocks if b.get("source_expanded_available"))
+        checks.append({
+            "field": "min_source_expanded_blocks",
+            "expected": min_expanded,
+            "actual": actual_expanded,
+            "passed": actual_expanded >= min_expanded,
         })
 
     all_passed = all(c["passed"] for c in checks)

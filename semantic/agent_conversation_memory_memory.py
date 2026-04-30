@@ -90,6 +90,7 @@ def _build_memory_envelope(
     kind_basis: str,
     subjects: list[MemorySubjectAnchor],
     work_refs: tuple[str, ...] = (),
+    source_content_length: int = 0,
 ) -> MemoryEnvelope:
     return MemoryEnvelope(
         schema_id=MEMORY_ENVELOPE_SCHEMA_ID,
@@ -110,6 +111,7 @@ def _build_memory_envelope(
             model_role=WRITE_TIME_MODEL_ROLE if prompt_variant else None,
             kind_basis=kind_basis,
         ),
+        source_content_length=source_content_length,
     )
 
 def _semantic_provenance_from_process_result(result: ProcessResult) -> dict[str, object]:
@@ -263,6 +265,7 @@ def _apply_direct_memory_envelopes(
                     kind_basis=kind_basis,
                     subjects=direct_subjects,
                     work_refs=merged_work_refs,
+                    source_content_length=len(source_item.content),
                 ),
             )
         )

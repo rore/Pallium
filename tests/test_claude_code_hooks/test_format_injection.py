@@ -59,3 +59,20 @@ class TestFormatInjection:
         blocks = [{"title": "", "memory_object_id": "", "text": ""}]
         result = format_injection(blocks, "c", 2400)
         assert result == "" or "[ | ref:]" in result
+
+    def test_source_expanded_flag_appended_when_true(self):
+        blocks = [{"title": "Prior Investigation", "memory_object_id": "mo-1",
+                   "text": "found X", "source_expanded_available": True}]
+        result = format_injection(blocks, "c", 2400)
+        assert "[Prior Investigation | ref:mo-1] found X [+source]" in result
+
+    def test_source_expanded_flag_absent_when_false(self):
+        blocks = [{"title": "T", "memory_object_id": "x", "text": "y",
+                   "source_expanded_available": False}]
+        result = format_injection(blocks, "c", 2400)
+        assert "[+source]" not in result
+
+    def test_source_expanded_flag_absent_when_key_missing(self):
+        blocks = [{"title": "T", "memory_object_id": "x", "text": "y"}]
+        result = format_injection(blocks, "c", 2400)
+        assert "[+source]" not in result

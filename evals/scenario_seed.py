@@ -86,6 +86,7 @@ def _memory_envelope_from_spec(spec: dict[str, Any] | None) -> MemoryEnvelope | 
             for subject in subject_specs
         ],
         confidence=str(spec.get("confidence") or "unknown"),
+        source_content_length=int(spec.get("source_content_length") or 0),
     )
 
 

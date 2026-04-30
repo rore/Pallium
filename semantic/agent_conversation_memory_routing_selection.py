@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from core.models import InjectableBlock, QueryFilters, QueryResultItem, QueryRuntimeContext
 from semantic.common import content_tokens, normalize_for_index
 from semantic.agent_conversation_memory_constraints import (
@@ -676,7 +677,25 @@ def _build_injectable_blocks(
         "same_thread_context_evaluation": same_thread_context,
     }
 
-def _build_injectable_block_from_candidate(candidate: dict[str, object], *, intent: str) -> InjectableBlock:
+_SOURCE_EXPANDED_THRESHOLD = 1000
+
+_SOURCE_EXPANDED_TYPES = frozenset({
+    "investigation_outcome",
+    "decision",
+    "task_checkpoint",
+    "turn_summary",
+})
+
+
+def _source_expanded_available(item: QueryResultItem) -> bool:
+    return (
+        item.type in _SOURCE_EXPANDED_TYPES
+        and item.envelope is not None
+        and item.envelope.source_content_length > _SOURCE_EXPANDED_THRESHOLD
+    )
+
+
+def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) -> InjectableBlock:
     item = candidate["item"]
     assert isinstance(item, QueryResultItem)
     mo_id = item.memory_object_id  # None for source hits
@@ -818,6 +837,17 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
         memory_type=item.type,
         memory_object_id=mo_id,
     )
+
+
+def _build_injectable_block_from_candidate(candidate: dict[str, object], *, intent: str) -> InjectableBlock:
+    block = _build_raw_injectable_block(candidate, intent=intent)
+    if block.block_type == "memory":
+        item = candidate["item"]
+        assert isinstance(item, QueryResultItem)
+        if _source_expanded_available(item):
+            block = replace(block, source_expanded_available=True)
+    return block
+
 
 def _task_checkpoint_injection_text(payload: dict[str, object]) -> str:
     summary = str(payload.get("summary") or "").strip()
