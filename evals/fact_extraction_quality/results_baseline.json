@@ -1,0 +1,202 @@
+{
+  "variant": "baseline",
+  "chunks_processed": 20,
+  "total_facts": 129,
+  "good_facts": 114,
+  "noise_facts": 15,
+  "noise_rate": 0.11627906976744186,
+  "precision": 0.8837209302325582,
+  "avg_facts_per_chunk": 6.45,
+  "noise_reasons": {
+    "runtime_status": 3,
+    "proposal_recommendation": 1,
+    "prescriptive_not_factual": 4,
+    "implementation_narration_now": 1,
+    "plan_detail": 5,
+    "implementation_narration": 1
+  },
+  "per_chunk": [
+    {
+      "total": 5,
+      "noise": 0,
+      "good": 5,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 10,
+      "noise": 2,
+      "good": 8,
+      "noise_rate": 0.2,
+      "precision": 0.8,
+      "noise_reasons": {
+        "runtime_status": 1,
+        "proposal_recommendation": 1
+      }
+    },
+    {
+      "total": 8,
+      "noise": 1,
+      "good": 7,
+      "noise_rate": 0.125,
+      "precision": 0.875,
+      "noise_reasons": {
+        "prescriptive_not_factual": 1
+      }
+    },
+    {
+      "total": 7,
+      "noise": 1,
+      "good": 6,
+      "noise_rate": 0.14285714285714285,
+      "precision": 0.8571428571428571,
+      "noise_reasons": {
+        "prescriptive_not_factual": 1
+      }
+    },
+    {
+      "total": 3,
+      "noise": 1,
+      "good": 2,
+      "noise_rate": 0.3333333333333333,
+      "precision": 0.6666666666666666,
+      "noise_reasons": {
+        "runtime_status": 1
+      }
+    },
+    {
+      "total": 5,
+      "noise": 0,
+      "good": 5,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 1,
+      "noise": 0,
+      "good": 1,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 6,
+      "noise": 2,
+      "good": 4,
+      "noise_rate": 0.3333333333333333,
+      "precision": 0.6666666666666666,
+      "noise_reasons": {
+        "implementation_narration_now": 1,
+        "prescriptive_not_factual": 1
+      }
+    },
+    {
+      "total": 9,
+      "noise": 0,
+      "good": 9,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 8,
+      "noise": 0,
+      "good": 8,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 7,
+      "noise": 1,
+      "good": 6,
+      "noise_rate": 0.14285714285714285,
+      "precision": 0.8571428571428571,
+      "noise_reasons": {
+        "runtime_status": 1
+      }
+    },
+    {
+      "total": 1,
+      "noise": 0,
+      "good": 1,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 9,
+      "noise": 1,
+      "good": 8,
+      "noise_rate": 0.1111111111111111,
+      "precision": 0.8888888888888888,
+      "noise_reasons": {
+        "prescriptive_not_factual": 1
+      }
+    },
+    {
+      "total": 12,
+      "noise": 4,
+      "good": 8,
+      "noise_rate": 0.3333333333333333,
+      "precision": 0.6666666666666666,
+      "noise_reasons": {
+        "plan_detail": 4
+      }
+    },
+    {
+      "total": 1,
+      "noise": 0,
+      "good": 1,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 10,
+      "noise": 1,
+      "good": 9,
+      "noise_rate": 0.1,
+      "precision": 0.9,
+      "noise_reasons": {
+        "implementation_narration": 1
+      }
+    },
+    {
+      "total": 4,
+      "noise": 0,
+      "good": 4,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 8,
+      "noise": 0,
+      "good": 8,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 5,
+      "noise": 0,
+      "good": 5,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 10,
+      "noise": 1,
+      "good": 9,
+      "noise_rate": 0.1,
+      "precision": 0.9,
+      "noise_reasons": {
+        "plan_detail": 1
+      }
+    }
+  ]
+}

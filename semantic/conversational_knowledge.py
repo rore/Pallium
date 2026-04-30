@@ -132,10 +132,13 @@ FACT_EXTRACTION_SYSTEM_PROMPT = (
     "- git state: commit hashes ('committed as abc1234'), push confirmations, branch status\n"
     "- one-off failures, monitoring chatter, and generic platform behavior instructions\n"
     "- assistant's own options, recommendations, or brainstorming (these are not facts about the user)\n"
-    "- plans, proposals, and task breakdowns discussed in the session: number of files/tasks/steps, "
-    "architectural suggestions that were not confirmed, recommended approaches not yet adopted\n"
+    "- proposals and recommendations: 'proposed X', 'recommended Y', 'suggestion is Z' — even when stated by the user, "
+    "a proposal is not a committed decision until confirmed AND implemented\n"
+    "- plans, task breakdowns, and improvement targets: number of files/tasks/steps, "
+    "percentage targets ('targets 28% of X'), priority lists, architectural suggestions not yet confirmed\n"
     "- implementation narration: what was built/fixed/deployed/committed, code files created or modified, "
-    "UI changes described, assets compressed or converted — unless it falls under the EXTRACT categories below\n"
+    "UI changes described, assets compressed or converted, "
+    "'X now does/shows/includes/loads Y' (describes a change outcome) — unless it falls under the EXTRACT categories below\n"
     "- asset details: file sizes, pixel dimensions, color values, path listings, directory structures\n"
     "- conversation progress: what was checked off, options considered, debugging steps taken\n"
     "\n"
@@ -153,8 +156,11 @@ FACT_EXTRACTION_SYSTEM_PROMPT = (
     "- {\"subject\": \"assistant\", \"statement\": \"assistant recommends option A\"} — not a user fact\n"
     "- {\"subject\": \"service plan\", \"statement\": \"plan creates 8 new files across two packages\"} — plan detail\n"
     "- {\"subject\": \"dashboard\", \"statement\": \"dashboard header modified to display clean blue text\"} — implementation narration\n"
+    "- {\"subject\": \"dashboard\", \"statement\": \"dashboard now includes a feedback metric card\"} — implementation narration ('now includes' describes a change)\n"
     "- {\"subject\": \"pallium_header.png\", \"statement\": \"pallium_header.png is 837KB in size\"} — asset detail\n"
     "- {\"subject\": \"Redis\", \"statement\": \"assistant recommends against Redis because SQLite is sufficient\"} — assistant recommendation, not a discovered constraint\n"
+    "- {\"subject\": \"turn summaries\", \"statement\": \"proposed improvement targets 28% of action-descriptions\"} — improvement plan with percentage target\n"
+    "- {\"subject\": \"[+source] flag\", \"statement\": \"proposed [+source] flag should be stored in memory envelope\"} — proposal, not a committed decision\n"
     "\n"
     "GOOD (extract these):\n"
     "- {\"subject\": \"claim_next_source_item\", \"statement\": \"claim_next_source_item has a race condition because it checks source_items status without awareness of the package table\"} — root cause\n"
@@ -522,22 +528,30 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
             index_entries=index_entries,
         )
 
+    _EXISTING_FACTS_CONTEXT_CAP = 40
+
     def _extract_facts(self, thread_text: str, *, existing_facts: list[dict] | None = None) -> list[dict[str, Any]]:
         """Call the LLM to extract facts from thread text.
 
         When existing_facts is provided, prepends them to the user prompt so
-        the LLM avoids re-extracting already-known facts.
+        the LLM avoids re-extracting already-known facts.  Only the most recent
+        _EXISTING_FACTS_CONTEXT_CAP facts are included to keep the prompt
+        focused and avoid pressuring the model into low-quality extraction.
         """
         user_prompt = thread_text
         if existing_facts:
+            capped = existing_facts[-self._EXISTING_FACTS_CONTEXT_CAP:]
             existing_lines = "\n".join(
                 f"- {f.get('subject', '')}: {f.get('statement', '')}"
-                for f in existing_facts
+                for f in capped
             )
             user_prompt = (
+                f"IMPORTANT: Only extract facts that are genuinely new and durable. "
+                f"If the conversation below contains no new extractable facts beyond what is already known, "
+                f"return {{\"facts\": []}}. Do NOT lower your quality bar to produce output.\n\n"
                 f"Previously extracted facts (do NOT re-extract these):\n"
                 f"{existing_lines}\n\n"
-                f"New conversation messages to extract facts from:\n"
+                f"New conversation messages:\n"
                 f"{thread_text}"
             )
 

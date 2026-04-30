@@ -1,0 +1,498 @@
+{
+  "variant": "baseline_reinforced",
+  "chunks_processed": 52,
+  "total_facts": 308,
+  "good_facts": 266,
+  "noise_facts": 42,
+  "noise_rate": 0.13636363636363635,
+  "precision": 0.8636363636363636,
+  "avg_facts_per_chunk": 5.923076923076923,
+  "noise_reasons": {
+    "runtime_status": 7,
+    "ui_layout_detail": 1,
+    "prescriptive_not_factual": 12,
+    "implementation_narration_now": 2,
+    "implementation_narration": 6,
+    "plan_detail": 1,
+    "plan_task_reference": 6,
+    "test_eval_result": 2,
+    "proposal_recommendation": 2,
+    "git_state": 2,
+    "improvement_plan": 1
+  },
+  "per_chunk": [
+    {
+      "total": 6,
+      "noise": 0,
+      "good": 6,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 11,
+      "noise": 2,
+      "good": 9,
+      "noise_rate": 0.18181818181818182,
+      "precision": 0.8181818181818182,
+      "noise_reasons": {
+        "runtime_status": 1,
+        "ui_layout_detail": 1
+      }
+    },
+    {
+      "total": 7,
+      "noise": 1,
+      "good": 6,
+      "noise_rate": 0.14285714285714285,
+      "precision": 0.8571428571428571,
+      "noise_reasons": {
+        "prescriptive_not_factual": 1
+      }
+    },
+    {
+      "total": 8,
+      "noise": 2,
+      "good": 6,
+      "noise_rate": 0.25,
+      "precision": 0.75,
+      "noise_reasons": {
+        "prescriptive_not_factual": 1,
+        "implementation_narration_now": 1
+      }
+    },
+    {
+      "total": 5,
+      "noise": 1,
+      "good": 4,
+      "noise_rate": 0.2,
+      "precision": 0.8,
+      "noise_reasons": {
+        "runtime_status": 1
+      }
+    },
+    {
+      "total": 3,
+      "noise": 0,
+      "good": 3,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 0,
+      "noise": 0,
+      "good": 0,
+      "noise_rate": 0.0,
+      "precision": 1.0
+    },
+    {
+      "total": 4,
+      "noise": 1,
+      "good": 3,
+      "noise_rate": 0.25,
+      "precision": 0.75,
+      "noise_reasons": {
+        "implementation_narration_now": 1
+      }
+    },
+    {
+      "total": 2,
+      "noise": 0,
+      "good": 2,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 4,
+      "noise": 0,
+      "good": 4,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 10,
+      "noise": 3,
+      "good": 7,
+      "noise_rate": 0.3,
+      "precision": 0.7,
+      "noise_reasons": {
+        "implementation_narration": 1,
+        "runtime_status": 2
+      }
+    },
+    {
+      "total": 2,
+      "noise": 0,
+      "good": 2,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 7,
+      "noise": 0,
+      "good": 7,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 1,
+      "noise": 0,
+      "good": 1,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 10,
+      "noise": 3,
+      "good": 7,
+      "noise_rate": 0.3,
+      "precision": 0.7,
+      "noise_reasons": {
+        "implementation_narration": 2,
+        "runtime_status": 1
+      }
+    },
+    {
+      "total": 4,
+      "noise": 0,
+      "good": 4,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 5,
+      "noise": 0,
+      "good": 5,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 5,
+      "noise": 0,
+      "good": 5,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 9,
+      "noise": 1,
+      "good": 8,
+      "noise_rate": 0.1111111111111111,
+      "precision": 0.8888888888888888,
+      "noise_reasons": {
+        "plan_detail": 1
+      }
+    },
+    {
+      "total": 10,
+      "noise": 1,
+      "good": 9,
+      "noise_rate": 0.1,
+      "precision": 0.9,
+      "noise_reasons": {
+        "plan_task_reference": 1
+      }
+    },
+    {
+      "total": 10,
+      "noise": 0,
+      "good": 10,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 10,
+      "noise": 4,
+      "good": 6,
+      "noise_rate": 0.4,
+      "precision": 0.6,
+      "noise_reasons": {
+        "test_eval_result": 1,
+        "plan_task_reference": 3
+      }
+    },
+    {
+      "total": 2,
+      "noise": 0,
+      "good": 2,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 4,
+      "noise": 2,
+      "good": 2,
+      "noise_rate": 0.5,
+      "precision": 0.5,
+      "noise_reasons": {
+        "runtime_status": 1,
+        "plan_task_reference": 1
+      }
+    },
+    {
+      "total": 7,
+      "noise": 2,
+      "good": 5,
+      "noise_rate": 0.2857142857142857,
+      "precision": 0.7142857142857143,
+      "noise_reasons": {
+        "prescriptive_not_factual": 1,
+        "plan_task_reference": 1
+      }
+    },
+    {
+      "total": 8,
+      "noise": 1,
+      "good": 7,
+      "noise_rate": 0.125,
+      "precision": 0.875,
+      "noise_reasons": {
+        "test_eval_result": 1
+      }
+    },
+    {
+      "total": 5,
+      "noise": 0,
+      "good": 5,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 9,
+      "noise": 0,
+      "good": 9,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 14,
+      "noise": 0,
+      "good": 14,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 3,
+      "noise": 0,
+      "good": 3,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 4,
+      "noise": 1,
+      "good": 3,
+      "noise_rate": 0.25,
+      "precision": 0.75,
+      "noise_reasons": {
+        "implementation_narration": 1
+      }
+    },
+    {
+      "total": 4,
+      "noise": 0,
+      "good": 4,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 6,
+      "noise": 1,
+      "good": 5,
+      "noise_rate": 0.16666666666666666,
+      "precision": 0.8333333333333334,
+      "noise_reasons": {
+        "prescriptive_not_factual": 1
+      }
+    },
+    {
+      "total": 6,
+      "noise": 1,
+      "good": 5,
+      "noise_rate": 0.16666666666666666,
+      "precision": 0.8333333333333334,
+      "noise_reasons": {
+        "implementation_narration": 1
+      }
+    },
+    {
+      "total": 3,
+      "noise": 0,
+      "good": 3,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 7,
+      "noise": 0,
+      "good": 7,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 7,
+      "noise": 0,
+      "good": 7,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 7,
+      "noise": 1,
+      "good": 6,
+      "noise_rate": 0.14285714285714285,
+      "precision": 0.8571428571428571,
+      "noise_reasons": {
+        "runtime_status": 1
+      }
+    },
+    {
+      "total": 5,
+      "noise": 1,
+      "good": 4,
+      "noise_rate": 0.2,
+      "precision": 0.8,
+      "noise_reasons": {
+        "prescriptive_not_factual": 1
+      }
+    },
+    {
+      "total": 8,
+      "noise": 0,
+      "good": 8,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 6,
+      "noise": 0,
+      "good": 6,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 9,
+      "noise": 1,
+      "good": 8,
+      "noise_rate": 0.1111111111111111,
+      "precision": 0.8888888888888888,
+      "noise_reasons": {
+        "proposal_recommendation": 1
+      }
+    },
+    {
+      "total": 6,
+      "noise": 2,
+      "good": 4,
+      "noise_rate": 0.3333333333333333,
+      "precision": 0.6666666666666666,
+      "noise_reasons": {
+        "implementation_narration": 1,
+        "git_state": 1
+      }
+    },
+    {
+      "total": 5,
+      "noise": 1,
+      "good": 4,
+      "noise_rate": 0.2,
+      "precision": 0.8,
+      "noise_reasons": {
+        "git_state": 1
+      }
+    },
+    {
+      "total": 3,
+      "noise": 0,
+      "good": 3,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 5,
+      "noise": 4,
+      "good": 1,
+      "noise_rate": 0.8,
+      "precision": 0.2,
+      "noise_reasons": {
+        "prescriptive_not_factual": 4
+      }
+    },
+    {
+      "total": 3,
+      "noise": 0,
+      "good": 3,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 1,
+      "noise": 0,
+      "good": 1,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 4,
+      "noise": 0,
+      "good": 4,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    },
+    {
+      "total": 9,
+      "noise": 2,
+      "good": 7,
+      "noise_rate": 0.2222222222222222,
+      "precision": 0.7777777777777778,
+      "noise_reasons": {
+        "improvement_plan": 1,
+        "prescriptive_not_factual": 1
+      }
+    },
+    {
+      "total": 12,
+      "noise": 3,
+      "good": 9,
+      "noise_rate": 0.25,
+      "precision": 0.75,
+      "noise_reasons": {
+        "proposal_recommendation": 1,
+        "prescriptive_not_factual": 2
+      }
+    },
+    {
+      "total": 3,
+      "noise": 0,
+      "good": 3,
+      "noise_rate": 0.0,
+      "precision": 1.0,
+      "noise_reasons": {}
+    }
+  ]
+}
