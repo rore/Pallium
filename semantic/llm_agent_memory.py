@@ -490,7 +490,12 @@ def resolve_prompt_variant_for_role(
 
 
 def _normalize_extraction(payload: dict[str, Any], *, source_id: str | None = None) -> SemanticExtraction:
-    summary = _normalize_required_string(payload.get("summary"), field_name="summary")
+    is_low_value_meta = _normalize_optional_bool(payload.get("is_low_value_meta"), field_name="is_low_value_meta")
+    raw_summary = payload.get("summary")
+    if is_low_value_meta and (raw_summary is None or not isinstance(raw_summary, str) or not raw_summary.strip()):
+        summary = ""
+    else:
+        summary = _normalize_required_string(raw_summary, field_name="summary")
     candidate_type = _normalize_optional_string(payload.get("candidate_type"), field_name="candidate_type")
     decision_text = _normalize_optional_string(payload.get("decision_text"), field_name="decision_text")
     decision_evidence_text = _normalize_optional_string(payload.get("decision_evidence_text"), field_name="decision_evidence_text")
@@ -498,7 +503,6 @@ def _normalize_extraction(payload: dict[str, Any], *, source_id: str | None = No
     investigation_evidence_text = _normalize_optional_string(payload.get("investigation_evidence_text"), field_name="investigation_evidence_text")
     rationale_text = _normalize_optional_string(payload.get("rationale_text"), field_name="rationale_text")
     interest_text = _normalize_optional_string(payload.get("interest_text"), field_name="interest_text")
-    is_low_value_meta = _normalize_optional_bool(payload.get("is_low_value_meta"), field_name="is_low_value_meta")
     constraint_text = _normalize_optional_string(payload.get("constraint_text"), field_name="constraint_text")
     next_step_text = _normalize_optional_string(payload.get("next_step_text"), field_name="next_step_text")
     blocker_text = _normalize_optional_string(payload.get("blocker_text"), field_name="blocker_text")

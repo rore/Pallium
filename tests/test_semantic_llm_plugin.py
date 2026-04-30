@@ -304,7 +304,7 @@ def test_grounded_investigation_evidence_cyrillic_rejects_translation() -> None:
 
 from providers.llm.base import LLMCallMetadata, LLMJsonResponse, LLMProviderError
 from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY
-from semantic.llm_agent_memory import DEFAULT_PROMPT_VARIANT, LLMAgentMemoryPlugin, build_analysis_request
+from semantic.llm_agent_memory import DEFAULT_PROMPT_VARIANT, LLMAgentMemoryPlugin, build_analysis_request, _normalize_extraction
 from semantic.prompt_roles import get_prompt_role_contract
 
 
@@ -543,6 +543,37 @@ def test_llm_plugin_flags_low_value_meta_without_promoting_typed_memory() -> Non
     assert result.memory_objects == []
     assert result.thread_rebuild_requested is False
     assert result.source_item_metadata_updates[source_item.id][SEMANTIC_SIGNAL_METADATA_KEY]["is_low_value_meta"] is True
+
+
+def test_normalize_extraction_accepts_null_summary_when_low_value_meta() -> None:
+    extraction = _normalize_extraction({
+        "summary": None,
+        "is_low_value_meta": True,
+        "candidate_type": None,
+        "decision_text": None,
+        "decision_evidence_text": None,
+        "investigation_text": None,
+        "investigation_evidence_text": None,
+        "rationale_text": None,
+        "interest_text": None,
+        "constraint_text": None,
+        "next_step_text": None,
+        "blocker_text": None,
+        "progress_text": None,
+        "key_finding_text": None,
+    })
+    assert extraction.summary == ""
+    assert extraction.is_low_value_meta is True
+
+
+def test_normalize_extraction_rejects_null_summary_when_not_low_value_meta() -> None:
+    import pytest
+    with pytest.raises(ValueError, match="summary must be a string"):
+        _normalize_extraction({
+            "summary": None,
+            "is_low_value_meta": False,
+            "candidate_type": None,
+        })
 
 
 def test_llm_plugin_promotes_investigation_outcome_from_valid_extraction() -> None:
