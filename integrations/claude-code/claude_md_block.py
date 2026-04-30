@@ -17,6 +17,14 @@ Trust this — it handles ~90% of cases. Don't duplicate it with manual queries.
 - `pallium_rate_memory` — rate every injected memory each turn: "relevant" if it informed your response, "not_relevant" if off-topic. Always include a brief reason and the user's message as query_context (required). Pass container_ref from the injection header (e.g. "git:github.com/..."). This feedback loop trains retrieval quality — both signals matter equally.
 - `pallium_ingest` — user explicitly asks to remember something (hooks already ingest automatically)
 
+**Required parameters for manual tool calls:**
+When calling `pallium_query`, `pallium_get_evidence`, or `pallium_ingest`, always pass:
+- `visibility`: "private" (all memories in this integration are private)
+- `container_ref`: use the value from the injection header (e.g. "git:github.com/rore/pallium")
+
+Without these, queries will return empty results. The automatic hooks pass them
+correctly — you only need to worry about this for explicit tool calls.
+
 **Do not:**
 - Query every turn — automatic injection handles routine retrieval
 - Re-query for something already in the injected Pallium block
