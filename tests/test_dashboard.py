@@ -243,3 +243,36 @@ class TestDashboardActivityEndpoint:
         assert body["items"][0]["event"] == "memory_created"
         assert "type" in body["items"][0]
         assert "display_text" in body["items"][0]
+
+
+class TestDashboardFlagsEndpoint:
+
+    def test_returns_flags_for_memory(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            mo = _seed_memory(app, type="decision")
+            storage = app.state.pallium_service._storage
+            with storage._session_factory() as session:
+                session.add(MemoryFlagRecord(
+                    id="flag-test-1",
+                    memory_object_id=mo.id,
+                    reason="incorrect decision",
+                    source_ref="test-agent",
+                    flagged_at=datetime(2026, 4, 28, 10, 0, 0, tzinfo=timezone.utc),
+                ))
+                session.commit()
+            resp = client.get(f"/dashboard/api/memories/{mo.id}/flags")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["items"]) == 1
+        assert body["items"][0]["reason"] == "incorrect decision"
+        assert body["items"][0]["source_ref"] == "test-agent"
+        assert body["items"][0]["flagged_at"] is not None
+
+    def test_returns_empty_when_no_flags(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            mo = _seed_memory(app, type="decision")
+            resp = client.get(f"/dashboard/api/memories/{mo.id}/flags")
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []

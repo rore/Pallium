@@ -248,6 +248,34 @@ def mount_dashboard(app: FastAPI) -> None:
 
         return JSONResponse(content={"items": items})
 
+    @app.get("/dashboard/api/memories/{memory_object_id}/flags")
+    def dashboard_memory_flags(memory_object_id: str) -> JSONResponse:
+        service = app.state.pallium_service
+        storage = service._storage
+        if not isinstance(storage, SQLiteStorageProvider):
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+
+        with storage._session_factory() as session:
+            rows = session.scalars(
+                select(MemoryFlagRecord)
+                .where(MemoryFlagRecord.memory_object_id == memory_object_id)
+                .order_by(MemoryFlagRecord.flagged_at.desc())
+            ).all()
+
+        items = []
+        for r in rows:
+            flagged_at = r.flagged_at
+            if flagged_at and flagged_at.tzinfo is None:
+                flagged_at = flagged_at.replace(tzinfo=timezone.utc)
+            items.append({
+                "id": r.id,
+                "reason": r.reason,
+                "source_ref": r.source_ref,
+                "flagged_at": flagged_at.isoformat() if flagged_at else None,
+            })
+
+        return JSONResponse(content={"items": items})
+
     @app.get("/dashboard/api/feedback/stats")
     def dashboard_feedback_stats() -> JSONResponse:
         service = app.state.pallium_service
