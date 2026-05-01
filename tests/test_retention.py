@@ -445,3 +445,186 @@ def test_purge_suppressed_empty(test_db_url: str) -> None:
     storage = SQLiteStorageProvider(test_db_url)
     stats = storage.purge_suppressed()
     assert stats.deleted_memory_objects == 0
+
+
+def test_purge_suppressed_comprehensive_cascade_and_preservation(test_db_url: str) -> None:
+    """Verify purge removes ALL artifacts of suppressed objects, preserves everything else."""
+    from core.models import MemoryFlag
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 3, 15, tzinfo=UTC)
+
+    shared_source = _make_source(storage, source_id="shared-src", occurred_at=now)
+    suppressed_only_source = _make_source(storage, source_id="suppressed-only-src", occurred_at=now)
+
+    active_mem = _make_memory(
+        storage, memory_type="decision", created_at=now, source_items=[shared_source]
+    )
+    suppressed_mem_1 = _make_memory(
+        storage, memory_type="atomic_fact", created_at=now,
+        source_items=[shared_source], lifecycle="suppressed",
+    )
+    suppressed_mem_2 = _make_memory(
+        storage, memory_type="fact_summary", created_at=now,
+        source_items=[suppressed_only_source], lifecycle="suppressed",
+    )
+
+    storage.create_index_entry(
+        IndexEntry(
+            target_kind="memory_object",
+            target_id=suppressed_mem_1.id,
+            index_type="vector",
+            text_view="vector content suppressed 1",
+            text_view_name="embedding",
+        )
+    )
+    storage.create_index_entry(
+        IndexEntry(
+            target_kind="memory_object",
+            target_id=active_mem.id,
+            index_type="vector",
+            text_view="vector content active",
+            text_view_name="embedding",
+        )
+    )
+
+    storage.store_memory_flag(MemoryFlag(
+        memory_object_id=suppressed_mem_1.id,
+        reason="noisy fact", source_ref="test-agent",
+    ))
+    storage.store_memory_flag(MemoryFlag(
+        memory_object_id=active_mem.id,
+        reason="should survive", source_ref="test-agent",
+    ))
+
+    active_indexes_before = storage.list_index_entries_for_target("memory_object", active_mem.id)
+    active_relations_before = len([
+        r for r in storage.list_relations_for_source_item(shared_source.id)
+        if r.from_id == active_mem.id
+    ])
+
+    with storage._engine.connect() as conn:
+        fts_count_before = conn.execute(text("SELECT COUNT(*) FROM lexical_fts")).scalar()
+
+    stats = storage.purge_suppressed()
+
+    assert stats.deleted_memory_objects == 2
+    assert stats.deleted_relations >= 2
+    assert stats.deleted_index_entries >= 3
+
+    with pytest.raises(KeyError):
+        storage.get_memory_object(suppressed_mem_1.id)
+    with pytest.raises(KeyError):
+        storage.get_memory_object(suppressed_mem_2.id)
+
+    assert storage.get_memory_object(active_mem.id) is not None
+
+    assert storage.get_source_item(shared_source.id) is not None
+    assert storage.get_source_item(suppressed_only_source.id) is not None
+
+    assert storage.list_index_entries_for_target("memory_object", suppressed_mem_1.id) == []
+    assert storage.list_index_entries_for_target("memory_object", suppressed_mem_2.id) == []
+
+    active_indexes_after = storage.list_index_entries_for_target("memory_object", active_mem.id)
+    assert len(active_indexes_after) == len(active_indexes_before)
+    assert {e.id for e in active_indexes_after} == {e.id for e in active_indexes_before}
+
+    active_relations_after = [
+        r for r in storage.list_relations_for_source_item(shared_source.id)
+        if r.from_id == active_mem.id
+    ]
+    assert len(active_relations_after) == active_relations_before
+
+    with storage._engine.connect() as conn:
+        fts_count_after = conn.execute(text("SELECT COUNT(*) FROM lexical_fts")).scalar()
+        assert fts_count_after < fts_count_before
+        for mem_id in (suppressed_mem_1.id, suppressed_mem_2.id):
+            orphan_fts = conn.execute(
+                text("SELECT COUNT(*) FROM lexical_fts WHERE target_id = :tid"),
+                {"tid": mem_id},
+            ).scalar()
+            assert orphan_fts == 0, f"FTS5 orphan rows remain for {mem_id}"
+
+    assert storage.count_total_flags(suppressed_mem_1.id) == 0
+    assert storage.count_total_flags(active_mem.id) == 1
+
+
+def test_purge_suppressed_batches_correctly(test_db_url: str) -> None:
+    """Verify purge handles >50 items (multiple batches) without losing any."""
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 3, 15, tzinfo=UTC)
+    source = _make_source(storage, source_id="batch-src", occurred_at=now)
+
+    suppressed_ids = []
+    for i in range(75):
+        mem = _make_memory(
+            storage, memory_type="atomic_fact", created_at=now + timedelta(seconds=i),
+            source_items=[source], lifecycle="suppressed",
+        )
+        suppressed_ids.append(mem.id)
+
+    active = _make_memory(storage, memory_type="decision", created_at=now, source_items=[source])
+
+    stats = storage.purge_suppressed()
+
+    assert stats.deleted_memory_objects == 75
+    for mem_id in suppressed_ids:
+        with pytest.raises(KeyError):
+            storage.get_memory_object(mem_id)
+    assert storage.get_memory_object(active.id) is not None
+    assert storage.get_source_item(source.id) is not None
+
+
+def test_purge_suppressed_lexical_search_intact_for_active(test_db_url: str) -> None:
+    """After purge, lexical search still returns active memory hits — retrieval path unbroken."""
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 3, 15, tzinfo=UTC)
+    source = _make_source(storage, source_id="search-src", occurred_at=now)
+
+    active = _make_memory(storage, memory_type="decision", created_at=now, source_items=[source])
+    storage.create_index_entry(
+        IndexEntry(
+            target_kind="memory_object",
+            target_id=active.id,
+            index_type="lexical",
+            text_view="important architecture decision about caching",
+            text_view_name="memory_object.summary",
+        )
+    )
+    suppressed = _make_memory(
+        storage, memory_type="atomic_fact", created_at=now,
+        source_items=[source], lifecycle="suppressed",
+    )
+    storage.create_index_entry(
+        IndexEntry(
+            target_kind="memory_object",
+            target_id=suppressed.id,
+            index_type="lexical",
+            text_view="noisy fact about caching layer implementation",
+            text_view_name="memory_object.summary",
+        )
+    )
+
+    from core.text import tokenize_text
+    tokens = tokenize_text("caching")
+
+    with storage._engine.connect() as conn:
+        fts_rows_before = conn.execute(
+            text("SELECT target_id FROM lexical_fts WHERE lexical_fts MATCH '\"caching\"'")
+        ).fetchall()
+    fts_target_ids_before = {row[0] for row in fts_rows_before}
+    assert active.id in fts_target_ids_before
+    assert suppressed.id in fts_target_ids_before
+
+    storage.purge_suppressed()
+
+    results_after = storage.search_index_entries(tokens, limit=10)
+    hit_ids_after = {hit.target_id for hit in results_after.hits}
+    assert active.id in hit_ids_after
+
+    with storage._engine.connect() as conn:
+        fts_rows_after = conn.execute(
+            text("SELECT target_id FROM lexical_fts WHERE lexical_fts MATCH '\"caching\"'")
+        ).fetchall()
+    fts_target_ids_after = {row[0] for row in fts_rows_after}
+    assert active.id in fts_target_ids_after
+    assert suppressed.id not in fts_target_ids_after
