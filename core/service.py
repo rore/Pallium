@@ -163,8 +163,27 @@ class PalliumService:
             processing_status=processing_status,
             processing_error=processing_error,
         )
+        # Multi-package tracking: determine packages before creating the item.
+        active_packages = [plugin_name]
+        for pkg_name, pkg_plugin in self._semantic_plugins.items():
+            if pkg_name == plugin_name:
+                continue
+            if pkg_plugin.parallel_processing:
+                active_packages.append(pkg_name)
+        skip_packages: list[str] = []
+        for pkg_name in active_packages:
+            pkg_plugin = self._semantic_plugins.get(pkg_name)
+            if pkg_plugin and pkg_plugin.requires_visibility_context and (container_ref is None or visibility is None):
+                skip_packages.append(pkg_name)
+
+        # Atomic creation: source item + PPS rows in one transaction to prevent
+        # the processor from claiming via the legacy path before PPS rows exist.
         try:
-            self._storage.create_source_item(source_item)
+            self._storage.create_source_item_with_packages(
+                source_item,
+                active_packages,
+                skip_packages=skip_packages,
+            )
         except IntegrityError:
             existing = self._storage.find_source_item(source_type=source_type, source_id=source_id)
             if existing is not None:
@@ -178,26 +197,6 @@ class PalliumService:
                 text_view=_normalize_for_index(source_item.content),
                 text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW,
             )
-        )
-
-        # Multi-package tracking: create per-package processing records.
-        # Start with the item's assigned package, then add any packages that
-        # opt into parallel processing (e.g., fact extraction).
-        active_packages = [plugin_name]
-        for pkg_name, pkg_plugin in self._semantic_plugins.items():
-            if pkg_name == plugin_name:
-                continue
-            if pkg_plugin.parallel_processing:
-                active_packages.append(pkg_name)
-        skip_packages: list[str] = []
-        for pkg_name in active_packages:
-            pkg_plugin = self._semantic_plugins.get(pkg_name)
-            if pkg_plugin and pkg_plugin.requires_visibility_context and (container_ref is None or visibility is None):
-                skip_packages.append(pkg_name)
-        self._storage.create_package_processing_records(
-            source_item.id,
-            active_packages,
-            skip_packages=skip_packages,
         )
 
         return self._build_ingest_result(self._storage.get_source_item(source_item.id))

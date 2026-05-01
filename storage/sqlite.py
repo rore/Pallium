@@ -22,6 +22,7 @@ from storage.sqlite_schema import (
     MemoryFeedbackRecord,
     MemoryFlagRecord,
     MemoryObjectRecord,
+    PackageProcessingStatusRecord,
     QueryAuditLogRecord,
     RelationRecord,
     SQLiteSchemaMixin,
@@ -131,6 +132,70 @@ class SQLiteStorageProvider(
                 record.thread_position = 1
             session.add(record)
             session.flush()
+
+    def create_source_item_with_packages(
+        self,
+        source_item: SourceItem,
+        package_names: list[str],
+        *,
+        skip_packages: list[str] | None = None,
+    ) -> None:
+        skip_set = set(skip_packages or [])
+        now = utc_now()
+        record = SourceItemRecord(
+            id=source_item.id,
+            source_type=source_item.source_type,
+            source_id=source_item.source_id,
+            content_type=source_item.content_type,
+            content=source_item.content,
+            metadata_json=self._dumps(source_item.metadata),
+            occurred_at=source_item.occurred_at,
+            actor_ref=source_item.actor_ref,
+            agent_ref=source_item.agent_ref,
+            role=source_item.role,
+            container_ref=source_item.container_ref,
+            thread_ref=source_item.thread_ref,
+            source_ref=source_item.source_ref,
+            artifact_kind=source_item.artifact_kind,
+            visibility=source_item.visibility,
+            use_case=source_item.use_case,
+            processing_status=source_item.processing_status,
+            processing_attempts=source_item.processing_attempts,
+            processing_claimed_by=source_item.processing_claimed_by,
+            processing_claimed_at=source_item.processing_claimed_at,
+            processing_lease_expires_at=source_item.processing_lease_expires_at,
+            processing_completed_at=source_item.processing_completed_at,
+            processing_error=source_item.processing_error,
+            processing_next_attempt_at=source_item.processing_next_attempt_at,
+            created_at=source_item.created_at,
+        )
+        with self._begin_immediate() as session:
+            if source_item.thread_ref is not None and source_item.container_ref is not None:
+                count = session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM source_items "
+                        "WHERE container_ref = :container_ref AND thread_ref = :thread_ref"
+                    ),
+                    {"container_ref": source_item.container_ref, "thread_ref": source_item.thread_ref},
+                ).scalar()
+                record.thread_position = count + 1
+            else:
+                record.thread_position = 1
+            session.add(record)
+            session.flush()
+            source_item_created_at = self._normalize_datetime(record.created_at) or record.created_at
+            for pkg in package_names:
+                status = "skipped" if pkg in skip_set else "pending"
+                session.add(
+                    PackageProcessingStatusRecord(
+                        source_item_id=source_item.id,
+                        package_name=pkg,
+                        status=status,
+                        attempts=0,
+                        source_item_created_at=source_item_created_at,
+                        created_at=now,
+                    )
+                )
 
     def get_source_item(self, source_item_id: str) -> SourceItem:
         with self._session_factory() as session:

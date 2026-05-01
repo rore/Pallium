@@ -182,6 +182,21 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def create_source_item_with_packages(
+        self,
+        source_item: SourceItem,
+        package_names: list[str],
+        *,
+        skip_packages: list[str] | None = None,
+    ) -> None:
+        """Atomically create source item and its package processing records.
+
+        Prevents race where a processor claims the item via the legacy path
+        before PPS rows exist.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def get_source_item(self, source_item_id: str) -> SourceItem:
         raise NotImplementedError
 

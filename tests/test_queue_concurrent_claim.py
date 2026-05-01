@@ -551,3 +551,71 @@ def test_rapid_sequential_claims_exhaust_queue(storage):
 
     assert claimed_ids == item_ids, "All items should be claimed exactly once"
 
+
+# ── Atomic ingest prevents legacy-path race ────────────────────────────
+
+
+def test_atomic_ingest_prevents_legacy_claim_during_pps_gap(storage):
+    """Item created with create_source_item_with_packages cannot be claimed by legacy path.
+
+    Reproduces the race where a processor polls between create_source_item and
+    create_package_processing_records — with atomic ingest, PPS rows exist from
+    the start, so the NOT EXISTS guard in claim_next_source_item blocks it.
+    """
+    item = build_source_item(
+        source_type="test",
+        source_id="atomic-race-1",
+        content_type="text/plain",
+        content="Atomic ingest test item",
+        metadata=None,
+        use_case="demo",
+        processing_status="pending",
+    )
+    storage.create_source_item_with_packages(item, ["pkg_a", "pkg_b"])
+
+    # Legacy path must NOT find this item (PPS rows exist in pending state)
+    legacy_claim = storage.claim_next_source_item(
+        worker_id="legacy-worker",
+        lease_seconds=60,
+        max_attempts=3,
+    )
+    assert legacy_claim is None, "Legacy path must not claim items with pending PPS rows"
+
+    # PPS path should find it
+    pps_claim = storage.claim_next_package_task(
+        worker_id="pps-worker",
+        lease_seconds=60,
+        max_attempts=3,
+    )
+    assert pps_claim is not None
+    assert pps_claim[0].id == item.id
+    assert pps_claim[1] in ("pkg_a", "pkg_b")
+
+
+def test_atomic_ingest_integrity_error_on_duplicate(storage):
+    """Duplicate source_id raises IntegrityError even with atomic ingest."""
+    from sqlalchemy.exc import IntegrityError as SAIntegrityError
+
+    item = build_source_item(
+        source_type="test",
+        source_id="dupe-atomic-1",
+        content_type="text/plain",
+        content="First ingest",
+        metadata=None,
+        use_case="demo",
+        processing_status="pending",
+    )
+    storage.create_source_item_with_packages(item, ["pkg_a"])
+
+    item2 = build_source_item(
+        source_type="test",
+        source_id="dupe-atomic-1",
+        content_type="text/plain",
+        content="Duplicate ingest",
+        metadata=None,
+        use_case="demo",
+        processing_status="pending",
+    )
+    with pytest.raises(SAIntegrityError):
+        storage.create_source_item_with_packages(item2, ["pkg_a"])
+
