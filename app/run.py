@@ -19,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "mode",
         nargs="?",
-        choices=("all", "serve", "mcp", "processor", "cleaner", "snapshot", "rebuild-vector-index", "download-embedding-model", "setup", "service"),
+        choices=("all", "serve", "mcp", "processor", "cleaner", "snapshot", "rebuild-vector-index", "download-embedding-model", "purge-suppressed", "setup", "service"),
         default="all",
     )
     parser.add_argument("--host", default="127.0.0.1")
@@ -100,6 +100,8 @@ def run(args: list[str] | None = None) -> int:
         return run_snapshot()
     if parsed.mode == "rebuild-vector-index":
         return _run_rebuild_vector_index()
+    if parsed.mode == "purge-suppressed":
+        return _run_purge_suppressed()
     if parsed.mode == "download-embedding-model":
         return _run_download_embedding_model()
     if parsed.mode == "setup":
@@ -175,6 +177,26 @@ def _run_rebuild_vector_index() -> int:
 
     vector_index.save()
     logger.info("Vector index rebuilt successfully at %s with %d entries.", index_path, vector_index.entry_count())
+    return 0
+
+
+def _run_purge_suppressed() -> int:
+    """Permanently delete all suppressed memory objects with cascade."""
+    from app.config import AppConfig
+    from app.dependencies import build_storage_provider
+
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+
+    config = AppConfig.from_env()
+    storage = build_storage_provider(config)
+    stats = storage.purge_suppressed()
+
+    logger.info(
+        "Purge complete: %d memory objects, %d relations, %d index entries deleted.",
+        stats.deleted_memory_objects,
+        stats.deleted_relations,
+        stats.deleted_index_entries,
+    )
     return 0
 
 

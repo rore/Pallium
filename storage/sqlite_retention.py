@@ -215,6 +215,25 @@ class SQLiteRetentionMixin:
 
         return stats
 
+    def purge_suppressed(self) -> RetentionRunStats:
+        """Delete all suppressed memory objects in batches of 50 per transaction."""
+        stats = RetentionRunStats()
+        while True:
+            with self._session_factory.begin() as session:
+                records = session.scalars(
+                    select(MemoryObjectRecord)
+                    .where(MemoryObjectRecord.lifecycle == "suppressed")
+                    .order_by(MemoryObjectRecord.created_at.asc(), MemoryObjectRecord.id.asc())
+                    .limit(50)
+                ).all()
+                if not records:
+                    break
+                for record in records:
+                    stats = self._merge_retention_stats(
+                        stats, self._delete_memory_object_cascade_in_session(session, record.id)
+                    )
+        return stats
+
     def _run_superseded_memory_retention_chunk(
         self,
         *,

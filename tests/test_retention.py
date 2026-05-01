@@ -415,3 +415,33 @@ def test_service_surfaces_retention_lease_loss_without_reporting_completion(test
     ]
     assert observability.events[-1]["failure_reason"] == "lease_lost"
     assert observability.events[-1]["lease_release_succeeded"] is False
+
+
+def test_purge_suppressed_deletes_only_suppressed(test_db_url: str) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 3, 15, tzinfo=UTC)
+    source = _make_source(storage, source_id="src-purge", occurred_at=now)
+
+    active = _make_memory(storage, memory_type="decision", created_at=now, source_items=[source])
+    superseded = _make_memory(
+        storage, memory_type="decision", created_at=now, source_items=[source], lifecycle="superseded"
+    )
+    suppressed = _make_memory(
+        storage, memory_type="atomic_fact", created_at=now, source_items=[source], lifecycle="suppressed"
+    )
+
+    stats = storage.purge_suppressed()
+
+    assert stats.deleted_memory_objects == 1
+    assert stats.deleted_relations >= 1
+    assert stats.deleted_index_entries >= 1
+    assert storage.get_memory_object(active.id) is not None
+    assert storage.get_memory_object(superseded.id) is not None
+    with pytest.raises(KeyError):
+        storage.get_memory_object(suppressed.id)
+
+
+def test_purge_suppressed_empty(test_db_url: str) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+    stats = storage.purge_suppressed()
+    assert stats.deleted_memory_objects == 0
