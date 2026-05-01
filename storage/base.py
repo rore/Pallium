@@ -163,6 +163,7 @@ class RetentionHealthSnapshot:
 @dataclass(frozen=True)
 class QueueHealthSnapshot:
     status_counts: dict[str, int]
+    status_counts_24h: dict[str, int]
     oldest_pending_age_seconds: int | None
     pending_without_use_case_count: int
     unclaimable_pending_counts: tuple[QueueHealthReasonCount, ...]

@@ -566,11 +566,23 @@ def test_normalize_extraction_accepts_null_summary_when_low_value_meta() -> None
     assert extraction.is_low_value_meta is True
 
 
-def test_normalize_extraction_rejects_null_summary_when_not_low_value_meta() -> None:
+def test_normalize_extraction_defaults_null_summary_to_empty_when_not_low_value_meta() -> None:
+    """Null summary with is_low_value_meta=false should default to empty string, not raise."""
+    extraction = _normalize_extraction({
+        "summary": None,
+        "is_low_value_meta": False,
+        "candidate_type": None,
+    })
+    assert extraction.summary == ""
+    assert extraction.is_low_value_meta is False
+
+
+def test_normalize_extraction_rejects_non_string_summary() -> None:
+    """Non-null non-string summary (e.g. integer) should still raise ValueError."""
     import pytest
     with pytest.raises(ValueError, match="summary must be a string"):
         _normalize_extraction({
-            "summary": None,
+            "summary": 123,
             "is_low_value_meta": False,
             "candidate_type": None,
         })

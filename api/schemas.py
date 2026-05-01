@@ -361,6 +361,7 @@ class RetentionHealthResponse(BaseModel):
 
 class QueueHealthResponse(BaseModel):
     status_counts: dict[str, int]
+    status_counts_24h: dict[str, int] = Field(default_factory=dict)
     oldest_pending_age_seconds: int | None = None
     pending_without_use_case_count: int
     unclaimable_pending_counts: list[QueueHealthReasonCountResponse] = Field(default_factory=list)

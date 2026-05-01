@@ -492,10 +492,15 @@ def resolve_prompt_variant_for_role(
 def _normalize_extraction(payload: dict[str, Any], *, source_id: str | None = None) -> SemanticExtraction:
     is_low_value_meta = _normalize_optional_bool(payload.get("is_low_value_meta"), field_name="is_low_value_meta")
     raw_summary = payload.get("summary")
-    if is_low_value_meta and (raw_summary is None or not isinstance(raw_summary, str) or not raw_summary.strip()):
+    if raw_summary is None or (isinstance(raw_summary, str) and not raw_summary.strip()):
+        # Tolerate null/empty summary — LLM sometimes omits it even when is_low_value_meta is false.
+        # Empty summary won't cause downstream issues; turn_summary creation handles it.
         summary = ""
+    elif not isinstance(raw_summary, str):
+        # Non-null non-string (e.g. integer, list) indicates a malformed LLM response — fail explicitly.
+        raise ValueError("summary must be a string")
     else:
-        summary = _normalize_required_string(raw_summary, field_name="summary")
+        summary = raw_summary.strip()
     candidate_type = _normalize_optional_string(payload.get("candidate_type"), field_name="candidate_type")
     decision_text = _normalize_optional_string(payload.get("decision_text"), field_name="decision_text")
     decision_evidence_text = _normalize_optional_string(payload.get("decision_evidence_text"), field_name="decision_evidence_text")

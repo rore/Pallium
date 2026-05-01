@@ -143,9 +143,16 @@
   .skip-table tbody tr:hover { background: rgba(255,255,255,0.03); }
 
   /* ── Queue panel ─────────────────────────────── */
-  .queue-grid {
-    display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px;
+  .queue-grid-v2 {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;
     margin-bottom: 12px;
+  }
+  .queue-section-header {
+    font-size: 10px; text-transform: uppercase; color: var(--muted);
+    letter-spacing: 0.5px; margin-bottom: 6px; font-weight: 600;
+  }
+  .queue-section-items {
+    display: flex; gap: 16px;
   }
   .retention-info { font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 8px; }
   .retention-info span { color: var(--text); }
@@ -357,7 +364,7 @@
   @media (max-width: 900px) {
     .metrics-row { grid-template-columns: repeat(2, 1fr); }
     .two-col     { grid-template-columns: 1fr; }
-    .queue-grid  { grid-template-columns: repeat(3, 1fr); }
+    .queue-grid-v2 { grid-template-columns: 1fr 1fr 1fr; }
     .query-grid  { grid-template-columns: repeat(2, 1fr); }
   }
 </style>
@@ -426,26 +433,46 @@
       </div>
     </div>
     <div class="card">
-      <div class="queue-grid">
-        <div class="stat-item">
-          <div class="stat-label">Pending</div>
-          <div id="qs-pending" class="stat-value yellow">—</div>
+      <div style="font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px; font-weight:600">Ingestion Queue</div>
+      <div class="queue-grid-v2">
+        <div class="queue-section">
+          <div class="queue-section-header">Active Now</div>
+          <div class="queue-section-items">
+            <div class="stat-item">
+              <div class="stat-label">Pending</div>
+              <div id="qs-pending" class="stat-value yellow">—</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Processing</div>
+              <div id="qs-processing" class="stat-value blue">—</div>
+            </div>
+          </div>
         </div>
-        <div class="stat-item">
-          <div class="stat-label">Processing</div>
-          <div id="qs-processing" class="stat-value blue">—</div>
+        <div class="queue-section">
+          <div class="queue-section-header">Completed</div>
+          <div class="queue-section-items">
+            <div class="stat-item">
+              <div class="stat-label">Last 24h</div>
+              <div id="qs-completed-24h" class="stat-value green">—</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Total</div>
+              <div id="qs-completed" class="stat-value green" style="opacity:0.6">—</div>
+            </div>
+          </div>
         </div>
-        <div class="stat-item">
-          <div class="stat-label">Completed</div>
-          <div id="qs-completed" class="stat-value green">—</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Failed</div>
-          <div id="qs-failed" class="stat-value red">—</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Skipped</div>
-          <div id="qs-skipped" class="stat-value">—</div>
+        <div class="queue-section">
+          <div class="queue-section-header">Failed</div>
+          <div class="queue-section-items">
+            <div class="stat-item">
+              <div class="stat-label">Last 24h</div>
+              <div id="qs-failed-24h" class="stat-value red">—</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Total</div>
+              <div id="qs-failed" class="stat-value red" style="opacity:0.6">—</div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="retention-info" id="retention-info">
@@ -932,16 +959,22 @@ function renderStatus(data) {
 // ──────────────────────────────────────────────────
 function renderQueue(data) {
   const sc = data.status_counts || {};
+  const sc24 = data.status_counts_24h || {};
   document.getElementById('qs-pending').textContent    = fmtNum(sc.pending    || 0);
   document.getElementById('qs-processing').textContent = fmtNum(sc.processing || 0);
   document.getElementById('qs-completed').textContent  = fmtNum(sc.completed  || 0);
+  document.getElementById('qs-completed-24h').textContent = fmtNum(sc24.completed || 0);
 
   const failedEl = document.getElementById('qs-failed');
   const failedCount = sc.failed || 0;
   failedEl.textContent = fmtNum(failedCount);
-  failedEl.className = 'stat-value' + (failedCount > 0 ? ' red' : '');
+  failedEl.className = 'stat-value' + (failedCount > 0 ? ' red' : '') + (failedCount === 0 ? '' : '');
+  failedEl.style.opacity = '0.6';
 
-  document.getElementById('qs-skipped').textContent    = fmtNum(sc.skipped    || 0);
+  const failed24El = document.getElementById('qs-failed-24h');
+  const failed24Count = sc24.failed || 0;
+  failed24El.textContent = fmtNum(failed24Count);
+  failed24El.className = 'stat-value' + (failed24Count > 0 ? ' red' : '');
 
   const ret = data.retention || {};
   document.getElementById('r-enabled').innerHTML =

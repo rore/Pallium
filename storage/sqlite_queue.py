@@ -396,15 +396,20 @@ class SQLiteQueueMixin:
             maintenance_record = session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY)
 
         status_counts: dict[str, int] = {}
+        status_counts_24h: dict[str, int] = {}
         pending_without_use_case_count = 0
         unclaimable_counts: dict[str, int] = {}
         oldest_pending_created_at: datetime | None = None
         leased_source_items: list[LeasedSourceItemInfo] = []
         recent_failures: list[RecentFailureInfo] = []
+        cutoff_24h = normalized_now - timedelta(hours=24)
 
         for record in source_records:
             status = record.processing_status or "pending"
             status_counts[status] = status_counts.get(status, 0) + 1
+            completed_at = self._normalize_datetime(record.processing_completed_at)
+            if completed_at is not None and completed_at >= cutoff_24h:
+                status_counts_24h[status] = status_counts_24h.get(status, 0) + 1
             created_at = self._normalize_datetime(record.created_at)
             if status == "pending":
                 if not record.use_case:
@@ -472,6 +477,7 @@ class SQLiteQueueMixin:
             oldest_pending_age_seconds = max(0, int((normalized_now - oldest_pending_created_at).total_seconds()))
         return QueueHealthSnapshot(
             status_counts=dict(sorted(status_counts.items())),
+            status_counts_24h=dict(sorted(status_counts_24h.items())),
             oldest_pending_age_seconds=oldest_pending_age_seconds,
             pending_without_use_case_count=pending_without_use_case_count,
             unclaimable_pending_counts=tuple(
