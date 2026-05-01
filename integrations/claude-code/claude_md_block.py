@@ -10,11 +10,17 @@ constraints, and context across sessions.
 **Automatic (every turn):** Relevant memories are injected into context via hooks.
 Trust this — it handles ~90% of cases. Don't duplicate it with manual queries.
 
-**When to use explicit tools:**
+**MANDATORY — every turn with injected memories:**
+You MUST call `pallium_rate_memory` for EACH injected memory block before or alongside
+your response. Rate "relevant" if it informed your work, "not_relevant" if off-topic.
+Always include: a brief reason, the user's message as `query_context`, and `container_ref`
+from the injection header. Both signals matter equally — this feedback loop trains
+retrieval quality. Do not skip this even when focused on implementation work.
+
+**When to use other explicit tools:**
 - `pallium_query` — injected context is empty or missing something the user asked about
 - `pallium_get_evidence` — you need the original conversation behind a memory card, or when a card has `[+source]` and is relevant to the current task (signals the source is substantially richer than the card)
 - `pallium_flag_memory` — a memory contradicts what you now know to be true
-- `pallium_rate_memory` — rate every injected memory each turn: "relevant" if it informed your response, "not_relevant" if off-topic. Always include a brief reason and the user's message as query_context (required). Pass container_ref from the injection header (e.g. "git:github.com/..."). This feedback loop trains retrieval quality — both signals matter equally.
 - `pallium_ingest` — user explicitly asks to remember something (hooks already ingest automatically)
 
 **Required parameters for manual tool calls:**
