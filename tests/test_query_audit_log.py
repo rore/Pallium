@@ -314,3 +314,197 @@ def test_config_query_audit_log_from_env(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("PALLIUM_ENV_FILE", str(tmp_path / "nonexistent.env"))
     config = AppConfig.from_env()
     assert config.observability.query_audit_log is True
+
+
+# ── Test 12: candidate_scores_json is None when no snapshot passed ──────
+
+def test_candidate_scores_json_none_when_no_snapshot(test_db_url: str) -> None:
+    service = _build_service(test_db_url)
+    service.write_query_audit(
+        source_item_id="si-400",
+        source_id="chat:msg:400",
+        thread_ref="thread:400",
+        container_ref="container:400",
+        actor_ref="user:400",
+        visibility="private",
+        query_text="test query no candidates",
+        should_inject=False,
+        decision_reason="no_relevant_memory",
+        injectable_blocks=[],
+        results=[],
+    )
+
+    with service._storage._engine.begin() as connection:
+        rows = connection.execute(
+            text("SELECT candidate_scores_json FROM query_audit_log WHERE source_item_id = 'si-400'")
+        ).fetchall()
+
+    assert len(rows) == 1
+    assert rows[0][0] is None
+
+
+# ── Test 13: candidate_scores_json populated with correct structure ─────
+
+def test_candidate_scores_json_populated(test_db_url: str) -> None:
+    service = _build_service(test_db_url)
+
+    block = InjectableBlock(
+        result_id="memory_object:mo-10",
+        block_type="structured_recall",
+        title="Some memory",
+        text="Memory text",
+        evidence=[],
+        memory_type="decision",
+        memory_object_id="mo-10",
+    )
+    item1 = QueryResultItem(
+        result_id="memory_object:mo-10",
+        result_kind="memory_hit",
+        score=0.9,
+        evidence=[],
+        memory_object_id="mo-10",
+        type="decision",
+    )
+    item2 = QueryResultItem(
+        result_id="memory_object:mo-11",
+        result_kind="memory_hit",
+        score=0.5,
+        evidence=[],
+        memory_object_id="mo-11",
+        type="atomic_fact",
+    )
+
+    ranked_candidates = [
+        {
+            "item": item1,
+            "routing_score": 0.95,
+            "lexical_score": 0.8,
+            "vector_score": 12,
+            "routing_rank": 1,
+            "layer": "core",
+            "support_grade": "strong",
+            "suppression_reason_code": None,
+        },
+        {
+            "item": item2,
+            "routing_score": 0.4,
+            "lexical_score": 0.3,
+            "vector_score": 5,
+            "routing_rank": 2,
+            "layer": "supporting",
+            "support_grade": "weak",
+            "suppression_reason_code": "low_relevance",
+        },
+    ]
+
+    service.write_query_audit(
+        source_item_id="si-500",
+        source_id="chat:msg:500",
+        thread_ref="thread:500",
+        container_ref="container:500",
+        actor_ref="user:500",
+        visibility="private",
+        query_text="test query with candidates",
+        should_inject=True,
+        decision_reason="carry_forward_available",
+        injectable_blocks=[block],
+        results=[item1, item2],
+        ranked_candidates=ranked_candidates,
+    )
+
+    with service._storage._engine.begin() as connection:
+        rows = connection.execute(
+            text("SELECT candidate_scores_json FROM query_audit_log WHERE source_item_id = 'si-500'")
+        ).fetchall()
+
+    assert len(rows) == 1
+    scores = json.loads(rows[0][0])
+    assert len(scores) == 2
+
+    # First candidate
+    assert scores[0]["memory_object_id"] == "mo-10"
+    assert scores[0]["memory_type"] == "decision"
+    assert scores[0]["routing_score"] == 0.95
+    assert scores[0]["lexical_score"] == 0.8
+    assert scores[0]["vector_score"] == 12
+    assert scores[0]["routing_rank"] == 1
+    assert scores[0]["layer"] == "core"
+    assert scores[0]["support_grade"] == "strong"
+    assert scores[0]["suppression_reason_code"] is None
+    assert scores[0]["injected"] is True
+
+    # Second candidate (not injected)
+    assert scores[1]["memory_object_id"] == "mo-11"
+    assert scores[1]["memory_type"] == "atomic_fact"
+    assert scores[1]["routing_score"] == 0.4
+    assert scores[1]["injected"] is False
+    assert scores[1]["suppression_reason_code"] == "low_relevance"
+
+
+# ── Test 14: serialization failure does not break audit write ───────────
+
+def test_candidate_scores_serialization_failure(test_db_url: str) -> None:
+    service = _build_service(test_db_url)
+
+    # Create a candidate with an item that has a non-serializable field
+    item = QueryResultItem(
+        result_id="memory_object:mo-bad",
+        result_kind="memory_hit",
+        score=0.5,
+        evidence=[],
+        memory_object_id="mo-bad",
+        type="decision",
+    )
+
+    # Use a non-JSON-serializable value in the candidate dict to trigger failure
+    class Unserializable:
+        def __repr__(self):
+            return "<Unserializable>"
+
+    ranked_candidates = [
+        {
+            "item": item,
+            "routing_score": Unserializable(),  # json.dumps will fail on this
+            "lexical_score": 0.3,
+            "vector_score": 5,
+            "routing_rank": 1,
+            "layer": "core",
+            "support_grade": "strong",
+            "suppression_reason_code": None,
+        },
+    ]
+
+    # Should not raise
+    service.write_query_audit(
+        source_item_id="si-600",
+        source_id="chat:msg:600",
+        thread_ref="thread:600",
+        container_ref="container:600",
+        actor_ref="user:600",
+        visibility="private",
+        query_text="test query with bad candidate",
+        should_inject=False,
+        decision_reason="no_relevant_memory",
+        injectable_blocks=[],
+        results=[],
+        ranked_candidates=ranked_candidates,
+    )
+
+    with service._storage._engine.begin() as connection:
+        rows = connection.execute(
+            text("SELECT candidate_scores_json FROM query_audit_log WHERE source_item_id = 'si-600'")
+        ).fetchall()
+
+    assert len(rows) == 1
+    # Serialization failed, so it should be None
+    assert rows[0][0] is None
+
+
+# ── Test 15: schema migration adds candidate_scores_json column ─────────
+
+def test_schema_has_candidate_scores_json_column(test_db_url: str) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+    with storage._engine.begin() as connection:
+        rows = connection.execute(text("PRAGMA table_info(query_audit_log)")).fetchall()
+    column_names = {row[1] for row in rows}
+    assert "candidate_scores_json" in column_names

@@ -538,6 +538,7 @@ def route_query_results(
             decision_reason=str(injection_summary["decision_reason"]),
             injectable_blocks=injection_blocks,
             sharp_candidate_diagnostics=sharp_candidate_diagnostics,
+            ranked_candidates=ranked_candidates,
         )
 
 def _build_kind_prefilter_trace_entry(

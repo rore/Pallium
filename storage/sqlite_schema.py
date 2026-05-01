@@ -164,6 +164,7 @@ class QueryAuditLogRecord(Base):
     should_inject = Column(Integer, nullable=False, default=0)
     decision_reason = Column(String, nullable=False)
     injected_blocks_json = Column(Text, nullable=False, default="[]")
+    candidate_scores_json = Column(Text, nullable=True)
 
 
 class MemoryFlagRecord(Base):
@@ -331,6 +332,9 @@ class SQLiteSchemaMixin:
         "thread_ref": "ALTER TABLE memory_feedback ADD COLUMN thread_ref VARCHAR",
         "container_ref": "ALTER TABLE memory_feedback ADD COLUMN container_ref VARCHAR",
     }
+    _QUERY_AUDIT_LOG_MIGRATIONS = {
+        "candidate_scores_json": "ALTER TABLE query_audit_log ADD COLUMN candidate_scores_json TEXT",
+    }
 
     def _initialize_schema(self) -> None:
         with self._schema_initialization_lock():
@@ -345,6 +349,7 @@ class SQLiteSchemaMixin:
             self._ensure_unique_indexes()
             self._ensure_indexes()
             self._ensure_query_audit_log_indexes()
+            self._ensure_query_audit_log_columns()
             self._ensure_memory_flag_indexes()
             self._ensure_memory_feedback_columns()
             self._ensure_memory_feedback_indexes()
@@ -535,6 +540,13 @@ class SQLiteSchemaMixin:
         with self._engine.begin() as connection:
             for _index_name, create_sql in self._QUERY_AUDIT_LOG_INDEX_MIGRATIONS.items():
                 connection.execute(text(create_sql))
+
+    def _ensure_query_audit_log_columns(self) -> None:
+        with self._engine.begin() as connection:
+            existing_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(query_audit_log)"))}
+            for column_name, migration_sql in self._QUERY_AUDIT_LOG_MIGRATIONS.items():
+                if column_name not in existing_columns:
+                    connection.execute(text(migration_sql))
 
     def _ensure_memory_flag_indexes(self) -> None:
         with self._engine.begin() as connection:

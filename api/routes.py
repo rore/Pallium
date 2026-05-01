@@ -218,6 +218,7 @@ def _maybe_write_query_audit(
     if not audit_log_enabled:
         return
     try:
+        ranked_candidates = getattr(query_result, '_ranked_candidates', None)
         service.write_query_audit(
             source_item_id=ingest_result.source_item_id,
             source_id=request.source_id,
@@ -230,6 +231,7 @@ def _maybe_write_query_audit(
             decision_reason=query_result.decision_reason,
             injectable_blocks=query_result.injectable_blocks,
             results=query_result.results,
+            ranked_candidates=ranked_candidates,
         )
     except Exception:
         logger.warning("query audit log write failed", exc_info=True)
@@ -279,6 +281,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
         snapshot = service.get_queue_health()
         return QueueHealthResponse(
             status_counts=snapshot.status_counts,
+            status_counts_24h=snapshot.status_counts_24h,
             oldest_pending_age_seconds=snapshot.oldest_pending_age_seconds,
             pending_without_use_case_count=snapshot.pending_without_use_case_count,
             unclaimable_pending_counts=[

@@ -85,3 +85,6 @@ evals/fragment_embedding_experiment.py
 evals/locomo/*.log
 .superpowers/
 evals/memory_quality_corpus.jsonl
+evals/fact_extraction_quality/results_*.json
+evals/fact_extraction_quality/gen_v2_all_facts.json
+scripts/analyze_fact_noise.py

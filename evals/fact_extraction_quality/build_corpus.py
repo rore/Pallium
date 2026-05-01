@@ -92,6 +92,36 @@ def classify_fact(stmt: str) -> tuple[str, str | None]:
     ]):
         return "noise", "ui_layout_detail"
 
+    # Derivable from code/repo — facts describing what code currently does/contains
+    # This is the #1 noise category (~65% of real noise) but hardest to catch with keywords.
+    # Heuristic: statements about code structure, function behavior, file contents
+    if any(kw in lower for kw in [
+        "function ", "method ", "class ", "module ", "file ",
+        "implements ", "contains ", "returns ", "accepts ",
+        "uses ", " uses a ", " calls ", "imports ",
+        "stored in ", "defined in ", "located in ",
+        "handles ", " handles the ",
+        "responsible for ",
+    ]):
+        # But preserve root causes and constraints
+        if not any(good in lower for good in [
+            "because", "race condition", "root cause", "caused by",
+            "cannot", "limitation", "constraint", "fails when",
+            "breaks ", "broke ", "unexpected",
+        ]):
+            return "noise", "derivable_from_code"
+
+    # Code-change narration — describing what was implemented
+    if any(kw in lower for kw in [
+        "introduced ", "refactored ", "migrated to ", "switched to ",
+        "replaced with ", "consolidated into ",
+        "extraction now ", "processing now ",
+    ]):
+        if not any(good in lower for good in [
+            "because", "root cause", "caused by", "constraint",
+        ]):
+            return "noise", "code_change_narration"
+
     return "good", None
 
 

@@ -601,6 +601,7 @@ class PalliumService:
         decision_reason: str,
         injectable_blocks: list[InjectableBlock],
         results: list,
+        ranked_candidates: list[dict] | None = None,
     ) -> None:
         result_lookup = {}
         for item in results:
@@ -621,6 +622,32 @@ class PalliumService:
                 "title_preview": (block.title or "")[:120],
             })
 
+        # Serialize top-20 candidate scores for diagnostics
+        candidate_scores_json = None
+        if ranked_candidates is not None:
+            try:
+                injectable_result_ids = {block.result_id for block in injectable_blocks}
+                snapshot = []
+                for candidate in ranked_candidates[:20]:
+                    item = candidate["item"]
+                    result_id = getattr(item, "result_id", None)
+                    snapshot.append({
+                        "memory_object_id": getattr(item, "memory_object_id", None),
+                        "memory_type": getattr(item, "type", None),
+                        "routing_score": candidate.get("routing_score"),
+                        "lexical_score": candidate.get("lexical_score"),
+                        "vector_score": candidate.get("vector_score"),
+                        "routing_rank": candidate.get("routing_rank"),
+                        "layer": candidate.get("layer"),
+                        "support_grade": candidate.get("support_grade"),
+                        "suppression_reason_code": candidate.get("suppression_reason_code"),
+                        "injected": result_id in injectable_result_ids if result_id else False,
+                    })
+                candidate_scores_json = json.dumps(snapshot)
+            except Exception:
+                self._logger.warning("candidate scores serialization failed", exc_info=True)
+                candidate_scores_json = None
+
         row = {
             "id": str(uuid.uuid4()),
             "created_at": datetime.now(timezone.utc),
@@ -634,6 +661,7 @@ class PalliumService:
             "should_inject": 1 if should_inject else 0,
             "decision_reason": decision_reason,
             "injected_blocks_json": json.dumps(blocks_json_list),
+            "candidate_scores_json": candidate_scores_json,
         }
         self._storage.write_query_audit_row(row)
 

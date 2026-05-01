@@ -162,6 +162,8 @@ class QueryExecutor:
                 decision_reason=outcome.decision_reason,
                 injectable_blocks=outcome.injectable_blocks,
             )
+            # Attach ranked_candidates for audit logging without modifying QueryResult's public contract
+            object.__setattr__(result, '_ranked_candidates', outcome.ranked_candidates)
             if self._query_stats is not None:
                 self._query_stats.record_query(result)
             return result
