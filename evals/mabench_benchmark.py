@@ -229,6 +229,10 @@ def run_mabench_benchmark(
 
     benchmark_start = time.monotonic()
     rows_completed = 0
+    total_rows = sum(
+        len(_select_rows(raw_dataset, DATASET_CONFIGS[did], context_depth))
+        for did in dataset_ids
+    )
     file_mode = "a" if completed_ids else "w"
     with results_path.open(file_mode, encoding="utf-8") as results_file:
         if completed_ids and resume_dir != run_dir:
@@ -288,7 +292,7 @@ def run_mabench_benchmark(
                 row_elapsed = time.monotonic() - row_start
                 total_elapsed = time.monotonic() - benchmark_start
                 print(f"    {row_id}: {correct}/{len(row_results)} correct ({row_elapsed:.0f}s, total {total_elapsed:.0f}s)")
-                _write_progress(run_dir, rows_completed, len(rows), len(all_results), total_elapsed)
+                _write_progress(run_dir, rows_completed, total_rows, len(all_results), total_elapsed)
 
     summary = _build_summary(
         results=all_results,
