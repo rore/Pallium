@@ -62,9 +62,15 @@ def rebuild_vector_index(
     )
 
     if texts:
-        vectors = embedding_provider.embed(texts, mode="passage")
-        for entry, vector in zip(valid_entries, vectors):
-            vector_index.add(entry.id, vector)
+        batch_size = 128
+        for batch_start in range(0, len(texts), batch_size):
+            batch_texts = texts[batch_start:batch_start + batch_size]
+            batch_entries = valid_entries[batch_start:batch_start + batch_size]
+            vectors = embedding_provider.embed(batch_texts, mode="passage")
+            for entry, vector in zip(batch_entries, vectors):
+                vector_index.add(entry.id, vector)
+            if batch_start + batch_size < len(texts):
+                logger.info("Rebuild: embedded %d/%d entries...", batch_start + len(batch_texts), len(texts))
 
     vector_index.save()
     logger.info("Rebuild: vector index saved at %s with %d entries.", index_path, vector_index.entry_count())
