@@ -3,12 +3,14 @@ from __future__ import annotations
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
 from app.config import AppConfig, SnapshotConfig
 from app.main import create_app
 from core.models import MemoryObject, SourceItem
+from core.vector_index_holder import VectorIndexHolder
 from storage.vector_index import VectorIndexConfig
 
 
@@ -72,8 +74,8 @@ class TestHealthWithVectorIndex:
         app.state._lifespan_complete = True
         app.state._reconcile_done = threading.Event()  # not set
         service = app.state.pallium_service
-        original_vi = service._vector_index
-        service._vector_index = object()  # truthy sentinel
+        # Swap in a truthy sentinel via the holder so _vector_index is not None
+        service._index_holder.swap(MagicMock())
 
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/health")
@@ -83,8 +85,6 @@ class TestHealthWithVectorIndex:
         assert body["status"] == "initializing"
         assert body["vector_index_ready"] is False
 
-        service._vector_index = original_vi
-
     def test_health_200_when_vector_configured_and_reconcile_done(self) -> None:
         app = create_app(_no_vector_config())
         # Simulate: lifespan has run, vector index configured, reconcile done.
@@ -93,8 +93,7 @@ class TestHealthWithVectorIndex:
         reconcile_done.set()
         app.state._reconcile_done = reconcile_done
         service = app.state.pallium_service
-        original_vi = service._vector_index
-        service._vector_index = object()
+        service._index_holder.swap(MagicMock())
 
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/health")
@@ -103,8 +102,6 @@ class TestHealthWithVectorIndex:
         body = response.json()
         assert body["status"] == "ok"
         assert body["vector_index_ready"] is True
-
-        service._vector_index = original_vi
 
     def test_vector_index_ready_true_when_no_vector_configured(self) -> None:
         app = create_app(_no_vector_config())

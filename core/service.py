@@ -22,6 +22,7 @@ from core.thread_rebuild import ThreadRebuilder, truncate_processing_error
 from core.turn_inference import resolve_runtime_context
 from core.type_registry import TypeRegistry
 from core.vector_embed import VectorEmbedder
+from core.vector_index_holder import VectorIndexHolder
 from core.models import FlagResult, InjectableBlock, MemoryFlag, QueryRuntimeContext, Relation, SourceItem, utc_now
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.visibility import is_visible
@@ -46,7 +47,7 @@ class PalliumService:
         retention_lease_seconds: int = 300,
         retention_batch_size: int = 200,
         embedding_provider: EmbeddingProvider | None = None,
-        vector_index: VectorIndex | None = None,
+        index_holder: VectorIndexHolder | None = None,
         type_registry: TypeRegistry | None = None,
         routing_overrides=None,
         query_stats: QueryStats | None = None,
@@ -60,9 +61,9 @@ class PalliumService:
         self._retention_lease_seconds = retention_lease_seconds
         self._retention_batch_size = retention_batch_size
         self._embedding_provider = embedding_provider
-        self._vector_index = vector_index
+        self._index_holder = index_holder or VectorIndexHolder()
         self._type_registry = type_registry
-        self._vector_embedder = VectorEmbedder(storage, embedding_provider, vector_index)
+        self._vector_embedder = VectorEmbedder(storage, embedding_provider, index_holder=self._index_holder)
         self._query_stats = query_stats
         self._query_executor = QueryExecutor(
             storage, retrieval, semantic_plugins, default_use_case,
@@ -111,6 +112,11 @@ class PalliumService:
                     orphan_delete_types=merged_retention.orphan_delete_types | plugin_policy.orphan_delete_types,
                 )
         self._retention_policy = merged_retention
+
+    @property
+    def _vector_index(self) -> VectorIndex | None:
+        """Backward-compat property for app/main.py health/status checks."""
+        return self._index_holder.index
 
     def ingest_item(
         self,

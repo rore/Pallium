@@ -10,6 +10,7 @@ from core.contracts import ProcessResult, build_source_item
 from core.models import IndexEntry
 from core.processing import ItemProcessor
 from core.vector_embed import VectorEmbedder
+from core.vector_index_holder import VectorIndexHolder
 from core.thread_rebuild import ThreadRebuilder
 from core.observability import IntegrationDebugLogger
 from providers.embedding.base import EmbeddingProvider
@@ -63,7 +64,7 @@ def test_source_vector_embedded_even_when_llm_fails(test_db_url: str, tmp_path: 
     index_path = tmp_path / "test.index"
     vector_index = VectorIndex.create_empty(index_path, dimensions=4, model_name="test-model")
 
-    vector_embedder = VectorEmbedder(storage, embedding_provider, vector_index)
+    vector_embedder = VectorEmbedder(storage, embedding_provider, index_holder=VectorIndexHolder(vector_index))
     plugin = AlwaysFailPlugin()
     plugins = {plugin.name: plugin}
     observability = IntegrationDebugLogger(enabled=False)
@@ -138,7 +139,7 @@ def test_reconcile_forward_embeds_missing_entries(test_db_url: str, tmp_path: Pa
     index_path = tmp_path / "reconcile.index"
     vector_index = VectorIndex.create_empty(index_path, dimensions=4, model_name="test-model")
 
-    vector_embedder = VectorEmbedder(storage, embedding_provider, vector_index)
+    vector_embedder = VectorEmbedder(storage, embedding_provider, index_holder=VectorIndexHolder(vector_index))
 
     # Create a vector index entry in SQLite only (simulating an orphan)
     from core.indexing import build_index_entry
@@ -169,7 +170,7 @@ def test_reconcile_reverse_removes_stale_entries(test_db_url: str, tmp_path: Pat
     index_path = tmp_path / "reconcile.index"
     vector_index = VectorIndex.create_empty(index_path, dimensions=4, model_name="test-model")
 
-    vector_embedder = VectorEmbedder(storage, embedding_provider, vector_index)
+    vector_embedder = VectorEmbedder(storage, embedding_provider, index_holder=VectorIndexHolder(vector_index))
 
     # Add an entry to usearch only (simulating retention deleting the SQLite row)
     vector_index.add("stale-entry-1", [0.1, 0.2, 0.3, 0.4])
@@ -189,7 +190,7 @@ def test_reconcile_reverse_respects_batch_size(test_db_url: str, tmp_path: Path)
     index_path = tmp_path / "reconcile-batch.index"
     vector_index = VectorIndex.create_empty(index_path, dimensions=4, model_name="test-model")
 
-    vector_embedder = VectorEmbedder(storage, embedding_provider, vector_index)
+    vector_embedder = VectorEmbedder(storage, embedding_provider, index_holder=VectorIndexHolder(vector_index))
 
     for index in range(5):
         vector_index.add(f"stale-entry-{index}", [0.1, 0.2, 0.3, 0.4])
@@ -215,7 +216,7 @@ def test_reconcile_noop_when_counts_match(test_db_url: str, tmp_path: Path) -> N
     index_path = tmp_path / "reconcile.index"
     vector_index = VectorIndex.create_empty(index_path, dimensions=4, model_name="test-model")
 
-    vector_embedder = VectorEmbedder(storage, embedding_provider, vector_index)
+    vector_embedder = VectorEmbedder(storage, embedding_provider, index_holder=VectorIndexHolder(vector_index))
 
     # Both empty — counts match
     reconciled = vector_embedder.reconcile(batch_size=50)
@@ -230,7 +231,7 @@ def test_reconcile_forward_respects_batch_size(test_db_url: str, tmp_path: Path)
     index_path = tmp_path / "reconcile.index"
     vector_index = VectorIndex.create_empty(index_path, dimensions=4, model_name="test-model")
 
-    vector_embedder = VectorEmbedder(storage, embedding_provider, vector_index)
+    vector_embedder = VectorEmbedder(storage, embedding_provider, index_holder=VectorIndexHolder(vector_index))
 
     # Create 5 orphan entries in SQLite
     from core.indexing import build_index_entry
@@ -267,7 +268,7 @@ def test_reconcile_forward_respects_batch_size(test_db_url: str, tmp_path: Path)
 def test_reconcile_noop_when_disabled(test_db_url: str) -> None:
     """Reconciliation returns 0 when embedding_provider or vector_index is None."""
     storage = SQLiteStorageProvider(test_db_url)
-    embedder_no_provider = VectorEmbedder(storage, None, None)
+    embedder_no_provider = VectorEmbedder(storage, None, index_holder=VectorIndexHolder())
     assert embedder_no_provider.reconcile(batch_size=50) == 0
 
 
@@ -290,7 +291,7 @@ def test_service_reconcile_vector_index_delegates(test_db_url: str, tmp_path: Pa
         semantic_plugins=plugins,
         default_use_case="demo_agent_memory",
         embedding_provider=embedding_provider,
-        vector_index=vector_index,
+        index_holder=VectorIndexHolder(vector_index),
     )
 
     # Both empty — should return 0

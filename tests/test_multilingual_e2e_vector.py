@@ -17,6 +17,7 @@ import pytest
 
 from core.models import IndexEntry, MemoryObject, Relation, SourceItem
 from core.text import normalize_for_index
+from core.vector_index_holder import VectorIndexHolder
 
 
 def _try_load_model():
@@ -89,9 +90,9 @@ class TestEndToEndMultilingualVectorRetrieval:
 
         retrieval = VectorRetrievalProvider(
             storage=storage,
-            vector_index=vector_index,
             embedding_provider=_provider,
             min_similarity=0.3,  # low threshold to see all results
+            index_holder=VectorIndexHolder(vector_index),
         )
 
         return storage, vector_index, retrieval
@@ -270,9 +271,9 @@ class TestEndToEndMultilingualVectorRetrieval:
         from retrieval.vector import VectorRetrievalProvider
         reloaded_retrieval = VectorRetrievalProvider(
             storage=storage,
-            vector_index=reloaded_index,
             embedding_provider=_provider,
             min_similarity=0.3,
+            index_holder=VectorIndexHolder(reloaded_index),
         )
 
         result = reloaded_retrieval.query(

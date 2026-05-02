@@ -11,6 +11,7 @@ from core.models import (
     RetrievalStageTrace,
     RetrievalTraceHit,
 )
+from core.vector_index_holder import VectorIndexHolder
 from core.visibility import (
     QueryVisibilityTrace,
     is_visible,
@@ -30,14 +31,19 @@ class VectorRetrievalProvider(RetrievalProvider):
     def __init__(
         self,
         storage: StorageProvider,
-        vector_index: VectorIndex,
         embedding_provider: EmbeddingProvider,
         min_similarity: float = 0.3,
+        *,
+        index_holder: VectorIndexHolder,
     ) -> None:
         self._storage = storage
-        self._vector_index = vector_index
+        self._holder = index_holder
         self._embedding_provider = embedding_provider
         self._min_similarity = min_similarity
+
+    @property
+    def _vector_index(self) -> VectorIndex | None:
+        return self._holder.index
 
     def query(
         self,

@@ -12,6 +12,7 @@ from core.models import (
     QueryFilters,
     SourceItem,
 )
+from core.vector_index_holder import VectorIndexHolder
 from providers.embedding.base import EmbeddingProvider
 from retrieval.vector import VectorRetrievalProvider, VECTOR_STAGE_NAME
 from storage.base import StorageProvider
@@ -175,7 +176,7 @@ class TestVectorRetrievalBasic:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.85)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test query", limit=5)
 
         assert len(result.results) == 1
@@ -198,7 +199,7 @@ class TestVectorRetrievalBasic:
         vector_index = FakeVectorIndex(hits=[("idx-2", 0.72)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test query", limit=5)
 
         assert len(result.results) == 1
@@ -223,7 +224,7 @@ class TestVectorRetrievalBasic:
         vector_index = FakeVectorIndex(hits=[("idx-a", 0.9), ("idx-b", 0.8)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=10)
 
         assert len(result.results) == 1
@@ -247,7 +248,7 @@ class TestVectorRetrievalBasic:
         vector_index = FakeVectorIndex(hits=hits)
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=2)
 
         assert len(result.results) == 2
@@ -268,7 +269,7 @@ class TestMinSimilarityThreshold:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.2)])  # Below default 0.3
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding, min_similarity=0.3)
+        provider = VectorRetrievalProvider(storage, embedding, min_similarity=0.3, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test query", limit=5)
 
         assert len(result.results) == 0
@@ -285,7 +286,7 @@ class TestMinSimilarityThreshold:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.3)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding, min_similarity=0.3)
+        provider = VectorRetrievalProvider(storage, embedding, min_similarity=0.3, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test query", limit=5)
 
         assert len(result.results) == 1
@@ -303,7 +304,7 @@ class TestMinSimilarityThreshold:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.5)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding, min_similarity=0.6)
+        provider = VectorRetrievalProvider(storage, embedding, min_similarity=0.6, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test query", limit=5)
 
         assert len(result.results) == 0
@@ -322,7 +323,7 @@ class TestMinSimilarityThreshold:
         vector_index = FakeVectorIndex(hits=[("idx-above", 0.7), ("idx-below", 0.1)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding, min_similarity=0.3)
+        provider = VectorRetrievalProvider(storage, embedding, min_similarity=0.3, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=10)
 
         assert len(result.results) == 1
@@ -346,7 +347,7 @@ class TestVisibilityFiltering:
         vector_index = FakeVectorIndex(hits=[("idx-pub", 0.9), ("idx-lim", 0.8)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=10, visibility="public", query_container_ref="channel-x")
 
         assert len(result.results) == 1
@@ -373,7 +374,7 @@ class TestVisibilityFiltering:
         )
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=10, visibility="container", query_container_ref="channel-a")
 
         returned_ids = {r.memory_object_id for r in result.results}
@@ -394,7 +395,7 @@ class TestVisibilityFiltering:
         vector_index = FakeVectorIndex(hits=[("idx-pub", 0.9), ("idx-lim", 0.8)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=10, visibility=None)
 
         assert len(result.results) == 2
@@ -408,7 +409,7 @@ class TestRequireVisibilityFailClosed:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.9)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5, require_visibility=True, visibility=None)
 
         assert result.results == []
@@ -420,7 +421,7 @@ class TestRequireVisibilityFailClosed:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.9)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query(
             "test", limit=5, require_visibility=True, visibility=None, include_trace=True
         )
@@ -442,7 +443,7 @@ class TestRequireVisibilityFailClosed:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.9)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query(
             "test", limit=5, require_visibility=True, visibility="public",
             query_container_ref="test-container",
@@ -455,7 +456,7 @@ class TestRequireVisibilityFailClosed:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.9)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query(
             "test", limit=5, require_visibility=True, visibility="public",
         )
@@ -473,7 +474,7 @@ class TestStaleEntryLazyRemoval:
         vector_index = FakeVectorIndex(hits=[("idx-stale", 0.9)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5)
 
         assert result.results == []
@@ -494,7 +495,7 @@ class TestStaleEntryLazyRemoval:
         vector_index = FakeVectorIndex(hits=[("idx-stale", 0.95), ("idx-valid", 0.85)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5)
 
         assert len(result.results) == 1
@@ -513,7 +514,7 @@ class TestStaleEntryLazyRemoval:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.9)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5)
 
         assert len(result.results) == 1
@@ -536,7 +537,7 @@ class TestTraceOutput:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.85)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test query", limit=5, include_trace=True)
 
         assert result.trace is not None
@@ -558,7 +559,7 @@ class TestTraceOutput:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.85)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5, include_trace=True)
 
         hit = result.trace.stages[0].selected_hits[0]
@@ -585,7 +586,7 @@ class TestTraceOutput:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.75)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5, include_trace=True)
 
         hit = result.trace.stages[0].selected_hits[0]
@@ -607,7 +608,7 @@ class TestTraceOutput:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.85)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5, include_trace=False)
 
         assert result.trace is None
@@ -624,7 +625,7 @@ class TestTraceOutput:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.85)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test query text", limit=5, include_trace=True)
 
         assert result.trace.query_tokens == ()
@@ -641,7 +642,7 @@ class TestTraceOutput:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.85)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5, include_trace=True, visibility="public")
 
         assert result.trace.visibility is not None
@@ -662,7 +663,7 @@ class TestFilterMatching:
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.9)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5)
 
         assert len(result.results) == 0
@@ -682,7 +683,7 @@ class TestFilterMatching:
         embedding = FakeEmbeddingProvider()
 
         filters = QueryFilters(container_ref="chat:target")
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5, filters=filters)
 
         assert len(result.results) == 1
@@ -701,7 +702,7 @@ class TestFilterMatching:
         embedding = FakeEmbeddingProvider()
 
         filters = QueryFilters(container_ref="chat:target")
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5, filters=filters)
 
         assert len(result.results) == 0
@@ -718,7 +719,7 @@ class TestFilterMatching:
         embedding = FakeEmbeddingProvider()
 
         filters = QueryFilters(role="assistant", container_ref="chat:target")
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5, filters=filters)
 
         assert len(result.results) == 1
@@ -735,7 +736,7 @@ class TestFilterMatching:
         embedding = FakeEmbeddingProvider()
 
         filters = QueryFilters(role="assistant")
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5, filters=filters)
 
         assert len(result.results) == 0
@@ -767,7 +768,7 @@ class TestScoreContract:
         vector_index = FakeVectorIndex(hits=[("idx-1", similarity)])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding, min_similarity=0.0)
+        provider = VectorRetrievalProvider(storage, embedding, min_similarity=0.0, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5)
 
         assert len(result.results) == 1
@@ -782,7 +783,7 @@ class TestEmptyIndex:
         vector_index = FakeVectorIndex(hits=[])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5)
 
         assert result.results == []
@@ -793,7 +794,7 @@ class TestEmptyIndex:
         vector_index = FakeVectorIndex(hits=[])
         embedding = FakeEmbeddingProvider()
 
-        provider = VectorRetrievalProvider(storage, vector_index, embedding)
+        provider = VectorRetrievalProvider(storage, embedding, index_holder=VectorIndexHolder(vector_index))
         result = provider.query("test", limit=5, include_trace=True)
 
         assert result.results == []

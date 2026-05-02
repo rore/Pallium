@@ -543,6 +543,7 @@ def _process_question(
         from core.observability import IntegrationDebugLogger
         from core.service import PalliumService
         from core.type_registry import TypeRegistry
+        from core.vector_index_holder import VectorIndexHolder
         from retrieval.composite import CompositeRetrievalProvider
         from retrieval.vector import VectorRetrievalProvider
         from storage.vector_index import VectorIndex
@@ -553,6 +554,7 @@ def _process_question(
 
         # Reuse embedding provider; build fresh vector index for this question's DB.
         vector_index = None
+        index_holder = None
         if shared_embedding is not None:
             index_path = Path(scenario_config.vector_index.index_path)
             try:
@@ -568,11 +570,12 @@ def _process_question(
                 vector_index = None
 
             if vector_index is not None:
+                index_holder = VectorIndexHolder(vector_index)
                 vector_retrieval = VectorRetrievalProvider(
                     storage=storage,
-                    vector_index=vector_index,
                     embedding_provider=shared_embedding,
                     min_similarity=scenario_config.vector_index.min_similarity,
+                    index_holder=index_holder,
                 )
                 retrieval = CompositeRetrievalProvider(
                     lexical=retrieval,
@@ -593,7 +596,7 @@ def _process_question(
             observability=IntegrationDebugLogger(enabled=False),
             retention_enabled=False,
             embedding_provider=shared_embedding,
-            vector_index=vector_index,
+            index_holder=index_holder,
             type_registry=type_registry if len(type_registry) > 0 else None,
         )
         client.app.state.pallium_service = service

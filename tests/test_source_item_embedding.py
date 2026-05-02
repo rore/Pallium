@@ -8,6 +8,7 @@ from core.contracts import ProcessResult
 from core.indexing import VECTOR_INDEX_TYPE
 from core.models import IndexEntry, SourceItem
 from core.service import PalliumService
+from core.vector_index_holder import VectorIndexHolder
 from providers.embedding.base import EmbeddingProvider
 from retrieval.lexical import LexicalRetrievalProvider
 from semantic.agent_conversation_memory_embedding import source_item_embedding_text
@@ -134,7 +135,7 @@ def _build_service(
         semantic_plugins=resolved_plugins,
         default_use_case=default_use_case,
         embedding_provider=embedding_provider,
-        vector_index=vector_index,
+        index_holder=VectorIndexHolder(vector_index) if vector_index is not None else None,
     )
 
 
@@ -343,7 +344,7 @@ class TestRetryIdempotency:
             semantic_plugins={"selective_embedding": SelectiveEmbeddingPlugin()},
             default_use_case="selective_embedding",
             embedding_provider=embedding,
-            vector_index=vector_idx,
+            index_holder=VectorIndexHolder(vector_idx),
         )
 
         ingest = service.ingest_item(

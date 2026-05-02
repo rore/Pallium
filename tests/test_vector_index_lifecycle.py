@@ -20,6 +20,7 @@ from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
 from core.models import MemoryObject, Relation, new_id, utc_now
 from core.service import PalliumService
 from core.vector_embed import VectorEmbedder
+from core.vector_index_holder import VectorIndexHolder
 from providers.embedding.base import EmbeddingProvider
 from retrieval.composite import CompositeRetrievalProvider
 from retrieval.lexical import LexicalRetrievalProvider
@@ -97,7 +98,7 @@ def test_reconcile_picks_up_sqlite_only_entries(test_db_url, vector_index_path):
     storage = SQLiteStorageProvider(test_db_url)
     embedding = StubEmbeddingProvider()
     vector_index = VectorIndex.create_empty(vector_index_path, dimensions=8, model_name="stub-embed")
-    embedder = VectorEmbedder(storage, embedding, vector_index)
+    embedder = VectorEmbedder(storage, embedding, index_holder=VectorIndexHolder(vector_index))
 
     # Simulate processor: write IndexEntry to SQLite without touching usearch
     entry = build_index_entry(
@@ -127,7 +128,7 @@ def test_reconcile_is_idempotent(test_db_url, vector_index_path):
     storage = SQLiteStorageProvider(test_db_url)
     embedding = StubEmbeddingProvider()
     vector_index = VectorIndex.create_empty(vector_index_path, dimensions=8, model_name="stub-embed")
-    embedder = VectorEmbedder(storage, embedding, vector_index)
+    embedder = VectorEmbedder(storage, embedding, index_holder=VectorIndexHolder(vector_index))
 
     entry = build_index_entry(
         target_kind="memory_object", target_id="mo-1",
@@ -144,7 +145,7 @@ def test_reconcile_sets_provider_metadata(test_db_url, vector_index_path):
     storage = SQLiteStorageProvider(test_db_url)
     embedding = StubEmbeddingProvider()
     vector_index = VectorIndex.create_empty(vector_index_path, dimensions=8, model_name="stub-embed")
-    embedder = VectorEmbedder(storage, embedding, vector_index)
+    embedder = VectorEmbedder(storage, embedding, index_holder=VectorIndexHolder(vector_index))
 
     entry = build_index_entry(
         target_kind="memory_object", target_id="mo-1",
@@ -221,7 +222,8 @@ def test_end_to_end_processor_reconcile_query(test_db_url, vector_index_path):
 
     # Server service: with vector infra
     vector_index = VectorIndex.create_empty(vector_index_path, dimensions=8, model_name="stub-embed")
-    vector_retrieval = VectorRetrievalProvider(storage, vector_index, embedding)
+    holder = VectorIndexHolder(vector_index)
+    vector_retrieval = VectorRetrievalProvider(storage, embedding, index_holder=holder)
     composite = CompositeRetrievalProvider(
         lexical=LexicalRetrievalProvider(storage),
         vector=vector_retrieval,
@@ -232,7 +234,7 @@ def test_end_to_end_processor_reconcile_query(test_db_url, vector_index_path):
         semantic_plugins=plugins,
         default_use_case="demo_agent_memory",
         embedding_provider=embedding,
-        vector_index=vector_index,
+        index_holder=holder,
     )
 
     # Before reconcile: vector index is empty
@@ -265,7 +267,7 @@ def test_reconcile_daemon_thread_fires(test_db_url, vector_index_path):
         semantic_plugins=plugins,
         default_use_case="demo_agent_memory",
         embedding_provider=embedding,
-        vector_index=vector_index,
+        index_holder=VectorIndexHolder(vector_index),
     )
 
     # Write an entry to SQLite

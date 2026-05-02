@@ -35,6 +35,7 @@ from core.models import (
     Relation,
     SourceItem,
 )
+from core.vector_index_holder import VectorIndexHolder
 from providers.embedding.base import EmbeddingProvider
 from retrieval.base import RetrievalQueryResult
 from retrieval.lexical import LexicalRetrievalProvider
@@ -342,7 +343,8 @@ def run_scenario(
     mock_embedding = MockEmbeddingProvider()
     lexical_provider = LexicalRetrievalProvider(storage)
     vector_provider = VectorRetrievalProvider(
-        storage, mock_index, mock_embedding, min_similarity=min_similarity,
+        storage, mock_embedding, min_similarity=min_similarity,
+        index_holder=VectorIndexHolder(mock_index),
     )
 
     # 4. Run queries

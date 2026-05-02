@@ -5,6 +5,7 @@ import logging
 from core.contracts import ProcessResult
 from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
 from core.models import IndexEntry, SourceItem
+from core.vector_index_holder import VectorIndexHolder
 from providers.embedding.base import EmbeddingProvider
 from semantic.base import SemanticPlugin
 from storage.base import StorageProvider
@@ -27,14 +28,24 @@ class VectorEmbedder:
         self,
         storage: StorageProvider,
         embedding_provider: EmbeddingProvider | None = None,
-        vector_index: VectorIndex | None = None,
+        *,
+        index_holder: VectorIndexHolder,
     ) -> None:
         self._storage = storage
         self._embedding_provider = embedding_provider
-        self._vector_index = vector_index
+        self._holder = index_holder
         self._logger = logging.getLogger(__name__)
         self._reconcile_after_id: str | None = None
         self._reconcile_stale_after_id: str | None = None
+
+    @property
+    def _vector_index(self) -> VectorIndex | None:
+        return self._holder.index
+
+    def reset_reconcile_state(self) -> None:
+        """Reset pagination cursors after a hot-swap so reconcile starts fresh."""
+        self._reconcile_after_id = None
+        self._reconcile_stale_after_id = None
 
     def embed_process_result(self, process_result: ProcessResult, plugin: SemanticPlugin | None = None) -> bool:
         """Add vector index entries to the in-memory index after SQLite commit.

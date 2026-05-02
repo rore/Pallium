@@ -8,6 +8,7 @@ from api.routes import create_router
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.service import PalliumService
+from core.vector_index_holder import VectorIndexHolder
 from providers.embedding.base import EmbeddingProvider
 from providers.llm.aicore_anthropic import AICoreAnthropicLLMProvider
 from providers.llm.aicore_auth import AICoreDeploymentCatalog, AICoreTokenProvider
@@ -265,6 +266,7 @@ def build_service(
     vector_retrieval: VectorRetrievalProvider | None = None
     vector_index: VectorIndex | None = None
     embedding_provider: EmbeddingProvider | None = None
+    index_holder: VectorIndexHolder | None = None
     vector_config = resolved_config.vector_index
 
     if vector_config.enabled and enable_vector:
@@ -349,11 +351,13 @@ def build_service(
             if effective_min_similarity is None:
                 effective_min_similarity = embedding_provider.recommended_min_similarity()
 
+            index_holder = VectorIndexHolder(vector_index)
+
             vector_retrieval = VectorRetrievalProvider(
                 storage=storage,
-                vector_index=vector_index,
                 embedding_provider=embedding_provider,
                 min_similarity=effective_min_similarity,
+                index_holder=index_holder,
             )
 
     # Wrap lexical + vector into composite retrieval if vector is available
@@ -382,7 +386,7 @@ def build_service(
         retention_lease_seconds=resolved_config.retention.lease_seconds,
         retention_batch_size=resolved_config.retention.batch_size,
         embedding_provider=embedding_provider,
-        vector_index=vector_index,
+        index_holder=index_holder,
         type_registry=type_registry if len(type_registry) > 0 else None,
         routing_overrides=routing_overrides,
         query_stats=query_stats,
