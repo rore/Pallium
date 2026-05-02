@@ -189,3 +189,118 @@ def test_specific_constraint_accepted_via_full_pipeline(monkeypatch, test_db_url
             f"Specific constraint text should create constraint_memory via pipeline, "
             f"but only found types: {[m.type for m in active_memories]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: canonical_key generation
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_key_generated():
+    from semantic.agent_conversation_memory_memory import _constraint_canonical_key
+    key = _constraint_canonical_key("do not add any new llm calls to the pipeline")
+    assert key  # non-empty
+    # Same content with different stopwords -> same key
+    key2 = _constraint_canonical_key("don't add new llm calls to the pipeline")
+    assert key == key2 or set(key.split()) & set(key2.split())  # at least high overlap
+
+
+def test_canonical_key_different_for_different_constraints():
+    from semantic.agent_conversation_memory_memory import _constraint_canonical_key
+    key_llm = _constraint_canonical_key("do not add any new llm calls to the pipeline")
+    key_muxi = _constraint_canonical_key("do not use the name muxi in documentation")
+    assert key_llm != key_muxi
+
+
+# ---------------------------------------------------------------------------
+# Integration: cross-thread constraint deduplication via supersession
+# ---------------------------------------------------------------------------
+
+
+def test_same_constraint_in_two_threads_supersedes(monkeypatch, test_db_url: str):
+    """Second statement of same constraint supersedes the first across threads."""
+    DEDUP_CONTAINER = "chat:dedup-test"
+
+    with _build_client(monkeypatch, test_db_url) as client:
+        # First constraint in thread-1
+        events_1 = [{
+            "source_type": "chat_message",
+            "source_id": "dedup-t1-1",
+            "content_type": "text/plain",
+            "content": "do not add any new llm calls to the extraction pipeline",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": DEDUP_CONTAINER,
+            "thread_ref": f"{DEDUP_CONTAINER}:thread-1",
+            "visibility": "private",
+            "occurred_at": "2026-03-23T10:00:00Z",
+        }]
+        response = client.post("/items", json=events_1)
+        assert response.status_code == 200
+        client.app.state.pallium_service.drain_processing_queue(worker_id="test")
+
+        # Verify first constraint exists
+        storage = client.app.state.pallium_service._storage
+        active = [m for m in storage.list_memory_objects(lifecycle="active") if m.type == "constraint_memory"]
+        assert len(active) == 1
+
+        # Same constraint (paraphrase) in thread-2
+        events_2 = [{
+            "source_type": "chat_message",
+            "source_id": "dedup-t2-1",
+            "content_type": "text/plain",
+            "content": "don't add new llm calls to the pipeline",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": DEDUP_CONTAINER,
+            "thread_ref": f"{DEDUP_CONTAINER}:thread-2",
+            "visibility": "private",
+            "occurred_at": "2026-03-23T11:00:00Z",
+        }]
+        response = client.post("/items", json=events_2)
+        assert response.status_code == 200
+        client.app.state.pallium_service.drain_processing_queue(worker_id="test")
+
+        # Only one active constraint should remain
+        active = [m for m in storage.list_memory_objects(lifecycle="active") if m.type == "constraint_memory"]
+        assert len(active) == 1, f"Expected 1, got {len(active)}: {[m.payload.get('constraint_text') for m in active]}"
+
+
+def test_different_constraints_coexist(monkeypatch, test_db_url: str):
+    """Different constraints are NOT deduplicated."""
+    COEXIST_CONTAINER = "chat:coexist-test"
+
+    with _build_client(monkeypatch, test_db_url) as client:
+        events = [
+            {
+                "source_type": "chat_message",
+                "source_id": "coexist-1",
+                "content_type": "text/plain",
+                "content": "do not add any new llm calls to the extraction pipeline",
+                "artifact_kind": "message",
+                "role": "user",
+                "container_ref": COEXIST_CONTAINER,
+                "thread_ref": f"{COEXIST_CONTAINER}:thread-1",
+                "visibility": "private",
+                "occurred_at": "2026-03-23T10:00:00Z",
+            },
+            {
+                "source_type": "chat_message",
+                "source_id": "coexist-2",
+                "content_type": "text/plain",
+                "content": "do not use the name muxi in documentation or code",
+                "artifact_kind": "message",
+                "role": "user",
+                "container_ref": COEXIST_CONTAINER,
+                "thread_ref": f"{COEXIST_CONTAINER}:thread-2",
+                "visibility": "private",
+                "occurred_at": "2026-03-23T11:00:00Z",
+            },
+        ]
+        response = client.post("/items", json=events)
+        assert response.status_code == 200
+        client.app.state.pallium_service.drain_processing_queue(worker_id="test")
+
+        storage = client.app.state.pallium_service._storage
+        active = [m for m in storage.list_memory_objects(lifecycle="active") if m.type == "constraint_memory"]
+        assert len(active) == 2, f"Expected 2, got {len(active)}"

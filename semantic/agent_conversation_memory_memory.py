@@ -6,7 +6,7 @@ from typing import Iterable
 from core.contracts import ProcessResult, SupersessionHint
 from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
 from core.models import MemoryEnvelope, MemoryEnvelopeConfidence, MemoryEnvelopeDerivation, MemoryEnvelopeKind, MemoryEnvelopeScope, MemoryObject, MemorySubjectAnchor, Relation, SourceItem
-from semantic.common import SemanticExtraction, normalize_for_index, _resolve_actor_ref, _should_reject_constraint_text
+from semantic.common import SemanticExtraction, normalize_for_index, content_tokens, _resolve_actor_ref, _should_reject_constraint_text
 from semantic.agent_conversation_memory_embedding import VECTOR_EMBEDDING_PROVIDER_NAME, VECTOR_EMBEDDING_PROVIDER_VERSION, build_embedding_text
 from semantic.agent_conversation_memory_constraints import (
     CONSTRAINT_MEMORY_SCHEMA_ID,
@@ -122,6 +122,12 @@ def _semantic_provenance_from_process_result(result: ProcessResult) -> dict[str,
             return dict(semantic_provenance)
     return {}
 
+def _constraint_canonical_key(constraint_text: str) -> str:
+    """Generate a dedup key from sorted content tokens (stopwords removed)."""
+    tokens = sorted(content_tokens(constraint_text))
+    return " ".join(tokens)
+
+
 def _append_typed_constraint_memory_objects(
     result: ProcessResult,
     *,
@@ -142,9 +148,11 @@ def _append_typed_constraint_memory_objects(
     producer_schema_version = str(semantic_provenance.get("prompt_schema_version") or CONSTRAINT_MEMORY_SCHEMA_VERSION)
     prompt_variant = semantic_provenance.get("prompt_variant") if isinstance(semantic_provenance.get("prompt_variant"), str) else None
     envelope_subjects = _merge_subject_anchors(extraction.subject_hints)
+    canonical_key = _constraint_canonical_key(constraint_text)
     payload = {
         "summary": constraint_text,
         "constraint_text": constraint_text,
+        "canonical_key": canonical_key,
         "evidence_context": source_item.content,
         "container_ref": source_item.container_ref,
         "thread_ref": source_item.thread_ref,
@@ -288,13 +296,16 @@ def build_supersession_hints(source_item: SourceItem, result: ProcessResult) -> 
         canonical_key = str(memory_object.payload.get('canonical_key') or '').strip()
         if not canonical_key:
             continue
+        # Constraints are container-scoped: same constraint stated in different
+        # threads should supersede. Decisions/investigations remain thread-scoped.
+        hint_thread_ref = None if memory_object.type == CONSTRAINT_MEMORY_TYPE else source_item.thread_ref
         hints.append(
             SupersessionHint(
                 replacement_memory_id=memory_object.id,
                 memory_type=memory_object.type,
                 canonical_key=canonical_key,
                 container_ref=source_item.container_ref,
-                thread_ref=source_item.thread_ref,
+                thread_ref=hint_thread_ref,
                 visibility=source_item.visibility,
             )
         )

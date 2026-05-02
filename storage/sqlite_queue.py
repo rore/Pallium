@@ -32,6 +32,9 @@ from storage.sqlite_schema import (
     insert_lexical_fts_row,
 )
 
+_CONTAINER_SCOPED_SUPERSESSION_TYPES = frozenset({"constraint_memory"})
+_CONTAINER_SCOPED_JACCARD_THRESHOLD = 0.5
+
 
 class SQLiteQueueMixin:
     @contextmanager
@@ -619,7 +622,48 @@ class SQLiteQueueMixin:
             replacement = replacements.get(hint.replacement_memory_id)
             if replacement is None:
                 continue
-            if not hint.container_ref or not hint.thread_ref or not hint.canonical_key:
+            if not hint.container_ref or not hint.canonical_key:
+                continue
+
+            # Container-scoped supersession (for constraint_memory)
+            if hint.thread_ref is None and hint.memory_type in _CONTAINER_SCOPED_SUPERSESSION_TYPES:
+                existing_records = session.scalars(
+                    select(MemoryObjectRecord).where(
+                        MemoryObjectRecord.container_ref == hint.container_ref,
+                        MemoryObjectRecord.type == hint.memory_type,
+                        MemoryObjectRecord.lifecycle == "active",
+                        MemoryObjectRecord.id != hint.replacement_memory_id,
+                    )
+                ).all()
+                new_key_tokens = set(hint.canonical_key.split()) if hint.canonical_key else set()
+                for existing_record in existing_records:
+                    existing_payload = self._loads(existing_record.payload_json)
+                    existing_key = str(existing_payload.get("canonical_key") or "").strip()
+                    if not existing_key:
+                        continue
+                    # Exact canonical_key match
+                    if existing_key == hint.canonical_key:
+                        pair = (existing_record.id, hint.replacement_memory_id)
+                        if pair not in seen:
+                            seen.add(pair)
+                            pairs.append(pair)
+                        continue
+                    # Jaccard overlap on canonical_key tokens (catches paraphrases)
+                    if new_key_tokens:
+                        existing_key_tokens = set(existing_key.split())
+                        if existing_key_tokens:
+                            intersection = new_key_tokens & existing_key_tokens
+                            union = new_key_tokens | existing_key_tokens
+                            jaccard = len(intersection) / len(union)
+                            if jaccard >= _CONTAINER_SCOPED_JACCARD_THRESHOLD:
+                                pair = (existing_record.id, hint.replacement_memory_id)
+                                if pair not in seen:
+                                    seen.add(pair)
+                                    pairs.append(pair)
+                continue
+
+            # Thread-scoped supersession (existing behavior for decisions/investigations)
+            if not hint.thread_ref:
                 continue
             thread_item_records = session.scalars(
                 select(SourceItemRecord).where(
