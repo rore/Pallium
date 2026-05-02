@@ -19,7 +19,7 @@ retrieval quality. Do not skip this even when focused on implementation work.
 
 **When to use other explicit tools:**
 - `pallium_query` — injected context is empty or missing something the user asked about
-- `pallium_get_evidence` — you need the original conversation behind a memory card, or when a card has `[+source]` and is relevant to the current task (signals the source is substantially richer than the card)
+- `pallium_get_evidence` — you need the original conversation behind a memory card. **If an injected card has `[+source]` and you rated it relevant, you MUST call `pallium_get_evidence` for it before responding** — the source is substantially richer than the card summary
 - `pallium_flag_memory` — a memory contradicts what you now know to be true
 - `pallium_ingest` — user explicitly asks to remember something (hooks already ingest automatically)
 
