@@ -155,6 +155,67 @@ class TestBuildEmbeddingTextContinuityMemory:
         assert "Token refresh resolution carried forward" in text
 
 
+class TestTypePrefixInEmbeddingText:
+    def test_decision_has_type_prefix(self):
+        mo = _make_memory("decision", {
+            "decision": "Use PostgreSQL for the main database",
+            "rationale": "Better JSON support and full-text search",
+        })
+        text = build_embedding_text(mo)
+        assert text is not None
+        assert text.startswith("[decision] ")
+
+    def test_investigation_outcome_has_type_prefix(self):
+        mo = _make_memory("investigation_outcome", {
+            "investigation_outcome": "Token refresh was failing due to clock skew",
+            "rationale": "Server clocks were 30 seconds apart",
+        })
+        text = build_embedding_text(mo)
+        assert text is not None
+        assert text.startswith("[investigation_outcome] ")
+
+    def test_interest_has_type_prefix(self):
+        mo = _make_memory("interest", {
+            "interest_text": "Chroma vector database for lightweight local embedding and retrieval",
+            "summary": "User expressed interest in trying Chroma for a side project",
+        })
+        text = build_embedding_text(mo)
+        assert text is not None
+        assert text.startswith("[interest] ")
+
+    def test_constraint_memory_has_type_prefix(self):
+        mo = _make_memory("constraint_memory", {
+            "constraint_text": "No GPL-licensed dependencies allowed in this project per legal requirement",
+        })
+        text = build_embedding_text(mo)
+        assert text is not None
+        assert text.startswith("[constraint_memory] ")
+
+    def test_short_content_still_returns_none(self):
+        """Type prefix does not rescue too-short content from the 40-char guard."""
+        mo = _make_memory("decision", {"decision": "Use option B"})
+        text = build_embedding_text(mo)
+        assert text is None
+
+    def test_all_embeddable_types_have_prefix(self):
+        """Every embeddable type gets its bracket prefix."""
+        payloads = {
+            "decision": {"decision": "Use event-time ordering for reservation priority during catalog sync delays"},
+            "investigation_outcome": {"investigation_outcome": "Duplicate hold entries caused by missing deduplication check in queue consumer"},
+            "thread_summary": {"summary": "Investigation into catalog sync failures found expired API token on nightly batch service account"},
+            "task_checkpoint": {"task": "Investigate catalog sync scheduled job failure and token rotation policy gap"},
+            "pattern_memory": {"summary": "Recurring pattern: nightly batch jobs accumulating backlogs cause downstream queue failures"},
+            "continuity_memory": {"continuity_question": "What is the status of the catalog sync investigation and token refresh?"},
+            "interest": {"interest_text": "Chroma vector database for lightweight local embedding and retrieval", "summary": "User expressed interest in trying Chroma for a side project"},
+            "constraint_memory": {"constraint_text": "No GPL-licensed dependencies allowed in this project per legal requirement"},
+        }
+        for memory_type in EMBEDDABLE_MEMORY_TYPES:
+            mo = _make_memory(memory_type, payloads[memory_type])
+            text = build_embedding_text(mo)
+            assert text is not None, f"build_embedding_text returned None for {memory_type}"
+            assert text.startswith(f"[{memory_type}] "), f"{memory_type} missing prefix, got: {text[:30]}"
+
+
 class TestNonEmbeddableTypes:
     def test_turn_summary_returns_none(self):
         mo = _make_memory("turn_summary", {

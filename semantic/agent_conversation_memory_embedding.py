@@ -14,6 +14,9 @@ EMBEDDABLE_MEMORY_TYPES = {
     "constraint_memory",
 }
 
+# Bump when embedding text format changes (used by auto-rebuild infrastructure).
+EMBEDDING_SCHEMA_VERSION = 2
+
 # Placeholder constants — replaced with real provider values in Part 6.
 VECTOR_EMBEDDING_PROVIDER_NAME = "embedding"
 VECTOR_EMBEDDING_PROVIDER_VERSION = "pending"
@@ -45,7 +48,9 @@ def build_embedding_text(memory_object: MemoryObject) -> str | None:
     if builder is None:
         return None
     text = builder(payload)
-    return text if text and len(text) >= 40 else None
+    if not text or len(text) < 40:
+        return None
+    return f"[{memory_type}] {text}"
 
 
 def _build_decision_text(payload: dict) -> str:
