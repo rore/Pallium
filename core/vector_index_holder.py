@@ -30,4 +30,5 @@ class VectorIndexHolder:
 
     @property
     def is_available(self) -> bool:
-        return self._index is not None
+        with self._lock:
+            return self._index is not None

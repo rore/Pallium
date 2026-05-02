@@ -1,8 +1,14 @@
 import threading
+from unittest.mock import MagicMock
 
 import pytest
 
 from core.vector_index_holder import VectorIndexHolder
+from storage.vector_index import VectorIndex
+
+
+def _mock_index() -> VectorIndex:
+    return MagicMock(spec=VectorIndex)
 
 
 class TestVectorIndexHolder:
@@ -12,14 +18,14 @@ class TestVectorIndexHolder:
         assert holder.is_available is False
 
     def test_initial_with_index(self):
-        mock_index = object()
+        mock_index = _mock_index()
         holder = VectorIndexHolder(mock_index)
         assert holder.index is mock_index
         assert holder.is_available is True
 
     def test_swap_returns_old(self):
-        old = object()
-        new = object()
+        old = _mock_index()
+        new = _mock_index()
         holder = VectorIndexHolder(old)
         returned = holder.swap(new)
         assert returned is old
@@ -27,7 +33,7 @@ class TestVectorIndexHolder:
 
     def test_concurrent_access(self):
         """Many readers + one writer don't crash."""
-        holder = VectorIndexHolder(object())
+        holder = VectorIndexHolder(_mock_index())
         results = []
         barrier = threading.Barrier(11)
 
@@ -41,7 +47,7 @@ class TestVectorIndexHolder:
         def writer():
             barrier.wait()
             for _ in range(100):
-                holder.swap(object())
+                holder.swap(_mock_index())
 
         threads = [threading.Thread(target=reader) for _ in range(10)]
         threads.append(threading.Thread(target=writer))
