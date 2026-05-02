@@ -6,7 +6,7 @@ from typing import Iterable
 from core.contracts import ProcessResult, SupersessionHint
 from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
 from core.models import MemoryEnvelope, MemoryEnvelopeConfidence, MemoryEnvelopeDerivation, MemoryEnvelopeKind, MemoryEnvelopeScope, MemoryObject, MemorySubjectAnchor, Relation, SourceItem
-from semantic.common import SemanticExtraction, normalize_for_index, _resolve_actor_ref
+from semantic.common import SemanticExtraction, normalize_for_index, _resolve_actor_ref, _should_reject_constraint_text
 from semantic.agent_conversation_memory_embedding import VECTOR_EMBEDDING_PROVIDER_NAME, VECTOR_EMBEDDING_PROVIDER_VERSION, build_embedding_text
 from semantic.agent_conversation_memory_constraints import (
     CONSTRAINT_MEMORY_SCHEMA_ID,
@@ -130,6 +130,8 @@ def _append_typed_constraint_memory_objects(
 ) -> ProcessResult:
     constraint_text = (extraction.constraint_text or "").strip()
     if not constraint_text:
+        return result
+    if _should_reject_constraint_text(constraint_text):
         return result
     if source_item.role and source_item.role.lower() != "user":
         return result

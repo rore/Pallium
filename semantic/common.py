@@ -115,6 +115,23 @@ def content_tokens(text: str) -> set[str]:
     return expanded
 
 
+_ANAPHORIC_PRONOUNS = frozenset({"that", "it", "this", "those", "these", "them"})
+_GENERIC_VERBS = frozenset({"do", "done", "allow", "allowed", "want", "wanted", "don"})
+
+def _should_reject_constraint_text(constraint_text: str) -> bool:
+    """Reject constraint text that is too short or anaphoric (unresolvable without context)."""
+    normalized = normalize_for_index(constraint_text)
+    if len(normalized) < 15:
+        return True
+    tokens = content_tokens(constraint_text)
+    if not tokens:
+        return True
+    meaningful_tokens = tokens - _ANAPHORIC_PRONOUNS - _GENERIC_VERBS
+    if not meaningful_tokens:
+        return True
+    return False
+
+
 def deterministic_extraction(source_item: SourceItem) -> SemanticExtraction:
     return SemanticExtraction(summary=summarize_content(source_item.content))
 
@@ -150,16 +167,30 @@ def _typed_memory_payload_is_quality_viable(*texts: str | None) -> bool:
     return True
 
 
+_MIN_INVESTIGATION_TOKENS = 6
+
+
 def _investigation_payload_is_quality_viable(extraction: SemanticExtraction) -> bool:
     if not _typed_memory_payload_is_quality_viable(
         extraction.investigation_text,
         extraction.investigation_evidence_text,
     ):
         return False
-    return bool(
+    if not (
         str(clean_markdown_artifacts(extraction.key_finding_text) or "").strip()
         or str(clean_markdown_artifacts(extraction.rationale_text) or "").strip()
-    )
+    ):
+        return False
+
+    investigation_text = (clean_markdown_artifacts(extraction.investigation_text) or "").strip()
+    if not investigation_text:
+        return False
+
+    tokens = TOKEN_PATTERN.findall(investigation_text)
+    if len(tokens) < _MIN_INVESTIGATION_TOKENS:
+        return False
+
+    return True
 
 
 def fact_statement_is_quality_viable(statement: str) -> bool:
