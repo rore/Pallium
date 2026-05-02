@@ -674,7 +674,7 @@ class TestCLICommands:
         )
 
         mock_storage = MagicMock()
-        mock_storage.list_index_entries_by_type.return_value = [
+        entries = [
             IndexEntry(
                 id="e1",
                 target_kind="memory_object",
@@ -690,6 +690,18 @@ class TestCLICommands:
                 text_view="other text",
             ),
         ]
+        mock_storage.count_index_entries_by_type.return_value = len(entries)
+
+        def page(index_type, *, after_id=None, limit=None):
+            effective_limit = limit or 128
+            if after_id is None:
+                return entries[:effective_limit]
+            for i, e in enumerate(entries):
+                if e.id == after_id:
+                    return entries[i + 1:i + 1 + effective_limit]
+            return []
+
+        mock_storage.list_index_entries_by_type_page.side_effect = page
         mock_storage.get_memory_object.return_value = memory_obj
         mock_storage.get_source_item.return_value = source_item
         mock_storage.update_index_entry_text_view = MagicMock()

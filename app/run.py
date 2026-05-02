@@ -131,7 +131,8 @@ def _run_rebuild_vector_index() -> int:
 
     from app.config import AppConfig
     from app.dependencies import build_embedding_provider, build_storage_provider
-    from core.vector_rebuild import rebuild_vector_index
+    from core.rebuild_coordinator import RebuildCoordinator
+    from core.vector_index_holder import VectorIndexHolder
     from semantic.agent_conversation_memory_embedding import EMBEDDING_SCHEMA_VERSION
 
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
@@ -154,18 +155,27 @@ def _run_rebuild_vector_index() -> int:
         return 1
 
     storage = build_storage_provider(config)
-    try:
-        rebuild_vector_index(
-            storage=storage,
-            embedding_provider=embedding_provider,
-            index_path=Path(vector_config.index_path),
-            embedding_schema_version=EMBEDDING_SCHEMA_VERSION,
-        )
-    except Exception as exc:
-        logger.error("Rebuild failed: %s", exc)
-        return 1
+    index_path = Path(vector_config.index_path)
+    holder = VectorIndexHolder()
 
-    return 0
+    coordinator = RebuildCoordinator(
+        storage=storage,
+        embedding_provider=embedding_provider,
+        index_holder=holder,
+        index_path=index_path,
+        target_model_name=embedding_provider.model_name(),
+        target_dimensions=embedding_provider.dimensions(),
+        target_schema_version=EMBEDDING_SCHEMA_VERSION,
+        reason="manual CLI rebuild",
+    )
+    coordinator.run_sync()
+
+    if holder.is_available:
+        logger.info("Rebuild complete: %d entries", holder.index.entry_count())
+        return 0
+    else:
+        logger.error("Rebuild failed — check logs above")
+        return 1
 
 
 def _run_purge_suppressed() -> int:
