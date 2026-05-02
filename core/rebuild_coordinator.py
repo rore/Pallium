@@ -246,7 +246,7 @@ class RebuildCoordinator:
                 self._shadow_index.add(entry.id, vector)
 
         self._checkpoint.last_processed_entry_id = batch[-1].id
-        self._checkpoint.entry_count_processed += len(valid_entries)
+        self._checkpoint.entry_count_processed += len(batch)
         self._checkpoint.save(self._state_path)
 
         if self._checkpoint.entry_count_processed % self._shadow_save_interval < self._batch_size:

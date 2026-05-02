@@ -373,7 +373,7 @@ class TestCrashRecovery:
         assert result is False
 
     def test_recover_interrupted_swap_cleans_old_files(self, tmp_path: Path):
-        """Interrupted swap leaves .old files that get cleaned on recovery."""
+        """Crash window 2: live files exist + .old remnants → forward cleanup."""
         from app.main import _recover_interrupted_swap
 
         index_path = tmp_path / "live.usearch"
@@ -390,6 +390,29 @@ class TestCrashRecovery:
         # Live files untouched
         assert index_path.exists()
         assert Path(f"{index_path}.meta.json").exists()
+
+    def test_recover_interrupted_swap_rollback_when_live_missing(self, tmp_path: Path):
+        """Crash window 1: live files missing, .old has good copy → rollback."""
+        from app.main import _recover_interrupted_swap
+
+        index_path = tmp_path / "live.usearch"
+        # Simulate: crash between live→.old rename and shadow→live move
+        # .old files exist but live files do NOT
+        Path(f"{index_path}.old").write_bytes(b"good index data")
+        Path(f"{index_path}.meta.json.old").write_text('{"model_name":"test"}', encoding="utf-8")
+        Path(f"{index_path}.idmap.json.old").write_text('{"entries":{}}', encoding="utf-8")
+
+        _recover_interrupted_swap(index_path)
+
+        # .old files should have been renamed back to live
+        assert index_path.exists()
+        assert index_path.read_bytes() == b"good index data"
+        assert Path(f"{index_path}.meta.json").read_text(encoding="utf-8") == '{"model_name":"test"}'
+        assert Path(f"{index_path}.idmap.json").read_text(encoding="utf-8") == '{"entries":{}}'
+        # .old files should be gone
+        assert not Path(f"{index_path}.old").exists()
+        assert not Path(f"{index_path}.meta.json.old").exists()
+        assert not Path(f"{index_path}.idmap.json.old").exists()
 
     def test_recover_interrupted_swap_noop_when_no_old_files(self, tmp_path: Path):
         """No .old files means nothing to recover."""

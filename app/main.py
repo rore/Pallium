@@ -61,9 +61,28 @@ def _start_reconcile_thread(
 
 
 def _recover_interrupted_swap(index_path: Path) -> None:
-    """Clean up .old files left by an interrupted atomic swap."""
+    """Recover from a crash during atomic file swap.
+
+    Two crash windows exist:
+    1. After live→.old rename but before shadow→live: live files missing, .old has good copy → rollback
+    2. After shadow→live but before .old cleanup: both live and .old exist → forward (delete .old)
+    """
     old_meta = Path(f"{index_path}.meta.json.old")
-    if old_meta.exists():
+    if not old_meta.exists():
+        return
+
+    live_meta = Path(f"{index_path}.meta.json")
+    if not live_meta.exists():
+        # Crash window 1: live files gone, .old is the only good copy → rollback
+        from storage.vector_index import _replace_with_retry
+        for suffix in ["", ".meta.json", ".idmap.json"]:
+            old_path = Path(f"{index_path}{suffix}.old")
+            live_path = Path(f"{index_path}{suffix}") if suffix else index_path
+            if old_path.exists():
+                _replace_with_retry(str(old_path), str(live_path))
+        logger.info("Rolled back interrupted swap at %s (restored from .old)", index_path)
+    else:
+        # Crash window 2: swap completed, .old is stale backup → forward cleanup
         for suffix in ["", ".meta.json", ".idmap.json"]:
             Path(f"{index_path}{suffix}.old").unlink(missing_ok=True)
         logger.info("Cleaned interrupted swap remnants at %s", index_path)

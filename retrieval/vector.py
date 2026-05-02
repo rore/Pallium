@@ -73,12 +73,17 @@ class VectorRetrievalProvider(RetrievalProvider):
                 )
             return RetrievalQueryResult(results=[], trace=trace)
 
+        # Capture index reference once to avoid TOCTOU across search/remove
+        index = self._vector_index
+        if index is None:
+            return RetrievalQueryResult(results=[], trace=None)
+
         # 1. Embed query text
         query_vectors = self._embedding_provider.embed([text], mode="query")
         query_vector = query_vectors[0]
 
         # 2. Search vector index (overfetch limit * 4)
-        raw_hits = self._vector_index.search(query_vector, k=limit * 4)
+        raw_hits = index.search(query_vector, k=limit * 4)
 
         # 3. Resolve entry_ids to IndexEntries, handle stale entries
         resolved_hits: list[tuple[IndexEntry, float]] = []
@@ -95,7 +100,7 @@ class VectorRetrievalProvider(RetrievalProvider):
                     # Stale entry: index entry deleted by retention
                     logger.debug("Stale vector index entry %s; scheduling lazy removal", entry_id)
                     try:
-                        self._vector_index.remove(entry_id)
+                        index.remove(entry_id)
                     except KeyError:
                         pass  # Already removed
                     continue
