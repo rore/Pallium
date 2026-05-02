@@ -141,9 +141,9 @@ class TestBuildServiceVectorDisabled:
         )
         service = build_service(config)
 
-        assert not isinstance(service._retrieval, CompositeRetrievalProvider)
-        assert service._vector_index is None
-        assert service._embedding_provider is None
+        assert not isinstance(service.service._retrieval, CompositeRetrievalProvider)
+        assert service.service._vector_index is None
+        assert service.service._embedding_provider is None
 
     def test_vector_disabled_explicit_false_with_provider(self) -> None:
         config = _minimal_config(
@@ -151,9 +151,9 @@ class TestBuildServiceVectorDisabled:
         )
         service = build_service(config)
 
-        assert not isinstance(service._retrieval, CompositeRetrievalProvider)
-        assert service._vector_index is None
-        assert service._embedding_provider is None
+        assert not isinstance(service.service._retrieval, CompositeRetrievalProvider)
+        assert service.service._vector_index is None
+        assert service.service._embedding_provider is None
 
 
 # ---------------------------------------------------------------------------
@@ -198,9 +198,9 @@ class TestBuildServiceVectorEnabled:
 
         service = build_service(config)
 
-        assert service._embedding_provider is stub_provider
-        assert service._vector_index is mock_index
-        assert isinstance(service._retrieval, CompositeRetrievalProvider)
+        assert service.service._embedding_provider is stub_provider
+        assert service.service._vector_index is mock_index
+        assert isinstance(service.service._retrieval, CompositeRetrievalProvider)
 
     def test_vector_enabled_no_embedding_provider_name_disables(self, caplog) -> None:
         """Vector enabled but no embedding_provider configured => vector disabled with error log."""
@@ -211,9 +211,9 @@ class TestBuildServiceVectorEnabled:
         with caplog.at_level(logging.ERROR):
             service = build_service(config)
 
-        assert not isinstance(service._retrieval, CompositeRetrievalProvider)
-        assert service._vector_index is None
-        assert service._embedding_provider is None
+        assert not isinstance(service.service._retrieval, CompositeRetrievalProvider)
+        assert service.service._vector_index is None
+        assert service.service._embedding_provider is None
         assert "no embedding_provider configured" in caplog.text.lower()
 
 
@@ -244,9 +244,9 @@ class TestGracefulDegradation:
         with caplog.at_level(logging.ERROR):
             service = build_service(config)
 
-        assert not isinstance(service._retrieval, CompositeRetrievalProvider)
-        assert service._vector_index is None
-        assert service._embedding_provider is None
+        assert not isinstance(service.service._retrieval, CompositeRetrievalProvider)
+        assert service.service._vector_index is None
+        assert service.service._embedding_provider is None
         assert "vector disabled" in caplog.text.lower() or "vector embedding provider failed" in caplog.text.lower()
 
     def test_usearch_not_installed_disables_vector(self, tmp_path: Path, monkeypatch, caplog) -> None:
@@ -281,8 +281,8 @@ class TestGracefulDegradation:
 
 class TestModelMismatch:
 
-    def test_model_mismatch_disables_vector(self, tmp_path: Path, monkeypatch, caplog) -> None:
-        """If the index was built with a different model, auto-rebuild is attempted and on failure vector is disabled."""
+    def test_model_mismatch_detects_rebuild_needed(self, tmp_path: Path, monkeypatch, caplog) -> None:
+        """If the index was built with a different model, rebuild_needed is set but vector stays available."""
         from app.config import EmbeddingProviderConfig
         from storage.vector_index import VectorIndex
 
@@ -296,10 +296,8 @@ class TestModelMismatch:
 
         stub_provider = StubEmbeddingProvider(model="new-model")
 
-        # Mock storage — rebuild will call list_index_entries_by_type but
-        # then fail on get_memory_object/get_source_item (simulates rebuild failure)
         mock_storage = MagicMock()
-        mock_storage.list_index_entries_by_type.side_effect = RuntimeError("storage unavailable")
+        mock_storage.count_index_entries_by_type.return_value = 1
 
         config = _minimal_config(
             vector_index=VectorIndexConfig(
@@ -328,13 +326,15 @@ class TestModelMismatch:
             lambda config: mock_storage,
         )
 
-        with caplog.at_level(logging.ERROR):
-            service = build_service(config)
+        result = build_service(config)
 
-        assert not isinstance(service._retrieval, CompositeRetrievalProvider)
-        assert service._vector_index is None
-        assert service._embedding_provider is None
-        assert "auto-rebuild failed" in caplog.text.lower()
+        # Stale index is still wired in (better than nothing)
+        assert isinstance(result.service._retrieval, CompositeRetrievalProvider)
+        assert result.service._vector_index is mock_index
+        assert result.service._embedding_provider is stub_provider
+        # But rebuild is flagged
+        assert result.rebuild_needed is True
+        assert "model changed" in result.rebuild_reason
 
     def test_model_match_with_entries_keeps_vector(self, tmp_path: Path, monkeypatch) -> None:
         """If the model matches and entry counts agree, vector is kept."""
@@ -383,9 +383,9 @@ class TestModelMismatch:
 
         service = build_service(config)
 
-        assert isinstance(service._retrieval, CompositeRetrievalProvider)
-        assert service._vector_index is mock_index
-        assert service._embedding_provider is stub_provider
+        assert isinstance(service.service._retrieval, CompositeRetrievalProvider)
+        assert service.service._vector_index is mock_index
+        assert service.service._embedding_provider is stub_provider
 
     def test_empty_index_skips_model_check(self, tmp_path: Path, monkeypatch) -> None:
         """If the index is empty, model check is skipped (fresh index created with current model)."""
@@ -425,8 +425,8 @@ class TestModelMismatch:
         service = build_service(config)
 
         # Model mismatch ignored because index is empty
-        assert isinstance(service._retrieval, CompositeRetrievalProvider)
-        assert service._vector_index is mock_index
+        assert isinstance(service.service._retrieval, CompositeRetrievalProvider)
+        assert service.service._vector_index is mock_index
 
 
 # ---------------------------------------------------------------------------
@@ -484,9 +484,9 @@ class TestCountMismatch:
             service = build_service(config)
 
         # Vector stays enabled despite mismatch
-        assert isinstance(service._retrieval, CompositeRetrievalProvider)
-        assert service._vector_index is mock_index
-        assert service._embedding_provider is stub_provider
+        assert isinstance(service.service._retrieval, CompositeRetrievalProvider)
+        assert service.service._vector_index is mock_index
+        assert service.service._embedding_provider is stub_provider
         assert "mismatch" in caplog.text.lower()
 
 

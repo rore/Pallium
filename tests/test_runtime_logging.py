@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import types
 
 from app.cleaner import run_cleaner
 from app.config import AppConfig
@@ -21,7 +22,7 @@ class FakeRetentionService:
 
 
 def test_cleaner_runtime_logs_are_timestamped_and_labeled(monkeypatch, capsys) -> None:
-    monkeypatch.setattr("app.cleaner.build_service", lambda config, **kw: FakeRetentionService())
+    monkeypatch.setattr("app.cleaner.build_service", lambda config, **kw: types.SimpleNamespace(service=FakeRetentionService()))
 
     exit_code = run_cleaner(
         ["--once", "--cleaner-id", "cleaner-test"],

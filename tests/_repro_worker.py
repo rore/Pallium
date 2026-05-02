@@ -30,7 +30,7 @@ def main():
     args = parser.parse_args()
 
     config = _thread_test_config(args.db_url)
-    service = build_service(config, enable_vector=False)
+    service = build_service(config, enable_vector=False).service
 
     deadline = time.monotonic() + args.duration
     items_processed = 0

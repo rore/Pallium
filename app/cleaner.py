@@ -40,7 +40,7 @@ def run_cleaner(
 ) -> int:
     parsed = build_parser().parse_args(args)
     resolved_config = config or AppConfig.from_env()
-    service = build_service(resolved_config, enable_vector=False)
+    service = build_service(resolved_config, enable_vector=False).service
     cleaner_id = parsed.cleaner_id or default_cleaner_id()
     run_interval_seconds = parsed.run_interval_seconds if parsed.run_interval_seconds is not None else resolved_config.retention.run_interval_seconds
     lease_seconds = parsed.lease_seconds if parsed.lease_seconds is not None else resolved_config.retention.lease_seconds

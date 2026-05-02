@@ -1,6 +1,7 @@
 """Tests for vector index self-healing: orphan prevention, startup mismatch, reconciliation."""
 from __future__ import annotations
 
+import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -336,7 +337,7 @@ def test_worker_loop_does_not_call_reconciliation(test_db_url: str, monkeypatch)
 
     monkeypatch.setattr(
         "app.worker.build_service",
-        lambda config, **_kw: tracking_service,
+        lambda config, **_kw: types.SimpleNamespace(service=tracking_service),
     )
 
     run_worker(["--once"], config=AppConfig(

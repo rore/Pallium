@@ -117,7 +117,7 @@ class TestHealthEndpointLocation:
         from app.dependencies import build_service
 
         config = _no_vector_config()
-        service = build_service(config)
+        service = build_service(config).service
         router = create_router(service)
         route_paths = [route.path for route in router.routes]
         assert "/health" not in route_paths
@@ -164,6 +164,7 @@ class TestStatusResponseShape:
             "snapshot",
             "storage",
             "vector_index_ready",
+            "vector_rebuild",
             "uptime_seconds",
             "query",
         }

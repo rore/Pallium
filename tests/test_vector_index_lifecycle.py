@@ -176,7 +176,7 @@ def test_enable_vector_false_produces_working_service(test_db_url):
             vector_index=VectorIndexConfig(enabled=False),
         ),
         enable_vector=False,
-    )
+    ).service
 
     # Ingest and process
     ingest = service.ingest_item(

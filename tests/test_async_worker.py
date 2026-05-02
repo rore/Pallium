@@ -4,6 +4,7 @@ from datetime import timedelta
 import re
 import sqlite3
 import threading
+import types
 from subprocess import TimeoutExpired
 from unittest.mock import MagicMock
 
@@ -206,7 +207,7 @@ def test_run_worker_uses_processing_summary_path(test_db_url: str, monkeypatch) 
         raise AssertionError('worker should not call full processing hydration')
 
     service._processor._get_item_processing = fail_if_full_processing_used
-    monkeypatch.setattr('app.worker.build_service', lambda config, **_kw: service)
+    monkeypatch.setattr('app.worker.build_service', lambda config, **_kw: types.SimpleNamespace(service=service))
 
     exit_code = run_worker(
         ['--once', '--worker-id', 'worker-summary-test'],
@@ -701,7 +702,7 @@ def test_run_worker_logs_failure_details(monkeypatch, test_db_url: str, capsys) 
     )
     assert ingest.processing_status == "pending"
 
-    monkeypatch.setattr("app.worker.build_service", lambda config, **_kw: service)
+    monkeypatch.setattr("app.worker.build_service", lambda config, **_kw: types.SimpleNamespace(service=service))
 
     exit_code = run_worker(
         ["--once", "--worker-id", "worker-log-test", "--max-attempts", "1"],
@@ -764,7 +765,7 @@ def test_worker_retries_on_transient_sqlite_error_then_recovers(monkeypatch, tes
         return original_process(**kwargs)
 
     service.process_next_source_item = failing_then_working
-    monkeypatch.setattr("app.worker.build_service", lambda config, **_kw: service)
+    monkeypatch.setattr("app.worker.build_service", lambda config, **_kw: types.SimpleNamespace(service=service))
 
     sleep_durations: list[float] = []
     original_sleep = lambda d: sleep_durations.append(d)
@@ -809,7 +810,7 @@ def test_worker_gives_up_after_max_consecutive_transient_errors(monkeypatch, tes
         raise _make_sa_operational_error("database is locked")
 
     service.process_next_source_item = always_fail
-    monkeypatch.setattr("app.worker.build_service", lambda config, **_kw: service)
+    monkeypatch.setattr("app.worker.build_service", lambda config, **_kw: types.SimpleNamespace(service=service))
 
     exit_code = run_worker(
         ["--worker-id", "worker-transient-max-test"],
@@ -843,7 +844,7 @@ def test_worker_non_transient_sqlite_error_still_crashes(monkeypatch, test_db_ur
         raise _make_sa_operational_error("no such table: source_items")
 
     service.process_next_source_item = raise_non_transient
-    monkeypatch.setattr("app.worker.build_service", lambda config, **_kw: service)
+    monkeypatch.setattr("app.worker.build_service", lambda config, **_kw: types.SimpleNamespace(service=service))
 
     import pytest
     with pytest.raises(SAOperationalError, match="no such table"):

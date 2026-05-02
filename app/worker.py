@@ -47,7 +47,7 @@ def run_worker(
     clock: Callable[[], float] = time.monotonic,
 ) -> int:
     parsed = build_parser().parse_args(args)
-    service = build_service(config, enable_vector=False)
+    service = build_service(config, enable_vector=False).service
     worker_id = parsed.worker_id or default_worker_id()
     last_rebuild_check = clock()
 

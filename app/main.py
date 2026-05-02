@@ -7,6 +7,7 @@ import time
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -21,6 +22,9 @@ from core.service import PalliumService
 from semantic.agent_conversation_memory_routing import RoutingOverrides
 from storage.sqlite import SQLiteStorageProvider
 from storage.sqlite_schema import MemoryObjectRecord, SourceItemRecord
+
+if TYPE_CHECKING:
+    from core.rebuild_coordinator import RebuildCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -72,13 +76,15 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
 
     resolved_config = config or AppConfig.from_env()
     query_stats = QueryStats()
-    service = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats)
+    build_result = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats)
+    service = build_result.service
 
     @contextlib.asynccontextmanager
     async def app_lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
         # Start reconcile thread inside lifespan so shutdown stops it cleanly.
         stop: threading.Event | None = None
-        if service._vector_index is not None:
+        rebuild_coordinator: "RebuildCoordinator | None" = None
+        if build_result.index_holder.is_available:
             reconcile_done = threading.Event()
             app_instance.state._reconcile_done = reconcile_done
             stop = _start_reconcile_thread(
@@ -87,6 +93,28 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             app_instance.state._reconcile_stop = stop
         else:
             app_instance.state._reconcile_done = None
+
+        # Start background rebuild if needed
+        if build_result.rebuild_needed and build_result.embedding_provider is not None:
+            from core.rebuild_coordinator import RebuildCoordinator
+            from semantic.agent_conversation_memory_embedding import EMBEDDING_SCHEMA_VERSION
+
+            RebuildCoordinator.cleanup_orphaned_rebuild(build_result.index_path)
+
+            rebuild_coordinator = RebuildCoordinator(
+                storage=service._storage,
+                embedding_provider=build_result.embedding_provider,
+                index_holder=build_result.index_holder,
+                index_path=build_result.index_path,
+                target_model_name=build_result.embedding_provider.model_name(),
+                target_dimensions=build_result.embedding_provider.dimensions(),
+                target_schema_version=EMBEDDING_SCHEMA_VERSION,
+                reason=build_result.rebuild_reason,
+                on_swap_callback=service._vector_embedder.reset_reconcile_state,
+            )
+            rebuild_coordinator.start()
+            app_instance.state._rebuild_coordinator = rebuild_coordinator
+
         app_instance.state._lifespan_complete = True
         try:
             if mcp_available and session_manager is not None:
@@ -95,6 +123,8 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             else:
                 yield
         finally:
+            if rebuild_coordinator is not None:
+                rebuild_coordinator.stop()
             if stop is not None:
                 stop.set()
 
@@ -102,6 +132,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     app.state.pallium_service = service
     app.state._lifespan_complete = False
     app.state._reconcile_done = None
+    app.state._rebuild_coordinator = None
     app.state._start_time = time.monotonic()
 
     @app.get("/health")
@@ -236,6 +267,12 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         except Exception:
             logger.warning("status: query stats failed", exc_info=True)
 
+        # --- Vector rebuild status ---
+        rebuild_info: dict | None = None
+        rebuild_coord = getattr(app.state, "_rebuild_coordinator", None)
+        if rebuild_coord is not None:
+            rebuild_info = rebuild_coord.status()
+
         return JSONResponse(content={
             "pending_items": pending_count,
             "oldest_pending_age_seconds": oldest_pending_age,
@@ -244,6 +281,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "snapshot": snapshot_info,
             "storage": storage_info,
             "vector_index_ready": vector_index_ready,
+            "vector_rebuild": rebuild_info,
             "uptime_seconds": uptime,
             "query": query_info,
         })

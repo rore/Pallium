@@ -180,7 +180,7 @@ def test_dual_package_two_instances_sequential(monkeypatch, test_db_url: str) ->
     app_a = create_app(config)
     client_a = TestClient(app_a)
     service_a = app_a.state.pallium_service
-    service_b = build_service(config, enable_vector=False)
+    service_b = build_service(config, enable_vector=False).service
 
     thread_ref = "chat:test:thread-dual-seq"
     container_ref = "chat:test"
@@ -216,8 +216,8 @@ def test_dual_package_concurrent_workers(monkeypatch, test_db_url: str) -> None:
 
     app = create_app(config)
     client = TestClient(app)
-    service_w1 = build_service(config, enable_vector=False)
-    service_w2 = build_service(config, enable_vector=False)
+    service_w1 = build_service(config, enable_vector=False).service
+    service_w2 = build_service(config, enable_vector=False).service
 
     thread_ref = "chat:test:thread-dual-concurrent"
     container_ref = "chat:test"
@@ -292,8 +292,8 @@ def test_dual_package_concurrent_rapid_fire(monkeypatch, test_db_url: str) -> No
 
     app = create_app(config)
     client = TestClient(app)
-    service_w1 = build_service(config, enable_vector=False)
-    service_w2 = build_service(config, enable_vector=False)
+    service_w1 = build_service(config, enable_vector=False).service
+    service_w2 = build_service(config, enable_vector=False).service
 
     thread_ref = "chat:test:thread-dual-rapid"
     container_ref = "chat:test"

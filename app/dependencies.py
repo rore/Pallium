@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,16 @@ from storage.sqlite import SQLiteStorageProvider
 from storage.vector_index import VectorIndex, VectorIndexConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class BuildResult:
+    service: PalliumService
+    index_holder: VectorIndexHolder
+    rebuild_needed: bool
+    rebuild_reason: str
+    index_path: Path | None
+    embedding_provider: EmbeddingProvider | None
 
 
 def build_storage_provider(config: AppConfig) -> StorageProvider:
@@ -250,7 +261,7 @@ def build_service(
     *,
     enable_vector: bool = True,
     query_stats: QueryStats | None = None,
-) -> PalliumService:
+) -> BuildResult:
     resolved_config = config or AppConfig.from_env()
     storage = build_storage_provider(resolved_config)
     plugins = build_semantic_plugins(resolved_config, routing_overrides=routing_overrides)
@@ -268,6 +279,8 @@ def build_service(
     embedding_provider: EmbeddingProvider | None = None
     index_holder: VectorIndexHolder | None = None
     vector_config = resolved_config.vector_index
+    rebuild_needed = False
+    rebuild_reason = ""
 
     if vector_config.enabled and enable_vector:
         # 1. Build embedding provider
@@ -287,51 +300,29 @@ def build_service(
         if embedding_provider is not None:
             vector_index = _load_or_create_vector_index(vector_config, embedding_provider)
 
-        # 3. Model/schema consistency check — auto-rebuild or disable
+        # Create holder early — rebuild coordinator will swap into it
+        if vector_index is not None:
+            index_holder = VectorIndexHolder(vector_index)
+
+        # 3. Model/schema consistency check — detect need, don't block
         if vector_index is not None and embedding_provider is not None:
             from semantic.agent_conversation_memory_embedding import EMBEDDING_SCHEMA_VERSION
 
-            needs_rebuild = False
-            reason = ""
-
             if vector_index.entry_count() > 0:
                 if vector_index.model_name != embedding_provider.model_name():
-                    needs_rebuild = True
-                    reason = f"model changed: {vector_index.model_name} -> {embedding_provider.model_name()}"
+                    rebuild_needed = True
+                    rebuild_reason = f"model changed: {vector_index.model_name} -> {embedding_provider.model_name()}"
                 elif vector_index.embedding_schema_version != EMBEDDING_SCHEMA_VERSION:
-                    needs_rebuild = True
-                    reason = f"schema version: {vector_index.embedding_schema_version} -> {EMBEDDING_SCHEMA_VERSION}"
+                    rebuild_needed = True
+                    rebuild_reason = f"schema version: {vector_index.embedding_schema_version} -> {EMBEDDING_SCHEMA_VERSION}"
 
-            if needs_rebuild:
-                from core.vector_rebuild import AUTO_REBUILD_THRESHOLD, rebuild_vector_index
-
-                if vector_index.entry_count() <= AUTO_REBUILD_THRESHOLD:
-                    logger.info(
-                        "Vector index rebuild triggered (%s). Rebuilding %d entries inline...",
-                        reason,
-                        vector_index.entry_count(),
-                    )
-                    try:
-                        vector_index = rebuild_vector_index(
-                            storage=storage,
-                            embedding_provider=embedding_provider,
-                            index_path=Path(vector_config.index_path),
-                            embedding_schema_version=EMBEDDING_SCHEMA_VERSION,
-                        )
-                    except Exception as exc:
-                        logger.error("Auto-rebuild failed: %s. Vector disabled.", exc)
-                        vector_index = None
-                        embedding_provider = None
-                else:
-                    logger.error(
-                        "Vector index needs rebuild (%s) but has %d entries (> %d threshold). "
-                        "Vector disabled. Run: python -m app.run rebuild-vector-index",
-                        reason,
-                        vector_index.entry_count(),
-                        AUTO_REBUILD_THRESHOLD,
-                    )
-                    vector_index = None
-                    embedding_provider = None
+        # Check for pending rebuild from prior crash
+        if not rebuild_needed and vector_config.enabled and enable_vector:
+            from core.rebuild_coordinator import RebuildCoordinator
+            pending = RebuildCoordinator.has_pending_rebuild(Path(vector_config.index_path))
+            if pending is not None and pending.status == "in_progress":
+                rebuild_needed = True
+                rebuild_reason = f"resuming: {pending.reason}"
 
         # 4. Count reconciliation check — warn but continue; runtime reconciliation fills gaps
         if vector_index is not None and embedding_provider is not None:
@@ -350,8 +341,6 @@ def build_service(
             effective_min_similarity = vector_config.min_similarity
             if effective_min_similarity is None:
                 effective_min_similarity = embedding_provider.recommended_min_similarity()
-
-            index_holder = VectorIndexHolder(vector_index)
 
             vector_retrieval = VectorRetrievalProvider(
                 storage=storage,
@@ -376,7 +365,7 @@ def build_service(
         if callable(register_routing_types):
             register_routing_types(type_registry)
 
-    return PalliumService(
+    service = PalliumService(
         storage=storage,
         retrieval=retrieval,
         semantic_plugins=plugins,
@@ -390,6 +379,15 @@ def build_service(
         type_registry=type_registry if len(type_registry) > 0 else None,
         routing_overrides=routing_overrides,
         query_stats=query_stats,
+    )
+
+    return BuildResult(
+        service=service,
+        index_holder=index_holder or VectorIndexHolder(),
+        rebuild_needed=rebuild_needed,
+        rebuild_reason=rebuild_reason,
+        index_path=Path(vector_config.index_path) if vector_config.enabled else None,
+        embedding_provider=embedding_provider,
     )
 
 
