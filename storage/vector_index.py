@@ -14,7 +14,7 @@ class VectorIndexConfig:
     enabled: bool = True
     index_path: str = "./pallium_vector.index"
     embedding_provider: str = "onnx"  # key into embedding_providers
-    min_similarity: float = 0.55
+    min_similarity: float | None = None  # None = use model's recommended value
 
 
 def _require_usearch():

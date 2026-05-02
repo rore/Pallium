@@ -24,3 +24,10 @@ class EmbeddingProvider(ABC):
     @abstractmethod
     def model_name(self) -> str:
         """Return the model identifier used by this provider."""
+
+    def recommended_min_similarity(self) -> float:
+        """Model-specific minimum cosine similarity threshold for retrieval filtering.
+
+        Returns a safe low default. Subclasses override with calibrated values.
+        """
+        return 0.3

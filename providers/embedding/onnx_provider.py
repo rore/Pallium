@@ -8,8 +8,8 @@ from providers.embedding.base import EmbedMode, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
-# Default model — same as fastembed default
-DEFAULT_MODEL_REPO = "BAAI/bge-small-en-v1.5"
+# Default model — multilingual E5-base (768 dims, good cross-language recall)
+DEFAULT_MODEL_REPO = "intfloat/multilingual-e5-base"
 DEFAULT_ONNX_FILE = "onnx/model.onnx"
 DEFAULT_TOKENIZER_FILE = "tokenizer.json"
 DEFAULT_MAX_TOKENS = 512  # BERT-family position embedding limit (bge, e5, etc.)
@@ -23,6 +23,18 @@ _KNOWN_MODEL_PREFIXES: dict[str, tuple[str, str]] = {
     "intfloat/e5-small-v2": ("query: ", "passage: "),
     "intfloat/e5-base-v2": ("query: ", "passage: "),
     "intfloat/e5-large-v2": ("query: ", "passage: "),
+}
+
+# Known model minimum cosine similarity thresholds.  These are calibrated per
+# model family — different embedding spaces produce different score distributions.
+_KNOWN_MODEL_MIN_SIMILARITY: dict[str, float] = {
+    "intfloat/multilingual-e5-small": 0.55,
+    "intfloat/multilingual-e5-base": 0.55,
+    "intfloat/multilingual-e5-large": 0.55,
+    "intfloat/e5-small-v2": 0.55,
+    "intfloat/e5-base-v2": 0.55,
+    "intfloat/e5-large-v2": 0.55,
+    "BAAI/bge-small-en-v1.5": 0.55,
 }
 
 # Process-level cache: keyed by (model_path, tokenizer_path).
@@ -180,3 +192,7 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
 
     def model_name(self) -> str:
         return self._model
+
+    def recommended_min_similarity(self) -> float:
+        """Return a calibrated min similarity threshold for this model."""
+        return _KNOWN_MODEL_MIN_SIMILARITY.get(self._model, 0.3)

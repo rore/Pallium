@@ -51,7 +51,7 @@ class LLMProviderConfig:
 class EmbeddingProviderConfig:
     name: str
     kind: str                     # "fastembed" | "onnx"
-    model: str
+    model: str = ""               # empty = use provider's built-in default
     dimensions: int | None = None
     cache_dir: str | None = None  # model cache directory (default: HuggingFace global cache)
     query_prefix: str = ""
@@ -143,7 +143,6 @@ class AppConfig:
             embedding["onnx"] = EmbeddingProviderConfig(
                 name="onnx",
                 kind="onnx",
-                model="intfloat/multilingual-e5-small",
             )
 
         if self.llm_provider and self.llm_base_url:
@@ -389,6 +388,15 @@ def _resolve_float_value(name: str, env_values: dict[str, str]) -> float | None:
     return float(value)
 
 
+def _resolve_optional_float(env_value: str | None, config_value: Any) -> float | None:
+    """Resolve a float that may be None (unset in both env and config)."""
+    if env_value is not None and env_value != "":
+        return float(env_value)
+    if config_value is not None:
+        return float(config_value)
+    return None
+
+
 def _resolve_int_setting(name: str, env_values: dict[str, str], raw_value: Any, default: int) -> int:
     if name in env_values:
         return int(env_values[name])
@@ -572,7 +580,7 @@ def _build_embedding_provider_configs(config_data: dict[str, Any]) -> dict[str, 
             providers[provider_name] = EmbeddingProviderConfig(
                 name=provider_name,
                 kind=_as_string(raw_value.get("kind")),
-                model=_as_string(raw_value.get("model")),
+                model=_as_string(raw_value.get("model")),  # empty = use provider default
                 dimensions=dimensions,
                 cache_dir=_as_string(raw_value.get("cache_dir")) if raw_value.get("cache_dir") else None,
                 query_prefix=_as_string(raw_value.get("query_prefix")),
@@ -602,11 +610,9 @@ def _build_vector_index_config(config_data: dict[str, Any], env_values: dict[str
             env_values.get("PALLIUM_VECTOR_INDEX_EMBEDDING_PROVIDER")
             or raw.get("embedding_provider")
         ) or defaults.embedding_provider,
-        min_similarity=float(
-            env_values.get(
-                "PALLIUM_VECTOR_INDEX_MIN_SIMILARITY",
-                raw.get("min_similarity", defaults.min_similarity),
-            )
+        min_similarity=_resolve_optional_float(
+            env_values.get("PALLIUM_VECTOR_INDEX_MIN_SIMILARITY"),
+            raw.get("min_similarity"),
         ),
     )
 

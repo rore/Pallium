@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from api.routes import create_router
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
@@ -111,14 +112,17 @@ def build_embedding_provider(config: AppConfig, *, provider_name: str) -> Embedd
     if provider_kind == "onnx":
         from providers.embedding.onnx_provider import OnnxEmbeddingProvider
 
-        return OnnxEmbeddingProvider(
-            model=provider_config.model,
-            dimensions=provider_config.dimensions,
-            cache_dir=provider_config.cache_dir,
-            query_prefix=provider_config.query_prefix,
-            passage_prefix=provider_config.passage_prefix,
-            max_tokens=provider_config.max_tokens,
-        )
+        kwargs: dict[str, Any] = {
+            "cache_dir": provider_config.cache_dir,
+            "query_prefix": provider_config.query_prefix,
+            "passage_prefix": provider_config.passage_prefix,
+            "max_tokens": provider_config.max_tokens,
+        }
+        if provider_config.model:
+            kwargs["model"] = provider_config.model
+        if provider_config.dimensions is not None:
+            kwargs["dimensions"] = provider_config.dimensions
+        return OnnxEmbeddingProvider(**kwargs)
 
     raise ValueError(f"Unsupported embedding provider kind: {provider_config.kind}")
 
@@ -341,11 +345,15 @@ def build_service(
 
         # 5. Build VectorRetrievalProvider
         if vector_index is not None and embedding_provider is not None:
+            effective_min_similarity = vector_config.min_similarity
+            if effective_min_similarity is None:
+                effective_min_similarity = embedding_provider.recommended_min_similarity()
+
             vector_retrieval = VectorRetrievalProvider(
                 storage=storage,
                 vector_index=vector_index,
                 embedding_provider=embedding_provider,
-                min_similarity=vector_config.min_similarity,
+                min_similarity=effective_min_similarity,
             )
 
     # Wrap lexical + vector into composite retrieval if vector is available

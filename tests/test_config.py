@@ -424,7 +424,7 @@ def test_embedding_providers_default_auto_created() -> None:
     assert "onnx" in config.embedding_providers
     default_ep = config.embedding_providers["onnx"]
     assert default_ep.kind == "onnx"
-    assert default_ep.model == "intfloat/multilingual-e5-small"
+    assert default_ep.model == ""  # empty = use provider's built-in default
 
 
 def test_embedding_provider_config_direct_construction() -> None:
