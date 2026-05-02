@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from datetime import timedelta
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from sqlalchemy import create_engine, event, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.transient_errors import is_transient_error
 from core.contracts import ProcessResult
 from core.models import EvidenceReference, IndexEntry, MemoryFeedback, MemoryFlag, MemoryObject, Relation, SourceItem, utc_now
 from core.turn_inference import ThreadStats
@@ -31,6 +34,10 @@ from storage.sqlite_schema import (
     insert_lexical_fts_row,
 )
 from storage.sqlite_search import SQLiteSearchMixin
+
+logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 _DISPLAY_TEXT_KEYS = ("summary", "statement", "decision", "investigation_outcome", "interest_text", "constraint_text", "carry_forward_answer")
 
@@ -75,8 +82,29 @@ class SQLiteStorageProvider(
         def _set_sqlite_pragma(dbapi_connection, connection_record):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
-            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA busy_timeout=15000")
             cursor.close()
+
+    _LOCKED_MAX_RETRIES = 3
+    _LOCKED_BACKOFF_BASE = 0.2
+
+    def _with_retry(self, fn: Callable[[Session], _T]) -> _T:
+        """Execute fn(session) in a transaction, retrying on transient SQLite errors."""
+        for attempt in range(self._LOCKED_MAX_RETRIES):
+            try:
+                with self._session_factory.begin() as session:
+                    return fn(session)
+            except Exception as exc:
+                if not is_transient_error(exc):
+                    raise
+                if attempt == self._LOCKED_MAX_RETRIES - 1:
+                    raise
+                logger.warning(
+                    "Transient SQLite error (attempt %d/%d), retrying: %s",
+                    attempt + 1, self._LOCKED_MAX_RETRIES, exc,
+                )
+                time.sleep(self._LOCKED_BACKOFF_BASE * (2 ** attempt))
+        raise AssertionError("unreachable: loop must return or raise")
 
     def find_source_item(self, source_type: str, source_id: str) -> SourceItem | None:
         with self._session_factory() as session:
@@ -274,8 +302,7 @@ class SQLiteStorageProvider(
             subject=extract_memory_subject(memory_object),
             created_at=memory_object.created_at,
         )
-        with self._session_factory.begin() as session:
-            session.add(record)
+        self._with_retry(lambda session: session.add(record))
 
     def get_memory_object(self, memory_object_id: str) -> MemoryObject:
         with self._session_factory() as session:
@@ -285,14 +312,15 @@ class SQLiteStorageProvider(
             return self._to_memory_object(record)
 
     def update_memory_object_lifecycle(self, memory_object_id: str, lifecycle: str) -> None:
-        with self._session_factory.begin() as session:
+        def _do(session):
             record = session.get(MemoryObjectRecord, memory_object_id)
             if record is None:
                 raise KeyError(memory_object_id)
             record.lifecycle = lifecycle
+        self._with_retry(_do)
 
     def store_memory_flag(self, flag: MemoryFlag) -> None:
-        with self._session_factory.begin() as session:
+        def _do(session):
             record = session.get(MemoryObjectRecord, flag.memory_object_id)
             if record is None:
                 raise KeyError(flag.memory_object_id)
@@ -303,6 +331,7 @@ class SQLiteStorageProvider(
                 source_ref=flag.source_ref,
                 flagged_at=flag.flagged_at,
             ))
+        self._with_retry(_do)
 
     def record_memory_feedback(
         self,
@@ -323,7 +352,7 @@ class SQLiteStorageProvider(
         """
         from core.models import new_id
         feedback_id = new_id()
-        with self._session_factory.begin() as session:
+        def _do(session):
             memory_type = None
             memory_text = None
             mem_record = session.get(MemoryObjectRecord, memory_object_id)
@@ -345,6 +374,7 @@ class SQLiteStorageProvider(
                 thread_ref=thread_ref,
                 container_ref=container_ref,
             ))
+        self._with_retry(_do)
         return feedback_id
 
     def count_unique_flag_sources(self, memory_object_id: str, window_days: int) -> int:
@@ -386,8 +416,9 @@ class SQLiteStorageProvider(
             ]
 
     def refresh_memory_object_freshness(self, memory_object_id: str):
-        with self._session_factory.begin() as session:
+        def _do(session):
             return self._refresh_memory_object_freshness_in_session(session, memory_object_id)
+        return self._with_retry(_do)
 
     def list_memory_objects(self, memory_types: list[str] | None = None, lifecycle: str | None = None, container_ref: str | None = None, subject_in: list[str] | None = None) -> list[MemoryObject]:
         with self._session_factory() as session:
@@ -458,11 +489,12 @@ class SQLiteStorageProvider(
             to_kind=relation.to_kind,
             to_id=relation.to_id,
         )
-        with self._session_factory.begin() as session:
+        def _do(session):
             session.add(record)
             if relation.from_kind == "memory_object":
                 session.flush()
                 self._refresh_memory_object_freshness_in_session(session, relation.from_id)
+        self._with_retry(_do)
 
     def list_relations_for_source_item(self, source_item_id: str) -> list[Relation]:
         with self._session_factory() as session:
@@ -508,7 +540,7 @@ class SQLiteStorageProvider(
             provider_name=index_entry.provider_name,
             provider_version=index_entry.provider_version,
         )
-        with self._session_factory.begin() as session:
+        def _do(session):
             session.add(record)
             if index_entry.index_type == "lexical":
                 container_ref = self._resolve_container_ref_in_session(
@@ -523,6 +555,7 @@ class SQLiteStorageProvider(
                     text_view_name=index_entry.text_view_name,
                     container_ref=container_ref,
                 )
+        self._with_retry(_do)
 
     def list_index_entries_for_target(self, target_kind: str, target_id: str) -> list[IndexEntry]:
         with self._session_factory() as session:
@@ -599,20 +632,22 @@ class SQLiteStorageProvider(
         return count or 0
 
     def update_index_entry_provider(self, index_entry_id: str, provider_name: str, provider_version: str) -> None:
-        with self._session_factory.begin() as session:
+        def _do(session):
             record = session.get(IndexEntryRecord, index_entry_id)
             if record is None:
                 raise KeyError(index_entry_id)
             record.provider_name = provider_name
             record.provider_version = provider_version
+        self._with_retry(_do)
 
     def retarget_index_entries_for_target(
         self, target_kind: str, old_target_id: str, new_target_id: str,
     ) -> int:
-        with self._session_factory.begin() as session:
+        def _do(session):
             return self._retarget_index_entries_in_session(
                 session, target_kind, old_target_id, new_target_id,
             )
+        return self._with_retry(_do)
 
     def _retarget_index_entries_in_session(
         self,
@@ -680,8 +715,7 @@ class SQLiteStorageProvider(
 
     def write_query_audit_row(self, row: dict[str, Any]) -> None:
         record = QueryAuditLogRecord(**row)
-        with self._session_factory.begin() as session:
-            session.add(record)
+        self._with_retry(lambda session: session.add(record))
 
     def _after_commit_processed_source_item_persist(
         self,
