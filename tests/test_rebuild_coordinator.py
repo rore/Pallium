@@ -401,3 +401,135 @@ class TestCrashRecovery:
         _recover_interrupted_swap(index_path)
         # No crash, no error
         assert index_path.exists()
+
+
+class TestFullLifecycle:
+    """Integration tests: real VectorIndex, full rebuild lifecycle."""
+
+    def test_schema_change_rebuild_swaps_new_index(self, tmp_path: Path):
+        """Schema version change: old index stays live, rebuild produces new, swap happens."""
+        import time
+
+        # 1. Create an "old" index at schema_version=1 with 10 entries
+        index_path = tmp_path / "live.usearch"
+        old_index = VectorIndex(index_path, dimensions=8, model_name="test-model", embedding_schema_version=1)
+        for i in range(10):
+            old_index.add(f"entry-{i}", [float(i % 3) / 3.0] * 8)
+        old_index.save()
+
+        # 2. Put old index in holder — it's "live"
+        holder = VectorIndexHolder(old_index)
+        assert holder.index.entry_count() == 10
+        assert holder.index.embedding_schema_version == 1
+
+        # 3. Set up storage + provider for rebuild
+        entries = [_make_entry(f"entry-{i}", text=f"content {i}") for i in range(10)]
+        storage = _make_stub_storage(entries)
+        provider = _make_stub_provider(dimensions=8)
+
+        # 4. Run rebuild targeting schema_version=2
+        coordinator = RebuildCoordinator(
+            storage=storage,
+            embedding_provider=provider,
+            index_holder=holder,
+            index_path=index_path,
+            target_model_name="test-model",
+            target_dimensions=8,
+            target_schema_version=2,
+            reason="schema version: 1 -> 2",
+            batch_size=3,
+            shadow_save_interval=3,
+        )
+        coordinator.run_sync()
+
+        # 5. Verify: new index has correct schema and entries
+        assert holder.index.embedding_schema_version == 2
+        assert holder.index.entry_count() == 10
+        # Old index files replaced
+        reloaded = VectorIndex.load(index_path)
+        assert reloaded.embedding_schema_version == 2
+
+    def test_concurrent_queries_during_background_rebuild(self, tmp_path: Path):
+        """Queries against the old index work while rebuild runs in a background thread."""
+        import time
+
+        # Create old index with searchable vectors
+        index_path = tmp_path / "live.usearch"
+        old_index = VectorIndex(index_path, dimensions=8, model_name="test-model", embedding_schema_version=1)
+        for i in range(20):
+            old_index.add(f"entry-{i}", [0.5] * 8)
+        old_index.save()
+
+        holder = VectorIndexHolder(old_index)
+
+        # Slow provider to ensure rebuild takes time
+        provider = MagicMock()
+        provider.dimensions.return_value = 8
+        provider.model_name.return_value = "test-model"
+        def slow_embed(texts, **kw):
+            time.sleep(0.01)
+            return [[0.5] * 8 for _ in texts]
+        provider.embed.side_effect = slow_embed
+
+        entries = [_make_entry(f"entry-{i}", text=f"content {i}") for i in range(20)]
+        storage = _make_stub_storage(entries)
+
+        coordinator = RebuildCoordinator(
+            storage=storage,
+            embedding_provider=provider,
+            index_holder=holder,
+            index_path=index_path,
+            target_model_name="test-model",
+            target_dimensions=8,
+            target_schema_version=2,
+            reason="test",
+            batch_size=5,
+            shadow_save_interval=5,
+        )
+        coordinator.start()
+
+        # Run queries while rebuild is in progress
+        query_results = []
+        for _ in range(50):
+            idx = holder.index
+            if idx is not None:
+                hits = idx.search([0.5] * 8, k=5)
+                query_results.append(len(hits))
+            time.sleep(0.005)
+
+        coordinator.stop(timeout=10)
+
+        # All queries returned results (old or new index, never None)
+        assert all(r > 0 for r in query_results)
+        assert len(query_results) == 50
+
+    def test_on_swap_callback_resets_reconcile(self, tmp_path: Path):
+        """Verify the on_swap_callback mechanism works for reconcile state reset."""
+        index_path = tmp_path / "live.usearch"
+        old_index = VectorIndex(index_path, dimensions=8, model_name="test-model", embedding_schema_version=1)
+        old_index.add("existing-1", [0.5] * 8)
+        old_index.save()
+
+        holder = VectorIndexHolder(old_index)
+        entries = [_make_entry("entry-0", text="hello")]
+        storage = _make_stub_storage(entries)
+        provider = _make_stub_provider(dimensions=8)
+
+        callback_invocations = []
+        coordinator = RebuildCoordinator(
+            storage=storage,
+            embedding_provider=provider,
+            index_holder=holder,
+            index_path=index_path,
+            target_model_name="test-model",
+            target_dimensions=8,
+            target_schema_version=2,
+            reason="test",
+            batch_size=10,
+            shadow_save_interval=10,
+            on_swap_callback=lambda: callback_invocations.append("reset"),
+        )
+        coordinator.run_sync()
+
+        assert callback_invocations == ["reset"]
+        assert holder.index.entry_count() == 1
