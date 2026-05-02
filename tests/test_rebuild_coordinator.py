@@ -371,3 +371,33 @@ class TestCrashRecovery:
         index_path = tmp_path / "live.usearch"
         result = RebuildCoordinator.cleanup_orphaned_rebuild(index_path)
         assert result is False
+
+    def test_recover_interrupted_swap_cleans_old_files(self, tmp_path: Path):
+        """Interrupted swap leaves .old files that get cleaned on recovery."""
+        from app.main import _recover_interrupted_swap
+
+        index_path = tmp_path / "live.usearch"
+        # Simulate: live files exist + .old remnants from interrupted swap
+        index_path.write_bytes(b"live")
+        Path(f"{index_path}.meta.json").write_text("{}", encoding="utf-8")
+        Path(f"{index_path}.meta.json.old").write_text("{}", encoding="utf-8")
+        Path(f"{index_path}.idmap.json.old").write_text("{}", encoding="utf-8")
+
+        _recover_interrupted_swap(index_path)
+
+        assert not Path(f"{index_path}.meta.json.old").exists()
+        assert not Path(f"{index_path}.idmap.json.old").exists()
+        # Live files untouched
+        assert index_path.exists()
+        assert Path(f"{index_path}.meta.json").exists()
+
+    def test_recover_interrupted_swap_noop_when_no_old_files(self, tmp_path: Path):
+        """No .old files means nothing to recover."""
+        from app.main import _recover_interrupted_swap
+
+        index_path = tmp_path / "live.usearch"
+        index_path.write_bytes(b"live")
+
+        _recover_interrupted_swap(index_path)
+        # No crash, no error
+        assert index_path.exists()

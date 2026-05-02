@@ -60,6 +60,15 @@ def _start_reconcile_thread(
     return stop
 
 
+def _recover_interrupted_swap(index_path: Path) -> None:
+    """Clean up .old files left by an interrupted atomic swap."""
+    old_meta = Path(f"{index_path}.meta.json.old")
+    if old_meta.exists():
+        for suffix in ["", ".meta.json", ".idmap.json"]:
+            Path(f"{index_path}{suffix}.old").unlink(missing_ok=True)
+        logger.info("Cleaned interrupted swap remnants at %s", index_path)
+
+
 def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverrides | None = None) -> FastAPI:
     # Check MCP availability
     mcp_available = False
@@ -99,6 +108,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             from core.rebuild_coordinator import RebuildCoordinator
             from semantic.agent_conversation_memory_embedding import EMBEDDING_SCHEMA_VERSION
 
+            _recover_interrupted_swap(build_result.index_path)
             RebuildCoordinator.cleanup_orphaned_rebuild(build_result.index_path)
 
             rebuild_coordinator = RebuildCoordinator(
