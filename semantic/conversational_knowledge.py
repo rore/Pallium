@@ -481,8 +481,9 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
                 )
             )
 
-            # Vector index: "{subject}: {statement}"
-            embedding_text = f"{subject}: {statement}" if subject else statement
+            # Vector index: "[atomic_fact] {subject}: {statement}"
+            raw_text = f"{subject}: {statement}" if subject else statement
+            embedding_text = f"[atomic_fact] {raw_text}"
             index_entries.append(
                 build_index_entry(
                     target_kind="memory_object",
@@ -853,7 +854,8 @@ def _build_fact_summary(
         ),
     ]
 
-    embedding_text = f"{subject}: {summary}" if subject else summary
+    raw_text = f"{subject}: {summary}" if subject else summary
+    embedding_text = f"[fact_summary] {raw_text}"
     index_entries.append(
         build_index_entry(
             target_kind="memory_object",
