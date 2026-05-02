@@ -167,12 +167,14 @@ def test_enable_vector_false_produces_working_service(test_db_url):
     from app.config import AppConfig
     from app.dependencies import build_service
     from storage.vector_index import VectorIndexConfig
+    from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
     service = build_service(
         AppConfig(
             storage_backend="sqlite",
             sqlite_url=test_db_url,
             default_use_case="demo_agent_memory",
+            semantic_packages=DEMO_SEMANTIC_PACKAGES,
             vector_index=VectorIndexConfig(enabled=False),
         ),
         enable_vector=False,

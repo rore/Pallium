@@ -98,7 +98,6 @@ class SnapshotConfig:
 
 def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
     return {
-        "demo_agent_memory": SemanticPackageConfig(name="demo_agent_memory", implementation="demo_agent_memory"),
         "agent_conversation_memory": SemanticPackageConfig(
             name="agent_conversation_memory",
             implementation="agent_conversation_memory",

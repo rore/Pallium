@@ -99,6 +99,7 @@ def _config(test_db_url: str) -> AppConfig:
             ),
         },
         semantic_packages={
+            "demo_agent_memory": SemanticPackageConfig(name="demo_agent_memory", implementation="demo_agent_memory"),
             "conversational_knowledge": SemanticPackageConfig(
                 name="conversational_knowledge",
                 implementation="conversational_knowledge",

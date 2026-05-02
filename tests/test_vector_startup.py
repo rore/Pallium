@@ -13,6 +13,7 @@ from app.dependencies import build_service, _load_or_create_vector_index
 from providers.embedding.base import EmbeddingProvider
 from retrieval.composite import CompositeRetrievalProvider
 from storage.vector_index import VectorIndexConfig
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 try:
     import usearch  # noqa: F401
@@ -50,6 +51,7 @@ def _minimal_config(**overrides) -> AppConfig:
         storage_backend="sqlite",
         sqlite_url="sqlite:///:memory:",
         default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
     )
     defaults.update(overrides)
     return AppConfig(**defaults)

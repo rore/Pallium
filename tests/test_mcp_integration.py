@@ -16,6 +16,7 @@ from app.main import create_app
 from app.config import AppConfig
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import PalliumContext
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
 @pytest.fixture()
@@ -26,6 +27,7 @@ def pallium_asgi_app(test_db_url: str):
             storage_backend="sqlite",
             sqlite_url=test_db_url,
             default_use_case="demo_agent_memory",
+            semantic_packages=DEMO_SEMANTIC_PACKAGES,
             vector_index=VectorIndexConfig(enabled=False),
         )
     )
@@ -114,6 +116,7 @@ class TestMcpEndpointReachable:
             storage_backend="sqlite",
             sqlite_url=test_db_url,
             default_use_case="demo_agent_memory",
+            semantic_packages=DEMO_SEMANTIC_PACKAGES,
             vector_index=VectorIndexConfig(enabled=False),
         ))
         with TestClient(app, headers={"host": "127.0.0.1:8000"}) as client:
@@ -149,6 +152,7 @@ class TestMcpEndpointReachable:
             storage_backend="sqlite",
             sqlite_url=test_db_url,
             default_use_case="demo_agent_memory",
+            semantic_packages=DEMO_SEMANTIC_PACKAGES,
             vector_index=VectorIndexConfig(enabled=False),
         ))
         with TestClient(app, headers={"host": "127.0.0.1:8000"}) as client:

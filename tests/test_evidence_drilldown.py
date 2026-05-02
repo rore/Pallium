@@ -16,6 +16,7 @@ from app.config import AppConfig
 from app.main import create_app
 from core.models import MemoryObject, Relation, SourceItem
 from storage.vector_index import VectorIndexConfig
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
 def _config(db_url: str) -> AppConfig:
@@ -23,6 +24,7 @@ def _config(db_url: str) -> AppConfig:
         storage_backend="sqlite",
         sqlite_url=db_url,
         default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
         vector_index=VectorIndexConfig(enabled=False),
     )
 

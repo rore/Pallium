@@ -12,7 +12,7 @@ from sqlalchemy.exc import OperationalError as SAOperationalError
 
 from app.config import AppConfig
 from storage.vector_index import VectorIndexConfig
-from tests.config_helpers import _vector_index_path_for_sqlite
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES, _vector_index_path_for_sqlite
 from app.processor import run_processor
 from app.worker import run_worker
 from app.transient_errors import is_transient_error
@@ -179,7 +179,7 @@ def test_run_worker_once_processes_pending_item(test_db_url: str, capsys) -> Non
     )
     assert ingest.processing_status == 'pending'
 
-    exit_code = run_worker(['--once', '--worker-id', 'worker-test'], config=AppConfig(storage_backend='sqlite', sqlite_url=test_db_url, default_use_case='demo_agent_memory', vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url))))
+    exit_code = run_worker(['--once', '--worker-id', 'worker-test'], config=AppConfig(storage_backend='sqlite', sqlite_url=test_db_url, default_use_case='demo_agent_memory', semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url))))
     assert exit_code == 0
 
     status = service.get_item_processing(ingest.source_item_id)
@@ -215,6 +215,7 @@ def test_run_worker_uses_processing_summary_path(test_db_url: str, monkeypatch) 
             storage_backend='sqlite',
             sqlite_url=test_db_url,
             default_use_case='demo_agent_memory',
+            semantic_packages=DEMO_SEMANTIC_PACKAGES,
             vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)),
         ),
         install_signal_handlers=False,
@@ -226,7 +227,7 @@ def test_run_worker_uses_processing_summary_path(test_db_url: str, monkeypatch) 
 def test_run_worker_stops_cleanly_when_stop_is_requested(test_db_url: str) -> None:
     exit_code = run_worker(
         ['--worker-id', 'worker-stop-test'],
-        config=AppConfig(storage_backend='sqlite', sqlite_url=test_db_url, default_use_case='demo_agent_memory', vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url))),
+        config=AppConfig(storage_backend='sqlite', sqlite_url=test_db_url, default_use_case='demo_agent_memory', semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url))),
         sleep_fn=lambda _: None,
         should_stop=lambda: True,
         install_signal_handlers=False,
@@ -249,7 +250,7 @@ def test_run_processor_once_processes_pending_item(test_db_url: str, capsys) -> 
     )
     assert ingest.processing_status == 'pending'
 
-    exit_code = run_processor(['--once', '--processor-id', 'processor-test'], config=AppConfig(storage_backend='sqlite', sqlite_url=test_db_url, default_use_case='demo_agent_memory', vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url))))
+    exit_code = run_processor(['--once', '--processor-id', 'processor-test'], config=AppConfig(storage_backend='sqlite', sqlite_url=test_db_url, default_use_case='demo_agent_memory', semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url))))
     assert exit_code == 0
 
     status = service.get_item_processing(ingest.source_item_id)
@@ -776,6 +777,7 @@ def test_worker_retries_on_transient_sqlite_error_then_recovers(monkeypatch, tes
             storage_backend="sqlite",
             sqlite_url=test_db_url,
             default_use_case="demo_agent_memory",
+            semantic_packages=DEMO_SEMANTIC_PACKAGES,
             vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)),
         ),
         sleep_fn=original_sleep,
@@ -818,6 +820,7 @@ def test_worker_gives_up_after_max_consecutive_transient_errors(monkeypatch, tes
             storage_backend="sqlite",
             sqlite_url=test_db_url,
             default_use_case="demo_agent_memory",
+            semantic_packages=DEMO_SEMANTIC_PACKAGES,
             vector_index=VectorIndexConfig(enabled=False),
         ),
         sleep_fn=lambda _: None,
@@ -854,6 +857,7 @@ def test_worker_non_transient_sqlite_error_still_crashes(monkeypatch, test_db_ur
                 storage_backend="sqlite",
                 sqlite_url=test_db_url,
                 default_use_case="demo_agent_memory",
+                semantic_packages=DEMO_SEMANTIC_PACKAGES,
                 vector_index=VectorIndexConfig(enabled=False),
             ),
             sleep_fn=lambda _: None,

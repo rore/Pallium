@@ -11,6 +11,7 @@ from app.main import create_app
 from core.models import MemoryObject
 from storage.sqlite_schema import MemoryFlagRecord
 from storage.vector_index import VectorIndexConfig
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
 def _test_config(tmp_path: Path) -> AppConfig:
@@ -19,6 +20,7 @@ def _test_config(tmp_path: Path) -> AppConfig:
         storage_backend="sqlite",
         sqlite_url=f"sqlite:///{db_path}",
         default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
         vector_index=VectorIndexConfig(enabled=False),
     )
 

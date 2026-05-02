@@ -12,6 +12,7 @@ from app.main import create_app
 from core.models import MemoryObject, SourceItem
 from core.vector_index_holder import VectorIndexHolder
 from storage.vector_index import VectorIndexConfig
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
 def _no_vector_config() -> AppConfig:
@@ -19,6 +20,7 @@ def _no_vector_config() -> AppConfig:
         storage_backend="sqlite",
         sqlite_url="sqlite:///:memory:",
         default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
         vector_index=VectorIndexConfig(enabled=False),
     )
 
@@ -138,6 +140,7 @@ def _file_db_config(tmp_path: Path, **overrides) -> AppConfig:
         storage_backend="sqlite",
         sqlite_url=f"sqlite:///{db_path}",
         default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
         vector_index=VectorIndexConfig(enabled=False),
     )
     defaults.update(overrides)

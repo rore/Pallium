@@ -22,6 +22,10 @@ DEFAULT_CONSOLIDATION_POLICY = ConsolidationPolicy(
     lexical_overlap_threshold=2,
 )
 
+DEMO_SEMANTIC_PACKAGES = {
+    "demo_agent_memory": SemanticPackageConfig(name="demo_agent_memory", implementation="demo_agent_memory"),
+}
+
 
 def build_llm_test_config(
     *,

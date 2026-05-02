@@ -5,8 +5,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import AppConfig
+from app.config import AppConfig, SemanticPackageConfig
 from app.main import create_app
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
 @pytest.fixture()
@@ -22,6 +23,7 @@ def client(test_db_url: str) -> TestClient:
             storage_backend="sqlite",
             sqlite_url=test_db_url,
             default_use_case="demo_agent_memory",
+            semantic_packages=DEMO_SEMANTIC_PACKAGES,
             vector_index=VectorIndexConfig(enabled=False),
         )
     )

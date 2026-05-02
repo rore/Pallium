@@ -9,7 +9,7 @@ from sqlalchemy import text
 from api.schemas import QueueHealthResponse
 from app.config import AppConfig, RetentionConfig
 from storage.vector_index import VectorIndexConfig
-from tests.config_helpers import _vector_index_path_for_sqlite
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES, _vector_index_path_for_sqlite
 from app.main import create_app
 from core.contracts import MemoryRetentionPolicy
 from core.models import IndexEntry, MemoryObject, Relation, SourceItem
@@ -246,6 +246,7 @@ def test_queue_health_exposes_retention_stats(test_db_url: str) -> None:
         storage_backend="sqlite",
         sqlite_url=test_db_url,
         default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
         retention=RetentionConfig(enabled=True, run_interval_seconds=300, lease_seconds=300, batch_size=20),
         vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)),
     )

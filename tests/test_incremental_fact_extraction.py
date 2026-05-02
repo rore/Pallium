@@ -1056,6 +1056,10 @@ def test_e2e_container_then_thread_scope_no_skip(monkeypatch, test_db_url: str):
             ),
         },
         semantic_packages={
+            "demo_agent_memory": SemanticPackageConfig(
+                name="demo_agent_memory",
+                implementation="demo_agent_memory",
+            ),
             "conversational_knowledge": SemanticPackageConfig(
                 name="conversational_knowledge",
                 implementation="conversational_knowledge",

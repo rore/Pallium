@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.config import AppConfig
 from storage.vector_index import VectorIndexConfig
-from tests.config_helpers import _vector_index_path_for_sqlite
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES, _vector_index_path_for_sqlite
 from app.live_exploratory_runner import (
     BackgroundProcessor,
     StageTimeoutError,
@@ -141,7 +141,7 @@ def test_wait_for_turn_event_processing_skips_followup_wait_when_not_required() 
 
 
 def test_targeted_waits_complete_for_user_and_assistant_without_full_drain(test_db_url: str) -> None:
-    config = AppConfig(storage_backend="sqlite", sqlite_url=test_db_url, default_use_case="demo_agent_memory", vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)))
+    config = AppConfig(storage_backend="sqlite", sqlite_url=test_db_url, default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)))
     client = TestClient(create_app(config))
     try:
         user_response = client.post("/items", json=[_item_payload("targeted-user", "Decision: user stage.")])
@@ -175,7 +175,7 @@ def test_targeted_waits_complete_for_user_and_assistant_without_full_drain(test_
 
 
 def test_background_processor_processes_pending_item_and_stops_cleanly(test_db_url: str) -> None:
-    config = AppConfig(storage_backend="sqlite", sqlite_url=test_db_url, default_use_case="demo_agent_memory", vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)))
+    config = AppConfig(storage_backend="sqlite", sqlite_url=test_db_url, default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)))
     client = TestClient(create_app(config))
     try:
         response = client.post("/items", json=[_item_payload("background-processor-1", "Decision: process this item.")])
@@ -203,8 +203,8 @@ def test_scenario_isolation_keeps_separate_sqlite_dbs(test_db_url: str) -> None:
     second_db_url = test_db_url.replace("test.db", "live-runner-second.db")
     shared_source_id = "live-runner-isolation"
 
-    first_config = AppConfig(storage_backend="sqlite", sqlite_url=first_db_url, default_use_case="demo_agent_memory", vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(first_db_url)))
-    second_config = AppConfig(storage_backend="sqlite", sqlite_url=second_db_url, default_use_case="demo_agent_memory", vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(second_db_url)))
+    first_config = AppConfig(storage_backend="sqlite", sqlite_url=first_db_url, default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(first_db_url)))
+    second_config = AppConfig(storage_backend="sqlite", sqlite_url=second_db_url, default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(second_db_url)))
 
     first_client = TestClient(create_app(first_config))
     second_client = TestClient(create_app(second_config))
@@ -406,7 +406,7 @@ def test_build_shadow_diff_shadow_neutral() -> None:
 
 def test_create_app_with_routing_overrides_reaches_plugin(test_db_url: str) -> None:
     from semantic.agent_conversation_memory import AgentConversationMemoryPlugin
-    config = AppConfig(storage_backend="sqlite", sqlite_url=test_db_url, default_use_case="demo_agent_memory", vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)))
+    config = AppConfig(storage_backend="sqlite", sqlite_url=test_db_url, default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)))
     overrides = {"fallback_margin": 999}
     app = create_app(config, routing_overrides=overrides)
     service = app.state.pallium_service

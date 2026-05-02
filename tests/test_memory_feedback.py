@@ -333,11 +333,13 @@ class TestFeedbackAPIEndpoint:
         from app.config import AppConfig
         from app.main import create_app
         from storage.vector_index import VectorIndexConfig
+        from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
         db_url = f"sqlite:///{tmp_path / 'test.db'}"
         config = AppConfig(
             storage_backend="sqlite",
             sqlite_url=db_url,
             default_use_case="demo_agent_memory",
+            semantic_packages=DEMO_SEMANTIC_PACKAGES,
             vector_index=VectorIndexConfig(enabled=False),
         )
         app = create_app(config)
@@ -471,11 +473,13 @@ class TestFeedbackMcpTool:
         from app.config import AppConfig
         from app.main import create_app
         from storage.vector_index import VectorIndexConfig
+        from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
         db_url = f"sqlite:///{tmp_path / 'test.db'}"
         config = AppConfig(
             storage_backend="sqlite",
             sqlite_url=db_url,
             default_use_case="demo_agent_memory",
+            semantic_packages=DEMO_SEMANTIC_PACKAGES,
             vector_index=VectorIndexConfig(enabled=False),
         )
         app = create_app(config)

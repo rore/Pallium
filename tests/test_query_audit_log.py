@@ -14,6 +14,7 @@ from retrieval.lexical import LexicalRetrievalProvider
 from semantic.demo_agent_memory import DemoAgentMemoryPlugin
 from storage.sqlite import SQLiteStorageProvider
 from storage.vector_index import VectorIndexConfig
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
 def _build_service(
@@ -37,6 +38,7 @@ def _make_client(test_db_url: str, *, audit_log_enabled: bool = False) -> TestCl
         storage_backend="sqlite",
         sqlite_url=test_db_url,
         default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
         vector_index=VectorIndexConfig(enabled=False),
         observability=ObservabilityConfig(query_audit_log=audit_log_enabled),
     ))

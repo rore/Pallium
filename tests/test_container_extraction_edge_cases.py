@@ -28,6 +28,7 @@ from providers.llm.base import LLMJsonResponse
 from semantic.base import ThreadAggregationSemanticPlugin
 from storage.base import ThreadProcessingScope
 from storage.vector_index import VectorIndexConfig
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -37,6 +38,7 @@ def _app_config(db_url: str) -> AppConfig:
         storage_backend="sqlite",
         sqlite_url=db_url,
         default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
         vector_index=VectorIndexConfig(enabled=False),
     )
 
@@ -56,6 +58,7 @@ def _app_config_with_llm(db_url: str) -> AppConfig:
             ),
         },
         semantic_packages={
+            "demo_agent_memory": SemanticPackageConfig(name="demo_agent_memory", implementation="demo_agent_memory"),
             "conversational_knowledge": SemanticPackageConfig(
                 name="conversational_knowledge",
                 implementation="conversational_knowledge",

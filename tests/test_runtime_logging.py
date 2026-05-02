@@ -7,6 +7,7 @@ from app.cleaner import run_cleaner
 from app.config import AppConfig
 from storage.vector_index import VectorIndexConfig
 from storage.base import RetentionRunStats
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
 TIMESTAMPED_CLEANER_LINE = re.compile(
@@ -26,7 +27,7 @@ def test_cleaner_runtime_logs_are_timestamped_and_labeled(monkeypatch, capsys) -
 
     exit_code = run_cleaner(
         ["--once", "--cleaner-id", "cleaner-test"],
-        config=AppConfig(storage_backend="sqlite", sqlite_url="sqlite:///:memory:", default_use_case="demo_agent_memory", vector_index=VectorIndexConfig(enabled=False)),
+        config=AppConfig(storage_backend="sqlite", sqlite_url="sqlite:///:memory:", default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(enabled=False)),
         install_signal_handlers=False,
     )
 

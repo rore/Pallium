@@ -300,7 +300,8 @@ class TestStatusEndpointQueryStats:
     def test_status_includes_query_key(self):
         from app.config import AppConfig
         from app.main import create_app
-        config = AppConfig(default_use_case="demo_agent_memory")
+        from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+        config = AppConfig(default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES)
         app = create_app(config)
         client = TestClient(app)
         resp = client.get("/status")
