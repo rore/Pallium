@@ -53,8 +53,9 @@ def rebuild_vector_index(
 
     logger.info("Rebuild: embedding %d entries (skipped %d orphans).", len(valid_entries), len(entries) - len(valid_entries))
 
-    # Create fresh index
-    vector_index = VectorIndex.create_empty(
+    # Create index in memory only — do NOT persist until all entries are embedded.
+    # Persisting early (via create_empty) leaves corrupt state if the process is killed mid-rebuild.
+    vector_index = VectorIndex(
         index_path,
         dimensions=embedding_provider.dimensions(),
         model_name=embedding_provider.model_name(),
