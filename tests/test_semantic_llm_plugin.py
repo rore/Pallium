@@ -172,9 +172,79 @@ def test_build_process_result_rejects_low_value_meta_investigation() -> None:
     assert result.thread_rebuild_requested is False
 
 
-# ---------------------------------------------------------------------------
-# Multilingual write-time grounding
-# ---------------------------------------------------------------------------
+def test_build_process_result_rejects_markdown_heading_as_investigation() -> None:
+    source = SourceItem(
+        source_type="assistant_artifact", source_id="heading-2", content_type="text/plain",
+        content="## Access-count Retrieval Signal Investigation\n\nWe found that access count correlates with worse quality.",
+    )
+    extraction = SemanticExtraction(
+        summary="investigation heading",
+        candidate_type="investigation_outcome",
+        investigation_text="Access-count Retrieval Signal Investigation",
+        investigation_evidence_text="Access-count Retrieval Signal Investigation",
+        key_finding_text="access count correlates with worse quality",
+    )
+
+    result = build_process_result(source, extraction, "test")
+
+    assert all(memory.type != "investigation_outcome" for memory in result.memory_objects)
+
+
+
+    source = SourceItem(
+        source_type="assistant_artifact", source_id="short-1", content_type="text/plain",
+        content="Root Causes Found in the analysis of memory retrieval quality.",
+    )
+    extraction = SemanticExtraction(
+        summary="generic heading",
+        candidate_type="investigation_outcome",
+        investigation_text="Root Causes Found",
+        investigation_evidence_text="Root Causes Found in the analysis of memory retrieval quality.",
+        key_finding_text="Root Causes Found",
+    )
+
+    result = build_process_result(source, extraction, "test")
+
+    assert all(memory.type != "investigation_outcome" for memory in result.memory_objects)
+
+
+def test_build_process_result_accepts_good_investigation_outcome() -> None:
+    source = SourceItem(
+        source_type="assistant_artifact", source_id="good-1", content_type="text/plain",
+        content="Vector scores for ALL memory types cluster in 900-970 with std ~12-14",
+    )
+    extraction = SemanticExtraction(
+        summary="vector score distribution finding",
+        candidate_type="investigation_outcome",
+        investigation_text="Vector scores for ALL memory types cluster in 900-970 with std ~12-14",
+        investigation_evidence_text="Vector scores for ALL memory types cluster in 900-970 with std ~12-14",
+        key_finding_text="Vector scores for ALL memory types cluster in 900-970 with std ~12-14",
+    )
+
+    result = build_process_result(source, extraction, "test")
+
+    assert any(memory.type == "investigation_outcome" for memory in result.memory_objects)
+
+
+def test_build_process_result_accepts_root_cause_investigation() -> None:
+    source = SourceItem(
+        source_type="assistant_artifact", source_id="good-2", content_type="text/plain",
+        content="Root cause: The reconcile() method in vector_embed.py loops over a batch, calling update_index_entry per item inside a transaction",
+    )
+    extraction = SemanticExtraction(
+        summary="reconcile batch loop root cause",
+        candidate_type="investigation_outcome",
+        investigation_text="Root cause: The reconcile() method in vector_embed.py loops over a batch, calling update_index_entry per item inside a transaction",
+        investigation_evidence_text="Root cause: The reconcile() method in vector_embed.py loops over a batch, calling update_index_entry per item inside a transaction",
+        key_finding_text="The reconcile() method in vector_embed.py loops over a batch, calling update_index_entry per item inside a transaction",
+    )
+
+    result = build_process_result(source, extraction, "test")
+
+    assert any(memory.type == "investigation_outcome" for memory in result.memory_objects)
+
+
+
 
 def test_grounded_decision_evidence_hebrew_exact_containment() -> None:
     source = SourceItem(
@@ -899,3 +969,11 @@ def test_llm_plugin_with_prompt_variant_uses_variant_prompt() -> None:
     assert 'Evidence rule:' in provider.last_system_prompt
     assert 'we should watch' in provider.last_system_prompt
     assert 'low-value meta chatter' in provider.last_system_prompt
+
+
+def test_constraint_text_prompt_requires_self_contained():
+    """The active prompt variant must instruct self-contained constraint_text."""
+    from semantic.llm_agent_memory import PROMPT_VARIANTS, DEFAULT_PROMPT_VARIANT
+    prompt = PROMPT_VARIANTS[DEFAULT_PROMPT_VARIANT]
+    assert "understandable in isolation" in prompt
+    assert "REJECT" in prompt and "anaphoric" in prompt
