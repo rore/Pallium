@@ -73,13 +73,16 @@ def supersede_memories(storage: SQLiteStorageProvider, memory_ids: list[str]) ->
     """Set lifecycle='superseded' for the given memory object IDs."""
     if not memory_ids:
         return 0
-    with storage._session_factory.begin() as session:
+
+    def _do(session):
         result = session.execute(
             update(MemoryObjectRecord)
             .where(MemoryObjectRecord.id.in_(memory_ids))
             .values(lifecycle="superseded")
         )
         return result.rowcount
+
+    return storage._with_retry(_do)
 
 
 def content_preview(content: str, max_len: int = 60) -> str:

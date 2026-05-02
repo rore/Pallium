@@ -60,13 +60,15 @@ def find_duplicate_groups(storage: SQLiteStorageProvider) -> list[dict]:
 
 def delete_duplicates(storage: SQLiteStorageProvider, groups: list[dict]) -> int:
     """Delete duplicate memory objects using the standard cascade."""
-    total_deleted = 0
-    with storage._session_factory.begin() as session:
+    def _do(session):
+        total_deleted = 0
         for group in groups:
             for mo_id in group["delete_ids"]:
                 storage._delete_memory_object_cascade_in_session(session, mo_id)
                 total_deleted += 1
-    return total_deleted
+        return total_deleted
+
+    return storage._with_retry(_do)
 
 
 def main() -> int:

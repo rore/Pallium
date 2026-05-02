@@ -43,7 +43,8 @@ class SQLiteRetentionMixin:
     ) -> RetentionLease | None:
         claimed_at = now or utc_now()
         lease_expires_at = claimed_at + timedelta(seconds=max(1, lease_seconds))
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             record = self._ensure_maintenance_state_record_in_session(session, RETENTION_MAINTENANCE_KEY, claimed_at)
             current_expiry = self._normalize_datetime(record.lease_expires_at)
             if current_expiry is not None and current_expiry > claimed_at:
@@ -54,6 +55,8 @@ class SQLiteRetentionMixin:
             record.last_run_started_at = claimed_at
             record.updated_at = claimed_at
             return self._to_retention_lease(record)
+
+        return self._with_retry(_do)
 
     def renew_retention_lease(
         self,
@@ -66,7 +69,8 @@ class SQLiteRetentionMixin:
         renewed_at = now or utc_now()
         normalized_claimed_at = self._normalize_datetime(claimed_at) or claimed_at
         lease_expires_at = renewed_at + timedelta(seconds=max(1, lease_seconds))
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             record = session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY)
             if record is None:
                 raise KeyError(RETENTION_MAINTENANCE_KEY)
@@ -82,6 +86,8 @@ class SQLiteRetentionMixin:
             record.updated_at = renewed_at
             return self._to_retention_lease(record)
 
+        return self._with_retry(_do)
+
     def complete_retention_pass(
         self,
         *,
@@ -92,7 +98,8 @@ class SQLiteRetentionMixin:
     ) -> bool:
         finished_at = completed_at or utc_now()
         normalized_claimed_at = self._normalize_datetime(claimed_at) or claimed_at
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             record = session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY)
             if record is None:
                 raise KeyError(RETENTION_MAINTENANCE_KEY)
@@ -112,6 +119,8 @@ class SQLiteRetentionMixin:
             record.updated_at = finished_at
             return True
 
+        return self._with_retry(_do)
+
     def fail_retention_pass(
         self,
         *,
@@ -120,7 +129,8 @@ class SQLiteRetentionMixin:
     ) -> bool:
         failed_at = utc_now()
         normalized_claimed_at = self._normalize_datetime(claimed_at) or claimed_at
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             record = session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY)
             if record is None:
                 raise KeyError(RETENTION_MAINTENANCE_KEY)
@@ -137,6 +147,8 @@ class SQLiteRetentionMixin:
             record.lease_expires_at = None
             record.updated_at = failed_at
             return True
+
+        return self._with_retry(_do)
 
     def run_retention_pass(
         self,
@@ -219,7 +231,7 @@ class SQLiteRetentionMixin:
         """Delete all suppressed memory objects in batches of 50 per transaction."""
         stats = RetentionRunStats()
         while True:
-            with self._session_factory.begin() as session:
+            def _do(session):
                 records = session.scalars(
                     select(MemoryObjectRecord)
                     .where(MemoryObjectRecord.lifecycle == "suppressed")
@@ -227,11 +239,18 @@ class SQLiteRetentionMixin:
                     .limit(50)
                 ).all()
                 if not records:
-                    break
+                    return None
+                batch_stats = RetentionRunStats()
                 for record in records:
-                    stats = self._merge_retention_stats(
-                        stats, self._delete_memory_object_cascade_in_session(session, record.id)
+                    batch_stats = self._merge_retention_stats(
+                        batch_stats, self._delete_memory_object_cascade_in_session(session, record.id)
                     )
+                return batch_stats
+
+            batch_result = self._with_retry(_do)
+            if batch_result is None:
+                break
+            stats = self._merge_retention_stats(stats, batch_result)
         return stats
 
     def _run_superseded_memory_retention_chunk(
@@ -242,7 +261,8 @@ class SQLiteRetentionMixin:
     ) -> RetentionRunStats:
         if limit <= 0:
             return RetentionRunStats()
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             superseded_cutoff = now - SUPERSEDED_MEMORY_TTL
             records = session.scalars(
                 select(MemoryObjectRecord)
@@ -258,6 +278,8 @@ class SQLiteRetentionMixin:
                 stats = self._merge_retention_stats(stats, self._delete_memory_object_cascade_in_session(session, record.id))
             return stats
 
+        return self._with_retry(_do)
+
     def _run_stale_working_memory_retention_chunk(
         self,
         *,
@@ -267,7 +289,8 @@ class SQLiteRetentionMixin:
     ) -> RetentionRunStats:
         if limit <= 0:
             return RetentionRunStats()
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             stale_cutoff = now - WORKING_MEMORY_TTL
             scan_limit = max(limit * 4, limit)
             records = session.scalars(
@@ -295,6 +318,8 @@ class SQLiteRetentionMixin:
                 deleted_count += 1
             return stats
 
+        return self._with_retry(_do)
+
     def _run_source_item_retention_chunk(
         self,
         *,
@@ -307,7 +332,8 @@ class SQLiteRetentionMixin:
     ) -> tuple[RetentionRunStats, int]:
         if delete_limit <= 0 or scan_limit <= 0:
             return RetentionRunStats(), 0
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             maintenance_record, candidates = self._next_source_retention_candidates_in_session(session, now=now, limit=scan_limit)
             stats = RetentionRunStats()
             deleted_sources = 0
@@ -337,6 +363,8 @@ class SQLiteRetentionMixin:
                 self._set_source_scan_cursor_in_session(maintenance_record, last_scanned_record)
             return stats, scanned_count
 
+        return self._with_retry(_do)
+
     def _run_debug_metadata_stripping_chunk(
         self,
         *,
@@ -345,7 +373,8 @@ class SQLiteRetentionMixin:
     ) -> RetentionRunStats:
         if limit <= 0:
             return RetentionRunStats()
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             records = session.scalars(
                 select(SourceItemRecord)
                 .where(SourceItemRecord.created_at <= now - DEBUG_METADATA_TTL)
@@ -361,6 +390,8 @@ class SQLiteRetentionMixin:
                 record.metadata_json = self._dumps(metadata)
                 stats = self._merge_retention_stats(stats, RetentionRunStats(stripped_debug_metadata=1))
             return stats
+
+        return self._with_retry(_do)
 
     def _ensure_maintenance_state_record_in_session(
         self,
@@ -469,7 +500,7 @@ class SQLiteRetentionMixin:
         record.source_scan_cursor_id = None
 
     def _backfill_legacy_memory_freshness(self) -> None:
-        with self._session_factory.begin() as session:
+        def _do(session):
             records = session.scalars(
                 select(MemoryObjectRecord).where(
                     MemoryObjectRecord.freshness_at.is_(None),
@@ -477,6 +508,8 @@ class SQLiteRetentionMixin:
             ).all()
             for record in records:
                 self._refresh_memory_object_freshness_in_session(session, record.id)
+
+        self._with_retry(_do)
 
     def _retention_health_snapshot(
         self,

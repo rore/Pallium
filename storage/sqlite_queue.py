@@ -129,7 +129,8 @@ class SQLiteQueueMixin:
 
     def complete_source_item_processing(self, source_item_id: str, *, completed_at: datetime | None = None) -> None:
         finished_at = completed_at or utc_now()
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             record = session.get(SourceItemRecord, source_item_id)
             if record is None:
                 raise KeyError(source_item_id)
@@ -138,6 +139,8 @@ class SQLiteQueueMixin:
             record.processing_error = None
             record.processing_lease_expires_at = None
             record.processing_next_attempt_at = None
+
+        self._with_retry(_do)
 
     def fail_source_item_processing(
         self,
@@ -149,7 +152,8 @@ class SQLiteQueueMixin:
         metadata_updates: dict[str, object] | None = None,
     ) -> None:
         finished_at = utc_now()
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             record = session.get(SourceItemRecord, source_item_id)
             if record is None:
                 raise KeyError(source_item_id)
@@ -165,6 +169,8 @@ class SQLiteQueueMixin:
             record.processing_completed_at = finished_at if final else None
             record.processing_next_attempt_at = next_attempt_at
 
+        self._with_retry(_do)
+
     def commit_processed_source_item(
         self,
         *,
@@ -175,7 +181,8 @@ class SQLiteQueueMixin:
         completed_at: datetime | None = None,
     ) -> list[tuple[str, str]]:
         finished_at = completed_at or utc_now()
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             self._persist_process_result_in_session(session, result)
             supersession_pairs = self._resolve_supersession_pairs_in_session(session, result)
             self._apply_supersession_pairs_in_session(session, supersession_pairs)
@@ -209,7 +216,9 @@ class SQLiteQueueMixin:
             record.processing_claimed_at = None
             record.processing_lease_expires_at = None
             record.processing_next_attempt_at = None
-        return supersession_pairs
+            return supersession_pairs
+
+        return self._with_retry(_do)
 
     def commit_process_result(
         self,
@@ -217,14 +226,16 @@ class SQLiteQueueMixin:
         result: ProcessResult,
         supersession_pairs: list[tuple[str, str]] | None = None,
     ) -> list[tuple[str, str]]:
-        with self._session_factory.begin() as session:
+        def _do(session):
             self._persist_process_result_in_session(session, result)
             resolved_pairs = self._resolve_supersession_pairs_in_session(session, result)
             all_pairs = resolved_pairs + (supersession_pairs or [])
             self._apply_supersession_pairs_in_session(session, all_pairs)
             self._apply_source_item_metadata_updates_in_session(session, result.source_item_metadata_updates)
             self._refresh_memory_freshness_for_ids_in_session(session, [memory.id for memory in result.memory_objects])
-        return all_pairs
+            return all_pairs
+
+        return self._with_retry(_do)
 
     def commit_process_result_and_complete_scope(
         self,
@@ -239,7 +250,8 @@ class SQLiteQueueMixin:
     ) -> bool:
         finished_at = completed_at or utc_now()
         normalized_claimed_at = self._normalize_datetime(claimed_at) or claimed_at
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             self._persist_process_result_in_session(session, result)
             resolved_pairs = self._resolve_supersession_pairs_in_session(session, result)
             all_pairs = resolved_pairs + (supersession_pairs or [])
@@ -265,6 +277,8 @@ class SQLiteQueueMixin:
                 record.collection_watermark_at = collection_watermark_at
             record.updated_at = finished_at
             return pending_after
+
+        return self._with_retry(_do)
 
     def claim_thread_processing_scope(
         self,
@@ -359,7 +373,8 @@ class SQLiteQueueMixin:
     ) -> bool:
         finished_at = completed_at or utc_now()
         normalized_claimed_at = self._normalize_datetime(claimed_at) or claimed_at
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             record = session.get(ThreadProcessingLeaseRecord, scope_key)
             if record is None:
                 raise KeyError(scope_key)
@@ -376,6 +391,8 @@ class SQLiteQueueMixin:
             record.processing_lease_expires_at = None
             record.updated_at = finished_at
             return pending_after
+
+        return self._with_retry(_do)
 
     def get_queue_health_snapshot(
         self,
@@ -667,8 +684,7 @@ class SQLiteQueueMixin:
             record.metadata_json = self._dumps(existing_metadata)
 
     def update_source_item_metadata(self, source_item_id: str, metadata_patch: dict[str, object]) -> None:
-        with self._session_factory.begin() as session:
-            self._apply_source_item_metadata_updates_in_session(session, {source_item_id: metadata_patch})
+        self._with_retry(lambda session: self._apply_source_item_metadata_updates_in_session(session, {source_item_id: metadata_patch}))
 
     def _upsert_thread_processing_scope_in_session(
         self,
@@ -741,7 +757,8 @@ class SQLiteQueueMixin:
     ) -> None:
         skip_set = set(skip_packages or [])
         now = utc_now()
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             source_record = session.get(SourceItemRecord, source_item_id)
             source_item_created_at = None
             if source_record is not None:
@@ -758,6 +775,8 @@ class SQLiteQueueMixin:
                         created_at=now,
                     )
                 )
+
+        self._with_retry(_do)
 
     def claim_next_package_task(
         self,
@@ -895,7 +914,8 @@ class SQLiteQueueMixin:
         completed_at: datetime | None = None,
     ) -> None:
         finished_at = completed_at or utc_now()
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             record = self._find_package_task_record(session, source_item_id, package_name)
             if record is None:
                 raise KeyError(f"({source_item_id}, {package_name})")
@@ -908,6 +928,8 @@ class SQLiteQueueMixin:
             record.next_attempt_at = None
             self._sync_source_item_if_all_packages_terminal(session, source_item_id, finished_at)
 
+        self._with_retry(_do)
+
     def fail_package_task(
         self,
         source_item_id: str,
@@ -918,7 +940,8 @@ class SQLiteQueueMixin:
         final: bool,
     ) -> None:
         finished_at = utc_now()
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             record = self._find_package_task_record(session, source_item_id, package_name)
             if record is None:
                 raise KeyError(f"({source_item_id}, {package_name})")
@@ -931,6 +954,8 @@ class SQLiteQueueMixin:
             record.next_attempt_at = next_attempt_at
             if final:
                 self._sync_source_item_if_all_packages_terminal(session, source_item_id, finished_at)
+
+        self._with_retry(_do)
 
     def _sync_source_item_if_all_packages_terminal(
         self,
@@ -991,7 +1016,8 @@ class SQLiteQueueMixin:
         and thread rebuild scope — but does NOT modify source_item processing state.
         """
         finished_at = completed_at or utc_now()
-        with self._session_factory.begin() as session:
+
+        def _do(session):
             self._persist_process_result_in_session(session, result)
             supersession_pairs = self._resolve_supersession_pairs_in_session(session, result)
             self._apply_supersession_pairs_in_session(session, supersession_pairs)
@@ -1017,5 +1043,7 @@ class SQLiteQueueMixin:
             )
             # NOTE: We intentionally do NOT touch source_item processing state here.
             # Source_item completion is managed by the caller after all packages are done.
-        return supersession_pairs
+            return supersession_pairs
+
+        return self._with_retry(_do)
 
