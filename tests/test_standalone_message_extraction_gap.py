@@ -41,31 +41,41 @@ from storage.vector_index import VectorIndexConfig
 # ---------------------------------------------------------------------------
 
 class FactExtractionStubProvider:
-    """Returns realistic facts for catalog-sync design discussion."""
+    """Returns realistic facts for catalog-sync design discussion.
+
+    Each call returns facts with entirely different subjects and content so that
+    paraphrase dedup across multiple extraction scopes cannot collapse them.
+    """
+
+    _FACT_SETS = [
+        [
+            {"subject": "catalog sync", "statement": "Catalog sync should run in shadow mode before enabling for all branches.", "category": "preference"},
+            {"subject": "catalog sync rollout", "statement": "The proposed rollout has three stages: debug-only logging, shadow sync with quality measurement, and full sync.", "category": "event"},
+            {"subject": "shadow sync evaluation", "statement": "Shadow mode evaluation works by pushing tagged updates that the catalog service ignores, allowing accuracy measurement without side effects.", "category": "activity"},
+        ],
+        [
+            {"subject": "branch protection", "statement": "Branch protection rules must require at least two approvals before merge.", "category": "constraint"},
+            {"subject": "deployment pipeline", "statement": "The deployment pipeline uses blue-green strategy with automatic rollback on health check failure.", "category": "architecture"},
+            {"subject": "monitoring alerts", "statement": "Monitoring alerts fire when error rate exceeds five percent over a rolling five minute window.", "category": "threshold"},
+        ],
+        [
+            {"subject": "data retention", "statement": "Data retention policy requires deletion of user data within thirty days of account closure.", "category": "constraint"},
+            {"subject": "cache invalidation", "statement": "Cache invalidation uses event-driven approach where writes publish to invalidation topic.", "category": "architecture"},
+            {"subject": "rate limiting", "statement": "Rate limiting is set to one hundred requests per minute per authenticated client.", "category": "threshold"},
+        ],
+    ]
+
+    def __init__(self):
+        self._call_count = 0
 
     def generate_json(
         self, *, system_prompt: str, user_prompt: str, schema_description: str,
     ) -> LLMJsonResponse:
         if "atomic fact" in system_prompt.lower() or '"category"' in schema_description:
-            payload = {"facts": [
-                {
-                    "subject": "catalog sync",
-                    "statement": "Catalog sync should run in shadow mode before enabling for all branches.",
-                    "category": "preference",
-                },
-                {
-                    "subject": "catalog sync rollout",
-                    "statement": "The proposed rollout has three stages: debug-only logging, shadow sync with quality measurement, and full sync.",
-                    "category": "event",
-                },
-                {
-                    "subject": "shadow sync evaluation",
-                    "statement": "Shadow mode evaluation works by pushing tagged updates that the catalog service ignores, allowing accuracy measurement without side effects.",
-                    "category": "activity",
-                },
-            ]}
+            self._call_count += 1
+            fact_set = self._FACT_SETS[(self._call_count - 1) % len(self._FACT_SETS)]
+            payload = {"facts": list(fact_set)}
             return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
-        # Non-fact-extraction calls (thread_summary etc.) — return minimal valid response
         payload = {"summary": "Design discussion about catalog sync shadow mode rollout."}
         return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
 

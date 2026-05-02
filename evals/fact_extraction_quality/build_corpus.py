@@ -18,9 +18,45 @@ DB_PATH = Path(os.environ.get("PALLIUM_DB", r"C:\Users\I347041\.pallium\data\pal
 OUTPUT_DIR = Path(__file__).parent
 
 
-def classify_fact(stmt: str) -> tuple[str, str | None]:
+def classify_fact(stmt: str, subject: str = "") -> tuple[str, str | None]:
     """Classify a fact statement as 'noise' or 'good' with reason."""
     lower = stmt.lower()
+    subject_lower = subject.lower()
+
+    # Assistant reasoning — assistant's internal deliberation, not durable knowledge
+    if "assistant" in subject_lower and any(kw in lower for kw in [
+        "rationale", "reasoning", "identified", "proposed", "assessment",
+        "investigation", "believes", "chose", "concluded", "determined",
+        "decided to", "approach", "strategy",
+    ]):
+        return "noise", "assistant_reasoning"
+
+    if any(kw in lower for kw in [
+        "assistant's rationale", "assistant's reasoning", "assistant identified",
+        "assistant proposed", "assistant's assessment", "assistant chose",
+        "assistant believes", "assistant concluded", "assistant determined",
+        "assistant committed", "assistant did not call",
+    ]):
+        return "noise", "assistant_reasoning"
+
+    # Session events — transient things that happened during a session
+    if any(kw in lower for kw in [
+        "an error occurred", "api error occurred", "was referencing stale",
+        "options presented", "stale information from memory",
+        "memories sourced from the current session",
+        "were being re-injected", "injection failures",
+    ]):
+        return "noise", "session_event"
+
+    # Activity narration — session actions, not durable knowledge
+    if any(kw in lower for kw in [
+        "user requested a prompt", "user wants to understand",
+        "user is asking", "user has decided to proceed",
+        "user wants to examine", "user wants to conduct",
+        "user wants to know how", "user is evaluating",
+    ]):
+        if not any(good in lower for good in ["because", "constraint", "cannot", "limitation"]):
+            return "noise", "activity_narration"
 
     # Implementation narration — past-tense changes
     if any(kw in lower for kw in [
@@ -140,7 +176,7 @@ def build_corpus():
     for f in all_facts:
         payload = json.loads(f["payload_json"])
         thread_ref = payload.get("thread_ref")
-        judgment, reason = classify_fact(payload.get("statement", ""))
+        judgment, reason = classify_fact(payload.get("statement", ""), subject=payload.get("subject", ""))
         entry = {
             "fact_id": f["id"],
             "subject": payload.get("subject", ""),

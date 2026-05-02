@@ -235,8 +235,47 @@ def _is_subject_prefixed_vague_fact(subject: str, statement: str) -> bool:
     return len(content_tokens(remainder)) < 2 and not any(char.isdigit() for char in remainder)
 
 
+_ASSISTANT_REASONING_KEYWORDS = frozenset([
+    "rationale", "reasoning", "identified", "proposed", "assessment",
+    "investigation", "believes", "chose", "concluded", "determined",
+    "decided to", "approach", "strategy", "committed to",
+])
+
+_ACTIVITY_NARRATION_PATTERNS = [
+    "user requested a prompt", "user wants to understand",
+    "user is asking", "user has decided to proceed",
+    "user wants to examine", "user wants to conduct",
+    "user wants to know how", "user is evaluating",
+    "user requested an", "user asked for",
+]
+
+
+def _is_assistant_reasoning(subject: str, statement: str) -> bool:
+    subject_lower = normalize_for_index(subject)
+    if "assistant" not in subject_lower:
+        return False
+    stmt_lower = statement.lower()
+    return any(kw in stmt_lower for kw in _ASSISTANT_REASONING_KEYWORDS)
+
+
+def _is_activity_narration(statement: str) -> bool:
+    lower = statement.lower()
+    if any(pattern in lower for pattern in _ACTIVITY_NARRATION_PATTERNS):
+        if not any(good in lower for good in ["because", "constraint", "cannot", "limitation"]):
+            return True
+    return False
+
+
 def _is_durable_fact_statement(subject: str, statement: str) -> bool:
-    return not _is_question_like_fact(statement) and not _is_subject_prefixed_vague_fact(subject, statement)
+    if _is_question_like_fact(statement):
+        return False
+    if _is_subject_prefixed_vague_fact(subject, statement):
+        return False
+    if _is_assistant_reasoning(subject, statement):
+        return False
+    if _is_activity_narration(statement):
+        return False
+    return True
 
 
 class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, ConsolidationSemanticPlugin):
@@ -346,12 +385,15 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
         # Determine which items are new since the last extraction
         existing_facts = conclusions  # filtered to FACT_TYPE by thread_conclusion_types
 
-        # For thread-scope: ignore watermarks from container-scope facts.
-        # Container-scope processes the first message before thread-scope fires;
-        # using its watermark would skip that message, causing near-duplicate
-        # re-extraction from later messages that reference the same content.
+        # Each scope uses only its own watermarks to avoid cross-scope skipping.
+        # Container-scope facts have thread_ref=None; thread-scope facts have thread_ref set.
+        # Using the other scope's watermark would skip items that were never processed
+        # by this scope, causing gaps or near-duplicate re-extraction.
         if is_container_scope:
-            watermark_facts = existing_facts
+            watermark_facts = [
+                f for f in existing_facts
+                if f.payload.get("thread_ref") is None
+            ]
         else:
             watermark_facts = [
                 f for f in existing_facts
@@ -697,6 +739,9 @@ def _dedup_extracted_facts(facts: list[dict], existing_facts: list[dict] | None 
 
     When existing_facts is provided, pre-seeds the seen set so new facts
     that duplicate existing ones are filtered out.
+
+    Also catches near-duplicate paraphrases via token-overlap Jaccard on
+    same subject + same category (threshold 0.75).
     """
     seen: set[tuple[str, str]] = set()
     if existing_facts:
@@ -706,15 +751,45 @@ def _dedup_extracted_facts(facts: list[dict], existing_facts: list[dict] | None 
                 normalize_for_index(str(fact.get("statement", ""))),
             )
             seen.add(key)
+
+    # Track accepted facts per (subject, category) for paraphrase dedup
+    accepted_tokens: list[tuple[str, str, set[str]]] = []
+    if existing_facts:
+        for fact in existing_facts:
+            subj = normalize_for_index(str(fact.get("subject", "")))
+            cat = str(fact.get("category", "")).lower()
+            tokens = content_tokens(str(fact.get("statement", "")))
+            if tokens:
+                accepted_tokens.append((subj, cat, tokens))
+
     result: list[dict] = []
     for fact in facts:
         key = (
             normalize_for_index(str(fact.get("subject", ""))),
             normalize_for_index(str(fact.get("statement", ""))),
         )
-        if key not in seen:
-            seen.add(key)
-            result.append(fact)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        # Paraphrase dedup: same subject + same category + Jaccard > 0.75
+        subj = key[0]
+        cat = str(fact.get("category", "")).lower()
+        tokens = content_tokens(str(fact.get("statement", "")))
+        if tokens and len(tokens) >= 3:
+            is_paraphrase = False
+            for prev_subj, prev_cat, prev_tokens in accepted_tokens:
+                if prev_subj == subj and prev_cat == cat:
+                    intersection = tokens & prev_tokens
+                    union = tokens | prev_tokens
+                    if union and len(intersection) / len(union) > 0.75:
+                        is_paraphrase = True
+                        break
+            if is_paraphrase:
+                continue
+
+        accepted_tokens.append((subj, cat, tokens))
+        result.append(fact)
     return result
 
 

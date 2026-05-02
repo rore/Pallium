@@ -755,7 +755,7 @@ def score_extraction(extracted_facts: list[dict]) -> dict:
     noise = 0
     noise_reasons: dict[str, int] = {}
     for fact in extracted_facts:
-        judgment, reason = classify_fact(fact.get("statement", ""))
+        judgment, reason = classify_fact(fact.get("statement", ""), subject=fact.get("subject", ""))
         if judgment == "noise":
             noise += 1
             noise_reasons[reason or "unknown"] = noise_reasons.get(reason or "unknown", 0) + 1
@@ -806,7 +806,8 @@ def load_existing_facts_from_db(thread_ref: str | None = None) -> list[dict]:
 
 
 def run_eval(variant: str, max_chunks: int | None = None, verbose: bool = False,
-             with_existing_facts: bool = False, existing_facts_count: int | None = None):
+             with_existing_facts: bool = False, existing_facts_count: int | None = None,
+             apply_filters: bool = False):
     """Run the full evaluation for a prompt variant.
 
     Args:
@@ -814,6 +815,8 @@ def run_eval(variant: str, max_chunks: int | None = None, verbose: bool = False,
             to the LLM. Tests the "pressure effect" — does having N prior facts
             push the model into lower-quality extraction? Defaults to all available
             when with_existing_facts is True.
+        apply_filters: When True, applies the production post-extraction filters
+            to LLM output before scoring. Isolates filter contribution.
     """
     from app.config import AppConfig
     from app.dependencies import build_llm_provider
@@ -840,6 +843,8 @@ def run_eval(variant: str, max_chunks: int | None = None, verbose: bool = False,
     if with_existing_facts:
         cap_desc = f", capped at {existing_facts_count}" if existing_facts_count else " (all available)"
         print(f"  (simulating production: existing_facts context enabled{cap_desc})")
+    if apply_filters:
+        print(f"  (applying production post-extraction filters before scoring)")
     print()
 
     # Pre-load existing facts per thread if simulating production
@@ -865,6 +870,9 @@ def run_eval(variant: str, max_chunks: int | None = None, verbose: bool = False,
             print(f"  ERROR on chunk {chunk['chunk_id']}: {e}")
             continue
 
+        if apply_filters:
+            facts = apply_production_filters(facts)
+
         score = score_extraction(facts)
         chunk_scores.append(score)
         all_extracted.extend(facts)
@@ -873,7 +881,7 @@ def run_eval(variant: str, max_chunks: int | None = None, verbose: bool = False,
             print(f"  {chunk['chunk_id']}: {score['total']} facts, {score['noise']} noise ({score['noise_rate']:.0%})")
             if score["noise"] > 0:
                 for fact in facts:
-                    j, r = classify_fact(fact.get("statement", ""))
+                    j, r = classify_fact(fact.get("statement", ""), subject=fact.get("subject", ""))
                     if j == "noise":
                         print(f"    NOISE [{r}]: {fact.get('statement', '')[:90]}")
 
@@ -887,6 +895,7 @@ def run_eval(variant: str, max_chunks: int | None = None, verbose: bool = False,
     total_facts = sum(s["total"] for s in chunk_scores)
     total_noise = sum(s["noise"] for s in chunk_scores)
     total_good = sum(s["good"] for s in chunk_scores)
+    good_per_chunk = total_good / max(len(chunk_scores), 1)
 
     all_noise_reasons: dict[str, int] = {}
     for s in chunk_scores:
@@ -903,6 +912,7 @@ def run_eval(variant: str, max_chunks: int | None = None, verbose: bool = False,
     print(f"  Noise facts: {total_noise}")
     print(f"  Noise rate: {total_noise/max(total_facts,1):.1%}")
     print(f"  Precision: {total_good/max(total_facts,1):.1%}")
+    print(f"  Good/chunk (yield): {good_per_chunk:.2f}")
     print(f"  Avg facts/chunk: {total_facts/max(len(chunk_scores),1):.1f}")
     print()
     if all_noise_reasons:
@@ -921,6 +931,7 @@ def run_eval(variant: str, max_chunks: int | None = None, verbose: bool = False,
             "noise_facts": total_noise,
             "noise_rate": total_noise / max(total_facts, 1),
             "precision": total_good / max(total_facts, 1),
+            "good_per_chunk": good_per_chunk,
             "avg_facts_per_chunk": total_facts / max(len(chunk_scores), 1),
             "noise_reasons": all_noise_reasons,
             "per_chunk": chunk_scores,
@@ -928,6 +939,29 @@ def run_eval(variant: str, max_chunks: int | None = None, verbose: bool = False,
     print(f"\n  Results written to: {results_path}")
 
     return total_noise / max(total_facts, 1)
+
+
+def apply_production_filters(facts: list[dict]) -> list[dict]:
+    """Apply the same post-extraction filters as the production pipeline.
+
+    Simulates what conversational_knowledge.py does after LLM extraction:
+    quality viability, durability check, subject presence.
+    """
+    from semantic.common import fact_statement_is_quality_viable, normalize_for_index
+    from semantic.conversational_knowledge import _is_durable_fact_statement, _clean_fact_text, _fact_subject_is_present
+
+    result = []
+    for fact in facts:
+        subject = _clean_fact_text(str(fact.get("subject") or ""))
+        statement = _clean_fact_text(str(fact.get("statement", "")))
+        if not fact_statement_is_quality_viable(statement):
+            continue
+        if not _fact_subject_is_present(subject):
+            continue
+        if not _is_durable_fact_statement(subject, statement):
+            continue
+        result.append(fact)
+    return result
 
 
 def main():
@@ -939,11 +973,14 @@ def main():
                         help="Simulate production by prepending real existing facts from DB")
     parser.add_argument("--existing-facts-count", type=int, default=None,
                         help="Cap existing facts to N most recent (tests pressure effect)")
+    parser.add_argument("--apply-filters", action="store_true",
+                        help="Apply production post-extraction filters before scoring")
     args = parser.parse_args()
 
     run_eval(args.variant, max_chunks=args.max_chunks, verbose=args.verbose,
              with_existing_facts=args.with_existing_facts,
-             existing_facts_count=args.existing_facts_count)
+             existing_facts_count=args.existing_facts_count,
+             apply_filters=args.apply_filters)
 
 
 if __name__ == "__main__":
