@@ -345,7 +345,19 @@ class ConversationalKnowledgePlugin(ThreadAggregationSemanticPlugin, Consolidati
 
         # Determine which items are new since the last extraction
         existing_facts = conclusions  # filtered to FACT_TYPE by thread_conclusion_types
-        watermark = _resolve_extraction_watermark(existing_facts)
+
+        # For thread-scope: ignore watermarks from container-scope facts.
+        # Container-scope processes the first message before thread-scope fires;
+        # using its watermark would skip that message, causing near-duplicate
+        # re-extraction from later messages that reference the same content.
+        if is_container_scope:
+            watermark_facts = existing_facts
+        else:
+            watermark_facts = [
+                f for f in existing_facts
+                if f.payload.get("thread_ref") is not None
+            ]
+        watermark = _resolve_extraction_watermark(watermark_facts)
 
         if watermark is not None:
             new_items = [

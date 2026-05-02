@@ -737,3 +737,402 @@ class TestBuildExistingFactsContext:
 
     def test_empty_list_returns_empty(self):
         assert _build_existing_facts_context([]) == []
+
+
+# ── Container-scope watermark bypass tests ──────────────────────────────────
+# These test the fix where thread-scope ignores watermarks from container-scope
+# facts (thread_ref=None in payload) to prevent skipping message 1.
+
+
+class TestContainerScopeWatermarkBypass:
+    """Thread-scope extraction must ignore watermarks from container-scope facts.
+
+    Scenario: Container-scope processes the first message of a thread (before
+    thread-scope fires because the thread has <2 items). When a second message
+    arrives and thread-scope kicks in, it must NOT skip message 1 due to the
+    container-scope watermark — otherwise it re-extracts paraphrased content
+    from message 2 that references message 1.
+    """
+
+    def test_thread_scope_ignores_container_scope_watermarks(self):
+        """Thread-scope should do full extraction when only container-scope facts exist."""
+        base_time = datetime(2026, 4, 28, 10, 0, 0, tzinfo=timezone.utc)
+
+        # Container-scope processed message 1 at base_time, set watermark
+        container_fact = _make_existing_fact(
+            "User wants catalog sync in shadow mode.",
+            subject="catalog sync",
+            thread_ref=None,  # container-scope fact
+            extraction_watermark=(base_time + timedelta(minutes=1)).isoformat(),
+        )
+
+        # Thread-scope runs when message 2 arrives — both messages in the aggregate
+        items = [
+            _make_source_item("Should we run catalog sync in shadow mode first?", created_at=base_time),
+            _make_source_item(
+                "Yes, let's do three-stage rollout: debug, shadow, full.",
+                role="assistant",
+                artifact_kind="assistant_output",
+                created_at=base_time + timedelta(minutes=5),
+            ),
+        ]
+        aggregate = build_thread_aggregate(items)
+
+        plugin, stub = _make_plugin()
+        result = plugin.build_thread_summary(aggregate, conclusions=[container_fact])
+
+        # Thread-scope should process ALL items (ignoring container watermark)
+        assert len(stub.calls) == 1
+        prompt = stub.calls[0]
+        assert "shadow mode" in prompt
+        assert "three-stage rollout" in prompt
+
+    def test_thread_scope_respects_own_watermarks(self):
+        """Thread-scope facts (thread_ref set) should be used for watermark calculation."""
+        base_time = datetime(2026, 4, 28, 10, 0, 0, tzinfo=timezone.utc)
+        watermark_time = base_time + timedelta(minutes=5)
+
+        # A prior thread-scope fact with watermark
+        thread_fact = _make_existing_fact(
+            "Shadow mode runs before full sync.",
+            subject="catalog sync",
+            thread_ref="test-thread",  # thread-scope fact
+            extraction_watermark=watermark_time.isoformat(),
+        )
+
+        # Three items: two old, one new
+        items = [
+            _make_source_item("Should we run shadow mode?", created_at=base_time),
+            _make_source_item(
+                "Yes, shadow mode first.",
+                role="assistant",
+                artifact_kind="assistant_output",
+                created_at=watermark_time,
+            ),
+            _make_source_item(
+                "What about canary deployment after shadow?",
+                created_at=watermark_time + timedelta(minutes=3),
+            ),
+        ]
+        aggregate = build_thread_aggregate(items)
+
+        plugin, stub = _make_plugin()
+        result = plugin.build_thread_summary(aggregate, conclusions=[thread_fact])
+
+        # Only the new item (after watermark) should be in the prompt
+        assert len(stub.calls) == 1
+        prompt = stub.calls[0]
+        assert "canary deployment" in prompt
+        assert "Should we run shadow mode" not in prompt
+        assert "Yes, shadow mode first" not in prompt
+
+    def test_mixed_container_and_thread_facts_uses_only_thread_watermarks(self):
+        """When both container-scope and thread-scope facts exist, only thread-scope
+        watermarks are used for thread-scope extraction."""
+        base_time = datetime(2026, 4, 28, 10, 0, 0, tzinfo=timezone.utc)
+        thread_watermark_time = base_time + timedelta(minutes=10)
+
+        # Container-scope fact with LATER watermark (should be ignored)
+        container_fact = _make_existing_fact(
+            "User wants shadow mode.",
+            subject="catalog sync",
+            thread_ref=None,  # container-scope
+            extraction_watermark=(base_time + timedelta(minutes=20)).isoformat(),
+        )
+        # Thread-scope fact with EARLIER watermark (should be used)
+        thread_fact = _make_existing_fact(
+            "Three-stage rollout planned.",
+            subject="catalog sync",
+            thread_ref="test-thread",
+            extraction_watermark=thread_watermark_time.isoformat(),
+        )
+
+        items = [
+            _make_source_item("Shadow mode first?", created_at=base_time),
+            _make_source_item(
+                "Three stages: debug, shadow, full.",
+                role="assistant",
+                artifact_kind="assistant_output",
+                created_at=thread_watermark_time,
+            ),
+            _make_source_item(
+                "What metrics should we track in shadow?",
+                created_at=thread_watermark_time + timedelta(minutes=2),
+            ),
+        ]
+        aggregate = build_thread_aggregate(items)
+
+        plugin, stub = _make_plugin()
+        result = plugin.build_thread_summary(
+            aggregate, conclusions=[container_fact, thread_fact],
+        )
+
+        # Should use the thread-scope watermark (minute 10), not the container's (minute 20)
+        # So the new item at minute 12 should be in the prompt
+        assert len(stub.calls) == 1
+        prompt = stub.calls[0]
+        assert "metrics should we track" in prompt
+        # Old items should NOT be present
+        assert "Shadow mode first" not in prompt
+        assert "Three stages" not in prompt
+
+    def test_container_scope_uses_all_watermarks(self):
+        """Container-scope extraction uses ALL facts for watermark (including container-scope)."""
+        base_time = datetime(2026, 4, 28, 10, 0, 0, tzinfo=timezone.utc)
+        watermark_time = base_time + timedelta(minutes=5)
+
+        # Container-scope fact with watermark
+        container_fact = _make_existing_fact(
+            "User wants shadow mode.",
+            subject="catalog sync",
+            thread_ref=None,
+            container_ref="test-container",
+            extraction_watermark=watermark_time.isoformat(),
+        )
+
+        # Container-scope aggregate (thread_ref=None)
+        items = [
+            _make_source_item(
+                "Should we run shadow mode?",
+                container_ref="test-container",
+                thread_ref="thread-a",
+                created_at=base_time,
+            ),
+            _make_source_item(
+                "What about canary after shadow?",
+                container_ref="test-container",
+                thread_ref="thread-b",
+                created_at=watermark_time + timedelta(minutes=2),
+            ),
+        ]
+        aggregate = build_thread_aggregate(items, container_scope=True)
+
+        plugin, stub = _make_plugin()
+        result = plugin.build_thread_summary(aggregate, conclusions=[container_fact])
+
+        # Container-scope DOES use its own watermark — only new item in prompt
+        assert len(stub.calls) == 1
+        prompt = stub.calls[0]
+        assert "canary after shadow" in prompt
+        assert "Should we run shadow mode" not in prompt
+
+    def test_thread_scope_full_extraction_when_only_container_facts_have_watermarks(self):
+        """If all existing facts are container-scope, thread-scope resolves watermark=None → full extraction."""
+        base_time = datetime(2026, 4, 28, 10, 0, 0, tzinfo=timezone.utc)
+
+        # Multiple container-scope facts with watermarks
+        container_facts = [
+            _make_existing_fact(
+                "Shadow mode preferred.",
+                subject="deployment",
+                thread_ref=None,
+                extraction_watermark=(base_time + timedelta(minutes=2)).isoformat(),
+            ),
+            _make_existing_fact(
+                "Three-stage rollout.",
+                subject="deployment",
+                thread_ref=None,
+                extraction_watermark=(base_time + timedelta(minutes=3)).isoformat(),
+            ),
+        ]
+
+        # Thread items — all would be "old" if container watermark were used
+        items = [
+            _make_source_item("Plan the deployment.", created_at=base_time),
+            _make_source_item(
+                "Shadow mode is safest.",
+                role="assistant",
+                artifact_kind="assistant_output",
+                created_at=base_time + timedelta(minutes=1),
+            ),
+        ]
+        aggregate = build_thread_aggregate(items)
+
+        plugin, stub = _make_plugin()
+        result = plugin.build_thread_summary(aggregate, conclusions=container_facts)
+
+        # Full extraction — both items sent to LLM
+        assert len(stub.calls) == 1
+        prompt = stub.calls[0]
+        assert "Plan the deployment" in prompt
+        assert "Shadow mode is safest" in prompt
+
+    def test_standalone_message_container_scope_unaffected(self):
+        """Standalone messages (Slack pattern) processed only by container-scope remain unchanged."""
+        base_time = datetime(2026, 4, 28, 10, 0, 0, tzinfo=timezone.utc)
+        watermark_time = base_time + timedelta(minutes=3)
+
+        # Prior container-scope extraction covered messages up to watermark_time
+        container_fact = _make_existing_fact(
+            "User mentioned shadow mode.",
+            subject="catalog sync",
+            thread_ref=None,
+            container_ref="slack:dm:test",
+            extraction_watermark=watermark_time.isoformat(),
+        )
+
+        # New standalone message arrives after the watermark
+        items = [
+            _make_source_item(
+                "Old standalone message",
+                container_ref="slack:dm:test",
+                thread_ref="slack:thread:test:old",
+                created_at=base_time,
+            ),
+            _make_source_item(
+                "New standalone message about canary",
+                container_ref="slack:dm:test",
+                thread_ref="slack:thread:test:new",
+                created_at=watermark_time + timedelta(minutes=5),
+            ),
+        ]
+        aggregate = build_thread_aggregate(items, container_scope=True)
+
+        plugin, stub = _make_plugin()
+        result = plugin.build_thread_summary(aggregate, conclusions=[container_fact])
+
+        # Container-scope uses its own watermark — only new message
+        assert len(stub.calls) == 1
+        prompt = stub.calls[0]
+        assert "canary" in prompt
+        assert "Old standalone message" not in prompt
+
+
+# ── E2E: Container-scope → thread-scope watermark transition ─────────────────
+
+
+def test_e2e_container_then_thread_scope_no_skip(monkeypatch, test_db_url: str):
+    """Integration test: msg 1 → container-scope extracts it → msg 2 arrives →
+    thread-scope fires with full thread (does NOT skip msg 1).
+
+    This is the exact production scenario that caused near-duplicate extraction:
+    1. User sends msg 1 to a Slack channel (standalone, thread has 1 item)
+    2. Container-scope fires (aggregates thread_position=1 items), extracts fact from msg 1
+    3. User sends msg 2 to same thread (now thread has 2 items, thread-scope fires)
+    4. BUG (before fix): thread-scope used container-scope watermark → skipped msg 1
+       → LLM re-extracted paraphrased content from msg 2 referencing msg 1
+    5. FIX: thread-scope ignores container-scope watermarks → processes full thread
+    """
+    from app.config import AppConfig, LLMProviderConfig, SemanticPackageConfig
+    from app.main import create_app
+    from fastapi.testclient import TestClient
+    from providers.llm.base import LLMJsonResponse
+    from storage.vector_index import VectorIndexConfig
+
+    extraction_calls: list[dict] = []
+
+    class TrackingStubProvider:
+        def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+            if "atomic fact" in system_prompt.lower() or '"category"' in schema_description:
+                call_num = len(extraction_calls) + 1
+                extraction_calls.append({"call_num": call_num, "prompt": user_prompt})
+                if call_num == 1:
+                    # Container-scope extracts from msg 1
+                    payload = {"facts": [
+                        {"subject": "catalog sync", "statement": "Shadow mode should run before full sync.", "category": "preference"},
+                    ]}
+                else:
+                    # Thread-scope extracts from full thread
+                    payload = {"facts": [
+                        {"subject": "catalog sync", "statement": "Three-stage rollout: debug, shadow, full.", "category": "event"},
+                    ]}
+                return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
+            payload = {"summary": "Discussion."}
+            return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
+
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: TrackingStubProvider())
+
+    config = AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=test_db_url,
+        default_use_case="demo_agent_memory",
+        llm_providers={
+            "test_provider": LLMProviderConfig(
+                name="test_provider",
+                kind="openai_compatible",
+                base_url="http://fake-provider.local",
+                api_key="test-key",
+                timeout_seconds=30.0,
+            ),
+        },
+        semantic_packages={
+            "conversational_knowledge": SemanticPackageConfig(
+                name="conversational_knowledge",
+                implementation="conversational_knowledge",
+                llm_provider="test_provider",
+                model="fake-model",
+            ),
+        },
+        vector_index=VectorIndexConfig(enabled=False),
+    )
+
+    app = create_app(config)
+    client = TestClient(app)
+    service = app.state.pallium_service
+
+    container_ref = "slack:dm:watermark-test"
+    thread_ref = "slack:thread:watermark-test:17764306"
+
+    # Phase 1: msg 1 arrives — standalone in thread, container-scope fires
+    client.post("/items", json=[{
+        "source_type": "conversation_agent_event",
+        "source_id": "wm-test-msg-1",
+        "content_type": "text/plain",
+        "content": "Should we run catalog sync in shadow mode before enabling for all branches?",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": container_ref,
+        "thread_ref": thread_ref,
+        "visibility": "private",
+    }])
+    service.drain_processing_queue(worker_id="drain")
+
+    # Container-scope should have fired (thread has <2 items → no thread-scope)
+    container_facts = service._storage.list_memory_objects(
+        memory_types=["atomic_fact"],
+        lifecycle="active",
+        container_ref=container_ref,
+    )
+    # Container-scope fact has thread_ref=None in payload
+    container_scope_facts = [f for f in container_facts if f.payload.get("thread_ref") is None]
+    assert len(container_scope_facts) >= 1, (
+        "Container-scope should have extracted a fact from msg 1"
+    )
+    # Verify the container-scope fact has a watermark set
+    assert container_scope_facts[0].payload.get("extraction_watermark") is not None
+
+    calls_after_phase1 = len(extraction_calls)
+
+    # Phase 2: msg 2 arrives in the same thread → thread-scope fires (2+ items)
+    client.post("/items", json=[{
+        "source_type": "conversation_agent_event",
+        "source_id": "wm-test-msg-2",
+        "content_type": "text/plain",
+        "content": "Yes, let's do a three-stage rollout: debug-only logging, then shadow sync, then full sync.",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": container_ref,
+        "thread_ref": thread_ref,
+        "visibility": "private",
+    }])
+    service.drain_processing_queue(worker_id="drain")
+
+    # Thread-scope should have fired and processed the FULL thread
+    assert len(extraction_calls) > calls_after_phase1, (
+        "Expected additional extraction calls in phase 2 (thread-scope)"
+    )
+
+    # The thread-scope call MUST include msg 1 content (not skipped)
+    phase2_calls = extraction_calls[calls_after_phase1:]
+    phase2_prompts = [c["prompt"] for c in phase2_calls]
+    msg1_found = any("shadow mode" in p.lower() for p in phase2_prompts)
+    assert msg1_found, (
+        "Thread-scope extraction must include msg 1 content — "
+        "watermark bypass should prevent skipping the first message"
+    )
+
+    # Both messages should be in the thread-scope prompt
+    msg2_found = any("three-stage rollout" in p.lower() for p in phase2_prompts)
+    assert msg2_found, (
+        "Thread-scope extraction must include msg 2 content"
+    )
