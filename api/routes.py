@@ -350,6 +350,25 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             visibility=request.visibility_kind(),
             runtime_context=_deserialize_runtime_context(request.runtime_context),
         )
+        if audit_log_enabled:
+            try:
+                ranked_candidates = getattr(result, '_ranked_candidates', None)
+                service.write_query_audit(
+                    source_item_id="",
+                    source_id="",
+                    thread_ref=request.thread_ref,
+                    container_ref=request.container_ref,
+                    actor_ref=request.actor_ref,
+                    visibility=request.visibility_kind(),
+                    query_text=request.text,
+                    should_inject=result.should_inject,
+                    decision_reason=result.decision_reason,
+                    injectable_blocks=result.injectable_blocks,
+                    results=result.results,
+                    ranked_candidates=ranked_candidates,
+                )
+            except Exception:
+                logger.warning("query audit log write failed", exc_info=True)
         return QueryResponse(
             results=[_serialize_result(item) for item in result.results],
             should_inject=result.should_inject,

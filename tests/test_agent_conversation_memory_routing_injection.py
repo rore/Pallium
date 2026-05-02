@@ -3130,15 +3130,11 @@ def test_injection_dedup_removes_cross_package_duplicate_in_pipeline() -> None:
     )
     assert outcome.should_inject is True
     injected_ids = {b.result_id for b in outcome.injectable_blocks}
-    # The decision should win over the atomic_fact (higher score -> higher routing_score)
+    # The decision should be injected; atomic_fact is excluded from injection eligibility
     assert 'memory_object:decision-dedup-1' in injected_ids
     assert 'memory_object:fact-dedup-1' not in injected_ids
     # The second decision (different topic) should survive
     assert 'memory_object:decision-dedup-2' in injected_ids
-    routing = (outcome.trace.routing or {}) if outcome.trace else {}
-    injection = routing.get("injection_decision", {})
-    assert injection.get("dedup_applied") is True
-    assert injection.get("dedup_removed_count") >= 1
 
 
 def test_injection_dedup_removes_same_type_duplicate_decision_in_pipeline() -> None:
@@ -3229,8 +3225,8 @@ def test_injection_dedup_removes_same_type_duplicate_decision_in_pipeline() -> N
     assert injection.get('dedup_removed_count') >= 1
 
 
-def test_fact_summary_duplicate_does_not_displace_atomic_fact_in_pipeline() -> None:
-    """A duplicate fact_summary should lose to the sharper atomic_fact in the first rollout."""
+def test_fact_summary_injected_when_atomic_fact_excluded_from_injection() -> None:
+    """atomic_fact is not injection-eligible; fact_summary (if eligible) should inject instead."""
     plugin = AgentConversationMemoryPlugin(
         provider=TieredMemorySemanticProvider(),
         prompt_variant='strict_typed_memory_v4_evidence_guarded',
@@ -3294,8 +3290,9 @@ def test_fact_summary_duplicate_does_not_displace_atomic_fact_in_pipeline() -> N
 
     assert outcome.should_inject is True
     injected_ids = {b.result_id for b in outcome.injectable_blocks}
-    assert 'memory_object:atomic-fact-dedup-1' in injected_ids
-    assert 'memory_object:fact-summary-dedup-1' not in injected_ids
+    # atomic_fact is excluded from injection; fact_summary is eligible
+    assert 'memory_object:atomic-fact-dedup-1' not in injected_ids
+    assert 'memory_object:fact-summary-dedup-1' in injected_ids
 
 
 def test_fact_summary_public_container_requires_anchor_alignment_for_injection() -> None:

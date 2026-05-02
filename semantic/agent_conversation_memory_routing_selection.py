@@ -1287,9 +1287,9 @@ def _candidate_is_injection_eligible(
         return allow_source_companion and _source_candidate_is_companion_injection_eligible(intent)
     if item.type == FACT_SUMMARY_TYPE:
         return _fact_summary_is_injection_eligible(candidate, intent=intent)
-    if item.type in {"decision", "investigation_outcome", "task_checkpoint", "continuity_memory", "pattern_memory", "interest", "thread_summary", "atomic_fact", CONSTRAINT_MEMORY_TYPE}:
-        # Note: atomic_fact injection relies on the content-overlap gate for topical
-        # precision (see "Injection precision over recall" decision in decisions.md).
+    if item.type == "atomic_fact":
+        return False
+    if item.type in {"decision", "investigation_outcome", "task_checkpoint", "continuity_memory", "pattern_memory", "interest", "thread_summary", CONSTRAINT_MEMORY_TYPE}:
         return True
     if item.type == "turn_summary":
         return allow_discussion_fallback

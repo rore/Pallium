@@ -94,7 +94,7 @@ class TestCandidateIsInjectionEligible:
             "suppression_reason_code": None,
         }
 
-    def test_atomic_fact_is_injection_eligible(self):
+    def test_atomic_fact_is_not_injection_eligible(self):
         candidate = self._make_fact_candidate()
         assert _candidate_is_injection_eligible(
             candidate,
@@ -102,7 +102,7 @@ class TestCandidateIsInjectionEligible:
             query_text="how many cats does Alice have",
             allow_discussion_fallback=False,
             allow_source_companion=False,
-        ) is True
+        ) is False
 
     def _make_fact_summary_candidate(
         self,
