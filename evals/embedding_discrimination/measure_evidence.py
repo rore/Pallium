@@ -26,7 +26,7 @@ def load_memory_sample(db_path: str, sample_size: int = 50) -> list[dict]:
     conn.row_factory = sqlite3.Row
 
     rows = conn.execute("""
-        SELECT mo.id, mo.type, mo.thread_ref, mo.container_ref,
+        SELECT mo.id, mo.type, mo.container_ref,
                ie.text_view as current_embedding_text
         FROM memory_objects mo
         JOIN index_entries ie ON ie.target_id = mo.id
@@ -35,7 +35,7 @@ def load_memory_sample(db_path: str, sample_size: int = 50) -> list[dict]:
           AND mo.lifecycle = 'active'
         ORDER BY mo.freshness_at DESC
         LIMIT ?
-    """, (sample_size * 2,)).fetchall()  # over-fetch since some may lack evidence
+    """, (sample_size * 2,)).fetchall()
 
     memories = []
     for row in rows:
@@ -43,7 +43,7 @@ def load_memory_sample(db_path: str, sample_size: int = 50) -> list[dict]:
             break
 
         evidence_rows = conn.execute("""
-            SELECT si.content
+            SELECT si.content, si.thread_ref
             FROM relations r
             JOIN source_items si ON si.id = r.to_id
             WHERE r.from_id = ? AND r.relation_type = 'supported_by' AND r.to_kind = 'source_item'
@@ -55,11 +55,12 @@ def load_memory_sample(db_path: str, sample_size: int = 50) -> list[dict]:
             continue
 
         evidence_text = " ".join(e["content"][:500] for e in evidence_rows[:3])
+        thread_ref = evidence_rows[0]["thread_ref"] if evidence_rows else None
 
         memories.append({
             "id": row["id"],
             "type": row["type"],
-            "thread_ref": row["thread_ref"],
+            "thread_ref": thread_ref,
             "container_ref": row["container_ref"],
             "current_embedding_text": row["current_embedding_text"],
             "evidence_text": evidence_text[:500],

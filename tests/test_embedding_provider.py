@@ -58,6 +58,12 @@ def _make_mock_onnx_modules(*, dimensions: int = 384):
             # Return [batch, seq_len=1, dims] to simulate CLS pooling
             return [np.random.randn(batch_size, 1, self._dims).astype(np.float32)]
 
+        def get_inputs(self):
+            class _Input:
+                def __init__(self, name):
+                    self.name = name
+            return [_Input("input_ids"), _Input("attention_mask"), _Input("token_type_ids")]
+
     mock_ort.InferenceSession = MockInferenceSession  # type: ignore[attr-defined]
 
     # Mock tokenizers

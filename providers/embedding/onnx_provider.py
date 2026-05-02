@@ -106,6 +106,8 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
             self._tokenizer = Tokenizer.from_file(tokenizer_path)
             _SESSION_CACHE[cache_key] = (self._session, self._tokenizer)
 
+        self._input_names = frozenset(inp.name for inp in self._session.get_inputs())
+
         # Truncate sequences to model's max position embedding length.
         # Without this, texts exceeding the limit crash the ONNX model.
         self._tokenizer.enable_truncation(max_length=max_tokens)
@@ -164,21 +166,20 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
 
         input_ids = np.zeros((len(texts), max_len), dtype=np.int64)
         attention_mask = np.zeros((len(texts), max_len), dtype=np.int64)
-        token_type_ids = np.zeros((len(texts), max_len), dtype=np.int64)
 
         for i, enc in enumerate(encodings):
             length = len(enc.ids)
             input_ids[i, :length] = enc.ids
             attention_mask[i, :length] = 1
 
-        outputs = self._session.run(
-            None,
-            {
-                "input_ids": input_ids,
-                "attention_mask": attention_mask,
-                "token_type_ids": token_type_ids,
-            },
-        )
+        feed = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+        }
+        if "token_type_ids" in self._input_names:
+            feed["token_type_ids"] = np.zeros((len(texts), max_len), dtype=np.int64)
+
+        outputs = self._session.run(None, feed)
 
         # CLS token pooling + L2 normalization
         embeddings = outputs[0][:, 0, :]
