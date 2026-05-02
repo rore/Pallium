@@ -73,11 +73,12 @@ class VectorIndex:
     Python (PEP 703), these operations will need a lock.
     """
 
-    def __init__(self, index_path: Path, dimensions: int, model_name: str) -> None:
+    def __init__(self, index_path: Path, dimensions: int, model_name: str, embedding_schema_version: int = 1) -> None:
         Index = _require_usearch()
         self._index_path = Path(index_path)
         self._dimensions = dimensions
         self._model_name = model_name
+        self._embedding_schema_version = embedding_schema_version
         self._index = Index(ndim=dimensions, metric="cos", dtype="f32")
         self._id_to_key: dict[str, int] = {}
         self._key_to_id: dict[int, str] = {}
@@ -153,6 +154,7 @@ class VectorIndex:
             "model_name": self._model_name,
             "dimensions": self._dimensions,
             "entry_count": len(self._id_to_key),
+            "embedding_schema_version": self._embedding_schema_version,
         }
         _atomic_write_json(meta_path, meta_data)
 
@@ -163,8 +165,9 @@ class VectorIndex:
         meta_data = json.loads(meta_path.read_text(encoding="utf-8"))
         model_name = meta_data["model_name"]
         dimensions = meta_data["dimensions"]
+        embedding_schema_version = meta_data.get("embedding_schema_version", 1)
 
-        instance = cls(index_path, dimensions, model_name)
+        instance = cls(index_path, dimensions, model_name, embedding_schema_version=embedding_schema_version)
 
         idmap_path = Path(f"{index_path}.idmap.json")
         idmap_data = json.loads(idmap_path.read_text(encoding="utf-8"))
@@ -179,9 +182,9 @@ class VectorIndex:
         return instance
 
     @classmethod
-    def create_empty(cls, index_path: Path, dimensions: int, model_name: str) -> VectorIndex:
+    def create_empty(cls, index_path: Path, dimensions: int, model_name: str, embedding_schema_version: int = 1) -> VectorIndex:
         """Create a new empty index and persist it immediately."""
-        instance = cls(index_path, dimensions, model_name)
+        instance = cls(index_path, dimensions, model_name, embedding_schema_version=embedding_schema_version)
         instance.save()
         return instance
 
@@ -198,6 +201,11 @@ class VectorIndex:
     def dimensions(self) -> int:
         """Return the dimensionality of the vectors in this index."""
         return self._dimensions
+
+    @property
+    def embedding_schema_version(self) -> int:
+        """Return the embedding schema version this index was built with."""
+        return self._embedding_schema_version
 
     def known_entry_ids(self) -> frozenset[str]:
         """Return the set of entry IDs currently in the index."""

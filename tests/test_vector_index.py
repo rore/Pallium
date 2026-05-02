@@ -272,6 +272,7 @@ def test_metadata_file_contents(mock_usearch, tmp_path: Path):
         "model_name": "text-embedding-ada-002",
         "dimensions": 128,
         "entry_count": 2,
+        "embedding_schema_version": 1,
     }
 
 

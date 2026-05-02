@@ -282,7 +282,7 @@ class TestGracefulDegradation:
 class TestModelMismatch:
 
     def test_model_mismatch_disables_vector(self, tmp_path: Path, monkeypatch, caplog) -> None:
-        """If the index was built with a different model, vector is disabled."""
+        """If the index was built with a different model, auto-rebuild is attempted and on failure vector is disabled."""
         from app.config import EmbeddingProviderConfig
         from storage.vector_index import VectorIndex
 
@@ -292,8 +292,14 @@ class TestModelMismatch:
         mock_index = MagicMock(spec=VectorIndex)
         mock_index.entry_count.return_value = 1
         mock_index.model_name = "old-model"
+        mock_index.embedding_schema_version = 1
 
         stub_provider = StubEmbeddingProvider(model="new-model")
+
+        # Mock storage — rebuild will call list_index_entries_by_type but
+        # then fail on get_memory_object/get_source_item (simulates rebuild failure)
+        mock_storage = MagicMock()
+        mock_storage.list_index_entries_by_type.side_effect = RuntimeError("storage unavailable")
 
         config = _minimal_config(
             vector_index=VectorIndexConfig(
@@ -317,6 +323,10 @@ class TestModelMismatch:
             "app.dependencies._load_or_create_vector_index",
             lambda config, provider: mock_index,
         )
+        monkeypatch.setattr(
+            "app.dependencies.build_storage_provider",
+            lambda config: mock_storage,
+        )
 
         with caplog.at_level(logging.ERROR):
             service = build_service(config)
@@ -324,11 +334,12 @@ class TestModelMismatch:
         assert not isinstance(service._retrieval, CompositeRetrievalProvider)
         assert service._vector_index is None
         assert service._embedding_provider is None
-        assert "model mismatch" in caplog.text.lower()
+        assert "auto-rebuild failed" in caplog.text.lower()
 
     def test_model_match_with_entries_keeps_vector(self, tmp_path: Path, monkeypatch) -> None:
         """If the model matches and entry counts agree, vector is kept."""
         from app.config import EmbeddingProviderConfig
+        from semantic.agent_conversation_memory_embedding import EMBEDDING_SCHEMA_VERSION
         from storage.vector_index import VectorIndex
 
         index_path = tmp_path / "test.index"
@@ -336,6 +347,7 @@ class TestModelMismatch:
         mock_index = MagicMock(spec=VectorIndex)
         mock_index.entry_count.return_value = 5
         mock_index.model_name = "test-model"
+        mock_index.embedding_schema_version = EMBEDDING_SCHEMA_VERSION
 
         stub_provider = StubEmbeddingProvider(model="test-model")
 
@@ -426,6 +438,7 @@ class TestCountMismatch:
     def test_count_mismatch_logs_warning_and_keeps_vector_enabled(self, tmp_path: Path, monkeypatch, caplog) -> None:
         """When SQLite and index entry counts differ, a warning is logged but vector stays enabled."""
         from app.config import EmbeddingProviderConfig
+        from semantic.agent_conversation_memory_embedding import EMBEDDING_SCHEMA_VERSION
         from storage.vector_index import VectorIndex
 
         index_path = tmp_path / "test.index"
@@ -433,6 +446,7 @@ class TestCountMismatch:
         mock_index = MagicMock(spec=VectorIndex)
         mock_index.entry_count.return_value = 3
         mock_index.model_name = "test-model"
+        mock_index.embedding_schema_version = EMBEDDING_SCHEMA_VERSION
 
         stub_provider = StubEmbeddingProvider(model="test-model")
 
@@ -625,7 +639,7 @@ class TestCLICommands:
     def test_rebuild_vector_index_success(self, monkeypatch, tmp_path: Path) -> None:
         from app import run as app_run
         from app.config import AppConfig, EmbeddingProviderConfig
-        from core.models import IndexEntry
+        from core.models import IndexEntry, MemoryObject, SourceItem
 
         index_path = tmp_path / "rebuild.index"
         stub_provider = StubEmbeddingProvider(dims=4)
@@ -640,6 +654,23 @@ class TestCLICommands:
                     name="local", kind="fastembed", model="test-model",
                 ),
             },
+        )
+
+        # Create source objects that the rebuild will look up
+        memory_obj = MemoryObject(
+            type="decision",
+            schema_id="test",
+            schema_version="1",
+            payload={"decision": "Use SQLite for local storage", "rationale": "Simpler deployment model"},
+            id="mo-1",
+        )
+        source_item = SourceItem(
+            source_type="test",
+            source_id="si-source-1",
+            content_type="text/plain",
+            content="What storage engine should we use for the local-first architecture?",
+            artifact_kind="message",
+            id="si-1",
         )
 
         mock_storage = MagicMock()
@@ -659,6 +690,9 @@ class TestCLICommands:
                 text_view="other text",
             ),
         ]
+        mock_storage.get_memory_object.return_value = memory_obj
+        mock_storage.get_source_item.return_value = source_item
+        mock_storage.update_index_entry_text_view = MagicMock()
 
         monkeypatch.setattr(
             AppConfig,

@@ -126,11 +126,13 @@ def run(args: list[str] | None = None) -> int:
 
 
 def _run_rebuild_vector_index() -> int:
-    """Rebuild the vector index from scratch using all vector index entries in SQLite."""
+    """Rebuild the vector index from scratch, recomputing text from source."""
     from pathlib import Path
 
     from app.config import AppConfig
     from app.dependencies import build_embedding_provider, build_storage_provider
+    from core.vector_rebuild import rebuild_vector_index
+    from semantic.agent_conversation_memory_embedding import EMBEDDING_SCHEMA_VERSION
 
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 
@@ -138,7 +140,7 @@ def _run_rebuild_vector_index() -> int:
     vector_config = config.vector_index
 
     if not vector_config.enabled:
-        logger.error("Vector index is not enabled in configuration. Set [vector_index] enabled = true.")
+        logger.error("Vector index is not enabled in configuration.")
         return 1
 
     if not vector_config.embedding_provider:
@@ -152,31 +154,17 @@ def _run_rebuild_vector_index() -> int:
         return 1
 
     storage = build_storage_provider(config)
-    entries = storage.list_index_entries_by_type("vector")
-    logger.info("Found %d vector index entries in SQLite.", len(entries))
-
-    from storage.vector_index import VectorIndex
-
-    index_path = Path(vector_config.index_path)
     try:
-        vector_index = VectorIndex.create_empty(
-            index_path,
-            dimensions=embedding_provider.dimensions(),
-            model_name=embedding_provider.model_name(),
+        rebuild_vector_index(
+            storage=storage,
+            embedding_provider=embedding_provider,
+            index_path=Path(vector_config.index_path),
+            embedding_schema_version=EMBEDDING_SCHEMA_VERSION,
         )
-    except ImportError:
-        logger.error("usearch not installed. pip install usearch")
+    except Exception as exc:
+        logger.error("Rebuild failed: %s", exc)
         return 1
 
-    if entries:
-        texts = [entry.text_view for entry in entries]
-        logger.info("Embedding %d entries...", len(texts))
-        vectors = embedding_provider.embed(texts, mode="passage")
-        for entry, vector in zip(entries, vectors):
-            vector_index.add(entry.id, vector)
-
-    vector_index.save()
-    logger.info("Vector index rebuilt successfully at %s with %d entries.", index_path, vector_index.entry_count())
     return 0
 
 

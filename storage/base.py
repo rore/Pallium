@@ -506,6 +506,11 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def update_index_entry_text_view(self, index_entry_id: str, text_view: str) -> None:
+        """Update the text_view of an existing index entry."""
+        raise NotImplementedError
+
+    @abstractmethod
     def search_index_entries(
         self,
         tokens: list[str],

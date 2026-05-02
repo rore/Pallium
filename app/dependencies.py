@@ -281,15 +281,48 @@ def build_service(
         if embedding_provider is not None:
             vector_index = _load_or_create_vector_index(vector_config, embedding_provider)
 
-        # 3. Model consistency check
+        # 3. Model/schema consistency check — auto-rebuild or disable
         if vector_index is not None and embedding_provider is not None:
+            from semantic.agent_conversation_memory_embedding import EMBEDDING_SCHEMA_VERSION
+
+            needs_rebuild = False
+            reason = ""
+
             if vector_index.entry_count() > 0:
                 if vector_index.model_name != embedding_provider.model_name():
+                    needs_rebuild = True
+                    reason = f"model changed: {vector_index.model_name} -> {embedding_provider.model_name()}"
+                elif vector_index.embedding_schema_version != EMBEDDING_SCHEMA_VERSION:
+                    needs_rebuild = True
+                    reason = f"schema version: {vector_index.embedding_schema_version} -> {EMBEDDING_SCHEMA_VERSION}"
+
+            if needs_rebuild:
+                from core.vector_rebuild import AUTO_REBUILD_THRESHOLD, rebuild_vector_index
+
+                if vector_index.entry_count() <= AUTO_REBUILD_THRESHOLD:
+                    logger.info(
+                        "Vector index rebuild triggered (%s). Rebuilding %d entries inline...",
+                        reason,
+                        vector_index.entry_count(),
+                    )
+                    try:
+                        vector_index = rebuild_vector_index(
+                            storage=storage,
+                            embedding_provider=embedding_provider,
+                            index_path=Path(vector_config.index_path),
+                            embedding_schema_version=EMBEDDING_SCHEMA_VERSION,
+                        )
+                    except Exception as exc:
+                        logger.error("Auto-rebuild failed: %s. Vector disabled.", exc)
+                        vector_index = None
+                        embedding_provider = None
+                else:
                     logger.error(
-                        "Vector index model mismatch: index=%s, provider=%s. "
-                        "Vector disabled. Run rebuild-vector-index.",
-                        vector_index.model_name,
-                        embedding_provider.model_name(),
+                        "Vector index needs rebuild (%s) but has %d entries (> %d threshold). "
+                        "Vector disabled. Run: python -m app.run rebuild-vector-index",
+                        reason,
+                        vector_index.entry_count(),
+                        AUTO_REBUILD_THRESHOLD,
                     )
                     vector_index = None
                     embedding_provider = None
@@ -356,6 +389,8 @@ def _load_or_create_vector_index(
 
     Returns ``None`` if usearch is not installed or the index cannot be loaded.
     """
+    from semantic.agent_conversation_memory_embedding import EMBEDDING_SCHEMA_VERSION
+
     index_path = Path(config.index_path)
     try:
         if index_path.exists() and Path(f"{index_path}.meta.json").exists():
@@ -365,6 +400,7 @@ def _load_or_create_vector_index(
                 index_path,
                 dimensions=embedding_provider.dimensions(),
                 model_name=embedding_provider.model_name(),
+                embedding_schema_version=EMBEDDING_SCHEMA_VERSION,
             )
     except ImportError:
         logger.error("usearch not installed. Vector index disabled. pip install usearch")

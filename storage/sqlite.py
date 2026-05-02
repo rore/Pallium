@@ -640,6 +640,14 @@ class SQLiteStorageProvider(
             record.provider_version = provider_version
         self._with_retry(_do)
 
+    def update_index_entry_text_view(self, index_entry_id: str, text_view: str) -> None:
+        def _do(session):
+            record = session.get(IndexEntryRecord, index_entry_id)
+            if record is None:
+                raise KeyError(index_entry_id)
+            record.text_view = text_view
+        self._with_retry(_do)
+
     def retarget_index_entries_for_target(
         self, target_kind: str, old_target_id: str, new_target_id: str,
     ) -> int:
