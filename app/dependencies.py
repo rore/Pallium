@@ -143,6 +143,8 @@ def build_semantic_plugins(config: AppConfig, routing_overrides: RoutingOverride
     plugins: dict[str, SemanticPlugin] = {}
 
     for package_name, package_config in config.semantic_packages.items():
+        if not package_config.enabled:
+            continue
         plugin = _build_plugin_for_package(config=config, package_config=package_config, routing_overrides=routing_overrides)
         if plugin is not None:
             plugins[package_name] = plugin

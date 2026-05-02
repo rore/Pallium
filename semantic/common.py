@@ -170,7 +170,23 @@ def _typed_memory_payload_is_quality_viable(*texts: str | None) -> bool:
 _MIN_INVESTIGATION_TOKENS = 6
 
 
-def _investigation_payload_is_quality_viable(extraction: SemanticExtraction) -> bool:
+def _appears_as_heading_in_source(investigation_text: str, source_content: str) -> bool:
+    """Check if investigation_text was extracted from a markdown heading in the source."""
+    normalized = investigation_text.strip().lower()
+    if not normalized:
+        return False
+    for line in source_content.split("\n"):
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            continue
+        heading_text = stripped.lstrip("#").strip().lower()
+        heading_text = heading_text.replace("**", "").replace("*", "").replace("__", "")
+        if normalized in heading_text or heading_text in normalized:
+            return True
+    return False
+
+
+def _investigation_payload_is_quality_viable(extraction: SemanticExtraction, source_item: SourceItem) -> bool:
     if not _typed_memory_payload_is_quality_viable(
         extraction.investigation_text,
         extraction.investigation_evidence_text,
@@ -188,6 +204,9 @@ def _investigation_payload_is_quality_viable(extraction: SemanticExtraction) -> 
 
     tokens = TOKEN_PATTERN.findall(investigation_text)
     if len(tokens) < _MIN_INVESTIGATION_TOKENS:
+        return False
+
+    if _appears_as_heading_in_source(investigation_text, source_item.content):
         return False
 
     return True
@@ -345,7 +364,7 @@ def build_process_result(
         and extraction.candidate_type == "investigation_outcome"
         and investigation_text
         and investigation_evidence_text
-        and _investigation_payload_is_quality_viable(extraction)
+        and _investigation_payload_is_quality_viable(extraction, source_item)
         and has_grounded_investigation_evidence(source_item, investigation_evidence_text)
     ):
         canonical_key = normalize_for_index(investigation_text)

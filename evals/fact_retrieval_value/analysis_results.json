@@ -1,0 +1,90 @@
+{
+  "viability": {
+    "total_facts": 962,
+    "total_subjects": 904,
+    "facts_per_subject_avg": 1.06,
+    "subjects_with_3plus_facts": 12,
+    "subjects_meeting_consolidation_criteria": 0,
+    "consolidation_eligible_subjects": [],
+    "thread_distribution": [
+      {
+        "thread": "1bcbb241-c220-4733-ba5c-59b9f97c4cdc",
+        "facts": 216
+      },
+      {
+        "thread": "7ca73f41-127b-4494-918b-13eb8bbbdd22",
+        "facts": 209
+      },
+      {
+        "thread": "ee3d527f-5c17-4cbe-ac85-9d06e5de6a38",
+        "facts": 195
+      },
+      {
+        "thread": "607656ac-e3d5-401a-ab35-fad3b056c4a0",
+        "facts": 56
+      },
+      {
+        "thread": "null",
+        "facts": 54
+      },
+      {
+        "thread": "83d8d040-7fa9-4f8a-b365-952c1a8a0656",
+        "facts": 42
+      },
+      {
+        "thread": "40752291-58f3-4c2b-ab9b-edcdd6029fd3",
+        "facts": 39
+      },
+      {
+        "thread": "3e38ddce-e7eb-485a-bd22-1a1e8c29a131",
+        "facts": 35
+      },
+      {
+        "thread": "cd32acad-de2e-4a86-b2ee-8fa8d1daf1ff",
+        "facts": 33
+      },
+      {
+        "thread": "6f62a1ab-0121-441c-8e43-862b7f27116e",
+        "facts": 30
+      }
+    ],
+    "fact_count_distribution": [
+      {
+        "facts_per_subject": 1,
+        "num_subjects": 871
+      },
+      {
+        "facts_per_subject": 2,
+        "num_subjects": 21
+      },
+      {
+        "facts_per_subject": 3,
+        "num_subjects": 7
+      },
+      {
+        "facts_per_subject": 4,
+        "num_subjects": 1
+      },
+      {
+        "facts_per_subject": 5,
+        "num_subjects": 2
+      },
+      {
+        "facts_per_subject": 7,
+        "num_subjects": 2
+      }
+    ],
+    "existing_decisions": 45,
+    "existing_investigations": 160,
+    "existing_fact_summaries": 29
+  },
+  "redundancy": {
+    "sample_size": 50,
+    "redundant_count": 9,
+    "redundancy_rate": 0.18,
+    "covered_by_breakdown": {
+      "investigation_outcome": 8,
+      "constraint_memory": 1
+    }
+  }
+}

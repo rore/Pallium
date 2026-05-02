@@ -217,6 +217,21 @@ If memory doesn't appear:
 | Prompt min length | 20 chars | Hardcoded |
 | Content-length gate (Stop) | 20K chars | Hardcoded |
 
+### Recommended Package Configuration
+
+For the Claude Code integration, disable the `conversational_knowledge` (fact
+extraction) package. Its atomic facts are redundant with the decisions and
+investigation outcomes that `agent_conversation_memory` already extracts, and
+they cannot compete for injection slots. Disabling it saves LLM tokens on every
+ingested turn.
+
+In `~/.pallium/config/pallium.toml`:
+
+```toml
+[semantic_packages.conversational_knowledge]
+enabled = false
+```
+
 ## Concurrent Sessions
 
 Multiple Claude Code sessions on the same repo work correctly:

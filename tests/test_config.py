@@ -558,6 +558,79 @@ def test_model_roles_env_override(monkeypatch, tmp_path: Path) -> None:
     assert package.model_roles["write_extraction"] == "gpt-5-mini"
 
 
+# ---------------------------------------------------------------------------
+# Package enabled flag
+# ---------------------------------------------------------------------------
+
+def test_package_enabled_defaults_to_true() -> None:
+    from app.config import SemanticPackageConfig
+
+    package = SemanticPackageConfig(name="test", implementation="test")
+    assert package.enabled is True
+
+
+def test_package_enabled_false_from_toml(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        """
+        default_use_case = "agent_conversation_memory"
+
+        [semantic_packages.agent_conversation_memory]
+        implementation = "agent_conversation_memory"
+
+        [semantic_packages.conversational_knowledge]
+        implementation = "conversational_knowledge"
+        enabled = false
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    config = AppConfig.from_env()
+
+    acm = config.package_config("agent_conversation_memory")
+    assert acm.enabled is True
+
+    ck = config.package_config("conversational_knowledge")
+    assert ck.enabled is False
+
+
+def test_build_semantic_plugins_skips_disabled_package(monkeypatch) -> None:
+    from app.config import SemanticPackageConfig
+    from app.dependencies import build_semantic_plugins
+    from tests.config_helpers import DEFAULT_CONSOLIDATION_POLICY
+
+    class StubProvider:
+        def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str):
+            raise AssertionError("not used")
+
+    monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: StubProvider())
+
+    config = build_llm_test_config(default_use_case="agent_conversation_memory")
+    assert "llm_agent_memory" in config.semantic_packages
+    assert config.semantic_packages["llm_agent_memory"].enabled is True
+
+    # Disable llm_agent_memory via a new config with enabled=False
+    disabled_packages = dict(config.semantic_packages)
+    original = disabled_packages["llm_agent_memory"]
+    disabled_packages["llm_agent_memory"] = SemanticPackageConfig(
+        name=original.name,
+        implementation=original.implementation,
+        enabled=False,
+        llm_provider=original.llm_provider,
+        model=original.model,
+        prompt_variant=original.prompt_variant,
+    )
+
+    from dataclasses import replace
+    config_with_disabled = replace(config, semantic_packages=disabled_packages)
+
+    plugins = build_semantic_plugins(config_with_disabled)
+
+    assert "llm_agent_memory" not in plugins
+    assert "agent_conversation_memory" in plugins
+
+
 def test_provider_api_key_file_from_toml(monkeypatch, tmp_path: Path) -> None:
     api_key_file = tmp_path / "hai_api_key"
     api_key_file.write_text("pelican-managed-key\n", encoding="utf-8")

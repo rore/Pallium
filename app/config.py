@@ -63,6 +63,7 @@ class EmbeddingProviderConfig:
 class SemanticPackageConfig:
     name: str
     implementation: str
+    enabled: bool = True
     llm_provider: str | None = None
     model: str | None = None
     prompt_variant: str | None = None
@@ -632,6 +633,7 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
             packages[package_name] = SemanticPackageConfig(
                 name=package_name,
                 implementation=_as_string(raw_value.get("implementation", current.implementation)),
+                enabled=_parse_bool(raw_value.get("enabled"), current.enabled),
                 llm_provider=_as_optional_string(raw_value.get("llm_provider", current.llm_provider)),
                 model=_as_optional_string(raw_value.get("model", current.model)),
                 prompt_variant=_as_optional_string(raw_value.get("prompt_variant", current.prompt_variant)),

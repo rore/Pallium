@@ -142,7 +142,9 @@ FACT_EXTRACTION_SYSTEM_PROMPT = (
     "Preserve proper nouns and qualifying details. Extract once in most specific form. "
     "Resolve relative dates using the session date.\n\n"
     "Return JSON with key 'facts' containing up to 10 items. "
-    "Each: subject (string), statement (string), category (personal | event | preference | relationship | activity). "
+    "Each: subject (short canonical name of the entity/topic, e.g. 'hot-swap rebuild' not "
+    "'hot-swap rebuild architecture scalability analysis'), "
+    "statement (string), category (personal | event | preference | relationship | activity). "
     "If no extractable facts, return {\"facts\": []}.\n\n"
     "LANGUAGE: Write statements in the same language as the conversation. Do not translate."
 )
@@ -235,12 +237,6 @@ def _is_subject_prefixed_vague_fact(subject: str, statement: str) -> bool:
     return len(content_tokens(remainder)) < 2 and not any(char.isdigit() for char in remainder)
 
 
-_ASSISTANT_REASONING_KEYWORDS = frozenset([
-    "rationale", "reasoning", "identified", "proposed", "assessment",
-    "investigation", "believes", "chose", "concluded", "determined",
-    "decided to", "approach", "strategy", "committed to",
-])
-
 _ACTIVITY_NARRATION_PATTERNS = [
     "user requested a prompt", "user wants to understand",
     "user is asking", "user has decided to proceed",
@@ -252,10 +248,12 @@ _ACTIVITY_NARRATION_PATTERNS = [
 
 def _is_assistant_reasoning(subject: str, statement: str) -> bool:
     subject_lower = normalize_for_index(subject)
-    if "assistant" not in subject_lower:
-        return False
+    if "assistant" in subject_lower:
+        return True
     stmt_lower = statement.lower()
-    return any(kw in stmt_lower for kw in _ASSISTANT_REASONING_KEYWORDS)
+    if stmt_lower.startswith("assistant "):
+        return True
+    return False
 
 
 def _is_activity_narration(statement: str) -> bool:

@@ -682,6 +682,40 @@ PROMPT_VARIANTS["option4_gen_v11"] = (
     "LANGUAGE: Write statements in the same language as the conversation. Do not translate."
 )
 
+# Variant: gen_v11 with subject normalization guidance
+PROMPT_VARIANTS["option4_gen_v11_subj_norm"] = (
+    "Extract specific, atomic facts from the conversation below. "
+    "Record what participants stated, not what is objectively true. "
+    "Each fact should answer a possible future question. "
+    "Each statement must be self-contained and explicitly name its subject.\n\n"
+    "THE RULE: Extract the WHY, skip the WHAT.\n"
+    "Ask: 'If this conversation disappeared, could someone re-learn this from any artifact?'\n"
+    "If yes → skip. Memory is ONLY for knowledge that lives in the conversation and nowhere else.\n\n"
+    "EXTRACT: reasoning/rationale behind decisions, root causes of failures, "
+    "constraints discovered through experience, preferences and personal context, "
+    "surprising behavior (reality vs expectation), tacit knowledge not written down anywhere.\n\n"
+    "SKIP: what things currently are/do/contain, what was built/changed/fixed/committed, "
+    "measurements and counts, plans/proposals/recommendations, "
+    "prescriptive should/must statements, progress reports.\n\n"
+    "EXAMPLES:\n"
+    "GOOD: 'X broke because Y conflicts with Z under concurrent writes' (root cause)\n"
+    "BAD:  'X was fixed by adding a lock' (action narration)\n"
+    "GOOD: 'Chose X over Y because Y has a 500ms cold-start penalty' (decision rationale)\n"
+    "BAD:  'X uses Y with Z setting' (current state — in the artifacts)\n"
+    "GOOD: 'User prefers outcome-focused summaries over step-by-step' (preference)\n"
+    "BAD:  'Commit abc123 fixed the issue' / 'deployed in version X' (git state)\n"
+    "GOOD: 'Cannot do X because of Y discovered when...' (constraint)\n"
+    "BAD:  'The plan includes X' / 'Recommends Y' (plan/proposal)\n\n"
+    "Preserve proper nouns and qualifying details. Extract once in most specific form. "
+    "Resolve relative dates using the session date.\n\n"
+    "Return JSON with key 'facts' containing up to 10 items. "
+    "Each: subject (short canonical name of the entity/topic — e.g. 'hot-swap rebuild' not "
+    "'hot-swap rebuild architecture scalability analysis'; reuse subjects across facts about the same thing), "
+    "statement (string), category (personal | event | preference | relationship | activity). "
+    "If no extractable facts, return {\"facts\": []}.\n\n"
+    "LANGUAGE: Write statements in the same language as the conversation. Do not translate."
+)
+
 # Variant: Baseline with stronger negative examples
 PROMPT_VARIANTS["baseline_reinforced"] = FACT_EXTRACTION_SYSTEM_PROMPT + (
     "\n\n"
