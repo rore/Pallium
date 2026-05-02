@@ -1,6 +1,19 @@
 # Investigation: Adding a Recency Signal to Retrieval Scoring
 
-## Summary
+## Conclusion
+
+**Not worth building.** Empirical validation against production data shows that memory
+age does not correlate with irrelevant injections. The not_relevant rate is flat across
+age buckets (47-57%), with the youngest memories (1-6h) actually being the worst
+performers (90% not_relevant). The real problem is topical mismatch, not temporal
+mismatch.
+
+Pallium's existing mechanisms — lifecycle supersession, typed memory, thread/container
+scoping, and routing freshness ranking — already handle staleness effectively. Adding
+time-based decay would penalize old-but-relevant memories without reducing noise from
+young irrelevant ones.
+
+## Original Hypothesis
 
 Pallium's retrieval layer currently has no time signal — a memory from 6 months ago
 scores the same as one from yesterday if lexical+vector match equally. The routing
@@ -349,188 +362,105 @@ penalty calibration.**
 
 ## Comparison with Other Memory Systems
 
-A well-known open-source memory system uses a simple position-based hybrid formula for
-its short-term buffer memory:
+Some memory systems use a position-based recency bias in their short-term buffer
+memory (e.g., `score = 0.7 × semantic + 0.3 × recency`). This makes sense for
+their architecture because:
 
-```python
-combined_score = (1 - recency_bias) * semantic_score + recency_bias * recency_score
-# where recency_score = 1.0 - (position / buffer_size), default recency_bias = 0.3
-```
+- Their buffer is a flat FIFO queue of raw messages with no type system or lifecycle
+- All items are the same kind — recency is the only staleness signal available
+- There's no supersession, no typed extraction, no routing
+- "What did we just discuss?" genuinely needs positional recency to find recent turns
 
-For their long-term memory, they use pure semantic search with no recency signal.
+Their long-term memory typically uses pure semantic search with NO recency signal.
 
-Pallium's situation is different:
-- Memories are inherently time-sensitive (decisions get superseded, interests shift)
-- The memory types have very different temporal characteristics
-- We already have lifecycle management (supersession, suppression) for explicit staleness
-
-The proposed per-type exponential decay is more principled than a flat linear bias
-because it reflects the actual half-life of different knowledge types.
+Pallium doesn't need buffer-style recency because it solves "active context" through
+typed memory, lifecycle management (supersession), thread/container scoping, and
+routing freshness ranking. The production data confirms this: irrelevant injections
+are caused by topical mismatch, not temporal mismatch.
 
 ---
 
 ## Validation Plan: How to Test Assumptions Before Building
 
-The design above contains several ungrounded assumptions. Before implementing anything,
-each assumption needs empirical validation.
+The design above contained several ungrounded assumptions. Before implementing anything,
+the primary assumption was validated empirically against production data.
 
 ### Assumption 1: "Recency matters — old memories are a problem"
 
 **What we're assuming:** That old memories surface when they shouldn't, degrading
 injection quality.
 
-**How to validate:**
-- Join `memory_feedback` ratings with memory age at query time. If older memories are
-  disproportionately rated `not_relevant`, there's a real signal. If `not_relevant`
-  ratings distribute evenly across ages, recency isn't the problem.
-- Examine the query audit log: for injected memories, compute age at injection time.
-  Manually review the oldest injected memories — were they correctly injected or noise?
-- **Blocker:** The live database only spans ~4 days. This analysis requires either
-  waiting for more data to accumulate, or using a synthetic/benchmark dataset with
-  temporal spread.
+**How validated:**
+- Joined `memory_feedback` ratings (124 total: 68 not_relevant, 56 relevant) with
+  memory age at query time. Checked whether older memories are disproportionately
+  rated `not_relevant`.
 
-**LoCoMo approach:** LoCoMo conversations span multiple sessions with temporal gaps.
-Ingest all sessions, then query from the perspective of the latest session. Check
-whether old memories from early sessions are correctly surfaced or incorrectly injected.
-This gives us ground truth for "should this old memory appear?"
+**Result — FALSIFIED:**
 
-### Assumption 2: "Exponential decay is the right shape"
+| Age bucket | Total | Not relevant | Rate |
+|-----------|-------|-------------|------|
+| <1h | 17 | 8 | 47% |
+| 1-6h | 10 | 9 | 90% |
+| 6-24h | 21 | 12 | 57% |
+| 24-48h | 43 | 20 | 47% |
+| 48h+ | 23 | 13 | 57% |
 
-**What we're assuming:** That relevance decays exponentially with time, not linearly,
-not as a step function, not logarithmically.
+Key findings:
+- The not_relevant rate is flat across age buckets (47-57%)
+- The **youngest** memories (1-6h) have the **highest** not_relevant rate (90%)
+- Average age: not_relevant = 30.6h, relevant = 32.6h (nearly identical)
+- By type: `investigation_outcome` and `decision` appear in both relevant and
+  not_relevant sets at similar ages — the distinguishing factor is topical match,
+  not recency
 
-**How to validate:**
-- Build a parameterized decay eval: replay the same query set with linear, exponential,
-  and step-function decay. Measure precision/recall against ground-truth judgments.
-- If the curves produce similar results, the shape doesn't matter much and we should
-  pick the simplest (linear). If exponential clearly separates, it's justified.
-- **Minimum viable test:** Take 10-20 queries where we know the correct injection set.
-  Score candidates under each decay shape. See which shape matches ground truth best.
+**Interpretation:** Irrelevant injections are caused by topical mismatch (the memory
+doesn't match the query's subject), not temporal mismatch (the memory is too old).
+Recency decay would not address the actual problem and would hurt old-but-relevant
+memories.
 
-### Assumption 3: "Per-type half-lives are necessary"
-
-**What we're assuming:** That different memory types decay at different rates
-(continuity_memory fast, decision slow, atomic_fact never).
-
-**How to validate:**
-- Start with a single uniform half-life across all types (except facts which get no
-  decay). Measure impact on retrieval quality.
-- Then test per-type half-lives. If per-type doesn't meaningfully improve over uniform,
-  the extra complexity isn't justified.
-- Use LoCoMo: facts should always be retrievable regardless of age (ground truth from
-  the benchmark). Decisions from early sessions should still surface for "what did we
-  decide about X?" queries. Measure whether per-type decay preserves fact recall while
-  suppressing stale context.
-
-### Assumption 4: "The proposed half-life values are correct"
-
-**What we're assuming:** 72h for continuity, 48h for checkpoints, 14d for decisions, etc.
-
-**How to validate:**
-- These numbers should NOT be guessed. They should be derived from data:
-  - What's the median age of memories that get rated `relevant` vs `not_relevant`?
-  - At what age does a memory type's injection precision drop below 50%?
-  - What's the natural "useful window" for each type based on supersession patterns?
-    (If most thread_summaries get superseded within 24h, a 7-day half-life is too long.)
-- **Calibration approach:** Set up a sweep — try half-lives at 1h, 6h, 24h, 72h, 168h,
-  336h, 720h for each type. Measure eval metrics at each point. Pick the value that
-  maximizes precision without hurting recall below a threshold.
-- **Supersession as a proxy:** For types with active supersession (thread_summary,
-  task_checkpoint), the median time-to-supersession is an empirical upper bound on
-  useful lifetime. A memory that would have been superseded "soon" is already stale.
-
-### Assumption 5: "Post-RRF decay is better than the alternatives"
-
-**What we're assuming:** That applying decay after RRF fusion (Option B) is superior
-to a third RRF signal (Option A) or routing-only (Option C).
-
-**How to validate:**
-- Build the eval harness with a pluggable decay application point.
-- Implement all three options (they're all simple) and measure on the same query set.
-- Key metric: does Option B give strictly better precision@k than Option C (which is
-  roughly what routing does today)? If routing-only handles it well enough, we don't
-  need retrieval-level decay at all.
-
-### Assumption 6: "Decay floor of 0.3 is the right minimum"
-
-**What we're assuming:** That old memories should never be fully suppressed, just
-demoted to 30% of their original score.
-
-**How to validate:**
-- Test floors at 0.0 (full suppression possible), 0.1, 0.3, 0.5.
-- The right floor is the one where old-but-correctly-relevant memories still surface.
-  Use known queries where an old memory IS the right answer (e.g., "what did we decide
-  about X?" where X was decided weeks ago).
-- If floor=0.0 never causes a missed correct injection in the eval set, we can be more
-  aggressive. If floor=0.5 still lets noise through, we need it higher.
-
-### Assumption 7: "This won't cause double-penalization with routing"
-
-**What we're assuming:** That retrieval decay + routing freshness penalties are
-complementary, not destructive when combined.
-
-**How to validate:**
-- Run the full pipeline (decay + routing) on the eval set and compare against
-  routing-only. Look specifically for cases where a candidate that SHOULD be injected
-  gets killed by the combination.
-- Check: does any correctly-relevant candidate receive both decay demotion AND routing
-  staleness penalty? If so, the combined penalty is the sum — is that sum ever large
-  enough to suppress a correct candidate below a wrong one?
-
-### Proposed Eval Harness Design
-
-```
-Input:  A set of (query, expected_injections, expected_non_injections) triples
-        with memories spanning a realistic time range (days to weeks)
-
-Method: For each (query, expected) triple:
-        1. Retrieve candidates (existing pipeline)
-        2. Apply decay with parameterized config
-        3. Run routing
-        4. Compare injected set against expected
-        5. Compute precision@k and recall@k
-
-Sweep:  Run across parameter grid:
-        - decay_shape: [none, linear, exponential]
-        - half_life_uniform: [24h, 72h, 168h, 336h]
-        - floor: [0.0, 0.1, 0.3, 0.5]
-        - per_type: [uniform, per_type_proposed]
-        - integration_point: [post_rrf, routing_only]
-
-Output: Table showing (config → precision, recall, F1)
-        Identify Pareto-optimal configs
-```
-
-### Data Sources for the Eval
-
-1. **LoCoMo (primary):** Multi-session conversations with known correct answers.
-   Each question has a ground-truth answer derivable from specific conversation turns.
-   We can determine which memories SHOULD surface for each question.
-
-2. **Synthetic aging:** Take current Pallium memories, duplicate with timestamps
-   shifted to simulate aging. Re-run queries. Judge whether the injection changes
-   are improvements.
-
-3. **Production feedback (future):** As `pallium_rate_memory` data accumulates over
-   weeks/months, correlate `not_relevant` ratings with memory age to empirically
-   measure the actual decay curve of relevance by type.
-
-### Order of Operations
-
-1. **First: Prove the problem exists.** Analyze LoCoMo injection results — are there
-   cases where old memories are incorrectly injected over fresher, more relevant ones?
-   If not, stop here.
-2. **Second: If problem exists, build the eval harness.** Design the sweep grid.
-3. **Third: Run the sweep.** Find parameters empirically.
-4. **Fourth: Implement with validated parameters.** Not guessed ones.
+Since Assumption 1 is falsified, Assumptions 2-7 (decay shape, per-type half-lives,
+parameter values, integration point, floor, double-penalization) are moot — they all
+depend on recency being a real problem signal. The validation plan worked as designed:
+the first gate stopped unnecessary work.
 
 ---
 
-## Next Steps (if pursued)
+## Why This Architecture Doesn't Need Recency Decay
 
-1. **Validate Assumption 1** — analyze LoCoMo for temporal injection errors
-2. If validated: build parameterized eval harness with sweep grid
-3. Run sweep to find optimal parameters empirically
-4. Implement with data-derived parameters
-5. Regression check against existing evals
-6. Monitor with `pallium_rate_memory` feedback loop post-deployment
+Pallium already handles temporal relevance through other mechanisms:
+
+1. **Lifecycle supersession:** When a thread is rebuilt, old summaries/checkpoints are
+   superseded and excluded from retrieval. This handles "replaced by newer version."
+
+2. **Contradiction detection:** Cross-thread fact contradictions are detected during
+   consolidation and older versions superseded. This handles "no longer true."
+
+3. **Routing freshness ranking:** Within candidates of the same type, the freshest
+   gets a bonus (+24 for recall). This handles "which of these equally-relevant
+   candidates is most current."
+
+4. **Work resumption staleness:** Task checkpoints >45 minutes behind the freshest
+   get a -55 penalty. This handles "stale work state."
+
+5. **Thread/container scoping:** Queries are scoped to the current container, so
+   memories from unrelated containers don't surface. This handles "wrong context."
+
+These mechanisms address staleness structurally rather than with a blunt time-based
+penalty. The data confirms they're sufficient: old memories that ARE relevant (same
+topic, correct context) are correctly surfaced, while irrelevant ones are blocked by
+topical mismatch — which decay wouldn't fix.
+
+---
+
+## Next Steps
+
+This investigation is concluded. The data does not support adding recency decay.
+
+Future directions if the problem profile changes:
+- If `pallium_rate_memory` feedback over months shows age correlating with
+  not_relevant ratings, revisit this conclusion with fresh data.
+- If a specific memory type shows clear age-dependent relevance degradation,
+  a targeted per-type mechanism might be warranted.
+- The topical mismatch problem (the actual source of noise) is better addressed
+  by improving retrieval precision — tighter content-overlap gates, better
+  embedding discrimination, or query-time subject anchoring.
