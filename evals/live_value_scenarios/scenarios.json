@@ -1,0 +1,194 @@
+[
+  {
+    "scenario_id": "constraint-carry-forward-dashboard-pattern",
+    "description": "User opens a new thread to modify the dashboard. They previously stated a UI pattern preference (both totals + last 24h numbers). The constraint should be surfaced so the agent knows the broader design intent, not just the literal current ask.",
+    "value_story": "Without this memory, the agent implements only what was literally asked (add 24h to feedback). With the constraint, the agent knows to apply the same pattern consistently across all dashboard sections — reducing future back-and-forth.",
+    "category": "constraint_carry_forward",
+    "query": {
+      "text": "in the dachboard - in the feedback - can we have here also the last 24h numbers like we have on other stats?",
+      "container_ref": "git:github.com/rore/pallium",
+      "visibility": "private"
+    },
+    "expected": {
+      "should_inject": true,
+      "memory_types": ["constraint_memory"],
+      "content_patterns": ["24 hour", "totals"],
+      "value_reason": "Carries forward a stated UI preference that applies to this new request"
+    },
+    "anti_patterns": {
+      "should_not_inject_types": ["thread_summary"],
+      "should_not_contain": ["embedding", "vector", "extraction"]
+    },
+    "original_event": {
+      "time": "2026-05-03T17:54:48Z",
+      "thread_ref": "4488ca2e-6d65-41d4-b225-a3cedc5500b9",
+      "was_rated": "relevant",
+      "rating_reason": "Directly about the pattern of showing both totals and last 24h numbers"
+    },
+    "expected_status": "known_fail",
+    "expected_status_reason": "Routing anchor prefilter drops the constraint (0 aligned candidates) because the query's subject tokens don't match the memory's subject. Scoring change regression."
+  },
+  {
+    "scenario_id": "investigation-continuation-embedding-discrimination",
+    "description": "User starts a new investigation into retrieval discrimination for single-domain content. A prior session already reached conclusions about embedding model limitations on this exact topic. The prior findings should be surfaced so the agent builds on established knowledge rather than re-investigating from scratch.",
+    "value_story": "Without prior findings, the agent would re-run the same analysis (measure vector score clustering, try larger models, etc). With them, the agent already knows: (1) 384-dim can't discriminate subtopics in single-domain content, (2) even 768-dim doesn't fix intra-domain similarity — so it can skip dead ends and focus on new approaches.",
+    "category": "investigation_continuation",
+    "query": {
+      "text": "Investigate retrieval discrimination for single-domain content. Vector scores cluster, precision suffers. All memories are about Pallium development. The E5 embedding model produces vector similarity scores that cluster.",
+      "container_ref": "git:github.com/rore/pallium",
+      "visibility": "private"
+    },
+    "expected": {
+      "should_inject": true,
+      "memory_types": ["investigation_outcome"],
+      "content_patterns": ["discriminat", "single-domain", "cluster"],
+      "value_reason": "Prevents re-investigation of already-resolved questions about embedding model capacity"
+    },
+    "anti_patterns": {
+      "should_not_inject_types": [],
+      "should_not_contain": ["reservation", "catalog sync"]
+    },
+    "original_event": {
+      "time": "2026-05-03T12:20:26Z",
+      "thread_ref": "f9e10585-25fb-4748-ac80-7cf594acc716",
+      "was_rated": "relevant",
+      "rating_reason": "Directly about the embedding model's inability to discriminate subtopics"
+    },
+    "expected_status": "pass"
+  },
+  {
+    "scenario_id": "analysis-to-fix-handoff-extraction-quality",
+    "description": "User starts a thread to fix decision extraction quality. A prior session analyzed memory quality and categorized the problems into 3 areas. The prior taxonomy should be surfaced so the agent starts the fix with the right problem framing.",
+    "value_story": "Without the prior analysis, the agent re-analyzes the problem space from scratch. With it, the agent already knows the problems cluster into 3 investigation areas and can jump directly to implementation. This is the core 'analysis -> fix' handoff that makes multi-session work efficient.",
+    "category": "analysis_handoff",
+    "query": {
+      "text": "Investigate and fix thread decision extraction quality in agent_conversation_memory. The thread aggregation path extracts decisions from thread summaries. Many extracted decisions are noise.",
+      "container_ref": "git:github.com/rore/pallium",
+      "visibility": "private"
+    },
+    "expected": {
+      "should_inject": true,
+      "memory_types": ["investigation_outcome"],
+      "content_patterns": ["extraction", "quality"],
+      "value_reason": "Carries forward the problem taxonomy from analysis to implementation session"
+    },
+    "anti_patterns": {
+      "should_not_inject_types": [],
+      "should_not_contain": ["global visibility", "container scoping", "reservation"]
+    },
+    "original_event": {
+      "time": "2026-05-03T11:28:33Z",
+      "thread_ref": "2db7f163-45c6-4efc-82df-2e16e83df76f",
+      "was_rated": "relevant",
+      "rating_reason": "Bad memories investigation directly related to decision extraction quality"
+    },
+    "expected_status": "pass"
+  },
+  {
+    "scenario_id": "decision-recall-architect-review",
+    "description": "User mentions doing an architect review. A prior session established the decision to always do architect reviews before and after changes. The decision should be surfaced as a relevant workflow constraint.",
+    "value_story": "Without this memory, the agent might just do the review without context. With it, the agent knows this is a deliberate established practice — the user decided on this workflow previously — and can follow it consistently without being reminded.",
+    "category": "decision_recall",
+    "query": {
+      "text": "ok, so let's add it. but remember to do an architect review before and after every change",
+      "container_ref": "git:github.com/rore/pallium",
+      "visibility": "private"
+    },
+    "expected": {
+      "should_inject": true,
+      "memory_types": ["decision", "investigation_outcome"],
+      "content_patterns": ["architect review"],
+      "value_reason": "Reinforces an established workflow decision — the agent should proactively follow this pattern"
+    },
+    "anti_patterns": {
+      "should_not_inject_types": [],
+      "should_not_contain": ["reservation", "catalog"]
+    },
+    "original_event": {
+      "time": "2026-05-01T08:38:50Z",
+      "thread_ref": "7ca73f41-127b-4494-918b-13eb8bbbdd22",
+      "was_rated": "relevant",
+      "rating_reason": "User is explicitly following this decision"
+    },
+    "expected_status": "pass"
+  },
+  {
+    "scenario_id": "constraint-carry-forward-data-driven",
+    "description": "User asks about simulating something to validate it works. A prior session established the constraint that work should be data-driven with real evidence, not assumptions. The constraint should be surfaced to guide the approach.",
+    "value_story": "Without this memory, the agent might propose a quick manual test. With the constraint, the agent knows the user has explicitly stated they want evidence-based validation with substantial corpus sizes — leading to a more rigorous approach.",
+    "category": "constraint_carry_forward",
+    "query": {
+      "text": "i already restarted but there's probably not a lot of data yet. can we simulate it somehow to be sure?",
+      "container_ref": "git:github.com/rore/pallium",
+      "visibility": "private"
+    },
+    "expected": {
+      "should_inject": true,
+      "memory_types": ["constraint_memory"],
+      "content_patterns": ["data driven", "assumption"],
+      "value_reason": "Carries forward a stated methodology preference that directly applies to this validation question"
+    },
+    "anti_patterns": {
+      "should_not_inject_types": [],
+      "should_not_contain": ["reservation", "catalog"]
+    },
+    "original_event": {
+      "time": "2026-05-03T17:56:51Z",
+      "thread_ref": "f9e10585-25fb-4748-ac80-7cf594acc716",
+      "was_rated": "relevant",
+      "rating_reason": "User confirmed the data-driven approach worked and now wants ongoing tracking"
+    },
+    "expected_status": "pass"
+  },
+  {
+    "scenario_id": "negative-operational-command-no-inject",
+    "description": "User gives a simple operational command (push and restart). No memory should be injected because this is a mechanical action that doesn't benefit from prior context.",
+    "value_story": "Pallium should stay silent here. Injecting memory for 'push and restart' wastes tokens and distracts the agent. The value of memory is knowing when NOT to inject just as much as when to inject.",
+    "category": "negative_no_inject",
+    "query": {
+      "text": "push this and restart the service",
+      "container_ref": "git:github.com/rore/pallium",
+      "visibility": "private"
+    },
+    "expected": {
+      "should_inject": false,
+      "memory_types": [],
+      "content_patterns": [],
+      "value_reason": "Operational commands don't benefit from prior memory — injection here is noise"
+    },
+    "anti_patterns": {
+      "should_not_inject_types": ["investigation_outcome", "decision"],
+      "should_not_contain": []
+    },
+    "original_event": {
+      "time": "2026-05-03T17:51:54Z",
+      "thread_ref": "8426fa50-e169-4abc-861b-85d0f3206bd2",
+      "was_rated": "not_relevant",
+      "rating_reason": "About a prior restart picking up model changes, not relevant to this push/restart task"
+    },
+    "expected_status": "pass"
+  },
+  {
+    "scenario_id": "negative-greeting-no-inject",
+    "description": "User sends a greeting or acknowledgement. No memory should be injected because there's nothing to ground memory retrieval against.",
+    "value_story": "Pallium should recognize low-value queries and abstain. Injecting memory cards for 'ok thanks' is pure noise.",
+    "category": "negative_no_inject",
+    "query": {
+      "text": "ok thanks, got it",
+      "container_ref": "git:github.com/rore/pallium",
+      "visibility": "private"
+    },
+    "expected": {
+      "should_inject": false,
+      "memory_types": [],
+      "content_patterns": [],
+      "value_reason": "Acknowledgements don't benefit from memory injection"
+    },
+    "anti_patterns": {
+      "should_not_inject_types": ["investigation_outcome", "decision", "constraint_memory"],
+      "should_not_contain": []
+    },
+    "original_event": null,
+    "expected_status": "pass"
+  }
+]
