@@ -25,7 +25,7 @@ retrieval quality. Do not skip this even when focused on implementation work.
 
 **Required parameters for manual tool calls:**
 When calling `pallium_query`, `pallium_get_evidence`, or `pallium_ingest`, always pass:
-- `visibility`: "private" (all memories in this integration are private)
+- `visibility`: "private" for project-scoped memory (default), or "global" when user explicitly asks to remember something across all projects (requires `actor_ref`)
 - `container_ref`: use the value from the injection header (e.g. "git:github.com/rore/pallium")
 
 Without these, queries will return empty results. The automatic hooks pass them
