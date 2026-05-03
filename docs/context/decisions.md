@@ -650,3 +650,27 @@ Why:
   enable cross-thread bundling when work_refs match
 - does not override visibility rules — private memories stay private
 - prompt schema bumped v7 → v8; default variant: `strict_typed_memory_v8b_work_refs_separate`
+
+### 2026-05-03 - Global visibility for cross-container actor-scoped memory
+
+A new `"global"` visibility value allows personal memories to follow an actor
+across all containers. Added as a fourth value orthogonal to the
+`public/container/private` containment hierarchy rather than overloading
+`public + actor_ref` (which was deliberately blocked in commit 2886cdf to
+prevent interest leakage from public channels).
+
+Design: fail-closed actor gate (`candidate_actor_ref is not None and
+query_actor_ref is not None and candidate_actor_ref == query_actor_ref`).
+Single-user integrations must derive a stable actor_ref and pass it explicitly.
+`query_actor_ref` threaded through entire retrieval pipeline.
+
+Why:
+
+- users working across multiple repos/containers need personal preferences
+  (coding style, workflow constraints) to follow them without re-stating
+- cannot reuse `public + actor_ref` because commit 2886cdf correctly blocks
+  that combination from crossing containers (prevents accidental leakage)
+- cannot use `private` or `container` because they are container-bound by definition
+- fail-closed prevents leakage when actor identity is missing
+- explicit-only creation (never automatic extraction) prevents accidental global scope
+- routing demotion factor deferred pending live usage data

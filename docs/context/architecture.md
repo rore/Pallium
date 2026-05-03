@@ -263,6 +263,18 @@ Actor scoping extends the visibility model with per-memory attribution:
 - thread-level memories (`thread_summary`, `task_checkpoint`) always have `actor_ref = null` regardless of container type
 - query-time actor filtering prevents personal memories from being injected into other users' contexts; shared memories (`actor_ref = null`) always pass the filter
 
+Global visibility extends the model with cross-container actor-scoped memory:
+
+- `visibility = "global"` is a special fourth value orthogonal to the `public/container/private` containment hierarchy
+- semantics: personal memory that follows a specific actor across all containers
+- always has `actor_ref` (the owner); visible in any container where `query_actor_ref == candidate_actor_ref`
+- fail-closed: if either `candidate_actor_ref` or `query_actor_ref` is None, global memories are invisible
+- `container_ref` on global items records provenance (where it originated) but does not bound retrieval
+- only created by explicit user request (MCP `pallium_ingest` with `visibility: "global"`); automatic extraction never produces global memories
+- `query_actor_ref` is threaded through the entire retrieval pipeline (lexical, vector, composite, query executor) to `is_visible()`
+- `core/filters.py` exempts global from container_ref filtering (same as public) so global items reach the visibility check from any container
+- does not participate in thread aggregation or cross-container consolidation
+
 ## Future Operational Scale
 
 The current architecture intentionally accepts some write amplification in
