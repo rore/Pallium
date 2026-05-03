@@ -51,6 +51,7 @@ class InjectionThresholds:
     candidate_vector_override: int = 800   # per-candidate strong vector (source hits)
     high_value_lexical_floor: float = 0.01 # per-candidate min normalized lexical (structured memory)
     high_value_vector_floor: int = 650     # per-candidate vector floor (structured memory)
+    min_raw_lexical_bm25: float = 12.0     # per-candidate: require raw BM25 >= this (blocks vector-only)
 
 
 _DEFAULT_THRESHOLDS = InjectionThresholds()
@@ -158,7 +159,11 @@ def candidate_injection_eligible(
 ) -> bool:
     """Per-candidate: does this specific candidate have enough grounding to inject?
 
-    Type-aware: structured memory gets a lower bar. Source hits need stronger signals.
+    Primary gate: requires raw BM25 lexical score >= min_raw_lexical_bm25.
+    This blocks vector-only candidates and low-lexical candidates that lack
+    topical vocabulary overlap with the query.
+
+    Type-aware secondary checks apply after the lexical floor passes.
     """
     raw_lex = candidate.get("lexical_score")
     raw_vec = candidate.get("vector_score")
@@ -168,6 +173,17 @@ def candidate_injection_eligible(
     item_type = getattr(item, "type", None) if item else None
 
     if raw_lex is not None or raw_vec is not None:
+        # Primary gate: require minimum raw BM25 lexical confirmation.
+        raw_lex_value = float(raw_lex) if raw_lex is not None else 0.0
+        if raw_lex is None or raw_lex_value < thresholds.min_raw_lexical_bm25:
+            if verbose:
+                _verbose(
+                    f"  PER_CANDIDATE lexical_floor: id={item_id} kind={item_kind} type={item_type} "
+                    f"raw_lex={raw_lex} vec={raw_vec} -> BLOCKED "
+                    f"(requires raw BM25 >= {thresholds.min_raw_lexical_bm25})"
+                )
+            return False
+
         lex = normalize_lexical_score(raw_lex)
         vec = float(raw_vec or 0)
         is_source = item_kind == "source_hit"

@@ -286,9 +286,9 @@ def test_multi_token_wallet_recall_excludes_unrelated_batch_checkpoint() -> None
     )
     retrieval_result = RetrievalQueryResult(
         results=[
-            _wallet_snapshot_checkpoint_result(score=18, lexical_score=5),
-            _wallet_snapshot_summary_result(score=17, lexical_score=5),
-            _inventory_batch_constraint_checkpoint_result(score=8, lexical_score=2),
+            _wallet_snapshot_checkpoint_result(score=18, lexical_score=18),
+            _wallet_snapshot_summary_result(score=17, lexical_score=16),
+            _inventory_batch_constraint_checkpoint_result(score=8, lexical_score=6),
             _inventory_batch_constraint_summary_result(score=7),
         ],
         trace=QueryTrace(

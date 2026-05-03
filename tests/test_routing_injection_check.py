@@ -51,22 +51,33 @@ class TestSetLevelGate:
 
 
 class TestPerCandidateEligibility:
-    def test_lexical_above_floor(self):
-        assert candidate_injection_eligible(_make_candidate(lexical_score=2)) is True
+    def test_lexical_above_bm25_floor(self):
+        assert candidate_injection_eligible(_make_candidate(lexical_score=15)) is True
 
-    def test_lexical_below_floor_vector_below_override(self):
-        assert candidate_injection_eligible(_make_candidate(lexical_score=0, vector_score=600)) is False
+    def test_lexical_below_bm25_floor(self):
+        assert candidate_injection_eligible(_make_candidate(lexical_score=8, vector_score=900)) is False
 
-    def test_strong_vector_override(self):
-        assert candidate_injection_eligible(_make_candidate(lexical_score=0, vector_score=850)) is True
+    def test_vector_only_blocked(self):
+        """Vector-only candidates (no lexical) are blocked by the BM25 floor."""
+        assert candidate_injection_eligible(_make_candidate(lexical_score=0, vector_score=850)) is False
+
+    def test_no_lexical_at_all_blocked(self):
+        """Candidate with lexical_score=None is blocked."""
+        assert candidate_injection_eligible({"lexical_score": None, "vector_score": 950}) is False
 
     def test_both_zero(self):
         assert candidate_injection_eligible(_make_candidate(lexical_score=0, vector_score=0)) is False
 
-    def test_custom_thresholds(self):
-        strict = InjectionThresholds(candidate_lexical_floor=0.5)
+    def test_custom_bm25_floor(self):
+        lenient = InjectionThresholds(min_raw_lexical_bm25=5.0)
         assert candidate_injection_eligible(
-            _make_candidate(lexical_score=2), thresholds=strict
+            _make_candidate(lexical_score=6, vector_score=0), thresholds=lenient
+        ) is True
+
+    def test_custom_bm25_floor_blocks(self):
+        strict = InjectionThresholds(min_raw_lexical_bm25=20.0)
+        assert candidate_injection_eligible(
+            _make_candidate(lexical_score=15, vector_score=900), thresholds=strict
         ) is False
 
 

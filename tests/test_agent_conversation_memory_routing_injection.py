@@ -1972,7 +1972,7 @@ def test_retrieval_relevance_floor_passes_high_lexical_score() -> None:
     result = _build_floor_test_retrieval_result(
         score=19,
         retrieval_source='both',
-        lexical_score=4,
+        lexical_score=15,
     )
     outcome = _run_floor_test(result, query_text='what did we discuss about vector databases?')
     assert outcome.should_inject is True
@@ -1980,11 +1980,11 @@ def test_retrieval_relevance_floor_passes_high_lexical_score() -> None:
 
 
 def test_retrieval_relevance_floor_passes_at_boundary() -> None:
-    """lexical_score exactly at the injection threshold (2) should pass."""
+    """lexical_score exactly at the BM25 floor (12) should pass."""
     result = _build_floor_test_retrieval_result(
         score=19,
         retrieval_source='both',
-        lexical_score=2,
+        lexical_score=12,
     )
     outcome = _run_floor_test(result, query_text='what about vector databases?')
     assert outcome.should_inject is True
@@ -2078,7 +2078,7 @@ def test_continuity_preference_bypasses_low_confidence_gate_when_continuity_memo
     result = _build_floor_test_retrieval_result(
         score=19,
         retrieval_source='both',
-        lexical_score=1,
+        lexical_score=14,
         vector_score=923,
         memory_type='continuity_memory',
         payload={
@@ -2101,7 +2101,7 @@ def test_supported_exact_memory_bypasses_low_confidence_gate() -> None:
     result = _build_floor_test_retrieval_result(
         score=19,
         retrieval_source='both',
-        lexical_score=1,
+        lexical_score=14,
         vector_score=922,
         memory_type='decision',
         payload={
@@ -3249,7 +3249,7 @@ def test_fact_summary_injected_when_atomic_fact_excluded_from_injection() -> Non
                     'summary': "Alice's travel: planning trips to Rome and Madrid this summer.",
                 },
                 score=21,
-                lexical_score=5,
+                lexical_score=15,
                 vector_score=760,
                 evidence=shared_evidence,
                 container_ref='chat:library-help',
@@ -3263,7 +3263,7 @@ def test_fact_summary_injected_when_atomic_fact_excluded_from_injection() -> Non
                 type='atomic_fact',
                 payload={'statement': 'Alice is planning trips to Rome and Madrid this summer.'},
                 score=18,
-                lexical_score=4,
+                lexical_score=15,
                 vector_score=720,
                 evidence=shared_evidence,
                 container_ref='chat:library-help',
@@ -3314,7 +3314,7 @@ def test_fact_summary_public_container_requires_anchor_alignment_for_injection()
                     'summary': "Alice's travel: planning trips to Rome and Madrid this summer.",
                 },
                 score=18,
-                lexical_score=4,
+                lexical_score=15,
                 vector_score=730,
                 evidence=[],
                 container_ref='slack:channel:CLOCAL001',
@@ -3363,7 +3363,7 @@ def test_fact_summary_recall_injects_single_aligned_block() -> None:
                     'summary': "Alice's travel: planning trips to Rome and Madrid this summer.",
                 },
                 score=18,
-                lexical_score=4,
+                lexical_score=15,
                 vector_score=730,
                 evidence=[],
                 container_ref='slack:channel:CLOCAL001',
