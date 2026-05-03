@@ -25,7 +25,7 @@ turn solely to rate memory.
 **Required parameters for manual tool calls:**
 When calling `pallium_query`, `pallium_get_evidence`, or `pallium_ingest`, always pass:
 - `container_ref`: use the value from the injection header (e.g. "git:github.com/user/repo")
-- `visibility`: "private" for project-scoped memory (default)
+- `visibility`: "private" for project-scoped memory (default), or "global" when user explicitly asks to remember something across all projects (requires `actor_ref`)
 
 Without these parameters, queries will return empty results. The automatic hooks
 pass them correctly — you only need to worry about this for explicit tool calls.

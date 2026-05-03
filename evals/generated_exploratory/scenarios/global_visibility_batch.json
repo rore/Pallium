@@ -1,0 +1,228 @@
+[
+  {
+    "id": "global-cross-container-recall",
+    "description": "Global memory ingested in container A should be visible from container B with matching actor",
+    "steps": [
+      {
+        "action": "ingest",
+        "item": {
+          "source_type": "chat_message",
+          "source_id": "global-scenario-1",
+          "content_type": "text/plain",
+          "content": "Decision: always use tabs for indentation across all projects",
+          "role": "user",
+          "container_ref": "git:repo-alpha",
+          "thread_ref": "git:repo-alpha:thread-1",
+          "actor_ref": "alice",
+          "visibility": "global",
+          "artifact_kind": "message"
+        }
+      },
+      {
+        "action": "query",
+        "query": {
+          "text": "what indentation style should I use for tabs or spaces?",
+          "container_ref": "git:repo-beta",
+          "actor_ref": "alice",
+          "visibility": "private",
+          "limit": 10
+        }
+      }
+    ],
+    "invariants": ["INV-14", "INV-15"],
+    "expect_results": true
+  },
+  {
+    "id": "global-actor-isolation",
+    "description": "Global memory for actor A must NOT be visible to actor B",
+    "steps": [
+      {
+        "action": "ingest",
+        "item": {
+          "source_type": "chat_message",
+          "source_id": "global-scenario-2",
+          "content_type": "text/plain",
+          "content": "Decision: always use tabs for indentation across all projects",
+          "role": "user",
+          "container_ref": "git:repo-alpha",
+          "thread_ref": "git:repo-alpha:thread-1",
+          "actor_ref": "alice",
+          "visibility": "global",
+          "artifact_kind": "message"
+        }
+      },
+      {
+        "action": "query",
+        "query": {
+          "text": "what indentation style should I use for tabs or spaces?",
+          "container_ref": "git:repo-beta",
+          "actor_ref": "bob",
+          "visibility": "private",
+          "limit": 10
+        }
+      }
+    ],
+    "invariants": ["INV-15"],
+    "expect_results": false
+  },
+  {
+    "id": "global-no-actor-invisible",
+    "description": "Global memory must NOT be visible when query has no actor_ref",
+    "steps": [
+      {
+        "action": "ingest",
+        "item": {
+          "source_type": "chat_message",
+          "source_id": "global-scenario-3",
+          "content_type": "text/plain",
+          "content": "Decision: always use tabs for indentation across all projects",
+          "role": "user",
+          "container_ref": "git:repo-alpha",
+          "thread_ref": "git:repo-alpha:thread-1",
+          "actor_ref": "alice",
+          "visibility": "global",
+          "artifact_kind": "message"
+        }
+      },
+      {
+        "action": "query",
+        "query": {
+          "text": "what indentation style should I use for tabs or spaces?",
+          "container_ref": "git:repo-alpha",
+          "visibility": "private",
+          "limit": 10
+        }
+      }
+    ],
+    "invariants": ["INV-16"],
+    "expect_results": false
+  },
+  {
+    "id": "global-same-container-visible",
+    "description": "Global memory visible in originating container with matching actor",
+    "steps": [
+      {
+        "action": "ingest",
+        "item": {
+          "source_type": "chat_message",
+          "source_id": "global-scenario-4",
+          "content_type": "text/plain",
+          "content": "Decision: always use tabs for indentation across all projects",
+          "role": "user",
+          "container_ref": "git:repo-alpha",
+          "thread_ref": "git:repo-alpha:thread-1",
+          "actor_ref": "alice",
+          "visibility": "global",
+          "artifact_kind": "message"
+        }
+      },
+      {
+        "action": "query",
+        "query": {
+          "text": "what indentation style should I use for tabs or spaces?",
+          "container_ref": "git:repo-alpha",
+          "actor_ref": "alice",
+          "visibility": "private",
+          "limit": 10
+        }
+      }
+    ],
+    "invariants": ["INV-14", "INV-15"],
+    "expect_results": true
+  },
+  {
+    "id": "global-does-not-suppress-local",
+    "description": "Global memory should not suppress local private memory on same topic",
+    "steps": [
+      {
+        "action": "ingest",
+        "item": {
+          "source_type": "chat_message",
+          "source_id": "global-scenario-5a",
+          "content_type": "text/plain",
+          "content": "Decision: always use tabs for indentation across all projects",
+          "role": "user",
+          "container_ref": "git:repo-alpha",
+          "thread_ref": "git:repo-alpha:thread-1",
+          "actor_ref": "alice",
+          "visibility": "global",
+          "artifact_kind": "message"
+        }
+      },
+      {
+        "action": "ingest",
+        "item": {
+          "source_type": "chat_message",
+          "source_id": "global-scenario-5b",
+          "content_type": "text/plain",
+          "content": "Decision: use 4-space indentation for Python files in this project",
+          "role": "user",
+          "container_ref": "git:repo-alpha",
+          "thread_ref": "git:repo-alpha:thread-1",
+          "actor_ref": "alice",
+          "visibility": "private",
+          "artifact_kind": "message"
+        }
+      },
+      {
+        "action": "query",
+        "query": {
+          "text": "what indentation style should I use for tabs or spaces?",
+          "container_ref": "git:repo-alpha",
+          "actor_ref": "alice",
+          "visibility": "private",
+          "limit": 10
+        }
+      }
+    ],
+    "invariants": ["INV-14", "INV-15"],
+    "expect_results": true
+  },
+  {
+    "id": "global-coexists-with-public",
+    "description": "Global and public memories coexist: both appear in cross-container queries",
+    "steps": [
+      {
+        "action": "ingest",
+        "item": {
+          "source_type": "chat_message",
+          "source_id": "global-scenario-6a",
+          "content_type": "text/plain",
+          "content": "Decision: always use tabs for indentation across all projects",
+          "role": "user",
+          "container_ref": "git:repo-alpha",
+          "thread_ref": "git:repo-alpha:thread-1",
+          "actor_ref": "alice",
+          "visibility": "global",
+          "artifact_kind": "message"
+        }
+      },
+      {
+        "action": "ingest",
+        "item": {
+          "source_type": "chat_message",
+          "source_id": "global-scenario-6b",
+          "content_type": "text/plain",
+          "content": "Decision: team standard is to use 2-space indentation for all YAML files",
+          "role": "user",
+          "container_ref": "git:repo-alpha",
+          "thread_ref": "git:repo-alpha:thread-1",
+          "visibility": "public",
+          "artifact_kind": "message"
+        }
+      },
+      {
+        "action": "query",
+        "query": {
+          "text": "what indentation conventions apply for formatting tabs spaces?",
+          "container_ref": "git:repo-beta",
+          "actor_ref": "alice",
+          "visibility": "private",
+          "limit": 10
+        }
+      }
+    ],
+    "invariants": ["INV-01", "INV-04", "INV-14", "INV-15"],
+    "expect_results": true
+  }
+]

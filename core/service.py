@@ -680,7 +680,7 @@ class PalliumService:
             self._storage.create_index_entry(index_entry)
 
     def get_memory_evidence(
-        self, memory_object_id: str, *, container_ref: str | None = None,
+        self, memory_object_id: str, *, container_ref: str | None = None, query_actor_ref: str | None = None,
     ) -> list[SourceItem]:
         """Return source items linked to a memory object, with access control.
 
@@ -690,7 +690,7 @@ class PalliumService:
         """
         memory_object = self._storage.get_memory_object(memory_object_id)
         effective_container = container_ref or memory_object.container_ref
-        if container_ref and memory_object.container_ref != container_ref:
+        if container_ref and memory_object.visibility != "global" and memory_object.container_ref != container_ref:
             raise KeyError(memory_object_id)
         refs = self._storage.get_evidence_for_memory_object(memory_object_id)
         items: list[SourceItem] = []
@@ -699,6 +699,7 @@ class PalliumService:
                 item = self._storage.get_source_item(ref.source_item_id)
             except KeyError:
                 continue
-            if is_visible(item.visibility, item.container_ref, effective_container, item.actor_ref):
+            effective_actor_ref = query_actor_ref or memory_object.actor_ref
+            if is_visible(item.visibility, item.container_ref, effective_container, item.actor_ref, query_actor_ref=effective_actor_ref):
                 items.append(item)
         return items

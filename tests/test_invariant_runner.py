@@ -399,7 +399,7 @@ class TestINV13ThreadLevelMemoryAlwaysShared:
 class TestRunInvariants:
     def test_runs_all_by_default(self):
         results = run_invariants(_EMPTY_SCENARIO, _EMPTY_QUERY, _EMPTY_DEBUG)
-        assert len(results) == 13
+        assert len(results) == 16
         assert all(isinstance(r, InvariantResult) for r in results)
 
     def test_runs_selected_subset(self):

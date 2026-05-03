@@ -175,6 +175,8 @@ This applies to both `source_item_matches_filters` and `evidence_matches_filters
 
 Global memories compete with container-scoped ones in every query. The routing layer should apply a demotion factor (e.g., 0.7–0.8× score) so container-specific memories win when both match a query. A global preference like "use tabs" should yield to a repo-specific coding convention memory.
 
+**Status: Deferred.** The demotion factor requires live usage data to calibrate. The core visibility gate is implemented; scoring tuning will follow once global memories are in use and retrieval quality feedback is available.
+
 ### 7. Integration Layer
 
 The MCP tools and hooks need a way for users to signal "remember this globally":

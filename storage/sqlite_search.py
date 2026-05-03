@@ -26,6 +26,7 @@ class SQLiteSearchMixin:
         *,
         query_container_ref: str | None = None,
         query_visibility: str | None = None,
+        query_actor_ref: str | None = None,
         include_visibility_trace: bool = False,
     ) -> IndexSearchResult:
         if not tokens:
@@ -95,12 +96,13 @@ class SQLiteSearchMixin:
                     row.target_id,
                 )
             )
-            if query_container_ref is not None and not is_visible(
+            if not is_visible(
                 candidate_visibility,
                 candidate_container_ref,
                 query_container_ref,
                 candidate_actor_ref,
                 query_visibility=query_visibility,
+                query_actor_ref=query_actor_ref,
             ):
                 if include_visibility_trace:
                     reason = (

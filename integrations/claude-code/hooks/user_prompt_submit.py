@@ -66,6 +66,7 @@ def main() -> None:
             "artifact_kind": "message",
             "query_text": query_text,
             "query_limit": 5,
+            "query_actor_ref": actor_ref,
         })
 
         if not response:
