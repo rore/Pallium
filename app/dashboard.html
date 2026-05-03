@@ -509,12 +509,20 @@
           <div class="stat-label">Suppressions</div>
           <div id="q-suppress" class="stat-value">—</div>
         </div>
-        <div class="stat-item">
-          <div class="stat-label">Feedback <span style="color:var(--muted);font-size:0.8em">(all time)</span></div>
-          <div id="q-feedback" class="stat-value">—</div>
-          <div id="q-feedback-sub" class="stat-label" style="margin-top:2px"></div>
-          <div id="q-feedback-24h" class="stat-label" style="margin-top:4px;color:var(--muted);font-size:0.85em"></div>
-          <div id="q-feedback-24h-sub" class="stat-label" style="margin-top:2px;font-size:0.85em"></div>
+        <div>
+          <div class="queue-section-header">Feedback</div>
+          <div class="queue-section-items">
+            <div class="stat-item">
+              <div class="stat-label">Last 24h</div>
+              <div id="q-feedback-24h" class="stat-value">—</div>
+              <div id="q-feedback-24h-sub" class="stat-label" style="margin-top:2px"></div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Total</div>
+              <div id="q-feedback" class="stat-value" style="opacity:0.6">—</div>
+              <div id="q-feedback-sub" class="stat-label" style="margin-top:2px;opacity:0.6"></div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="last-query">
@@ -752,24 +760,19 @@ async function fetchFeedbackStats() {
     const data = await r.json();
     document.getElementById('q-feedback').textContent = fmtNum(data.total);
     if (data.not_relevant_rate != null) {
-      document.getElementById('q-feedback-sub').textContent =
-        Math.round(data.not_relevant_rate * 100) + '% not-relevant';
-      if (data.not_relevant_rate > 0.3) {
-        document.getElementById('q-feedback-sub').style.color = 'var(--red)';
-      }
+      const sub = document.getElementById('q-feedback-sub');
+      sub.textContent = Math.round(data.not_relevant_rate * 100) + '% not-relevant';
+      sub.style.color = data.not_relevant_rate > 0.3 ? 'var(--red)' : '';
     } else {
       document.getElementById('q-feedback-sub').textContent = '';
     }
-    const el24h = document.getElementById('q-feedback-24h');
-    const el24hSub = document.getElementById('q-feedback-24h-sub');
-    if (data.total_24h != null) {
-      el24h.textContent = fmtNum(data.total_24h) + ' (last 24h)';
-      if (data.not_relevant_rate_24h != null) {
-        el24hSub.textContent = Math.round(data.not_relevant_rate_24h * 100) + '% not-relevant';
-        el24hSub.style.color = data.not_relevant_rate_24h > 0.3 ? 'var(--red)' : '';
-      } else {
-        el24hSub.textContent = '';
-      }
+    document.getElementById('q-feedback-24h').textContent = fmtNum(data.total_24h ?? 0);
+    const sub24 = document.getElementById('q-feedback-24h-sub');
+    if (data.not_relevant_rate_24h != null) {
+      sub24.textContent = Math.round(data.not_relevant_rate_24h * 100) + '% not-relevant';
+      sub24.style.color = data.not_relevant_rate_24h > 0.3 ? 'var(--red)' : '';
+    } else {
+      sub24.textContent = '';
     }
   } catch (e) { /* non-fatal */ }
 }
