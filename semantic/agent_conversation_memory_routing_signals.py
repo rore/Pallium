@@ -16,6 +16,7 @@ from semantic.agent_conversation_memory_routing_constants import (
     QuerySignalEnvelope,
     POLICY_SUPPORT_THRESHOLD,
     POLICY_WORK_STATE_USEFULNESS_THRESHOLD,
+    RESUMED_SESSION_SUPPORT_FLOOR,
     ROUTING_LOWER_LEVEL_EXACT_TYPES,
     ROUTING_SUMMARY_TYPES,
     WORK_RESUMPTION_SIGNAL_TYPES,
@@ -438,6 +439,118 @@ def _select_recall_mode(candidate_evidence: dict[str, object]) -> str:
     return "default"
 
 
+def _derive_resume_state_signal(
+    *,
+    runtime_context: QueryRuntimeContext | None,
+    policy_evidence: dict[str, object],
+    anchor_prefiltered_candidates: list[QueryResultItem],
+) -> tuple[bool, list[str]]:
+    """Returns (resume_state, derivation_reasons)."""
+    derivation: list[str] = []
+
+    is_resumed = runtime_context is not None and runtime_context.turn_kind == "resumed_session"
+    if not is_resumed:
+        return False, derivation
+
+    work_gate = _work_state_evidence_gate_passes(policy_evidence)
+    if work_gate:
+        derivation.append("resumed_session_with_evidence")
+        return True, derivation
+
+    # Fallback: resumed session without checkpoint/usefulness evidence.
+    # Accept decisions or investigations as proof of active work context —
+    # "pick up where I left off" should surface the last decision even when
+    # no task_checkpoint was extracted. Uses a lower support threshold than
+    # the general policy gate because the integrating agent has already
+    # signaled resumed_session confidence via turn_kind.
+    #
+    # Only fire when candidates lack vector confirmation — meaning the
+    # query has no semantic similarity to the retrieved content. This
+    # distinguishes generic resume queries ("pick up where I left off",
+    # vec=0) from topical queries in a resumed session ("what batch
+    # interval did we choose?", vec=800+) that should route via recall.
+    _candidate_vec_scores = [
+        int(getattr(item, "vector_score", 0) or 0)
+        for item in anchor_prefiltered_candidates
+        if getattr(item, "vector_score", None) is not None
+    ]
+    # Check if composite retrieval is active (any candidate has lex or vec set)
+    _has_composite_scores = any(
+        getattr(item, "lexical_score", None) is not None
+        or getattr(item, "vector_score", None) is not None
+        for item in anchor_prefiltered_candidates
+    )
+    # When composite retrieval is active but no candidate has a vector
+    # score, vector search found nothing → no semantic similarity →
+    # treat as generic resume. When composite isn't active (non-composite
+    # retrieval), skip the fallback since we can't assess.
+    _best_candidate_vec = max(_candidate_vec_scores) if _candidate_vec_scores else (0 if _has_composite_scores else None)
+    _has_supported_sharp = (
+        _best_candidate_vec is not None
+        and _best_candidate_vec == 0
+        and any(
+            item.result_kind == "memory_hit"
+            and getattr(item, "type", None) in ("decision", "investigation_outcome")
+            and _policy_candidate_support_estimate(item, _result_layer(item)) >= RESUMED_SESSION_SUPPORT_FLOOR
+            for item in anchor_prefiltered_candidates
+        )
+    )
+    if _has_supported_sharp:
+        derivation.append("resumed_session_with_supported_decision")
+        return True, derivation
+
+    return False, derivation
+
+
+def _derive_history_lookup_signal(
+    candidate_evidence: dict[str, object],
+) -> tuple[bool, list[str]]:
+    """Returns (history_lookup, derivation_reasons)."""
+    derivation: list[str] = []
+    dominant = str(candidate_evidence.get("dominant_memory_layer") or "")
+    per_layer = candidate_evidence.get("per_layer_support", {})
+
+    history_layers = {"pattern_memory", "continuity_memory"}
+    sharp_layers = {"decision", "investigation_outcome"}
+    if dominant in history_layers:
+        derivation.append(f"dominant_{dominant}")
+        return True, derivation
+    elif dominant in sharp_layers:
+        layer_info = per_layer.get(dominant, {})
+        if isinstance(layer_info, dict) and int(layer_info.get("best_support_score", 0)) >= POLICY_SUPPORT_THRESHOLD:
+            derivation.append(f"strong_{dominant}")
+            return True, derivation
+
+    return False, derivation
+
+
+def _derive_latest_status_signal(
+    candidate_evidence: dict[str, object],
+    anchor_prefiltered_candidates: list[QueryResultItem],
+) -> tuple[bool, list[str]]:
+    """Returns (latest_status_request, derivation_reasons)."""
+    derivation: list[str] = []
+    dominant = str(candidate_evidence.get("dominant_memory_layer") or "")
+
+    _now = datetime.now(timezone.utc)
+    for item in anchor_prefiltered_candidates:
+        if item.result_kind != "memory_hit":
+            continue
+        if item.type not in {"task_checkpoint", "thread_summary"}:
+            continue
+        payload = item.payload or {}
+        has_state = bool(payload.get("current_state") or payload.get("freshness_signal"))
+        if not has_state:
+            continue
+        if item.freshness_at and (_now - item.freshness_at).total_seconds() < 86400:
+            layer = _result_layer(item)
+            if layer == dominant:
+                derivation.append("dominant_fresh_state_memory")
+                return True, derivation
+
+    return False, derivation
+
+
 def _derive_query_signal_envelope(
     *,
     text: str,
@@ -469,58 +582,13 @@ def _derive_query_signal_envelope(
         derivation.append("ultra_short_query")
 
     if not signals["low_value"]:
-        dominant = str(candidate_evidence.get("dominant_memory_layer") or "")
-        per_layer = candidate_evidence.get("per_layer_support", {})
-
-        # resume_state: requires resumed_session context + candidate-side evidence
-        is_resumed = runtime_context is not None and runtime_context.turn_kind == "resumed_session"
-        work_gate = _work_state_evidence_gate_passes(policy_evidence)
-        if is_resumed and work_gate:
-            signals["resume_state"] = True
-            derivation.append("resumed_session_with_evidence")
-        elif is_resumed and not work_gate:
-            # Fallback: resumed session without checkpoint/usefulness evidence.
-            # Accept decisions or investigations as proof of active work context —
-            # "pick up where I left off" should surface the last decision even when
-            # no task_checkpoint was extracted. Uses a lower support threshold than
-            # the general policy gate because the integrating agent has already
-            # signaled resumed_session confidence via turn_kind.
-            #
-            # Only fire when candidates lack vector confirmation — meaning the
-            # query has no semantic similarity to the retrieved content. This
-            # distinguishes generic resume queries ("pick up where I left off",
-            # vec=0) from topical queries in a resumed session ("what batch
-            # interval did we choose?", vec=800+) that should route via recall.
-            _candidate_vec_scores = [
-                int(getattr(item, "vector_score", 0) or 0)
-                for item in anchor_prefiltered_candidates
-                if getattr(item, "vector_score", None) is not None
-            ]
-            # Check if composite retrieval is active (any candidate has lex or vec set)
-            _has_composite_scores = any(
-                getattr(item, "lexical_score", None) is not None
-                or getattr(item, "vector_score", None) is not None
-                for item in anchor_prefiltered_candidates
-            )
-            # When composite retrieval is active but no candidate has a vector
-            # score, vector search found nothing → no semantic similarity →
-            # treat as generic resume. When composite isn't active (non-composite
-            # retrieval), skip the fallback since we can't assess.
-            _best_candidate_vec = max(_candidate_vec_scores) if _candidate_vec_scores else (0 if _has_composite_scores else None)
-            _RESUMED_SESSION_SUPPORT_FLOOR = 40
-            _has_supported_sharp = (
-                _best_candidate_vec is not None
-                and _best_candidate_vec == 0
-                and any(
-                    item.result_kind == "memory_hit"
-                    and getattr(item, "type", None) in ("decision", "investigation_outcome")
-                    and _policy_candidate_support_estimate(item, _result_layer(item)) >= _RESUMED_SESSION_SUPPORT_FLOOR
-                    for item in anchor_prefiltered_candidates
-                )
-            )
-            if _has_supported_sharp:
-                signals["resume_state"] = True
-                derivation.append("resumed_session_with_supported_decision")
+        # resume_state
+        signals["resume_state"], resume_derivation = _derive_resume_state_signal(
+            runtime_context=runtime_context,
+            policy_evidence=policy_evidence,
+            anchor_prefiltered_candidates=anchor_prefiltered_candidates,
+        )
+        derivation.extend(resume_derivation)
 
         # evidence_request: NOT derivable from Tier 1 structural signals alone;
         # respect caller-provided hint when available
@@ -529,36 +597,15 @@ def _derive_query_signal_envelope(
             derivation.append("caller_evidence_request_hint")
 
         # history_lookup
-        history_layers = {"pattern_memory", "continuity_memory"}
-        sharp_layers = {"decision", "investigation_outcome"}
-        if dominant in history_layers:
-            signals["history_lookup"] = True
-            derivation.append(f"dominant_{dominant}")
-        elif dominant in sharp_layers:
-            layer_info = per_layer.get(dominant, {})
-            if isinstance(layer_info, dict) and int(layer_info.get("best_support_score", 0)) >= POLICY_SUPPORT_THRESHOLD:
-                signals["history_lookup"] = True
-                derivation.append(f"strong_{dominant}")
+        signals["history_lookup"], history_derivation = _derive_history_lookup_signal(candidate_evidence)
+        derivation.extend(history_derivation)
 
-        # latest_status_request: requires dominant fresh state memory
-        if not any(signals[s] for s in ("resume_state", "history_lookup")):
-            from datetime import timezone as _tz
-            _now = datetime.now(_tz.utc)
-            for item in anchor_prefiltered_candidates:
-                if item.result_kind != "memory_hit":
-                    continue
-                if item.type not in {"task_checkpoint", "thread_summary"}:
-                    continue
-                payload = item.payload or {}
-                has_state = bool(payload.get("current_state") or payload.get("freshness_signal"))
-                if not has_state:
-                    continue
-                if item.freshness_at and (_now - item.freshness_at).total_seconds() < 86400:
-                    layer = _result_layer(item)
-                    if layer == dominant:
-                        signals["latest_status_request"] = True
-                        derivation.append("dominant_fresh_state_memory")
-                        break
+        # latest_status_request ONLY fires when neither resume_state nor history_lookup is set
+        if not signals["resume_state"] and not signals["history_lookup"]:
+            signals["latest_status_request"], latest_derivation = _derive_latest_status_signal(
+                candidate_evidence, anchor_prefiltered_candidates
+            )
+            derivation.extend(latest_derivation)
 
     # Tier 1 confidence
     active_signals = [s for s, v in signals.items() if v and s != "low_value"]
