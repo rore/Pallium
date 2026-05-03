@@ -360,13 +360,32 @@ class SQLiteStorageProvider(
                 memory_type = mem_record.type
                 payload = json.loads(mem_record.payload_json) if mem_record.payload_json else {}
                 memory_text = _extract_display_text(payload)
+
+            resolved_audit_id = query_audit_log_id
+            if resolved_audit_id is None and (thread_ref or container_ref):
+                one_hour_ago = utc_now() - timedelta(hours=1)
+                stmt = (
+                    select(QueryAuditLogRecord.id)
+                    .where(
+                        QueryAuditLogRecord.injected_blocks_json.contains(memory_object_id),
+                        QueryAuditLogRecord.should_inject == 1,
+                        QueryAuditLogRecord.created_at >= one_hour_ago,
+                    )
+                )
+                if thread_ref:
+                    stmt = stmt.where(QueryAuditLogRecord.thread_ref == thread_ref)
+                if container_ref:
+                    stmt = stmt.where(QueryAuditLogRecord.container_ref == container_ref)
+                stmt = stmt.order_by(QueryAuditLogRecord.created_at.desc()).limit(1)
+                resolved_audit_id = session.execute(stmt).scalar_one_or_none()
+
             session.add(MemoryFeedbackRecord(
                 id=feedback_id,
                 memory_object_id=memory_object_id,
                 rating=rating,
                 reason=reason,
                 query_context=query_context,
-                query_audit_log_id=query_audit_log_id,
+                query_audit_log_id=resolved_audit_id,
                 rater_ref=rater_ref,
                 created_at=utc_now(),
                 memory_type=memory_type,

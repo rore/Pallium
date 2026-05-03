@@ -554,3 +554,152 @@ class TestFeedbackMcpTool:
                 )
             ).all()
         assert records[0].rater_ref == "local"
+
+
+class TestFeedbackAuditLogAutoLink:
+    """Tests for auto-linking query_audit_log_id when not provided."""
+
+    def test_auto_links_to_matching_audit_row(self):
+        """When no audit_log_id is provided, auto-links to most recent matching audit row."""
+        import json
+        from datetime import datetime, timezone
+        storage = _make_storage()
+        memory = _make_memory(storage)
+
+        audit_row = {
+            "id": "audit-autolink-001",
+            "created_at": datetime.now(timezone.utc),
+            "source_item_id": "",
+            "source_id": "",
+            "thread_ref": "thread-1",
+            "container_ref": "git:example.com/repo",
+            "actor_ref": None,
+            "visibility": "private",
+            "query_text": "test query",
+            "should_inject": 1,
+            "decision_reason": "carry_forward_available",
+            "injected_blocks_json": json.dumps([{"memory_object_id": memory.id, "memory_type": "decision"}]),
+            "candidate_scores_json": None,
+        }
+        storage.write_query_audit_row(audit_row)
+
+        feedback_id = storage.record_memory_feedback(
+            memory_object_id=memory.id,
+            rating="not_relevant",
+            reason="off-topic",
+            query_context="test query",
+            query_audit_log_id=None,
+            rater_ref="local",
+            thread_ref="thread-1",
+            container_ref="git:example.com/repo",
+        )
+
+        from sqlalchemy import select
+        from storage.sqlite_schema import MemoryFeedbackRecord
+        with storage._session_factory() as session:
+            record = session.get(MemoryFeedbackRecord, feedback_id)
+        assert record.query_audit_log_id == "audit-autolink-001"
+
+    def test_no_auto_link_when_explicitly_provided(self):
+        """When audit_log_id is explicitly provided, it's used as-is."""
+        import json
+        from datetime import datetime, timezone
+        storage = _make_storage()
+        memory = _make_memory(storage)
+
+        audit_row = {
+            "id": "audit-explicit-001",
+            "created_at": datetime.now(timezone.utc),
+            "source_item_id": "",
+            "source_id": "",
+            "thread_ref": "thread-1",
+            "container_ref": "git:example.com/repo",
+            "actor_ref": None,
+            "visibility": "private",
+            "query_text": "test query",
+            "should_inject": 1,
+            "decision_reason": "carry_forward_available",
+            "injected_blocks_json": json.dumps([{"memory_object_id": memory.id}]),
+            "candidate_scores_json": None,
+        }
+        storage.write_query_audit_row(audit_row)
+
+        feedback_id = storage.record_memory_feedback(
+            memory_object_id=memory.id,
+            rating="relevant",
+            reason=None,
+            query_context="test query",
+            query_audit_log_id="my-explicit-id",
+            rater_ref="local",
+            thread_ref="thread-1",
+            container_ref="git:example.com/repo",
+        )
+
+        from sqlalchemy import select
+        from storage.sqlite_schema import MemoryFeedbackRecord
+        with storage._session_factory() as session:
+            record = session.get(MemoryFeedbackRecord, feedback_id)
+        assert record.query_audit_log_id == "my-explicit-id"
+
+    def test_no_auto_link_when_no_matching_audit(self):
+        """When no matching audit row exists, stays NULL."""
+        storage = _make_storage()
+        memory = _make_memory(storage)
+
+        feedback_id = storage.record_memory_feedback(
+            memory_object_id=memory.id,
+            rating="not_relevant",
+            reason="no match",
+            query_context="test query",
+            query_audit_log_id=None,
+            rater_ref="local",
+            thread_ref="thread-1",
+            container_ref="git:example.com/repo",
+        )
+
+        from sqlalchemy import select
+        from storage.sqlite_schema import MemoryFeedbackRecord
+        with storage._session_factory() as session:
+            record = session.get(MemoryFeedbackRecord, feedback_id)
+        assert record.query_audit_log_id is None
+
+    def test_no_auto_link_for_non_injecting_audit(self):
+        """Audit rows with should_inject=0 are not matched."""
+        import json
+        from datetime import datetime, timezone
+        storage = _make_storage()
+        memory = _make_memory(storage)
+
+        audit_row = {
+            "id": "audit-skip-001",
+            "created_at": datetime.now(timezone.utc),
+            "source_item_id": "",
+            "source_id": "",
+            "thread_ref": "thread-1",
+            "container_ref": "git:example.com/repo",
+            "actor_ref": None,
+            "visibility": "private",
+            "query_text": "test query",
+            "should_inject": 0,
+            "decision_reason": "no_relevant_memory",
+            "injected_blocks_json": json.dumps([{"memory_object_id": memory.id}]),
+            "candidate_scores_json": None,
+        }
+        storage.write_query_audit_row(audit_row)
+
+        feedback_id = storage.record_memory_feedback(
+            memory_object_id=memory.id,
+            rating="not_relevant",
+            reason="test",
+            query_context="test query",
+            query_audit_log_id=None,
+            rater_ref="local",
+            thread_ref="thread-1",
+            container_ref="git:example.com/repo",
+        )
+
+        from sqlalchemy import select
+        from storage.sqlite_schema import MemoryFeedbackRecord
+        with storage._session_factory() as session:
+            record = session.get(MemoryFeedbackRecord, feedback_id)
+        assert record.query_audit_log_id is None
