@@ -2,24 +2,26 @@
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import sys
 import uuid
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_common_path = str(Path(__file__).resolve().parent / "common.py")
+_spec = importlib.util.spec_from_file_location("codex_common", _common_path)
+_common = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
+_spec.loader.exec_module(_common)  # type: ignore[union-attr]
 
-from common import (
-    AGENT_REF,
-    SOURCE_TYPE,
-    check_dedup,
-    derive_actor_ref,
-    derive_container_ref,
-    emit_context,
-    format_injection,
-    pallium_request,
-    read_hook_input,
-)
+AGENT_REF = _common.AGENT_REF
+SOURCE_TYPE = _common.SOURCE_TYPE
+check_dedup = _common.check_dedup
+derive_actor_ref = _common.derive_actor_ref
+derive_container_ref = _common.derive_container_ref
+emit_context = _common.emit_context
+format_injection = _common.format_injection
+pallium_request = _common.pallium_request
+read_hook_input = _common.read_hook_input
 
 _IDE_TAG_RE = re.compile(
     r"<ide_(?:opened_file|selection)>.*?</ide_(?:opened_file|selection)>",

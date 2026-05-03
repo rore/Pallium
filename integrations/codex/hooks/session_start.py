@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_common_path = str(Path(__file__).resolve().parent / "common.py")
+_spec = importlib.util.spec_from_file_location("codex_common", _common_path)
+_common = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
+_spec.loader.exec_module(_common)  # type: ignore[union-attr]
 
-from common import (
-    derive_container_ref,
-    emit_context,
-    format_injection,
-    pallium_request,
-    read_hook_input,
-)
+derive_container_ref = _common.derive_container_ref
+emit_context = _common.emit_context
+format_injection = _common.format_injection
+pallium_request = _common.pallium_request
+read_hook_input = _common.read_hook_input
 
 
 def main() -> None:
