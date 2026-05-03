@@ -139,10 +139,14 @@ def check_no_cross_container_leak(
             details="No container_ref on query — invariant not applicable",
         )
 
+    query_actor = _query_actor_ref(scenario, debug_payload)
     leaked = []
     for result in debug_payload.get("results", []):
         # Public results are visible to all containers — not a leak.
         if result.get("visibility") == "public":
+            continue
+        # Global results are visible cross-container to the same actor.
+        if result.get("visibility") == "global" and result.get("actor_ref") == query_actor and query_actor is not None:
             continue
         result_container = result.get("container_ref")
         if result_container and result_container != query_container:
@@ -281,11 +285,15 @@ def check_no_visibility_violation(
             details="No container_ref on query — invariant not applicable",
         )
 
+    query_actor = _query_actor_ref(scenario, debug_payload)
     violations = []
     for result in debug_payload.get("results", []):
         result_vis = result.get("visibility")
         # Public results are visible to all — this matches core/filters.py.
         if result_vis == "public":
+            continue
+        # Global results are visible cross-container to the same actor.
+        if result_vis == "global" and result.get("actor_ref") == query_actor and query_actor is not None:
             continue
         result_container = result.get("container_ref")
         if result_container and result_container != query_container:
@@ -699,6 +707,122 @@ def check_thread_level_memory_always_shared(
 
 
 # ---------------------------------------------------------------------------
+# INV-14: no_global_memory_without_actor
+# ---------------------------------------------------------------------------
+
+def check_no_global_memory_without_actor(
+    scenario: dict[str, Any],
+    query_payload: dict[str, Any],
+    debug_payload: dict[str, Any],
+) -> InvariantResult:
+    """Global memories must always have a non-null actor_ref.
+
+    A global memory without actor_ref indicates a storage bug — the visibility
+    gate requires both candidate and query actor to match.
+    """
+    violations = []
+    for result in debug_payload.get("results", []):
+        if result.get("visibility") == "global" and result.get("actor_ref") is None:
+            violations.append({
+                "result_id": result.get("result_id"),
+                "memory_type": result.get("type"),
+            })
+
+    if violations:
+        return InvariantResult(
+            invariant_id="INV-14",
+            passed=False,
+            details=f"Global memory without actor_ref: {len(violations)} result(s)",
+            evidence={"violations": violations},
+        )
+    return InvariantResult(invariant_id="INV-14", passed=True)
+
+
+# ---------------------------------------------------------------------------
+# INV-15: no_global_cross_actor_leak
+# ---------------------------------------------------------------------------
+
+def check_no_global_cross_actor_leak(
+    scenario: dict[str, Any],
+    query_payload: dict[str, Any],
+    debug_payload: dict[str, Any],
+) -> InvariantResult:
+    """Global memories must not appear for a different actor than the querier.
+
+    When query specifies actor_ref=A, no result with visibility="global" should
+    have actor_ref=B. This is the cross-actor variant of the global fail-closed gate.
+    """
+    query_actor = _query_actor_ref(scenario, debug_payload)
+    if not query_actor:
+        return InvariantResult(
+            invariant_id="INV-15",
+            passed=True,
+            details="No actor_ref on query — invariant not applicable",
+        )
+
+    leaked = []
+    for result in debug_payload.get("results", []):
+        if result.get("visibility") != "global":
+            continue
+        result_actor = result.get("actor_ref")
+        if result_actor != query_actor:
+            leaked.append({
+                "result_id": result.get("result_id"),
+                "result_actor_ref": result_actor,
+            })
+
+    if leaked:
+        return InvariantResult(
+            invariant_id="INV-15",
+            passed=False,
+            details=(
+                f"Global cross-actor leak: {len(leaked)} global result(s) with "
+                f"actor_ref != query actor {query_actor!r}"
+            ),
+            evidence={"query_actor": query_actor, "leaked_results": leaked},
+        )
+    return InvariantResult(invariant_id="INV-15", passed=True)
+
+
+# ---------------------------------------------------------------------------
+# INV-16: global_absent_without_actor_ref
+# ---------------------------------------------------------------------------
+
+def check_global_absent_without_actor_ref(
+    scenario: dict[str, Any],
+    query_payload: dict[str, Any],
+    debug_payload: dict[str, Any],
+) -> InvariantResult:
+    """When query has no actor_ref, no global memories should appear (fail-closed).
+
+    The is_visible() gate requires both candidate_actor_ref and query_actor_ref
+    to be non-None. Without query actor, global memories must be invisible.
+    """
+    query_actor = _query_actor_ref(scenario, debug_payload)
+    if query_actor is not None:
+        return InvariantResult(
+            invariant_id="INV-16",
+            passed=True,
+            details="Query has actor_ref — invariant not applicable",
+        )
+
+    global_results = [
+        {"result_id": r.get("result_id"), "actor_ref": r.get("actor_ref")}
+        for r in debug_payload.get("results", [])
+        if r.get("visibility") == "global"
+    ]
+
+    if global_results:
+        return InvariantResult(
+            invariant_id="INV-16",
+            passed=False,
+            details=f"Global memories visible without query actor_ref: {len(global_results)} result(s)",
+            evidence={"global_results": global_results},
+        )
+    return InvariantResult(invariant_id="INV-16", passed=True)
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -716,6 +840,9 @@ ALL_INVARIANTS = {
     "INV-11": check_no_personal_memory_in_shared_container,
     "INV-12": check_no_cross_actor_leak,
     "INV-13": check_thread_level_memory_always_shared,
+    "INV-14": check_no_global_memory_without_actor,
+    "INV-15": check_no_global_cross_actor_leak,
+    "INV-16": check_global_absent_without_actor_ref,
 }
 
 
