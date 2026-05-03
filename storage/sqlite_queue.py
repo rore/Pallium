@@ -583,6 +583,34 @@ class SQLiteQueueMixin:
                     container_ref=container_ref,
                 )
 
+    def _delete_index_entries_for_target_in_session(
+        self,
+        session: Session,
+        target_kind: str,
+        target_id: str,
+    ) -> int:
+        """Delete all index entries for a target within an open session.
+
+        Removes both the IndexEntryRecord and associated FTS5 shadow rows.
+        The in-memory vector index is NOT updated here — reconciliation handles gaps.
+        """
+        records = session.scalars(
+            select(IndexEntryRecord).where(
+                IndexEntryRecord.target_kind == target_kind,
+                IndexEntryRecord.target_id == target_id,
+            )
+        ).all()
+        if not records:
+            return 0
+        for record in records:
+            if record.index_type == "lexical":
+                session.execute(
+                    text("DELETE FROM lexical_fts WHERE index_entry_id = :id"),
+                    {"id": record.id},
+                )
+            session.delete(record)
+        return len(records)
+
     def _apply_supersession_pairs_in_session(self, session: Session, supersession_pairs: list[tuple[str, str]]) -> None:
         for superseded_id, replacement_id in supersession_pairs:
             superseded = session.get(MemoryObjectRecord, superseded_id)
@@ -604,8 +632,8 @@ class SQLiteQueueMixin:
                     to_id=superseded_id,
                 )
             )
-            self._retarget_index_entries_in_session(
-                session, "memory_object", superseded_id, replacement_id,
+            self._delete_index_entries_for_target_in_session(
+                session, "memory_object", superseded_id,
             )
 
     def _resolve_supersession_pairs_in_session(

@@ -14,8 +14,6 @@ target, but the new target ALSO has its own fresh entries from the same commit.
 
 from __future__ import annotations
 
-import pytest
-
 from core.contracts import ProcessResult
 from core.models import (
     IndexEntry,
@@ -24,7 +22,6 @@ from core.models import (
     MemoryEnvelopeScope,
     MemoryObject,
     MemorySubjectAnchor,
-    new_id,
 )
 from storage.sqlite import SQLiteStorageProvider
 
@@ -121,10 +118,10 @@ class TestIndexEntryAccumulation:
     """
 
     def test_accumulation_baseline(self, test_db_url: str) -> None:
-        """Baseline: shows the bug -- entries accumulate after repeated supersession.
+        """After fix: entries do NOT accumulate after repeated supersession.
 
-        After N rebuilds, the final active object has 3*N entries because each
-        supersession retargets previous entries while the object also has its own.
+        After N rebuilds, the final active object has only its own ENTRIES_PER_OBJECT
+        entries because supersession deletes old entries instead of retargeting them.
         """
         storage = SQLiteStorageProvider(test_db_url)
 
@@ -150,10 +147,8 @@ class TestIndexEntryAccumulation:
             if previous_mo_id is not None:
                 supersession_pairs = [(previous_mo_id, new_mo.id)]
 
-            # Commit — this is the atomic operation that exhibits the bug:
-            # 1. Persists new_mo and its entries (3 entries pointing to new_mo)
-            # 2. Applies supersession: retargets ALL entries from previous_mo to new_mo
-            # Result: new_mo has 3 (own) + all retargeted from previous_mo
+            # Commit — after fix, supersession DELETES old entries
+            # so the new object only keeps its own fresh entries
             storage.commit_process_result(
                 result=result,
                 supersession_pairs=supersession_pairs,
@@ -161,20 +156,18 @@ class TestIndexEntryAccumulation:
 
             previous_mo_id = new_mo.id
 
-        # Verify the accumulation bug:
-        # The final active object should have 3 * NUM_REBUILDS entries (the bug)
+        # After fix: the final active object has ONLY its own entries
         final_entries = storage.list_index_entries_for_target("memory_object", previous_mo_id)
         actual_count = len(final_entries)
-        expected_buggy_count = ENTRIES_PER_OBJECT * NUM_REBUILDS  # 3 * 5 = 15
 
-        assert actual_count == expected_buggy_count, (
-            f"Expected {expected_buggy_count} entries (bug: 3*N accumulation), "
+        assert actual_count == ENTRIES_PER_OBJECT, (
+            f"Expected {ENTRIES_PER_OBJECT} entries (fixed: only own entries), "
             f"got {actual_count}. "
-            f"If this fails with {ENTRIES_PER_OBJECT}, the bug has been fixed!"
+            f"Entries are still accumulating — fix not applied."
         )
 
         # Also verify that all intermediate (superseded) objects have 0 entries
-        # (they were all retargeted away)
+        # (they were all deleted)
         all_mos = storage.list_memory_objects(
             memory_types=["task_checkpoint"],
             lifecycle="superseded",
@@ -185,9 +178,6 @@ class TestIndexEntryAccumulation:
                 f"Superseded object {mo.id} still has {len(entries)} entries"
             )
 
-    @pytest.mark.xfail(
-        reason="fix pending: _apply_supersession_pairs_in_session retargets instead of deletes"
-    )
     def test_fixed_behavior(self, test_db_url: str) -> None:
         """Post-fix: entries should NOT accumulate. Max 3 per object.
 
@@ -235,10 +225,10 @@ class TestIndexEntryAccumulation:
             f"Entries are still accumulating — fix not applied."
         )
 
-    def test_accumulation_grows_linearly(self, test_db_url: str) -> None:
-        """Verify the accumulation pattern is exactly linear: 3, 6, 9, 12, 15.
+    def test_no_accumulation_stays_constant(self, test_db_url: str) -> None:
+        """After fix: entry count stays constant at ENTRIES_PER_OBJECT per object.
 
-        This proves the bug is systematic and not a one-off issue.
+        Each rebuild's object retains only its own entries — no accumulation.
         """
         storage = SQLiteStorageProvider(test_db_url)
 
@@ -273,9 +263,113 @@ class TestIndexEntryAccumulation:
 
             previous_mo_id = new_mo.id
 
-        # Expected pattern: [3, 6, 9, 12, 15] — grows by 3 each time
-        expected_pattern = [ENTRIES_PER_OBJECT * (i + 1) for i in range(NUM_REBUILDS)]
+        # Expected pattern: [3, 3, 3, 3, 3] — stays constant (fixed)
+        expected_pattern = [ENTRIES_PER_OBJECT] * NUM_REBUILDS
         assert entry_counts_per_iteration == expected_pattern, (
-            f"Expected linear growth pattern {expected_pattern}, "
+            f"Expected constant pattern {expected_pattern}, "
             f"got {entry_counts_per_iteration}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Defensive invariant: max entries per memory object
+# ---------------------------------------------------------------------------
+
+MAX_ENTRIES_PER_MEMORY_OBJECT = 6  # lexical + vector + enrichment × 2 (generous)
+
+
+def check_index_entry_accumulation_invariant(
+    storage: SQLiteStorageProvider,
+    *,
+    memory_types: list[str] | None = None,
+    max_entries: int = MAX_ENTRIES_PER_MEMORY_OBJECT,
+) -> list[tuple[str, str, int]]:
+    """Check no active memory object exceeds max_entries index entries.
+
+    Returns list of (memory_object_id, type, entry_count) for violators.
+    Use in tests or as a diagnostic against the live database.
+    """
+    types_to_check = memory_types or ["task_checkpoint", "thread_summary"]
+    violators: list[tuple[str, str, int]] = []
+    for memory_type in types_to_check:
+        active_objects = storage.list_memory_objects(
+            memory_types=[memory_type],
+            lifecycle="active",
+        )
+        for mo in active_objects:
+            entries = storage.list_index_entries_for_target("memory_object", mo.id)
+            if len(entries) > max_entries:
+                violators.append((mo.id, mo.type, len(entries)))
+    return violators
+
+
+class TestAccumulationInvariant:
+    """Defensive guard: ensure the accumulation invariant holds after operations."""
+
+    def test_invariant_after_repeated_supersession(self, test_db_url: str) -> None:
+        """After repeated supersession, no object exceeds max entries."""
+        storage = SQLiteStorageProvider(test_db_url)
+
+        previous_mo_id: str | None = None
+        for iteration in range(10):  # 10 iterations — well above typical
+            new_mo = _make_thread_memory_object(
+                memory_type="task_checkpoint",
+                iteration=iteration,
+            )
+            new_entries = _make_index_entries_for_object(new_mo.id, iteration=iteration)
+
+            result = ProcessResult(
+                memory_objects=[new_mo],
+                relations=[],
+                index_entries=new_entries,
+            )
+
+            supersession_pairs: list[tuple[str, str]] = []
+            if previous_mo_id is not None:
+                supersession_pairs = [(previous_mo_id, new_mo.id)]
+
+            storage.commit_process_result(
+                result=result,
+                supersession_pairs=supersession_pairs,
+            )
+            previous_mo_id = new_mo.id
+
+        violators = check_index_entry_accumulation_invariant(storage)
+        assert violators == [], (
+            f"Accumulation invariant violated — objects with excess entries: "
+            f"{[(v[0][:8], v[1], v[2]) for v in violators]}"
+        )
+
+    def test_invariant_with_mixed_types(self, test_db_url: str) -> None:
+        """Invariant holds for both task_checkpoint and thread_summary."""
+        storage = SQLiteStorageProvider(test_db_url)
+
+        for memory_type in ["task_checkpoint", "thread_summary"]:
+            previous_mo_id: str | None = None
+            for iteration in range(5):
+                new_mo = _make_thread_memory_object(
+                    memory_type=memory_type,
+                    iteration=iteration,
+                )
+                new_entries = _make_index_entries_for_object(new_mo.id, iteration=iteration)
+
+                result = ProcessResult(
+                    memory_objects=[new_mo],
+                    relations=[],
+                    index_entries=new_entries,
+                )
+
+                supersession_pairs: list[tuple[str, str]] = []
+                if previous_mo_id is not None:
+                    supersession_pairs = [(previous_mo_id, new_mo.id)]
+
+                storage.commit_process_result(
+                    result=result,
+                    supersession_pairs=supersession_pairs,
+                )
+                previous_mo_id = new_mo.id
+
+        violators = check_index_entry_accumulation_invariant(storage)
+        assert violators == [], (
+            f"Accumulation invariant violated: {violators}"
         )

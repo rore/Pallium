@@ -301,8 +301,8 @@ class TestRetargetIndexEntries:
 
 class TestAtomicCommitRetarget:
 
-    def test_supersession_pairs_retarget_entries(self, test_db_url: str) -> None:
-        """_apply_supersession_pairs_in_session retargets index entries."""
+    def test_supersession_pairs_delete_entries(self, test_db_url: str) -> None:
+        """_apply_supersession_pairs_in_session deletes superseded index entries."""
         storage = SQLiteStorageProvider(test_db_url)
         # Create two same-type memories with entries
         old_ts = _make_memory_object(memory_type="thread_summary", subject="summary-old")
@@ -326,12 +326,13 @@ class TestAtomicCommitRetarget:
         )
         storage.commit_process_result(result=result, supersession_pairs=[(old_ts.id, new_ts.id)])
 
-        # Entry should be retargeted
-        assert storage.get_index_entry(entry.id).target_id == new_ts.id
+        # Entry should be deleted (not retargeted)
+        with pytest.raises(KeyError):
+            storage.get_index_entry(entry.id)
         assert storage.get_memory_object(old_ts.id).lifecycle == "superseded"
 
-    def test_already_superseded_skips_retarget(self, test_db_url: str) -> None:
-        """If memory is already superseded, no retarget happens."""
+    def test_already_superseded_skips_deletion(self, test_db_url: str) -> None:
+        """If memory is already superseded, no deletion happens."""
         storage = SQLiteStorageProvider(test_db_url)
         old_ts = _make_memory_object(memory_type="thread_summary")
         new_ts = _make_memory_object(memory_type="thread_summary")
