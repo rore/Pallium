@@ -212,8 +212,8 @@ ROUTING_FOCUS_BOOST = 80
 
 ANCHOR_SECONDARY_TIER_PENALTY = 80  # must be >= ROUTING_FOCUS_BOOST; ensures aligned always outranks secondary tier even at max focus boost
 
-LEXICAL_NORM_SCALE = 6.0  # BM25 normalization scale; recalibrate from eval score distributions
-QUALITY_WEIGHT = 200    # multiplier for quality_score in scoring formula (used later in Phase 2)
+LEXICAL_NORM_SCALE = 50.0  # BM25 normalization scale; calibrated from replay eval (2026-05-03)
+QUALITY_WEIGHT = 200    # multiplier for quality_score in scoring formula
 
 
 def normalize_lexical_score(raw_score: float | int | None) -> float:

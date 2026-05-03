@@ -14,6 +14,8 @@ from retrieval.vector import VectorRetrievalProvider
 
 RRF_K = 60
 RRF_SCORE_SCALE = 600
+RRF_LEXICAL_WEIGHT = 1.5
+RRF_VECTOR_WEIGHT = 1.0
 
 
 class CompositeRetrievalProvider(RetrievalProvider):
@@ -110,9 +112,9 @@ class CompositeRetrievalProvider(RetrievalProvider):
         for result_id in all_ids:
             rrf_score = 0.0
             if result_id in lexical_ranks:
-                rrf_score += 1.0 / (RRF_K + lexical_ranks[result_id])
+                rrf_score += RRF_LEXICAL_WEIGHT / (RRF_K + lexical_ranks[result_id])
             if result_id in vector_ranks:
-                rrf_score += 1.0 / (RRF_K + vector_ranks[result_id])
+                rrf_score += RRF_VECTOR_WEIGHT / (RRF_K + vector_ranks[result_id])
             scored.append((rrf_score, result_id))
 
         # 4. Sort by RRF score descending
@@ -175,6 +177,8 @@ class CompositeRetrievalProvider(RetrievalProvider):
             fused_candidate_count=len(scored),
             both_sources_count=both_count,
             selected_count=len(fused_results),
+            lexical_weight=RRF_LEXICAL_WEIGHT,
+            vector_weight=RRF_VECTOR_WEIGHT,
             hits=tuple(fusion_trace_hits),
         ) if include_trace else None
 

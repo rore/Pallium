@@ -44,7 +44,7 @@ class InjectionThresholds:
     In lexical-only mode (no composite scores), the set-level gate falls
     through to the retrieval_score > 0 check instead.
     """
-    set_lexical_threshold: float = 0.33    # min normalized lexical for set-level gate (≈ 2/6)
+    set_lexical_threshold: float = 0.04    # min normalized lexical for set-level gate (= 2/50)
     set_vector_high: int = 750             # cosine*1000 for strong vector match
     set_lexical_low: float = 0.01          # min normalized lexical for vector+lexical condition (any meaningful match)
     candidate_lexical_floor: float = 0.01  # per-candidate min normalized lexical (source hits)

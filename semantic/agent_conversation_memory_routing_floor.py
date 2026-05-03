@@ -10,7 +10,7 @@ from semantic.agent_conversation_memory_routing_constants import normalize_lexic
 class FloorThresholds:
     """Relevance floor thresholds. Swappable for testing."""
     min_vector: int = 580       # cosine * 1000 (0.58)
-    min_lexical: float = 0.33   # normalized 0-1 (≈ 2/6 raw BM25)
+    min_lexical: float = 0.04   # normalized 0-1 (= 2/50 raw BM25)
 
 
 _DEFAULT_THRESHOLDS = FloorThresholds()

@@ -14,7 +14,7 @@ from core.models import (
     RetrievalTraceHit,
 )
 from retrieval.base import RetrievalProvider, RetrievalQueryResult
-from retrieval.composite import CompositeRetrievalProvider, RRF_K, RRF_SCORE_SCALE
+from retrieval.composite import CompositeRetrievalProvider, RRF_K, RRF_SCORE_SCALE, RRF_LEXICAL_WEIGHT, RRF_VECTOR_WEIGHT
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +187,7 @@ class TestRRFRanking:
 
         result = composite.query("test", limit=10)
 
-        expected_rrf = 1.0 / (RRF_K + 1) + 1.0 / (RRF_K + 1)  # Both at rank 1
+        expected_rrf = RRF_LEXICAL_WEIGHT / (RRF_K + 1) + RRF_VECTOR_WEIGHT / (RRF_K + 1)  # Both at rank 1
         expected_score = int(expected_rrf * RRF_SCORE_SCALE)
         assert result.results[0].score == expected_score
 
@@ -202,11 +202,13 @@ class TestRRFRanking:
 
         result = composite.query("test", limit=10)
 
-        expected_single_rrf = 1.0 / (RRF_K + 1)
-        expected_single_score = int(expected_single_rrf * RRF_SCORE_SCALE)
-        # Both single-source items at rank 1 in their respective lists
+        # Single-source items at rank 1: lexical gets RRF_LEXICAL_WEIGHT, vector gets RRF_VECTOR_WEIGHT
         for r in result.results:
-            assert r.score == expected_single_score
+            if r.retrieval_source == "lexical":
+                expected = int(RRF_LEXICAL_WEIGHT / (RRF_K + 1) * RRF_SCORE_SCALE)
+            else:
+                expected = int(RRF_VECTOR_WEIGHT / (RRF_K + 1) * RRF_SCORE_SCALE)
+            assert r.score == expected
 
 
 # ---------------------------------------------------------------------------
@@ -274,10 +276,7 @@ class TestDeduplication:
 
 class TestScoreRange:
     def test_score_range_typical_inputs(self):
-        """Scores should fall in the 7-19 range for typical rank-1 items."""
-        # Single source rank 1: 1/(60+1) * 600 = 9.83 -> int = 9
-        # Dual source rank 1/rank 1: 2/(60+1) * 600 = 19.67 -> int = 19
-        # Single source rank 10: 1/(60+10) * 600 = 8.57 -> int = 8
+        """Scores should fall in the 7-24 range for typical rank-1 items."""
         lexical_items = [_make_result(f"memory_object:l{i}", score=200 - i) for i in range(10)]
         vector_items = [_make_result(f"memory_object:v{i}", score=800 - i) for i in range(10)]
 
@@ -287,11 +286,13 @@ class TestScoreRange:
 
         result = composite.query("test", limit=20)
 
+        max_score = int((RRF_LEXICAL_WEIGHT + RRF_VECTOR_WEIGHT) / (RRF_K + 1) * RRF_SCORE_SCALE)
+        min_score = int(min(RRF_LEXICAL_WEIGHT, RRF_VECTOR_WEIGHT) / (RRF_K + 10) * RRF_SCORE_SCALE)
         for r in result.results:
-            assert 7 <= r.score <= 19, f"Score {r.score} for {r.result_id} outside expected range"
+            assert min_score <= r.score <= max_score, f"Score {r.score} for {r.result_id} outside expected range"
 
-    def test_dual_source_rank1_score_is_19(self):
-        """Both at rank 1: 2/(60+1) * 600 = 19.67 -> 19."""
+    def test_dual_source_rank1_score(self):
+        """Both at rank 1: (1.5+1.0)/(60+1) * 600 = 24.59 -> 24."""
         lexical_items = [_make_result("memory_object:a")]
         vector_items = [_make_result("memory_object:a")]
 
@@ -300,10 +301,11 @@ class TestScoreRange:
         composite = CompositeRetrievalProvider(lexical=lexical, vector=vector)
 
         result = composite.query("test", limit=10)
-        assert result.results[0].score == 19  # int(2/61 * 600) = int(19.672) = 19
+        expected = int((RRF_LEXICAL_WEIGHT + RRF_VECTOR_WEIGHT) / (RRF_K + 1) * RRF_SCORE_SCALE)
+        assert result.results[0].score == expected
 
-    def test_single_source_rank1_score_is_9(self):
-        """Single source at rank 1: 1/(60+1) * 600 = 9.83 -> 9."""
+    def test_single_source_rank1_scores(self):
+        """Single source at rank 1: lexical gets 1.5/61*600=14, vector gets 1.0/61*600=9."""
         lexical_items = [_make_result("memory_object:a")]
         vector_items = [_make_result("memory_object:b")]
 
@@ -312,8 +314,11 @@ class TestScoreRange:
         composite = CompositeRetrievalProvider(lexical=lexical, vector=vector)
 
         result = composite.query("test", limit=10)
-        for r in result.results:
-            assert r.score == 9  # int(1/61 * 600) = int(9.836) = 9
+        by_id = {r.result_id: r for r in result.results}
+        expected_lex = int(RRF_LEXICAL_WEIGHT / (RRF_K + 1) * RRF_SCORE_SCALE)
+        expected_vec = int(RRF_VECTOR_WEIGHT / (RRF_K + 1) * RRF_SCORE_SCALE)
+        assert by_id["memory_object:a"].score == expected_lex
+        assert by_id["memory_object:b"].score == expected_vec
 
 
 # ---------------------------------------------------------------------------

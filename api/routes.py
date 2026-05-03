@@ -183,6 +183,8 @@ def _serialize_fusion_trace(fusion_trace: FusionStageTrace) -> dict[str, object]
         "fused_candidate_count": fusion_trace.fused_candidate_count,
         "both_sources_count": fusion_trace.both_sources_count,
         "selected_count": fusion_trace.selected_count,
+        "lexical_weight": fusion_trace.lexical_weight,
+        "vector_weight": fusion_trace.vector_weight,
         "hits": [_serialize_fusion_trace_hit(hit) for hit in fusion_trace.hits],
     }
 

@@ -247,6 +247,8 @@ class FusionStageTraceResponse(BaseModel):
     fused_candidate_count: int
     both_sources_count: int
     selected_count: int
+    lexical_weight: float = 1.0
+    vector_weight: float = 1.0
     hits: list[FusionTraceHitResponse]
 
 

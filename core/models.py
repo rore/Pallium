@@ -302,6 +302,8 @@ class FusionStageTrace:
     fused_candidate_count: int = 0
     both_sources_count: int = 0
     selected_count: int = 0
+    lexical_weight: float = 1.0
+    vector_weight: float = 1.0
     hits: tuple[FusionTraceHit, ...] = ()
 
 
