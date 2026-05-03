@@ -195,3 +195,55 @@ class TestCandidateIsInjectionEligible:
             allow_discussion_fallback=False,
             allow_source_companion=False,
         ) is True
+
+
+class TestResolveGateBlockedInjection:
+    def test_returns_none_when_no_override_applies(self):
+        """When no override strategy applies, returns None to fall through to normal path."""
+        from semantic.agent_conversation_memory_routing_selection import _resolve_gate_blocked_injection
+
+        same_thread_ctx = {"suppress_injection": False}
+        result = _resolve_gate_blocked_injection(
+            [],
+            [],
+            intent="recall",
+            recall_mode="default",
+            query_text="test query",
+            evidence_request=False,
+            same_thread_context=same_thread_ctx,
+        )
+        assert result is None
+
+    def test_returns_none_with_non_matching_candidates(self):
+        """Candidates that don't match any override strategy yield None."""
+        from semantic.agent_conversation_memory_routing_selection import _resolve_gate_blocked_injection
+
+        # A plain candidate with no special type or carry-forward markers
+        item = QueryResultItem(
+            result_kind="memory_hit",
+            result_id="plain-1",
+            memory_object_id="mo-plain-1",
+            type="thread_summary",
+            payload={"summary": "discussed general topics"},
+            score=50,
+            evidence=[],
+        )
+        candidate = {
+            "item": item,
+            "layer": "thread_summary",
+            "retrieval_score": 50,
+            "lexical_score": 1,
+            "vector_score": 400,
+            "suppression_reason_code": None,
+        }
+        same_thread_ctx = {"suppress_injection": False}
+        result = _resolve_gate_blocked_injection(
+            [candidate],
+            [candidate],
+            intent="recall",
+            recall_mode="default",
+            query_text="what is the weather",
+            evidence_request=False,
+            same_thread_context=same_thread_ctx,
+        )
+        assert result is None

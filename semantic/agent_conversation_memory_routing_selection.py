@@ -229,6 +229,375 @@ def _candidate_locality_compatible_for_packaging(
     return True
 
 
+def _make_injection_result(
+    blocks: list[InjectableBlock],
+    *,
+    should_inject: bool,
+    decision_reason: str,
+    returned_block_ids: list[str],
+    eligible_result_ids: list[str],
+    dropped_by_cap_result_ids: list[str],
+    same_thread_context: dict[str, object],
+    injection_method: str | None = None,
+    dedup_applied: bool = False,
+    dedup_removed_count: int = 0,
+    dedup_removed_result_ids: list[str] | None = None,
+    dedup_kept_map: dict | None = None,
+    expansion_applied: bool = False,
+    expansion_added_count: int = 0,
+    best_lexical: float | None = None,
+    best_vector: int | None = None,
+    cap_config: dict[str, object] | None = None,
+) -> tuple[list[InjectableBlock], dict[str, object]]:
+    """Build the standard injection result tuple returned by _build_injectable_blocks."""
+    result: dict[str, object] = {
+        "should_inject": should_inject,
+        "decision_reason": decision_reason,
+        "returned_block_ids": returned_block_ids,
+        "eligible_result_ids": eligible_result_ids,
+        "dropped_by_cap_result_ids": dropped_by_cap_result_ids,
+        "cap": INJECTION_HARD_CEILING,
+        "dedup_applied": dedup_applied,
+        "dedup_removed_count": dedup_removed_count,
+        "dedup_removed_result_ids": dedup_removed_result_ids or [],
+        "dedup_kept_map": dedup_kept_map or {},
+        "expansion_applied": expansion_applied,
+        "expansion_added_count": expansion_added_count,
+        "same_thread_context_evaluation": same_thread_context,
+    }
+    if injection_method is not None:
+        result["injection_method"] = injection_method
+    if best_lexical is not None:
+        result["best_lexical"] = best_lexical
+    if best_vector is not None:
+        result["best_vector"] = best_vector
+    if cap_config is not None:
+        result["cap_config"] = cap_config
+    return blocks, result
+
+
+def _resolve_gate_blocked_injection(
+    final_candidates: list[dict[str, object]],
+    ranked_candidates: list[dict[str, object]],
+    *,
+    intent: str,
+    recall_mode: str,
+    query_text: str,
+    evidence_request: bool,
+    same_thread_context: dict[str, object],
+) -> tuple[list[InjectableBlock], dict[str, object]] | None:
+    """Try override strategies in priority order when the confidence gate blocked injection.
+
+    Returns a result tuple if any override applies, or None to fall through to the
+    low_injection_confidence return.
+    """
+    # Strategy 1: Constraint supplement — recent constraints are cross-cutting and
+    # deserve injection even when topical confidence is low.
+    constraint_supplements = _find_constraint_supplements(
+        ranked_candidates,
+        already_selected_ids=set(),
+    )
+    if constraint_supplements:
+        blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in constraint_supplements]
+        returned_ids = [b.result_id for b in blocks]
+        if _INJECTION_VERBOSE:
+            _injection_verbose(
+                f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
+                f"should_inject=True reason=constraint_supplement (gate blocked but recent constraint retrieved)"
+            )
+        return _make_injection_result(
+            blocks,
+            should_inject=True,
+            decision_reason="constraint_supplement",
+            injection_method="simplified",
+            returned_block_ids=returned_ids,
+            eligible_result_ids=returned_ids,
+            dropped_by_cap_result_ids=[],
+            same_thread_context=same_thread_context,
+        )
+
+    # Strategy 2: Carry-forward low confidence override
+    carry_forward_override = _carry_forward_low_confidence_override_candidates(
+        final_candidates,
+        intent=intent,
+        recall_mode=recall_mode,
+    )
+    if carry_forward_override:
+        blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in carry_forward_override]
+        returned_ids = [b.result_id for b in blocks]
+        eligible_ids = [_routing_result_id(c["item"]) for c in carry_forward_override]
+        if _INJECTION_VERBOSE:
+            _injection_verbose(
+                f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
+                "should_inject=True reason=carry_forward_available "
+                "(carry-forward low-confidence override)"
+            )
+        return _make_injection_result(
+            blocks,
+            should_inject=True,
+            decision_reason="carry_forward_available",
+            injection_method="carry_forward_low_confidence_override",
+            returned_block_ids=returned_ids,
+            eligible_result_ids=eligible_ids,
+            dropped_by_cap_result_ids=[],
+            same_thread_context=same_thread_context,
+        )
+
+    # Strategy 3: Supported exact low confidence override
+    exact_memory_override = _supported_exact_low_confidence_override_candidates(
+        final_candidates,
+        intent=intent,
+        recall_mode=recall_mode,
+        evidence_request=evidence_request,
+    )
+    if exact_memory_override:
+        blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in exact_memory_override]
+        returned_ids = [b.result_id for b in blocks]
+        eligible_ids = [_routing_result_id(c["item"]) for c in exact_memory_override]
+        if _INJECTION_VERBOSE:
+            _injection_verbose(
+                f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
+                "should_inject=True reason=carry_forward_available "
+                "(supported exact-memory override after low-confidence gate)"
+            )
+        return _make_injection_result(
+            blocks,
+            should_inject=True,
+            decision_reason="carry_forward_available",
+            injection_method="supported_exact_low_confidence_override",
+            returned_block_ids=returned_ids,
+            eligible_result_ids=eligible_ids,
+            dropped_by_cap_result_ids=[],
+            same_thread_context=same_thread_context,
+        )
+
+    # Strategy 4: Source evidence provenance override
+    source_evidence_override = _source_evidence_provenance_override_candidates(
+        final_candidates,
+        intent=intent,
+        evidence_request=evidence_request,
+        query_text=query_text,
+    )
+    if source_evidence_override:
+        blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in source_evidence_override]
+        returned_ids = [b.result_id for b in blocks]
+        eligible_ids = [_routing_result_id(c["item"]) for c in source_evidence_override]
+        if _INJECTION_VERBOSE:
+            _injection_verbose(
+                f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
+                "should_inject=True reason=carry_forward_available "
+                "(source_evidence provenance override after low-confidence gate)"
+            )
+        return _make_injection_result(
+            blocks,
+            should_inject=True,
+            decision_reason="carry_forward_available",
+            injection_method="source_evidence_provenance_override",
+            returned_block_ids=returned_ids,
+            eligible_result_ids=eligible_ids,
+            dropped_by_cap_result_ids=[],
+            same_thread_context=same_thread_context,
+        )
+
+    # Strategy 5: Fact summary low confidence override
+    fact_summary_override = _fact_summary_low_confidence_override_candidates(
+        final_candidates,
+        intent=intent,
+        query_text=query_text,
+    )
+    if fact_summary_override:
+        selected_override: list[dict[str, object]] = []
+        for candidate in fact_summary_override:
+            if not _can_select_candidate_under_fact_summary_limit(candidate, selected_override):
+                continue
+            selected_override.append(candidate)
+        if selected_override:
+            blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in selected_override]
+            returned_ids = [b.result_id for b in blocks]
+            eligible_ids = [_routing_result_id(c["item"]) for c in fact_summary_override]
+            dropped_ids = [rid for rid in eligible_ids if rid not in returned_ids]
+            if _INJECTION_VERBOSE:
+                _injection_verbose(
+                    f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
+                    "should_inject=True reason=carry_forward_available "
+                    "(fact_summary low-confidence override)"
+                )
+            return _make_injection_result(
+                blocks,
+                should_inject=True,
+                decision_reason="carry_forward_available",
+                injection_method="fact_summary_low_confidence_override",
+                returned_block_ids=returned_ids,
+                eligible_result_ids=eligible_ids,
+                dropped_by_cap_result_ids=dropped_ids,
+                same_thread_context=same_thread_context,
+            )
+
+    # No override strategy applied
+    return None
+
+
+def _select_candidates_with_floor_and_expansion(
+    deduped_candidates: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], int]:
+    """Selects candidates up to floor, then expands if they score well.
+    Returns (selected_candidates, expansion_added_count)."""
+    floor = min(INJECTION_MIN_FLOOR, len(deduped_candidates))
+    selected: list[dict[str, object]] = []
+    for candidate in deduped_candidates:
+        if len(selected) >= floor:
+            break
+        if not _can_select_candidate_under_fact_summary_limit(candidate, selected):
+            continue
+        selected.append(candidate)
+
+    expansion_added = 0
+    if deduped_candidates and selected:
+        top_score = int(deduped_candidates[0].get("routing_score") or 0)
+        if top_score > 0 and len(deduped_candidates) > len(selected):
+            expansion_floor_score = top_score * INJECTION_EXPANSION_RATIO
+            for candidate in deduped_candidates:
+                if candidate in selected:
+                    continue
+                if len(selected) >= INJECTION_HARD_CEILING:
+                    break
+                if not _can_select_candidate_under_fact_summary_limit(candidate, selected):
+                    continue
+                if int(candidate.get("routing_score") or 0) >= expansion_floor_score:
+                    selected.append(candidate)
+                    expansion_added += 1
+
+    return selected, expansion_added
+
+
+def _fill_companion_candidates(
+    selected_candidates: list[dict[str, object]],
+    final_candidates: list[dict[str, object]],
+    *,
+    intent: str,
+    query_text: str,
+    evidence_request: bool,
+) -> None:
+    """Appends work_resumption companion source_hit candidates to the selection list.
+    Appends candidates in place."""
+    if intent != "work_resumption":
+        return
+    used_result_ids = {_routing_result_id(candidate["item"]) for candidate in selected_candidates}
+    companion_candidates = [
+        candidate
+        for candidate in final_candidates
+        if _candidate_is_injection_eligible(
+            candidate,
+            intent=intent,
+            query_text=query_text,
+            allow_discussion_fallback=False,
+            allow_source_companion=True,
+            evidence_request=evidence_request,
+        )
+        and candidate["item"].result_kind == "source_hit"
+        and _routing_result_id(candidate["item"]) not in used_result_ids
+    ]
+    for candidate in companion_candidates:
+        if len(selected_candidates) >= INJECTION_HARD_CEILING:
+            break
+        if not _can_select_candidate_under_fact_summary_limit(candidate, selected_candidates):
+            continue
+        selected_candidates.append(candidate)
+        used_result_ids.add(_routing_result_id(candidate["item"]))
+
+
+def _append_constraint_supplements(
+    selected_candidates: list[dict[str, object]],
+    ranked_candidates: list[dict[str, object]],
+) -> None:
+    """Appends constraint supplement candidates to selection if room permits."""
+    if len(selected_candidates) >= INJECTION_HARD_CEILING:
+        return
+    _selected_ids = {_routing_result_id(c["item"]) for c in selected_candidates}
+    constraint_supplements = _find_constraint_supplements(
+        ranked_candidates,
+        already_selected_ids=_selected_ids,
+        max_count=min(_CONSTRAINT_SUPPLEMENT_CAP, INJECTION_HARD_CEILING - len(selected_candidates)),
+    )
+    for cs in constraint_supplements:
+        if _is_duplicate_of_selected(cs, selected_candidates):
+            continue
+        if not _can_select_candidate_under_fact_summary_limit(cs, selected_candidates):
+            continue
+        selected_candidates.append(cs)
+
+
+def _resolve_source_evidence_override(
+    final_candidates: list[dict[str, object]],
+    *,
+    intent: str,
+    evidence_request: bool,
+    query_text: str,
+    same_thread_context: dict[str, object],
+) -> tuple[list[InjectableBlock], dict[str, object]] | None:
+    """Returns a result tuple if source_evidence provenance override applies, else None."""
+    source_evidence_override = _source_evidence_provenance_override_candidates(
+        final_candidates,
+        intent=intent,
+        evidence_request=evidence_request,
+        query_text=query_text,
+    )
+    if not source_evidence_override:
+        return None
+    blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in source_evidence_override]
+    returned_ids = [b.result_id for b in blocks]
+    eligible_ids = [_routing_result_id(c["item"]) for c in source_evidence_override]
+    if _INJECTION_VERBOSE:
+        _injection_verbose(
+            f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
+            "should_inject=True reason=carry_forward_available "
+            "(source_evidence provenance override)"
+        )
+    return _make_injection_result(
+        blocks,
+        should_inject=True,
+        decision_reason="carry_forward_available",
+        injection_method="source_evidence_provenance_override",
+        returned_block_ids=returned_ids,
+        eligible_result_ids=eligible_ids,
+        dropped_by_cap_result_ids=[],
+        same_thread_context=same_thread_context,
+    )
+
+
+def _compute_eligible_and_dropped_ids(
+    blocks: list[InjectableBlock],
+    primary_eligible_candidates: list[dict[str, object]],
+    final_candidates: list[dict[str, object]],
+    *,
+    intent: str,
+    query_text: str,
+    evidence_request: bool,
+) -> tuple[list[str], list[str]]:
+    """Computes eligible_ids and dropped_ids.
+    Returns (eligible_ids, dropped_ids)."""
+    returned_ids = [block.result_id for block in blocks]
+    eligible_candidates = list(primary_eligible_candidates)
+    if intent == "work_resumption":
+        eligible_candidates.extend(
+            candidate
+            for candidate in final_candidates
+            if _candidate_is_injection_eligible(
+                candidate,
+                intent=intent,
+                query_text=query_text,
+                allow_discussion_fallback=False,
+                allow_source_companion=True,
+                evidence_request=evidence_request,
+            )
+            and candidate["item"].result_kind == "source_hit"
+            and _routing_result_id(candidate["item"]) not in {_routing_result_id(item["item"]) for item in eligible_candidates}
+        )
+    eligible_ids = [_routing_result_id(candidate["item"]) for candidate in eligible_candidates]
+    dropped_ids = [result_id for result_id in eligible_ids if result_id not in returned_ids]
+    return eligible_ids, dropped_ids
+
+
 def _build_injectable_blocks(
     final_candidates: list[dict[str, object]],
     *,
@@ -249,222 +618,50 @@ def _build_injectable_blocks(
         evidence_request=evidence_request,
     )
     if same_thread_context["suppress_injection"]:
-        return [], {
-            "should_inject": False,
-            "decision_reason": "same_thread_context_sufficient",
-            "returned_block_ids": [],
-            "eligible_result_ids": [],
-            "dropped_by_cap_result_ids": [],
-            "cap": INJECTION_HARD_CEILING,
-            "dedup_applied": False,
-            "dedup_removed_count": 0,
-            "dedup_removed_result_ids": [],
-            "dedup_kept_map": {},
-            "expansion_applied": False,
-            "expansion_added_count": 0,
-            "same_thread_context_evaluation": same_thread_context,
-        }
+        return _make_injection_result(
+            [],
+            should_inject=False,
+            decision_reason="same_thread_context_sufficient",
+            returned_block_ids=[],
+            eligible_result_ids=[],
+            dropped_by_cap_result_ids=[],
+            same_thread_context=same_thread_context,
+        )
     if not final_candidates:
-        return [], {
-            "should_inject": False,
-            "decision_reason": "no_relevant_memory",
-            "returned_block_ids": [],
-            "eligible_result_ids": [],
-            "dropped_by_cap_result_ids": [],
-            "cap": INJECTION_HARD_CEILING,
-            "dedup_applied": False,
-            "dedup_removed_count": 0,
-            "dedup_removed_result_ids": [],
-            "dedup_kept_map": {},
-            "expansion_applied": False,
-            "expansion_added_count": 0,
-            "same_thread_context_evaluation": same_thread_context,
-        }
+        return _make_injection_result(
+            [],
+            should_inject=False,
+            decision_reason="no_relevant_memory",
+            returned_block_ids=[],
+            eligible_result_ids=[],
+            dropped_by_cap_result_ids=[],
+            same_thread_context=same_thread_context,
+        )
 
     if not should_allow_injection(final_candidates, query_text=query_text, intent=intent):
-        # Gate blocked — but check for recent constraints that were retrieved.
-        # Constraints are cross-cutting and deserve injection even when the
-        # topical confidence is low, as long as they were actually retrieved
-        # (some similarity exists) and are recent.
-        constraint_supplements = _find_constraint_supplements(
+        resolved = _resolve_gate_blocked_injection(
+            final_candidates,
             ranked_candidates,
-            already_selected_ids=set(),
-        )
-        if constraint_supplements:
-            blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in constraint_supplements]
-            returned_ids = [b.result_id for b in blocks]
-            if _INJECTION_VERBOSE:
-                _injection_verbose(
-                    f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
-                    f"should_inject=True reason=constraint_supplement (gate blocked but recent constraint retrieved)"
-                )
-            return blocks, {
-                "should_inject": True,
-                "decision_reason": "constraint_supplement",
-                "injection_method": "simplified",
-                "returned_block_ids": returned_ids,
-                "eligible_result_ids": returned_ids,
-                "dropped_by_cap_result_ids": [],
-                "cap": INJECTION_HARD_CEILING,
-                "dedup_applied": False,
-                "dedup_removed_count": 0,
-                "dedup_removed_result_ids": [],
-                "dedup_kept_map": {},
-                "expansion_applied": False,
-                "expansion_added_count": 0,
-                "same_thread_context_evaluation": same_thread_context,
-            }
-        carry_forward_override = _carry_forward_low_confidence_override_candidates(
-            final_candidates,
             intent=intent,
             recall_mode=recall_mode,
-        )
-        if carry_forward_override:
-            blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in carry_forward_override]
-            returned_ids = [b.result_id for b in blocks]
-            eligible_ids = [_routing_result_id(c["item"]) for c in carry_forward_override]
-            if _INJECTION_VERBOSE:
-                _injection_verbose(
-                    f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
-                    "should_inject=True reason=carry_forward_available "
-                    "(carry-forward low-confidence override)"
-                )
-            return blocks, {
-                "should_inject": True,
-                "decision_reason": "carry_forward_available",
-                "injection_method": "carry_forward_low_confidence_override",
-                "returned_block_ids": returned_ids,
-                "eligible_result_ids": eligible_ids,
-                "dropped_by_cap_result_ids": [],
-                "cap": INJECTION_HARD_CEILING,
-                "dedup_applied": False,
-                "dedup_removed_count": 0,
-                "dedup_removed_result_ids": [],
-                "dedup_kept_map": {},
-                "expansion_applied": False,
-                "expansion_added_count": 0,
-                "same_thread_context_evaluation": same_thread_context,
-            }
-        exact_memory_override = _supported_exact_low_confidence_override_candidates(
-            final_candidates,
-            intent=intent,
-            recall_mode=recall_mode,
-            evidence_request=evidence_request,
-        )
-        if exact_memory_override:
-            blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in exact_memory_override]
-            returned_ids = [b.result_id for b in blocks]
-            eligible_ids = [_routing_result_id(c["item"]) for c in exact_memory_override]
-            if _INJECTION_VERBOSE:
-                _injection_verbose(
-                    f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
-                    "should_inject=True reason=carry_forward_available "
-                    "(supported exact-memory override after low-confidence gate)"
-                )
-            return blocks, {
-                "should_inject": True,
-                "decision_reason": "carry_forward_available",
-                "injection_method": "supported_exact_low_confidence_override",
-                "returned_block_ids": returned_ids,
-                "eligible_result_ids": eligible_ids,
-                "dropped_by_cap_result_ids": [],
-                "cap": INJECTION_HARD_CEILING,
-                "dedup_applied": False,
-                "dedup_removed_count": 0,
-                "dedup_removed_result_ids": [],
-                "dedup_kept_map": {},
-                "expansion_applied": False,
-                "expansion_added_count": 0,
-                "same_thread_context_evaluation": same_thread_context,
-            }
-        source_evidence_override = _source_evidence_provenance_override_candidates(
-            final_candidates,
-            intent=intent,
-            evidence_request=evidence_request,
             query_text=query_text,
+            evidence_request=evidence_request,
+            same_thread_context=same_thread_context,
         )
-        if source_evidence_override:
-            blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in source_evidence_override]
-            returned_ids = [b.result_id for b in blocks]
-            eligible_ids = [_routing_result_id(c["item"]) for c in source_evidence_override]
-            if _INJECTION_VERBOSE:
-                _injection_verbose(
-                    f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
-                    "should_inject=True reason=carry_forward_available "
-                    "(source_evidence provenance override after low-confidence gate)"
-                )
-            return blocks, {
-                "should_inject": True,
-                "decision_reason": "carry_forward_available",
-                "injection_method": "source_evidence_provenance_override",
-                "returned_block_ids": returned_ids,
-                "eligible_result_ids": eligible_ids,
-                "dropped_by_cap_result_ids": [],
-                "cap": INJECTION_HARD_CEILING,
-                "dedup_applied": False,
-                "dedup_removed_count": 0,
-                "dedup_removed_result_ids": [],
-                "dedup_kept_map": {},
-                "expansion_applied": False,
-                "expansion_added_count": 0,
-                "same_thread_context_evaluation": same_thread_context,
-            }
-        fact_summary_override = _fact_summary_low_confidence_override_candidates(
-            final_candidates,
-            intent=intent,
-            query_text=query_text,
+        if resolved is not None:
+            return resolved
+        return _make_injection_result(
+            [],
+            should_inject=False,
+            decision_reason="low_injection_confidence",
+            injection_method="simplified",
+            best_lexical=max((normalize_lexical_score(c.get("lexical_score")) for c in final_candidates), default=0),
+            best_vector=max((int(c.get("vector_score", 0) or 0) for c in final_candidates), default=0),
+            returned_block_ids=[],
+            eligible_result_ids=[],
+            dropped_by_cap_result_ids=[],
+            same_thread_context=same_thread_context,
         )
-        if fact_summary_override:
-            selected_override: list[dict[str, object]] = []
-            for candidate in fact_summary_override:
-                if not _can_select_candidate_under_fact_summary_limit(candidate, selected_override):
-                    continue
-                selected_override.append(candidate)
-            if selected_override:
-                blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in selected_override]
-                returned_ids = [b.result_id for b in blocks]
-                eligible_ids = [_routing_result_id(c["item"]) for c in fact_summary_override]
-                dropped_ids = [rid for rid in eligible_ids if rid not in returned_ids]
-                if _INJECTION_VERBOSE:
-                    _injection_verbose(
-                        f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
-                        "should_inject=True reason=carry_forward_available "
-                        "(fact_summary low-confidence override)"
-                    )
-                return blocks, {
-                    "should_inject": True,
-                    "decision_reason": "carry_forward_available",
-                    "injection_method": "fact_summary_low_confidence_override",
-                    "returned_block_ids": returned_ids,
-                    "eligible_result_ids": eligible_ids,
-                    "dropped_by_cap_result_ids": dropped_ids,
-                    "cap": INJECTION_HARD_CEILING,
-                    "dedup_applied": False,
-                    "dedup_removed_count": 0,
-                    "dedup_removed_result_ids": [],
-                    "dedup_kept_map": {},
-                    "expansion_applied": False,
-                    "expansion_added_count": 0,
-                    "same_thread_context_evaluation": same_thread_context,
-                }
-        return [], {
-            "should_inject": False,
-            "decision_reason": "low_injection_confidence",
-            "injection_method": "simplified",
-            "best_lexical": max((normalize_lexical_score(c.get("lexical_score")) for c in final_candidates), default=0),
-            "best_vector": max((int(c.get("vector_score", 0) or 0) for c in final_candidates), default=0),
-            "returned_block_ids": [],
-            "eligible_result_ids": [],
-            "dropped_by_cap_result_ids": [],
-            "cap": INJECTION_HARD_CEILING,
-            "dedup_applied": False,
-            "dedup_removed_count": 0,
-            "dedup_removed_result_ids": [],
-            "dedup_kept_map": {},
-            "expansion_applied": False,
-            "expansion_added_count": 0,
-            "same_thread_context_evaluation": same_thread_context,
-        }
 
     primary_non_discussion_eligible = [
         candidate
@@ -478,38 +675,15 @@ def _build_injectable_blocks(
             evidence_request=evidence_request,
         )
     ]
-    source_evidence_override = _source_evidence_provenance_override_candidates(
+    source_evidence_resolved = _resolve_source_evidence_override(
         final_candidates,
         intent=intent,
         evidence_request=evidence_request,
         query_text=query_text,
+        same_thread_context=same_thread_context,
     )
-    if source_evidence_override:
-        blocks = [_build_injectable_block_from_candidate(c, intent=intent) for c in source_evidence_override]
-        returned_ids = [b.result_id for b in blocks]
-        eligible_ids = [_routing_result_id(c["item"]) for c in source_evidence_override]
-        if _INJECTION_VERBOSE:
-            _injection_verbose(
-                f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: "
-                "should_inject=True reason=carry_forward_available "
-                "(source_evidence provenance override)"
-            )
-        return blocks, {
-            "should_inject": True,
-            "decision_reason": "carry_forward_available",
-            "injection_method": "source_evidence_provenance_override",
-            "returned_block_ids": returned_ids,
-            "eligible_result_ids": eligible_ids,
-            "dropped_by_cap_result_ids": [],
-            "cap": INJECTION_HARD_CEILING,
-            "dedup_applied": False,
-            "dedup_removed_count": 0,
-            "dedup_removed_result_ids": [],
-            "dedup_kept_map": {},
-            "expansion_applied": False,
-            "expansion_added_count": 0,
-            "same_thread_context_evaluation": same_thread_context,
-        }
+    if source_evidence_resolved is not None:
+        return source_evidence_resolved
     primary_eligible_candidates = [
         candidate
         for candidate in final_candidates
@@ -529,21 +703,15 @@ def _build_injectable_blocks(
                 f"INJECTION query={query_text[:80]!r} intent={intent} | DECISION: should_inject=False "
                 f"reason={decision_reason} (gate=ALLOW but no eligible candidates after type/intent filter)"
             )
-        return [], {
-            "should_inject": False,
-            "decision_reason": decision_reason,
-            "returned_block_ids": [],
-            "eligible_result_ids": [],
-            "dropped_by_cap_result_ids": [],
-            "cap": INJECTION_HARD_CEILING,
-            "dedup_applied": False,
-            "dedup_removed_count": 0,
-            "dedup_removed_result_ids": [],
-            "dedup_kept_map": {},
-            "expansion_applied": False,
-            "expansion_added_count": 0,
-            "same_thread_context_evaluation": same_thread_context,
-        }
+        return _make_injection_result(
+            [],
+            should_inject=False,
+            decision_reason=decision_reason,
+            returned_block_ids=[],
+            eligible_result_ids=[],
+            dropped_by_cap_result_ids=[],
+            same_thread_context=same_thread_context,
+        )
 
     # --- Dedup + dynamic cap (replaces static [:3] cap) ---
     deduped_candidates, dedup_removed = _dedup_eligible_candidates(
@@ -560,92 +728,30 @@ def _build_injectable_blocks(
                 dedup_kept_map[removed_id] = _routing_result_id(kept["item"])
                 break
 
-    floor = min(INJECTION_MIN_FLOOR, len(deduped_candidates))
-    selected_candidates: list[dict[str, object]] = []
-    for candidate in deduped_candidates:
-        if len(selected_candidates) >= floor:
-            break
-        if not _can_select_candidate_under_fact_summary_limit(candidate, selected_candidates):
-            continue
-        selected_candidates.append(candidate)
-
-    # Expand beyond floor if candidates score well relative to top
-    expansion_added = 0
-    if deduped_candidates and selected_candidates:
-        top_score = int(deduped_candidates[0].get("routing_score") or 0)
-        if top_score > 0 and len(deduped_candidates) > len(selected_candidates):
-            expansion_floor_score = top_score * INJECTION_EXPANSION_RATIO
-            for candidate in deduped_candidates:
-                if candidate in selected_candidates:
-                    continue
-                if len(selected_candidates) >= INJECTION_HARD_CEILING:
-                    break
-                if not _can_select_candidate_under_fact_summary_limit(candidate, selected_candidates):
-                    continue
-                if int(candidate.get("routing_score") or 0) >= expansion_floor_score:
-                    selected_candidates.append(candidate)
-                    expansion_added += 1
+    selected_candidates, expansion_added = _select_candidates_with_floor_and_expansion(deduped_candidates)
 
     # Companion fill (work_resumption only): fill to ceiling with dedup check
-    if intent == "work_resumption" and len(selected_candidates) < INJECTION_HARD_CEILING:
-        used_result_ids = {_routing_result_id(candidate["item"]) for candidate in selected_candidates}
-        companion_candidates = [
-            candidate
-            for candidate in final_candidates
-            if _candidate_is_injection_eligible(
-                candidate,
-                intent=intent,
-                query_text=query_text,
-                allow_discussion_fallback=False,
-                allow_source_companion=True,
-                evidence_request=evidence_request,
-            )
-            and candidate["item"].result_kind == "source_hit"
-            and _routing_result_id(candidate["item"]) not in used_result_ids
-        ]
-        for candidate in companion_candidates:
-            if len(selected_candidates) >= INJECTION_HARD_CEILING:
-                break
-            if not _can_select_candidate_under_fact_summary_limit(candidate, selected_candidates):
-                continue
-            selected_candidates.append(candidate)
-            used_result_ids.add(_routing_result_id(candidate["item"]))
+    _fill_companion_candidates(
+        selected_candidates,
+        final_candidates,
+        intent=intent,
+        query_text=query_text,
+        evidence_request=evidence_request,
+    )
 
     # Constraint supplement: add recent constraint if room permits, with dedup check
-    if len(selected_candidates) < INJECTION_HARD_CEILING:
-        _selected_ids = {_routing_result_id(c["item"]) for c in selected_candidates}
-        constraint_supplements = _find_constraint_supplements(
-            ranked_candidates,
-            already_selected_ids=_selected_ids,
-            max_count=min(_CONSTRAINT_SUPPLEMENT_CAP, INJECTION_HARD_CEILING - len(selected_candidates)),
-        )
-        for cs in constraint_supplements:
-            if _is_duplicate_of_selected(cs, selected_candidates):
-                continue
-            if not _can_select_candidate_under_fact_summary_limit(cs, selected_candidates):
-                continue
-            selected_candidates.append(cs)
+    _append_constraint_supplements(selected_candidates, ranked_candidates)
 
     blocks = [_build_injectable_block_from_candidate(candidate, intent=intent) for candidate in selected_candidates]
+    eligible_ids, dropped_ids = _compute_eligible_and_dropped_ids(
+        blocks,
+        primary_eligible_candidates,
+        final_candidates,
+        intent=intent,
+        query_text=query_text,
+        evidence_request=evidence_request,
+    )
     returned_ids = [block.result_id for block in blocks]
-    eligible_candidates = list(primary_eligible_candidates)
-    if intent == "work_resumption":
-        eligible_candidates.extend(
-            candidate
-            for candidate in final_candidates
-            if _candidate_is_injection_eligible(
-                candidate,
-                intent=intent,
-                query_text=query_text,
-                allow_discussion_fallback=False,
-                allow_source_companion=True,
-                evidence_request=evidence_request,
-            )
-            and candidate["item"].result_kind == "source_hit"
-            and _routing_result_id(candidate["item"]) not in {_routing_result_id(item["item"]) for item in eligible_candidates}
-        )
-    eligible_ids = [_routing_result_id(candidate["item"]) for candidate in eligible_candidates]
-    dropped_ids = [result_id for result_id in eligible_ids if result_id not in returned_ids]
     if _INJECTION_VERBOSE:
         block_summaries = []
         for b in blocks:
@@ -655,27 +761,27 @@ def _build_injectable_blocks(
             f"should_inject={bool(blocks)} reason={'carry_forward_available' if blocks else 'no_relevant_memory'} "
             f"blocks={len(blocks)} [{'; '.join(block_summaries) if block_summaries else 'none'}]"
         )
-    return blocks, {
-        "should_inject": bool(blocks),
-        "decision_reason": "carry_forward_available" if blocks else "no_relevant_memory",
-        "injection_method": "simplified",
-        "returned_block_ids": returned_ids,
-        "eligible_result_ids": eligible_ids,
-        "dropped_by_cap_result_ids": dropped_ids,
-        "cap": INJECTION_HARD_CEILING,
-        "cap_config": {
+    return _make_injection_result(
+        blocks,
+        should_inject=bool(blocks),
+        decision_reason="carry_forward_available" if blocks else "no_relevant_memory",
+        injection_method="simplified",
+        returned_block_ids=returned_ids,
+        eligible_result_ids=eligible_ids,
+        dropped_by_cap_result_ids=dropped_ids,
+        same_thread_context=same_thread_context,
+        cap_config={
             "floor": INJECTION_MIN_FLOOR,
             "expansion_ratio": INJECTION_EXPANSION_RATIO,
             "ceiling": INJECTION_HARD_CEILING,
         },
-        "dedup_applied": bool(dedup_removed),
-        "dedup_removed_count": len(dedup_removed),
-        "dedup_removed_result_ids": dedup_removed_ids,
-        "dedup_kept_map": dedup_kept_map,
-        "expansion_applied": expansion_added > 0,
-        "expansion_added_count": expansion_added,
-        "same_thread_context_evaluation": same_thread_context,
-    }
+        dedup_applied=bool(dedup_removed),
+        dedup_removed_count=len(dedup_removed),
+        dedup_removed_result_ids=dedup_removed_ids,
+        dedup_kept_map=dedup_kept_map,
+        expansion_applied=expansion_added > 0,
+        expansion_added_count=expansion_added,
+    )
 
 _SOURCE_EXPANDED_THRESHOLD = 1000
 
