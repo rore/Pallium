@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from app.config import AppConfig, LLMProviderConfig, SemanticPackageConfig
 from app.dependencies import build_service
 from app.main import create_app
@@ -209,6 +211,7 @@ def test_dual_package_two_instances_sequential(monkeypatch, test_db_url: str) ->
 # Scenario 3: Dual-package, concurrent worker threads
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_dual_package_concurrent_workers(monkeypatch, test_db_url: str) -> None:
     """Both packages, two concurrent worker threads with separate service instances."""
     monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: DualPackageStubProvider())

@@ -94,6 +94,7 @@ def _start_api_with_retry(
     *,
     popen_factory: Callable[..., subprocess.Popen] = _default_popen,
     sleep_fn: Callable[[float], None] = time.sleep,
+    wait_for_api_fn: Callable[..., bool] = _wait_for_api,  # pass lambda *_, **__: True in tests
     stop: object | None = None,
 ) -> subprocess.Popen | None:
     """Start the API server, retrying on startup crashes."""
@@ -102,7 +103,7 @@ def _start_api_with_retry(
             return None
         proc = popen_factory(cmd, cwd=os.getcwd())
         emit_runtime_log("supervisor", f"started api pid={proc.pid} host={host} port={port} attempt={attempt}")
-        if _wait_for_api(host, port, timeout=30.0, process=proc):
+        if wait_for_api_fn(host, port, timeout=30.0, process=proc):
             return proc
         # If process is still alive but didn't bind port (slow startup), proceed
         if proc.poll() is None:
@@ -123,6 +124,7 @@ def run_supervisor(
     *,
     popen_factory: Callable[..., subprocess.Popen] = _default_popen,
     sleep_fn: Callable[[float], None] = time.sleep,
+    wait_for_api_fn: Callable[..., bool] = _wait_for_api,
     should_stop: Callable[[], bool] | None = None,
     clock: Callable[[], float] = time.monotonic,
     log_file: Path | None = None,
@@ -187,6 +189,7 @@ def run_supervisor(
                 server_cmd, parsed.host, parsed.port,
                 popen_factory=_popen_with_log,
                 sleep_fn=sleep_fn,
+                wait_for_api_fn=wait_for_api_fn,
                 stop=stop,
             )
             if server is None:

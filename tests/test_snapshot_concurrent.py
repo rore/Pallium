@@ -213,6 +213,7 @@ def test_snapshot_during_begin_immediate(tmp_path: Path) -> None:
     assert snap_count <= live_count
 
 
+@pytest.mark.slow
 def test_multiple_snapshots_during_sustained_writes(tmp_path: Path) -> None:
     """Five snapshots taken 0.5 s apart; each must be valid with non-decreasing row counts."""
     db_path = tmp_path / "live.db"

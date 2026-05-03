@@ -58,7 +58,7 @@ dev = [
 testpaths = ["tests"]
 addopts = "-m 'not slow' -n 4 --import-mode=importlib"
 markers = [
-    "slow: benchmark and eval harness tests — run explicitly with -m slow",
+    "slow: tests with unavoidable real-time sleeps (snapshot ordering, concurrency), benchmarks, and eval harness — run explicitly with -m slow",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:sqlalchemy",

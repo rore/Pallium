@@ -175,6 +175,7 @@ max_snapshots = 5
 # 4. Corrupt snapshot among valid ones — fallback to older valid snapshot
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_corrupt_snapshot_among_valid_ones(tmp_path: Path) -> None:
     """restore_snapshot skips a corrupt newest file and uses the next valid one."""
     snapshot_dir = tmp_path / "snapshots"

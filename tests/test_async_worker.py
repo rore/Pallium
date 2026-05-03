@@ -455,6 +455,7 @@ def test_supervisor_starts_api_and_processors_and_terminates_them(capsys) -> Non
         ['--host', '127.0.0.1', '--port', '8010', '--processors', '2'],
         popen_factory=popen_factory,
         sleep_fn=lambda _: None,
+        wait_for_api_fn=lambda *_, **__: True,
         should_stop=lambda: True,
     )
 
@@ -482,6 +483,7 @@ def test_supervisor_can_disable_cleaners_explicitly(capsys) -> None:
         ['--host', '127.0.0.1', '--port', '8010', '--processors', '1', '--cleaners', '0'],
         popen_factory=popen_factory,
         sleep_fn=lambda _: None,
+        wait_for_api_fn=lambda *_, **__: True,
         should_stop=lambda: True,
     )
 
@@ -508,6 +510,7 @@ def test_supervisor_kills_process_that_ignores_terminate(capsys) -> None:
         ['--host', '127.0.0.1', '--port', '8010', '--processors', '1'],
         popen_factory=popen_factory,
         sleep_fn=lambda _: None,
+        wait_for_api_fn=lambda *_, **__: True,
         should_stop=lambda: True,
     )
 
@@ -893,6 +896,7 @@ def test_supervisor_restarts_crashed_processor(capsys) -> None:
         ['--host', '127.0.0.1', '--port', '8010', '--processors', '1', '--cleaners', '0'],
         popen_factory=popen_factory,
         sleep_fn=sleep_fn,
+        wait_for_api_fn=lambda *_, **__: True,
         should_stop=lambda: poll_count[0] >= 3,
     )
 
@@ -925,6 +929,7 @@ def test_supervisor_shuts_down_on_rapid_crashes(capsys) -> None:
         ['--host', '127.0.0.1', '--port', '8010', '--processors', '1', '--cleaners', '0'],
         popen_factory=popen_factory,
         sleep_fn=sleep_fn,
+        wait_for_api_fn=lambda *_, **__: True,
         clock=lambda: 0.0,  # time never advances
     )
 
@@ -955,6 +960,7 @@ def test_supervisor_api_exit_is_always_fatal(capsys) -> None:
         ['--host', '127.0.0.1', '--port', '8010', '--processors', '1', '--cleaners', '0'],
         popen_factory=popen_factory,
         sleep_fn=sleep_fn,
+        wait_for_api_fn=lambda *_, **__: True,
     )
 
     assert exit_code == 2
@@ -985,6 +991,7 @@ def test_supervisor_spawns_snapshot_worker_when_enabled(capsys, tmp_path, monkey
         ['--host', '127.0.0.1', '--port', '8099', '--processors', '1', '--cleaners', '0'],
         popen_factory=popen_factory,
         sleep_fn=lambda _: None,
+        wait_for_api_fn=lambda *_, **__: True,
         should_stop=lambda: True,
     )
 
@@ -1012,6 +1019,7 @@ def test_supervisor_does_not_spawn_snapshot_when_disabled(capsys, tmp_path, monk
         ['--host', '127.0.0.1', '--port', '8099', '--processors', '1', '--cleaners', '0'],
         popen_factory=popen_factory,
         sleep_fn=lambda _: None,
+        wait_for_api_fn=lambda *_, **__: True,
         should_stop=lambda: True,
     )
 

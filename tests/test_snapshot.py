@@ -367,6 +367,7 @@ def test_dirty_tracking_wal_modification(tmp_path: Path) -> None:
 # === Restore tests ===
 
 
+@pytest.mark.slow
 def test_restore_newest_valid(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
@@ -382,6 +383,7 @@ def test_restore_newest_valid(tmp_path: Path) -> None:
     assert rows[0][0] == "newer-row-0"
 
 
+@pytest.mark.slow
 def test_restore_skips_corrupt_to_older(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
@@ -410,6 +412,7 @@ def test_restore_all_corrupt(tmp_path: Path) -> None:
     assert not live_db.exists()
 
 
+@pytest.mark.slow
 def test_restore_skips_when_live_exists(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
@@ -432,6 +435,7 @@ def test_restore_no_snapshots(tmp_path: Path) -> None:
     assert result is False
 
 
+@pytest.mark.slow
 def test_restore_cleans_stale_wal_shm(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
@@ -449,6 +453,7 @@ def test_restore_cleans_stale_wal_shm(tmp_path: Path) -> None:
     assert not shm_path.exists()
 
 
+@pytest.mark.slow
 def test_restore_creates_parent_dirs(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
@@ -462,6 +467,7 @@ def test_restore_creates_parent_dirs(tmp_path: Path) -> None:
 # === Prune tests ===
 
 
+@pytest.mark.slow
 def test_prune_keeps_n(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
@@ -482,6 +488,7 @@ def test_prune_keeps_n(tmp_path: Path) -> None:
         assert snap.name == all_sorted[i]
 
 
+@pytest.mark.slow
 def test_prune_fewer_than_max(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
