@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Query
@@ -283,9 +283,16 @@ def mount_dashboard(app: FastAPI) -> None:
         if not isinstance(storage, SQLiteStorageProvider):
             return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
 
+        cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=24)
+
         with storage._session_factory() as session:
             rows = session.execute(
                 select(MemoryFeedbackRecord.rating, func.count())
+                .group_by(MemoryFeedbackRecord.rating)
+            ).all()
+            rows_24h = session.execute(
+                select(MemoryFeedbackRecord.rating, func.count())
+                .where(MemoryFeedbackRecord.created_at >= cutoff)
                 .group_by(MemoryFeedbackRecord.rating)
             ).all()
 
@@ -293,10 +300,18 @@ def mount_dashboard(app: FastAPI) -> None:
         for rating, count in rows:
             counts[rating] = count
 
+        counts_24h = {"relevant": 0, "not_relevant": 0}
+        for rating, count in rows_24h:
+            counts_24h[rating] = count
+
         total = counts["relevant"] + counts["not_relevant"]
+        total_24h = counts_24h["relevant"] + counts_24h["not_relevant"]
         return JSONResponse(content={
             "total": total,
             "relevant": counts["relevant"],
             "not_relevant": counts["not_relevant"],
             "not_relevant_rate": round(counts["not_relevant"] / total, 3) if total > 0 else None,
+            "total_24h": total_24h,
+            "not_relevant_24h": counts_24h["not_relevant"],
+            "not_relevant_rate_24h": round(counts_24h["not_relevant"] / total_24h, 3) if total_24h > 0 else None,
         })

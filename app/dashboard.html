@@ -513,6 +513,8 @@
           <div class="stat-label">Feedback <span style="color:var(--muted);font-size:0.8em">(all time)</span></div>
           <div id="q-feedback" class="stat-value">—</div>
           <div id="q-feedback-sub" class="stat-label" style="margin-top:2px"></div>
+          <div id="q-feedback-24h" class="stat-label" style="margin-top:4px;color:var(--muted);font-size:0.85em"></div>
+          <div id="q-feedback-24h-sub" class="stat-label" style="margin-top:2px;font-size:0.85em"></div>
         </div>
       </div>
       <div class="last-query">
@@ -757,6 +759,17 @@ async function fetchFeedbackStats() {
       }
     } else {
       document.getElementById('q-feedback-sub').textContent = '';
+    }
+    const el24h = document.getElementById('q-feedback-24h');
+    const el24hSub = document.getElementById('q-feedback-24h-sub');
+    if (data.total_24h != null) {
+      el24h.textContent = fmtNum(data.total_24h) + ' (last 24h)';
+      if (data.not_relevant_rate_24h != null) {
+        el24hSub.textContent = Math.round(data.not_relevant_rate_24h * 100) + '% not-relevant';
+        el24hSub.style.color = data.not_relevant_rate_24h > 0.3 ? 'var(--red)' : '';
+      } else {
+        el24hSub.textContent = '';
+      }
     }
   } catch (e) { /* non-fatal */ }
 }
