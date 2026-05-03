@@ -1594,6 +1594,67 @@ DEDUP_TEXT_ONLY_THRESHOLD = 0.7
 DEDUP_MIN_TOKENS = 2
 
 
+def _prefer_duplicate_by_nonfact_mode(
+    item_a: QueryResultItem,
+    item_b: QueryResultItem,
+    candidate_a: dict[str, object],
+    candidate_b: dict[str, object],
+    recall_mode: str,
+) -> dict[str, object] | None:
+    """Apply recall_mode-specific duplicate preference rules (non-default modes).
+
+    Returns the preferred candidate or None if the mode produces no preference.
+    """
+    if recall_mode == "sharp_fact_preference":
+        if item_a.type in ROUTING_LOWER_LEVEL_EXACT_TYPES and item_b.type in {"continuity_memory", "atomic_fact", "thread_summary"}:
+            return candidate_a
+        if item_b.type in ROUTING_LOWER_LEVEL_EXACT_TYPES and item_a.type in {"continuity_memory", "atomic_fact", "thread_summary"}:
+            return candidate_b
+    elif recall_mode == "continuity_preference":
+        if item_a.type == "continuity_memory" and item_b.type in {"decision", "investigation_outcome", "atomic_fact", "thread_summary"}:
+            return candidate_a
+        if item_b.type == "continuity_memory" and item_a.type in {"decision", "investigation_outcome", "atomic_fact", "thread_summary"}:
+            return candidate_b
+    elif recall_mode == "investigation_preference":
+        if item_a.type == "investigation_outcome" and item_b.type == "decision":
+            return candidate_a
+        if item_b.type == "investigation_outcome" and item_a.type == "decision":
+            return candidate_b
+    return None
+
+
+def _prefer_duplicate_by_default_mode(
+    item_a: QueryResultItem,
+    item_b: QueryResultItem,
+    candidate_a: dict[str, object],
+    candidate_b: dict[str, object],
+) -> dict[str, object] | None:
+    """Apply recall_mode == "default" duplicate preference rules.
+
+    Returns the preferred candidate or None if no rule matches.
+    """
+    if item_a.type == "continuity_memory" and item_b.type == "thread_summary":
+        return candidate_a
+    if item_b.type == "continuity_memory" and item_a.type == "thread_summary":
+        return candidate_b
+
+    continuity_candidate: dict[str, object] | None = None
+    exact_candidate: dict[str, object] | None = None
+    if item_a.type == "continuity_memory" and item_b.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+        continuity_candidate = candidate_a
+        exact_candidate = candidate_b
+    elif item_b.type == "continuity_memory" and item_a.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+        continuity_candidate = candidate_b
+        exact_candidate = candidate_a
+    if continuity_candidate is not None and exact_candidate is not None:
+        continuity_rank = _candidate_lexical_rank(continuity_candidate)
+        exact_rank = _candidate_lexical_rank(exact_candidate)
+        if exact_rank >= 5 and continuity_rank + 2 <= exact_rank:
+            return continuity_candidate
+
+    return None
+
+
 def _prefer_duplicate_candidate(
     candidate_a: dict[str, object],
     candidate_b: dict[str, object],
@@ -1610,46 +1671,21 @@ def _prefer_duplicate_candidate(
     assert isinstance(item_a, QueryResultItem)
     assert isinstance(item_b, QueryResultItem)
 
-    if recall_mode == "sharp_fact_preference":
-        if item_a.type in ROUTING_LOWER_LEVEL_EXACT_TYPES and item_b.type in {"continuity_memory", "atomic_fact", "thread_summary"}:
-            return candidate_a
-        if item_b.type in ROUTING_LOWER_LEVEL_EXACT_TYPES and item_a.type in {"continuity_memory", "atomic_fact", "thread_summary"}:
-            return candidate_b
-    elif recall_mode == "continuity_preference":
-        if item_a.type == "continuity_memory" and item_b.type in {"decision", "investigation_outcome", "atomic_fact", "thread_summary"}:
-            return candidate_a
-        if item_b.type == "continuity_memory" and item_a.type in {"decision", "investigation_outcome", "atomic_fact", "thread_summary"}:
-            return candidate_b
-    elif recall_mode == "investigation_preference":
-        if item_a.type == "investigation_outcome" and item_b.type == "decision":
-            return candidate_a
-        if item_b.type == "investigation_outcome" and item_a.type == "decision":
-            return candidate_b
+    mode_result = _prefer_duplicate_by_nonfact_mode(item_a, item_b, candidate_a, candidate_b, recall_mode)
+    if mode_result is not None:
+        return mode_result
 
+    # Universal fact_summary rule
     if item_a.type == FACT_SUMMARY_TYPE and item_b.type != FACT_SUMMARY_TYPE:
         return candidate_b
     if item_b.type == FACT_SUMMARY_TYPE and item_a.type != FACT_SUMMARY_TYPE:
         return candidate_a
 
+    # Default mode specific rules
     if recall_mode == "default":
-        if item_a.type == "continuity_memory" and item_b.type == "thread_summary":
-            return candidate_a
-        if item_b.type == "continuity_memory" and item_a.type == "thread_summary":
-            return candidate_b
-
-        continuity_candidate: dict[str, object] | None = None
-        exact_candidate: dict[str, object] | None = None
-        if item_a.type == "continuity_memory" and item_b.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
-            continuity_candidate = candidate_a
-            exact_candidate = candidate_b
-        elif item_b.type == "continuity_memory" and item_a.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
-            continuity_candidate = candidate_b
-            exact_candidate = candidate_a
-        if continuity_candidate is not None and exact_candidate is not None:
-            continuity_rank = _candidate_lexical_rank(continuity_candidate)
-            exact_rank = _candidate_lexical_rank(exact_candidate)
-            if exact_rank >= 5 and continuity_rank + 2 <= exact_rank:
-                return continuity_candidate
+        default_result = _prefer_duplicate_by_default_mode(item_a, item_b, candidate_a, candidate_b)
+        if default_result is not None:
+            return default_result
 
     score_a = int(candidate_a.get("routing_score") or 0)
     score_b = int(candidate_b.get("routing_score") or 0)
