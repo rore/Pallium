@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 
-Visibility = Literal["public", "container", "private"]
+Visibility = Literal["public", "container", "private", "global"]
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,15 @@ def is_visible(
     query_container_ref: str | None,
     candidate_actor_ref: str | None = None,
     query_visibility: str | None = None,
+    query_actor_ref: str | None = None,
 ) -> bool:
+    # Global: visible to same actor in any container, fail-closed
+    if candidate_visibility == "global":
+        return (
+            candidate_actor_ref is not None
+            and query_actor_ref is not None
+            and candidate_actor_ref == query_actor_ref
+        )
     if query_container_ref is None:
         return True
     # Public query context: only see public memories, regardless of container.

@@ -14,7 +14,7 @@ def source_item_matches_filters(source_item: SourceItem, filters: QueryFilters) 
         return False
     if filters.artifact_kind is not None and source_item.artifact_kind != filters.artifact_kind:
         return False
-    if filters.container_ref is not None and source_item.visibility != "public" and source_item.container_ref != filters.container_ref:
+    if filters.container_ref is not None and source_item.visibility not in ("public", "global") and source_item.container_ref != filters.container_ref:
         return False
     if filters.thread_ref is not None and source_item.thread_ref != filters.thread_ref:
         return False
@@ -31,7 +31,7 @@ def evidence_matches_filters(evidence: EvidenceReference, filters: QueryFilters)
         return False
     if filters.artifact_kind is not None and evidence.artifact_kind != filters.artifact_kind:
         return False
-    if filters.container_ref is not None and evidence.visibility != "public" and evidence.container_ref != filters.container_ref:
+    if filters.container_ref is not None and evidence.visibility not in ("public", "global") and evidence.container_ref != filters.container_ref:
         return False
     if filters.thread_ref is not None and evidence.thread_ref != filters.thread_ref:
         return False
