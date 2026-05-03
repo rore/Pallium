@@ -280,8 +280,8 @@ Why:
 
 Container type drives memory scoping, not memory type detection or content
 analysis. Personal memory types (`interest`, `constraint_memory`) are suppressed
-in shared containers (`container`, `public`) and fall through to
-`turn_summary`. `actor_ref` is propagated from source item only in private
+in shared containers (`container`, `public`) with no fallback extraction.
+`actor_ref` is propagated from source item only in private
 containers; shared containers always produce `actor_ref = null`.
 
 Personal memories (`actor_ref` set) do not cross container boundaries even when
@@ -315,17 +315,17 @@ Why:
 
 ### 2026-03-23 - Interest memory kind
 
-`interest` captures specific-but-uncommitted user interest — stronger than
-`turn_summary`, weaker than `task_checkpoint`. Created when the LLM judges
+`interest` captures specific-but-uncommitted user interest — a dedicated type
+weaker than `task_checkpoint`. Created when the LLM judges
 that a specific subject is present and the speaker expressed meaningful
 future-oriented interest without a concrete commitment.
 
 Why:
 
 - user-stated interest ("Chroma sounds interesting, I should check it sometime")
-  was falling through to generic `turn_summary` with no special weight
+  previously had no dedicated memory type and was lost
 - cross-thread recall queries ("what was the db I wanted to check?") couldn't
-  surface the interest because it was buried among other summaries
+  surface the interest without a typed extraction
 - user-only role guard prevents assistant responses from creating interest
 - suppressed in shared containers (container/public) per container-driven scoping
 

@@ -23,8 +23,8 @@ def test_superseded_memory_is_hidden_but_evidence_remains(test_db_url: str) -> N
         content="Decision: use arrival time for reservation ordering across all background worker processes to keep the ingestion pipeline simple and predictable.",
         metadata={"topic": "reservation ordering"},
         use_case=None,
-        artifact_kind="assistant_output",
-        role="assistant",
+        artifact_kind="message",
+        role="user",
         thread_ref="thread-1",
     )
     service.drain_processing_queue(worker_id="memory-lifecycle")
@@ -37,8 +37,8 @@ def test_superseded_memory_is_hidden_but_evidence_remains(test_db_url: str) -> N
         content="Decision: use item event time for reservation ordering instead of arrival time to avoid missed hold updates during concurrent sync delay operations.",
         metadata={"topic": "reservation ordering"},
         use_case=None,
-        artifact_kind="assistant_output",
-        role="assistant",
+        artifact_kind="message",
+        role="user",
         thread_ref="thread-1",
     )
 

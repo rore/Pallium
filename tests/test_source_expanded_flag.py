@@ -99,7 +99,6 @@ _TYPE_PAYLOADS: dict[str, dict] = {
     "investigation_outcome": {"investigation_outcome": "x", "rationale": "r"},
     "decision": {"decision": "x", "rationale": "r"},
     "task_checkpoint": {"summary": "x", "task": "t", "current_state": "s"},
-    "turn_summary": {"summary": "x"},
     "thread_summary": {"summary": "x"},
     "constraint_memory": {"summary": "x", "constraint_text": "y"},
     "atomic_fact": {"statement": "x"},
@@ -112,7 +111,6 @@ _TYPE_PAYLOADS: dict[str, dict] = {
     (1000, "investigation_outcome", False),
     (1001, "investigation_outcome", True),
     (5000, "decision",             True),
-    (5000, "turn_summary",         True),
     (5000, "task_checkpoint",      True),
     (5000, "thread_summary",       False),   # not in _SOURCE_EXPANDED_TYPES
     (5000, "constraint_memory",    False),   # excluded

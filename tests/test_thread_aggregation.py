@@ -476,7 +476,7 @@ def test_monitoring_note_does_not_create_durable_investigation_memory(monkeypatc
     memory_objects = storage.list_memory_objects_for_source_item(source_item_id)
 
     assert all(memory.type != "investigation_outcome" for memory in memory_objects)
-    assert any(memory.type == "turn_summary" for memory in memory_objects)
+    assert len(memory_objects) == 0
     assert processing.thread_rebuild_requested is False
 
 

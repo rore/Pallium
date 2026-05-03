@@ -133,7 +133,16 @@ def _should_reject_constraint_text(constraint_text: str) -> bool:
 
 
 def deterministic_extraction(source_item: SourceItem) -> SemanticExtraction:
-    return SemanticExtraction(summary=summarize_content(source_item.content))
+    summary = summarize_content(source_item.content)
+    content_lower = source_item.content.lower()
+    if "decided" in content_lower or "decision" in content_lower:
+        return SemanticExtraction(
+            summary=summary,
+            candidate_type="decision",
+            decision_text=summary,
+            decision_evidence_text=source_item.content[:300],
+        )
+    return SemanticExtraction(summary=summary)
 
 
 def _looks_like_markdown_table_cell(text: str) -> bool:
@@ -451,43 +460,6 @@ def _build_interest_result(
     return memory_object, index_source
 
 
-def _build_turn_summary_result(
-    source_item: SourceItem,
-    extraction: SemanticExtraction,
-    schema_prefix: str,
-    semantic_metadata: dict[str, str] | None,
-) -> tuple[MemoryObject | None, str | None]:
-    """Terminal fallback: uses _should_create_turn_summary(), NOT candidate_type == 'turn_summary'."""
-    if not _should_create_turn_summary(source_item, extraction):
-        return None, None
-
-    memory_object = MemoryObject(
-        type="turn_summary",
-        schema_id=f"{schema_prefix}.turn_summary",
-        schema_version="v1",
-        payload={
-            "summary": extraction.summary,
-            "source_type": source_item.source_type,
-            "source_id": source_item.source_id,
-            **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
-        },
-        visibility=source_item.visibility,
-        container_ref=source_item.container_ref,
-        actor_ref=_resolve_actor_ref(source_item),
-    )
-    index_source = " ".join(
-        part
-        for part in (
-            extraction.summary,
-            extraction.constraint_text or "",
-            extraction.blocker_text or "",
-            extraction.progress_text or "",
-            extraction.next_step_text or "",
-            extraction.key_finding_text or "",
-        )
-        if part
-    )
-    return memory_object, index_source
 
 
 def build_process_result(
@@ -513,7 +485,6 @@ def build_process_result(
         lambda: _build_decision_result(source_item, extraction, decision_text, decision_evidence_text, rationale_text, schema_prefix, semantic_metadata),
         lambda: _build_investigation_result(source_item, extraction, investigation_text, investigation_evidence_text, rationale_text, key_finding_text, schema_prefix, semantic_metadata),
         lambda: _build_interest_result(source_item, extraction, schema_prefix, semantic_metadata),
-        lambda: _build_turn_summary_result(source_item, extraction, schema_prefix, semantic_metadata),
     ):
         memory_object, index_source = builder()
         if memory_object is not None:
@@ -605,12 +576,6 @@ def _is_substantive_summary(source_item: SourceItem, extraction: SemanticExtract
     return len(content_tokens_list) >= 4
 
 
-def _should_create_turn_summary(source_item: SourceItem, extraction: SemanticExtraction) -> bool:
-    if _looks_like_low_value_meta_update(extraction):
-        return False
-    if _is_selected_assistant_work_artifact(source_item, extraction):
-        return True
-    return _is_substantive_summary(source_item, extraction)
 
 
 def _should_request_thread_rebuild(

@@ -41,7 +41,7 @@ def test_processing_endpoint_includes_observability_summary_fields(client, drain
     assert response.status_code == 200
     payload = response.json()
     assert payload["failure_category"] is None
-    assert payload["memory_object_types"] == ["turn_summary"]
+    assert payload["memory_object_types"] == ["decision"]
     assert payload["thread_rebuild_requested"] is False
     assert payload["thread_rebuild_completed"] is False
     assert payload["produced_memory_provenance"]
@@ -182,8 +182,8 @@ def test_integration_debug_logging_is_opt_in(test_db_url: str, capsys) -> None:
         content="Decision: do not emit logs by default.",
         metadata=None,
         use_case="demo_agent_memory",
-        artifact_kind="assistant_output",
-        role="assistant",
+        artifact_kind="message",
+        role="user",
     )
     service.drain_processing_queue(worker_id="logging-off")
     assert service.get_item_processing(ingest.source_item_id).processing_status == "completed"
@@ -205,8 +205,8 @@ def test_integration_debug_logging_is_opt_in(test_db_url: str, capsys) -> None:
         content="Decision: emit debug logs only when explicitly enabled by the operator through the runtime configuration file and verified by the integration health check endpoint.",
         metadata=None,
         use_case="demo_agent_memory",
-        artifact_kind="assistant_output",
-        role="assistant",
+        artifact_kind="message",
+        role="user",
     )
     service_enabled.drain_processing_queue(worker_id="logging-on")
     assert service_enabled.get_item_processing(ingest_enabled.source_item_id).processing_status == "completed"

@@ -197,11 +197,6 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 default_weight=60, block_title="Thread Summary", block_text_field="summary", high_value=True,
             ),
             TypeRegistration(
-                type_name="turn_summary", layer_name="turn_summary",
-                weight_by_intent={"recall": 40, "structured_recall": 50, "work_resumption": 35, "evidence_trace": 40},
-                default_weight=40, block_title="Turn Summary", block_text_field="summary", high_value=False,
-            ),
-            TypeRegistration(
                 type_name="interest", layer_name="interest",
                 weight_by_intent={"recall": 50, "structured_recall": 50, "work_resumption": 50, "evidence_trace": 43},
                 default_weight=50, block_title="Interest", block_text_field="summary", high_value=True,

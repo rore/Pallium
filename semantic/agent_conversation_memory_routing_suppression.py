@@ -17,7 +17,7 @@ RECALL_INTENTS = frozenset({
 })
 
 WEAK_SUMMARY_QUALITIES = frozenset({"query_only", "weak", "unresolved"})
-SUMMARY_TYPES = frozenset({"thread_summary", "turn_summary"})
+SUMMARY_TYPES = frozenset({"thread_summary"})
 
 
 @dataclass(frozen=True)

@@ -789,7 +789,6 @@ _SOURCE_EXPANDED_TYPES = frozenset({
     "investigation_outcome",
     "decision",
     "task_checkpoint",
-    "turn_summary",
 })
 
 
@@ -923,12 +922,12 @@ def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) ->
             memory_type=item.type,
             memory_object_id=mo_id,
         )
-    if item.type in {"thread_summary", "turn_summary"}:
+    if item.type in {"thread_summary"}:
         summary_text = str(payload.get("summary") or "").strip()
         return InjectableBlock(
             result_id=str(item.result_id),
             block_type="memory",
-            title="Thread Summary" if item.type == "thread_summary" else "Turn Summary",
+            title="Thread Summary",
             text=summary_text,
             evidence=item.evidence,
             memory_type=item.type,
@@ -1114,7 +1113,7 @@ def _candidate_qualifies_as_same_thread_local_state(
             return True, ""
         return False, "weak_same_thread_structured_state"
 
-    if item.type in {"thread_summary", "turn_summary"}:
+    if item.type in {"thread_summary"}:
         payload = item.payload or {}
         summary_text = str(payload.get("summary") or "").strip()
         summary_rejection = _summary_low_value_reason(
@@ -1397,8 +1396,6 @@ def _candidate_is_injection_eligible(
         return False
     if item.type in {"decision", "investigation_outcome", "task_checkpoint", "continuity_memory", "pattern_memory", "interest", "thread_summary", CONSTRAINT_MEMORY_TYPE}:
         return True
-    if item.type == "turn_summary":
-        return allow_discussion_fallback
     return False
 
 def _candidate_is_low_value(candidate: dict[str, object]) -> bool:
@@ -1407,7 +1404,7 @@ def _candidate_is_low_value(candidate: dict[str, object]) -> bool:
     if item.result_kind == "source_hit":
         excerpt = str(item.excerpt or "")
         return _is_low_value_meta_text(excerpt)
-    if item.type in {"turn_summary", "thread_summary"}:
+    if item.type in {"thread_summary"}:
         payload = item.payload or {}
         return _is_low_value_meta_text(str(payload.get("summary") or ""))
     return False

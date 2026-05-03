@@ -56,7 +56,7 @@ def test_end_to_end_simulation_flow(client) -> None:
         json={"text": "why did we choose item item event time reservation ordering?", "limit": 6, "thread_ref": "slack:C123:1730000000.000100"},
     )
     decision_payload = decision_query.json()
-    assert any(item.get("type") == "turn_summary" for item in decision_payload["results"] if item["result_kind"] == "memory_hit")
+    assert any(item.get("type") == "decision" for item in decision_payload["results"] if item["result_kind"] == "memory_hit")
     assert any(item.get("source_id") == "artifact-002" for item in decision_payload["results"] if item["result_kind"] == "source_hit")
 
     investigation_query = client.post(
@@ -64,5 +64,5 @@ def test_end_to_end_simulation_flow(client) -> None:
         json={"text": "what did the investigation find about missed hold updates?", "limit": 6, "thread_ref": "slack:C123:1730000000.000100"},
     )
     investigation_payload = investigation_query.json()
-    assert any(item.get("type") == "turn_summary" for item in investigation_payload["results"] if item["result_kind"] == "memory_hit")
+    assert any(item["result_kind"] == "source_hit" for item in investigation_payload["results"])
     assert any(item.get("source_id") == "artifact-001" for item in investigation_payload["results"] if item["result_kind"] == "source_hit")

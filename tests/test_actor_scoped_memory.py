@@ -99,9 +99,9 @@ def test_interest_not_created_in_public_container(monkeypatch, test_db_url: str)
         )
         # Should have a turn_summary instead
         discussion_summaries = [m for m in active_memories if m.type == "turn_summary"]
-        assert discussion_summaries, (
-            f"Expected turn_summary as fallback, but only found: "
-            f"{[m.type for m in active_memories]}"
+        assert not discussion_summaries, (
+            f"turn_summary should not be created (extraction disabled), "
+            f"but found: {[m.payload for m in discussion_summaries]}"
         )
 
 
@@ -546,30 +546,12 @@ def test_interest_fallthrough_in_shared_container_creates_shared_turn_summary(mo
             "Interest should not be created in public container"
         )
 
-        # turn_summary must be created as fallback
+        # turn_summary extraction is disabled — nothing should be created as fallback
         discussion_summaries = [m for m in active_memories if m.type == "turn_summary"]
-        assert discussion_summaries, "Expected turn_summary as fallback for interest"
-
-        # The turn_summary must be shared (actor_ref=None)
-        for ds in discussion_summaries:
-            assert ds.actor_ref is None, (
-                f"turn_summary in shared container should have actor_ref=None, "
-                f"got {ds.actor_ref}"
-            )
-            assert ds.visibility == "public", (
-                f"turn_summary should inherit visibility=public, got {ds.visibility}"
-            )
-
-        # User A (the creator) can see their own turn_summary
-        query_a = client.post("/query", json={
-            "text": "what was said about chroma?",
-            "limit": 10,
-            "container_ref": CONTAINER_PUBLIC,
-            "visibility": "public",
-            "actor_ref": ACTOR_A,
-        })
-        assert query_a.status_code == 200
-        assert query_a.json()["results"], "Creator should see their own turn_summary"
+        assert not discussion_summaries, (
+            f"turn_summary should not be created (extraction disabled), "
+            f"but found: {[m.payload for m in discussion_summaries]}"
+        )
 
 
 def test_shared_memory_visible_to_other_user_through_evidence_path(monkeypatch, test_db_url: str) -> None:

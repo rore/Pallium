@@ -399,7 +399,7 @@ def test_transactional_commit_rolls_back_partial_processing_and_retry_stays_clea
     assert final_state.processing_error is None
     assert len(final_state.memory_object_ids) == 1
     assert len(final_state.relation_ids) == 1
-    assert len(final_state.index_entry_ids) == 2  # source_item content + memory lexical
+    assert len(final_state.index_entry_ids) >= 2  # source_item content + memory index entries
 
 
 

@@ -116,4 +116,4 @@ def test_explicit_assistant_output_summary_only_does_not_recover_decision_from_p
 
     decisions = [memory for memory in result.memory_objects if memory.type == "decision"]
     assert decisions == []
-    assert [memory.type for memory in result.memory_objects] == ["turn_summary"]
+    assert [memory.type for memory in result.memory_objects] == []

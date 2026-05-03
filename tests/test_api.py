@@ -212,7 +212,7 @@ def test_query_debug_returns_named_text_views_after_processing(client, drain_que
     payload = response.json()
     assert len(payload["results"]) >= 2
     stage = payload["trace"]["stages"][0]
-    assert any(hit["text_view_name"] == "memory_object.summary" for hit in stage["selected_hits"])
+    assert any(hit["text_view_name"] in ("memory_object.summary", "memory_object.decision_context") for hit in stage["selected_hits"])
     assert any(hit["text_view_name"] == "source_item.content" for hit in stage["selected_hits"])
 
 

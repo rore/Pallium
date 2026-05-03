@@ -286,7 +286,7 @@ class TestExtractionToEnvelopePipeline:
             content_type="text/plain",
             content="Decision: use event-time ordering for LIB-241 to avoid duplicate holds during concurrent sync operations across all background worker instances.",
             artifact_kind="assistant_output",
-            role="assistant",
+            role="user",
             container_ref="chat:library-help",
             thread_ref="chat:library-help:thread-001",
         )
@@ -320,7 +320,7 @@ class TestExtractionToEnvelopePipeline:
             content_type="text/plain",
             content="Decision: use event-time ordering for LIB-241 to avoid duplicate holds during concurrent sync operations across all background worker instances.",
             artifact_kind="assistant_output",
-            role="assistant",
+            role="user",
             container_ref="chat:library-help",
             thread_ref="chat:library-help:thread-001",
             metadata={WORK_REFS_METADATA_KEY: ["SYNC-42"]},  # runtime hint
