@@ -36,7 +36,6 @@ from semantic.agent_conversation_memory_routing_constants import (
     _candidate_matches_work_ref,
     _candidate_work_refs,
     _result_layer,
-    _routing_query_tokens,
     _routing_result_id,
     _routing_support_grade,
 )
@@ -189,100 +188,48 @@ def _query_family_query_shape_score(
         reasons.append("same_thread_runtime")
     return score, reasons
 
-def _summarize_query_family_candidates(
+def _accumulate_layer_stats(
+    item: QueryResultItem,
     *,
-    retrieved_candidates: list[QueryResultItem],
-    query_text: str,
-    query_tokens: tuple[str, ...],
+    layer: str,
     query_filters: QueryFilters | None,
-) -> dict[str, object]:
-    layer_support: dict[str, dict[str, object]] = {}
-    continuity_candidates: list[dict[str, object]] = []
-    for item in retrieved_candidates:
-        layer = _result_layer(item)
-        support_score = _candidate_evidence_shape_score(
-            item,
-            layer=layer,
-            query_filters=query_filters,
-        )
-        same_thread = _candidate_matches_thread(item, query_filters)
-        same_container = _candidate_matches_container(item, query_filters)
-        work_signal_types = _work_resumption_signal_types(item)
-        work_usefulness, work_reasons = _work_resumption_usefulness_score(item, work_signal_types)
-        if _source_hit_matches_current_query_text(item, query_text=query_text, query_filters=query_filters):
-            continue
-        has_rationale = _candidate_has_rationale(item)
-        has_explicit_evidence = _candidate_has_explicit_evidence(item)
-        stats = layer_support.setdefault(
-            layer,
-            {
-                "count": 0,
-                "best_support": 0,
-                "same_thread_hits": 0,
-                "same_container_hits": 0,
-                "evidence_hits": 0,
-                "rationale_hits": 0,
-                "best_work_usefulness": 0,
-                "best_content_overlap_count": 0,
-                "best_content_overlap_tokens": [],
-                "best_result_id": None,
-                "strong_candidate": False,
-                "sharp_candidate": False,
-                "dominant_work_signals": [],
-            },
-        )
-        stats["count"] = int(stats["count"]) + 1
-        stats["same_thread_hits"] = int(stats["same_thread_hits"]) + int(same_thread)
-        stats["same_container_hits"] = int(stats["same_container_hits"]) + int(same_container)
-        stats["evidence_hits"] = int(stats["evidence_hits"]) + int(has_explicit_evidence or bool(item.evidence))
-        stats["rationale_hits"] = int(stats["rationale_hits"]) + int(has_rationale)
-        candidate_is_strong = _routing_support_grade(support_score) in {"supported", "strong"}
-        if layer == "continuity_memory":
-            continuity_candidates.append(
-                {
-                    "result_id": _routing_result_id(item),
-                    "support": support_score,
-                    "same_thread": same_thread,
-                    "content_overlap_count": 0,
-                    "content_overlap_tokens": [],
-                    "strong_candidate": candidate_is_strong,
-                }
-            )
-        if support_score >= int(stats["best_support"]):
-            stats["best_support"] = support_score
-            stats["best_work_usefulness"] = work_usefulness
-            stats["best_content_overlap_count"] = 0
-            stats["best_content_overlap_tokens"] = []
-            stats["best_result_id"] = _routing_result_id(item)
-            stats["strong_candidate"] = candidate_is_strong
-            stats["sharp_candidate"] = bool(
-                ("sharp_checkpoint" in work_reasons)
-                or (layer in ROUTING_LOWER_LEVEL_EXACT_TYPES and (has_rationale or has_explicit_evidence))
-            )
-            stats["dominant_work_signals"] = list(work_signal_types[:3])
+    query_text: str,
+) -> dict[str, object] | None:
+    """Extract per-candidate signal stats. Returns None when the item should be skipped."""
+    if _source_hit_matches_current_query_text(item, query_text=query_text, query_filters=query_filters):
+        return None
+    support_score = _candidate_evidence_shape_score(item, layer=layer, query_filters=query_filters)
+    same_thread = _candidate_matches_thread(item, query_filters)
+    same_container = _candidate_matches_container(item, query_filters)
+    work_signal_types = _work_resumption_signal_types(item)
+    work_usefulness, work_reasons = _work_resumption_usefulness_score(item, work_signal_types)
+    has_rationale = _candidate_has_rationale(item)
+    has_explicit_evidence = _candidate_has_explicit_evidence(item)
+    candidate_is_strong = _routing_support_grade(support_score) in {"supported", "strong"}
+    sharp_candidate = bool(
+        ("sharp_checkpoint" in work_reasons)
+        or (layer in ROUTING_LOWER_LEVEL_EXACT_TYPES and (has_rationale or has_explicit_evidence))
+    )
+    return {
+        "support_score": support_score,
+        "same_thread": same_thread,
+        "same_container": same_container,
+        "has_rationale": has_rationale,
+        "has_explicit_evidence": has_explicit_evidence,
+        "has_evidence": has_explicit_evidence or bool(item.evidence),
+        "candidate_is_strong": candidate_is_strong,
+        "sharp_candidate": sharp_candidate,
+        "work_usefulness": work_usefulness,
+        "work_signal_types": work_signal_types,
+        "result_id": _routing_result_id(item),
+    }
 
-    bounded_layer_support: dict[str, dict[str, object]] = {}
-    for layer, stats in layer_support.items():
-        entry = {
-            "count": int(stats["count"]),
-            "best_support": int(stats["best_support"]),
-            "same_thread_hits": int(stats["same_thread_hits"]),
-            "same_container_hits": int(stats["same_container_hits"]),
-            "evidence_hits": int(stats["evidence_hits"]),
-            "rationale_hits": int(stats["rationale_hits"]),
-            "best_work_usefulness": int(stats["best_work_usefulness"]),
-            "best_content_overlap_count": int(stats["best_content_overlap_count"]),
-            "strong_candidate": bool(stats["strong_candidate"]),
-            "sharp_candidate": bool(stats["sharp_candidate"]),
-        }
-        if stats["best_result_id"]:
-            entry["best_result_id"] = stats["best_result_id"]
-        if stats["best_content_overlap_tokens"]:
-            entry["best_content_overlap_tokens"] = list(stats["best_content_overlap_tokens"])
-        if stats["dominant_work_signals"]:
-            entry["dominant_work_signals"] = list(stats["dominant_work_signals"])
-        bounded_layer_support[layer] = entry
 
+def _resolve_cross_thread_continuity_candidates(
+    continuity_candidates: list[dict[str, object]],
+    bounded_layer_support: dict[str, dict[str, object]],
+) -> dict[str, object] | None:
+    """Returns the best relevant cross-thread continuity candidate or None."""
     sharp_lower_level_topic_tokens = list(
         OrderedDict.fromkeys(
             token
@@ -321,7 +268,92 @@ def _summarize_query_family_candidates(
         ),
         reverse=True,
     )
-    best_relevant_cross_thread_continuity = relevant_continuity_candidates[0] if relevant_continuity_candidates else None
+    return relevant_continuity_candidates[0] if relevant_continuity_candidates else None
+
+
+def _summarize_query_family_candidates(
+    *,
+    retrieved_candidates: list[QueryResultItem],
+    query_text: str,
+    query_tokens: tuple[str, ...],
+    query_filters: QueryFilters | None,
+) -> dict[str, object]:
+    layer_support: dict[str, dict[str, object]] = {}
+    continuity_candidates: list[dict[str, object]] = []
+    for item in retrieved_candidates:
+        layer = _result_layer(item)
+        result = _accumulate_layer_stats(item, layer=layer, query_filters=query_filters, query_text=query_text)
+        if result is None:
+            continue
+        stats = layer_support.setdefault(
+            layer,
+            {
+                "count": 0,
+                "best_support": 0,
+                "same_thread_hits": 0,
+                "same_container_hits": 0,
+                "evidence_hits": 0,
+                "rationale_hits": 0,
+                "best_work_usefulness": 0,
+                "best_content_overlap_count": 0,
+                "best_content_overlap_tokens": [],
+                "best_result_id": None,
+                "strong_candidate": False,
+                "sharp_candidate": False,
+                "dominant_work_signals": [],
+            },
+        )
+        stats["count"] = int(stats["count"]) + 1
+        stats["same_thread_hits"] = int(stats["same_thread_hits"]) + int(result["same_thread"])
+        stats["same_container_hits"] = int(stats["same_container_hits"]) + int(result["same_container"])
+        stats["evidence_hits"] = int(stats["evidence_hits"]) + int(result["has_evidence"])
+        stats["rationale_hits"] = int(stats["rationale_hits"]) + int(result["has_rationale"])
+        if layer == "continuity_memory":
+            continuity_candidates.append(
+                {
+                    "result_id": result["result_id"],
+                    "support": result["support_score"],
+                    "same_thread": result["same_thread"],
+                    "content_overlap_count": 0,
+                    "content_overlap_tokens": [],
+                    "strong_candidate": result["candidate_is_strong"],
+                }
+            )
+        if result["support_score"] >= int(stats["best_support"]):
+            stats["best_support"] = result["support_score"]
+            stats["best_work_usefulness"] = result["work_usefulness"]
+            stats["best_content_overlap_count"] = 0
+            stats["best_content_overlap_tokens"] = []
+            stats["best_result_id"] = result["result_id"]
+            stats["strong_candidate"] = result["candidate_is_strong"]
+            stats["sharp_candidate"] = result["sharp_candidate"]
+            stats["dominant_work_signals"] = list(result["work_signal_types"][:3])
+
+    bounded_layer_support: dict[str, dict[str, object]] = {}
+    for layer, stats in layer_support.items():
+        entry = {
+            "count": int(stats["count"]),
+            "best_support": int(stats["best_support"]),
+            "same_thread_hits": int(stats["same_thread_hits"]),
+            "same_container_hits": int(stats["same_container_hits"]),
+            "evidence_hits": int(stats["evidence_hits"]),
+            "rationale_hits": int(stats["rationale_hits"]),
+            "best_work_usefulness": int(stats["best_work_usefulness"]),
+            "best_content_overlap_count": int(stats["best_content_overlap_count"]),
+            "strong_candidate": bool(stats["strong_candidate"]),
+            "sharp_candidate": bool(stats["sharp_candidate"]),
+        }
+        if stats["best_result_id"]:
+            entry["best_result_id"] = stats["best_result_id"]
+        if stats["best_content_overlap_tokens"]:
+            entry["best_content_overlap_tokens"] = list(stats["best_content_overlap_tokens"])
+        if stats["dominant_work_signals"]:
+            entry["dominant_work_signals"] = list(stats["dominant_work_signals"])
+        bounded_layer_support[layer] = entry
+
+    best_relevant_cross_thread_continuity = _resolve_cross_thread_continuity_candidates(
+        continuity_candidates, bounded_layer_support
+    )
     continuity_topic_alignment_tokens = list((best_relevant_cross_thread_continuity or {}).get("alignment_tokens") or [])
     relevant_cross_thread_continuity_in_scope = best_relevant_cross_thread_continuity is not None
 
