@@ -55,6 +55,7 @@ class VectorRetrievalProvider(RetrievalProvider):
         query_container_ref: str | None = None,
         include_trace: bool = False,
         require_visibility: bool = False,
+        query_actor_ref: str | None = None,
     ) -> RetrievalQueryResult:
         if require_visibility and query_container_ref is None:
             trace = None
@@ -158,7 +159,7 @@ class VectorRetrievalProvider(RetrievalProvider):
                 self._storage.get_source_item, self._storage.get_memory_object,
                 index_entry.target_kind, index_entry.target_id,
             )
-            if not is_visible(candidate_visibility, candidate_container_ref, query_container_ref, candidate_actor_ref, query_visibility=visibility):
+            if not is_visible(candidate_visibility, candidate_container_ref, query_container_ref, candidate_actor_ref, query_visibility=visibility, query_actor_ref=query_actor_ref):
                 continue
 
             hits_after_visibility += 1
