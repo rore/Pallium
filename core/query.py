@@ -121,6 +121,7 @@ class QueryExecutor:
             query_container_ref=container_ref if plugin.requires_visibility_context else None,
             include_trace=include_trace,
             require_visibility=plugin.requires_visibility_context,
+            query_actor_ref=actor_ref if plugin.requires_visibility_context else None,
         )
         if retrieval_result.trace is not None:
             retrieval_result = replace(
@@ -146,6 +147,7 @@ class QueryExecutor:
                     visibility=visibility if plugin.requires_visibility_context else None,
                     query_container_ref=container_ref if plugin.requires_visibility_context else None,
                     require_visibility=plugin.requires_visibility_context,
+                    query_actor_ref=actor_ref if plugin.requires_visibility_context else None,
                 ),
                 routing_overrides=self._routing_overrides,
                 type_registry=self._type_registry,
@@ -188,6 +190,7 @@ class QueryExecutor:
         visibility: str | None,
         query_container_ref: str | None,
         require_visibility: bool = False,
+        query_actor_ref: str | None = None,
     ):
         if require_visibility and query_container_ref is None:
             def load_candidates(*, memory_types: list[str] | None = None) -> list[QueryResultItem]:
@@ -197,7 +200,7 @@ class QueryExecutor:
         def load_candidates(*, memory_types: list[str] | None = None) -> list[QueryResultItem]:
             results: list[QueryResultItem] = []
             for memory_object in self._storage.list_memory_objects(memory_types=memory_types, lifecycle="active"):
-                if require_visibility and not is_visible(memory_object.visibility, memory_object.container_ref, query_container_ref, getattr(memory_object, 'actor_ref', None), query_visibility=visibility):
+                if require_visibility and not is_visible(memory_object.visibility, memory_object.container_ref, query_container_ref, getattr(memory_object, 'actor_ref', None), query_visibility=visibility, query_actor_ref=query_actor_ref):
                     continue
                 # Use the canonical matches_filters to stay consistent with
                 # the retrieval path (handles lifecycle, thread_ref relaxation,
