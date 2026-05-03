@@ -32,3 +32,17 @@ def test_normalize_lexical_score_zero():
 
 def test_normalize_lexical_score_accepts_int():
     assert abs(normalize_lexical_score(3) - 0.5) < 0.01
+
+
+def test_structured_recall_family_candidate_score():
+    from semantic.agent_conversation_memory_routing_scoring import _query_family_candidate_score
+    signals = {
+        "layer_support": {}, "top_layers": [], "sharp_lower_level_in_scope": False,
+        "strong_task_checkpoint_in_scope": False, "strong_source_evidence_in_scope": False,
+        "relevant_cross_thread_continuity_in_scope": False, "continuity_topic_alignment_tokens": []
+    }
+    score, reasons = _query_family_candidate_score(
+        "structured_recall", candidate_signals=signals, query_shape_tags=[], runtime_context=None
+    )
+    assert isinstance(score, int)
+    assert isinstance(reasons, list)

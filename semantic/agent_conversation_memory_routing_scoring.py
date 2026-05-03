@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import datetime
 
 from core.models import QueryFilters, QueryResultItem, QueryRuntimeContext
@@ -386,6 +387,273 @@ def _query_family_top_layer(candidate_signals: dict[str, object]) -> str:
         return "none"
     return str(top_layer.get("layer") or "none")
 
+@dataclass(frozen=True)
+class CandidateSignalBundle:
+    pattern_support: int
+    pattern_count: int
+    continuity_support: int
+    continuity_same_thread_hits: int
+    checkpoint_support: int
+    thread_summary_support: int
+    turn_summary_support: int
+    checkpoint_same_thread_hits: int
+    checkpoint_work_usefulness: int
+    source_support: int
+    source_same_thread_hits: int
+    source_evidence_hits: int
+    source_work_usefulness: int
+    decision_support: int
+    investigation_support: int
+    lower_level_support: int
+    # Derived aggregates
+    sharp_lower_level_support: int
+    sharp_lower_level_rationale_hits: int
+    sharp_lower_level_evidence_hits: int
+    sharp_lower_level_same_thread_hits: int
+    structured_recall_support: int
+    structured_summary_support: int
+    top_layer: str
+    fresh_thread_cross_thread_recall: bool
+    history_recall_with_relevant_carry_forward: bool
+    constraint_recall: bool
+    # Pre-computed scope booleans from candidate_signals
+    sharp_lower_level_in_scope: bool
+    strong_task_checkpoint_in_scope: bool
+    strong_source_evidence_in_scope: bool
+
+    @classmethod
+    def from_signals(
+        cls,
+        candidate_signals: dict[str, object],
+        query_shape_tags: list[str],
+        runtime_context: "QueryRuntimeContext | None",
+    ) -> "CandidateSignalBundle":
+        supported_floor = ROUTING_SUPPORT_THRESHOLD["supported"]
+        p_sup = _query_family_layer_metric(candidate_signals, "pattern_memory", "best_support")
+        p_cnt = _query_family_layer_metric(candidate_signals, "pattern_memory", "count")
+        cont_sup = _query_family_layer_metric(candidate_signals, "continuity_memory", "best_support")
+        cont_sth = _query_family_layer_metric(candidate_signals, "continuity_memory", "same_thread_hits")
+        ck_sup = _query_family_layer_metric(candidate_signals, "task_checkpoint", "best_support")
+        ts_sup = _query_family_layer_metric(candidate_signals, "thread_summary", "best_support")
+        tu_sup = _query_family_layer_metric(candidate_signals, "turn_summary", "best_support")
+        ck_sth = _query_family_layer_metric(candidate_signals, "task_checkpoint", "same_thread_hits")
+        ck_wu = _query_family_layer_metric(candidate_signals, "task_checkpoint", "best_work_usefulness")
+        src_sup = _query_family_layer_metric(candidate_signals, "source_evidence", "best_support")
+        src_sth = _query_family_layer_metric(candidate_signals, "source_evidence", "same_thread_hits")
+        src_eh = _query_family_layer_metric(candidate_signals, "source_evidence", "evidence_hits")
+        src_wu = _query_family_layer_metric(candidate_signals, "source_evidence", "best_work_usefulness")
+        dec_sup = _query_family_layer_metric(candidate_signals, "decision", "best_support")
+        inv_sup = _query_family_layer_metric(candidate_signals, "investigation_outcome", "best_support")
+        ll_sup = _query_family_layer_metric(candidate_signals, "lower_level_memory", "best_support")
+        sharp_ll = max(dec_sup, inv_sup, ll_sup)
+        sharp_rh = sum(
+            _query_family_layer_metric(candidate_signals, l, "rationale_hits")
+            for l in ("investigation_outcome", "decision", "lower_level_memory")
+        )
+        sharp_eh = sum(
+            _query_family_layer_metric(candidate_signals, l, "evidence_hits")
+            for l in ("investigation_outcome", "decision", "lower_level_memory")
+        )
+        sharp_sth = sum(
+            _query_family_layer_metric(candidate_signals, l, "same_thread_hits")
+            for l in ("investigation_outcome", "decision", "lower_level_memory")
+        )
+        struct_rec = max(p_sup, cont_sup, ck_sup, ts_sup, tu_sup, sharp_ll)
+        struct_sum = max(ck_sup, ts_sup, tu_sup)
+        top = _query_family_top_layer(candidate_signals)
+        ftctr = _runtime_context_prefers_cross_thread_recall(runtime_context)
+        hrcf = (
+            "history_lookup" in query_shape_tags
+            and bool(candidate_signals.get("relevant_cross_thread_continuity_in_scope"))
+            and sharp_ll >= supported_floor
+        )
+        cr = "constraint_recall" in query_shape_tags
+        sll_in_scope = bool(candidate_signals.get("sharp_lower_level_in_scope"))
+        stc_in_scope = bool(candidate_signals.get("strong_task_checkpoint_in_scope"))
+        sse_in_scope = bool(candidate_signals.get("strong_source_evidence_in_scope"))
+        return cls(
+            pattern_support=p_sup, pattern_count=p_cnt,
+            continuity_support=cont_sup, continuity_same_thread_hits=cont_sth,
+            checkpoint_support=ck_sup, thread_summary_support=ts_sup,
+            turn_summary_support=tu_sup, checkpoint_same_thread_hits=ck_sth,
+            checkpoint_work_usefulness=ck_wu,
+            source_support=src_sup, source_same_thread_hits=src_sth,
+            source_evidence_hits=src_eh, source_work_usefulness=src_wu,
+            decision_support=dec_sup, investigation_support=inv_sup,
+            lower_level_support=ll_sup,
+            sharp_lower_level_support=sharp_ll,
+            sharp_lower_level_rationale_hits=sharp_rh,
+            sharp_lower_level_evidence_hits=sharp_eh,
+            sharp_lower_level_same_thread_hits=sharp_sth,
+            structured_recall_support=struct_rec,
+            structured_summary_support=struct_sum,
+            top_layer=top,
+            fresh_thread_cross_thread_recall=ftctr,
+            history_recall_with_relevant_carry_forward=hrcf,
+            constraint_recall=cr,
+            sharp_lower_level_in_scope=sll_in_scope,
+            strong_task_checkpoint_in_scope=stc_in_scope,
+            strong_source_evidence_in_scope=sse_in_scope,
+        )
+
+
+def _recall_candidate_score(
+    sig: CandidateSignalBundle,
+    query_shape_tags: list[str],
+) -> tuple[int, list[str]]:
+    supported_floor = ROUTING_SUPPORT_THRESHOLD["supported"]
+    score = 0
+    reasons: list[str] = []
+    if sig.pattern_support:
+        score += sig.pattern_support + (min(sig.pattern_count, 2) * 10)
+        reasons.append("pattern_memory_support")
+    if sig.history_recall_with_relevant_carry_forward:
+        score += min(sig.continuity_support // 3, 70) + 36
+        reasons.append("cross_thread_carry_forward_support")
+    if sig.sharp_lower_level_support:
+        score += min(sig.sharp_lower_level_support, 44)
+        reasons.append("sharp_lower_level_available")
+    if sig.fresh_thread_cross_thread_recall and sig.structured_recall_support >= supported_floor:
+        score += min(sig.structured_recall_support // 2, 56)
+        reasons.append("fresh_thread_structured_memory_support")
+    if sig.structured_summary_support >= supported_floor:
+        score += min(sig.structured_summary_support // 3, 36)
+        reasons.append("structured_summary_support")
+    if sig.checkpoint_support >= supported_floor and {"history_lookup", "carry_forward"}.issubset(set(query_shape_tags)):
+        score += min(sig.checkpoint_support // 2, 72)
+        reasons.append("checkpoint_carry_forward_support")
+    if sig.fresh_thread_cross_thread_recall and "history_lookup" in query_shape_tags and sig.structured_recall_support >= supported_floor:
+        score += 28
+        reasons.append("fresh_thread_history_recall")
+    if sig.top_layer == "pattern_memory":
+        score += 12
+        reasons.append("pattern_memory_won_candidate_competition")
+    if sig.history_recall_with_relevant_carry_forward and sig.top_layer == "continuity_memory":
+        score += 18
+        reasons.append("carry_forward_memory_won_candidate_competition")
+    if sig.pattern_support and sig.pattern_support >= sig.sharp_lower_level_support:
+        score += 10
+        reasons.append("pattern_memory_beats_sharp_lower_level")
+    if sig.pattern_support < supported_floor and sig.sharp_lower_level_support > sig.pattern_support and "analysis_request" in query_shape_tags:
+        score -= 18
+        reasons.append("sharp_lower_level_outweighs_weak_pattern_memory")
+    if "evidence_request" in query_shape_tags and sig.source_support >= supported_floor:
+        score -= 84
+        reasons.append("evidence_request_outweighs_recall")
+    return score, reasons
+
+
+def _work_resumption_candidate_score(
+    sig: CandidateSignalBundle,
+    query_shape_tags: list[str],
+    runtime_context: "QueryRuntimeContext | None",
+) -> tuple[int, list[str]]:
+    supported_floor = ROUTING_SUPPORT_THRESHOLD["supported"]
+    score = 0
+    reasons: list[str] = []
+    if sig.checkpoint_support:
+        score += (sig.checkpoint_support // 2) + sig.checkpoint_work_usefulness + (sig.checkpoint_same_thread_hits * 16)
+        reasons.append("task_checkpoint_support")
+    if sig.source_work_usefulness:
+        score += min(sig.source_support // 2, 42) + sig.source_work_usefulness + (sig.source_same_thread_hits * 8)
+        reasons.append("work_state_source_support")
+    if sig.fresh_thread_cross_thread_recall and sig.checkpoint_support >= supported_floor:
+        score += min(sig.checkpoint_support // 3, 42)
+        reasons.append("fresh_thread_checkpoint_support")
+    if sig.strong_task_checkpoint_in_scope:
+        score += 16
+        reasons.append("sharp_task_checkpoint_in_scope")
+    if sig.top_layer in {"task_checkpoint", "source_evidence"}:
+        score += 8
+        reasons.append("work_state_won_candidate_competition")
+    if runtime_context is not None and runtime_context.turn_kind == "resumed_session":
+        score += 6
+        reasons.append("resumed_session_candidate_tiebreak")
+    if "resume_state" not in query_shape_tags and (runtime_context is None or runtime_context.turn_kind != "resumed_session"):
+        score -= 180
+        reasons.append("missing_resume_query_shape")
+    if sig.checkpoint_support < supported_floor and sig.source_work_usefulness < 18:
+        score -= 20
+        reasons.append("weak_resumption_state_support")
+    if sig.fresh_thread_cross_thread_recall and "history_lookup" in query_shape_tags and "resume_state" not in query_shape_tags:
+        score -= 56
+        reasons.append("history_lookup_outweighs_resume_state")
+    return score, reasons
+
+
+def _evidence_trace_candidate_score(
+    sig: CandidateSignalBundle,
+    query_shape_tags: list[str],
+) -> tuple[int, list[str]]:
+    supported_floor = ROUTING_SUPPORT_THRESHOLD["supported"]
+    score = 0
+    reasons: list[str] = []
+    if sig.source_support:
+        score += (sig.source_support // 2) + (sig.source_evidence_hits * 10)
+        reasons.append("source_evidence_support")
+    if sig.strong_source_evidence_in_scope:
+        score += 14
+        reasons.append("sharp_source_evidence_in_scope")
+    if sig.sharp_lower_level_evidence_hits:
+        score += sig.sharp_lower_level_evidence_hits * 8
+        reasons.append("lower_level_evidence_available")
+    if sig.top_layer == "source_evidence":
+        score += 12
+        reasons.append("source_evidence_won_candidate_competition")
+    if sig.source_support < supported_floor:
+        score -= 16
+        reasons.append("weak_source_evidence_support")
+    if sig.checkpoint_support > sig.source_support + 20 and "resume_state" in query_shape_tags:
+        score -= 18
+        reasons.append("checkpoint_state_outweighs_weak_source_evidence")
+    if sig.fresh_thread_cross_thread_recall and sig.structured_recall_support >= max(sig.source_support, supported_floor) and "evidence_request" not in query_shape_tags:
+        score -= 72
+        reasons.append("structured_recall_outweighs_source_evidence")
+    if {"history_lookup", "carry_forward"}.issubset(set(query_shape_tags)) and sig.checkpoint_support >= supported_floor and "evidence_request" not in query_shape_tags:
+        score -= 84
+        reasons.append("checkpoint_carry_forward_outweighs_evidence_trace")
+    if ("history_lookup" in query_shape_tags or sig.constraint_recall) and sig.structured_summary_support >= supported_floor and "evidence_request" not in query_shape_tags:
+        score -= 54
+        reasons.append("history_lookup_outweighs_evidence_trace")
+    return score, reasons
+
+
+def _structured_recall_candidate_score(
+    sig: CandidateSignalBundle,
+    query_shape_tags: list[str],
+) -> tuple[int, list[str]]:
+    supported_floor = ROUTING_SUPPORT_THRESHOLD["supported"]
+    score = 0
+    reasons: list[str] = []
+    if sig.sharp_lower_level_support:
+        score += (sig.sharp_lower_level_support // 2) + (sig.sharp_lower_level_rationale_hits * 12) + (sig.sharp_lower_level_evidence_hits * 8) + (sig.sharp_lower_level_same_thread_hits * 10)
+        reasons.append("sharp_lower_level_support")
+    if sig.sharp_lower_level_in_scope:
+        score += 14
+        reasons.append("sharp_lower_level_in_scope")
+    if sig.source_support:
+        score += min(sig.source_support // 2, 32)
+        reasons.append("supporting_source_evidence_available")
+    if sig.top_layer in {"investigation_outcome", "decision", "lower_level_memory"}:
+        score += 10
+        reasons.append("sharp_lower_level_won_candidate_competition")
+    if sig.sharp_lower_level_support < supported_floor:
+        score -= 16
+        reasons.append("weak_investigative_support")
+    if sig.pattern_support >= sig.sharp_lower_level_support and "big_picture" in query_shape_tags:
+        score -= 18
+        reasons.append("pattern_memory_outweighs_sharp_conclusion")
+    return score, reasons
+
+
+_FAMILY_CANDIDATE_SCORERS = {
+    "recall": lambda sig, tags, ctx: _recall_candidate_score(sig, tags),
+    "work_resumption": lambda sig, tags, ctx: _work_resumption_candidate_score(sig, tags, ctx),
+    "evidence_trace": lambda sig, tags, ctx: _evidence_trace_candidate_score(sig, tags),
+    "structured_recall": lambda sig, tags, ctx: _structured_recall_candidate_score(sig, tags),
+}
+
+
 def _query_family_candidate_score(
     family: str,
     *,
@@ -393,174 +661,11 @@ def _query_family_candidate_score(
     query_shape_tags: list[str],
     runtime_context: QueryRuntimeContext | None,
 ) -> tuple[int, list[str]]:
-    pattern_support = _query_family_layer_metric(candidate_signals, "pattern_memory", "best_support")
-    pattern_count = _query_family_layer_metric(candidate_signals, "pattern_memory", "count")
-    continuity_support = _query_family_layer_metric(candidate_signals, "continuity_memory", "best_support")
-    continuity_same_thread_hits = _query_family_layer_metric(candidate_signals, "continuity_memory", "same_thread_hits")
-    checkpoint_support = _query_family_layer_metric(candidate_signals, "task_checkpoint", "best_support")
-    thread_summary_support = _query_family_layer_metric(candidate_signals, "thread_summary", "best_support")
-    turn_summary_support = _query_family_layer_metric(candidate_signals, "turn_summary", "best_support")
-    checkpoint_same_thread_hits = _query_family_layer_metric(candidate_signals, "task_checkpoint", "same_thread_hits")
-    checkpoint_work_usefulness = _query_family_layer_metric(candidate_signals, "task_checkpoint", "best_work_usefulness")
-    source_support = _query_family_layer_metric(candidate_signals, "source_evidence", "best_support")
-    source_same_thread_hits = _query_family_layer_metric(candidate_signals, "source_evidence", "same_thread_hits")
-    source_evidence_hits = _query_family_layer_metric(candidate_signals, "source_evidence", "evidence_hits")
-    source_work_usefulness = _query_family_layer_metric(candidate_signals, "source_evidence", "best_work_usefulness")
-    decision_support = _query_family_layer_metric(candidate_signals, "decision", "best_support")
-    investigation_support = _query_family_layer_metric(candidate_signals, "investigation_outcome", "best_support")
-    lower_level_support = _query_family_layer_metric(candidate_signals, "lower_level_memory", "best_support")
-    sharp_lower_level_support = max(decision_support, investigation_support, lower_level_support)
-    sharp_lower_level_rationale_hits = sum(
-        _query_family_layer_metric(candidate_signals, layer, "rationale_hits")
-        for layer in ("investigation_outcome", "decision", "lower_level_memory")
-    )
-    sharp_lower_level_evidence_hits = sum(
-        _query_family_layer_metric(candidate_signals, layer, "evidence_hits")
-        for layer in ("investigation_outcome", "decision", "lower_level_memory")
-    )
-    sharp_lower_level_same_thread_hits = sum(
-        _query_family_layer_metric(candidate_signals, layer, "same_thread_hits")
-        for layer in ("investigation_outcome", "decision", "lower_level_memory")
-    )
-    top_layer = _query_family_top_layer(candidate_signals)
-    supported_floor = ROUTING_SUPPORT_THRESHOLD["supported"]
-    structured_recall_support = max(
-        pattern_support,
-        continuity_support,
-        checkpoint_support,
-        thread_summary_support,
-        turn_summary_support,
-        sharp_lower_level_support,
-    )
-    fresh_thread_cross_thread_recall = _runtime_context_prefers_cross_thread_recall(runtime_context)
-    history_recall_with_relevant_carry_forward = (
-        "history_lookup" in query_shape_tags
-        and bool(candidate_signals.get("relevant_cross_thread_continuity_in_scope"))
-        and sharp_lower_level_support >= supported_floor
-    )
-    constraint_recall = "constraint_recall" in query_shape_tags
-    structured_summary_support = max(checkpoint_support, thread_summary_support, turn_summary_support)
-    score = 0
-    reasons: list[str] = []
-
-    if family == "recall":
-        if pattern_support:
-            score += pattern_support + (min(pattern_count, 2) * 10)
-            reasons.append("pattern_memory_support")
-        if history_recall_with_relevant_carry_forward:
-            score += min(continuity_support // 3, 70) + 36
-            reasons.append("cross_thread_carry_forward_support")
-        if sharp_lower_level_support:
-            score += min(sharp_lower_level_support, 44)
-            reasons.append("sharp_lower_level_available")
-        if fresh_thread_cross_thread_recall and structured_recall_support >= supported_floor:
-            score += min(structured_recall_support // 2, 56)
-            reasons.append("fresh_thread_structured_memory_support")
-        if structured_summary_support >= supported_floor:
-            score += min(structured_summary_support // 3, 36)
-            reasons.append("structured_summary_support")
-        if checkpoint_support >= supported_floor and {"history_lookup", "carry_forward"}.issubset(set(query_shape_tags)):
-            score += min(checkpoint_support // 2, 72)
-            reasons.append("checkpoint_carry_forward_support")
-        if fresh_thread_cross_thread_recall and "history_lookup" in query_shape_tags and structured_recall_support >= supported_floor:
-            score += 28
-            reasons.append("fresh_thread_history_recall")
-        if top_layer == "pattern_memory":
-            score += 12
-            reasons.append("pattern_memory_won_candidate_competition")
-        if history_recall_with_relevant_carry_forward and top_layer == "continuity_memory":
-            score += 18
-            reasons.append("carry_forward_memory_won_candidate_competition")
-        if pattern_support and pattern_support >= sharp_lower_level_support:
-            score += 10
-            reasons.append("pattern_memory_beats_sharp_lower_level")
-        if pattern_support < supported_floor and sharp_lower_level_support > pattern_support and "analysis_request" in query_shape_tags:
-            score -= 18
-            reasons.append("sharp_lower_level_outweighs_weak_pattern_memory")
-        if "evidence_request" in query_shape_tags and source_support >= supported_floor:
-            score -= 84
-            reasons.append("evidence_request_outweighs_recall")
-        return score, reasons
-
-    if family == "work_resumption":
-        if checkpoint_support:
-            score += (checkpoint_support // 2) + checkpoint_work_usefulness + (checkpoint_same_thread_hits * 16)
-            reasons.append("task_checkpoint_support")
-        if source_work_usefulness:
-            score += min(source_support // 2, 42) + source_work_usefulness + (source_same_thread_hits * 8)
-            reasons.append("work_state_source_support")
-        if fresh_thread_cross_thread_recall and checkpoint_support >= supported_floor:
-            score += min(checkpoint_support // 3, 42)
-            reasons.append("fresh_thread_checkpoint_support")
-        if bool(candidate_signals.get("strong_task_checkpoint_in_scope")):
-            score += 16
-            reasons.append("sharp_task_checkpoint_in_scope")
-        if top_layer in {"task_checkpoint", "source_evidence"}:
-            score += 8
-            reasons.append("work_state_won_candidate_competition")
-        if runtime_context is not None and runtime_context.turn_kind == "resumed_session":
-            score += 6
-            reasons.append("resumed_session_candidate_tiebreak")
-        if "resume_state" not in query_shape_tags and (runtime_context is None or runtime_context.turn_kind != "resumed_session"):
-            score -= 180
-            reasons.append("missing_resume_query_shape")
-        if checkpoint_support < supported_floor and source_work_usefulness < 18:
-            score -= 20
-            reasons.append("weak_resumption_state_support")
-        if fresh_thread_cross_thread_recall and "history_lookup" in query_shape_tags and "resume_state" not in query_shape_tags:
-            score -= 56
-            reasons.append("history_lookup_outweighs_resume_state")
-        return score, reasons
-
-    if family == "evidence_trace":
-        if source_support:
-            score += (source_support // 2) + (source_evidence_hits * 10)
-            reasons.append("source_evidence_support")
-        if bool(candidate_signals.get("strong_source_evidence_in_scope")):
-            score += 14
-            reasons.append("sharp_source_evidence_in_scope")
-        if sharp_lower_level_evidence_hits:
-            score += sharp_lower_level_evidence_hits * 8
-            reasons.append("lower_level_evidence_available")
-        if top_layer == "source_evidence":
-            score += 12
-            reasons.append("source_evidence_won_candidate_competition")
-        if source_support < supported_floor:
-            score -= 16
-            reasons.append("weak_source_evidence_support")
-        if checkpoint_support > source_support + 20 and "resume_state" in query_shape_tags:
-            score -= 18
-            reasons.append("checkpoint_state_outweighs_weak_source_evidence")
-        if fresh_thread_cross_thread_recall and structured_recall_support >= max(source_support, supported_floor) and "evidence_request" not in query_shape_tags:
-            score -= 72
-            reasons.append("structured_recall_outweighs_source_evidence")
-        if {"history_lookup", "carry_forward"}.issubset(set(query_shape_tags)) and checkpoint_support >= supported_floor and "evidence_request" not in query_shape_tags:
-            score -= 84
-            reasons.append("checkpoint_carry_forward_outweighs_evidence_trace")
-        if ("history_lookup" in query_shape_tags or constraint_recall) and structured_summary_support >= supported_floor and "evidence_request" not in query_shape_tags:
-            score -= 54
-            reasons.append("history_lookup_outweighs_evidence_trace")
-        return score, reasons
-
-    if sharp_lower_level_support:
-        score += (sharp_lower_level_support // 2) + (sharp_lower_level_rationale_hits * 12) + (sharp_lower_level_evidence_hits * 8) + (sharp_lower_level_same_thread_hits * 10)
-        reasons.append("sharp_lower_level_support")
-    if bool(candidate_signals.get("sharp_lower_level_in_scope")):
-        score += 14
-        reasons.append("sharp_lower_level_in_scope")
-    if source_support:
-        score += min(source_support // 2, 32)
-        reasons.append("supporting_source_evidence_available")
-    if top_layer in {"investigation_outcome", "decision", "lower_level_memory"}:
-        score += 10
-        reasons.append("sharp_lower_level_won_candidate_competition")
-    if sharp_lower_level_support < supported_floor:
-        score -= 16
-        reasons.append("weak_investigative_support")
-    if pattern_support >= sharp_lower_level_support and "big_picture" in query_shape_tags:
-        score -= 18
-        reasons.append("pattern_memory_outweighs_sharp_conclusion")
-    return score, reasons
+    sig = CandidateSignalBundle.from_signals(candidate_signals, query_shape_tags, runtime_context)
+    scorer = _FAMILY_CANDIDATE_SCORERS.get(family)
+    if scorer is not None:
+        return scorer(sig, query_shape_tags, runtime_context)
+    return _structured_recall_candidate_score(sig, query_shape_tags)
 
 
 # ---------------------------------------------------------------------------
