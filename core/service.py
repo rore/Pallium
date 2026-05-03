@@ -699,6 +699,7 @@ class PalliumService:
                 item = self._storage.get_source_item(ref.source_item_id)
             except KeyError:
                 continue
-            if is_visible(item.visibility, item.container_ref, effective_container, item.actor_ref, query_actor_ref=query_actor_ref):
+            effective_actor_ref = query_actor_ref or memory_object.actor_ref
+            if is_visible(item.visibility, item.container_ref, effective_container, item.actor_ref, query_actor_ref=effective_actor_ref):
                 items.append(item)
         return items
