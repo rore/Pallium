@@ -409,3 +409,63 @@ def test_debug_sharp_candidate_diagnostics_do_not_leak_hidden_candidates(monkeyp
         assert diagnostics
         # Diagnostics should only include items that are in scope (visible to the query)
         assert all(entry["result_id"] in visible_result_ids for entry in diagnostics)
+
+
+def test_is_visible_global_same_actor_any_container() -> None:
+    """Global memory visible to same actor regardless of container."""
+    from core.visibility import is_visible
+
+    # Different containers, same actor → visible
+    assert is_visible("global", "container-a", "container-b", candidate_actor_ref="alice", query_actor_ref="alice") is True
+    # Same container, same actor → visible
+    assert is_visible("global", "container-a", "container-a", candidate_actor_ref="alice", query_actor_ref="alice") is True
+    # No container on candidate, same actor → visible
+    assert is_visible("global", None, "container-b", candidate_actor_ref="alice", query_actor_ref="alice") is True
+
+
+def test_is_visible_global_same_actor_same_container() -> None:
+    """Global memory in same container still visible to same actor."""
+    from core.visibility import is_visible
+
+    assert is_visible("global", "container-a", "container-a", candidate_actor_ref="bob", query_actor_ref="bob") is True
+
+
+def test_is_visible_global_different_actor() -> None:
+    """Global memory NOT visible to a different actor."""
+    from core.visibility import is_visible
+
+    assert is_visible("global", "container-a", "container-b", candidate_actor_ref="alice", query_actor_ref="bob") is False
+    assert is_visible("global", "container-a", "container-a", candidate_actor_ref="alice", query_actor_ref="bob") is False
+
+
+def test_is_visible_global_missing_query_actor() -> None:
+    """Global memory NOT visible when query has no actor (fail-closed)."""
+    from core.visibility import is_visible
+
+    assert is_visible("global", "container-a", "container-b", candidate_actor_ref="alice", query_actor_ref=None) is False
+    assert is_visible("global", "container-a", "container-b", candidate_actor_ref="alice") is False  # default None
+
+
+def test_is_visible_global_missing_candidate_actor() -> None:
+    """Global memory NOT visible when candidate has no actor (malformed data)."""
+    from core.visibility import is_visible
+
+    assert is_visible("global", "container-a", "container-b", candidate_actor_ref=None, query_actor_ref="alice") is False
+
+
+def test_is_visible_global_no_container_ref_no_actor() -> None:
+    """Global with no query_container_ref AND no query_actor_ref → False (breaks 'see everything' convention)."""
+    from core.visibility import is_visible
+
+    # Without query_container_ref, non-global items pass through. Global still requires actor.
+    assert is_visible("global", "container-a", None, candidate_actor_ref="alice", query_actor_ref=None) is False
+    assert is_visible("global", "container-a", None, candidate_actor_ref="alice") is False
+
+
+def test_is_visible_global_no_container_ref_with_actor() -> None:
+    """Global with no query_container_ref but with matching actor → True."""
+    from core.visibility import is_visible
+
+    assert is_visible("global", "container-a", None, candidate_actor_ref="alice", query_actor_ref="alice") is True
+    # Different actor → False even with no container
+    assert is_visible("global", "container-a", None, candidate_actor_ref="alice", query_actor_ref="bob") is False

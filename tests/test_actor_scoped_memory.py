@@ -942,3 +942,63 @@ def test_query_with_actor_ref_excludes_other_actors_source_items(monkeypatch, te
                     f"Actor A's query should not return actor B's source item: "
                     f"source_id={result.get('source_id')}"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Global visibility filter exemption tests
+# ---------------------------------------------------------------------------
+
+
+def test_source_item_matches_filters_global_crosses_container() -> None:
+    """Global source items pass container_ref filter (not excluded cross-container)."""
+    from core.filters import source_item_matches_filters
+    from core.models import QueryFilters, SourceItem
+
+    item = SourceItem(
+        source_type="chat_message",
+        source_id="src-1",
+        content_type="text/plain",
+        content="test content",
+        role="user",
+        container_ref="container-a",
+        visibility="global",
+        actor_ref="alice",
+    )
+    filters = QueryFilters(container_ref="container-b")
+    assert source_item_matches_filters(item, filters) is True
+
+
+def test_evidence_matches_filters_global_crosses_container() -> None:
+    """Global evidence passes container_ref filter (not excluded cross-container)."""
+    from core.filters import evidence_matches_filters
+    from core.models import EvidenceReference, QueryFilters
+
+    evidence = EvidenceReference(
+        source_item_id="si-1",
+        source_type="chat_message",
+        source_id="src-1",
+        role="user",
+        container_ref="container-a",
+        visibility="global",
+        actor_ref="alice",
+    )
+    filters = QueryFilters(container_ref="container-b")
+    assert evidence_matches_filters(evidence, filters) is True
+
+
+def test_source_item_matches_filters_private_still_blocked() -> None:
+    """Private source items still rejected cross-container (regression guard)."""
+    from core.filters import source_item_matches_filters
+    from core.models import QueryFilters, SourceItem
+
+    item = SourceItem(
+        source_type="chat_message",
+        source_id="src-1",
+        content_type="text/plain",
+        content="test content",
+        role="user",
+        container_ref="container-a",
+        visibility="private",
+    )
+    filters = QueryFilters(container_ref="container-b")
+    assert source_item_matches_filters(item, filters) is False
