@@ -689,40 +689,52 @@ def _locality_adjustment(
         return 0
     return -60
 
-def _specificity_bonus(item: QueryResultItem, intent: str) -> int:
+def _specificity_bonus_memory_hit(item: QueryResultItem, intent: str) -> int:
     bonus = 0
-    if item.result_kind == "memory_hit" and item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+    if item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
         if intent == "structured_recall":
             bonus += 48 if item.type == "investigation_outcome" else 40
         elif intent == "evidence_trace":
             bonus += 25 if item.type == "decision" else 23
         else:
             bonus += 10
-    if item.result_kind == "memory_hit" and item.type in ROUTING_SUMMARY_TYPES and intent in {"structured_recall", "evidence_trace"}:
+    if item.type in ROUTING_SUMMARY_TYPES and intent in {"structured_recall", "evidence_trace"}:
         bonus -= 20
-    if item.result_kind == "memory_hit" and item.type == "thread_summary" and intent == "work_resumption":
+    if item.type == "thread_summary" and intent == "work_resumption":
         if _memory_hit_has_selected_work_artifacts(item):
             bonus += 18
-    if item.result_kind == "memory_hit" and item.type == "task_checkpoint":
+    if item.type == "task_checkpoint":
         if intent == "work_resumption":
             bonus += 28
         elif intent in {"structured_recall", "evidence_trace"}:
             bonus -= 18
-    if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "recall":
+    if item.type == "continuity_memory" and intent == "recall":
         bonus += 13
-    if item.result_kind == "memory_hit" and item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES and intent == "recall":
+    if item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES and intent == "recall":
         bonus += 43 if item.type == "decision" else 38
-    if item.result_kind == "memory_hit" and item.type == "continuity_memory" and intent == "recall":
+    if item.type == "continuity_memory" and intent == "recall":
         bonus -= 23
-    if item.result_kind == "memory_hit" and item.type == "pattern_memory" and intent == "recall":
+    if item.type == "pattern_memory" and intent == "recall":
         bonus += 13
-    if item.result_kind == "source_hit" and intent == "evidence_trace":
-        bonus += 15 if item.artifact_kind == "assistant_output" else 5
-    if item.result_kind == "source_hit" and intent == "work_resumption":
-        bonus += 23 if (item.artifact_kind or "") in SELECTED_WORK_ARTIFACT_KINDS else 10
-    if item.result_kind == "source_hit" and intent == "structured_recall":
-        bonus += 3 if item.artifact_kind == "assistant_output" else 1
     return bonus
+
+
+def _specificity_bonus_source_hit(item: QueryResultItem, intent: str) -> int:
+    if intent == "evidence_trace":
+        return 15 if item.artifact_kind == "assistant_output" else 5
+    if intent == "work_resumption":
+        return 23 if (item.artifact_kind or "") in SELECTED_WORK_ARTIFACT_KINDS else 10
+    if intent == "structured_recall":
+        return 3 if item.artifact_kind == "assistant_output" else 1
+    return 0
+
+
+def _specificity_bonus(item: QueryResultItem, intent: str) -> int:
+    if item.result_kind == "memory_hit":
+        return _specificity_bonus_memory_hit(item, intent)
+    if item.result_kind == "source_hit":
+        return _specificity_bonus_source_hit(item, intent)
+    return 0
 
 
 def _higher_level_retrieval_floor_adjustment(layer: str, retrieval_score: float, quality_score: float = 0.0) -> int:
