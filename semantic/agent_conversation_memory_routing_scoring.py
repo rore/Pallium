@@ -751,74 +751,108 @@ def _higher_level_retrieval_floor_adjustment(layer: str, retrieval_score: float,
         return -160
     return 0
 
+def _base_locality_score(item: QueryResultItem, query_filters: QueryFilters | None) -> int:
+    score = min(len(item.evidence), 3) * 8
+    if _candidate_matches_thread(item, query_filters):
+        score += 12
+    elif _candidate_matches_container(item, query_filters):
+        score += 6
+    return score
+
+
+def _source_hit_shape_score(item: QueryResultItem) -> int:
+    artifact_kind = (item.artifact_kind or "").lower()
+    if artifact_kind in SELECTED_WORK_ARTIFACT_KINDS:
+        return 34
+    elif artifact_kind == "assistant_output":
+        return 28
+    return 18
+
+
+def _lower_level_exact_shape_score(item: QueryResultItem) -> int:
+    score = 42
+    payload = item.payload or {}
+    if str(payload.get("decision_evidence_text") or payload.get("investigation_evidence_text") or "").strip():
+        score += 10
+    return score
+
+
+def _task_checkpoint_shape_score(item: QueryResultItem) -> int:
+    payload = item.payload or {}
+    explicit_fields = sum(
+        1
+        for key in ("task", "current_state", "blocker_state", "next_step", "freshness_signal")
+        if str(payload.get(key) or "").strip()
+    )
+    selected_work_artifacts = payload.get("selected_work_artifacts", [])
+    artifact_count = len(selected_work_artifacts) if isinstance(selected_work_artifacts, list) else 0
+    key_findings = _parse_string_list(payload.get("key_findings"))
+    evidence_lines = _parse_string_list(payload.get("evidence"))
+    score = 18 + min(explicit_fields, 5) * 8 + min(artifact_count, 4) * 6
+    score += min(len(key_findings), 3) * 4 + min(len(evidence_lines), 3) * 5
+    if str(payload.get("blocker_state") or "").strip() and str(payload.get("next_step") or "").strip():
+        score += 10
+    freshness_text = str(payload.get("freshness_signal") or "").lower()
+    if freshness_text and any(marker in freshness_text for marker in ("latest", "current", "stale")):
+        score += 6
+    if not evidence_lines and not key_findings:
+        score -= 12
+    return score
+
+
+def _conclusions_score(item: QueryResultItem) -> int:
+    payload = item.payload or {}
+    conclusions = payload.get("conclusions", [])
+    if isinstance(conclusions, list):
+        return min(len([e for e in conclusions if isinstance(e, dict) and e.get("text")]), 3) * 8
+    return 0
+
+
+def _continuity_memory_shape_score(item: QueryResultItem) -> int:
+    payload = item.payload or {}
+    score = 18
+    if str(payload.get("carry_forward_answer") or "").strip():
+        score += 18
+    score += _conclusions_score(item)
+    return score
+
+
+def _pattern_memory_shape_score(item: QueryResultItem) -> int:
+    payload = item.payload or {}
+    score = 14
+    label = str(payload.get("pattern_label") or "").strip()
+    if label and label != "generic_pattern":
+        score += 10
+    score += _conclusions_score(item)
+    return score
+
+
+def _generic_summary_shape_score(item: QueryResultItem) -> int:
+    score = 8
+    score += _conclusions_score(item)
+    return score
+
+
 def _candidate_evidence_shape_score(
     item: QueryResultItem,
     *,
     layer: str,
     query_filters: QueryFilters | None,
 ) -> int:
-    score = 0
-    evidence_count = len(item.evidence)
-    score += min(evidence_count, 3) * 8
-    if _candidate_matches_thread(item, query_filters):
-        score += 12
-    elif _candidate_matches_container(item, query_filters):
-        score += 6
-
+    score = _base_locality_score(item, query_filters)
     if item.result_kind == "source_hit":
-        artifact_kind = (item.artifact_kind or "").lower()
-        if artifact_kind in SELECTED_WORK_ARTIFACT_KINDS:
-            score += 34
-        elif artifact_kind == "assistant_output":
-            score += 28
-        else:
-            score += 18
-        return score
-
+        return score + _source_hit_shape_score(item)
     if item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
-        score += 42
-        payload = item.payload or {}
-        if str(payload.get("decision_evidence_text") or payload.get("investigation_evidence_text") or "").strip():
-            score += 10
-        return score
-
-    payload = item.payload or {}
+        return score + _lower_level_exact_shape_score(item)
     if item.type == "task_checkpoint":
-        explicit_fields = sum(
-            1
-            for key in ("task", "current_state", "blocker_state", "next_step", "freshness_signal")
-            if str(payload.get(key) or "").strip()
-        )
-        selected_work_artifacts = payload.get("selected_work_artifacts", [])
-        artifact_count = len(selected_work_artifacts) if isinstance(selected_work_artifacts, list) else 0
-        key_findings = _parse_string_list(payload.get("key_findings"))
-        evidence_lines = _parse_string_list(payload.get("evidence"))
-        score += 18 + min(explicit_fields, 5) * 8 + min(artifact_count, 4) * 6
-        score += min(len(key_findings), 3) * 4 + min(len(evidence_lines), 3) * 5
-        if str(payload.get("blocker_state") or "").strip() and str(payload.get("next_step") or "").strip():
-            score += 10
-        freshness_text = str(payload.get("freshness_signal") or "").lower()
-        if freshness_text and any(marker in freshness_text for marker in ("latest", "current", "stale")):
-            score += 6
-        if not evidence_lines and not key_findings:
-            score -= 12
-        return score
-
+        return score + _task_checkpoint_shape_score(item)
     if item.type == "continuity_memory":
-        score += 18
-        if str(payload.get("carry_forward_answer") or "").strip():
-            score += 18
-    elif item.type == "pattern_memory":
-        score += 14
-        if str(payload.get("pattern_label") or "").strip() and str(payload.get("pattern_label") or "").strip() != "generic_pattern":
-            score += 10
-    elif item.type in ROUTING_SUMMARY_TYPES:
-        score += 8
-
-    conclusions = payload.get("conclusions", [])
-    if isinstance(conclusions, list):
-        score += min(len([entry for entry in conclusions if isinstance(entry, dict) and entry.get("text")]), 3) * 8
-    return score
+        return score + _continuity_memory_shape_score(item)
+    if item.type == "pattern_memory":
+        return score + _pattern_memory_shape_score(item)
+    if item.type in ROUTING_SUMMARY_TYPES:
+        return score + _generic_summary_shape_score(item)
+    return score + _conclusions_score(item)
 
 
 # ---------------------------------------------------------------------------
