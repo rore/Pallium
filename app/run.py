@@ -105,6 +105,10 @@ def run(args: list[str] | None = None) -> int:
     if parsed.mode == "download-embedding-model":
         return _run_download_embedding_model()
     if parsed.mode == "setup":
+        # Route to the correct setup module based on target
+        if remaining and remaining[0] == "codex":
+            from app.cli.setup_codex import main as setup_codex_main
+            return setup_codex_main(remaining[1:])
         from app.cli.setup_claude_code import main as setup_main
         return setup_main(remaining)
     if parsed.mode == "service":

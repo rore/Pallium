@@ -12,6 +12,7 @@ Start here if you're evaluating or using Pallium.
 | [Configuration](configuration.md) | Providers, packages, prompt roles, tuning knobs |
 | [Agent Integration](agent-integration.md) | Wiring Pallium into an agent runtime |
 | [Claude Code Integration](claude-code-integration.md) | Local memory sidecar for Claude Code sessions |
+| [Codex Integration](codex-integration.md) | Local memory sidecar for OpenAI Codex CLI sessions |
 | [Integration Example](integration-example.md) | Concrete Slack agent walkthrough with code |
 | [Privacy and Visibility](privacy-and-visibility.md) | Scoped memory boundaries and enforcement |
 

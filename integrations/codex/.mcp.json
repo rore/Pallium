@@ -1,0 +1,14 @@
+{
+  "mcp_servers": {
+    "pallium": {
+      "command": "pallium-mcp",
+      "args": ["--stdio"],
+      "env": {
+        "PALLIUM_MCP_TRANSPORT": "stdio",
+        "PALLIUM_BASE_URL": "http://localhost:19836"
+      },
+      "startup_timeout_sec": 10,
+      "tool_timeout_sec": 30
+    }
+  }
+}

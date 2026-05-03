@@ -1,0 +1,37 @@
+---
+name: pallium-memory
+description: Use when you need to explicitly search, store, or debug Pallium memory beyond what automatic injection provides. Triggers on: "remember this", "why don't you remember", "what do you know about", memory debugging, or when injected context is insufficient.
+---
+
+# Pallium Memory Workflow
+
+## When to use this skill
+- User asks you to remember something explicitly
+- User asks why you don't remember something
+- Injected memory context is empty but you expect it shouldn't be
+- You need to search for a specific past decision or outcome
+- You need to debug retrieval (why was something missed)
+
+## Steps
+
+1. **Identify the need**: Is this a store, search, or debug operation?
+
+2. **For storing** (user says "remember this", "save this"):
+   - Call `pallium_ingest` with the content
+   - Pass `visibility: "private"` and `container_ref`
+   - Confirm to the user what was stored
+
+3. **For searching** (user asks about past context):
+   - Call `pallium_query` with a natural-language description
+   - Pass `visibility: "private"` and `container_ref`
+   - If results have `[+source]`, call `pallium_get_evidence` for richer context
+
+4. **For debugging** (user says "why don't you remember X"):
+   - Call `pallium_query_debug` with the expected query
+   - Report: was it found but filtered? Never stored? Low relevance score?
+   - Suggest remediation (re-ingest, flag stale memory, etc.)
+
+## Do not
+- Use this skill for routine retrieval — hooks handle that automatically
+- Ingest every conversation turn — hooks already do this
+- Call pallium_query before checking if the answer is already in injected context
