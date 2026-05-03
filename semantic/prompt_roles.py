@@ -31,7 +31,7 @@ PROMPT_ROLE_CONTRACTS: dict[PromptRole, PromptRoleContract] = {
     "write_extraction": PromptRoleContract(
         role="write_extraction",
         schema_id="typed_memory_extraction",
-        schema_version="v8",
+        schema_version="v9",
         purpose="Extract bounded typed memory and semantic signals from one source item.",
         supports_abstain=True,
         abstain_outcome="null_or_empty_fields",
