@@ -37,13 +37,40 @@ Default: `"private"`.
 see each other. `visibility` controls whether items can also be seen
 from other containers.
 
+## Global Visibility
+
+`"global"` is an actor-scoped visibility level for personal memory that follows
+a user across all containers.
+
+A global item is visible if and only if the query's `actor_ref` matches the
+item's `actor_ref`. Container boundaries do not apply — the memory travels with
+the person, not the workspace. Both `actor_ref` values must be non-null; if
+either is missing the item is invisible (fail-closed).
+
+Use global for memories that are genuinely about the person regardless of where
+they work: tool preferences, workflow conventions, personal constraints. Do not
+use it for project-specific decisions or team context — those belong at
+`container` or `private` scope.
+
+**Example:** A developer tells the agent in repo A that they prefer verbose test
+output. The agent stores this with `visibility: "global"` and
+`actor_ref: "user:alice"`. Later, in repo B, a query with
+`actor_ref: "user:alice"` surfaces that preference — even though repo B is a
+completely different container.
+
+Global items are exempt from the container filter: they do not need a matching
+`container_ref` to appear in results. They still pass through actor scoping and
+routing like any other candidate.
+
 ## Retrieval Rules
 
 - query from container X sees:
   - all `container` and `private` items where `container_ref` matches X
   - all `public` shared items from any container (`actor_ref = null`)
   - `public` personal items (`actor_ref` set) only if `container_ref` matches X
-- query without `container_ref` sees only `public` items
+  - all `global` items where the query's `actor_ref` matches the item's
+    `actor_ref` (regardless of container)
+- query without `container_ref` sees `public` items and matching `global` items
 
 Personal memories do not leak across containers. A `public` item with
 `actor_ref` set is only visible from its own container. This prevents a
@@ -51,7 +78,12 @@ user's personal interest from a public channel appearing in a different
 session's context. Shared knowledge like decisions and thread summaries
 (`actor_ref = null`) flows freely across containers when public.
 
-The caller sends `container_ref` and `visibility` on ingest and
+Global items are the exception to container scoping — they follow the actor, not
+the workspace. The fail-closed requirement (both actor refs must be present and
+match) ensures that global memory is never surfaced to anonymous or mismatched
+queries.
+
+The caller sends `container_ref`, `visibility`, and `actor_ref` on ingest and
 query. Pallium applies the filtering rules.
 
 ## Actor Scoping
@@ -159,9 +191,11 @@ that enforces the visibility boundary you provide.
 The current model does not yet ship:
 
 - explicit shared-memory publication across broader visibilities
-- cross-container shared memory
 - generalized visibility narrowing or intersection logic
 - organization-level memory scoping
 - consent models for cross-user memory sharing
+- routing demotion for global items (currently treated at equal weight to
+  container-local results; future calibration may introduce a cross-container
+  penalty)
 
 Those are later design steps, not hidden behavior in the current package.

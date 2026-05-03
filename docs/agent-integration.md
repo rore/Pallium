@@ -261,12 +261,18 @@ Set `visibility` based on the communication context:
   All memories have `actor_ref = null`.
 - **Public channel / broadcast** — `"public"`. Same suppression rules as
   `"container"`.
+- **Cross-container personal memory** — `"global"`. Use for preferences or
+  constraints that should follow the user across all containers. Requires
+  `actor_ref` on both ingest and query. The memory is invisible without a
+  matching actor identity (fail-closed).
 
 When to pass `actor_ref` in queries:
 
 - Always pass it when querying on behalf of a specific user. This ensures the
   user sees their own personal memories from private containers plus shared
   evidence from any accessible container.
+- Always pass it when the user may have `global` memories. Without `actor_ref`
+  on the query, global items are invisible.
 - Omit it for system-level or admin queries where actor scoping is not needed.
 - Omit it when the integration does not track actor identity.
 

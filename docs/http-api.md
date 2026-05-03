@@ -60,8 +60,8 @@ Recommended fields for `agent_conversation_memory`:
 
 - `container_ref` — which container this item belongs to (e.g. a channel ID
   or room ID). Used for scoping, thread grouping, and visibility enforcement
-- `visibility` — who can see this item: `"public"`, `"container"`, or
-  `"private"`. Default: `"private"`. See [Common Shapes](#visibility)
+- `visibility` — who can see this item: `"public"`, `"container"`,
+  `"private"`, or `"global"`. Default: `"private"`. See [Common Shapes](#visibility)
 - `thread_ref` — which conversation thread within the container
 - `work_refs` — optional list of external work identifiers for cross-thread
   work continuity (e.g. ticket IDs, PR numbers)
@@ -324,6 +324,9 @@ The request body is the same as `POST /items`, plus optional query fields:
 
 - `query_text` — override query text (defaults to `content`)
 - `query_limit` — max results (default: 5, range: 1–50)
+- `query_actor_ref` — actor identity for query-time visibility filtering. When
+  provided, enables retrieval of `global` memories belonging to this actor.
+  Defaults to the item's `actor_ref` if not set explicitly.
 - `work_refs` — optional list of external work identifiers (same behavior as
   in `POST /query`)
 
@@ -402,7 +405,8 @@ Response:
 
 Security:
 
-- The memory object must belong to the requested `container_ref` (404 otherwise)
+- The memory object must belong to the requested `container_ref`, or have
+  `visibility: "global"` with a matching `actor_ref` (404 otherwise)
 - Each evidence item is filtered through visibility rules — private items from
   other containers are excluded
 - Returns 404 (not 403) for both missing and unauthorized access to avoid
@@ -510,6 +514,9 @@ A simple string field:
 - `"public"` — visible to queries from any container
 - `"container"` — visible only within the same `container_ref` (group context)
 - `"private"` — visible only within the same `container_ref` (personal context)
+- `"global"` — visible to queries from any container where the query's
+  `actor_ref` matches the item's `actor_ref` (actor-scoped cross-container
+  memory)
 
 Default: `"private"`.
 
