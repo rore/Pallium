@@ -285,9 +285,10 @@ def _resolve_actor_ref(source_item: SourceItem) -> str | None:
     """Determine actor_ref for a memory created from a source item.
 
     Private containers: propagate the speaker's actor_ref (personal memory).
+    Global: propagate actor_ref (required for cross-container actor gating).
     Shared containers (container/public): null (shared evidence).
     """
-    if source_item.visibility == "private":
+    if source_item.visibility in ("private", "global"):
         return source_item.actor_ref
     return None
 
