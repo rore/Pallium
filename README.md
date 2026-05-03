@@ -147,33 +147,35 @@ See [agent-integration.md](docs/agent-integration.md) for the full guide and
 [integration-example.md](docs/integration-example.md) for a Slack agent
 walkthrough.
 
-## Use with Claude Code
+## Use with Claude Code and Codex
 
-Pallium works as a **local memory layer for Claude Code** — decisions,
-findings, and context carry forward across sessions without manual copy-paste
-or `.claude/` file maintenance.
+Pallium works as a **local memory layer for Claude Code and OpenAI Codex** —
+decisions, findings, and context carry forward across sessions without manual
+copy-paste or file maintenance.
 
 ```bash
 pallium service install                     # install + start (runs at login)
-python -m app.run setup claude-code         # register hooks + MCP tools
+python -m app.run setup claude-code         # register with Claude Code
+python -m app.run setup codex              # register with Codex CLI
 ```
 
-After setup, every Claude Code session automatically:
+After setup, every session automatically:
 - receives relevant memory from past sessions on the same repo
 - ingests conversation turns for future recall
-- gives Claude tools to query, flag, or store memories explicitly
+- gives the agent tools to query, flag, or store memories explicitly
 
-One Pallium instance serves all your repos (isolated by git remote). It runs
-at login via a system service — no per-session startup needed.
+One Pallium instance serves all your repos (isolated by git remote) and both
+tools. Memory is shared across Claude Code and Codex sessions on the same
+repo — a decision captured in one is retrievable in the other.
 
 Pallium also exposes an **MCP server** (`/mcp` endpoint or standalone via
 `python -m app.run mcp`) for direct tool access from any MCP-compatible
 client. Tools: `pallium_query`, `pallium_ingest`, `pallium_get_evidence`,
 `pallium_flag_memory`, `pallium_query_debug`, `pallium_status`.
 
-See [docs/claude-code-integration.md](docs/claude-code-integration.md) for
-the full setup guide and [docs/agent-integration.md](docs/agent-integration.md)
-for MCP details.
+See [docs/claude-code-integration.md](docs/claude-code-integration.md) or
+[docs/codex-integration.md](docs/codex-integration.md) for setup guides and
+[docs/agent-integration.md](docs/agent-integration.md) for MCP details.
 
 ## Multilingual by Design
 
@@ -233,6 +235,7 @@ reproduction commands are in [docs/benchmarks.md](docs/benchmarks.md).
 **Integrating Pallium:**
 - [Agent Integration](docs/agent-integration.md) — wiring into a runtime, MCP tools
 - [Claude Code Integration](docs/claude-code-integration.md) — local memory sidecar for Claude Code
+- [Codex Integration](docs/codex-integration.md) — local memory sidecar for OpenAI Codex CLI
 - [Integration Example](docs/integration-example.md) — Slack agent walkthrough
 - [Privacy and Visibility](docs/privacy-and-visibility.md) — scoped memory boundaries
 
