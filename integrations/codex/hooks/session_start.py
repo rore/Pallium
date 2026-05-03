@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import (
+    derive_actor_ref,
     derive_container_ref,
     emit_context,
     format_injection,
@@ -27,10 +28,12 @@ def main() -> None:
 
         cwd = payload.get("cwd", ".")
         container_ref = derive_container_ref(cwd)
+        actor_ref = derive_actor_ref()
 
         response = pallium_request("POST", "/query", {
             "text": "recent decisions, progress, and open tasks",
             "container_ref": container_ref,
+            "actor_ref": actor_ref,
             "visibility": "private",
             "limit": 5,
         })
