@@ -177,13 +177,42 @@ Global memories compete with container-scoped ones in every query. The routing l
 
 **Status: Deferred.** The demotion factor requires live usage data to calibrate. The core visibility gate is implemented; scoring tuning will follow once global memories are in use and retrieval quality feedback is available.
 
-### 7. Integration Layer
+### 7. Integration Layer — Claude Code
 
-The MCP tools and hooks need a way for users to signal "remember this globally":
-- `pallium_ingest` tool: accept `visibility: "global"` when the user explicitly asks to remember something across all projects
-- Automatic extraction (hooks): must NEVER produce `global` memories — only explicit user requests
+**Hook changes (for global memories to surface in queries):**
 
-### 8. Query `actor_ref` Dual Purpose
+- `integrations/claude-code/hooks/user_prompt_submit.py` — Add `"query_actor_ref": actor_ref` to the `/item-and-query` payload. Currently `actor_ref` is sent for the ingest side but not threaded to the query as `query_actor_ref`. Without this, global memories are invisible in the hook's query response.
+- `integrations/claude-code/hooks/session_start.py` — Add `derive_actor_ref()` call and `"actor_ref": actor_ref` to the `/query` payload. Currently queries without actor_ref, so global memories will never appear at session start.
+- `integrations/claude-code/hooks/pre_compact.py` — Same fix as session_start.
+- `integrations/claude-code/hooks/stop.py` — No change. Hardcodes `visibility: "private"` for assistant turn ingestion. Must never produce global memories.
+
+**Agent instruction changes:**
+
+- `integrations/claude-code/claude_md_block.py` — Update the `pallium_ingest` instructions. Currently says:
+  ```
+  - `visibility`: "private" (all memories in this integration are private)
+  ```
+  Change to explain two valid paths:
+  - Default: `visibility: "private"` — project-scoped memory (normal case)
+  - Global: `visibility: "global"` — only when user explicitly asks to remember something across all projects. Requires `actor_ref` to be set. `container_ref` still required (provenance).
+
+### 8. Integration Layer — Codex
+
+Same structural changes as Claude Code:
+
+- `integrations/codex/hooks/user_prompt_submit.py` — Add `"query_actor_ref": actor_ref` to `/item-and-query` payload.
+- `integrations/codex/hooks/session_start.py` — Add `derive_actor_ref()` and `"actor_ref": actor_ref` to `/query` payload.
+- `integrations/codex/hooks/stop.py` — No change.
+- `integrations/codex/AGENTS.md` — Update ingest instructions to document `visibility: "global"` path alongside default `visibility: "private"`.
+- `integrations/codex/skills/pallium-memory/SKILL.md` — Add "For global storage" sub-case explaining when and how to use `visibility: "global"`.
+
+### 9. MCP Layer
+
+**No code changes needed.** The MCP server (`app/mcp/server.py`) accepts `visibility: str | None` with no validation — values are forwarded to the HTTP API where Pydantic validates against the `Visibility` literal. Once `core/visibility.py` adds `"global"` to the literal, MCP calls with `visibility="global"` will pass through cleanly.
+
+**Documentation concern:** The env var `PALLIUM_ACTOR_REF` (read in `app/mcp/context.py` via `resolve_context()`) becomes critical for global memory. If not set, `actor_ref` will be `None` in the MCP context, and any global memory ingested via MCP will be permanently invisible (fails the `candidate_actor_ref is not None` check). Integration setup docs should document this requirement.
+
+### 10. Query `actor_ref` Dual Purpose
 
 The `/query` endpoint currently has a single `actor_ref` field that serves as both a filter (in `QueryFilters.actor_ref`) and will now also serve as the `query_actor_ref` for visibility gating. The `/item-and-query` endpoint already has a separate `query_actor_ref` field.
 
@@ -249,3 +278,119 @@ This is a deliberate break from the convention. The "see everything" passthrough
 - Global memories with no actor (team-wide globals) — use existing `public + actor_ref=None` for that
 - Cross-container consolidation of global memories (dedup handled by explicit user intent; future work if needed)
 - Thread participation for global source items (they are standalone meta-instructions, not conversational content)
+
+## Testing Plan
+
+### Unit Tests (`tests/test_visibility_scope.py`)
+
+New `is_visible()` test cases:
+
+1. `test_is_visible_global_same_actor_any_container` — `visibility="global"`, `candidate_actor_ref="alice"`, `query_actor_ref="alice"`, different containers → `True`
+2. `test_is_visible_global_same_actor_same_container` — same as above but same container → `True`
+3. `test_is_visible_global_different_actor` — `query_actor_ref="bob"` → `False`
+4. `test_is_visible_global_missing_query_actor` — `query_actor_ref=None` → `False` (fail-closed)
+5. `test_is_visible_global_missing_candidate_actor` — `candidate_actor_ref=None` → `False`
+6. `test_is_visible_global_no_container_ref_no_actor` — `query_container_ref=None`, `query_actor_ref=None` → `False` (breaks the "no container = see everything" convention intentionally)
+7. `test_is_visible_global_no_container_ref_with_actor` — `query_container_ref=None`, `query_actor_ref="alice"`, matching → `True`
+
+### Unit Tests (`tests/test_actor_scoped_memory.py`)
+
+Filter tests for `core/filters.py` exemption:
+
+1. `test_source_item_matches_filters_global_crosses_container` — global source item in container A, filter with `container_ref=B` → passes filter (not excluded)
+2. `test_evidence_matches_filters_global_crosses_container` — same for evidence path
+3. `test_source_item_matches_filters_private_still_blocked` — confirm `private` items are still rejected cross-container (regression guard)
+
+### Integration Tests (`tests/test_api.py` or new file)
+
+End-to-end API tests:
+
+1. `test_ingest_global_memory_and_query_cross_container` — ingest with `visibility="global"` + `actor_ref` + `container_ref=A`, process, query from container B with same `actor_ref` → memory appears in results
+2. `test_global_memory_invisible_without_actor_ref_on_query` — same ingest, query without `actor_ref` → empty results
+3. `test_global_memory_invisible_to_different_actor` — same ingest, query with different `actor_ref` → empty results
+4. `test_global_memory_visible_in_same_container` — query from container A with same `actor_ref` → visible
+5. `test_global_does_not_appear_in_extraction` — ingest a user message, drain processing, verify no `global` visibility memories are created (only explicit ingest creates them)
+
+### MCP Tests (`tests/test_mcp_server.py`)
+
+1. `test_ingest_with_global_visibility_forwards_to_client` — call `pallium_ingest` with `visibility="global"` and `actor_ref`, verify the HTTP payload includes both values correctly
+
+### Eval Invariant Updates (`evals/generated_exploratory/invariants.py`)
+
+**Existing invariants to update:**
+
+- **INV-01 (`check_no_cross_container_leak`)** — Currently exempts `visibility == "public"`. Must also exempt `"global"` results **but only when** `result.actor_ref == query_actor_ref`. A global result from a mismatched actor IS a leak.
+- **INV-04 (`check_no_visibility_violation`)** — Same pattern: exempt `"global"` with actor match, flag `"global"` with actor mismatch as a violation.
+
+**New invariants to add:**
+
+- **INV-14 (`check_no_global_memory_without_actor`)** — Any result with `visibility="global"` must have `actor_ref != None`. A global memory without actor indicates a storage bug.
+- **INV-15 (`check_no_global_cross_actor_leak`)** — When query specifies `actor_ref=A`, no result with `visibility="global"` should have `actor_ref=B`.
+- **INV-16 (`check_global_absent_without_actor_ref`)** — When query has no `actor_ref`, no global memories should appear (fail-closed guard).
+
+### Eval Scenarios (`evals/generated_exploratory/scenarios/`)
+
+New scenario file: `global_visibility_batch.json`
+
+| # | Scenario | Validates |
+|---|----------|-----------|
+| 1 | `global-cross-container-recall` — Ingest global memory in container A (`actor_ref=X`), query from container B (`actor_ref=X`) → global memory appears | INV-14, INV-15, positive recall |
+| 2 | `global-actor-isolation` — Ingest global for actor A, query with `actor_ref=B` → not visible | INV-15 |
+| 3 | `global-no-actor-invisible` — Ingest global, query without `actor_ref` → not visible | INV-16 |
+| 4 | `global-same-container-visible` — Ingest global in container A, query from container A with matching actor → visible | Basic positive case |
+| 5 | `global-does-not-suppress-local` — Ingest global + local private on same topic, query from local container → private ranks at least as high as global | Demotion behavior |
+| 6 | `global-coexists-with-public` — Ingest global (actor=X) + public shared (no actor) on overlapping topic, query from different container with `actor_ref=X` → both appear | Verifies global and public cross-container paths are independent |
+
+### Test Priority
+
+**P0 (must pass before merge):**
+- All unit tests for `is_visible()` with global
+- Filter exemption tests
+- End-to-end ingest + cross-container query test
+- INV-14, INV-15, INV-16
+- Scenarios 1, 2, 3
+
+**P1 (should pass for quality):**
+- INV-01/INV-04 updated exemptions
+- Scenarios 4, 5, 6
+- MCP forwarding test
+- Routing demotion test (once scoring is implemented)
+
+## Summary of All Changed Files
+
+### Core (must change to unblock):
+- `core/visibility.py` — Add `"global"` to literal, add `query_actor_ref` param, add global short-circuit
+- `core/filters.py` — Exempt `"global"` from container_ref filter (lines 17, 34)
+- `core/query.py` — Thread `query_actor_ref` through to retrieval + debug candidate loader
+- `core/service.py` — Thread `query_actor_ref` through `get_memory_evidence()`
+
+### Retrieval (must change for global to be retrievable):
+- `retrieval/base.py` — Add `query_actor_ref` to `RetrievalProvider.query()` interface
+- `retrieval/composite.py` — Pass `query_actor_ref` through to sub-providers
+- `retrieval/vector.py` — Accept and pass `query_actor_ref` to `is_visible()`
+- `storage/sqlite_search.py` — Accept and pass `query_actor_ref` to `is_visible()`
+
+### Integrations (must change for end-to-end):
+- `integrations/claude-code/hooks/user_prompt_submit.py` — Add `query_actor_ref`
+- `integrations/claude-code/hooks/session_start.py` — Add `actor_ref` to query
+- `integrations/claude-code/hooks/pre_compact.py` — Add `actor_ref` to query
+- `integrations/claude-code/claude_md_block.py` — Update agent instructions
+- `integrations/codex/hooks/user_prompt_submit.py` — Add `query_actor_ref`
+- `integrations/codex/hooks/session_start.py` — Add `actor_ref` to query
+- `integrations/codex/AGENTS.md` — Update agent instructions
+- `integrations/codex/skills/pallium-memory/SKILL.md` — Add global storage instructions
+
+### No change needed:
+- `app/mcp/server.py` — Already accepts `str | None`, no validation
+- `app/mcp/client.py` — Already passes through `_scope_params()`
+- `api/schemas.py` — Auto-fixed when `Visibility` literal is updated
+- `integrations/claude-code/hooks/stop.py` — Hardcodes `"private"`, correct
+- `integrations/codex/hooks/stop.py` — Same
+
+### Tests and evals to add/update:
+- `tests/test_visibility_scope.py` — 7 new unit tests
+- `tests/test_actor_scoped_memory.py` — 3 new filter tests
+- `tests/test_api.py` (or new file) — 5 integration tests
+- `tests/test_mcp_server.py` — 1 new test
+- `evals/generated_exploratory/invariants.py` — Update INV-01, INV-04; add INV-14, INV-15, INV-16
+- `evals/generated_exploratory/scenarios/global_visibility_batch.json` — 6 scenarios
