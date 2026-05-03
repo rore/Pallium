@@ -59,7 +59,9 @@ jobs:
 `continuity_memory` and `pattern_memory` are functional but not yet fully
 product-proven — grouping and candidate selection need further hardening.
 
-A fallback `turn_summary` covers cases that don't match a specific type.
+Items that don't match any specific type produce no memory object — only
+items with clear typed signals (decisions, investigation outcomes, interests,
+constraints) create persistent memory.
 
 Every memory object stays linked to its supporting source evidence. Query
 results can include both `memory_hit` (derived context) and `source_hit`
@@ -80,13 +82,13 @@ container owner.
 **Shared containers** (`visibility = "container"` or `"public"`):
 
 Personal memory types — `interest` and `constraint_memory` — are not created.
-They fall through to `turn_summary`, preserving the statement as shared
-evidence rather than personal memory. All memories in shared containers have
+The statement remains available as source evidence but does not produce a
+personal memory object. All memories in shared containers have
 `actor_ref = null`.
 
-This means a user saying "Chroma sounds interesting" in a team channel produces
-a shared `turn_summary`, not a personal `interest` memory that could leak
-into another user's recall.
+This means a user saying "Chroma sounds interesting" in a team channel does not
+produce a personal `interest` memory that could leak into another user's recall.
+The source item is still available as evidence if queried directly.
 
 **Thread aggregation** always produces shared memories (`actor_ref = null`)
 regardless of container type. Thread summaries and task checkpoints describe the

@@ -282,7 +282,7 @@ Each result in `results[]`:
 - `type` — memory type for `memory_hit` results: `"decision"`,
   `"investigation_outcome"`, `"thread_summary"`, `"task_checkpoint"`,
   `"atomic_fact"`, `"fact_summary"`, `"interest"`, `"constraint_memory"`,
-  `"pattern_memory"`, `"continuity_memory"`, or `"turn_summary"`
+  `"pattern_memory"`, or `"continuity_memory"`
 - `memory_object_id` — ID of the memory object (for `memory_hit`)
 - `source_item_id` — ID of the source item (for `source_hit`)
 - `excerpt` — text excerpt (for `source_hit`)

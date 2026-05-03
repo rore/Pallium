@@ -36,11 +36,10 @@
   - `constraint_memory`
   - `atomic_fact` (from `conversational_knowledge`)
   - `fact_summary` (from `conversational_knowledge` consolidation, `high_value=True`)
-  - fallback `turn_summary`
 - visibility terminology: `"limited"` renamed to `"container"` (visible within this single container); `container_visibility` field renamed to `visibility`; breaking change — requires fresh DB after applying
 - actor-scoped memory and container-driven visibility rules are shipped:
   - `actor_ref` field on MemoryObject tracks who a memory is personal to
-  - personal memory types (interest, constraint_memory) are suppressed in shared containers (container/public), falling through to turn_summary
+  - personal memory types (interest, constraint_memory) are suppressed in shared containers (container/public) with no fallback extraction
   - constraint_memory has a role guard — assistant messages cannot create it
   - constraint_memory is now created directly from `constraint_text` — the structured `constraint_candidates` extraction path has been fully removed (ConstraintCandidate dataclass, prompts, output schema, parser, and downstream constants all deleted); natural-language constraints are reliably promoted
   - shared memory is visible to other users via evidence-path actor filter; multi-user test coverage added across all test layers
@@ -100,9 +99,9 @@
   - language-agnostic IDF weighting supplemented by explicit multilingual stopword sets (English + Hebrew) for edge cases IDF misses
   - prevents off-topic injection (e.g., weather query matching vector DB memories on shared function words)
 - `interest` memory kind is shipped:
-  - captures specific-but-uncommitted user interest (stronger than turn_summary, weaker than task_checkpoint)
+  - captures specific-but-uncommitted user interest (dedicated type, weaker than task_checkpoint)
   - user-only role guard — assistant messages cannot create interest
-  - suppressed in shared containers (container/public) — falls through to turn_summary
+  - suppressed in shared containers (container/public) with no fallback
   - per-item extraction with `interest_text` signal, also detected at thread aggregation level
 - processing pipeline latency optimizations are shipped:
   - worker poll interval reduced from 1.0s to 0.2s
