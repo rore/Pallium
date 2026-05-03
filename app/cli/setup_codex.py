@@ -53,7 +53,9 @@ def _hook_command(script_name: str) -> str:
 
 def _mcp_command() -> str:
     suffix = ".exe" if sys.platform == "win32" else ""
-    return str(Path(sys.executable).parent / f"pallium-mcp{suffix}").replace("\\", "/")
+    exe = sys.executable.replace("\\", "/")
+    parent = exe.rsplit("/", 1)[0] if "/" in exe else "."
+    return f"{parent}/pallium-mcp{suffix}"
 
 
 # -- TOML helpers (minimal, stdlib-only) --
