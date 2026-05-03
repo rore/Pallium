@@ -195,6 +195,23 @@ def test_codex_stop_hook_ingests_quietly(monkeypatch: pytest.MonkeyPatch) -> Non
     }
 
 
+def test_codex_transcript_parser_reads_desktop_response_item_shape(tmp_path: Path) -> None:
+    from integrations.codex.hooks.common import read_last_assistant_turn
+
+    transcript = tmp_path / "codex.jsonl"
+    transcript.write_text(
+        "\n".join([
+            '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"question"}]}}',
+            '{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{}"}}',
+            '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"first answer"}]}}',
+            '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"final answer"}]}}',
+        ]),
+        encoding="utf-8",
+    )
+
+    assert read_last_assistant_turn(str(transcript)) == "final answer"
+
+
 def test_codex_agents_block_keeps_manual_memory_tools_optional() -> None:
     agents_block = Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8")
 

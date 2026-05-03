@@ -234,7 +234,12 @@ def read_last_assistant_turn(transcript_path: str) -> str | None:
         role = None
         content = None
 
-        if "message" in entry and isinstance(entry["message"], dict):
+        if entry.get("type") == "response_item" and isinstance(entry.get("payload"), dict):
+            payload = entry["payload"]
+            if payload.get("type") == "message":
+                role = payload.get("role")
+                content = payload.get("content")
+        elif "message" in entry and isinstance(entry["message"], dict):
             role = entry["message"].get("role")
             content = entry["message"].get("content")
         elif "role" in entry:
@@ -261,7 +266,7 @@ def _extract_text_from_content(content: Any) -> str | None:
             if not isinstance(block, dict):
                 continue
             block_type = block.get("type", "")
-            if block_type == "text":
+            if block_type in {"text", "output_text", "input_text"}:
                 parts.append(block.get("text", ""))
             elif block_type == "tool_result":
                 text = block.get("text", "") or block.get("content", "")
