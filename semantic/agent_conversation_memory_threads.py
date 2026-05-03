@@ -23,7 +23,7 @@ THREAD_SUMMARY_PROMPT_SCHEMA_ID = "thread_summary_extraction"
 
 MAX_THREAD_WORK_REFS = 5
 
-THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v5"
+THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v6"
 
 THREAD_SUMMARY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "content_quality": "string", "retrieval_context": "string or null", "decisions": [{"decision_text": "string (exact quote)", "evidence": "string (exact quote)"}]}, indent=2)
 
@@ -44,6 +44,8 @@ THREAD_SUMMARY_SYSTEM_PROMPT = (
     "or null when the summary already has enough search cues. Do not restate the summary. "
     "For decisions: identify choices that were made AND committed during the thread. "
     "A decision exists when a specific approach was proposed or discussed AND then implemented, confirmed, or accepted. "
+    "Each decision must be self-contained: comprehensible when read in a different conversation weeks later with no surrounding context. "
+    "The decision_text must name WHAT was decided about — the subject or system. "
     "For each decision, decision_text and evidence must be EXACT QUOTES copied verbatim from the thread items. Do not paraphrase. "
     "Not decisions: unresolved discussion, proposals without follow-through, questions, status updates, preferences without implementation. "
     "Return an empty array if no decisions were committed in this thread. "
@@ -246,7 +248,7 @@ TASK_CHECKPOINT_TEXT_VIEW = "memory_object.task_checkpoint_context"
 
 THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_ID = "thread_summary_with_checkpoint_extraction"
 
-THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v3"
+THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v4"
 
 THREAD_SUMMARY_WITH_CHECKPOINT_SCHEMA_DESCRIPTION = json.dumps(
     {
@@ -286,6 +288,8 @@ THREAD_SUMMARY_WITH_CHECKPOINT_SYSTEM_PROMPT = (
     "For the top-level retrieval_context: write one short search-friendly context line (12-30 words) that helps the summary match later queries, or null when the summary already has enough search cues. Do not restate the summary. "
     "For decisions: identify choices that were made AND committed during the thread. "
     "A decision exists when a specific approach was proposed or discussed AND then implemented, confirmed, or accepted. "
+    "Each decision must be self-contained: comprehensible when read in a different conversation weeks later with no surrounding context. "
+    "The decision_text must name WHAT was decided about — the subject or system. "
     "For each decision, decision_text and evidence must be EXACT QUOTES copied verbatim from the thread items. Do not paraphrase. "
     "Not decisions: unresolved discussion, proposals without follow-through, questions, status updates, preferences without implementation. "
     "Return an empty array if no decisions were committed in this thread. "
@@ -326,6 +330,18 @@ def _validate_thread_decisions(raw_decisions, thread_text: str) -> list[dict]:
         ):
             continue
         if _thread_decision_evidence_is_user_only(ev, thread_text):
+            continue
+        # --- Substance filters (language-agnostic, structural only) ---
+        norm_dt = _normalize_for_containment(dt)
+        norm_ev = _normalize_for_containment(ev)
+        # 1. Minimum character length — decisions under 30 chars are not self-contained
+        if len(norm_dt) < 30:
+            continue
+        # 2. Decision equals evidence — lazy LLM copy pattern
+        if norm_dt == norm_ev:
+            continue
+        # 3. Short decision fully contained in evidence — ack fragments
+        if len(norm_dt) < 50 and norm_dt in norm_ev and norm_dt != norm_ev:
             continue
         grounded.append({"decision_text": dt, "evidence": ev})
     return grounded
