@@ -297,6 +297,199 @@ _MINIMUM_SUBSTANTIVE_SOURCE_TOKENS = 20
 _MINIMUM_INTEREST_SOURCE_TOKENS = 10
 
 
+def _build_decision_result(
+    source_item: SourceItem,
+    extraction: SemanticExtraction,
+    decision_text: str | None,
+    decision_evidence_text: str | None,
+    rationale_text: str | None,
+    schema_prefix: str,
+    semantic_metadata: dict[str, str] | None,
+) -> tuple[MemoryObject | None, str | None]:
+    """Build a decision memory object if all guards pass."""
+    if not (
+        not extraction.is_low_value_meta
+        and extraction.candidate_type == "decision"
+        and (not source_item.role or source_item.role.lower() == "user")
+        and decision_text
+        and decision_evidence_text
+        and _typed_memory_payload_is_quality_viable(
+            decision_text,
+            decision_evidence_text,
+        )
+        and has_grounded_decision_text(source_item, decision_text)
+        and has_grounded_decision_evidence(source_item, decision_evidence_text)
+    ):
+        return None, None
+
+    canonical_key = normalize_for_index(decision_text)
+    memory_object = MemoryObject(
+        type="decision",
+        schema_id=f"{schema_prefix}.decision",
+        schema_version="v1",
+        payload={
+            "decision": decision_text,
+            "decision_evidence_text": decision_evidence_text,
+            "rationale": rationale_text,
+            "canonical_key": canonical_key,
+            "source_type": source_item.source_type,
+            "source_id": source_item.source_id,
+            **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
+        },
+        visibility=source_item.visibility,
+        container_ref=source_item.container_ref,
+        actor_ref=_resolve_actor_ref(source_item),
+    )
+    index_source = " ".join(
+        part
+        for part in (
+            extraction.summary,
+            decision_text or "",
+            decision_evidence_text or "",
+            rationale_text or "",
+            canonical_key,
+        )
+        if part
+    )
+    return memory_object, index_source
+
+
+def _build_investigation_result(
+    source_item: SourceItem,
+    extraction: SemanticExtraction,
+    investigation_text: str | None,
+    investigation_evidence_text: str | None,
+    rationale_text: str | None,
+    key_finding_text: str | None,
+    schema_prefix: str,
+    semantic_metadata: dict[str, str] | None,
+) -> tuple[MemoryObject | None, str | None]:
+    """Build an investigation_outcome memory object if all guards pass."""
+    if not (
+        not extraction.is_low_value_meta
+        and extraction.candidate_type == "investigation_outcome"
+        and investigation_text
+        and investigation_evidence_text
+        and _investigation_payload_is_quality_viable(extraction, source_item)
+        and has_grounded_investigation_evidence(source_item, investigation_evidence_text)
+    ):
+        return None, None
+
+    canonical_key = normalize_for_index(investigation_text)
+    memory_object = MemoryObject(
+        type="investigation_outcome",
+        schema_id=f"{schema_prefix}.investigation_outcome",
+        schema_version="v1",
+        payload={
+            "investigation_outcome": investigation_text,
+            "investigation_evidence_text": investigation_evidence_text,
+            "rationale": rationale_text,
+            "canonical_key": canonical_key,
+            "source_type": source_item.source_type,
+            "source_id": source_item.source_id,
+            **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
+        },
+        visibility=source_item.visibility,
+        container_ref=source_item.container_ref,
+        actor_ref=_resolve_actor_ref(source_item),
+    )
+    index_source = " ".join(
+        part
+        for part in (
+            extraction.summary,
+            investigation_text or "",
+            investigation_evidence_text or "",
+            rationale_text or "",
+            key_finding_text or "",
+            canonical_key,
+        )
+        if part
+    )
+    return memory_object, index_source
+
+
+def _build_interest_result(
+    source_item: SourceItem,
+    extraction: SemanticExtraction,
+    schema_prefix: str,
+    semantic_metadata: dict[str, str] | None,
+) -> tuple[MemoryObject | None, str | None]:
+    """Build an interest memory object if all guards pass."""
+    if not (
+        not extraction.is_low_value_meta
+        and extraction.candidate_type == "interest"
+        and extraction.interest_text
+        and (not source_item.role or source_item.role.lower() == "user")
+        and source_item.visibility not in ("container", "public")
+        and len(tokenize_text(source_item.content)) >= _MINIMUM_INTEREST_SOURCE_TOKENS
+    ):
+        return None, None
+
+    memory_object = MemoryObject(
+        type="interest",
+        schema_id=f"{schema_prefix}.interest",
+        schema_version="v1",
+        payload={
+            "interest_text": extraction.interest_text,
+            "summary": extraction.summary,
+            "source_type": source_item.source_type,
+            "source_id": source_item.source_id,
+            **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
+        },
+        visibility=source_item.visibility,
+        container_ref=source_item.container_ref,
+        actor_ref=_resolve_actor_ref(source_item),
+    )
+    index_source = " ".join(
+        part
+        for part in (
+            extraction.summary,
+            extraction.interest_text or "",
+        )
+        if part
+    )
+    return memory_object, index_source
+
+
+def _build_turn_summary_result(
+    source_item: SourceItem,
+    extraction: SemanticExtraction,
+    schema_prefix: str,
+    semantic_metadata: dict[str, str] | None,
+) -> tuple[MemoryObject | None, str | None]:
+    """Terminal fallback: uses _should_create_turn_summary(), NOT candidate_type == 'turn_summary'."""
+    if not _should_create_turn_summary(source_item, extraction):
+        return None, None
+
+    memory_object = MemoryObject(
+        type="turn_summary",
+        schema_id=f"{schema_prefix}.turn_summary",
+        schema_version="v1",
+        payload={
+            "summary": extraction.summary,
+            "source_type": source_item.source_type,
+            "source_id": source_item.source_id,
+            **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
+        },
+        visibility=source_item.visibility,
+        container_ref=source_item.container_ref,
+        actor_ref=_resolve_actor_ref(source_item),
+    )
+    index_source = " ".join(
+        part
+        for part in (
+            extraction.summary,
+            extraction.constraint_text or "",
+            extraction.blocker_text or "",
+            extraction.progress_text or "",
+            extraction.next_step_text or "",
+            extraction.key_finding_text or "",
+        )
+        if part
+    )
+    return memory_object, index_source
+
+
 def build_process_result(
     source_item: SourceItem,
     extraction: SemanticExtraction,
@@ -316,149 +509,16 @@ def build_process_result(
     relations: list[Relation] = []
     index_entries = []
 
-    if (
-        not extraction.is_low_value_meta
-        and extraction.candidate_type == "decision"
-        and (not source_item.role or source_item.role.lower() == "user")
-        and decision_text
-        and decision_evidence_text
-        and _typed_memory_payload_is_quality_viable(
-            decision_text,
-            decision_evidence_text,
-        )
-        and has_grounded_decision_text(source_item, decision_text)
-        and has_grounded_decision_evidence(source_item, decision_evidence_text)
+    for builder in (
+        lambda: _build_decision_result(source_item, extraction, decision_text, decision_evidence_text, rationale_text, schema_prefix, semantic_metadata),
+        lambda: _build_investigation_result(source_item, extraction, investigation_text, investigation_evidence_text, rationale_text, key_finding_text, schema_prefix, semantic_metadata),
+        lambda: _build_interest_result(source_item, extraction, schema_prefix, semantic_metadata),
+        lambda: _build_turn_summary_result(source_item, extraction, schema_prefix, semantic_metadata),
     ):
-        canonical_key = normalize_for_index(decision_text)
-        memory_objects.append(
-            MemoryObject(
-                type="decision",
-                schema_id=f"{schema_prefix}.decision",
-                schema_version="v1",
-                payload={
-                    "decision": decision_text,
-                    "decision_evidence_text": decision_evidence_text,
-                    "rationale": rationale_text,
-                    "canonical_key": canonical_key,
-                    "source_type": source_item.source_type,
-                    "source_id": source_item.source_id,
-                    **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
-                },
-                visibility=source_item.visibility,
-                container_ref=source_item.container_ref,
-                actor_ref=_resolve_actor_ref(source_item),
-            )
-        )
-        index_source = " ".join(
-            part
-            for part in (
-                extraction.summary,
-                decision_text or "",
-                decision_evidence_text or "",
-                rationale_text or "",
-                canonical_key,
-            )
-            if part
-        )
-    elif (
-        not extraction.is_low_value_meta
-        and extraction.candidate_type == "investigation_outcome"
-        and investigation_text
-        and investigation_evidence_text
-        and _investigation_payload_is_quality_viable(extraction, source_item)
-        and has_grounded_investigation_evidence(source_item, investigation_evidence_text)
-    ):
-        canonical_key = normalize_for_index(investigation_text)
-        memory_objects.append(
-            MemoryObject(
-                type="investigation_outcome",
-                schema_id=f"{schema_prefix}.investigation_outcome",
-                schema_version="v1",
-                payload={
-                    "investigation_outcome": investigation_text,
-                    "investigation_evidence_text": investigation_evidence_text,
-                    "rationale": rationale_text,
-                    "canonical_key": canonical_key,
-                    "source_type": source_item.source_type,
-                    "source_id": source_item.source_id,
-                    **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
-                },
-                visibility=source_item.visibility,
-                container_ref=source_item.container_ref,
-                actor_ref=_resolve_actor_ref(source_item),
-            )
-        )
-        index_source = " ".join(
-            part
-            for part in (
-                extraction.summary,
-                investigation_text or "",
-                investigation_evidence_text or "",
-                rationale_text or "",
-                key_finding_text or "",
-                canonical_key,
-            )
-            if part
-        )
-    elif not extraction.is_low_value_meta and extraction.candidate_type == "interest" and extraction.interest_text and (
-        not source_item.role or source_item.role.lower() == "user"
-    ) and source_item.visibility not in ("container", "public") and (
-        len(tokenize_text(source_item.content)) >= _MINIMUM_INTEREST_SOURCE_TOKENS
-    ):
-        memory_objects.append(
-            MemoryObject(
-                type="interest",
-                schema_id=f"{schema_prefix}.interest",
-                schema_version="v1",
-                payload={
-                    "interest_text": extraction.interest_text,
-                    "summary": extraction.summary,
-                    "source_type": source_item.source_type,
-                    "source_id": source_item.source_id,
-                    **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
-                },
-                visibility=source_item.visibility,
-                container_ref=source_item.container_ref,
-                actor_ref=_resolve_actor_ref(source_item),
-            )
-        )
-        index_source = " ".join(
-            part
-            for part in (
-                extraction.summary,
-                extraction.interest_text or "",
-            )
-            if part
-        )
-    elif _should_create_turn_summary(source_item, extraction):
-        memory_objects.append(
-            MemoryObject(
-                type="turn_summary",
-                schema_id=f"{schema_prefix}.turn_summary",
-                schema_version="v1",
-                payload={
-                    "summary": extraction.summary,
-                    "source_type": source_item.source_type,
-                    "source_id": source_item.source_id,
-                    **({"semantic_provenance": semantic_metadata} if semantic_metadata else {}),
-                },
-                visibility=source_item.visibility,
-                container_ref=source_item.container_ref,
-                actor_ref=_resolve_actor_ref(source_item),
-            )
-        )
-        index_source = " ".join(
-            part
-            for part in (
-                extraction.summary,
-                extraction.constraint_text or "",
-                extraction.blocker_text or "",
-                extraction.progress_text or "",
-                extraction.next_step_text or "",
-                extraction.key_finding_text or "",
-            )
-            if part
-        )
+        memory_object, index_source = builder()
+        if memory_object is not None:
+            memory_objects.append(memory_object)
+            break
     else:
         index_source = ""
 
