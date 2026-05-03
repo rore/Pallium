@@ -28,57 +28,96 @@ from semantic.agent_conversation_memory_routing_constants import (
 # Work-signal helpers (moved alongside signal functions they support)
 # ---------------------------------------------------------------------------
 
-def _work_resumption_signal_types(item: QueryResultItem) -> tuple[str, ...]:
+def _source_hit_signal_types(item: QueryResultItem) -> set[str]:
     signal_types: set[str] = set()
-    if item.result_kind == "source_hit":
-        excerpt = str(item.excerpt or "").strip()
-        signal_type = _classify_work_signal_text(item.artifact_kind, excerpt)
-        if signal_type:
-            signal_types.add(signal_type)
-        if excerpt:
-            signal_types.add("evidence")
-        return tuple(signal for signal in WORK_RESUMPTION_SIGNAL_TYPES if signal in signal_types)
+    excerpt = str(item.excerpt or "").strip()
+    signal_type = _classify_work_signal_text(item.artifact_kind, excerpt)
+    if signal_type:
+        signal_types.add(signal_type)
+    if excerpt:
+        signal_types.add("evidence")
+    return signal_types
 
+
+def _task_checkpoint_signal_types(payload: dict[str, object]) -> set[str]:
+    signal_types: set[str] = set()
+    if str(payload.get("task") or "").strip():
+        signal_types.add("task")
+    if str(payload.get("current_state") or "").strip():
+        signal_types.add("progress_update")
+    if _parse_string_list(payload.get("key_findings")):
+        signal_types.add("key_finding")
+    if str(payload.get("blocker_state") or "").strip():
+        signal_types.add("blocker")
+    if str(payload.get("next_step") or "").strip():
+        signal_types.add("next_step")
+    if _parse_string_list(payload.get("evidence")):
+        signal_types.add("evidence")
+    if str(payload.get("freshness_signal") or "").strip():
+        signal_types.add("freshness")
+    for artifact in payload.get("selected_work_artifacts", []):
+        if not isinstance(artifact, dict):
+            continue
+        artifact_signal = str(artifact.get("signal_type") or "").strip()
+        if artifact_signal in {"progress_update", "blocker", "next_step"}:
+            signal_types.add(artifact_signal)
+    return signal_types
+
+
+def _lower_level_signal_types(payload: dict[str, object]) -> set[str]:
+    signal_types: set[str] = {"key_finding"}
+    if str(payload.get("decision_evidence_text") or payload.get("investigation_evidence_text") or "").strip():
+        signal_types.add("evidence")
+    return signal_types
+
+
+def _summary_signal_types(payload: dict[str, object]) -> set[str]:
+    signal_types: set[str] = set()
+    if str(payload.get("summary") or "").strip():
+        signal_types.add("key_finding")
+    for artifact in payload.get("selected_work_artifacts", []):
+        if not isinstance(artifact, dict):
+            continue
+        artifact_signal = str(artifact.get("signal_type") or "").strip()
+        if artifact_signal in {"progress_update", "blocker", "next_step"}:
+            signal_types.add(artifact_signal)
+    return signal_types
+
+
+def _continuity_memory_signal_types(payload: dict[str, object]) -> set[str]:
+    return {"key_finding"} if str(payload.get("carry_forward_answer") or "").strip() else set()
+
+
+def _pattern_memory_signal_types(payload: dict[str, object]) -> set[str]:
+    return {"key_finding"} if str(payload.get("summary") or "").strip() else set()
+
+
+_SIGNAL_TYPE_DISPATCH: dict[str, Callable[[dict[str, object]], set[str]]] = {}
+
+
+def _init_signal_type_dispatch() -> None:
+    _SIGNAL_TYPE_DISPATCH["task_checkpoint"] = _task_checkpoint_signal_types
+    for t in ROUTING_LOWER_LEVEL_EXACT_TYPES:
+        _SIGNAL_TYPE_DISPATCH[t] = _lower_level_signal_types
+    for t in ROUTING_SUMMARY_TYPES:
+        _SIGNAL_TYPE_DISPATCH[t] = _summary_signal_types
+    _SIGNAL_TYPE_DISPATCH["continuity_memory"] = _continuity_memory_signal_types
+    _SIGNAL_TYPE_DISPATCH["pattern_memory"] = _pattern_memory_signal_types
+
+
+_init_signal_type_dispatch()
+
+
+def _work_resumption_signal_types(item: QueryResultItem) -> tuple[str, ...]:
+    if item.result_kind == "source_hit":
+        return _ordered_signals(_source_hit_signal_types(item))
     payload = item.payload or {}
-    if item.type == "task_checkpoint":
-        if str(payload.get("task") or "").strip():
-            signal_types.add("task")
-        if str(payload.get("current_state") or "").strip():
-            signal_types.add("progress_update")
-        if _parse_string_list(payload.get("key_findings")):
-            signal_types.add("key_finding")
-        if str(payload.get("blocker_state") or "").strip():
-            signal_types.add("blocker")
-        if str(payload.get("next_step") or "").strip():
-            signal_types.add("next_step")
-        if _parse_string_list(payload.get("evidence")):
-            signal_types.add("evidence")
-        if str(payload.get("freshness_signal") or "").strip():
-            signal_types.add("freshness")
-        for artifact in payload.get("selected_work_artifacts", []):
-            if not isinstance(artifact, dict):
-                continue
-            artifact_signal = str(artifact.get("signal_type") or "").strip()
-            if artifact_signal in {"progress_update", "blocker", "next_step"}:
-                signal_types.add(artifact_signal)
-    elif item.type in ROUTING_LOWER_LEVEL_EXACT_TYPES:
-        signal_types.add("key_finding")
-        if str(payload.get("decision_evidence_text") or payload.get("investigation_evidence_text") or "").strip():
-            signal_types.add("evidence")
-    elif item.type in ROUTING_SUMMARY_TYPES:
-        if str(payload.get("summary") or "").strip():
-            signal_types.add("key_finding")
-        for artifact in payload.get("selected_work_artifacts", []):
-            if not isinstance(artifact, dict):
-                continue
-            artifact_signal = str(artifact.get("signal_type") or "").strip()
-            if artifact_signal in {"progress_update", "blocker", "next_step"}:
-                signal_types.add(artifact_signal)
-    elif item.type == "continuity_memory":
-        if str(payload.get("carry_forward_answer") or "").strip():
-            signal_types.add("key_finding")
-    elif item.type == "pattern_memory" and str(payload.get("summary") or "").strip():
-        signal_types.add("key_finding")
+    handler = _SIGNAL_TYPE_DISPATCH.get(item.type)
+    signal_types = handler(payload) if handler else set()
+    return _ordered_signals(signal_types)
+
+
+def _ordered_signals(signal_types: set[str]) -> tuple[str, ...]:
     return tuple(signal for signal in WORK_RESUMPTION_SIGNAL_TYPES if signal in signal_types)
 
 def _classify_work_signal_text(artifact_kind: str | None, text: str) -> str:
