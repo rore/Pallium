@@ -826,7 +826,7 @@ async function fetchMemories() {
 
 async function fetchEvidence(id) {
   if (_evidenceCache[id]) return _evidenceCache[id];
-  const r = await fetch('/memory/' + encodeURIComponent(id) + '/evidence');
+  const r = await fetch('/memory/' + encodeURIComponent(id) + '/expand');
   if (!r.ok) throw new Error('evidence ' + r.status);
   const data = await r.json();
   _evidenceCache[id] = data.items || [];
