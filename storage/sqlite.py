@@ -740,6 +740,34 @@ class SQLiteStorageProvider(
             ).all()
         return [self._to_evidence_reference(record) for record in records]
 
+    def find_latest_checkpoint_for_thread(self, container_ref: str, thread_ref: str) -> MemoryObject | None:
+        with self._session_factory() as session:
+            record = session.execute(
+                select(MemoryObjectRecord)
+                .join(
+                    RelationRecord,
+                    (RelationRecord.from_id == MemoryObjectRecord.id)
+                    & (RelationRecord.from_kind == "memory_object")
+                    & (RelationRecord.relation_type == "supported_by")
+                    & (RelationRecord.to_kind == "source_item"),
+                )
+                .join(
+                    SourceItemRecord,
+                    SourceItemRecord.id == RelationRecord.to_id,
+                )
+                .where(
+                    MemoryObjectRecord.type == "task_checkpoint",
+                    MemoryObjectRecord.container_ref == container_ref,
+                    MemoryObjectRecord.lifecycle == "active",
+                    SourceItemRecord.thread_ref == thread_ref,
+                )
+                .order_by(MemoryObjectRecord.freshness_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if record is None:
+                return None
+            return self._to_memory_object(record)
+
     def write_query_audit_row(self, row: dict[str, Any]) -> None:
         record = QueryAuditLogRecord(**row)
         self._with_retry(lambda session: session.add(record))
