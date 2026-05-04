@@ -157,3 +157,32 @@ def test_note_injectable_block_big_content_truncated():
     assert "AAA" in block.text
     # Should signal that full content is available via get_evidence
     assert block.source_expanded_available is True
+
+
+def test_note_in_durable_retention_types():
+    mock_provider = MagicMock()
+    plugin = AgentConversationMemoryPlugin(
+        provider=mock_provider,
+        prompt_variant="strict_typed_memory_v8b_work_refs_separate",
+    )
+    policy = plugin.memory_retention_policy
+    assert "note" in policy.durable_types
+
+
+def test_note_excluded_from_consolidation():
+    """Notes are standalone — they must not participate in thread consolidation."""
+    mock_provider = MagicMock()
+    plugin = AgentConversationMemoryPlugin(
+        provider=mock_provider,
+        prompt_variant="strict_typed_memory_v8b_work_refs_separate",
+    )
+    from core.models import MemoryObject
+    note_mo = MemoryObject(
+        type="note",
+        schema_id="agent_conversation_memory.note",
+        schema_version="1",
+        payload={"content": "test", "title": "test"},
+        container_ref="git:test/repo",
+        visibility="private",
+    )
+    assert plugin.supports_consolidation(note_mo) is False

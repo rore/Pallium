@@ -61,7 +61,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
     @property
     def memory_retention_policy(self) -> MemoryRetentionPolicy:
         return MemoryRetentionPolicy(
-            durable_types=frozenset({"decision", "investigation_outcome"}),
+            durable_types=frozenset({"decision", "investigation_outcome", "note"}),
             working_types=frozenset({"thread_summary", "task_checkpoint", "continuity_memory", "pattern_memory"}),
             orphan_delete_types=frozenset({"turn_summary"}),
         )
@@ -198,11 +198,6 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 type_name="thread_summary", layer_name="thread_summary",
                 weight_by_intent={"recall": 60, "structured_recall": 80, "work_resumption": 65, "evidence_trace": 60},
                 default_weight=60, block_title="Thread Summary", block_text_field="summary", high_value=True,
-            ),
-            TypeRegistration(
-                type_name="interest", layer_name="interest",
-                weight_by_intent={"recall": 50, "structured_recall": 50, "work_resumption": 50, "evidence_trace": 43},
-                default_weight=50, block_title="Interest", block_text_field="summary", high_value=True,
             ),
             TypeRegistration(
                 type_name="constraint_memory", layer_name="constraint_memory",
