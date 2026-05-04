@@ -34,7 +34,7 @@ class TestFormatInjection:
         blocks = [{"title": "T", "memory_object_id": "x", "text": "y"}]
         result = format_injection(blocks, "c", 2400)
         assert "pallium_flag_memory" in result
-        assert "pallium_get_evidence" in result
+        assert "pallium_expand" in result
 
     def test_budget_exceeded_drops_blocks(self):
         blocks = [

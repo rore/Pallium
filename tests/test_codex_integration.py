@@ -219,4 +219,4 @@ def test_codex_agents_block_keeps_manual_memory_tools_optional() -> None:
     assert "MUST call `pallium_rate_memory` for EACH injected memory block" not in agents_block
     assert "If an injected card has `[+source]` and you rated it relevant" not in agents_block
     assert "`pallium_query`" in agents_block
-    assert "`pallium_get_evidence`" in agents_block
+    assert "`pallium_expand`" in agents_block

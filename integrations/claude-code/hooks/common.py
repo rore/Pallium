@@ -140,7 +140,7 @@ def format_injection(
     header = f"[Pallium memory — container: {container_ref}]\n\n"
     footer = (
         "\n\n[If any memory above seems incorrect or outdated, use the pallium_flag_memory\n"
-        "tool with the ref ID and a brief reason. Use pallium_get_evidence if you need\n"
+        "tool with the ref ID and a brief reason. Use pallium_expand if you need\n"
         "more context on how a memory was derived.]\n\n"
         "[End Pallium memory]"
     )
