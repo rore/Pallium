@@ -875,11 +875,17 @@ def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) ->
             memory_object_id=mo_id,
         )
     if item.type == "continuity_memory":
+        question = str(payload.get("continuity_question") or "").strip()
+        answer = str(payload.get("carry_forward_answer") or payload.get("summary") or "").strip()
+        if question and answer:
+            text = f"Q: {question}\nA: {answer}"
+        else:
+            text = answer or question
         return InjectableBlock(
             result_id=str(item.result_id),
             block_type="memory",
             title="Carry Forward",
-            text=str(payload.get("carry_forward_answer") or payload.get("summary") or "").strip(),
+            text=text,
             evidence=item.evidence,
             memory_type=item.type,
             memory_object_id=mo_id,

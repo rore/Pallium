@@ -3594,3 +3594,37 @@ def test_sharp_diagnostics_shows_dedup_loss_stage() -> None:
     )
     assert dedup_diags[0]["loss_reason_code"] == "injection_dedup"
     assert dedup_diags[0].get("dedup_kept_result_id") is not None
+
+
+def _continuity_item(payload: dict) -> QueryResultItem:
+    return QueryResultItem(
+        result_kind="memory_hit",
+        memory_object_id="mo-cm",
+        type="continuity_memory",
+        payload=payload,
+        score=100,
+        evidence=[],
+    )
+
+
+def test_continuity_memory_shows_question_and_answer() -> None:
+    item = _continuity_item({
+        "continuity_question": "Which deployment approach are we using?",
+        "carry_forward_answer": "Kubernetes on AKS with ephemeral SQLite.",
+    })
+    block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
+    assert "Q: Which deployment approach are we using?" in block.text
+    assert "A: Kubernetes on AKS with ephemeral SQLite." in block.text
+
+
+def test_continuity_memory_answer_only_when_no_question() -> None:
+    item = _continuity_item({"carry_forward_answer": "Use Redis for caching."})
+    block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
+    assert "Use Redis for caching." in block.text
+    assert "Q:" not in block.text
+
+
+def test_continuity_memory_falls_back_to_summary() -> None:
+    item = _continuity_item({"summary": "Summary fallback text."})
+    block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
+    assert "Summary fallback text." in block.text
