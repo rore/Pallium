@@ -130,7 +130,7 @@ When automatic injection isn't enough, Claude can use these tools directly:
 | Tool | When to use |
 |------|-------------|
 | `pallium_query` | Injected context is empty or missing something specific |
-| `pallium_get_evidence` | Need the original conversation behind a memory card |
+| `pallium_expand` | Need the full structured payload or original conversation behind a memory card |
 | `pallium_flag_memory` | A memory contradicts current knowledge (see [flagging](#flagging-wrong-memories)) |
 | `pallium_ingest` | User explicitly asks to remember something |
 | `pallium_query_debug` | Investigating why a memory wasn't found |
