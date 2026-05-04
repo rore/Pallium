@@ -1,0 +1,357 @@
+{
+  "signal_comparison": {
+    "total_compared": 224,
+    "per_signal": {
+      "progress_text": {
+        "sonnet_has": 87,
+        "haiku_agrees": 85,
+        "haiku_misses": 2,
+        "haiku_adds": 78,
+        "quality_samples": [
+          {
+            "sonnet": "Supervisor now passes the log file handle as stdout/stderr to child processes in service mode; all process output goes to ~/.pallium/logs/pallium.log.",
+            "haiku": "Supervisor now passes log file handle as stdout/stderr to child processes when running in service mode; all process output redirected to ~/.pallium/lo"
+          },
+          {
+            "sonnet": "Analyzed 973 active memories, 38 decisions, 33 today's turn_summaries, and 634 atomic facts for quality issues; quantified false positive rates per ca",
+            "haiku": "Analyzed 973 active memories and identified 5 major quality problems: decision false positives (63% garbage, 45% completion reports, 18% user commands"
+          },
+          {
+            "sonnet": "Created `c:\\Dev\\rore\\Pallium\\evals\\decision_quality_eval.py`; eval runs successfully with PASS on zero false rejections, 91.7% recall on bad items.",
+            "haiku": "Created decision_quality_eval.py script. Eval runs successfully with results: PASS for zero false rejections, gate precision 75.0%, gate recall 91.7%."
+          },
+          {
+            "sonnet": "Architect review completed on revised Memory Quality Improvement Plan; all critical issues from first review resolved; six low/info observations docum",
+            "haiku": "Architect review completed on revised memory quality improvement plan. All 9 tasks defined with implementation order dependencies clarified. Grounding"
+          },
+          {
+            "sonnet": "Applied fix and verified: accumulation pattern changes from [3, 6, 9, 12, 15] to [3, 3, 3, 3, 3]. Confirmed consolidation path (atomic_facts → fact_su",
+            "haiku": "Built a test reproducing the accumulation pattern [3, 6, 9, 12, 15] confirming the bug. Applied one-line fix (delete old entries instead of moving the"
+          }
+        ]
+      },
+      "blocker_text": {
+        "sonnet_has": 44,
+        "haiku_agrees": 38,
+        "haiku_misses": 6,
+        "haiku_adds": 62,
+        "quality_samples": [
+          {
+            "sonnet": "The prompt tightening commit (fd9ed7e) hasn't fixed decision false positives — today alone produced 13 decisions, nearly all false positives.",
+            "haiku": "Prompt tightening commit (fd9ed7e) has not fixed decision false positives in production. Today alone produced 13 decisions, nearly all false positives"
+          },
+          {
+            "sonnet": "Uncertainty about whether Copilot has lifecycle hooks (like UserPromptSubmit → additionalContext) for automatic memory injection on every turn, and wh",
+            "haiku": "Uncertain whether Copilot has lifecycle hooks with context injection (like UserPromptSubmit → inject additionalContext) for automatic memory injection"
+          },
+          {
+            "sonnet": "C1 (`matches_filters` silently excludes global memories) would make global memories unretrievable in practice — must fix before implementing",
+            "haiku": "C1: matches_filters silently excludes global memories from retrieval because global != public visibility check occurs before is_visible() exemption lo"
+          },
+          {
+            "sonnet": "Service is currently running without vector retrieval: `Vector embedding provider failed to initialize: [ONNXRuntimeError] : 2 : INVALID_ARGUMENT : In",
+            "haiku": "Service hit token_type_ids error during initialization and disabled vector embedding: Vector embedding provider failed to initialize: [ONNXRuntimeErro"
+          },
+          {
+            "sonnet": "query_audit_log_id is always NULL — the hook knows the audit ID but doesn't surface it to the agent in a way that's passable back.",
+            "haiku": "query_context is NULL in 7/11 rows, preventing retrieval pattern learning. query_audit_log_id is always NULL — the hook has the audit log ID but doesn"
+          }
+        ]
+      },
+      "next_step_text": {
+        "sonnet_has": 147,
+        "haiku_agrees": 133,
+        "haiku_misses": 14,
+        "haiku_adds": 29,
+        "quality_samples": [
+          {
+            "sonnet": "Fix thread summary prompt decision extraction criteria to reject utterances without a concrete subject, pure acks/confirmations, and context-dependent",
+            "haiku": "Investigate thread detection decision extraction criteria to reject utterances without concrete subject, pure acks/confirmations, and context-dependen"
+          },
+          {
+            "sonnet": "To properly test private memory retrieval, select both your container (`git:github.com/rore/pallium`) AND `private` visibility.",
+            "haiku": "To properly test private memory retrieval, select both the container (git:github.com/rore/pallium) AND private visibility."
+          },
+          {
+            "sonnet": "If you have docs or recent announcements about Copilot's extensibility beyond MCP tools, that would help me give you an accurate picture of what's act",
+            "haiku": "Locate documentation or recent announcements about Copilot's extensibility beyond MCP tools, specifically regarding lifecycle hooks and custom instruc"
+          },
+          {
+            "sonnet": "Add missing imports for `_normalize_for_containment` and `normalize_for_index` from `common.py` in Task 7 during implementation.",
+            "haiku": "Proceed with execution: resolve import dependencies for `_normalize_for_containment` and `normalize_for_index` from `common.py` (Task 7); implement Ta"
+          },
+          {
+            "sonnet": "Ingest the Pallium service facts (scheduled task name, port 19836, restart script path) into memory.",
+            "haiku": "Ingest the Pallium service fact now."
+          }
+        ]
+      },
+      "key_finding_text": {
+        "sonnet_has": 142,
+        "haiku_agrees": 140,
+        "haiku_misses": 2,
+        "haiku_adds": 21,
+        "quality_samples": [
+          {
+            "sonnet": "On Windows with CREATE_NO_WINDOW, child processes had no console to write to, causing their logs to silently disappear.",
+            "haiku": "On Windows with CREATE_NO_WINDOW, child processes had no console to write to, causing logs to disappear"
+          },
+          {
+            "sonnet": "7 out of 13 active thread decisions are objectively bad; the thread detection decision criteria is a single code path producing a clear class of garba",
+            "haiku": "Problems 1 and 2 are extraction quality fixes (prompt/validator changes). Problem 3 is retrieval architecture. Thread detection decision criteria is h"
+          },
+          {
+            "sonnet": "63% of active decisions are garbage (45% completion reports, 18% user commands); 36% of today's summaries parrot source; 35% of atomic facts are self-",
+            "haiku": "Decision false positives are the worst problem—directly injected into agent context with wrong information. Priority ordering: (1) Decision false posi"
+          },
+          {
+            "sonnet": "The cause was simpler: I treated `<ide_opened_file>` as \"this is what the user is asking about\" instead of reading it as background noise. The memorie",
+            "haiku": "The injected memories did not pull toward the access-count doc; the error was in misinterpreting the IDE file tag as a signal of user focus."
+          },
+          {
+            "sonnet": "The typed extraction (decisions, investigation_outcomes, constraints, interests) is significantly better than the prior state. The main remaining qual",
+            "haiku": "typed extraction quality is significantly better after classification fixes, but overall memory quality dragged down by atomic_fact over-production; 4"
+          }
+        ]
+      },
+      "constraint_text": {
+        "sonnet_has": 78,
+        "haiku_agrees": 64,
+        "haiku_misses": 14,
+        "haiku_adds": 38,
+        "quality_samples": [
+          {
+            "sonnet": "Tasks 1-6 are independent; Task 7 depends on Task 1's prompt philosophy; Task 8 must come after Tasks 1-6; Task 9 integrates everything.",
+            "haiku": "Task 8 (eval harness) must run after Tasks 1-6 are implemented; Task 7 depends on Task 1's prompt philosophy; Task 9 must integrate all prior tasks; t"
+          },
+          {
+            "sonnet": "The /static StaticFiles mount inside mount_dashboard must be registered before the MCP app.mount(\"\") or FastAPI's mount resolution might route /static",
+            "haiku": "assets/ directory resolution via Path(__file__).resolve().parent.parent / \"assets\" assumes execution from repo context. Will break if Pallium is pip-i"
+          },
+          {
+            "sonnet": "has_grounded_decision_text() requires decision_text to be a literal substring of the source content (after normalization); if it fails, the decision i",
+            "haiku": "Pre-filter should_skip_extraction must be called from both llm_agent_memory.py and conversational_knowledge packages before item processing, not just "
+          },
+          {
+            "sonnet": "'global' visibility memories are never created by automatic extraction — only via explicit user request (MCP pallium_ingest or equivalent explicit API",
+            "haiku": "Only memories with visibility='public' AND actor_ref=None are visible across containers. Personal memories (public with actor_ref set, or private) and"
+          },
+          {
+            "sonnet": "Do NOT add new LLM calls or processes",
+            "haiku": "Constraint extraction must produce text that is self-contained and understandable in isolation, with all pronouns resolved to named subjects and anaph"
+          }
+        ]
+      }
+    },
+    "errors": 0
+  },
+  "thread_constraints": {
+    "threads_tested": 16,
+    "good_constraints": 25,
+    "bad_constraints": 19,
+    "thread_extractions": [
+      {
+        "thread_ref": "11852d85",
+        "thread_size": 46,
+        "per_item_good": 0,
+        "per_item_bad": 1,
+        "thread_extracted": 2,
+        "thread_durable": 2,
+        "sample_constraints": [
+          "Dashboard UX reviews and data investigations must be based on actually running and interacting with ",
+          "The Pallium service runs on Windows, not Linux — do not use Linux/systemd commands for service manag"
+        ]
+      },
+      {
+        "thread_ref": "17f66777",
+        "thread_size": 77,
+        "per_item_good": 1,
+        "per_item_bad": 0,
+        "thread_extracted": 4,
+        "thread_durable": 4,
+        "sample_constraints": [
+          "The Pallium dashboard must be read-only for most things, but allow drill-down browsing of individual",
+          "The Pallium dashboard must show current state only (no historical trends or time-series data). Count",
+          "The Pallium dashboard must be implemented as a single HTML file with inline CSS/JS, no build step, a"
+        ]
+      },
+      {
+        "thread_ref": "18df314b",
+        "thread_size": 52,
+        "per_item_good": 0,
+        "per_item_bad": 1,
+        "thread_extracted": 5,
+        "thread_durable": 5,
+        "sample_constraints": [
+          "Pallium must always use the 'intfloat/multilingual-e5-small' embedding model and never switch to oth",
+          "Pallium's configuration should have sensible defaults for almost everything; the config file should ",
+          "Demo packages must never be activated in Pallium by default. Only the two production packages — agen"
+        ]
+      },
+      {
+        "thread_ref": "1bcbb241",
+        "thread_size": 123,
+        "per_item_good": 5,
+        "per_item_bad": 1,
+        "thread_extracted": 2,
+        "thread_durable": 2,
+        "sample_constraints": [
+          "The running Pallium service uses the user data directory (e.g., ~/.pallium/data/pallium.db) for its ",
+          "Pallium's extraction and filtering approaches must follow Pallium principles: multilingual, not depe"
+        ]
+      },
+      {
+        "thread_ref": "2db7f163",
+        "thread_size": 27,
+        "per_item_good": 1,
+        "per_item_bad": 1,
+        "thread_extracted": 5,
+        "thread_durable": 5,
+        "sample_constraints": [
+          "Decision extraction validators and filters must be language-agnostic — no language cues (e.g., no En",
+          "Prompt improvements must be iterative: collect a corpus of problematic items first, then reproduce a",
+          "Always do an architect review before and after making changes."
+        ]
+      },
+      {
+        "thread_ref": "40752291",
+        "thread_size": 20,
+        "per_item_good": 1,
+        "per_item_bad": 0,
+        "thread_extracted": 1,
+        "thread_durable": 1,
+        "sample_constraints": [
+          "Architectural assumptions and parameter choices in Pallium investigations must be validated with rea"
+        ]
+      },
+      {
+        "thread_ref": "607656ac",
+        "thread_size": 23,
+        "per_item_good": 0,
+        "per_item_bad": 1,
+        "thread_extracted": 2,
+        "thread_durable": 2,
+        "sample_constraints": [
+          "Before committing, remove any unrelated product or company names (e.g., 'muxi') from files.",
+          "Pallium should not add new background processes, threads, or workers beyond what already exists."
+        ]
+      },
+      {
+        "thread_ref": "63a1318f",
+        "thread_size": 16,
+        "per_item_good": 2,
+        "per_item_bad": 0,
+        "thread_extracted": 4,
+        "thread_durable": 4,
+        "sample_constraints": [
+          "All changes must be data-driven: build an eval or test with problematic data or scenario to reproduc",
+          "Always perform an architect review before and after every change.",
+          "Every change must include regression checks to ensure previous functionality is not broken."
+        ]
+      },
+      {
+        "thread_ref": "7690cbaa",
+        "thread_size": 32,
+        "per_item_good": 1,
+        "per_item_bad": 0,
+        "thread_extracted": 4,
+        "thread_durable": 4,
+        "sample_constraints": [
+          "The agent must rate every injected memory each turn using the pallium_rate_memory tool, for both rel",
+          "When calling pallium_rate_memory, the agent must always pass query_context as a required string para",
+          "When calling pallium_rate_memory, the agent must pass container_ref explicitly from the injection he"
+        ]
+      },
+      {
+        "thread_ref": "7c7e5d7f",
+        "thread_size": 79,
+        "per_item_good": 2,
+        "per_item_bad": 1,
+        "thread_extracted": 4,
+        "thread_durable": 4,
+        "sample_constraints": [
+          "Always perform an architect review before and after every code change, using subagents.",
+          "Follow subagent-driven-development: use subagents for tasks, do an architect pass before and after e",
+          "When making code changes, always update the documentation as well."
+        ]
+      },
+      {
+        "thread_ref": "7ca73f41",
+        "thread_size": 129,
+        "per_item_good": 2,
+        "per_item_bad": 1,
+        "thread_extracted": 4,
+        "thread_durable": 4,
+        "sample_constraints": [
+          "An architect review must be performed before and after every code change in the pallium project.",
+          "Every conversation turn that has injected memories must include rating those memories using pallium_",
+          "The hermes-agent project must not be included in Claude Code's additionalDirectories (working direct"
+        ]
+      },
+      {
+        "thread_ref": "c343c059",
+        "thread_size": 65,
+        "per_item_good": 4,
+        "per_item_bad": 4,
+        "thread_extracted": 3,
+        "thread_durable": 3,
+        "sample_constraints": [
+          "Never use regex-based content filtering as a safety net around prompt behavior in Pallium. If the LL",
+          "Before every code change in Pallium improvement tasks, perform an architect review to validate the a",
+          "In Pallium, do not add new LLM calls when existing LLM calls can be extended with additional schema "
+        ]
+      },
+      {
+        "thread_ref": "c51121d5",
+        "thread_size": 33,
+        "per_item_good": 0,
+        "per_item_bad": 1,
+        "thread_extracted": 2,
+        "thread_durable": 2,
+        "sample_constraints": [
+          "Always do an architect review before and after every change when implementing features.",
+          "Always test changes — use defensive programming and ensure test coverage for every implementation."
+        ]
+      },
+      {
+        "thread_ref": "cd32acad",
+        "thread_size": 27,
+        "per_item_good": 1,
+        "per_item_bad": 0,
+        "thread_extracted": 3,
+        "thread_durable": 3,
+        "sample_constraints": [
+          "Defaults should not be specified in the config file. The config file is for optional changes only. D",
+          "If a similarity threshold is model-dependent, it must be attached to the selected model's metadata r",
+          "Always do an architect review before and after every change. Think carefully about what is being don"
+        ]
+      },
+      {
+        "thread_ref": "ee3d527f",
+        "thread_size": 89,
+        "per_item_good": 1,
+        "per_item_bad": 1,
+        "thread_extracted": 4,
+        "thread_durable": 4,
+        "sample_constraints": [
+          "When writing Pallium documentation or investigation prompts, do not mention Muxi by name — refer to ",
+          "Semantic deduplication at storage time (#1) has been investigated and ruled out as not worth impleme",
+          "Adding a recency signal to Pallium's retrieval scoring (#2) has been investigated and ruled out as n"
+        ]
+      },
+      {
+        "thread_ref": "f4842fe7",
+        "thread_size": 81,
+        "per_item_good": 2,
+        "per_item_bad": 0,
+        "thread_extracted": 4,
+        "thread_durable": 4,
+        "sample_constraints": [
+          "No new LLM requests may be added to the system. Any improvement must work within existing LLM calls.",
+          "All changes must be data-driven and informative — no assumptions or guessing. Claims of improvement ",
+          "Before and after any code or prompt change, an architect review must be performed."
+        ]
+      }
+    ]
+  }
+}

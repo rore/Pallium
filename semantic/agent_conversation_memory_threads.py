@@ -23,9 +23,9 @@ THREAD_SUMMARY_PROMPT_SCHEMA_ID = "thread_summary_extraction"
 
 MAX_THREAD_WORK_REFS = 5
 
-THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v6"
+THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v7"
 
-THREAD_SUMMARY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "content_quality": "string", "retrieval_context": "string or null", "decisions": [{"decision_text": "string (exact quote)", "evidence": "string (exact quote)"}]}, indent=2)
+THREAD_SUMMARY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "content_quality": "string", "retrieval_context": "string or null", "decisions": [{"decision_text": "string (exact quote)", "evidence": "string (exact quote)"}], "investigations": [{"investigation_text": "string (self-contained finding, exact quote)", "evidence": "string (exact quote)"}]}, indent=2)
 
 THREAD_SUMMARY_SYSTEM_PROMPT = (
     "Summarize one agent-mediated conversation thread for future recall. "
@@ -49,6 +49,9 @@ THREAD_SUMMARY_SYSTEM_PROMPT = (
     "For each decision, decision_text and evidence must be EXACT QUOTES copied verbatim from the thread items. Do not paraphrase. "
     "Not decisions: unresolved discussion, proposals without follow-through, questions, status updates, preferences without implementation. "
     "Return an empty array if no decisions were committed in this thread. "
+    "For investigations: identify resolved findings or verified conclusions with evidence. "
+    "Each investigation must be self-contained. investigation_text and evidence must be EXACT QUOTES from the thread items. "
+    "Return an empty array if no investigations were resolved. "
     "Write all text fields in the same language as the thread items. Do not translate to English."
 )
 
@@ -248,7 +251,7 @@ TASK_CHECKPOINT_TEXT_VIEW = "memory_object.task_checkpoint_context"
 
 THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_ID = "thread_summary_with_checkpoint_extraction"
 
-THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v4"
+THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v5"
 
 THREAD_SUMMARY_WITH_CHECKPOINT_SCHEMA_DESCRIPTION = json.dumps(
     {
@@ -256,6 +259,7 @@ THREAD_SUMMARY_WITH_CHECKPOINT_SCHEMA_DESCRIPTION = json.dumps(
         "content_quality": "string",
         "retrieval_context": "string or null",
         "decisions": [{"decision_text": "string (exact quote)", "evidence": "string (exact quote)"}],
+        "investigations": [{"investigation_text": "string (self-contained finding, exact quote)", "evidence": "string (exact quote)"}],
         "task_checkpoint": {
             "summary": "string",
             "task": "string",
@@ -293,6 +297,9 @@ THREAD_SUMMARY_WITH_CHECKPOINT_SYSTEM_PROMPT = (
     "For each decision, decision_text and evidence must be EXACT QUOTES copied verbatim from the thread items. Do not paraphrase. "
     "Not decisions: unresolved discussion, proposals without follow-through, questions, status updates, preferences without implementation. "
     "Return an empty array if no decisions were committed in this thread. "
+    "For investigations: identify resolved findings or verified conclusions with evidence. "
+    "Each investigation must be self-contained. investigation_text and evidence must be EXACT QUOTES from the thread items. "
+    "Return an empty array if no investigations were resolved. "
     "For the task_checkpoint section: capture the task, the current state, key findings, blocker or failed-attempt state when present, the next supported step when present, and a concise freshness signal. "
     "Do not turn the checkpoint into a workflow graph, transcript replay, or speculative recommendation. "
     "Keep the task_checkpoint summary concise: at most two sentences and roughly 80 words. "
@@ -329,7 +336,7 @@ def _validate_thread_decisions(raw_decisions, thread_text: str) -> list[dict]:
             and _normalize_for_containment(ev) in normalized_thread
         ):
             continue
-        if _thread_decision_evidence_is_user_only(ev, thread_text):
+        if _thread_evidence_is_user_line_only(ev, thread_text):
             continue
         # --- Substance filters (language-agnostic, structural only) ---
         norm_dt = _normalize_for_containment(dt)
@@ -347,7 +354,48 @@ def _validate_thread_decisions(raw_decisions, thread_text: str) -> list[dict]:
     return grounded
 
 
-def _thread_decision_evidence_is_user_only(evidence: str, thread_text: str) -> bool:
+def _validate_thread_investigations(raw_investigations, thread_text: str) -> list[dict]:
+    """Validate and filter thread investigations by grounding and substance checks.
+
+    Both investigation_text and evidence must be literal substrings of thread_text.
+    Rejects investigations whose evidence is a user-role thread line (indicating
+    the LLM quoted a user command rather than extracting a committed investigation).
+    """
+    if not isinstance(raw_investigations, list):
+        return []
+    normalized_thread = _normalize_for_containment(thread_text)
+    grounded = []
+    for d in raw_investigations:
+        if not isinstance(d, dict):
+            continue
+        it = d.get("investigation_text", "")
+        ev = d.get("evidence", "")
+        if not (it and ev):
+            continue
+        if not (
+            _normalize_for_containment(it) in normalized_thread
+            and _normalize_for_containment(ev) in normalized_thread
+        ):
+            continue
+        if _thread_evidence_is_user_line_only(ev, thread_text):
+            continue
+        # --- Substance filters (language-agnostic, structural only) ---
+        norm_it = _normalize_for_containment(it)
+        norm_ev = _normalize_for_containment(ev)
+        # 1. Minimum character length — investigations under 40 chars are not self-contained
+        if len(norm_it) < 40:
+            continue
+        # 2. Investigation equals evidence — lazy LLM copy pattern
+        if norm_it == norm_ev:
+            continue
+        # 3. Short investigation fully contained in evidence — ack fragments
+        if len(norm_it) < 60 and norm_it in norm_ev and norm_it != norm_ev:
+            continue
+        grounded.append({"investigation_text": it, "evidence": ev})
+    return grounded
+
+
+def _thread_evidence_is_user_line_only(evidence: str, thread_text: str) -> bool:
     """Reject when the evidence quotes a user-role thread line verbatim.
 
     Detects when the LLM lazily copied a full thread line (including the
@@ -603,6 +651,53 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 relations.append(Relation(
                     from_kind="memory_object",
                     from_id=decision_memory.id,
+                    relation_type="supported_by",
+                    to_kind="source_item",
+                    to_id=source_item_id,
+                ))
+
+        raw_investigations = response.parsed_json.get("investigations")
+        thread_investigations = _validate_thread_investigations(raw_investigations, thread_material)
+        for inv in thread_investigations:
+            investigation_memory = MemoryObject(
+                type="investigation_outcome",
+                schema_id=f"{plugin_name}.thread_investigation",
+                schema_version="v1",
+                payload={
+                    "investigation_outcome": inv["investigation_text"],
+                    "investigation_evidence_text": inv["evidence"],
+                    "rationale": None,
+                    "canonical_key": normalize_for_index(inv["investigation_text"]),
+                    "source_type": "thread_detection",
+                    "source_id": f"thread:{aggregate.thread_ref}",
+                    "semantic_provenance": semantic_provenance,
+                },
+                visibility=aggregate.visibility,
+                container_ref=aggregate.container_ref,
+                freshness_at=aggregate.latest_occurred_at,
+            )
+            investigation_memory, investigation_index_entries = _finalize_memory_builder(
+                memory_object=investigation_memory,
+                container_ref=aggregate.container_ref,
+                thread_ref=aggregate.thread_ref,
+                producer_kind="thread_aggregation",
+                producer_schema_id=THREAD_SUMMARY_PROMPT_SCHEMA_ID,
+                producer_schema_version=THREAD_SUMMARY_PROMPT_SCHEMA_VERSION,
+                prompt_variant=prompt_variant,
+                subjects=thread_subjects,
+                work_refs=thread_work_refs,
+                index_source=f"{inv['investigation_text']} {inv['evidence']}",
+                text_view_name=THREAD_SUMMARY_TEXT_VIEW,
+                retrieval_context=None,
+                plugin_name=plugin_name,
+                llm_metadata=response.metadata,
+            )
+            memory_objects.append(investigation_memory)
+            index_entries.extend(investigation_index_entries)
+            for source_item_id in aggregate.source_item_ids:
+                relations.append(Relation(
+                    from_kind="memory_object",
+                    from_id=investigation_memory.id,
                     relation_type="supported_by",
                     to_kind="source_item",
                     to_id=source_item_id,

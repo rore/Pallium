@@ -1,0 +1,662 @@
+{
+  "test_3": {
+    "total_bad_investigations": 53,
+    "routing_failures": [
+      {
+        "content_preview": "Done. The problem was that on Windows with `CREATE_NO_WINDOW`, child processes had no console to wri",
+        "reasons": [
+          "About Windows console/child process logging, unrelated to the time window for audit log lookup"
+        ]
+      },
+      {
+        "content_preview": "No — the injected memories this turn were about extraction decisions and a prior investigation outco",
+        "reasons": [
+          "About ide_opened_file misinterpretation, not relevant to docs update."
+        ]
+      },
+      {
+        "content_preview": "Honestly, yes — I'd appreciate that. I'm confident about the MCP tools part (Copilot in VS Code agen",
+        "reasons": [
+          "Copilot MCP investigation is unrelated to Codex integration design and global memory visibility disc"
+        ]
+      },
+      {
+        "content_preview": "<task-notification>\n<task-id>a76f2232072dd3e2f</task-id>\n<tool-use-id>toolu_bdrk_01ASu4LqTreGpnzC2gT",
+        "reasons": [
+          "About Pallium gate validation, unrelated to project estimation research."
+        ]
+      },
+      {
+        "content_preview": "Good — `generate_json` takes `system_prompt`, `user_prompt`, and `schema_description`. The plan's us",
+        "reasons": [
+          "User is asking about eval results and quality improvement, not about the architect review verdict on"
+        ]
+      },
+      {
+        "content_preview": "No results with any parameter combination. The memory genuinely doesn't exist — it was never ingeste",
+        "reasons": [
+          "About a missing memory investigation, not related to the [+source] tag feature question."
+        ]
+      },
+      {
+        "content_preview": "Done. The investigation now leads with the conclusion (\"not worth building\"), includes the empirical",
+        "reasons": [
+          "About recency decay architecture decision, unrelated to constraint memory quality implementation.",
+          "About recency decay specifically, not about whether the whole memory concept has value."
+        ]
+      },
+      {
+        "content_preview": "**The bug:** When a thread gets rebuilt (e.g. new messages arrive), Pallium creates a fresh checkpoi",
+        "reasons": [
+          "About index entry accumulation bug, unrelated to test speed"
+        ]
+      },
+      {
+        "content_preview": "Here's the complete diagnosis:\n\n**33 facts produced today. Issues by category:**\n\n| Category | Count",
+        "reasons": [
+          "Generic \"issues by category\" with no context about what issues - not helpful for recalling remaining"
+        ]
+      },
+      {
+        "content_preview": "Good review — found real issues. Here's the summary:\n\n## Review Results\n\n### Critical (must fix befo",
+        "reasons": [
+          "This is about global visibility filtering, unrelated to lexical/vector discrimination eval."
+        ]
+      },
+      {
+        "content_preview": "Here's my architect review of the plan:\n\n---\n\n**Overall: Sound for a v1.** The approach is well-scop",
+        "reasons": [
+          "Dashboard plan investigation not related to the null-summary fix we just shipped",
+          "Dashboard investigation unrelated to semantic dedup discussion",
+          "Dashboard plan review is unrelated to injection precision improvements"
+        ]
+      },
+      {
+        "content_preview": "Here's what the production DB shows:\n\n**Biggest remaining problem: Atomic fact meta-pollution — 660 ",
+        "reasons": [
+          "About atomic fact noise volume, not about feedback sample size."
+        ]
+      },
+      {
+        "content_preview": "The summary section got swallowed by the encoding fix I applied mid-script. But all the data is in t",
+        "reasons": [
+          "User is asking about a specific fact_summary and consolidation behavior, not about the decision memo"
+        ]
+      },
+      {
+        "content_preview": "The service was restarted at 16:35:56 by another thread. It picked up the new code — you can see:\n1.",
+        "reasons": [
+          "About a restart/deployment issue, not about decision extraction validation.",
+          "About a restart not picking up an input detection fix, unrelated to audit_log_id linkage",
+          "About a past model change restart, not relevant to restarting now for turn_summary removal."
+        ]
+      },
+      {
+        "content_preview": "Here's what I see in the live data:\n\n**11 total feedback rows.** The data looks structurally correct",
+        "reasons": [
+          "Rating audit log gap investigation is about retrieval tuning, not about identity resolution in a new"
+        ]
+      },
+      {
+        "content_preview": "## Architect Review\n\n### 1. Current Fit\n\nBoth improvements target the production `agent_conversation",
+        "reasons": [
+          "This is about extraction improvement findings, unrelated to the access-count investigation review di",
+          "About a different investigation (fact extraction improvements), not about the user synopsis architec",
+          "User wants to push eval code, not related to improvement 2 structural tension"
+        ]
+      },
+      {
+        "content_preview": "btw we investigated 1 and 2 and the conclusion what that it's not worth doing in pallium",
+        "reasons": [
+          "About an investigation into something in Pallium, not about project size estimation.",
+          "About a different investigation (1 and 2 not worth doing in pallium) — no context on what 1 and 2 re",
+          "About specific investigation 1&2 not worth doing, not about the overall concept viability."
+        ]
+      },
+      {
+        "content_preview": "Now I have enough context for a thorough review.\n\n---\n\n## Architect Review: Access-Count Retrieval S",
+        "reasons": [
+          "About an access-count retrieval signal investigation, unrelated to reviewing the audit_log_id auto-l"
+        ]
+      },
+      {
+        "content_preview": "Both evals complete. Here's the comparison:\n\n| Metric | v8b (production) | v9 (new) |\n|--------|----",
+        "reasons": [
+          "About interest type classification problems - interest was already deprecated, not relevant to decis"
+        ]
+      },
+      {
+        "content_preview": "So to summarize: the instructions are there, I just wasn't applying them. The fix is behavioral — I ",
+        "reasons": [
+          "User is asking about extraction quality improvements, not about memory rating behavior."
+        ]
+      },
+      {
+        "content_preview": "Now I have enough to give a real assessment. Here's what I found:\n\n---\n\n**Atomic facts (498) — two d",
+        "reasons": [
+          "About the root cause of fact extraction noise, not about the deletion workflow being discussed now.",
+          "User is asking about fixing stale memory file content, not related to conversational_knowledge inves",
+          "About conversational_knowledge/atomic facts root cause, not about investigation_outcome extraction q"
+        ]
+      },
+      {
+        "content_preview": "Now I have the full picture. Here's my architectural review:\n\n---\n\n## Architect Review: Memory Quali",
+        "reasons": [
+          "User asked about pallium_rate_memory usage and integration instructions; injected memory is about de"
+        ]
+      },
+      {
+        "content_preview": "Here's the full picture of muxi's memory implementation:\n\n## Source Repos Found\n\nThree repos under `",
+        "reasons": [
+          "About muxi's memory implementation details, not relevant to renaming the investigation"
+        ]
+      },
+      {
+        "content_preview": "All 648 source items in the container have a thread_ref. The only 2 thread-less items are `agent_art",
+        "reasons": [
+          "User asking about embedding text composition options, not about thread_ref investigation",
+          "User has questions about container in embedding text, not about thread_ref investigation"
+        ]
+      },
+      {
+        "content_preview": "Good. I have all the data I need. Here's the full analysis across the three items:\n\n---\n\n**1. Thresh",
+        "reasons": [
+          "About token threshold for fact extraction, not about injection precision policy analysis"
+        ]
+      },
+      {
+        "content_preview": "Now I have a clear picture from the actual data. Let me map these to the competitor-inspired improve",
+        "reasons": [
+          "User asking about impact of including source evidence in embeddings, not about atomic fact noise",
+          "User says atomic facts are already handled; this memory is about atomic facts not investigation outc"
+        ]
+      },
+      {
+        "content_preview": "Pushed. The bug was an early `return` in `_seed_config` — after writing the TOML it returned without",
+        "reasons": [
+          "Past bug about _seed_config is unrelated to current API error in logs."
+        ]
+      },
+      {
+        "content_preview": "OK, I have the full picture. Here's the constraint_memory issue:\n\n---\n\n**Constraint memories have tw",
+        "reasons": [
+          "About constraint_memory type issue, not about investigation_outcome quality."
+        ]
+      },
+      {
+        "content_preview": "This is the key finding. The data tells a clear story:\n\n**Zero feedback on high-frequency subject fa",
+        "reasons": [
+          "About retrieval noise analysis and subject over-extraction, not about the rating behavior question."
+        ]
+      },
+      {
+        "content_preview": "There it is — it's behind a config flag that defaults to `False`:\n\n```python\nquery_audit_log: bool =",
+        "reasons": [
+          "About a config flag defaulting to False, not about embedding model defaults or similarity thresholds"
+        ]
+      },
+      {
+        "content_preview": "Looking at these, I see three clear categories:\n\n**Genuinely useful** (decisions + rationale, constr",
+        "reasons": [
+          "About classifier noise vs decision rationale, unrelated to visibility model design discussion",
+          "About Pallium memory classifier behavior, unrelated to project size estimation methods.",
+          "About memory classifier behavior, unrelated to code complexity metrics."
+        ]
+      },
+      {
+        "content_preview": "Yes, you're right — this is a failure of the new prompt. The commit `fd1013e` (May 1st 12:31) change",
+        "reasons": [
+          "User wants investigation prompt for access-count, unrelated to prompt failure investigation",
+          "User wants implementation prompt for embedding improvements, not about prompt failure investigation",
+          "About a different prompt failure, not about creating a new investigation prompt for the problems we "
+        ]
+      },
+      {
+        "content_preview": "Now I can see clearly. Here's the analysis:\n\n**Interests — real problems:**\n- `\"_EPHEMERAL_PATTERNS\"",
+        "reasons": [
+          "About IDE event classification as interests — unrelated to feedback denormalization plan review.",
+          "IDE event interest classification investigation is not relevant to pushing a remaining file."
+        ]
+      },
+      {
+        "content_preview": "This confirms it. The IDE events arrive as `source_type=claude-code` with `artifact_kind=None`. The ",
+        "reasons": [
+          "User asked to update instruction files for memory rating; injected memory is about IDE event handlin",
+          "This is about IDE event handling in the integration layer, not about extraction quality gates.",
+          "About IDE event handling being an integration-layer problem, unrelated to visibility model discussio"
+        ]
+      },
+      {
+        "content_preview": "Good news — **yes, GitHub Copilot supports a very similar integration pattern**. VS Code Copilot (si",
+        "reasons": [
+          "This memory is about GitHub Copilot integration patterns, not the current Codex hook installation lo",
+          "About GitHub Copilot integration, unrelated to dashboard layout"
+        ]
+      },
+      {
+        "content_preview": "There it is — Pallium actually just ingested *this conversation* where I said \"Pallium has no memory",
+        "reasons": [
+          "About a past bug with missing visibility parameter, not about how the ingest I just did works."
+        ]
+      },
+      {
+        "content_preview": "OK so here's what THIS session produced — 26 active memories from 87 source items. Let me assess the",
+        "reasons": [
+          "User is asking about the specific memory just ingested about BM25 floor tracking, not about extracti"
+        ]
+      },
+      {
+        "content_preview": "There it is. The session-start query \"recent decisions, progress, and open tasks\" contains the token",
+        "reasons": [
+          "About a content-overlap gate investigation, unrelated to code complexity metrics."
+        ]
+      },
+      {
+        "content_preview": "Now I have a clear picture. Here's the analysis:\n\n## Role → Memory Type Mapping (current state)\n\n| M",
+        "reasons": [
+          "User is researching muxi's memory feature, not related to extraction decisions analysis",
+          "About extraction decisions evaluation findings, not about deduplication",
+          "About extraction decision quality, not dedup"
+        ]
+      },
+      {
+        "content_preview": "Option 2 is more feasible.\n\nOption 1 requires Pallium to know at extraction time that a particular s",
+        "reasons": [
+          "User is updating status of muxi-inspired improvements, not related to option 2 feasibility for sourc",
+          "User is asking about retrieval precision improvement directions, not about thin card density."
+        ]
+      },
+      {
+        "content_preview": "I queried with: `pallium_query(\"installed service pallium windows\")`\n\nGot back: empty results — `{\"r",
+        "reasons": [
+          "About Windows scheduled task details, not related to user synopsis",
+          "About service management details, not embedding model migration strategy"
+        ]
+      },
+      {
+        "content_preview": "You're right, I was wrong. This conversation contains real decisions and findings:\n\n- \"Hot-swap chos",
+        "reasons": [
+          "About noise classification in memory extraction, unrelated to code complexity metrics."
+        ]
+      },
+      {
+        "content_preview": "The verification shows purge-suppressed is safe to run. Here's the evidence:\n\n**Live DB analysis (74",
+        "reasons": [
+          "Memory about purge-suppressed safety is unrelated to the vector rebuild implementation verification "
+        ]
+      },
+      {
+        "content_preview": "It means the LLM is correctly identifying these short user messages (\"go ahead\", \"sorry, go again\", ",
+        "reasons": [
+          "About a different validation crash issue, not about estimating recency validation effort"
+        ]
+      },
+      {
+        "content_preview": "Here's the full regression summary:\n\n| Suite | Result |\n|-------|--------|\n| **Unit tests** | 1639 p",
+        "reasons": [
+          "Investigation about extraction regressions, not related to routing refactor parallelization"
+        ]
+      },
+      {
+        "content_preview": "Big improvement is visible:\n\n**Before changes:** \"user\" = 240 facts, \"assistant\" = 68. Massive catch",
+        "reasons": [
+          "User wants a prompt for exploring semantic dedup, not related to fact extraction prompt changes"
+        ]
+      },
+      {
+        "content_preview": "**Race condition between ingest and processing due to non-atomic writes.**\n\nDuring ingest, `create_s",
+        "reasons": [
+          "About a race condition bug, unrelated to sample size discussion.",
+          "About ingest/processing race condition, unrelated to adding time window to audit log lookup"
+        ]
+      },
+      {
+        "content_preview": "**Architect Review — `federated-tickling-rabbit.md`**\n\n---\n\n**1. Current fit**\n\nAll three changes ar",
+        "reasons": [
+          "About a different architect review on a different plan, not the current one"
+        ]
+      },
+      {
+        "content_preview": "Here's the complete data-driven root cause analysis of all quality issues in the live database.\n\n---",
+        "reasons": [
+          "User is researching muxi's memory feature, not related to race condition investigation"
+        ]
+      },
+      {
+        "content_preview": "Top offenders, clear-cut:\n\n| # | Bad/Good | Type | Memory text | Why it's toxic |\n|---|----------|--",
+        "reasons": [
+          "About toxic memory injection from stale decisions — not related to note extraction design."
+        ]
+      }
+    ],
+    "extraction_failures": [],
+    "ambiguous": [
+      {
+        "content_preview": "Done. The investigation is concluded: **not worth building.** True duplicate rate is ~6%, vector sim",
+        "reasons": [
+          "About duplicate fact dedup investigation, not relevant to user-facing docs."
+        ]
+      },
+      {
+        "content_preview": "Two Pallium service instances running simultaneously (second started at 18:20:33 via the Windows Sch",
+        "reasons": [
+          "Duplicate processing investigation is unrelated to cleaning suppressed items from local DB"
+        ]
+      },
+      {
+        "content_preview": "OK, I've hit a wall on finding the actual SDK docs beyond the hooks page you already shared. Here's ",
+        "reasons": [
+          "This memory concerns GitHub Copilot SDK hook capabilities, not where Pallium Codex hooks are install"
+        ]
+      }
+    ],
+    "total_bad_constraints": 19,
+    "constraint_routing_failures": 15,
+    "constraint_extraction_failures": 0
+  },
+  "test_1": {
+    "total": 333,
+    "lvm_agreement": {
+      "agree": 279,
+      "disagree": 54,
+      "details": [
+        {
+          "content_preview": "Looking at these, I see three clear categories:\n\n**Genuinely useful** (decisions + rationale, constr",
+          "sonnet": false,
+          "haiku": true
+        },
+        {
+          "content_preview": "Top offenders, clear-cut:\n\n| # | Bad/Good | Type | Memory text | Why it's toxic |\n|---|----------|--",
+          "sonnet": false,
+          "haiku": true
+        },
+        {
+          "content_preview": "yes, but do a detailed planning first on all to see we don't miss anything",
+          "sonnet": false,
+          "haiku": true
+        },
+        {
+          "content_preview": "no no, that was completely wrong. no language cues !!!",
+          "sonnet": false,
+          "haiku": true
+        },
+        {
+          "content_preview": "i don't want to add a new process, is this something we already have?",
+          "sonnet": false,
+          "haiku": true
+        },
+        {
+          "content_preview": "what? why did you do an architect review on an investigation from another thread and not on the curr",
+          "sonnet": true,
+          "haiku": false
+        },
+        {
+          "content_preview": "do this also for linux ad push",
+          "sonnet": false,
+          "haiku": true
+        },
+        {
+          "content_preview": "still says discussion summary",
+          "sonnet": false,
+          "haiku": true
+        },
+        {
+          "content_preview": "implement with subagents. do defensive programming. make sure to always to an architect review befor",
+          "sonnet": true,
+          "haiku": false
+        },
+        {
+          "content_preview": "is was actually restarted by another thread - \"C:\\Users\\I347041\\.pallium\\logs\\pallium.log\" - see the",
+          "sonnet": true,
+          "haiku": false
+        }
+      ]
+    },
+    "investigation_detection": {
+      "true_positive": 83,
+      "false_negative": 6,
+      "true_negative": 190,
+      "false_positive": 54
+    },
+    "constraint_detection": {
+      "true_positive": 37,
+      "false_negative": 7,
+      "true_negative": 211,
+      "false_positive": 78
+    },
+    "errors": 0
+  },
+  "test_2": {
+    "threads_tested": 22,
+    "per_thread": [
+      {
+        "thread_ref": "0dd29392",
+        "thread_size": 12,
+        "good_items": 0,
+        "good_found": 0,
+        "bad_items": 1,
+        "bad_found": 0,
+        "outcomes_extracted": 4,
+        "durable_outcomes": 4
+      },
+      {
+        "thread_ref": "11852d85",
+        "thread_size": 46,
+        "good_items": 3,
+        "good_found": 3,
+        "bad_items": 0,
+        "bad_found": 0,
+        "outcomes_extracted": 5,
+        "durable_outcomes": 4
+      },
+      {
+        "thread_ref": "17f66777",
+        "thread_size": 77,
+        "good_items": 0,
+        "good_found": 0,
+        "bad_items": 3,
+        "bad_found": 1,
+        "outcomes_extracted": 4,
+        "durable_outcomes": 3
+      },
+      {
+        "thread_ref": "18df314b",
+        "thread_size": 52,
+        "good_items": 0,
+        "good_found": 0,
+        "bad_items": 2,
+        "bad_found": 2,
+        "outcomes_extracted": 5,
+        "durable_outcomes": 5
+      },
+      {
+        "thread_ref": "1bcbb241",
+        "thread_size": 123,
+        "good_items": 2,
+        "good_found": 0,
+        "bad_items": 7,
+        "bad_found": 1,
+        "outcomes_extracted": 5,
+        "durable_outcomes": 5
+      },
+      {
+        "thread_ref": "2273573f",
+        "thread_size": 18,
+        "good_items": 1,
+        "good_found": 0,
+        "bad_items": 0,
+        "bad_found": 0,
+        "outcomes_extracted": 5,
+        "durable_outcomes": 5
+      },
+      {
+        "thread_ref": "2db7f163",
+        "thread_size": 27,
+        "good_items": 0,
+        "good_found": 0,
+        "bad_items": 1,
+        "bad_found": 0,
+        "outcomes_extracted": 5,
+        "durable_outcomes": 4
+      },
+      {
+        "thread_ref": "397f949d",
+        "thread_size": 11,
+        "good_items": 0,
+        "good_found": 0,
+        "bad_items": 3,
+        "bad_found": 1,
+        "outcomes_extracted": 4,
+        "durable_outcomes": 4
+      },
+      {
+        "thread_ref": "40752291",
+        "thread_size": 20,
+        "good_items": 0,
+        "good_found": 0,
+        "bad_items": 1,
+        "bad_found": 0,
+        "outcomes_extracted": 5,
+        "durable_outcomes": 5
+      },
+      {
+        "thread_ref": "607656ac",
+        "thread_size": 23,
+        "good_items": 0,
+        "good_found": 0,
+        "bad_items": 1,
+        "bad_found": 1,
+        "outcomes_extracted": 5,
+        "durable_outcomes": 5
+      },
+      {
+        "thread_ref": "63a1318f",
+        "thread_size": 16,
+        "good_items": 0,
+        "good_found": 0,
+        "bad_items": 1,
+        "bad_found": 1,
+        "outcomes_extracted": 4,
+        "durable_outcomes": 4
+      },
+      {
+        "thread_ref": "7690cbaa",
+        "thread_size": 32,
+        "good_items": 3,
+        "good_found": 2,
+        "bad_items": 2,
+        "bad_found": 0,
+        "outcomes_extracted": 5,
+        "durable_outcomes": 5
+      },
+      {
+        "thread_ref": "7c7e5d7f",
+        "thread_size": 79,
+        "good_items": 5,
+        "good_found": 4,
+        "bad_items": 5,
+        "bad_found": 0,
+        "outcomes_extracted": 5,
+        "durable_outcomes": 5
+      },
+      {
+        "thread_ref": "7ca73f41",
+        "thread_size": 129,
+        "good_items": 1,
+        "good_found": 0,
+        "bad_items": 6,
+        "bad_found": 2,
+        "outcomes_extracted": 4,
+        "durable_outcomes": 4
+      },
+      {
+        "thread_ref": "83d8d040",
+        "thread_size": 21,
+        "good_items": 3,
+        "good_found": 3,
+        "bad_items": 1,
+        "bad_found": 0,
+        "outcomes_extracted": 5,
+        "durable_outcomes": 5
+      },
+      {
+        "thread_ref": "8426fa50",
+        "thread_size": 164,
+        "good_items": 7,
+        "good_found": 3,
+        "bad_items": 3,
+        "bad_found": 0,
+        "outcomes_extracted": 5,
+        "durable_outcomes": 5
+      },
+      {
+        "thread_ref": "c343c059",
+        "thread_size": 65,
+        "good_items": 1,
+        "good_found": 0,
+        "bad_items": 4,
+        "bad_found": 2,
+        "outcomes_extracted": 5,
+        "durable_outcomes": 5
+      },
+      {
+        "thread_ref": "c51121d5",
+        "thread_size": 33,
+        "good_items": 1,
+        "good_found": 1,
+        "bad_items": 1,
+        "bad_found": 0,
+        "outcomes_extracted": 5,
+        "durable_outcomes": 5
+      },
+      {
+        "thread_ref": "cd32acad",
+        "thread_size": 27,
+        "good_items": 0,
+        "good_found": 0,
+        "bad_items": 1,
+        "bad_found": 1,
+        "outcomes_extracted": 3,
+        "durable_outcomes": 3
+      },
+      {
+        "thread_ref": "d8780d0a",
+        "thread_size": 13,
+        "good_items": 1,
+        "good_found": 1,
+        "bad_items": 0,
+        "bad_found": 0,
+        "outcomes_extracted": 3,
+        "durable_outcomes": 3
+      },
+      {
+        "thread_ref": "ee3d527f",
+        "thread_size": 89,
+        "good_items": 4,
+        "good_found": 1,
+        "bad_items": 2,
+        "bad_found": 1,
+        "outcomes_extracted": 5,
+        "durable_outcomes": 5
+      },
+      {
+        "thread_ref": "f4842fe7",
+        "thread_size": 81,
+        "good_items": 4,
+        "good_found": 1,
+        "bad_items": 8,
+        "bad_found": 5,
+        "outcomes_extracted": 5,
+        "durable_outcomes": 5
+      }
+    ],
+    "aggregate": {
+      "source_items_with_good_inv": 36,
+      "source_items_with_bad_inv": 53,
+      "thread_found_good": 19,
+      "thread_missed_good": 17,
+      "thread_found_bad": 18,
+      "thread_avoided_bad": 35
+    }
+  }
+}

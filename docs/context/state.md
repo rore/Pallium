@@ -18,8 +18,8 @@
 - architecture direction: single local-first service with clear module boundaries
 - first concrete product package: `agent_conversation_memory`
 - current LLM provider: Anthropic Claude (Sonnet + Haiku via per-role model config)
-  - Sonnet: write_extraction (quality-critical, 14-field schema)
-  - Haiku: thread_aggregation, consolidation, query_ambiguity_resolution (simpler schemas, benchmarked equal or better)
+  - Haiku: write_extraction (eval-proven 82-99% recall on signals), consolidation, query_ambiguity_resolution
+  - Sonnet: thread_aggregation (investigation grounding requires stronger reasoning; 59.5% vs 21% Haiku)
 - current extraction prompt: `strict_typed_memory_v8b_work_refs_separate` (867 tokens, work_ref extraction for cross-surface work continuity, prompt schema v8)
 - normal local runtime goes through `python -m app.run ... --processors N`
 - debug queue health exists at `GET /debug/queue/health`
@@ -46,6 +46,7 @@
   - thread-level memories (thread_summary, task_checkpoint) always have actor_ref=null (shared)
   - backward compatible — queries without actor_ref work as before
 - reusable thread aggregation and bounded consolidation capabilities are shipped for the current package
+- thread aggregation extracts decisions AND investigation_outcomes from thread context (schema v7), with exact-quote grounding validation for both
 - item-level LLM extraction persists internal semantic signals under `SourceItem.metadata["pallium_semantic_signals"]`
 - work reference (work_ref) support is shipped for cross-surface work continuity:
   - external work identifiers (ticket IDs, PR numbers, incident keys) extracted from content via LLM prompt

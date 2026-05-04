@@ -662,3 +662,36 @@ Why:
 - fail-closed prevents leakage when actor identity is missing
 - explicit-only creation (never automatic extraction) prevents accidental global scope
 - routing demotion factor deferred pending live usage data
+
+### 2026-05-04 - Haiku for per-item extraction; Sonnet for thread aggregation with investigations
+
+Per-item write extraction switched from Sonnet to Haiku. Thread aggregation
+upgraded from Haiku to Sonnet to support thread-level investigation extraction.
+
+Evidence (333-item production corpus with ground-truth ratings):
+- Per-item signal extraction: Haiku achieves 82-99% recall vs Sonnet across all
+  work-state signals (progress, blocker, next_step, key_finding, constraint)
+- Thread-level investigation grounding: Sonnet achieves 59.5% exact-quote
+  grounding vs 21-25% for Haiku — Haiku hallucinations are filtered by
+  validation but leave too few valid extractions
+- Per-item investigation precision: 38%, with 94% of failures attributable to
+  routing not extraction — thread-level extraction with full context produces
+  higher quality, self-contained findings
+
+Amends "2026-03-21 - Haiku for thread aggregation and consolidation roles":
+- write_extraction: Sonnet → Haiku (eval-proven sufficient for 14-field schema)
+- thread_aggregation: Haiku → Sonnet (investigation grounding requires stronger
+  reasoning; summary/checkpoint quality is preserved since Sonnet ≥ Haiku)
+- consolidation: stays Haiku (unchanged)
+
+Thread-level investigation extraction follows the decision extraction pattern:
+exact-quote grounding validation, same schema structure, same memory builder.
+`THREAD_SUMMARY_PROMPT_SCHEMA_VERSION` bumped v6 → v7.
+
+Why:
+- per-item Sonnet cost is disproportionate to value for signal extraction
+- per-item investigations add near-zero value (all good ones come from large
+  threads that get rebuilt anyway)
+- thread-level extraction produces self-contained findings with full context
+- Sonnet at thread level costs ~1/11th of per-item Sonnet (142 summaries vs
+  1496 items in production)
