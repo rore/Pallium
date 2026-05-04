@@ -202,6 +202,7 @@ class QueryRuntimeContext:
     turn_kind: TurnKind | None = None
     session_has_sufficient_local_context: bool | None = None
     evidence_request: bool | None = None
+    thread_item_count: int | None = None
 
 
 @dataclass(frozen=True)

@@ -272,3 +272,49 @@ def test_item_and_query_excludes_just_ingested_item(client) -> None:
     assert rc2 is not None
     assert rc2.turn_kind == "same_thread_continuation"
     assert rc2.session_has_sufficient_local_context is True
+    assert rc2.thread_item_count == 1
+
+
+def test_resolve_runtime_context_fills_thread_item_count_when_turn_kind_provided(client) -> None:
+    """When turn_kind and local_context are pre-set, thread_item_count is still populated."""
+    service = client.app.state.pallium_service
+    service.ingest_item(
+        source_type="chat_message",
+        source_id="ti-item-count-1",
+        content_type="text/plain",
+        content="first message",
+        metadata=None,
+        use_case=None,
+        container_ref="chat:item-count-test",
+        thread_ref="ti-thread-count",
+        visibility="container",
+        role="user",
+        artifact_kind="message",
+    )
+    service.ingest_item(
+        source_type="chat_message",
+        source_id="ti-item-count-2",
+        content_type="text/plain",
+        content="second message",
+        metadata=None,
+        use_case=None,
+        container_ref="chat:item-count-test",
+        thread_ref="ti-thread-count",
+        visibility="container",
+        role="assistant",
+        artifact_kind="message",
+    )
+
+    pre_set_context = QueryRuntimeContext(
+        turn_kind="same_thread_continuation",
+        session_has_sufficient_local_context=True,
+    )
+    rc = resolve_runtime_context(
+        service._storage,
+        "ti-thread-count",
+        pre_set_context,
+    )
+    assert rc is not None
+    assert rc.turn_kind == "same_thread_continuation"
+    assert rc.session_has_sufficient_local_context is True
+    assert rc.thread_item_count == 2

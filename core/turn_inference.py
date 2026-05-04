@@ -109,20 +109,32 @@ def resolve_runtime_context(
 
     needs_turn_kind = runtime_context is None or runtime_context.turn_kind is None
     needs_local_context = runtime_context is None or runtime_context.session_has_sufficient_local_context is None
+    needs_item_count = runtime_context is None or runtime_context.thread_item_count is None
 
-    if not needs_turn_kind and not needs_local_context:
+    if not needs_turn_kind and not needs_local_context and not needs_item_count:
         return runtime_context
 
     if thread_ref is None:
         return runtime_context
 
     stats = storage.get_thread_stats(thread_ref, exclude_item_id=exclude_item_id)
+
+    if not needs_turn_kind and not needs_local_context:
+        assert runtime_context is not None
+        return QueryRuntimeContext(
+            turn_kind=runtime_context.turn_kind,
+            session_has_sufficient_local_context=runtime_context.session_has_sufficient_local_context,
+            evidence_request=runtime_context.evidence_request,
+            thread_item_count=stats.item_count,
+        )
+
     inferred = infer_from_thread_stats(stats, now=now or utc_now())
 
     if runtime_context is None:
         return QueryRuntimeContext(
             turn_kind=inferred.turn_kind,
             session_has_sufficient_local_context=inferred.session_has_sufficient_local_context,
+            thread_item_count=stats.item_count,
         )
 
     return QueryRuntimeContext(
@@ -133,4 +145,5 @@ def resolve_runtime_context(
             else inferred.session_has_sufficient_local_context
         ),
         evidence_request=runtime_context.evidence_request,
+        thread_item_count=runtime_context.thread_item_count if runtime_context.thread_item_count is not None else stats.item_count,
     )

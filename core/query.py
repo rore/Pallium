@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import replace
 from typing import Any
 
 from core.contracts import PackageQueryOutcome, QueryResult, resolve_query_filters
 from core.filters import matches_filters
-from core.models import QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace
+from core.models import InjectableBlock, MemoryObject, QueryFilters, QueryResultItem, QueryRuntimeContext, QueryTrace
 from core.observability import QueryStats
 from core.type_registry import TypeRegistry
 from core.visibility import QueryVisibilityTrace, is_visible
@@ -14,6 +15,10 @@ from retrieval.base import RetrievalProvider
 from retrieval.lexical import tokenize_query
 from semantic.base import SemanticPlugin
 from storage.base import StorageProvider
+
+logger = logging.getLogger(__name__)
+
+CHECKPOINT_BYPASS_ITEM_THRESHOLD = 12
 
 
 def _build_query_result_summary(results: list[Any]) -> dict[str, Any]:
@@ -26,6 +31,36 @@ def _build_query_result_summary(results: list[Any]) -> dict[str, Any]:
             "source": sum(1 for item in results if getattr(item, "result_kind", None) == "source_hit"),
         },
     }
+
+
+def _build_checkpoint_block(memory_object: MemoryObject, evidence) -> InjectableBlock:
+    payload = memory_object.payload or {}
+    task = str(payload.get("task") or "").strip()
+    title = f"Task Checkpoint — {task}" if task else "Task Checkpoint"
+    parts: list[str] = []
+    blocker = str(payload.get("blocker_state") or "").strip()
+    current_state = str(payload.get("current_state") or "").strip()
+    next_step = str(payload.get("next_step") or "").strip()
+    summary = str(payload.get("summary") or "").strip()
+    if blocker:
+        parts.append(f"Blocker: {blocker}")
+    if current_state:
+        parts.append(f"Current state: {current_state}")
+    elif summary:
+        parts.append(summary)
+    if next_step:
+        parts.append(f"Next step: {next_step}")
+    text = " ".join(parts) if parts else summary
+    return InjectableBlock(
+        result_id=f"memory_object:{memory_object.id}",
+        block_type="memory",
+        title=title,
+        text=text,
+        evidence=evidence,
+        memory_type="task_checkpoint",
+        memory_object_id=memory_object.id,
+        expand_available=True,
+    )
 
 
 class QueryExecutor:
@@ -154,6 +189,10 @@ class QueryExecutor:
             )
             if not isinstance(outcome, PackageQueryOutcome):
                 raise TypeError("route_query_results must return PackageQueryOutcome")
+            outcome = self._checkpoint_bypass(
+                outcome, runtime_context=runtime_context,
+                container_ref=container_ref, thread_ref=thread_ref,
+            )
             routed_trace = outcome.trace
             if routed_trace is not None:
                 routed_trace = replace(routed_trace, result_summary=_build_query_result_summary(outcome.results))
@@ -182,6 +221,45 @@ class QueryExecutor:
         if self._query_stats is not None:
             self._query_stats.record_query(result)
         return result
+
+    def _checkpoint_bypass(
+        self,
+        outcome: PackageQueryOutcome,
+        *,
+        runtime_context: QueryRuntimeContext | None,
+        container_ref: str | None,
+        thread_ref: str | None,
+    ) -> PackageQueryOutcome:
+        if outcome.decision_reason != "same_thread_context_sufficient":
+            return outcome
+        if runtime_context is None or not runtime_context.thread_item_count:
+            return outcome
+        if runtime_context.thread_item_count < CHECKPOINT_BYPASS_ITEM_THRESHOLD:
+            return outcome
+        if not container_ref or not thread_ref:
+            return outcome
+        checkpoint = self._storage.find_latest_checkpoint_for_thread(container_ref, thread_ref)
+        if checkpoint is None:
+            return outcome
+        payload = checkpoint.payload or {}
+        if (
+            not str(payload.get("next_step") or "").strip()
+            and not str(payload.get("blocker_state") or "").strip()
+            and not str(payload.get("current_state") or "").strip()
+        ):
+            return outcome
+        evidence = self._storage.get_evidence_for_memory_object(checkpoint.id)
+        block = _build_checkpoint_block(checkpoint, evidence)
+        logger.debug(
+            "checkpoint_bypass: injecting checkpoint %s for thread %s (item_count=%d)",
+            checkpoint.id, thread_ref, runtime_context.thread_item_count,
+        )
+        return replace(
+            outcome,
+            should_inject=True,
+            decision_reason="forced_checkpoint_reinject",
+            injectable_blocks=[block],
+        )
 
     def _make_debug_candidate_loader(
         self,
