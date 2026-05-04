@@ -16,7 +16,7 @@ turn solely to rate memory.
 **When to use other explicit tools:**
 - `pallium_query` — injected context is empty or missing something the user asked about
 - `pallium_expand` — you need the original conversation behind a memory card.
-  If a `[+source]` card summary is sufficient, trust the card; fetch evidence only
+  If a `[+expand]` card summary is sufficient, trust the card; fetch evidence only
   when you need the original conversation to answer accurately.
 - `pallium_flag_memory` — a memory contradicts what you now know to be true
 - `pallium_ingest` — user explicitly asks to remember something. **Pass
