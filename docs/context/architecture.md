@@ -120,7 +120,6 @@ Implemented semantic behavior now includes:
   - `continuity_memory`
   - `task_checkpoint`
 - item-level typed memory for:
-  - `interest`
   - `constraint_memory`
 - fallback: items that don't match any typed extraction produce no memory object (turn_summary fallback removed)
 - prompt provenance attached to LLM-derived memory objects
@@ -257,8 +256,9 @@ For resumed-work queries, that same package-owned path adds explicit usefulness 
 
 Actor scoping extends the visibility model with per-memory attribution:
 
-- personal memory types (`interest`, `constraint_memory`) are only created in private containers; in shared containers they are suppressed with no fallback
-- `constraint_memory` has a role guard — only user messages can create it (same pattern as `interest`)
+- personal memory types (`constraint_memory`) are only created in private containers; in shared containers they are suppressed with no fallback
+- `constraint_memory` has a role guard — only user messages can create it
+- `note` type is created via explicit ingest with `artifact_kind="note"` — bypasses standard type-classification extraction and uses a dedicated title-extraction prompt; content is preserved verbatim in payload, title provides retrieval metadata; durable (never garbage-collected), excluded from consolidation, injection truncates at 500 chars with `[+source]` pointer for expansion
 - `actor_ref` on `MemoryObject` tracks who the memory is about, not who created it; set from source item in private containers, null in shared containers
 - thread-level memories (`thread_summary`, `task_checkpoint`) always have `actor_ref = null` regardless of container type
 - query-time actor filtering prevents personal memories from being injected into other users' contexts; shared memories (`actor_ref = null`) always pass the filter
