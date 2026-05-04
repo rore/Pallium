@@ -312,6 +312,22 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_thread_processing_lease(self, scope_key: str) -> ThreadProcessingLease | None:
+        """Read a thread processing lease without claiming it."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def count_source_items_for_thread_after(
+        self,
+        *,
+        container_ref: str,
+        thread_ref: str,
+        after_created_at: datetime,
+    ) -> int:
+        """Count source items in a thread created after a given timestamp."""
+        raise NotImplementedError
+
+    @abstractmethod
     def claim_retention_lease(
         self,
         *,
@@ -524,6 +540,11 @@ class StorageProvider(ABC):
 
     @abstractmethod
     def get_evidence_for_memory_object(self, memory_object_id: str) -> list[EvidenceReference]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def find_latest_checkpoint_for_thread(self, container_ref: str, thread_ref: str) -> MemoryObject | None:
+        """Find the most recent active task_checkpoint with evidence from the given thread."""
         raise NotImplementedError
 
     @abstractmethod

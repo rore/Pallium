@@ -39,6 +39,7 @@ DEFAULT_PROCESSING_LEASE_SECONDS = 15 * 60
 DEFAULT_PROCESSING_MAX_ATTEMPTS = 3
 DEFAULT_RETRY_BACKOFF_SECONDS = 5
 MAX_RETRY_BACKOFF_SECONDS = 5 * 60
+REBUILD_ITEM_COUNT_THRESHOLD = 10
 
 
 def _observability_state(source_item: SourceItem) -> dict[str, Any]:
@@ -295,6 +296,12 @@ class ItemProcessor:
                     plugin=plugin,
                     source_item=source_item,
                 )
+            if thread_rebuild_scope is None:
+                thread_rebuild_scope = self._should_force_rebuild_by_count(
+                    plugin_name=plugin_name,
+                    plugin=plugin,
+                    source_item=source_item,
+                )
             observability_patch: dict[str, Any] = {
                 "thread_rebuild_completed": False,
             }
@@ -411,6 +418,30 @@ class ItemProcessor:
 
         if memory_vectors_added or source_vector_added:
             self._vector_embedder.save_vector_index()
+
+    def _should_force_rebuild_by_count(
+        self,
+        *,
+        plugin_name: str,
+        plugin: SemanticPlugin,
+        source_item: SourceItem,
+    ) -> ThreadProcessingScope | None:
+        scope = self._thread_rebuilder.build_thread_processing_scope(
+            plugin_name=plugin_name,
+            plugin=plugin,
+            source_item=source_item,
+        )
+        if scope is None:
+            return None
+        lease = self._storage.get_thread_processing_lease(scope.scope_key)
+        if lease is None or lease.collection_watermark_at is None:
+            return None
+        count = self._storage.count_source_items_for_thread_after(
+            container_ref=scope.container_ref,
+            thread_ref=source_item.thread_ref or "",
+            after_created_at=lease.collection_watermark_at,
+        )
+        return scope if count >= REBUILD_ITEM_COUNT_THRESHOLD else None
 
     @staticmethod
     def _queue_backoff_seconds(attempt_count: int) -> int:

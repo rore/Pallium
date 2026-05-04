@@ -855,3 +855,106 @@ def test_watermark_skips_old_items(monkeypatch, test_db_url: str) -> None:
         assert "new item after watermark" in last_rebuild.lower()
         # The old filler content should NOT be in the rebuild prompt (watermark skipped it)
         assert "padding word filler text for budget testing" not in last_rebuild.lower() or "new item after watermark" in last_rebuild.lower()
+
+
+# ---------------------------------------------------------------------------
+# Test 19: Count threshold triggers rebuild without per-item signal
+# ---------------------------------------------------------------------------
+
+class _CountThresholdStub:
+    """Stub that returns low_value_meta for per-item extraction (suppresses rebuild trigger)
+    but returns valid thread summaries when thread rebuild is called."""
+
+    def __init__(self):
+        self.call_count = 0
+        self.prompts: list[str] = []
+
+    def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+        self.call_count += 1
+        self.prompts.append(user_prompt)
+
+        if "thread items:" in user_prompt.lower():
+            payload = {
+                "summary": f"Thread summary from call {self.call_count}.",
+                "content_quality": "substantive",
+                "retrieval_context": None,
+                "decisions": [],
+                "investigations": [],
+            }
+            if "task_checkpoint" in schema_description:
+                payload["task_checkpoint"] = None
+        else:
+            payload = {
+                "candidate_type": None,
+                "summary": None,
+                "is_low_value_meta": True,
+                "constraint_text": None,
+                "next_step_text": None,
+                "blocker_text": None,
+                "progress_text": None,
+                "key_finding_text": None,
+                "subject_hints": [],
+            }
+
+        return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
+
+
+def test_count_threshold_triggers_rebuild_without_per_item_signal(monkeypatch, test_db_url: str) -> None:
+    """When ≥10 items accumulate after the watermark without per-item triggering a rebuild,
+    the count-based fallback forces a thread rebuild."""
+    from core.processing import REBUILD_ITEM_COUNT_THRESHOLD
+
+    container_ref = "test:count-trigger"
+    thread_ref = "test:count-trigger:thread-1"
+
+    # Phase 1: Use the standard stub to get an initial rebuild (establishes watermark)
+    standard_stub = IncrementalTestStubProvider()
+    client, service, standard_stub = _create_client(monkeypatch, test_db_url, stub=standard_stub)
+
+    initial_messages = [
+        _make_message("init-1", "We decided to use event-time ordering for all reservation holds to prevent sync-delay losses across all concurrent processing workers in our distributed system architecture.", container_ref, thread_ref, role="assistant"),
+        _make_message("init-2", "This is a follow-up message that provides additional context about the event-time ordering decision and its implications for the distributed catalog synchronization pipeline.", container_ref, thread_ref),
+    ]
+    _post_and_drain(client, service, initial_messages)
+
+    # Verify initial rebuild happened (watermark established)
+    thread_rebuild_prompts = [p for p in standard_stub.prompts if "thread items:" in p.lower()]
+    assert len(thread_rebuild_prompts) >= 1, "Initial rebuild should have triggered"
+
+    initial_thread_summaries = _collect_memory(service._storage, container_ref, thread_ref, "thread_summary")
+    assert len(initial_thread_summaries) >= 1, "Should have at least one thread_summary from initial rebuild"
+
+    initial_rebuild_count = len(thread_rebuild_prompts)
+
+    # Phase 2: Switch to the count-threshold stub that returns is_low_value_meta=True
+    count_stub = _CountThresholdStub()
+    for plugin in service._semantic_plugins.values():
+        if hasattr(plugin, "_provider"):
+            plugin._provider = count_stub
+        if hasattr(plugin, "_delegate") and hasattr(plugin._delegate, "_provider"):
+            plugin._delegate._provider = count_stub
+
+    # Post items that individually won't trigger a rebuild (low_value_meta=True)
+    low_value_messages = [
+        _make_message(f"low-{i}", f"Task complete. No message needed. Item number {i} processed.", container_ref, thread_ref)
+        for i in range(REBUILD_ITEM_COUNT_THRESHOLD)
+    ]
+
+    # Post first half — should NOT trigger a rebuild yet
+    half = REBUILD_ITEM_COUNT_THRESHOLD // 2
+    _post_drain_each(client, service, low_value_messages[:half])
+    mid_rebuild_prompts = [p for p in count_stub.prompts if "thread items:" in p.lower()]
+    assert len(mid_rebuild_prompts) == 0, (
+        f"Rebuild should NOT fire before threshold ({half}/{REBUILD_ITEM_COUNT_THRESHOLD} items). "
+        f"Got {len(mid_rebuild_prompts)} rebuild prompts."
+    )
+
+    # Post remaining items — threshold should trigger rebuild
+    _post_drain_each(client, service, low_value_messages[half:])
+
+    # Verify that the count-based threshold triggered exactly one rebuild
+    count_rebuild_prompts = [p for p in count_stub.prompts if "thread items:" in p.lower()]
+    assert len(count_rebuild_prompts) == 1, (
+        f"Count-based threshold ({REBUILD_ITEM_COUNT_THRESHOLD} items) should trigger exactly one thread rebuild. "
+        f"Got {len(count_rebuild_prompts)} rebuild prompts from {count_stub.call_count} total calls."
+    )

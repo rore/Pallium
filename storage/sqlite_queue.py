@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from core.contracts import ProcessResult, SupersessionHint
@@ -396,6 +396,44 @@ class SQLiteQueueMixin:
             return pending_after
 
         return self._with_retry(_do)
+
+    def get_thread_processing_lease(self, scope_key: str) -> ThreadProcessingLease | None:
+        with self._session_factory() as session:
+            record = session.get(ThreadProcessingLeaseRecord, scope_key)
+            if record is None:
+                return None
+            return ThreadProcessingLease(
+                scope_key=record.scope_key,
+                use_case=record.use_case,
+                container_ref=record.container_ref,
+                thread_ref=record.thread_ref,
+                visibility=record.visibility or "private",
+                requested_at=self._normalize_datetime(record.requested_at),
+                processing_claimed_by=record.processing_claimed_by,
+                processing_claimed_at=self._normalize_datetime(record.processing_claimed_at),
+                processing_lease_expires_at=self._normalize_datetime(record.processing_lease_expires_at),
+                collection_watermark_at=self._normalize_datetime(record.collection_watermark_at),
+            )
+
+    def count_source_items_for_thread_after(
+        self,
+        *,
+        container_ref: str,
+        thread_ref: str,
+        after_created_at: datetime,
+    ) -> int:
+        normalized = after_created_at.replace(tzinfo=None) if after_created_at.tzinfo else after_created_at
+        with self._session_factory() as session:
+            count = session.scalar(
+                select(func.count())
+                .select_from(SourceItemRecord)
+                .where(
+                    SourceItemRecord.container_ref == container_ref,
+                    SourceItemRecord.thread_ref == thread_ref,
+                    SourceItemRecord.created_at > normalized,
+                )
+            )
+            return count or 0
 
     def get_queue_health_snapshot(
         self,
