@@ -891,11 +891,19 @@ def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) ->
             memory_object_id=mo_id,
         )
     if item.type == "pattern_memory":
+        summary_text = str(payload.get("summary") or "").strip()
+        conclusions = [c for c in (payload.get("conclusions") or []) if c]
+        parts: list[str] = [summary_text] if summary_text else []
+        if conclusions:
+            first_text = _get_conclusion_text(conclusions[0])
+            if first_text:
+                suffix = f" [+{len(conclusions) - 1} more]" if len(conclusions) > 1 else ""
+                parts.append(f"{first_text}{suffix}")
         return InjectableBlock(
             result_id=str(item.result_id),
             block_type="memory",
             title="Pattern Memory",
-            text=str(payload.get("summary") or "").strip(),
+            text=_join_unique_text_parts(parts),
             evidence=item.evidence,
             memory_type=item.type,
             memory_object_id=mo_id,
@@ -933,11 +941,20 @@ def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) ->
         )
     if item.type in {"thread_summary"}:
         summary_text = str(payload.get("summary") or "").strip()
+        conclusions = [c for c in (payload.get("conclusions") or []) if c]
+        parts: list[str] = [summary_text] if summary_text else []
+        if conclusions:
+            texts = [_get_conclusion_text(c) for c in conclusions[:2]]
+            texts = [t for t in texts if t]
+            if texts:
+                joined = "; ".join(texts)
+                suffix = f" [+{len(conclusions) - 2} more]" if len(conclusions) > 2 else ""
+                parts.append(f"Conclusions: {joined}{suffix}")
         return InjectableBlock(
             result_id=str(item.result_id),
             block_type="memory",
             title="Thread Summary",
-            text=summary_text,
+            text=_join_unique_text_parts(parts),
             evidence=item.evidence,
             memory_type=item.type,
             memory_object_id=mo_id,
@@ -1022,6 +1039,13 @@ def _join_unique_text_parts(parts: list[str]) -> str:
         seen.add(key)
         ordered_parts.append(normalized)
     return " ".join(ordered_parts)
+
+
+def _get_conclusion_text(conclusion: object) -> str:
+    if isinstance(conclusion, dict):
+        return str(conclusion.get("text") or "").strip()
+    return str(conclusion).strip()
+
 
 def _evaluate_same_thread_local_context(
     ranked_candidates: list[dict[str, object]],

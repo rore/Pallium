@@ -3628,3 +3628,72 @@ def test_continuity_memory_falls_back_to_summary() -> None:
     item = _continuity_item({"summary": "Summary fallback text."})
     block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
     assert "Summary fallback text." in block.text
+
+
+def _thread_summary_item(payload: dict) -> QueryResultItem:
+    return QueryResultItem(
+        result_kind="memory_hit",
+        memory_object_id="mo-ts",
+        type="thread_summary",
+        payload=payload,
+        score=100,
+        evidence=[],
+    )
+
+
+def _pattern_item(payload: dict) -> QueryResultItem:
+    return QueryResultItem(
+        result_kind="memory_hit",
+        memory_object_id="mo-pm",
+        type="pattern_memory",
+        payload=payload,
+        score=100,
+        evidence=[],
+    )
+
+
+def test_thread_summary_conclusions_appear_in_text() -> None:
+    item = _thread_summary_item({
+        "summary": "Thread about catalog sync.",
+        "conclusions": [
+            {"type": "finding", "text": "Duplicate holds traced to stale ordering."},
+            {"type": "finding", "text": "Fix deployed in v2.3."},
+            {"type": "finding", "text": "Third conclusion here."},
+        ],
+    })
+    block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
+    assert "Duplicate holds traced to stale ordering." in block.text
+    assert "Fix deployed in v2.3." in block.text
+    assert "[+1 more]" in block.text
+    assert "Third conclusion here." not in block.text
+
+
+def test_thread_summary_no_conclusions_text_is_summary_only() -> None:
+    item = _thread_summary_item({"summary": "Just the summary."})
+    block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
+    assert block.text == "Just the summary."
+    assert "Conclusions:" not in block.text
+
+
+def test_pattern_memory_first_conclusion_inline() -> None:
+    item = _pattern_item({
+        "summary": "Pattern: delayed sync.",
+        "conclusions": [
+            {"type": "finding", "text": "Stale ordering is root cause."},
+            {"type": "finding", "text": "Seen in three incidents."},
+        ],
+    })
+    block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
+    assert "Stale ordering is root cause." in block.text
+    assert "[+1 more]" in block.text
+    assert "Seen in three incidents." not in block.text
+
+
+def test_pattern_memory_single_conclusion_no_count() -> None:
+    item = _pattern_item({
+        "summary": "Pattern: one thing.",
+        "conclusions": [{"type": "finding", "text": "Only finding."}],
+    })
+    block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
+    assert "Only finding." in block.text
+    assert "more]" not in block.text
