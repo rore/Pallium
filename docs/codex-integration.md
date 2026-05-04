@@ -125,7 +125,7 @@ When automatic injection isn't enough, Codex can use these tools directly:
 | Tool | When to use |
 |------|-------------|
 | `pallium_query` | Injected context is empty or missing something specific |
-| `pallium_get_evidence` | Need the original conversation because the injected card is insufficient |
+| `pallium_expand` | Need the full structured payload or original conversation behind a memory card |
 | `pallium_flag_memory` | A memory contradicts current knowledge |
 | `pallium_rate_memory` | Optionally rate clearly useful or off-topic injected memory |
 | `pallium_ingest` | User explicitly asks to remember something |
