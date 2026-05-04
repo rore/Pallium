@@ -9,6 +9,7 @@ from providers.llm.base import LLMProvider
 from semantic.base import ConsolidationSemanticPlugin, ThreadAggregationSemanticPlugin
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin
 from semantic.agent_conversation_memory_memory import _append_typed_constraint_memory_objects, _apply_direct_memory_envelopes, build_supersession_hints
+from semantic.agent_conversation_memory_note import build_note_memory
 from semantic.agent_conversation_memory_routing import RoutingOverrides, route_query_results
 from semantic.agent_conversation_memory_threads import _supports_thread_aggregation, build_consolidated_memory, build_pattern_memory, build_thread_summary
 
@@ -78,6 +79,8 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         return 'agent_conversation_memory.task_checkpoint'
 
     def process_item(self, source_item: SourceItem) -> ProcessResult:
+        if source_item.artifact_kind == "note":
+            return build_note_memory(source_item, provider=self._provider_for_role("write_extraction"))
         direct_trace = self._delegate.analyze_item(source_item)
         direct_result = direct_trace.process_result
         direct_result = _append_typed_constraint_memory_objects(
