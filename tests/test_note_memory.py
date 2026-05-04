@@ -69,3 +69,23 @@ def test_plugin_process_item_note_uses_dedicated_prompt():
     assert result.memory_objects[0].type == "note"
     assert "BM25 floor gate" in result.memory_objects[0].payload["content"]
     assert result.memory_objects[0].payload["title"] == "BM25 floor gate threshold info"
+
+
+from core.type_registry import TypeRegistry
+
+
+def test_note_type_registered_in_routing():
+    mock_provider = MagicMock()
+    plugin = AgentConversationMemoryPlugin(
+        provider=mock_provider,
+        prompt_variant="strict_typed_memory_v8b_work_refs_separate",
+    )
+    registry = TypeRegistry()
+    plugin.register_routing_types(registry)
+
+    assert "note" in registry
+    reg = registry.get("note")
+    assert reg is not None
+    assert reg.high_value is True
+    assert reg.block_title == "Note"
+    assert reg.block_text_field == "content"

@@ -12,6 +12,7 @@ EMBEDDABLE_MEMORY_TYPES = {
     "pattern_memory",
     "continuity_memory",
     "constraint_memory",
+    "note",
 }
 
 # Bump when embedding text format changes (used by auto-rebuild infrastructure).
@@ -43,6 +44,7 @@ def build_embedding_text(memory_object: MemoryObject) -> str | None:
         "pattern_memory": _build_pattern_memory_text,
         "continuity_memory": _build_continuity_memory_text,
         "constraint_memory": _build_constraint_memory_text,
+        "note": _build_note_text,
     }
     builder = builders.get(memory_type)
     if builder is None:
@@ -176,6 +178,18 @@ def _build_constraint_memory_text(payload: dict) -> str:
     evidence_context = payload.get("evidence_context")
     if evidence_context and evidence_context != constraint_text:
         parts.append(f"Context: {evidence_context}")
+    return " ".join(parts) if parts else ""
+
+
+def _build_note_text(payload: dict) -> str:
+    """Note: title + content (truncated for embedding model context)."""
+    parts: list[str] = []
+    title = payload.get("title")
+    if title:
+        parts.append(f"Note: {title}")
+    content = payload.get("content")
+    if content:
+        parts.append(content[:1500])
     return " ".join(parts) if parts else ""
 
 

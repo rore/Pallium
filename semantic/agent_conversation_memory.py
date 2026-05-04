@@ -209,6 +209,11 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
                 weight_by_intent={"recall": 200, "structured_recall": 120, "work_resumption": 245, "evidence_trace": 55},
                 default_weight=120, block_title="Active Constraint", block_text_field="constraint", high_value=True,
             ),
+            TypeRegistration(
+                type_name="note", layer_name="note",
+                weight_by_intent={"recall": 145, "structured_recall": 130, "work_resumption": 130, "evidence_trace": 100},
+                default_weight=140, block_title="Note", block_text_field="content", high_value=True,
+            ),
         ]
         for t in _TYPES:
             registry.register(t)

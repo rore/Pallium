@@ -208,6 +208,7 @@ class TestTypePrefixInEmbeddingText:
             "continuity_memory": {"continuity_question": "What is the status of the catalog sync investigation and token refresh?"},
             "interest": {"interest_text": "Chroma vector database for lightweight local embedding and retrieval", "summary": "User expressed interest in trying Chroma for a side project"},
             "constraint_memory": {"constraint_text": "No GPL-licensed dependencies allowed in this project per legal requirement"},
+            "note": {"title": "BM25 floor gate threshold", "content": "The BM25 floor gate threshold is set to 12 to improve injection precision from 18% to 52.7%"},
         }
         for memory_type in EMBEDDABLE_MEMORY_TYPES:
             mo = _make_memory(memory_type, payloads[memory_type])
@@ -242,6 +243,7 @@ class TestEmbeddableMemoryTypes:
             "continuity_memory": {"continuity_question": "What is the status of the catalog sync investigation and token refresh?"},
             "interest": {"interest_text": "Chroma vector database for lightweight local embedding and retrieval", "summary": "User expressed interest in trying Chroma for a side project"},
             "constraint_memory": {"constraint_text": "No GPL-licensed dependencies allowed in this project per legal requirement"},
+            "note": {"title": "BM25 floor gate threshold", "content": "The BM25 floor gate threshold is set to 12 to improve injection precision from 18% to 52.7%"},
         }
         for memory_type in EMBEDDABLE_MEMORY_TYPES:
             mo = _make_memory(memory_type, payloads[memory_type])
