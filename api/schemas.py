@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from core.visibility import Visibility
 
 
-ArtifactKind = Literal["message", "assistant_output", "tool_use_summary", "todo_snapshot", "notification"]
+ArtifactKind = Literal["message", "assistant_output", "tool_use_summary", "todo_snapshot", "notification", "note"]
 ProcessingStatus = Literal["pending", "processing", "completed", "skipped", "failed"]
 TurnKind = Literal["new_thread", "same_thread", "same_thread_continuation", "resumed_session", "new_session"]
 
