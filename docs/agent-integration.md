@@ -259,8 +259,7 @@ Set `visibility` based on the communication context:
 
 - **DM / 1:1 conversation** — `"private"`. All memory types are created.
   Memories carry `actor_ref` from the source item.
-- **Team channel / group chat** — `"container"`. Personal memory types (`interest`,
-  `constraint_memory`) are suppressed (no memory created for those signals).
+- **Team channel / group chat** — `"container"`. Personal memory types (`constraint_memory`) are suppressed (no memory created for those signals).
   All memories have `actor_ref = null`.
 - **Public channel / broadcast** — `"public"`. Same suppression rules as
   `"container"`.

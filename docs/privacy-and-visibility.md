@@ -74,7 +74,7 @@ routing like any other candidate.
 
 Personal memories do not leak across containers. A `public` item with
 `actor_ref` set is only visible from its own container. This prevents a
-user's personal interest from a public channel appearing in a different
+user's personal memory from a public channel appearing in a different
 session's context. Shared knowledge like decisions and thread summaries
 (`actor_ref = null`) flows freely across containers when public.
 
@@ -102,7 +102,7 @@ individual.
 
 **Example:** Alice and Bob both use a shared agent. Alice asks the agent in a DM
 to remember she prefers dark mode. Bob asks in a different DM about display
-settings. Alice's `interest` memory has `actor_ref = "alice"` and
+settings. Alice's `constraint_memory` has `actor_ref = "alice"` and
 `visibility = "private"` in her DM container. When Bob queries from his DM
 container, Alice's preference is invisible — it fails both the container
 visibility check and the actor scoping check. If they both work in a shared
@@ -118,7 +118,7 @@ Query-time filtering applies two filters in sequence:
    (`actor_ref = null`) always pass. Queries without `actor_ref` skip actor
    filtering entirely.
 
-Personal memory types (`interest`, `constraint_memory`) are not created in
+Personal memory types (`constraint_memory`) are not created in
 shared containers (`container` or `public`). The source items remain as
 shared evidence, but no personal memory object is produced. This means personal
 statements in shared channels do not become memory objects that could be
@@ -127,7 +127,7 @@ injected into another user's context.
 | Container type | Memory created | actor_ref |
 |----------------|----------------|-----------|
 | private | all types | speaker from source item |
-| container / public | interest and constraint suppressed | null (shared) |
+| container / public | constraint_memory suppressed | null (shared) |
 
 This keeps the model simple: container type drives the rules, not content
 analysis or memory type detection.

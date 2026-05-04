@@ -30,7 +30,6 @@
   - `investigation_outcome`
   - `thread_summary`
   - `task_checkpoint`
-  - `interest`
   - `pattern_memory`
   - `continuity_memory`
   - `constraint_memory`
@@ -39,7 +38,7 @@
 - visibility terminology: `"limited"` renamed to `"container"` (visible within this single container); `container_visibility` field renamed to `visibility`; breaking change — requires fresh DB after applying
 - actor-scoped memory and container-driven visibility rules are shipped:
   - `actor_ref` field on MemoryObject tracks who a memory is personal to
-  - personal memory types (interest, constraint_memory) are suppressed in shared containers (container/public) with no fallback extraction
+  - personal memory types (constraint_memory) are suppressed in shared containers (container/public) with no fallback extraction
   - constraint_memory has a role guard — assistant messages cannot create it
   - constraint_memory is now created directly from `constraint_text` — the structured `constraint_candidates` extraction path has been fully removed (ConstraintCandidate dataclass, prompts, output schema, parser, and downstream constants all deleted); natural-language constraints are reliably promoted
   - shared memory is visible to other users via evidence-path actor filter; multi-user test coverage added across all test layers
@@ -98,11 +97,10 @@
   - BM25 scores (float) replace IDF integers; `normalize_lexical_score()` provides 0-1 normalization for all routing consumers
   - language-agnostic IDF weighting supplemented by explicit multilingual stopword sets (English + Hebrew) for edge cases IDF misses
   - prevents off-topic injection (e.g., weather query matching vector DB memories on shared function words)
-- `interest` memory kind is shipped:
-  - captures specific-but-uncommitted user interest (dedicated type, weaker than task_checkpoint)
-  - user-only role guard — assistant messages cannot create interest
-  - suppressed in shared containers (container/public) with no fallback
-  - per-item extraction with `interest_text` signal, also detected at thread aggregation level
+- `interest` memory kind is deprecated (see docs/specs/2026-05-04-interest-type-deprecation.md):
+  - 14% precision, 0.9% injection rate — near-zero value
+  - no longer extracted; existing instances age out naturally
+  - interest-style content captured by thread_summary instead
 - processing pipeline latency optimizations are shipped:
   - worker poll interval reduced from 1.0s to 0.2s
   - thread rebuild decoupled from item processing with max-wait timer (2s default)

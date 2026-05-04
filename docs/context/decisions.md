@@ -279,15 +279,13 @@ Why:
 ### 2026-03-23 - Container-driven actor scoping
 
 Container type drives memory scoping, not memory type detection or content
-analysis. Personal memory types (`interest`, `constraint_memory`) are suppressed
+analysis. Personal memory types (`constraint_memory`) are suppressed
 in shared containers (`container`, `public`) with no fallback extraction.
 `actor_ref` is propagated from source item only in private
 containers; shared containers always produce `actor_ref = null`.
 
 Personal memories (`actor_ref` set) do not cross container boundaries even when
 public. Only shared memories (`actor_ref = null`) are visible cross-container.
-This prevents a user's interest from one session bleeding into another session's
-context while still allowing shared decisions and thread summaries to flow.
 
 Why:
 
@@ -295,7 +293,7 @@ Why:
 - personal statements in shared channels should become shared evidence, not personal memories for other users
 - personal memories from one container should not appear in a different container's context
 - keeps the model simple: one nullable field plus container-driven rules, no taxonomy matrices or scope enums
-- `constraint_memory` gets the same role guard as `interest` — only user messages can create it
+- `constraint_memory` gets the same role guard — only user messages can create it
 
 ### 2026-03-23 - IDF-weighted lexical scoring
 
@@ -313,21 +311,11 @@ Why:
 - zero additional I/O — IDF computed inline during the existing full-scan
 - when retrieval moves to SQLite FTS5 or PostgreSQL, native BM25/ranking replaces this
 
-### 2026-03-23 - Interest memory kind
+### 2026-03-23 - Interest memory kind (DEPRECATED 2026-05-04)
 
-`interest` captures specific-but-uncommitted user interest — a dedicated type
-weaker than `task_checkpoint`. Created when the LLM judges
-that a specific subject is present and the speaker expressed meaningful
-future-oriented interest without a concrete commitment.
-
-Why:
-
-- user-stated interest ("Chroma sounds interesting, I should check it sometime")
-  previously had no dedicated memory type and was lost
-- cross-thread recall queries ("what was the db I wanted to check?") couldn't
-  surface the interest without a typed extraction
-- user-only role guard prevents assistant responses from creating interest
-- suppressed in shared containers (container/public) per container-driven scoping
+`interest` was deprecated after data-driven investigation showed 14% precision
+and 0.9% injection rate. Interest-style content is now captured by
+`thread_summary`. See `docs/specs/2026-05-04-interest-type-deprecation.md`.
 
 ### 2026-04-05 - Unicode-aware tokenization and multilingual embedding support
 
@@ -460,7 +448,7 @@ Why:
 - the structured candidates path added complexity without improving recall quality
 - `constraint_text` natural-language extraction proved reliable enough that the
   structured intermediate step was wasted work
-- keeps constraint memory creation symmetric with interest memory creation
+- keeps constraint memory creation simple — only user messages can create it
 
 ### 2026-04-04 - Anchor prefilter layered defense over binary exclusion
 
@@ -657,7 +645,7 @@ A new `"global"` visibility value allows personal memories to follow an actor
 across all containers. Added as a fourth value orthogonal to the
 `public/container/private` containment hierarchy rather than overloading
 `public + actor_ref` (which was deliberately blocked in commit 2886cdf to
-prevent interest leakage from public channels).
+prevent leakage from public channels).
 
 Design: fail-closed actor gate (`candidate_actor_ref is not None and
 query_actor_ref is not None and candidate_actor_ref == query_actor_ref`).
