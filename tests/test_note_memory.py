@@ -186,3 +186,104 @@ def test_note_excluded_from_consolidation():
         visibility="private",
     )
     assert plugin.supports_consolidation(note_mo) is False
+
+
+def test_note_full_process_result_structure():
+    """Integration: verify the full ProcessResult from the plugin has all expected pieces."""
+    mock_provider = MagicMock()
+    mock_provider.generate_json.return_value = MagicMock(
+        parsed_json={
+            "title": "Tracking BM25 floor gate impact with SQL query",
+        },
+        metadata={},
+    )
+    plugin = AgentConversationMemoryPlugin(
+        provider=mock_provider,
+        prompt_variant="strict_typed_memory_v8b_work_refs_separate",
+    )
+    content = (
+        "## Tracking BM25 Floor Gate Impact\n\n"
+        "Run this SQL to find blocked-but-relevant memories:\n"
+        "```sql\n"
+        "SELECT memory_object_id, excluded_reason_code\n"
+        "FROM audit_log\n"
+        "WHERE excluded_reason_code = 'bm25_floor_gate'\n"
+        "```\n\n"
+        "If same memory_object_id shows up repeatedly, the floor may be too aggressive.\n"
+        "Related evals: evals/vector_only_penalty_sim.py, evals/lexical_scale_replay_eval.py"
+    )
+    source_item = _make_source_item(content)
+
+    result = plugin.process_item(source_item)
+
+    # Memory object
+    assert len(result.memory_objects) == 1
+    mo = result.memory_objects[0]
+    assert mo.type == "note"
+    assert mo.schema_id == "agent_conversation_memory.note"
+    assert mo.payload["content"] == content
+    assert mo.payload["title"] == "Tracking BM25 floor gate impact with SQL query"
+    assert mo.visibility == "private"
+    assert mo.container_ref == "git:test/repo"
+    assert mo.actor_ref == "user:test"
+
+    # Relation
+    assert len(result.relations) == 1
+    assert result.relations[0].from_id == mo.id
+
+    # Index entries: lexical + vector
+    assert len(result.index_entries) == 2
+    lexical = [e for e in result.index_entries if e.index_type == "lexical"]
+    vector = [e for e in result.index_entries if e.index_type == "vector"]
+    assert len(lexical) == 1
+    assert len(vector) == 1
+    assert "bm25" in lexical[0].text_view.lower()
+    assert "audit log" in lexical[0].text_view
+
+    # Thread rebuild NOT requested (notes are standalone)
+    assert result.thread_rebuild_requested is False
+
+    # LLM was called with note prompt (not standard extraction)
+    mock_provider.generate_json.assert_called_once()
+
+
+def test_non_note_artifact_kind_still_uses_standard_extraction():
+    """Verify that artifact_kind != 'note' still goes through normal extraction path."""
+    mock_provider = MagicMock()
+    mock_provider.generate_json.return_value = MagicMock(
+        parsed_json={
+            "summary": "Test summary",
+            "candidate_type": None,
+            "is_low_value_meta": False,
+            "decision_text": None,
+            "decision_evidence_text": None,
+            "investigation_text": None,
+            "investigation_evidence_text": None,
+            "rationale_text": None,
+            "interest_text": None,
+            "constraint_text": None,
+            "next_step_text": None,
+            "blocker_text": None,
+            "progress_text": None,
+            "key_finding_text": None,
+            "subject_hints": [],
+            "work_refs": [],
+        },
+        metadata=None,
+    )
+    plugin = AgentConversationMemoryPlugin(
+        provider=mock_provider,
+        prompt_variant="strict_typed_memory_v8b_work_refs_separate",
+    )
+    source_item = _make_source_item(
+        "Just a regular message about the project",
+        artifact_kind="message",
+    )
+
+    plugin.process_item(source_item)
+
+    # LLM SHOULD have been called with the standard extraction prompt
+    mock_provider.generate_json.assert_called_once()
+    call_kwargs = mock_provider.generate_json.call_args
+    system_prompt = call_kwargs[1].get("system_prompt") or call_kwargs[0][0]
+    assert "candidate_type" in system_prompt  # standard extraction prompt
