@@ -784,6 +784,7 @@ def _build_injectable_blocks(
     )
 
 _SOURCE_EXPANDED_THRESHOLD = 1000
+_NOTE_INJECTION_TRUNCATION = 500  # chars — notes longer than this get snippet + source pointer
 
 _SOURCE_EXPANDED_TYPES = frozenset({
     "investigation_outcome",
@@ -932,6 +933,28 @@ def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) ->
             evidence=item.evidence,
             memory_type=item.type,
             memory_object_id=mo_id,
+        )
+    if item.type == "note":
+        content = str(payload.get("content") or "").strip()
+        title = payload.get("title") or ""
+        block_title = f"Note: {title}" if title else "Note"
+        truncated = len(content) > _NOTE_INJECTION_TRUNCATION
+
+        if truncated:
+            snippet = content[:_NOTE_INJECTION_TRUNCATION].rsplit(" ", 1)[0] + "..."
+            text = snippet
+        else:
+            text = content
+
+        return InjectableBlock(
+            result_id=str(item.result_id),
+            block_type="memory",
+            title=block_title,
+            text=text,
+            evidence=item.evidence,
+            memory_type=item.type,
+            memory_object_id=mo_id,
+            source_expanded_available=truncated,
         )
     return InjectableBlock(
         result_id=str(item.result_id),

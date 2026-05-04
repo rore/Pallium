@@ -111,3 +111,49 @@ def test_note_in_routing_layer_weights():
 def test_note_in_routing_preferred_layers():
     for intent in ("recall", "structured_recall", "work_resumption", "evidence_trace"):
         assert "note" in ROUTING_PREFERRED_LAYERS[intent], f"note missing from {intent} preferred layers"
+
+
+from core.models import QueryResultItem
+from semantic.agent_conversation_memory_routing_selection import _build_raw_injectable_block
+
+
+def test_note_injectable_block_short_content():
+    """Short notes render full content, no source expansion needed."""
+    item = QueryResultItem(
+        result_kind="memory_hit",
+        score=100.0,
+        evidence=[],
+        memory_object_id="test-note-id",
+        type="note",
+        payload={"content": "Full note content here", "title": "My Note Title"},
+    )
+    candidate = {"item": item, "layer": "note", "final_score": 100}
+    block = _build_raw_injectable_block(candidate, intent="recall")
+
+    assert block.title == "Note: My Note Title"
+    assert block.text == "Full note content here"
+    assert block.memory_object_id == "test-note-id"
+    assert block.source_expanded_available is False  # short note — full content already shown
+
+
+def test_note_injectable_block_big_content_truncated():
+    """Big notes show title + snippet + source pointer instead of full content."""
+    long_content = "A" * 1000  # well above threshold
+    item = QueryResultItem(
+        result_kind="memory_hit",
+        score=100.0,
+        evidence=[],
+        memory_object_id="test-note-id",
+        type="note",
+        payload={"content": long_content, "title": "Long Procedure"},
+    )
+    candidate = {"item": item, "layer": "note", "final_score": 100}
+    block = _build_raw_injectable_block(candidate, intent="recall")
+
+    assert block.title == "Note: Long Procedure"
+    # Should NOT contain the full 1000 chars
+    assert len(block.text) < 700
+    # Should contain a truncated snippet
+    assert "AAA" in block.text
+    # Should signal that full content is available via get_evidence
+    assert block.source_expanded_available is True
