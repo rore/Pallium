@@ -89,3 +89,25 @@ def test_note_type_registered_in_routing():
     assert reg.high_value is True
     assert reg.block_title == "Note"
     assert reg.block_text_field == "content"
+
+
+from semantic.agent_conversation_memory_routing_constants import (
+    STRUCTURED_LAYERS,
+    ROUTING_LAYER_WEIGHTS,
+    ROUTING_PREFERRED_LAYERS,
+    ROUTING_SAFE_FALLBACK_LAYERS,
+)
+
+
+def test_note_in_structured_layers():
+    assert "note" in STRUCTURED_LAYERS
+
+
+def test_note_in_routing_layer_weights():
+    for intent in ("recall", "structured_recall", "work_resumption", "evidence_trace"):
+        assert "note" in ROUTING_LAYER_WEIGHTS[intent], f"note missing from {intent} weights"
+
+
+def test_note_in_routing_preferred_layers():
+    for intent in ("recall", "structured_recall", "work_resumption", "evidence_trace"):
+        assert "note" in ROUTING_PREFERRED_LAYERS[intent], f"note missing from {intent} preferred layers"
