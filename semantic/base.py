@@ -63,6 +63,19 @@ class ThreadAggregationSemanticPlugin(SemanticPlugin):
         return True
 
     @property
+    def non_superseding_types(self) -> frozenset[str]:
+        """Memory types that should accumulate across rebuilds rather than supersede.
+
+        When rebuild_supersedes_prior is True, types listed here are exempt from
+        supersession — each rebuild window's instances accumulate alongside prior
+        ones. This enables incremental extraction of decisions/investigations
+        across windowed thread rebuilds.
+
+        Default: empty (all types supersede as before).
+        """
+        return frozenset()
+
+    @property
     def supports_container_aggregation(self) -> bool:
         """Whether this plugin should receive container-level aggregation scopes.
 

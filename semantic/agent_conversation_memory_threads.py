@@ -23,7 +23,7 @@ THREAD_SUMMARY_PROMPT_SCHEMA_ID = "thread_summary_extraction"
 
 MAX_THREAD_WORK_REFS = 5
 
-THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v7"
+THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v8"
 
 THREAD_SUMMARY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "content_quality": "string", "retrieval_context": "string or null", "decisions": [{"decision_text": "string (exact quote)", "evidence": "string (exact quote)"}], "investigations": [{"investigation_text": "string (self-contained finding, exact quote)", "evidence": "string (exact quote)"}]}, indent=2)
 
@@ -69,7 +69,7 @@ SELECTED_THREAD_ARTIFACTS = {
 
 CARRIED_CONCLUSION_TYPES = {"decision", "investigation_outcome"}
 
-THREAD_SUMMARY_MAX_TEXT_CHARS = 4000
+THREAD_SUMMARY_MAX_TEXT_CHARS = 16000
 
 THREAD_SUMMARY_TEXT_VIEW = "memory_object.thread_summary_context"
 
@@ -251,7 +251,7 @@ TASK_CHECKPOINT_TEXT_VIEW = "memory_object.task_checkpoint_context"
 
 THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_ID = "thread_summary_with_checkpoint_extraction"
 
-THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v5"
+THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v6"
 
 THREAD_SUMMARY_WITH_CHECKPOINT_SCHEMA_DESCRIPTION = json.dumps(
     {
@@ -498,13 +498,28 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
 
         thread_material = _build_thread_material(aggregate.source_items)
         if len(thread_material) > THREAD_SUMMARY_MAX_TEXT_CHARS:
-            thread_material = thread_material[:THREAD_SUMMARY_MAX_TEXT_CHARS].rstrip() + "\n[thread items truncated for token budget]"
+            thread_material = "[earlier thread items truncated for token budget]\n" + thread_material[-THREAD_SUMMARY_MAX_TEXT_CHARS:].lstrip()
+
+        prior_summary_section = ""
+        incremental_grounding_instruction = ""
+        if aggregate.prior_summary:
+            prior_summary_section = (
+                f"Prior summary of earlier discussion:\n{aggregate.prior_summary}\n\n"
+            )
+            incremental_grounding_instruction = (
+                "The prior summary is context only. "
+                "Produce an updated summary that incorporates both the prior context and new developments. "
+                "decision_text, investigation_text, and evidence must be EXACT QUOTES from the NEW thread items below only. "
+                "Do not quote from the prior summary.\n\n"
+            )
 
         user_prompt_text = (
             ("Summarize this thread conservatively for later recall and "
              "create one compact resumed-work checkpoint from the same content. " if use_merged_call else
              "Summarize this thread conservatively for later recall. ") +
             "Use only explicit information from the provided content.\n\n"
+            f"{incremental_grounding_instruction}"
+            f"{prior_summary_section}"
             f"Container ref: {aggregate.container_ref}\n"
             f"Thread ref: {aggregate.thread_ref}\n"
             f"Latest occurred at: {aggregate.latest_occurred_at.isoformat() if aggregate.latest_occurred_at else 'null'}\n"

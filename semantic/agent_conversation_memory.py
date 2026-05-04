@@ -55,6 +55,10 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
         return frozenset({"decision", "investigation_outcome"})
 
     @property
+    def non_superseding_types(self) -> frozenset[str]:
+        return frozenset({"decision", "investigation_outcome"})
+
+    @property
     def consolidation_policy(self) -> ConsolidationPolicy | None:
         return self._consolidation_config
 

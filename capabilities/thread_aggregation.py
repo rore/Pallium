@@ -16,12 +16,14 @@ class ThreadAggregate:
     latest_occurred_at: datetime | None
     aggregate_text: str
     visibility: str = "private"
+    prior_summary: str | None = None
 
 
 def build_thread_aggregate(
     source_items: list[SourceItem],
     *,
     container_scope: bool = False,
+    prior_summary: str | None = None,
 ) -> ThreadAggregate:
     if not source_items:
         raise ValueError("Thread aggregation requires at least one source item")
@@ -61,4 +63,5 @@ def build_thread_aggregate(
         latest_occurred_at=latest_item.occurred_at or latest_item.created_at,
         aggregate_text=aggregate_text,
         visibility=first.visibility,
+        prior_summary=prior_summary,
     )

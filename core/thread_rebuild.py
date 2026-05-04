@@ -33,6 +33,8 @@ MAX_PROCESSING_ERROR_LENGTH = 1000
 
 CONTAINER_SCOPE_RECENT_ITEMS = 200
 
+THREAD_WINDOW_BUDGET_CHARS = 16000
+
 
 # ── Shared module-level helpers ─────────────────────────────────────────────
 
@@ -121,7 +123,7 @@ class ThreadRebuilder:
     building thread summaries via semantic plugins, and persisting results.
     """
 
-    _MAX_THREAD_REBUILD_ITERATIONS = 5
+    _MAX_THREAD_REBUILD_ITERATIONS = 15
 
     def __init__(
         self,
@@ -281,7 +283,7 @@ class ThreadRebuilder:
                 is_container_scope = current_lease.thread_ref is None
                 items_watermark = (
                     max((item.created_at for item in thread_items), default=None)
-                    if is_container_scope and thread_items else None
+                    if thread_items else None
                 )
                 try:
                     has_pending = self._storage.commit_process_result_and_complete_scope(
@@ -401,6 +403,8 @@ class ThreadRebuilder:
             return None, {}, []
 
         is_container_scope = thread_scope.thread_ref is None
+        all_content_size = 0
+        all_thread_items: list[SourceItem] = []
 
         if is_container_scope:
             is_incremental = not plugin.rebuild_supersedes_prior
@@ -423,11 +427,19 @@ class ThreadRebuilder:
                     if plugin.supports_thread_aggregation(item)
                 ]
         else:
-            thread_items = [
+            all_thread_items = [
                 item
                 for item in self._storage.list_source_items_for_thread(thread_scope.container_ref, thread_scope.thread_ref)
                 if plugin.supports_thread_aggregation(item)
             ]
+            all_content_size = sum(len(item.content.strip()) for item in all_thread_items)
+            if collection_watermark_at is not None and all_content_size > THREAD_WINDOW_BUDGET_CHARS:
+                thread_items = [
+                    item for item in all_thread_items
+                    if item.created_at > collection_watermark_at
+                ]
+            else:
+                thread_items = all_thread_items
 
         if plugin.requires_visibility_context:
             thread_items = [
@@ -437,16 +449,56 @@ class ThreadRebuilder:
             ]
 
         if not is_container_scope and len(thread_items) < 2:
-            return None, {}, thread_items
+            if (all_content_size > THREAD_WINDOW_BUDGET_CHARS
+                    and len(thread_items) >= 1):
+                pass
+            else:
+                return None, {}, thread_items
         if is_container_scope and len(thread_items) < 1:
             return None, {}, thread_items
+
+        if not is_container_scope:
+            thread_items = self._apply_thread_window_budget(thread_items)
+
+        prior_summary = self._get_prior_thread_summary(
+            container_ref=thread_scope.container_ref,
+            thread_ref=thread_scope.thread_ref,
+            plugin=plugin,
+            visibility=thread_scope.visibility,
+        ) if not is_container_scope else None
+
+        is_incremental = (
+            not is_container_scope
+            and collection_watermark_at is not None
+            and all_content_size > THREAD_WINDOW_BUDGET_CHARS
+        )
 
         memory_by_source = self._storage.list_memory_objects_for_source_items(
             [item.id for item in thread_items],
         )
-        active_thread_memory_ids = self._find_active_thread_memory_ids(thread_items, memory_by_source)
-        aggregate = build_thread_aggregate(thread_items, container_scope=is_container_scope)
+
+        if is_incremental:
+            all_memory_by_source = self._storage.list_memory_objects_for_source_items(
+                [item.id for item in all_thread_items],
+            )
+            active_thread_memory_ids = self._find_active_thread_memory_ids(all_thread_items, all_memory_by_source)
+        else:
+            all_memory_by_source = memory_by_source
+            active_thread_memory_ids = self._find_active_thread_memory_ids(thread_items, memory_by_source)
+
+        aggregate = build_thread_aggregate(thread_items, container_scope=is_container_scope, prior_summary=prior_summary)
         conclusions = self._collect_thread_conclusions(thread_items, memory_by_source, conclusion_types=plugin.thread_conclusion_types)
+
+        if is_incremental and prior_summary:
+            prior_conclusions = self._collect_thread_conclusions(
+                all_thread_items,
+                all_memory_by_source,
+                conclusion_types=plugin.thread_conclusion_types,
+            )
+            for conclusion in prior_conclusions:
+                if conclusion.id not in {c.id for c in conclusions}:
+                    conclusions.append(conclusion)
+
         thread_result = plugin.build_thread_summary(aggregate, conclusions)
         reconcile_process_result = getattr(plugin, "reconcile_process_result", None)
         if callable(reconcile_process_result) and thread_result is not None:
@@ -458,7 +510,11 @@ class ThreadRebuilder:
             )
         supersede_plan: dict[str, list[str]] = {}
         if plugin.rebuild_supersedes_prior:
+            non_superseding = plugin.non_superseding_types
             for memory_object in thread_result.memory_objects:
+                if memory_object.type in non_superseding:
+                    supersede_plan[memory_object.id] = []
+                    continue
                 key = (memory_object.type, memory_object.schema_id)
                 supersede_plan[memory_object.id] = [
                     superseded_id
@@ -466,6 +522,51 @@ class ThreadRebuilder:
                     if superseded_id != memory_object.id
                 ]
         return thread_result, supersede_plan, thread_items
+
+    def _apply_thread_window_budget(self, thread_items: list[SourceItem]) -> list[SourceItem]:
+        """Trim thread items to fit within the window budget (char count).
+
+        Takes items from the end (most recent) working backwards, stopping when
+        adding the next item would exceed the budget. If a single item exceeds
+        the budget, it is included alone (guaranteed progress).
+        """
+        total = 0
+        window: list[SourceItem] = []
+        for item in reversed(thread_items):
+            item_chars = len(item.content.strip())
+            if window and total + item_chars > THREAD_WINDOW_BUDGET_CHARS:
+                break
+            window.append(item)
+            total += item_chars
+        window.reverse()
+        return window
+
+    def _get_prior_thread_summary(
+        self,
+        *,
+        container_ref: str,
+        thread_ref: str | None,
+        plugin: ThreadAggregationSemanticPlugin,
+        visibility: str | None = None,
+    ) -> str | None:
+        """Fetch the most recent active thread_summary text for the given thread."""
+        if thread_ref is None:
+            return None
+        summaries = self._storage.list_memory_objects(
+            memory_types=["thread_summary"],
+            lifecycle="active",
+            container_ref=container_ref,
+        )
+        matching = [
+            mo for mo in summaries
+            if mo.payload.get("thread_ref") == thread_ref
+            and mo.schema_id == plugin.thread_summary_schema_id
+            and (visibility is None or mo.visibility == visibility)
+        ]
+        if not matching:
+            return None
+        latest = max(matching, key=lambda mo: (mo.created_at, mo.id))
+        return latest.payload.get("summary") or None
 
     def _find_active_thread_memory_ids(
         self,
