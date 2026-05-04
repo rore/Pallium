@@ -58,6 +58,7 @@ def test_task_checkpoint_no_findings_no_findings_line() -> None:
     block = _block(item)
     assert "Findings:" not in block.text
 
+
 def test_broad_recall_injection_prefers_compact_memory_over_source_hits() -> None:
     plugin = AgentConversationMemoryPlugin(
         provider=TieredMemorySemanticProvider(),
