@@ -19,8 +19,10 @@ turn solely to rate memory.
   If a `[+source]` card summary is sufficient, trust the card; fetch evidence only
   when you need the original conversation to answer accurately.
 - `pallium_flag_memory` — a memory contradicts what you now know to be true
-- `pallium_ingest` — user explicitly asks to remember something (hooks already
-  ingest automatically)
+- `pallium_ingest` — user explicitly asks to remember something. **Pass
+  `artifact_kind="note"`** to preserve content faithfully with retrieval
+  metadata. Without it, standard extraction may lose content. Hooks already
+  ingest routine conversation automatically.
 
 **Required parameters for manual tool calls:**
 When calling `pallium_query`, `pallium_get_evidence`, or `pallium_ingest`, always pass:

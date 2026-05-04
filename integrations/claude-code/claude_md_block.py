@@ -21,7 +21,7 @@ retrieval quality. Do not skip this even when focused on implementation work.
 - `pallium_query` — injected context is empty or missing something the user asked about
 - `pallium_get_evidence` — you need the original conversation behind a memory card. **If an injected card has `[+source]` and you rated it relevant, you MUST call `pallium_get_evidence` for it before responding** — the source is substantially richer than the card summary
 - `pallium_flag_memory` — a memory contradicts what you now know to be true
-- `pallium_ingest` — user explicitly asks to remember something (hooks already ingest automatically)
+- `pallium_ingest` — user explicitly asks to remember something. **Pass `artifact_kind="note"`** to preserve content faithfully with retrieval metadata. Without it, standard extraction may lose content. Hooks already ingest routine conversation automatically — only call this for explicit "remember" requests.
 
 **Required parameters for manual tool calls:**
 When calling `pallium_query`, `pallium_get_evidence`, or `pallium_ingest`, always pass:

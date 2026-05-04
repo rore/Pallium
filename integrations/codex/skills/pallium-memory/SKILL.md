@@ -18,6 +18,7 @@ description: Use when you need to explicitly search, store, or debug Pallium mem
 
 2. **For storing** (user says "remember this", "save this"):
    - Call `pallium_ingest` with the content
+   - **Always pass `artifact_kind: "note"`** — this preserves the content faithfully
    - Pass `visibility: "private"` and `container_ref` for project-scoped memory
    - If user says "across all projects" or "globally": use `visibility: "global"` with `actor_ref`
    - Confirm to the user what was stored
