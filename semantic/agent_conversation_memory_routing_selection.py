@@ -783,22 +783,27 @@ def _build_injectable_blocks(
         expansion_added_count=expansion_added,
     )
 
-_SOURCE_EXPANDED_THRESHOLD = 1000
 _NOTE_INJECTION_TRUNCATION = 500  # chars — notes longer than this get snippet + source pointer
-
-_SOURCE_EXPANDED_TYPES = frozenset({
-    "investigation_outcome",
-    "decision",
-    "task_checkpoint",
-})
 
 
 def _expand_available(item: QueryResultItem) -> bool:
-    return (
-        item.type in _SOURCE_EXPANDED_TYPES
-        and item.envelope is not None
-        and item.envelope.source_content_length > _SOURCE_EXPANDED_THRESHOLD
-    )
+    if item.envelope is None:
+        return False
+    payload = item.payload or {}
+    if item.type == "decision":
+        return bool(str(payload.get("decision_evidence_text") or "").strip())
+    if item.type == "investigation_outcome":
+        return bool(str(payload.get("investigation_evidence_text") or "").strip())
+    if item.type == "task_checkpoint":
+        return bool(payload.get("key_findings")) or bool(payload.get("selected_work_artifacts"))
+    if item.type == "thread_summary":
+        return bool(payload.get("conclusions")) or bool(payload.get("selected_work_artifacts"))
+    if item.type == "pattern_memory":
+        conclusions = payload.get("conclusions") or []
+        return len(conclusions) > 1
+    if item.type == CONSTRAINT_MEMORY_TYPE:
+        return bool(str(payload.get("evidence_context") or "").strip())
+    return False
 
 
 def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) -> InjectableBlock:

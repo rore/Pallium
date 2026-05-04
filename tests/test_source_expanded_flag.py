@@ -92,37 +92,42 @@ def test_envelope_boolean_source_content_length_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
-# B. Block builder — threshold and type whitelist
+# B. Block builder — payload-presence per type
 # ---------------------------------------------------------------------------
 
-_TYPE_PAYLOADS: dict[str, dict] = {
-    "investigation_outcome": {"investigation_outcome": "x", "rationale": "r"},
-    "decision": {"decision": "x", "rationale": "r"},
-    "task_checkpoint": {"summary": "x", "task": "t", "current_state": "s"},
-    "thread_summary": {"summary": "x"},
-    "constraint_memory": {"summary": "x", "constraint_text": "y"},
-    "atomic_fact": {"statement": "x"},
-    "interest": {"interest_text": "x"},
-}
-
-
-@pytest.mark.parametrize(("length", "mem_type", "expected_flag"), [
-    (999,  "investigation_outcome", False),
-    (1000, "investigation_outcome", False),
-    (1001, "investigation_outcome", True),
-    (5000, "decision",             True),
-    (5000, "task_checkpoint",      True),
-    (5000, "thread_summary",       False),   # not in _SOURCE_EXPANDED_TYPES
-    (5000, "constraint_memory",    False),   # excluded
-    (5000, "atomic_fact",          False),   # excluded
-    (5000, "interest",             False),   # excluded
+@pytest.mark.parametrize(("mem_type", "payload", "expected"), [
+    # decision: expand when evidence text present
+    ("decision", {"decision": "x", "decision_evidence_text": "verbatim quote"}, True),
+    ("decision", {"decision": "x"}, False),
+    ("decision", {"decision": "x", "decision_evidence_text": ""}, False),
+    # investigation_outcome: expand when evidence text present
+    ("investigation_outcome", {"investigation_outcome": "x", "investigation_evidence_text": "verbatim"}, True),
+    ("investigation_outcome", {"investigation_outcome": "x"}, False),
+    # task_checkpoint: expand when key_findings or work_artifacts present
+    ("task_checkpoint", {"summary": "x", "key_findings": ["f1", "f2"]}, True),
+    ("task_checkpoint", {"summary": "x", "selected_work_artifacts": [{"text": "a"}]}, True),
+    ("task_checkpoint", {"summary": "x"}, False),
+    ("task_checkpoint", {"summary": "x", "key_findings": []}, False),
+    # thread_summary: expand when conclusions or work_artifacts present
+    ("thread_summary", {"summary": "x", "conclusions": [{"type": "t", "text": "c"}]}, True),
+    ("thread_summary", {"summary": "x", "selected_work_artifacts": [{"text": "a"}]}, True),
+    ("thread_summary", {"summary": "x"}, False),
+    # pattern_memory: expand when >1 conclusion
+    ("pattern_memory", {"summary": "x", "conclusions": [{"text": "a"}, {"text": "b"}]}, True),
+    ("pattern_memory", {"summary": "x", "conclusions": [{"text": "only one"}]}, False),
+    ("pattern_memory", {"summary": "x"}, False),
+    # constraint_memory: expand when evidence_context present
+    ("constraint_memory", {"constraint_text": "x", "evidence_context": "full ctx"}, True),
+    ("constraint_memory", {"constraint_text": "x"}, False),
+    # types with no expand
+    ("fact_summary", {"summary": "x"}, False),
+    ("interest", {"interest_text": "x"}, False),
+    ("atomic_fact", {"statement": "x"}, False),
 ])
-def test_source_expanded_flag_per_type_and_length(
-    length: int, mem_type: str, expected_flag: bool
-) -> None:
-    item = _item(mem_type, _TYPE_PAYLOADS[mem_type], length)
+def test_expand_available_per_type(mem_type: str, payload: dict, expected: bool) -> None:
+    item = _item(mem_type, payload, source_content_length=500)
     block = _block(item)
-    assert block.expand_available is expected_flag
+    assert block.expand_available is expected, f"type={mem_type}, payload={payload}"
 
 
 # ---------------------------------------------------------------------------
