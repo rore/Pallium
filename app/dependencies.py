@@ -222,7 +222,23 @@ def _resolve_providers_by_role(
                 config, provider_name=package_config.llm_provider, model=role_model,
             )
         by_role[role] = provider_cache[role_model]
+    _apply_role_defaults(by_role)
     return by_role
+
+
+_LIGHTWEIGHT_ROLE_DEFAULTS: dict[str, tuple[str, ...]] = {
+    "note_extraction": ("consolidation", "thread_aggregation", "query_ambiguity_resolution"),
+}
+
+
+def _apply_role_defaults(by_role: dict[str, LLMProvider]) -> None:
+    """Fill in missing roles from existing ones in the same tier."""
+    for role, donors in _LIGHTWEIGHT_ROLE_DEFAULTS.items():
+        if role not in by_role:
+            for donor in donors:
+                if donor in by_role:
+                    by_role[role] = by_role[donor]
+                    break
 
 
 def _upgrade_to_sonnet(model: str) -> str:

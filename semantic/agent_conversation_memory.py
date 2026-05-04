@@ -80,7 +80,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
 
     def process_item(self, source_item: SourceItem) -> ProcessResult:
         if source_item.artifact_kind == "note":
-            return build_note_memory(source_item, provider=self._provider_for_role("write_extraction"))
+            return build_note_memory(source_item, provider=self._provider_for_role("note_extraction"))
         direct_trace = self._delegate.analyze_item(source_item)
         direct_result = direct_trace.process_result
         direct_result = _append_typed_constraint_memory_objects(
