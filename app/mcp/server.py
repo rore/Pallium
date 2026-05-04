@@ -81,7 +81,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         actor_ref: str | None = None,
         visibility: str | None = None,
     ) -> str:
-        """Store a conversation artifact in Pallium for semantic processing. The artifact goes through the standard extraction pipeline — it does not create memory objects directly. Use when the user explicitly asks to remember something, or to record a decision or outcome for future reference. Do not use for routine conversation — the integration layer already ingests outputs automatically."""
+        """Store a conversation artifact in Pallium for semantic processing. Pass artifact_kind="note" when the user explicitly asks to remember something — this preserves content faithfully with a dedicated extraction prompt. Without artifact_kind, the standard type-classification extraction pipeline is used. Do not use for routine conversation — the integration layer already ingests outputs automatically."""
         ctx = resolve_context(
             container_ref=container_ref,
             thread_ref=thread_ref,
