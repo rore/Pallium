@@ -142,7 +142,7 @@ QUERY_POLICY_FAMILY_ALLOWED_INTENTS: dict[str, frozenset[str]] = {
     "latest_status": frozenset({"recall", "work_resumption"}),
     "resume_work": frozenset({"work_resumption"}),
 }
-LATEST_STATUS_COLLAPSED_INTENTS = frozenset({"recall"})
+LATEST_STATUS_COLLAPSED_INTENTS = frozenset({"work_resumption"})
 POLICY_WORK_STATE_USEFULNESS_THRESHOLD = 24
 POLICY_SUPPORT_THRESHOLD = ROUTING_SUPPORT_THRESHOLD["supported"]
 RESUMED_SESSION_SUPPORT_FLOOR = 40

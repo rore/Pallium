@@ -312,6 +312,14 @@ def route_query_results(
                     allowed_query_intents=frozenset({"work_resumption"}),
                 )
                 final_intent_used = False
+            elif envelope_policy == "latest_status":
+                intent = "work_resumption"
+                recall_mode = "default"
+                policy_ctx = PolicySelectedContext(
+                    query_policy_family="latest_status",
+                    allowed_query_intents=frozenset({"work_resumption"}),
+                )
+                final_intent_used = False
             else:
                 # Pure recall — use recall mode from candidate evidence
                 recall_mode = _select_recall_mode(candidate_evidence)

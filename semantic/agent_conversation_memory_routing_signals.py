@@ -528,23 +528,34 @@ def _derive_latest_status_signal(
     candidate_evidence: dict[str, object],
     anchor_prefiltered_candidates: list[QueryResultItem],
 ) -> tuple[bool, list[str]]:
-    """Returns (latest_status_request, derivation_reasons)."""
+    """Returns (latest_status_request, derivation_reasons).
+
+    Fires when task_checkpoint or thread_summary is the dominant memory layer
+    AND has state payload AND is fresh (< 7 days). The dominant-layer gate
+    ensures specific recall queries (where investigations dominate) are not
+    affected.
+    """
     derivation: list[str] = []
     dominant = str(candidate_evidence.get("dominant_memory_layer") or "")
 
+    if dominant not in {"task_checkpoint", "thread_summary"}:
+        return False, derivation
+
     _now = datetime.now(timezone.utc)
+    _max_age_seconds = 7 * 86400
+
     for item in anchor_prefiltered_candidates:
         if item.result_kind != "memory_hit":
             continue
-        if item.type not in {"task_checkpoint", "thread_summary"}:
+        if item.type != dominant:
             continue
         payload = item.payload or {}
         has_state = bool(payload.get("current_state") or payload.get("freshness_signal"))
         if not has_state:
             continue
-        if item.freshness_at and (_now - item.freshness_at).total_seconds() < 86400:
-            layer = _result_layer(item)
-            if layer == dominant:
+        if item.freshness_at:
+            freshness = item.freshness_at if item.freshness_at.tzinfo else item.freshness_at.replace(tzinfo=timezone.utc)
+            if (_now - freshness).total_seconds() < _max_age_seconds:
                 derivation.append("dominant_fresh_state_memory")
                 return True, derivation
 

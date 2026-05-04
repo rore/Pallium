@@ -184,6 +184,7 @@ class VectorRetrievalProvider(RetrievalProvider):
                         memory_object_id=memory_object.id,
                         type=memory_object.type,
                         payload=memory_object.payload,
+                        freshness_at=memory_object.freshness_at,
                         envelope=memory_object.envelope,
                         score=score,
                         evidence=evidence,
