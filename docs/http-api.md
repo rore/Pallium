@@ -129,6 +129,10 @@ Notes:
   - `tool_use_summary` — a compact summary of a tool run
   - `todo_snapshot` — an explicit next-step or progress note
   - `notification` — an external notification or alert
+  - `note` — explicit "remember this" from the user. Uses a dedicated
+    extraction prompt that preserves content verbatim and extracts only a
+    title for retrieval. Use this when the user explicitly asks to save
+    something.
 
 ## GET /items/{source_item_id}/processing
 
@@ -281,8 +285,8 @@ Each result in `results[]`:
 - `score` — retrieval score (integer, higher is better)
 - `type` — memory type for `memory_hit` results: `"decision"`,
   `"investigation_outcome"`, `"thread_summary"`, `"task_checkpoint"`,
-  `"atomic_fact"`, `"fact_summary"`, `"interest"`, `"constraint_memory"`,
-  `"pattern_memory"`, or `"continuity_memory"`
+  `"atomic_fact"`, `"fact_summary"`, `"constraint_memory"`,
+  `"pattern_memory"`, `"continuity_memory"`, or `"note"`
 - `memory_object_id` — ID of the memory object (for `memory_hit`)
 - `source_item_id` — ID of the source item (for `source_hit`)
 - `excerpt` — text excerpt (for `source_hit`)

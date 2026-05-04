@@ -92,6 +92,9 @@ Common shapes that work well today:
   - `artifact_kind="tool_use_summary"`, `role="assistant"`
 - explicit next-step snapshot
   - `artifact_kind="todo_snapshot"`, `role="assistant"`
+- user explicitly asks to remember something
+  - `artifact_kind="note"`, `role="user"` — bypasses standard extraction,
+    preserves content verbatim, extracts only a title for retrieval
 
 The content should be the compact text you want Pallium to reason over. The
 current semantic layer is text-oriented; keep the text explicit and bounded.
@@ -330,7 +333,7 @@ for stdio mode.
 |---|---|
 | `pallium_query` | Search memory explicitly. Use when auto-injection is missing something. |
 | `pallium_query_debug` | Investigate retrieval — scores, stages, filtering. Use when memory seems missing. |
-| `pallium_ingest` | Store an artifact for processing. Goes through the standard extraction pipeline. |
+| `pallium_ingest` | Store an artifact for processing. Pass `artifact_kind="note"` when the user explicitly asks to remember something — this preserves content faithfully. Without it, standard type-classification extraction is used. |
 | `pallium_get_evidence` | Retrieve the source conversation items behind a memory card. Use when a memory summary isn't enough and the agent needs the original context. |
 | `pallium_flag_memory` | Flag a memory as incorrect or outdated. See [Flagging Wrong Memories](#flagging-wrong-memories) below. |
 
@@ -380,7 +383,8 @@ When using Pallium tools, pass the container_ref from the memory header.
 - pallium_get_evidence — get the original conversation behind a memory
   card when the summary isn't enough (pass the id from [ref: ...])
 - pallium_query_debug — investigate why a memory wasn't found
-- pallium_ingest — store something for future recall
+- pallium_ingest — store something for future recall. Pass artifact_kind="note"
+  when the user explicitly asks to remember something.
 
 Don't query on every turn. Don't re-query injected context.
 Don't fetch evidence for every memory — only when you need more detail.

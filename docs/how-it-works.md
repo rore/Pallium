@@ -49,15 +49,24 @@ jobs:
 | Investigation findings | `investigation_outcome` | "Root cause: stale cache after deploy" |
 | Thread orientation | `thread_summary` | "Discussed migration strategy, agreed on staged rollout" |
 | Resumed-work state | `task_checkpoint` | "Blocked on API rate limit, next: implement backoff" |
+| Explicit notes | `note` | "API key rotation: generate → vault → restart → verify → revoke" |
 | Factual knowledge | `atomic_fact` | "Jordan completed a half-marathon in Denver in March 2024" |
 | Consolidated facts | `fact_summary` | Cross-thread factual summary grouped by subject and topic |
-| Expressed interest | `interest` | "Chroma sounds interesting, should check it some time" |
 | Stated constraint | `constraint_memory` | "Must stay on Python 3.12 for compatibility" |
 | Cross-thread carry-forward | `continuity_memory` | Same question answered consistently across threads |
 | Recurring patterns | `pattern_memory` | Repeated architectural preference across conversations |
 
 `continuity_memory` and `pattern_memory` are functional but not yet fully
 product-proven — grouping and candidate selection need further hardening.
+
+`note` is different from other types: it bypasses standard type-classification
+extraction entirely. When a user explicitly asks to "remember something," the
+integrating agent passes `artifact_kind="note"` on ingest. Pallium uses a
+dedicated title-extraction prompt (not the standard extraction) to generate a
+short heading for retrieval, and preserves the original content verbatim. Notes
+are durable (never garbage-collected) and excluded from consolidation. At
+injection time, long notes are truncated with a `[+source]` pointer so agents
+can expand them on demand.
 
 Items that don't match any specific type produce no memory object — only
 items with clear typed signals (decisions, investigation outcomes, interests,
@@ -81,13 +90,13 @@ container owner.
 
 **Shared containers** (`visibility = "container"` or `"public"`):
 
-Personal memory types — `interest` and `constraint_memory` — are not created.
+Personal memory types — `constraint_memory` — are not created.
 The statement remains available as source evidence but does not produce a
 personal memory object. All memories in shared containers have
 `actor_ref = null`.
 
-This means a user saying "Chroma sounds interesting" in a team channel does not
-produce a personal `interest` memory that could leak into another user's recall.
+This means a user stating a personal constraint in a team channel does not
+produce a personal `constraint_memory` that could leak into another user's recall.
 The source item is still available as evidence if queried directly.
 
 **Thread aggregation** always produces shared memories (`actor_ref = null`)
@@ -204,12 +213,10 @@ contract.
 
 Current areas under active hardening:
 
-- **Thread-level interest extraction** — per-item extraction can lose subject
-  context when interest spans multiple messages. Under investigation.
 - **Extraction confidence** — promoted memory objects carry a type-based
   confidence label but no instance-level support signal. Grounding checks
   exist for decision and investigation evidence fields (substring containment
-  against source), but synthesized fields (interest, constraint, summaries)
+  against source), but synthesized fields (constraint, summaries)
   have no post-extraction quality signal.
 - **Contradiction supersession** — when a newer fact contradicts an older one,
   the atomic facts are correctly superseded but thread summaries containing the
