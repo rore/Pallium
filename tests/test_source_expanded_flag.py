@@ -1,4 +1,4 @@
-"""Tests for source_expanded_available flag — codec round-trip, block builder, null-envelope fallback."""
+"""Tests for expand_available flag — codec round-trip, block builder, null-envelope fallback."""
 from __future__ import annotations
 
 import json
@@ -122,7 +122,7 @@ def test_source_expanded_flag_per_type_and_length(
 ) -> None:
     item = _item(mem_type, _TYPE_PAYLOADS[mem_type], length)
     block = _block(item)
-    assert block.source_expanded_available is expected_flag
+    assert block.expand_available is expected_flag
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +137,7 @@ def test_source_evidence_block_never_gets_flag() -> None:
         excerpt="short",
     )
     block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
-    assert block.source_expanded_available is False
+    assert block.expand_available is False
 
 
 # ---------------------------------------------------------------------------
@@ -155,4 +155,4 @@ def test_no_flag_when_envelope_is_none() -> None:
         envelope=None,
     )
     block = _block(item)
-    assert block.source_expanded_available is False
+    assert block.expand_available is False

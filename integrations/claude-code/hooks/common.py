@@ -154,7 +154,7 @@ def format_injection(
         memory_object_id = block.get("memory_object_id", "")
         text = block.get("text", "")
         line = f"[{title} | ref:{memory_object_id}] {text}"
-        if block.get("source_expanded_available"):
+        if block.get("expand_available"):
             line += " [+source]"
         formatted_blocks.append(line)
 

@@ -793,7 +793,7 @@ _SOURCE_EXPANDED_TYPES = frozenset({
 })
 
 
-def _source_expanded_available(item: QueryResultItem) -> bool:
+def _expand_available(item: QueryResultItem) -> bool:
     return (
         item.type in _SOURCE_EXPANDED_TYPES
         and item.envelope is not None
@@ -979,7 +979,7 @@ def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) ->
             evidence=item.evidence,
             memory_type=item.type,
             memory_object_id=mo_id,
-            source_expanded_available=truncated,
+            expand_available=truncated,
         )
     return InjectableBlock(
         result_id=str(item.result_id),
@@ -997,8 +997,8 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
     if block.block_type == "memory":
         item = candidate["item"]
         assert isinstance(item, QueryResultItem)
-        if _source_expanded_available(item):
-            block = replace(block, source_expanded_available=True)
+        if _expand_available(item):
+            block = replace(block, expand_available=True)
     return block
 
 

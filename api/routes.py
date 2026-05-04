@@ -98,7 +98,7 @@ def _serialize_injectable_block(block: InjectableBlock) -> dict[str, object]:
         "text": block.text,
         "memory_type": block.memory_type,
         "memory_object_id": block.memory_object_id,
-        "source_expanded_available": block.source_expanded_available,
+        "expand_available": block.expand_available,
         "evidence": [_serialize_evidence(evidence) for evidence in block.evidence],
     }
 
