@@ -64,15 +64,15 @@ class TestFormatInjection:
         blocks = [{"title": "Prior Investigation", "memory_object_id": "mo-1",
                    "text": "found X", "expand_available": True}]
         result = format_injection(blocks, "c", 2400)
-        assert "[Prior Investigation | ref:mo-1] found X [+source]" in result
+        assert "[Prior Investigation | ref:mo-1] found X [+expand]" in result
 
     def test_source_expanded_flag_absent_when_false(self):
         blocks = [{"title": "T", "memory_object_id": "x", "text": "y",
                    "expand_available": False}]
         result = format_injection(blocks, "c", 2400)
-        assert "[+source]" not in result
+        assert "[+expand]" not in result
 
     def test_source_expanded_flag_absent_when_key_missing(self):
         blocks = [{"title": "T", "memory_object_id": "x", "text": "y"}]
         result = format_injection(blocks, "c", 2400)
-        assert "[+source]" not in result
+        assert "[+expand]" not in result
