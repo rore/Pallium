@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
-_DISPLAY_TEXT_KEYS = ("summary", "statement", "decision", "investigation_outcome", "interest_text", "constraint_text", "carry_forward_answer")
+_DISPLAY_TEXT_KEYS = ("summary", "statement", "decision", "investigation_outcome", "interest_text", "constraint_text", "carry_forward_answer", "content", "title")
 
 
 def _extract_display_text(payload: dict) -> str:
