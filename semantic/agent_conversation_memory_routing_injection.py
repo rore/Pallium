@@ -32,7 +32,7 @@ def _verbose(msg: str) -> None:
 # These get a lower injection bar because the extraction already confirmed relevance.
 HIGH_VALUE_MEMORY_TYPES = frozenset({
     "decision", "investigation_outcome", "task_checkpoint",
-    "continuity_memory", "pattern_memory", "interest",
+    "continuity_memory", "pattern_memory",
 })
 
 

@@ -174,14 +174,14 @@ class TestTypePrefixInEmbeddingText:
         assert text is not None
         assert text.startswith("[investigation_outcome] ")
 
-    def test_interest_has_type_prefix(self):
+    def test_interest_returns_none_deprecated(self):
+        """Interest type is deprecated — no longer embeddable."""
         mo = _make_memory("interest", {
             "interest_text": "Chroma vector database for lightweight local embedding and retrieval",
             "summary": "User expressed interest in trying Chroma for a side project",
         })
         text = build_embedding_text(mo)
-        assert text is not None
-        assert text.startswith("[interest] ")
+        assert text is None
 
     def test_constraint_memory_has_type_prefix(self):
         mo = _make_memory("constraint_memory", {
@@ -206,7 +206,6 @@ class TestTypePrefixInEmbeddingText:
             "task_checkpoint": {"task": "Investigate catalog sync scheduled job failure and token rotation policy gap"},
             "pattern_memory": {"summary": "Recurring pattern: nightly batch jobs accumulating backlogs cause downstream queue failures"},
             "continuity_memory": {"continuity_question": "What is the status of the catalog sync investigation and token refresh?"},
-            "interest": {"interest_text": "Chroma vector database for lightweight local embedding and retrieval", "summary": "User expressed interest in trying Chroma for a side project"},
             "constraint_memory": {"constraint_text": "No GPL-licensed dependencies allowed in this project per legal requirement"},
             "note": {"title": "BM25 floor gate threshold", "content": "The BM25 floor gate threshold is set to 12 to improve injection precision from 18% to 52.7%"},
         }
@@ -241,7 +240,6 @@ class TestEmbeddableMemoryTypes:
             "task_checkpoint": {"task": "Investigate catalog sync scheduled job failure and token rotation policy gap"},
             "pattern_memory": {"summary": "Recurring pattern: nightly batch jobs accumulating backlogs cause downstream queue failures"},
             "continuity_memory": {"continuity_question": "What is the status of the catalog sync investigation and token refresh?"},
-            "interest": {"interest_text": "Chroma vector database for lightweight local embedding and retrieval", "summary": "User expressed interest in trying Chroma for a side project"},
             "constraint_memory": {"constraint_text": "No GPL-licensed dependencies allowed in this project per legal requirement"},
             "note": {"title": "BM25 floor gate threshold", "content": "The BM25 floor gate threshold is set to 12 to improve injection precision from 18% to 52.7%"},
         }

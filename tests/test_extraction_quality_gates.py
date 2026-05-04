@@ -34,7 +34,7 @@ def test_interest_blocked_below_token_gate():
 
 
 def test_interest_allowed_above_token_gate():
-    """Interest extraction with >=10 token source creates interest memory."""
+    """Interest type is deprecated — even valid interest extractions produce no memory."""
     source = _make_source(
         "I want to explore using redis as a caching layer for our retrieval pipeline later",
         role="user",
@@ -46,7 +46,7 @@ def test_interest_allowed_above_token_gate():
     )
     result = build_process_result(source, extraction, "test")
     interest_objects = [m for m in result.memory_objects if m.type == "interest"]
-    assert len(interest_objects) == 1
+    assert len(interest_objects) == 0
 
 
 def test_low_value_meta_no_phrase_matching():

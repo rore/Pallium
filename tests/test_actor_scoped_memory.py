@@ -106,7 +106,7 @@ def test_interest_not_created_in_public_container(monkeypatch, test_db_url: str)
 
 
 def test_interest_created_in_private_container(monkeypatch, test_db_url: str) -> None:
-    """User interest in a private container should still create interest memory."""
+    """Interest type is deprecated — even private containers no longer produce interest memories."""
     events = [
         {
             "source_type": "chat_message",
@@ -129,9 +129,9 @@ def test_interest_created_in_private_container(monkeypatch, test_db_url: str) ->
         storage = client.app.state.pallium_service._storage
         active_memories = storage.list_memory_objects(lifecycle="active")
         interest_memories = [m for m in active_memories if m.type == "interest"]
-        assert interest_memories, (
-            f"Interest should be created in private containers, "
-            f"but only found: {[m.type for m in active_memories]}"
+        assert not interest_memories, (
+            f"Interest type is deprecated — should not produce interest memories, "
+            f"but found: {[m.payload for m in interest_memories]}"
         )
 
 
@@ -340,9 +340,9 @@ def test_query_with_actor_ref_excludes_other_actors_memories(monkeypatch, test_d
     events = [
         {
             "source_type": "chat_message",
-            "source_id": "actor-a-interest-1",
+            "source_id": "actor-a-decision-1",
             "content_type": "text/plain",
-            "content": "ok, chroma sounds interesting for vector database workloads. i should check it out some time next week when i have more bandwidth.",
+            "content": "Decision: we chose chroma as the vector database for our local retrieval pipeline because of simpler local deployment requirements.",
             "artifact_kind": "message",
             "role": "user",
             "actor_ref": ACTOR_A,
@@ -353,9 +353,9 @@ def test_query_with_actor_ref_excludes_other_actors_memories(monkeypatch, test_d
         },
         {
             "source_type": "chat_message",
-            "source_id": "actor-b-interest-1",
+            "source_id": "actor-b-decision-1",
             "content_type": "text/plain",
-            "content": "ok, qdrant sounds interesting for vector database workloads. i should check it out some time next week when i have more bandwidth.",
+            "content": "Decision: we chose qdrant as the vector database for our cloud retrieval pipeline because of better filtering support.",
             "artifact_kind": "message",
             "role": "user",
             "actor_ref": ACTOR_B,
@@ -381,7 +381,7 @@ def test_query_with_actor_ref_excludes_other_actors_memories(monkeypatch, test_d
         # Query as actor A — should not see B's memories
         actor_b_memory_ids = {m.id for m in actor_b_memories}
         query_response = client.post("/query", json={
-            "text": "what databases was I interested in?",
+            "text": "what vector database did we decide to use?",
             "limit": 10,
             "container_ref": CONTAINER_PRIVATE,
             "visibility": "private",

@@ -1,0 +1,671 @@
+{
+  "variant": "strict_typed_memory_v8b_work_refs_separate",
+  "provider": "proxy",
+  "summary": {
+    "total": 72,
+    "precision": 0.11363636363636363,
+    "recall": 0.8333333333333334,
+    "f1": 0.19999999999999998,
+    "tp": 5,
+    "tn": 27,
+    "fp": 39,
+    "fn": 1,
+    "fp_by_pattern": {
+      "question_in_session": 7,
+      "active_work": 12,
+      "task_instruction": 18,
+      "duplicate": 1,
+      "too_vague": 1
+    }
+  },
+  "results": [
+    {
+      "item_id": "6601d803",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "visibility into memories injected into the current session",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "b7cf0718",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "Cross-thread memory relevance / memory bleed between project threads",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "d4e3538c",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "Pallium value assessment",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "862156f7",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "explicit judgment/analysis of memory value by the assistant",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "4c040520",
+      "label": "bad",
+      "bad_pattern": "ide_event",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "web-dashboard-design spec (2026-04-28-web-dashboard-design.md)",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "f5bafc9a",
+      "label": "bad",
+      "bad_pattern": "ide_event",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "2026-04-28-web-dashboard.md architectural review",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "fcb36a85",
+      "label": "bad",
+      "bad_pattern": "command",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "architectural review",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "e91fdb62",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "pallium effectiveness evaluation",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "d106560a",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "ability to judge or evaluate retrieved memories",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "a1cec553",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "logging not-useful memories to improve memory query/retrieval",
+      "predicted_interest_text": "logging not-useful memories to improve the memory query component"
+    },
+    {
+      "item_id": "41adeb41",
+      "label": "bad",
+      "bad_pattern": "command",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "architectural review",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "cc9600ad",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "Linux ad push",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "3403e1b2",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "atomic facts summary field — why it is absent",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "bff4bad9",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "Memory Feedback feature integration in the dashboard",
+      "predicted_interest_text": "incorporating Memory Feedback feature (not-relevant rate per memory) into the dashboard"
+    },
+    {
+      "item_id": "5c43faab",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "Pallium memory extraction quality audit — evaluating correctness and value of 500+ stored memory items",
+      "predicted_interest_text": "evaluating quality and value of Pallium's memory extraction across 500+ stored memory items"
+    },
+    {
+      "item_id": "1a977c98",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "public documentation pass for pallium (local setup/service install, Claude integration, dashboard)",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "df17ef01",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "log file growth and truncation/rotation behavior",
+      "predicted_interest_text": "log file growth behavior — whether it grows indefinitely or is truncated/rotated"
+    },
+    {
+      "item_id": "fa531dea",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "indicator to distinguish ephemeral (since-last-restart) vs persistent metrics on the dashboard",
+      "predicted_interest_text": "indicator on dashboard to distinguish ephemeral metrics (since last restart) from persistent metrics"
+    },
+    {
+      "item_id": "5f330d06",
+      "label": "bad",
+      "bad_pattern": "ide_event",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "2026-04-29 memory quality improvement plan (Pallium project)",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "0a321bf7",
+      "label": "bad",
+      "bad_pattern": "ide_event",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "_EPHEMERAL_PATTERNS",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "855e4cd7",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "dashboard public documentation",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "b695483b",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "pallium Claude integration hooks and memory ingestion mechanism",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "0a0b4178",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "IDE event pre-filter",
+      "predicted_interest_text": "IDE event pre-filter — whether this is a Claude-integration-specific problem"
+    },
+    {
+      "item_id": "1a6ff819",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "rating 'good' memories",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "42f2d049",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "log level configuration to suppress dashboard API request logging in pallium.log",
+      "predicted_interest_text": "log level configuration for pallium service to suppress dashboard API request logging"
+    },
+    {
+      "item_id": "eec259e2",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "feedback storage design — whether feedback should be a log with query/context rather than a field on a memory",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "aaa7e5c6",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "audit logging",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "9477d19f",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "proving quality improvement",
+      "predicted_interest_text": "proving quality improvement"
+    },
+    {
+      "item_id": "31db4fd4",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "491 atomic_facts, 199 discussion_summaries - highest number category",
+      "predicted_interest_text": "491 atomic_facts, 199 discussion_summaries — highest number category warranting investigation"
+    },
+    {
+      "item_id": "d359d66f",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "discussion summary",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "dd0b7c32",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "matching local Pallium service DB memory data (C:\\Users\\I347041\\.pallium\\data) with suggestions from other projects to determine what memory content is genuinely valuable, grounded in actual data rather than speculation",
+      "predicted_interest_text": "matching local Pallium service DB memories (C:\\Users\\I347041\\.pallium\\data) with suggestions from other projects to empirically determine what memory content is genuinely valuable"
+    },
+    {
+      "item_id": "08677f6d",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "quality and injection usefulness of memories generated for this thread in the Pallium service",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "f98b44fc",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "data-driven iteration to prove memory generation improvements and catch regressions using problematic memory examples",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "b11cabcc",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "convention for flagging on memory cards that source could contain more info, so agent instructions can reference it and Pallium can expand on it in the future",
+      "predicted_interest_text": "Convention for flagging truncated/partial source content on memory cards, and query-impact of memories with multiple sources"
+    },
+    {
+      "item_id": "a39aeb17",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "Claude integration instructions — what we need and how to instruct",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "1a3fde49",
+      "label": "good",
+      "bad_pattern": null,
+      "predicted_interest": true,
+      "correct": true,
+      "interest_text": "memory visibility (public vs private) and explicit calls to set public memories",
+      "predicted_interest_text": "explicit calls to set public memories and memory visibility"
+    },
+    {
+      "item_id": "fe146cee",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "extraction quality failures in the memory system — why valuable memories are being missed",
+      "predicted_interest_text": "extraction quality failures — why valuable memories are missed from threads, diagnosed using this thread as a test case"
+    },
+    {
+      "item_id": "b655ece6",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "data-driven approach to improving and validating Pallium-principles-compliant (multilingual, language-agnostic) solutions",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "c1a37fd3",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "extraction quality: distinguishing useful vs. non-useful extracted facts, and deriving principles for what should vs. should not be extracted",
+      "predicted_interest_text": "extraction quality: distinguishing useful vs. non-useful extracted facts, and deriving principles for what to extract"
+    },
+    {
+      "item_id": "05f6197f",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "quantifying Pallium's ROI to justify 5% overhead",
+      "predicted_interest_text": "how to quantify Pallium's ROI given 5% overhead"
+    },
+    {
+      "item_id": "b7ce67fb",
+      "label": "bad",
+      "bad_pattern": "duplicate",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "how to measure ROI",
+      "predicted_interest_text": "how to measure ROI"
+    },
+    {
+      "item_id": "514fa318",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "quality of relevant memories (not just relevancy rating, but whether memories actually provide valuable information helpful to the session)",
+      "predicted_interest_text": "quality of relevant memories — whether they provide valuable, helpful information to the session, not just relevancy rating"
+    },
+    {
+      "item_id": "2712c54a",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "feedback review goals: using 'not relevant' signals to improve query, and relevancy judgements to judge ROI",
+      "predicted_interest_text": "feedback review goals: using 'not relevant' signals to improve query, and using relevancy judgement to judge ROI"
+    },
+    {
+      "item_id": "5ad3e1ef",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "how flagging works (marking items as flagged for pallium to remove)",
+      "predicted_interest_text": "how flagging works and whether pallium removes flagged items"
+    },
+    {
+      "item_id": "1959f300",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "muxi memory feature",
+      "predicted_interest_text": "muxi memory feature (C:\\Dev\\others\\muxi)"
+    },
+    {
+      "item_id": "0b8ae112",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "Adding a recency/time-decay signal to Pallium's retrieval scoring pipeline",
+      "predicted_interest_text": "Adding a recency/time-decay signal to Pallium's retrieval scoring pipeline"
+    },
+    {
+      "item_id": "fdf7289c",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "evaluate which memory approach is better: muxi or pallium",
+      "predicted_interest_text": "evaluating which memory approach is better: muxi or pallium"
+    },
+    {
+      "item_id": "a4815959",
+      "label": "good",
+      "bad_pattern": null,
+      "predicted_interest": true,
+      "correct": true,
+      "interest_text": "model migration strategy for running pallium services",
+      "predicted_interest_text": "model migration handling in running Pallium services — detecting model changes on startup and determining what action to take"
+    },
+    {
+      "item_id": "8e471dff",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "investigation outcome quality and indexing — what is indexed, in what queries it appears, how it functions, whether it is genuinely useful (e.g. investigation f051418b-bd0a-4dbb-b2ef-66f2ffafd8fa)",
+      "predicted_interest_text": "investigation outcome quality — whether outcomes are specific enough to the investigation topic, what gets indexed, and how outcomes function in queries"
+    },
+    {
+      "item_id": "e749f4ba",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "rethink the rebuild process to be more robust — dedicated process, resumable, hot-swap old vector with new one, catch-up mechanism for items processed during rebuild",
+      "predicted_interest_text": "robust vector rebuild process — dedicated process, resumable tracking, old-vector-keep-until-ready swap, catch-up mechanism for items processed during rebuild"
+    },
+    {
+      "item_id": "1d681e83",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "value of extracted facts and query cases where they actually matter",
+      "predicted_interest_text": "value of extracted facts and whether there are query cases where they actually matter"
+    },
+    {
+      "item_id": "2b9880f2",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "atomic facts consolidation and re-enablement — data-driven investigation into whether consolidated or re-enabled atomic facts improve query results, and root cause of why they are not currently consolidated",
+      "predicted_interest_text": "why items are not consolidated, whether consolidation would help, whether re-enabling atomic facts would help after prior spam injection issues, and whether query data shows facts would have been beneficial"
+    },
+    {
+      "item_id": "defc28ce",
+      "label": "good",
+      "bad_pattern": null,
+      "predicted_interest": true,
+      "correct": true,
+      "interest_text": "GitHub Copilot integration — whether it supports a similar integration pattern as Claude",
+      "predicted_interest_text": "GitHub Copilot integration — whether it supports a similar integration pattern as Claude"
+    },
+    {
+      "item_id": "922d63ed",
+      "label": "good",
+      "bad_pattern": null,
+      "predicted_interest": true,
+      "correct": true,
+      "interest_text": "extending Claude integration to support user-requested global memory storage (public memories applicable across all projects)",
+      "predicted_interest_text": "Extending Claude integration to support user-requested global memory storage (e.g., cross-project rules like 'never do XXX'), ingested by the agent as public memories"
+    },
+    {
+      "item_id": "61e13b53",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "failed hook calls in the beginning of this session",
+      "predicted_interest_text": "why there were failed hook calls in the beginning of this session"
+    },
+    {
+      "item_id": "72bb5014",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "Global/cross-project memory support in Pallium",
+      "predicted_interest_text": "Global/cross-project memory support in Pallium — enabling memories with no container scope that surface across all projects"
+    },
+    {
+      "item_id": "e97413d0",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "potential problem with public + actor_ref=user = personal global memory (previously disabled on purpose, reason unknown)",
+      "predicted_interest_text": "potential problem with public + actor_ref=user = personal global memory, and why it was disabled"
+    },
+    {
+      "item_id": "c7464739",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "visibility handling — whether current approach makes sense and whether there are too many options/settings",
+      "predicted_interest_text": "visibility handling — whether it makes sense and whether there are too many options and settings"
+    },
+    {
+      "item_id": "183357da",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "query quality QA review of Pallium service injections using collected feedback and query logs",
+      "predicted_interest_text": "query quality QA review of pallium service injections based on collected feedback and query logs"
+    },
+    {
+      "item_id": "aca8112c",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "retrieval discrimination for single-domain content — vector score clustering causing precision loss in same-project memory containers",
+      "predicted_interest_text": "retrieval discrimination for single-domain content — vector score clustering causing precision loss in intra-domain memory injection (Pallium container, E5-base 768-dim)"
+    },
+    {
+      "item_id": "cac6a7dd",
+      "label": "good",
+      "bad_pattern": null,
+      "predicted_interest": false,
+      "correct": false,
+      "interest_text": "common practices for estimating project effort (man-days) from code",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "a84ff5a0",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "gap analysis between Pallium's actual memory extraction/query behavior in this thread vs. the ideal value a memory service could bring",
+      "predicted_interest_text": "Gap analysis: what value Pallium's memory service actually delivered in this thread vs. what additional value a memory service ideally could have brought"
+    },
+    {
+      "item_id": "bce235fa",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "How other projects in C:\\Dev\\others handle things better (comparative investigation of peer projects)",
+      "predicted_interest_text": "other projects in C:\\Dev\\others and how they approach the problem better"
+    },
+    {
+      "item_id": "83c4ae0a",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "noise cleanup effectiveness and memory extraction quality — whether extracted memories are valuable enough and produce actionable data",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "49ad2d2b",
+      "label": "good",
+      "bad_pattern": null,
+      "predicted_interest": true,
+      "correct": true,
+      "interest_text": "centralized/team deployment of the tool — what it means to have it working for a group rather than locally",
+      "predicted_interest_text": "centralized team deployment instead of local setup"
+    },
+    {
+      "item_id": "6d45115a",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "agent evidence retrieval patterns: frequency of get_evidence calls, whether agents know to call it, and whether ingestion can be more helpful",
+      "predicted_interest_text": "how many times the agent calls get_evidence, whether it would know to do so, and whether ingestion can be made more helpful"
+    },
+    {
+      "item_id": "53e9f176",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "how valuable are the memories",
+      "predicted_interest_text": "how valuable are the memories"
+    },
+    {
+      "item_id": "9c3fb189",
+      "label": "bad",
+      "bad_pattern": "question_in_session",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "how to track missed items in the future and whether data exists to see what has been missed",
+      "predicted_interest_text": "tracking what we've missed — whether data exists to identify missed items in the future"
+    },
+    {
+      "item_id": "b00ffc2c",
+      "label": "bad",
+      "bad_pattern": "task_instruction",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "Building eval harnesses from live/real production data that simulate multi-thread scenarios and session continuations where Pallium should demonstrate value",
+      "predicted_interest_text": "building eval harnesses from live/real data that simulate multi-thread scenarios and session continuations where Pallium is expected to have value, using actual threads to construct full test scenarios"
+    },
+    {
+      "item_id": "dc1622d7",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": false,
+      "correct": true,
+      "interest_text": "Scenario-based deterministic tests for Pallium: given a known memory state, assert exactly what Pallium is expected to produce",
+      "predicted_interest_text": null
+    },
+    {
+      "item_id": "0525fb21",
+      "label": "bad",
+      "bad_pattern": "too_vague",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "analyze observed patterns to understand the right direction",
+      "predicted_interest_text": "analyzing missing capability/artifact and related observations to determine the right direction"
+    },
+    {
+      "item_id": "1d8de4a8",
+      "label": "bad",
+      "bad_pattern": "active_work",
+      "predicted_interest": true,
+      "correct": false,
+      "interest_text": "whether 'reference' is the right abstraction or should be generalized even more",
+      "predicted_interest_text": "whether 'reference' is the right abstraction or should be generalized even more"
+    }
+  ]
+}

@@ -6,7 +6,6 @@ from core.models import MemoryObject, SourceItem
 EMBEDDABLE_MEMORY_TYPES = {
     "decision",
     "investigation_outcome",
-    "interest",
     "thread_summary",
     "task_checkpoint",
     "pattern_memory",

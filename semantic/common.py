@@ -484,7 +484,6 @@ def build_process_result(
     for builder in (
         lambda: _build_decision_result(source_item, extraction, decision_text, decision_evidence_text, rationale_text, schema_prefix, semantic_metadata),
         lambda: _build_investigation_result(source_item, extraction, investigation_text, investigation_evidence_text, rationale_text, key_finding_text, schema_prefix, semantic_metadata),
-        lambda: _build_interest_result(source_item, extraction, schema_prefix, semantic_metadata),
     ):
         memory_object, index_source = builder()
         if memory_object is not None:

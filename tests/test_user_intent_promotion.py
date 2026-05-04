@@ -1,9 +1,8 @@
-"""Test that user-stated interest is promoted to the `interest` memory type.
+"""Test that the deprecated interest type is no longer produced.
 
-Scenario: user discusses vector databases with the assistant across a thread,
-then expresses specific interest in a tool (Chroma). After a thread boundary
-(/new), a query asking what the user wanted to try should surface a specific
-interest memory — not only generic discussion summaries.
+The interest memory type was deprecated (docs/specs/2026-05-04-interest-type-deprecation.md)
+due to 14% precision and 0.9% injection rate. Interest-style content now produces only
+thread_summary, which captures the topic for cross-thread retrieval.
 """
 from __future__ import annotations
 
@@ -79,8 +78,8 @@ THREAD_A_EVENTS = [
 
 
 def test_user_intent_promoted_to_actionable_memory(monkeypatch, test_db_url: str) -> None:
-    """After a user says 'chroma sounds interesting, i should check it some
-    time', an interest memory should be created — not only generic summaries."""
+    """Interest type is deprecated — interest-style content no longer produces
+    actionable typed memory. Only thread_summary is created."""
     with _build_client(monkeypatch, test_db_url) as client:
         # Ingest thread A conversation
         response = client.post('/items', json=THREAD_A_EVENTS)
@@ -92,21 +91,13 @@ def test_user_intent_promoted_to_actionable_memory(monkeypatch, test_db_url: str
         active_memories = storage.list_memory_objects(lifecycle='active')
         active_types = {m.type for m in active_memories}
 
-        actionable_types = {'decision', 'task_checkpoint', 'continuity_memory', 'interest'}
-        assert active_types & actionable_types, (
-            f'Expected at least one actionable memory type {actionable_types}, '
+        assert 'interest' not in active_types, (
+            f'Interest type is deprecated — should not be produced, '
+            f'but found interest in: {active_types}'
+        )
+        assert 'thread_summary' in active_types, (
+            f'Thread summary should still capture the conversation topic, '
             f'but only found: {active_types}'
-        )
-
-        # Verify the actionable memory mentions Chroma
-        actionable_memories = [m for m in active_memories if m.type in actionable_types]
-        chroma_mentioned = any(
-            'chroma' in str(m.payload).lower()
-            for m in actionable_memories
-        )
-        assert chroma_mentioned, (
-            f'Actionable memory should mention Chroma. '
-            f'Payloads: {[m.payload for m in actionable_memories]}'
         )
 
 

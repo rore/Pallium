@@ -90,7 +90,7 @@ ROUTING_POLICY_NAME = "agent_conversation_memory.intent_routing.v4"
 
 PASSTHROUGH_POLICY = PolicySelectedContext(query_policy_family="passthrough", allowed_query_intents=None)
 
-ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory", "task_checkpoint", "interest", "thread_summary", "turn_summary", CONSTRAINT_MEMORY_TYPE}
+ROUTING_HIGHER_LEVEL_TYPES = {"pattern_memory", "continuity_memory", "task_checkpoint", "thread_summary", "turn_summary", CONSTRAINT_MEMORY_TYPE}
 
 ROUTING_LOWER_LEVEL_EXACT_TYPES = {"decision", "investigation_outcome"}
 
@@ -98,15 +98,15 @@ ROUTING_SUMMARY_TYPES = {"thread_summary", "turn_summary"}
 
 STRUCTURED_LAYERS = frozenset({
     "decision", "investigation_outcome", "task_checkpoint",
-    "pattern_memory", "continuity_memory", "interest", CONSTRAINT_MEMORY_TYPE,
+    "pattern_memory", "continuity_memory", CONSTRAINT_MEMORY_TYPE,
     "thread_summary", "turn_summary", "atomic_fact", "note",
 })
 
 ROUTING_PREFERRED_LAYERS = {
-    "recall": ("pattern_memory", "investigation_outcome", "decision", "continuity_memory", "note", "atomic_fact", "task_checkpoint", "source_evidence", "interest", "thread_summary", "turn_summary", CONSTRAINT_MEMORY_TYPE),
-    "structured_recall": ("investigation_outcome", "decision", "source_evidence", "atomic_fact", "note", "interest", "thread_summary", "turn_summary", "continuity_memory", "task_checkpoint", "pattern_memory", CONSTRAINT_MEMORY_TYPE),
-    "work_resumption": ("task_checkpoint", "source_evidence", "investigation_outcome", "decision", "continuity_memory", "note", "atomic_fact", "pattern_memory", "interest", "thread_summary", "turn_summary", CONSTRAINT_MEMORY_TYPE),
-    "evidence_trace": ("source_evidence", "investigation_outcome", "decision", "atomic_fact", "note", "interest", "thread_summary", "turn_summary", "continuity_memory", "task_checkpoint", "pattern_memory"),
+    "recall": ("pattern_memory", "investigation_outcome", "decision", "continuity_memory", "note", "atomic_fact", "task_checkpoint", "source_evidence", "thread_summary", "turn_summary", CONSTRAINT_MEMORY_TYPE),
+    "structured_recall": ("investigation_outcome", "decision", "source_evidence", "atomic_fact", "note", "thread_summary", "turn_summary", "continuity_memory", "task_checkpoint", "pattern_memory", CONSTRAINT_MEMORY_TYPE),
+    "work_resumption": ("task_checkpoint", "source_evidence", "investigation_outcome", "decision", "continuity_memory", "note", "atomic_fact", "pattern_memory", "thread_summary", "turn_summary", CONSTRAINT_MEMORY_TYPE),
+    "evidence_trace": ("source_evidence", "investigation_outcome", "decision", "atomic_fact", "note", "thread_summary", "turn_summary", "continuity_memory", "task_checkpoint", "pattern_memory"),
 }
 
 ROUTING_FAMILY_ALLOWED_ENVELOPE_KINDS = {
@@ -117,10 +117,10 @@ ROUTING_FAMILY_ALLOWED_ENVELOPE_KINDS = {
 }
 
 ROUTING_LAYER_WEIGHTS = {
-    "recall": {CONSTRAINT_MEMORY_TYPE: 200, "pattern_memory": 130, "investigation_outcome": 160, "decision": 150, "continuity_memory": 145, "note": 145, "atomic_fact": 120, "task_checkpoint": 70, "source_evidence": 80, "interest": 50, "thread_summary": 60, "turn_summary": 40, "lower_level_memory": 130},
-    "structured_recall": {"investigation_outcome": 230, "decision": 220, CONSTRAINT_MEMORY_TYPE: 120, "source_evidence": 170, "atomic_fact": 140, "note": 130, "interest": 50, "thread_summary": 80, "turn_summary": 50, "continuity_memory": 60, "task_checkpoint": 50, "pattern_memory": 35, "lower_level_memory": 165},
-    "work_resumption": {CONSTRAINT_MEMORY_TYPE: 245, "task_checkpoint": 235, "source_evidence": 195, "investigation_outcome": 150, "decision": 145, "continuity_memory": 90, "note": 130, "atomic_fact": 60, "pattern_memory": 35, "interest": 50, "thread_summary": 65, "turn_summary": 35, "lower_level_memory": 125},
-    "evidence_trace": {"source_evidence": 230, "investigation_outcome": 190, "decision": 180, "atomic_fact": 140, "note": 100, CONSTRAINT_MEMORY_TYPE: 55, "interest": 43, "thread_summary": 60, "turn_summary": 40, "continuity_memory": 60, "task_checkpoint": 45, "pattern_memory": 20, "lower_level_memory": 150},
+    "recall": {CONSTRAINT_MEMORY_TYPE: 200, "pattern_memory": 130, "investigation_outcome": 160, "decision": 150, "continuity_memory": 145, "note": 145, "atomic_fact": 120, "task_checkpoint": 70, "source_evidence": 80, "thread_summary": 60, "turn_summary": 40, "lower_level_memory": 130},
+    "structured_recall": {"investigation_outcome": 230, "decision": 220, CONSTRAINT_MEMORY_TYPE: 120, "source_evidence": 170, "atomic_fact": 140, "note": 130, "thread_summary": 80, "turn_summary": 50, "continuity_memory": 60, "task_checkpoint": 50, "pattern_memory": 35, "lower_level_memory": 165},
+    "work_resumption": {CONSTRAINT_MEMORY_TYPE: 245, "task_checkpoint": 235, "source_evidence": 195, "investigation_outcome": 150, "decision": 145, "continuity_memory": 90, "note": 130, "atomic_fact": 60, "pattern_memory": 35, "thread_summary": 65, "turn_summary": 35, "lower_level_memory": 125},
+    "evidence_trace": {"source_evidence": 230, "investigation_outcome": 190, "decision": 180, "atomic_fact": 140, "note": 100, CONSTRAINT_MEMORY_TYPE: 55, "thread_summary": 60, "turn_summary": 40, "continuity_memory": 60, "task_checkpoint": 45, "pattern_memory": 20, "lower_level_memory": 150},
 }
 
 

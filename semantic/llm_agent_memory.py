@@ -290,7 +290,6 @@ Only promote to typed memory when the source contains explicit evidence:
   NOT a decision: action reports that describe WHAT was done without naming a chosen alternative ("Updated docs", "Fixed the bug", "Pushed the commit", "Removed the old code", "Deployed to production"), status updates ("Tests pass now", "21 items processed"), stated future intents ("I'll revert it"), parameter changes ("threshold 6 → 20"), or UI/cosmetic changes ("Browser is now collapsible").
 - investigation_outcome: requires resolved-finding language ("Root cause:", "Investigation found", "Analysis found", "Findings:", "Outcome:", "We found that", "Verdict:", "Conclusion:", "Investigation concluded", "The conclusion is").
   investigation_text must state what was DISCOVERED about a system or domain, not what was JUDGED about work quality. Architect reviews, plan approvals, and self-critiques are quality judgments, not findings.
-- interest: the user (not the assistant) explicitly signals that a named subject deserves future attention or investigation — the user is flagging something to come back to later, not asking for immediate help or action. Fill interest_text with the subject. No proof phrase needed. Do NOT classify as interest: assistant responses, questions asking for help or explanations right now (even if they name a topic), backward-looking recall, restatements of prior content, or task instructions/commands directed at the assistant (one-shot requests to perform, fix, review, or change something are immediate tasks, not durable subjects for future attention).
 - otherwise candidate_type = null.
 
 CRITICAL GROUNDING RULE: decision_text, decision_evidence_text, investigation_text, and investigation_evidence_text must be EXACT QUOTES copied from the source text. Do not paraphrase or rewrite. Copy a substring of the source verbatim (you may trim to the essential fragment but never rephrase).
@@ -526,7 +525,7 @@ def _normalize_extraction(payload: dict[str, Any], *, source_id: str | None = No
 
     if candidate_type is not None:
         candidate_type = candidate_type.lower()
-        if candidate_type not in {"decision", "investigation_outcome", "interest"}:
+        if candidate_type not in {"decision", "investigation_outcome"}:
             candidate_type = None
 
     return SemanticExtraction(
@@ -556,8 +555,6 @@ def _apply_grounded_candidate_type_fallback(extraction: SemanticExtraction) -> S
         return replace(extraction, candidate_type="decision")
     if extraction.investigation_text and extraction.investigation_evidence_text:
         return replace(extraction, candidate_type="investigation_outcome")
-    if extraction.interest_text:
-        return replace(extraction, candidate_type="interest")
     return extraction
 
 

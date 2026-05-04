@@ -2030,14 +2030,14 @@ def test_retrieval_relevance_floor_mixed_candidates_one_passes() -> None:
             QueryResultItem(
                 result_kind='memory_hit',
                 memory_object_id='floor-mix-2',
-                type='interest',
-                payload={'summary': 'Interest in ChromaDB for vector database experiments.'},
+                type='decision',
+                payload={'decision': 'Use ChromaDB for vector database experiments', 'summary': 'Decided to use ChromaDB for experiments.'},
                 score=19,
                 evidence=[],
                 container_ref='chat:floor-test',
                 thread_ref='chat:floor-test:thread-A',
                 retrieval_source='both',
-                lexical_score=3,
+                lexical_score=14,
             ),
         ],
         trace=QueryTrace(
