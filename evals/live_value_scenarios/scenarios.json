@@ -190,5 +190,28 @@
     },
     "original_event": null,
     "expected_status": "pass"
+  },
+  {
+    "scenario_id": "note-recall-operational-procedure",
+    "description": "User previously asked to remember a SQL query for tracking injection misses after deploying the BM25 floor gate. In a new thread, they ask about checking recall loss. The note should be surfaced with the full operational procedure.",
+    "value_story": "Without this note, the user must re-derive the SQL query and remember which tables/columns to check. With the note, the exact query and its context are immediately available — the user asked to remember it and the system honored that request faithfully.",
+    "category": "note_recall",
+    "query": {
+      "text": "how do I check if the BM25 floor gate is blocking relevant memories? what query should I run?",
+      "container_ref": "git:github.com/rore/pallium",
+      "visibility": "private"
+    },
+    "expected": {
+      "should_inject": true,
+      "memory_types": ["note"],
+      "content_patterns": ["bm25", "floor", "audit_log"],
+      "value_reason": "Surfaces the exact operational procedure the user explicitly asked to remember"
+    },
+    "anti_patterns": {
+      "should_not_inject_types": [],
+      "should_not_contain": ["reservation", "catalog"]
+    },
+    "original_event": null,
+    "expected_status": "pass"
   }
 ]
