@@ -1,0 +1,86 @@
+[
+  {
+    "id": "note_sql_query",
+    "description": "SQL query for finding overdue reservations",
+    "content": "SELECT r.id, r.patron_id, r.due_date\nFROM reservations r\nJOIN patrons p ON p.id = r.patron_id\nWHERE r.due_date < CURRENT_DATE\n  AND r.returned_at IS NULL\nORDER BY r.due_date ASC;",
+    "expected_title_contains": ["overdue", "reservation"],
+    "category": "sql_query"
+  },
+  {
+    "id": "note_config_recipe",
+    "description": "Nginx reverse proxy configuration for local dev",
+    "content": "server {\n    listen 80;\n    server_name api.local;\n\n    location / {\n        proxy_pass http://127.0.0.1:8000;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n    }\n\n    location /ws {\n        proxy_pass http://127.0.0.1:8000;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection \"upgrade\";\n    }\n}",
+    "expected_title_contains": ["nginx", "proxy"],
+    "category": "config_recipe"
+  },
+  {
+    "id": "note_short_fact",
+    "description": "Short factual note about a deployment detail",
+    "content": "The staging environment resets every Sunday at 03:00 UTC. Database snapshots are taken at 02:45 UTC before the reset.",
+    "expected_title_contains": ["staging", "reset"],
+    "category": "short_fact"
+  },
+  {
+    "id": "note_procedure",
+    "description": "Step-by-step procedure for rotating API keys",
+    "content": "API key rotation procedure:\n1. Generate new key in the admin console (Settings > API Keys > Generate)\n2. Update the key in vault: vault kv put secret/api-keys/catalog-sync key=NEW_KEY\n3. Restart the catalog-sync service: systemctl restart catalog-sync\n4. Verify connectivity: curl -H 'Authorization: Bearer NEW_KEY' https://api.example.com/health\n5. Revoke the old key in admin console\n6. Update the rotation log in Confluence",
+    "expected_title_contains": ["api", "key", "rotation"],
+    "category": "procedure"
+  },
+  {
+    "id": "note_reference_doc",
+    "description": "Team conventions for branch naming",
+    "content": "Branch naming conventions:\n- feature/TICKET-123-short-description\n- bugfix/TICKET-456-what-is-fixed\n- hotfix/TICKET-789-critical-issue\n- release/v1.2.3\n\nAlways use lowercase. Ticket prefix is mandatory for feature and bugfix branches. Hotfix branches go directly to main after review.",
+    "expected_title_contains": ["branch", "naming"],
+    "category": "reference_doc"
+  },
+  {
+    "id": "note_multi_paragraph",
+    "description": "Architecture decision about event sourcing approach",
+    "content": "We evaluated three approaches for the catalog sync pipeline:\n\n1. Polling: Simple but introduces latency (up to 60s). No ordering guarantees across partitions.\n\n2. Webhooks: Low latency but requires public endpoint. Retry semantics are provider-dependent.\n\n3. Event stream (chosen): Kafka consumer group with exactly-once semantics. Handles backpressure natively. Partition key = catalog_id ensures ordering per catalog.\n\nThe tradeoff is operational complexity (Kafka cluster maintenance) but we already run Kafka for the notification pipeline so incremental cost is low.",
+    "expected_title_contains": ["catalog", "sync"],
+    "category": "architecture_decision"
+  },
+  {
+    "id": "note_env_vars",
+    "description": "Required environment variables for the sync service",
+    "content": "Required env vars for catalog-sync service:\n\nCATALOG_API_URL=https://api.example.com/v2\nCATALOG_API_KEY=(from vault)\nDB_CONNECTION_STRING=postgresql://sync_user:***@db.internal:5432/catalog\nKAFKA_BROKERS=kafka-1.internal:9092,kafka-2.internal:9092\nKAFKA_CONSUMER_GROUP=catalog-sync-prod\nLOG_LEVEL=info\nMETRICS_PORT=9090",
+    "expected_title_contains": ["env", "catalog"],
+    "category": "config_recipe"
+  },
+  {
+    "id": "note_contact_info",
+    "description": "Team contact information for on-call escalation",
+    "content": "On-call escalation path:\n- L1 (first 15 min): Current on-call engineer (see PagerDuty schedule)\n- L2 (after 15 min): Team lead - available on Slack #platform-oncall\n- L3 (after 30 min): Engineering manager - phone call\n\nFor database issues specifically, ping the DBA team in #dba-support before escalating to L2.",
+    "expected_title_contains": ["on-call", "escalation"],
+    "category": "reference_doc"
+  },
+  {
+    "id": "note_curl_command",
+    "description": "Curl command for testing the health endpoint",
+    "content": "curl -s -w '\\n%{http_code}' -H 'Authorization: Bearer $TOKEN' https://api.example.com/v2/health | jq .",
+    "expected_title_contains": ["health", "endpoint"],
+    "category": "command"
+  },
+  {
+    "id": "note_meeting_outcome",
+    "description": "Key decisions from a planning meeting",
+    "content": "Sprint planning outcomes (2024-03-15):\n- Priority 1: Fix the duplicate hold bug in reservation service (assigned: backend team)\n- Priority 2: Implement patron notification preferences (assigned: full-stack team)\n- Deferred: Mobile app push notifications (blocked on iOS certificate renewal)\n- Agreement: All PRs need at least 2 approvals starting next sprint\n- Tech debt budget: 20% of sprint capacity allocated to catalog indexing cleanup",
+    "expected_title_contains": ["sprint", "planning"],
+    "category": "meeting_notes"
+  },
+  {
+    "id": "note_error_pattern",
+    "description": "Known error pattern and its resolution",
+    "content": "When you see 'SQLITE_BUSY: database is locked' in the sync service logs, it means two workers grabbed the same partition. Resolution:\n1. Check which workers are active: SELECT * FROM worker_leases WHERE expires_at > NOW();\n2. Kill the stale worker (the one with older claimed_at)\n3. The surviving worker will resume from its last checkpoint automatically\n\nRoot cause: lease expiry is set to 30s but GC pauses can exceed that under memory pressure. We should increase to 60s (tracked in backlog).",
+    "expected_title_contains": ["sqlite", "locked"],
+    "category": "troubleshooting"
+  },
+  {
+    "id": "note_minimal",
+    "description": "Very short note - just a URL to remember",
+    "content": "Dashboard for sync metrics: https://grafana.internal/d/catalog-sync/overview",
+    "expected_title_contains": ["dashboard", "sync"],
+    "category": "short_fact"
+  }
+]
