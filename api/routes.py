@@ -13,7 +13,7 @@ from api.schemas import (
     ItemCreateRequest,
     ItemCreateResponse,
     MemoryEvidenceItemResponse,
-    MemoryEvidenceResponse,
+    MemoryExpandResponse,
     MemoryFeedbackRequest,
     MemoryFeedbackResponse,
     ProcessingStatusResponse,
@@ -207,6 +207,12 @@ def _serialize_trace(trace: QueryTrace) -> dict[str, object]:
 
 
 logger = logging.getLogger(__name__)
+
+_EXPAND_PAYLOAD_EXCLUDED_KEYS: frozenset[str] = frozenset({
+    "semantic_provenance",
+    "retrieval_enrichment",
+    "canonical_key",
+})
 
 
 def _maybe_write_query_audit(
@@ -502,14 +508,21 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             trace=_serialize_trace(query_result.trace),
         )
 
-    @router.get("/memory/{memory_object_id}/evidence", response_model=MemoryEvidenceResponse)
-    def get_memory_evidence(memory_object_id: str, container_ref: str | None = None) -> MemoryEvidenceResponse:
+    @router.get("/memory/{memory_object_id}/expand", response_model=MemoryExpandResponse)
+    def get_memory_expand(memory_object_id: str, container_ref: str | None = None) -> MemoryExpandResponse:
         try:
-            items = service.get_memory_evidence(memory_object_id, container_ref=container_ref)
+            raw_payload, items = service.get_memory_expand(memory_object_id, container_ref=container_ref)
         except KeyError:
             raise HTTPException(status_code=404, detail="memory object not found")
-        return MemoryEvidenceResponse(
+        filtered: dict | None = None
+        if raw_payload:
+            filtered = {
+                k: v for k, v in raw_payload.items()
+                if k not in _EXPAND_PAYLOAD_EXCLUDED_KEYS and not k.startswith("_")
+            } or None
+        return MemoryExpandResponse(
             memory_object_id=memory_object_id,
+            payload=filtered,
             items=[
                 MemoryEvidenceItemResponse(
                     source_item_id=item.id,

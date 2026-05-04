@@ -116,7 +116,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         client = PalliumMcpClient(ctx)
-        result = await client.get_memory_evidence(memory_object_id)
+        result = await client.get_memory_expand(memory_object_id)
         return json.dumps(result, indent=2, default=str)
 
     @server.tool()

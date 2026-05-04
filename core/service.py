@@ -680,15 +680,10 @@ class PalliumService:
         for index_entry in result.index_entries:
             self._storage.create_index_entry(index_entry)
 
-    def get_memory_evidence(
+    def get_memory_expand(
         self, memory_object_id: str, *, container_ref: str | None = None, query_actor_ref: str | None = None,
-    ) -> list[SourceItem]:
-        """Return source items linked to a memory object, with access control.
-
-        When container_ref is provided, validates the memory object belongs to
-        that container (404-safe: no existence confirmation).  When omitted,
-        uses the memory object's own container_ref for visibility filtering.
-        """
+    ) -> tuple[dict | None, list[SourceItem]]:
+        """Return structured payload and source items for a memory object."""
         memory_object = self._storage.get_memory_object(memory_object_id)
         effective_container = container_ref or memory_object.container_ref
         if container_ref and memory_object.visibility != "global" and memory_object.container_ref != container_ref:
@@ -703,4 +698,4 @@ class PalliumService:
             effective_actor_ref = query_actor_ref or memory_object.actor_ref
             if is_visible(item.visibility, item.container_ref, effective_container, item.actor_ref, query_actor_ref=effective_actor_ref):
                 items.append(item)
-        return items
+        return memory_object.payload, items

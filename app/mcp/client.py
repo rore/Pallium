@@ -83,14 +83,14 @@ class PalliumMcpClient:
         except Exception as exc:
             return {"error": str(exc)}
 
-    async def get_memory_evidence(self, memory_object_id: str) -> dict[str, Any]:
-        """Fetch source items linked to a memory object, scoped to context container."""
+    async def get_memory_expand(self, memory_object_id: str) -> dict[str, Any]:
+        """Fetch payload and source items linked to a memory object, scoped to context container."""
         params: dict[str, str] = {}
         if self._ctx.container_ref:
             params["container_ref"] = self._ctx.container_ref
         try:
             async with httpx.AsyncClient(base_url=self._base_url, timeout=30.0) as http:
-                response = await http.get(f"/memory/{memory_object_id}/evidence", params=params)
+                response = await http.get(f"/memory/{memory_object_id}/expand", params=params)
                 response.raise_for_status()
                 return response.json()
         except httpx.HTTPStatusError as exc:

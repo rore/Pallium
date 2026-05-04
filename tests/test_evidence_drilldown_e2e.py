@@ -1,7 +1,7 @@
-"""End-to-end test for the evidence drill-down feature.
+"""End-to-end test for the expand drill-down feature.
 
 Full pipeline: ingest → process → query → verify memory_object_id in
-injectable blocks → GET /memory/{id}/evidence → verify source content.
+injectable blocks → GET /memory/{id}/expand → verify source content.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def _config(db_url: str) -> AppConfig:
 
 
 class TestEvidenceDrilldownE2E:
-    """Full pipeline test: ingest → process → query → evidence drill-down."""
+    """Full pipeline test: ingest → process → query → expand drill-down."""
 
     def test_ingest_query_and_drill_down(self, test_db_url: str) -> None:
         app = create_app(_config(test_db_url))
@@ -79,9 +79,9 @@ class TestEvidenceDrilldownE2E:
                     f"Injectable blocks present but none have memory_object_id: {blocks}"
                 )
 
-            # 6. Drill down: GET /memory/{id}/evidence
+            # 6. Drill down: GET /memory/{id}/expand
             evidence_response = client.get(
-                f"/memory/{memory_object_id}/evidence",
+                f"/memory/{memory_object_id}/expand",
                 params={"container_ref": "e2e:container:test"},
             )
             assert evidence_response.status_code == 200
@@ -98,7 +98,7 @@ class TestEvidenceDrilldownE2E:
 
             # 8. Verify cross-container access is blocked
             cross_response = client.get(
-                f"/memory/{memory_object_id}/evidence",
+                f"/memory/{memory_object_id}/expand",
                 params={"container_ref": "e2e:container:other-user"},
             )
             assert cross_response.status_code == 404
@@ -145,7 +145,7 @@ class TestEvidenceDrilldownE2E:
                 if not mo_id:
                     continue
                 ev = client.get(
-                    f"/memory/{mo_id}/evidence",
+                    f"/memory/{mo_id}/expand",
                     params={"container_ref": "e2e:container:multi"},
                 )
                 assert ev.status_code == 200

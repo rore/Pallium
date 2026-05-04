@@ -180,8 +180,9 @@ class MemoryEvidenceItemResponse(BaseModel):
     artifact_kind: ArtifactKind | None = None
 
 
-class MemoryEvidenceResponse(BaseModel):
+class MemoryExpandResponse(BaseModel):
     memory_object_id: str
+    payload: dict | None = None
     items: list[MemoryEvidenceItemResponse]
 
 
