@@ -783,22 +783,27 @@ def _build_injectable_blocks(
         expansion_added_count=expansion_added,
     )
 
-_SOURCE_EXPANDED_THRESHOLD = 1000
 _NOTE_INJECTION_TRUNCATION = 500  # chars — notes longer than this get snippet + source pointer
 
-_SOURCE_EXPANDED_TYPES = frozenset({
-    "investigation_outcome",
-    "decision",
-    "task_checkpoint",
-})
 
-
-def _source_expanded_available(item: QueryResultItem) -> bool:
-    return (
-        item.type in _SOURCE_EXPANDED_TYPES
-        and item.envelope is not None
-        and item.envelope.source_content_length > _SOURCE_EXPANDED_THRESHOLD
-    )
+def _expand_available(item: QueryResultItem) -> bool:
+    if item.envelope is None:
+        return False
+    payload = item.payload or {}
+    if item.type == "decision":
+        return bool(str(payload.get("decision_evidence_text") or "").strip())
+    if item.type == "investigation_outcome":
+        return bool(str(payload.get("investigation_evidence_text") or "").strip())
+    if item.type == "task_checkpoint":
+        return bool(payload.get("key_findings")) or bool(payload.get("selected_work_artifacts"))
+    if item.type == "thread_summary":
+        return bool(payload.get("conclusions")) or bool(payload.get("selected_work_artifacts"))
+    if item.type == "pattern_memory":
+        conclusions = payload.get("conclusions") or []
+        return len(conclusions) > 1
+    if item.type == CONSTRAINT_MEMORY_TYPE:
+        return bool(str(payload.get("evidence_context") or "").strip())
+    return False
 
 
 def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) -> InjectableBlock:
@@ -847,10 +852,12 @@ def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) ->
             memory_object_id=mo_id,
         )
     if item.type == "task_checkpoint":
+        task = str(payload.get("task") or "").strip()
+        title = f"Task Checkpoint — {task}" if task else "Task Checkpoint"
         return InjectableBlock(
             result_id=str(item.result_id),
             block_type="memory",
-            title="Task Checkpoint",
+            title=title,
             text=_task_checkpoint_injection_text(payload),
             evidence=item.evidence,
             memory_type=item.type,
@@ -873,21 +880,35 @@ def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) ->
             memory_object_id=mo_id,
         )
     if item.type == "continuity_memory":
+        question = str(payload.get("continuity_question") or "").strip()
+        answer = str(payload.get("carry_forward_answer") or payload.get("summary") or "").strip()
+        if question and answer:
+            text = f"Q: {question}\nA: {answer}"
+        else:
+            text = answer or question
         return InjectableBlock(
             result_id=str(item.result_id),
             block_type="memory",
             title="Carry Forward",
-            text=str(payload.get("carry_forward_answer") or payload.get("summary") or "").strip(),
+            text=text,
             evidence=item.evidence,
             memory_type=item.type,
             memory_object_id=mo_id,
         )
     if item.type == "pattern_memory":
+        summary_text = str(payload.get("summary") or "").strip()
+        conclusions = [c for c in (payload.get("conclusions") or []) if c]
+        parts: list[str] = [summary_text] if summary_text else []
+        if conclusions:
+            first_text = _get_conclusion_text(conclusions[0])
+            if first_text:
+                suffix = f" [+{len(conclusions) - 1} more]" if len(conclusions) > 1 else ""
+                parts.append(f"{first_text}{suffix}")
         return InjectableBlock(
             result_id=str(item.result_id),
             block_type="memory",
             title="Pattern Memory",
-            text=str(payload.get("summary") or "").strip(),
+            text=_join_unique_text_parts(parts),
             evidence=item.evidence,
             memory_type=item.type,
             memory_object_id=mo_id,
@@ -925,11 +946,20 @@ def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) ->
         )
     if item.type in {"thread_summary"}:
         summary_text = str(payload.get("summary") or "").strip()
+        conclusions = [c for c in (payload.get("conclusions") or []) if c]
+        parts: list[str] = [summary_text] if summary_text else []
+        if conclusions:
+            texts = [_get_conclusion_text(c) for c in conclusions[:2]]
+            texts = [t for t in texts if t]
+            if texts:
+                joined = "; ".join(texts)
+                suffix = f" [+{len(conclusions) - 2} more]" if len(conclusions) > 2 else ""
+                parts.append(f"Conclusions: {joined}{suffix}")
         return InjectableBlock(
             result_id=str(item.result_id),
             block_type="memory",
             title="Thread Summary",
-            text=summary_text,
+            text=_join_unique_text_parts(parts),
             evidence=item.evidence,
             memory_type=item.type,
             memory_object_id=mo_id,
@@ -954,7 +984,7 @@ def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) ->
             evidence=item.evidence,
             memory_type=item.type,
             memory_object_id=mo_id,
-            source_expanded_available=truncated,
+            expand_available=truncated,
         )
     return InjectableBlock(
         result_id=str(item.result_id),
@@ -972,8 +1002,8 @@ def _build_injectable_block_from_candidate(candidate: dict[str, object], *, inte
     if block.block_type == "memory":
         item = candidate["item"]
         assert isinstance(item, QueryResultItem)
-        if _source_expanded_available(item):
-            block = replace(block, source_expanded_available=True)
+        if _expand_available(item):
+            block = replace(block, expand_available=True)
     return block
 
 
@@ -982,9 +1012,8 @@ def _task_checkpoint_injection_text(payload: dict[str, object]) -> str:
     current_state = str(payload.get("current_state") or "").strip()
     blocker = str(payload.get("blocker_state") or "").strip()
     next_step = str(payload.get("next_step") or "").strip()
+    key_findings = [str(f).strip() for f in (payload.get("key_findings") or []) if str(f).strip()]
     parts: list[str] = []
-    # When an active blocker is present, lead with it so the blocking issue is
-    # immediately visible — it is the most actionable signal for resumption.
     if blocker:
         parts.append(f"Blocker: {blocker}")
     if current_state and normalize_for_index(current_state) not in normalize_for_index(blocker):
@@ -993,11 +1022,12 @@ def _task_checkpoint_injection_text(payload: dict[str, object]) -> str:
         parts.append(summary)
     if next_step:
         parts.append(f"Next step: {next_step}")
-    # Always include summary when it carries task identity not already present.
-    # This matters for blocker-only checkpoints where current_state is absent:
-    # without summary the injected text is just "Blocker: ..." with no task context.
     if summary and not current_state:
         parts.append(summary)
+    if key_findings:
+        joined = "; ".join(key_findings[:2])
+        suffix = f" [+{len(key_findings) - 2} more]" if len(key_findings) > 2 else ""
+        parts.append(f"Findings: {joined}{suffix}")
     return _join_unique_text_parts(parts)
 
 
@@ -1014,6 +1044,13 @@ def _join_unique_text_parts(parts: list[str]) -> str:
         seen.add(key)
         ordered_parts.append(normalized)
     return " ".join(ordered_parts)
+
+
+def _get_conclusion_text(conclusion: object) -> str:
+    if isinstance(conclusion, dict):
+        return str(conclusion.get("text") or "").strip()
+    return str(conclusion).strip()
+
 
 def _evaluate_same_thread_local_context(
     ranked_candidates: list[dict[str, object]],

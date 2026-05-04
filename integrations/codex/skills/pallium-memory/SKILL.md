@@ -26,7 +26,7 @@ description: Use when you need to explicitly search, store, or debug Pallium mem
 3. **For searching** (user asks about past context):
    - Call `pallium_query` with a natural-language description
    - Pass `visibility: "private"` and `container_ref`
-   - If results have `[+source]`, call `pallium_get_evidence` for richer context
+   - If results have `[+source]`, call `pallium_expand` for richer context
 
 4. **For debugging** (user says "why don't you remember X"):
    - Call `pallium_query_debug` with the expected query

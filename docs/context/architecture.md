@@ -20,7 +20,7 @@ Main layers:
 `app/mcp/` provides an MCP server mounted on the FastAPI app at `/mcp` via
 streamable-http transport. Agent runtimes connect to `http://<host>:<port>/mcp`
 to access `pallium_query`, `pallium_query_debug`, `pallium_ingest`,
-`pallium_get_evidence`, and `pallium_flag_memory` tools.
+`pallium_expand`, and `pallium_flag_memory` tools.
 The MCP module depends only on `mcp[cli]` and `httpx` — no core Pallium imports.
 It proxies tool calls to the HTTP API on the same server. Also available as a
 standalone entry point (`python -m app.run mcp`) for stdio transport.
@@ -34,7 +34,7 @@ Implemented HTTP endpoints:
 - POST /query/debug
 - POST /memory/{memory_object_id}/flag
 - GET /items/{source_item_id}/processing
-- GET /memory/{memory_object_id}/evidence
+- GET /memory/{memory_object_id}/expand
 - GET /debug/queue/health
 
 Implemented abstractions:

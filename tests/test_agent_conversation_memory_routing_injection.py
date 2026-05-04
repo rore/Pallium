@@ -1,6 +1,63 @@
 from __future__ import annotations
 
 from tests.agent_conversation_memory_routing_helpers import *
+from semantic.agent_conversation_memory_routing_selection import (
+    _build_injectable_block_from_candidate,
+)
+
+
+def _checkpoint_item(payload: dict) -> QueryResultItem:
+    return QueryResultItem(
+        result_kind="memory_hit",
+        memory_object_id="mo-ck",
+        type="task_checkpoint",
+        payload=payload,
+        score=100,
+        evidence=[],
+    )
+
+
+def _block(item: QueryResultItem) -> object:
+    return _build_injectable_block_from_candidate({"item": item}, intent="work_resumption")
+
+
+def test_task_checkpoint_task_field_in_title() -> None:
+    item = _checkpoint_item({"task": "Evaluate extraction alternatives", "current_state": "In progress"})
+    block = _block(item)
+    assert "Evaluate extraction alternatives" in block.title
+
+
+def test_task_checkpoint_no_task_falls_back_to_plain_title() -> None:
+    item = _checkpoint_item({"current_state": "In progress"})
+    block = _block(item)
+    assert block.title == "Task Checkpoint"
+
+
+def test_task_checkpoint_key_findings_first_two_in_text() -> None:
+    item = _checkpoint_item({
+        "task": "T",
+        "current_state": "running",
+        "key_findings": ["Finding A", "Finding B", "Finding C", "Finding D"],
+    })
+    block = _block(item)
+    assert "Finding A" in block.text
+    assert "Finding B" in block.text
+    assert "[+2 more]" in block.text
+    assert "Finding C" not in block.text
+
+
+def test_task_checkpoint_single_finding_no_count() -> None:
+    item = _checkpoint_item({"task": "T", "key_findings": ["Only one"]})
+    block = _block(item)
+    assert "Only one" in block.text
+    assert "more]" not in block.text
+
+
+def test_task_checkpoint_no_findings_no_findings_line() -> None:
+    item = _checkpoint_item({"task": "T", "current_state": "done"})
+    block = _block(item)
+    assert "Findings:" not in block.text
+
 
 def test_broad_recall_injection_prefers_compact_memory_over_source_hits() -> None:
     plugin = AgentConversationMemoryPlugin(
@@ -3537,3 +3594,106 @@ def test_sharp_diagnostics_shows_dedup_loss_stage() -> None:
     )
     assert dedup_diags[0]["loss_reason_code"] == "injection_dedup"
     assert dedup_diags[0].get("dedup_kept_result_id") is not None
+
+
+def _continuity_item(payload: dict) -> QueryResultItem:
+    return QueryResultItem(
+        result_kind="memory_hit",
+        memory_object_id="mo-cm",
+        type="continuity_memory",
+        payload=payload,
+        score=100,
+        evidence=[],
+    )
+
+
+def test_continuity_memory_shows_question_and_answer() -> None:
+    item = _continuity_item({
+        "continuity_question": "Which deployment approach are we using?",
+        "carry_forward_answer": "Kubernetes on AKS with ephemeral SQLite.",
+    })
+    block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
+    assert "Q: Which deployment approach are we using?" in block.text
+    assert "A: Kubernetes on AKS with ephemeral SQLite." in block.text
+
+
+def test_continuity_memory_answer_only_when_no_question() -> None:
+    item = _continuity_item({"carry_forward_answer": "Use Redis for caching."})
+    block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
+    assert "Use Redis for caching." in block.text
+    assert "Q:" not in block.text
+
+
+def test_continuity_memory_falls_back_to_summary() -> None:
+    item = _continuity_item({"summary": "Summary fallback text."})
+    block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
+    assert "Summary fallback text." in block.text
+
+
+def _thread_summary_item(payload: dict) -> QueryResultItem:
+    return QueryResultItem(
+        result_kind="memory_hit",
+        memory_object_id="mo-ts",
+        type="thread_summary",
+        payload=payload,
+        score=100,
+        evidence=[],
+    )
+
+
+def _pattern_item(payload: dict) -> QueryResultItem:
+    return QueryResultItem(
+        result_kind="memory_hit",
+        memory_object_id="mo-pm",
+        type="pattern_memory",
+        payload=payload,
+        score=100,
+        evidence=[],
+    )
+
+
+def test_thread_summary_conclusions_appear_in_text() -> None:
+    item = _thread_summary_item({
+        "summary": "Thread about catalog sync.",
+        "conclusions": [
+            {"type": "finding", "text": "Duplicate holds traced to stale ordering."},
+            {"type": "finding", "text": "Fix deployed in v2.3."},
+            {"type": "finding", "text": "Third conclusion here."},
+        ],
+    })
+    block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
+    assert "Duplicate holds traced to stale ordering." in block.text
+    assert "Fix deployed in v2.3." in block.text
+    assert "[+1 more]" in block.text
+    assert "Third conclusion here." not in block.text
+
+
+def test_thread_summary_no_conclusions_text_is_summary_only() -> None:
+    item = _thread_summary_item({"summary": "Just the summary."})
+    block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
+    assert block.text == "Just the summary."
+    assert "Conclusions:" not in block.text
+
+
+def test_pattern_memory_first_conclusion_inline() -> None:
+    item = _pattern_item({
+        "summary": "Pattern: delayed sync.",
+        "conclusions": [
+            {"type": "finding", "text": "Stale ordering is root cause."},
+            {"type": "finding", "text": "Seen in three incidents."},
+        ],
+    })
+    block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
+    assert "Stale ordering is root cause." in block.text
+    assert "[+1 more]" in block.text
+    assert "Seen in three incidents." not in block.text
+
+
+def test_pattern_memory_single_conclusion_no_count() -> None:
+    item = _pattern_item({
+        "summary": "Pattern: one thing.",
+        "conclusions": [{"type": "finding", "text": "Only finding."}],
+    })
+    block = _build_injectable_block_from_candidate({"item": item}, intent="recall")
+    assert "Only finding." in block.text
+    assert "more]" not in block.text

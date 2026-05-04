@@ -195,7 +195,7 @@ The key fields for integration:
 - `decision_reason` — why (e.g. `"carry_forward_available"`,
   `"no_relevant_memory"`)
 - `injectable_blocks` — ready-to-use blocks with title, text, evidence, and
-  optional `memory_object_id` for drill-down via `GET /memory/{id}/evidence`
+  optional `memory_object_id` for drill-down via `GET /memory/{id}/expand`
 
 The downstream agent should not need to decide:
 
@@ -333,7 +333,7 @@ for stdio mode.
 | `pallium_query` | Search memory explicitly. Use when auto-injection is missing something. |
 | `pallium_query_debug` | Investigate retrieval — scores, stages, filtering. Use when memory seems missing. |
 | `pallium_ingest` | Store an artifact for processing. Pass `artifact_kind="note"` when the user explicitly asks to remember something — this preserves content faithfully. Without it, standard type-classification extraction is used. |
-| `pallium_get_evidence` | Retrieve the source conversation items behind a memory card. Use when a memory summary isn't enough and the agent needs the original context. |
+| `pallium_expand` | Get the full structured payload and source conversation items behind a memory card. Use when a memory card has `[+expand]` available and the agent needs the original context or complete structured fields. |
 | `pallium_flag_memory` | Flag a memory as incorrect or outdated. See [Flagging Wrong Memories](#flagging-wrong-memories) below. |
 
 All tools accept optional scope parameters (`container_ref`, `thread_ref`,
@@ -379,7 +379,7 @@ annotation linking to the original conversation.
 When using Pallium tools, pass the container_ref from the memory header.
 
 - pallium_query — search when auto-injection is missing something
-- pallium_get_evidence — get the original conversation behind a memory
+- pallium_expand — get the full structured payload and original conversation behind a memory
   card when the summary isn't enough (pass the id from [ref: ...])
 - pallium_query_debug — investigate why a memory wasn't found
 - pallium_ingest — store something for future recall. Pass artifact_kind="note"

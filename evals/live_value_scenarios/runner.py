@@ -76,7 +76,7 @@ def run_query(host: str, query: dict[str, Any]) -> dict[str, Any]:
         if mo_id and query.get("container_ref"):
             try:
                 ev_resp = httpx.get(
-                    f"{host}/memory/{mo_id}/evidence",
+                    f"{host}/memory/{mo_id}/expand",
                     params={"container_ref": query["container_ref"]},
                     timeout=10,
                 )

@@ -254,7 +254,7 @@ class InjectableBlock:
     evidence: list[EvidenceReference]
     memory_type: str | None = None
     memory_object_id: str | None = None
-    source_expanded_available: bool = False
+    expand_available: bool = False
 
 
 @dataclass(frozen=True)

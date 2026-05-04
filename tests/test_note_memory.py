@@ -133,7 +133,7 @@ def test_note_injectable_block_short_content():
     assert block.title == "Note: My Note Title"
     assert block.text == "Full note content here"
     assert block.memory_object_id == "test-note-id"
-    assert block.source_expanded_available is False  # short note — full content already shown
+    assert block.expand_available is False  # short note — full content already shown
 
 
 def test_note_injectable_block_big_content_truncated():
@@ -156,7 +156,7 @@ def test_note_injectable_block_big_content_truncated():
     # Should contain a truncated snippet
     assert "AAA" in block.text
     # Should signal that full content is available via get_evidence
-    assert block.source_expanded_available is True
+    assert block.expand_available is True
 
 
 def test_note_in_durable_retention_types():

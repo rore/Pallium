@@ -1,4 +1,4 @@
-"""Tests for the evidence drill-down feature (memory_object_id + GET /memory/{id}/evidence).
+"""Tests for the expand drill-down feature (memory_object_id + GET /memory/{id}/expand).
 
 Covers:
 - Service method: container validation, visibility filtering, missing objects
@@ -63,7 +63,7 @@ def _make_memory_object(
 # Service method tests
 # ---------------------------------------------------------------------------
 
-class TestGetMemoryEvidence:
+class TestGetMemoryExpand:
     def test_returns_evidence_for_matching_container(self, test_db_url: str) -> None:
         app = create_app(_config(test_db_url))
         service = app.state.pallium_service
@@ -79,7 +79,7 @@ class TestGetMemoryEvidence:
             to_kind="source_item", to_id=si.id,
         ))
 
-        items = service.get_memory_evidence(mo.id, container_ref="container-a")
+        _payload, items = service.get_memory_expand(mo.id, container_ref="container-a")
         assert len(items) == 1
         assert items[0].content == "the original conversation"
 
@@ -92,14 +92,14 @@ class TestGetMemoryEvidence:
         storage.create_memory_object(mo)
 
         with pytest.raises(KeyError):
-            service.get_memory_evidence(mo.id, container_ref="container-b")
+            service.get_memory_expand(mo.id, container_ref="container-b")
 
     def test_rejects_nonexistent_memory_object(self, test_db_url: str) -> None:
         app = create_app(_config(test_db_url))
         service = app.state.pallium_service
 
         with pytest.raises(KeyError):
-            service.get_memory_evidence("nonexistent-id", container_ref="container-a")
+            service.get_memory_expand("nonexistent-id", container_ref="container-a")
 
     def test_no_container_ref_uses_memory_object_container(self, test_db_url: str) -> None:
         """When container_ref is omitted, evidence is returned using the
@@ -118,7 +118,7 @@ class TestGetMemoryEvidence:
             to_kind="source_item", to_id=si.id,
         ))
 
-        items = service.get_memory_evidence(mo.id)
+        _payload, items = service.get_memory_expand(mo.id)
         assert len(items) == 1
         assert items[0].content == "accessible without container"
 
@@ -156,7 +156,7 @@ class TestGetMemoryEvidence:
                 to_kind="source_item", to_id=si.id,
             ))
 
-        items = service.get_memory_evidence(mo.id, container_ref="container-a")
+        _payload, items = service.get_memory_expand(mo.id, container_ref="container-a")
         contents = {item.content for item in items}
         assert "same container" in contents
         assert "public shared" in contents
@@ -182,15 +182,45 @@ class TestGetMemoryEvidence:
                 to_kind="source_item", to_id=si.id,
             ))
 
-        result = service.get_memory_evidence(mo.id, container_ref="container-a")
+        _payload, result = service.get_memory_expand(mo.id, container_ref="container-a")
         assert len(result) == 3
+
+    def test_returns_filtered_payload(self, test_db_url: str) -> None:
+        app = create_app(_config(test_db_url))
+        service = app.state.pallium_service
+        storage = service._storage
+
+        mo = MemoryObject(
+            type="decision",
+            schema_id="test",
+            schema_version="1",
+            payload={
+                "decision": "use RRF",
+                "rationale_text": "better recall",
+                "canonical_key": "should-be-excluded",
+                "semantic_provenance": {"model": "should-be-excluded"},
+            },
+            container_ref="container-a",
+            visibility="private",
+        )
+        storage.create_memory_object(mo)
+
+        with TestClient(app) as client:
+            response = client.get(f"/memory/{mo.id}/expand", params={"container_ref": "container-a"})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["payload"]["decision"] == "use RRF"
+        assert body["payload"]["rationale_text"] == "better recall"
+        assert "canonical_key" not in body["payload"]
+        assert "semantic_provenance" not in body["payload"]
 
 
 # ---------------------------------------------------------------------------
 # HTTP endpoint tests
 # ---------------------------------------------------------------------------
 
-class TestMemoryEvidenceEndpoint:
+class TestMemoryExpandEndpoint:
     def test_happy_path(self, test_db_url: str) -> None:
         app = create_app(_config(test_db_url))
         storage = app.state.pallium_service._storage
@@ -206,7 +236,7 @@ class TestMemoryEvidenceEndpoint:
         ))
 
         with TestClient(app) as client:
-            response = client.get(f"/memory/{mo.id}/evidence", params={"container_ref": "container-a"})
+            response = client.get(f"/memory/{mo.id}/expand", params={"container_ref": "container-a"})
 
         assert response.status_code == 200
         body = response.json()
@@ -223,7 +253,7 @@ class TestMemoryEvidenceEndpoint:
         storage.create_memory_object(mo)
 
         with TestClient(app) as client:
-            response = client.get(f"/memory/{mo.id}/evidence", params={"container_ref": "container-b"})
+            response = client.get(f"/memory/{mo.id}/expand", params={"container_ref": "container-b"})
 
         assert response.status_code == 404
 
@@ -231,7 +261,7 @@ class TestMemoryEvidenceEndpoint:
         app = create_app(_config(test_db_url))
 
         with TestClient(app) as client:
-            response = client.get("/memory/nonexistent-id/evidence", params={"container_ref": "container-a"})
+            response = client.get("/memory/nonexistent-id/expand", params={"container_ref": "container-a"})
 
         assert response.status_code == 404
 
@@ -252,7 +282,7 @@ class TestMemoryEvidenceEndpoint:
         ))
 
         with TestClient(app) as client:
-            response = client.get(f"/memory/{mo.id}/evidence")
+            response = client.get(f"/memory/{mo.id}/expand")
 
         assert response.status_code == 200
         items = response.json()["items"]
@@ -278,12 +308,55 @@ class TestMemoryEvidenceEndpoint:
             ))
 
         with TestClient(app) as client:
-            response = client.get(f"/memory/{mo.id}/evidence", params={"container_ref": "container-a"})
+            response = client.get(f"/memory/{mo.id}/expand", params={"container_ref": "container-a"})
 
         assert response.status_code == 200
         items = response.json()["items"]
         assert len(items) == 1
         assert items[0]["content"] == "visible"
+
+    def test_payload_included_in_expand_response(self, test_db_url: str) -> None:
+        app = create_app(_config(test_db_url))
+        storage = app.state.pallium_service._storage
+
+        mo = MemoryObject(
+            type="decision",
+            schema_id="test",
+            schema_version="1",
+            payload={"decision": "use RRF", "rationale_text": "fast"},
+            container_ref="container-a",
+            visibility="private",
+        )
+        storage.create_memory_object(mo)
+
+        with TestClient(app) as client:
+            response = client.get(f"/memory/{mo.id}/expand", params={"container_ref": "container-a"})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["payload"]["decision"] == "use RRF"
+        assert body["payload"]["rationale_text"] == "fast"
+
+    def test_expand_payload_is_null_when_memory_object_has_no_payload(self, test_db_url: str) -> None:
+        app = create_app(_config(test_db_url))
+        storage = app.state.pallium_service._storage
+
+        mo = MemoryObject(
+            type="decision",
+            schema_id="test",
+            schema_version="1",
+            payload=None,
+            container_ref="container-a",
+            visibility="private",
+        )
+        storage.create_memory_object(mo)
+
+        with TestClient(app) as client:
+            response = client.get(f"/memory/{mo.id}/expand", params={"container_ref": "container-a"})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["payload"] is None
 
 
 # ---------------------------------------------------------------------------

@@ -273,8 +273,9 @@ Response fields:
 - `injectable_blocks` — ready-to-use blocks for prompt injection, each with
   `block_type`, `title`, `text`, optional `memory_type`, optional
   `memory_object_id`, and `evidence` refs. `memory_object_id` can be used
-  with `GET /memory/{id}/evidence` to retrieve the source conversation items
-  that the memory was derived from
+  with `GET /memory/{id}/expand` to retrieve the structured payload and source conversation items
+  that the memory was derived from. Injection blocks also carry an `expand_available` flag
+  indicating whether the expand endpoint will return useful content
 - `results` — ranked result list (see below)
 
 Each result in `results[]`:
@@ -370,11 +371,14 @@ relevant to the `content` (or `query_text` if provided).
 `POST /item-and-query/debug` returns the same plus `trace` (same as
 `POST /query/debug`).
 
-## GET /memory/{memory_object_id}/evidence
+## GET /memory/{memory_object_id}/expand
 
-Use this endpoint to retrieve the source conversation items that a memory
-object was derived from. This enables drill-down from a compact memory card
-to the full original context.
+Use this endpoint to retrieve the structured payload fields and source conversation items
+that a memory object was derived from. This enables drill-down from a compact memory card
+to the complete structured data and full original context.
+
+An injection block sets `expand_available: true` when the memory has payload fields
+worth expanding (evidence text, key findings, conclusions, etc.).
 
 Required query parameter:
 
@@ -384,7 +388,7 @@ Required query parameter:
 Example:
 
 ```
-GET /memory/63119911-e39d-4b51-b804-8cbecd0522b3/evidence?container_ref=slack:channel:C123
+GET /memory/63119911-e39d-4b51-b804-8cbecd0522b3/expand?container_ref=slack:channel:C123
 ```
 
 Response:
@@ -392,6 +396,11 @@ Response:
 ```json
 {
   "memory_object_id": "63119911-e39d-4b51-b804-8cbecd0522b3",
+  "payload": {
+    "decision": "Use event timestamps for ordering",
+    "rationale_text": "Avoids timezone drift issues seen in prior incident",
+    "decision_evidence_text": "We decided to use event timestamps..."
+  },
   "items": [
     {
       "source_item_id": "si-001",
