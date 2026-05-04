@@ -65,7 +65,7 @@ integrating agent passes `artifact_kind="note"` on ingest. Pallium uses a
 dedicated title-extraction prompt (not the standard extraction) to generate a
 short heading for retrieval, and preserves the original content verbatim. Notes
 are durable (never garbage-collected) and excluded from consolidation. At
-injection time, long notes are truncated with a `[+source]` pointer so agents
+injection time, long notes are truncated with a `[+expand]` pointer so agents
 can expand them on demand.
 
 Items that don't match any specific type produce no memory object — only

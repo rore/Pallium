@@ -268,8 +268,8 @@ turn solely to rate memory.
 
 **When to use other explicit tools:**
 - `pallium_query` — injected context is empty or missing something the user asked about
-- `pallium_get_evidence` — you need the original conversation behind a memory card.
-  If a `[+source]` card summary is sufficient, trust the card; fetch evidence only
+- `pallium_expand` — you need the original conversation behind a memory card.
+  If a `[+expand]` card summary is sufficient, trust the card; fetch evidence only
   when you need the original conversation to answer accurately.
 - `pallium_flag_memory` — a memory contradicts what you now know to be true
 - `pallium_ingest` — user explicitly asks to remember something (hooks already
@@ -321,7 +321,7 @@ description: Use when you need to explicitly search, store, or debug Pallium mem
 3. **For searching** (user asks about past context):
    - Call `pallium_query` with a natural-language description
    - Pass `visibility: "private"` and `container_ref`
-   - If results have `[+source]`, call `pallium_get_evidence` for richer context
+   - If results have `[+expand]`, call `pallium_expand` for richer context
 
 4. **For debugging** (user says "why don't you remember X"):
    - Call `pallium_query_debug` with the expected query
