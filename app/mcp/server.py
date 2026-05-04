@@ -101,13 +101,20 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         return json.dumps(result, indent=2, default=str)
 
     @server.tool()
-    async def pallium_get_evidence(
+    async def pallium_expand(
         memory_object_id: str,
         container_ref: str | None = None,
         actor_ref: str | None = None,
         visibility: str | None = None,
     ) -> str:
-        """Retrieve the source conversation items that a memory card was derived from. Use when an injected memory block's summary isn't enough and you need the original conversation context. Pass the memory_object_id from the [ref: ...] annotation on a memory block."""
+        """Get the full structured payload and source items for a memory object.
+
+        Use when a memory card has [+expand] available and you need:
+        - The complete structured fields (decision evidence, key findings, conclusions, etc.)
+        - The original source conversation turns that backed the memory
+
+        Returns a JSON object with 'payload' (structured fields) and 'items' (source turns).
+        Pass the memory_object_id from the [ref: ...] annotation on a memory block."""
         ctx = resolve_context(
             container_ref=container_ref,
             actor_ref=actor_ref,
