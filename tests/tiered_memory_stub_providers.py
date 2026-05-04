@@ -7,6 +7,9 @@ from providers.llm.base import LLMJsonResponse
 
 class TieredMemorySemanticProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+        if '"title"' in schema_description and 'max 15 words' in schema_description:
+            payload = _build_note_title_payload(user_prompt)
+            return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
         if 'task_checkpoint' in schema_description and 'Thread items:' in user_prompt:
             summary_payload = _build_thread_summary_payload(user_prompt)
             checkpoint_payload = _build_task_checkpoint_payload(user_prompt)
@@ -32,6 +35,19 @@ class TieredMemoryAnswerProvider:
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
         payload = _build_answer_payload(user_prompt)
         return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
+
+
+def _build_note_title_payload(user_prompt: str) -> dict[str, object]:
+    first_line = ""
+    for line in user_prompt.split("\n"):
+        stripped = line.strip()
+        if stripped:
+            if stripped.startswith("#"):
+                stripped = stripped.lstrip("#").strip()
+            first_line = stripped[:80]
+            break
+    return {"title": first_line or "Note"}
+
 
 def _build_write_enrichment_payload(user_prompt: str) -> dict[str, object]:
     lower = user_prompt.lower()
