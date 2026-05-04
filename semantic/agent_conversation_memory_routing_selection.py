@@ -847,10 +847,12 @@ def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) ->
             memory_object_id=mo_id,
         )
     if item.type == "task_checkpoint":
+        task = str(payload.get("task") or "").strip()
+        title = f"Task Checkpoint — {task}" if task else "Task Checkpoint"
         return InjectableBlock(
             result_id=str(item.result_id),
             block_type="memory",
-            title="Task Checkpoint",
+            title=title,
             text=_task_checkpoint_injection_text(payload),
             evidence=item.evidence,
             memory_type=item.type,
@@ -982,9 +984,8 @@ def _task_checkpoint_injection_text(payload: dict[str, object]) -> str:
     current_state = str(payload.get("current_state") or "").strip()
     blocker = str(payload.get("blocker_state") or "").strip()
     next_step = str(payload.get("next_step") or "").strip()
+    key_findings = [str(f).strip() for f in (payload.get("key_findings") or []) if str(f).strip()]
     parts: list[str] = []
-    # When an active blocker is present, lead with it so the blocking issue is
-    # immediately visible — it is the most actionable signal for resumption.
     if blocker:
         parts.append(f"Blocker: {blocker}")
     if current_state and normalize_for_index(current_state) not in normalize_for_index(blocker):
@@ -993,11 +994,12 @@ def _task_checkpoint_injection_text(payload: dict[str, object]) -> str:
         parts.append(summary)
     if next_step:
         parts.append(f"Next step: {next_step}")
-    # Always include summary when it carries task identity not already present.
-    # This matters for blocker-only checkpoints where current_state is absent:
-    # without summary the injected text is just "Blocker: ..." with no task context.
     if summary and not current_state:
         parts.append(summary)
+    if key_findings:
+        joined = "; ".join(key_findings[:2])
+        suffix = f" [+{len(key_findings) - 2} more]" if len(key_findings) > 2 else ""
+        parts.append(f"Findings: {joined}{suffix}")
     return _join_unique_text_parts(parts)
 
 

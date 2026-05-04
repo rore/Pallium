@@ -1,6 +1,62 @@
 from __future__ import annotations
 
 from tests.agent_conversation_memory_routing_helpers import *
+from semantic.agent_conversation_memory_routing_selection import (
+    _build_injectable_block_from_candidate,
+)
+
+
+def _checkpoint_item(payload: dict) -> QueryResultItem:
+    return QueryResultItem(
+        result_kind="memory_hit",
+        memory_object_id="mo-ck",
+        type="task_checkpoint",
+        payload=payload,
+        score=100,
+        evidence=[],
+    )
+
+
+def _block(item: QueryResultItem) -> object:
+    return _build_injectable_block_from_candidate({"item": item}, intent="work_resumption")
+
+
+def test_task_checkpoint_task_field_in_title() -> None:
+    item = _checkpoint_item({"task": "Evaluate extraction alternatives", "current_state": "In progress"})
+    block = _block(item)
+    assert "Evaluate extraction alternatives" in block.title
+
+
+def test_task_checkpoint_no_task_falls_back_to_plain_title() -> None:
+    item = _checkpoint_item({"current_state": "In progress"})
+    block = _block(item)
+    assert block.title == "Task Checkpoint"
+
+
+def test_task_checkpoint_key_findings_first_two_in_text() -> None:
+    item = _checkpoint_item({
+        "task": "T",
+        "current_state": "running",
+        "key_findings": ["Finding A", "Finding B", "Finding C", "Finding D"],
+    })
+    block = _block(item)
+    assert "Finding A" in block.text
+    assert "Finding B" in block.text
+    assert "[+2 more]" in block.text
+    assert "Finding C" not in block.text
+
+
+def test_task_checkpoint_single_finding_no_count() -> None:
+    item = _checkpoint_item({"task": "T", "key_findings": ["Only one"]})
+    block = _block(item)
+    assert "Only one" in block.text
+    assert "more]" not in block.text
+
+
+def test_task_checkpoint_no_findings_no_findings_line() -> None:
+    item = _checkpoint_item({"task": "T", "current_state": "done"})
+    block = _block(item)
+    assert "Findings:" not in block.text
 
 def test_broad_recall_injection_prefers_compact_memory_over_source_hits() -> None:
     plugin = AgentConversationMemoryPlugin(
