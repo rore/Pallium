@@ -36,10 +36,27 @@ def main() -> None:
 
         response = pallium_request("POST", "/query", query_payload)
 
-        if not response:
-            return
+        blocks: list[dict] = []
+        if response:
+            blocks = response.get("injectable_blocks", [])
 
-        blocks = response.get("injectable_blocks", [])
+        # Inject current session's task_trace if one exists
+        if session_id:
+            trace_response = pallium_request("POST", "/query", {
+                "text": f"task_trace for thread {session_id}",
+                "container_ref": container_ref,
+                "actor_ref": actor_ref,
+                "visibility": "private",
+                "thread_ref": session_id,
+                "limit": 1,
+            })
+            if trace_response:
+                trace_blocks = trace_response.get("injectable_blocks", [])
+                for tb in trace_blocks:
+                    if "task_trace" in tb.get("title", "").lower() or "task_trace" in tb.get("text", "").lower():
+                        blocks.append(tb)
+                        break
+
         output = format_injection(blocks, container_ref, budget_chars=2400)
         if output:
             print(output)
