@@ -389,9 +389,16 @@
   <div class="metrics-row">
     <div class="card metric-card">
       <div class="metric-label">Memory Objects</div>
-      <div id="m-memory" class="metric-value">—</div>
-      <div class="metric-sub">stored memory cards</div>
-      <div id="m-memory-active" class="metric-sub" style="margin-top:2px"></div>
+      <div class="queue-section-items" style="align-items:flex-end; gap:20px; margin-top:4px">
+        <div>
+          <div class="stat-label">Active</div>
+          <div id="m-memory-active" class="metric-value" style="margin:2px 0">—</div>
+        </div>
+        <div>
+          <div class="stat-label">Total</div>
+          <div id="m-memory" class="metric-value" style="margin:2px 0; opacity:0.45; font-size:22px">—</div>
+        </div>
+      </div>
     </div>
     <div class="card metric-card">
       <div class="metric-label">Source Items</div>
@@ -887,8 +894,7 @@ function renderStatus(data) {
   // Overview metrics
   document.getElementById('m-memory').textContent = fmtNum(data.total_memory_objects);
   if (data.active_memory_objects != null) {
-    document.getElementById('m-memory-active').textContent =
-      fmtNum(data.active_memory_objects) + ' active';
+    document.getElementById('m-memory-active').textContent = fmtNum(data.active_memory_objects);
   }
   document.getElementById('m-source').textContent = fmtNum(data.total_source_items);
 
