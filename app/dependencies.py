@@ -410,6 +410,7 @@ def build_service(
         routing_overrides=routing_overrides,
         query_stats=query_stats,
         metrics_store=metrics_store,
+        metrics_retention_days=resolved_config.observability.metrics_retention_days,
     )
 
     return BuildResult(

@@ -119,6 +119,16 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     build_result = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats, metrics_store=metrics_store)
     service = build_result.service
 
+    # Record service_start lifecycle event (fire-and-forget)
+    if metrics_store is not None:
+        try:
+            metrics_store.record(
+                "system", "service_start",
+                payload={"packages_enabled": list(resolved_config.semantic_packages.keys())},
+            )
+        except Exception:
+            pass
+
     @contextlib.asynccontextmanager
     async def app_lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
         # Start reconcile thread inside lifespan so shutdown stops it cleanly.
@@ -171,6 +181,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
 
     app = FastAPI(title="Pallium", version="0.1.0", lifespan=app_lifespan)
     app.state.pallium_service = service
+    app.state.metrics_store = metrics_store
     app.state._lifespan_complete = False
     app.state._reconcile_done = None
     app.state._rebuild_coordinator = None
@@ -321,6 +332,24 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         if rebuild_coord is not None:
             rebuild_info = rebuild_coord.status()
 
+        # --- Metrics summary (best-effort, last 24h) ---
+        metrics_summary: dict | None = None
+        _ms = getattr(app.state, "metrics_store", None)
+        if _ms is not None:
+            try:
+                from datetime import timedelta
+                day_ago = datetime.now(timezone.utc) - timedelta(days=1)
+                recent = _ms.query(since=day_ago, limit=1000)
+                by_cat: dict[str, int] = {}
+                for r in recent:
+                    by_cat[r.category] = by_cat.get(r.category, 0) + 1
+                metrics_summary = {
+                    "events_24h": len(recent),
+                    "events_24h_by_category": by_cat,
+                }
+            except Exception:
+                logger.warning("status: metrics summary failed", exc_info=True)
+
         return JSONResponse(content={
             "pending_items": pending_count,
             "oldest_pending_age_seconds": oldest_pending_age,
@@ -333,6 +362,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "vector_rebuild": rebuild_info,
             "uptime_seconds": uptime,
             "query": query_info,
+            "metrics_summary": metrics_summary,
         })
 
     mount_dashboard(app)

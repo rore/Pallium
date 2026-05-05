@@ -69,7 +69,7 @@ class TestMetricsQueryEndpoint:
     def test_get_query_empty(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
         with TestClient(app) as client:
-            resp = client.get("/dashboard/api/metrics/query")
+            resp = client.get("/dashboard/api/metrics/query?category=query")
         assert resp.status_code == 200
         body = resp.json()
         assert body["metrics"] == []
@@ -80,7 +80,7 @@ class TestMetricsQueryEndpoint:
         with TestClient(app) as client:
             _seed_metric(app, category="query", event_type="injection")
             _seed_metric(app, category="query", event_type="skip")
-            resp = client.get("/dashboard/api/metrics/query")
+            resp = client.get("/dashboard/api/metrics/query?category=query")
         body = resp.json()
         assert body["count"] == 2
         assert len(body["metrics"]) == 2
@@ -137,9 +137,9 @@ class TestMetricsQueryEndpoint:
         with TestClient(app) as client:
             for _ in range(5):
                 _seed_metric(app)
-            resp = client.get("/dashboard/api/metrics/query")
+            resp = client.get("/dashboard/api/metrics/query?category=query")
         body = resp.json()
-        # Default limit is 100, we only seeded 5
+        # Default limit is 100, we only seeded 5 query-category events
         assert body["count"] == 5
 
     def test_get_query_limit_capped_at_1000(self, tmp_path: Path) -> None:
@@ -147,7 +147,7 @@ class TestMetricsQueryEndpoint:
         with TestClient(app) as client:
             for _ in range(3):
                 _seed_metric(app)
-            resp = client.get("/dashboard/api/metrics/query?limit=9999")
+            resp = client.get("/dashboard/api/metrics/query?limit=9999&category=query")
         body = resp.json()
         # Still returns all 3 — cap only matters when rows exceed 1000
         assert body["count"] == 3
@@ -157,7 +157,7 @@ class TestMetricsQueryEndpoint:
         with TestClient(app) as client:
             _seed_metric(app, timestamp=datetime(2024, 1, 1, tzinfo=UTC))
             _seed_metric(app, timestamp=datetime(2025, 6, 1, tzinfo=UTC))
-            resp = client.get("/dashboard/api/metrics/query?since=2025-01-01T00:00:00")
+            resp = client.get("/dashboard/api/metrics/query?since=2025-01-01T00:00:00&category=query")
         body = resp.json()
         assert body["count"] == 1
 

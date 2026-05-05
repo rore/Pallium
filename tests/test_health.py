@@ -171,6 +171,7 @@ class TestStatusResponseShape:
             "vector_rebuild",
             "uptime_seconds",
             "query",
+            "metrics_summary",
         }
         assert set(body.keys()) == expected_keys
 

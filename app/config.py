@@ -78,6 +78,7 @@ class SemanticPackageConfig:
 class ObservabilityConfig:
     integration_debug: bool = False
     query_audit_log: bool = False
+    metrics_retention_days: int = 0
 
 
 @dataclass(frozen=True)
@@ -209,6 +210,12 @@ class AppConfig:
                     env_values,
                     _read_nested(config_data, "observability", "query_audit_log"),
                     False,
+                ),
+                metrics_retention_days=_resolve_int_setting(
+                    "PALLIUM_OBSERVABILITY_METRICS_RETENTION_DAYS",
+                    env_values,
+                    _read_nested(config_data, "observability", "metrics_retention_days"),
+                    0,
                 ),
             ),
             retention=RetentionConfig(
