@@ -8,11 +8,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -300,3 +302,245 @@ def check_dedup(prompt: str, session_id: str) -> bool:
         pass
 
     return False
+
+
+# --- Redaction ---
+
+REDACTION_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"Bearer\s+\S+", re.IGNORECASE), "Bearer [REDACTED]"),
+    (re.compile(r"(PASSWORD|SECRET|TOKEN|KEY|AUTH)\s*=\s*\S+", re.IGNORECASE), r"\1=[REDACTED]"),
+    (re.compile(r"-----BEGIN [A-Z ]+KEY-----.*?-----END[^\n]*", re.IGNORECASE | re.DOTALL), "[REDACTED KEY BLOCK]"),
+    (re.compile(r"(mongodb|postgres|mysql|redis)://\S+", re.IGNORECASE), r"\1://[REDACTED]"),
+    (re.compile(r"(Authorization|Cookie):\s*.+", re.IGNORECASE), r"\1: [REDACTED]"),
+]
+
+
+def redact_sensitive(text: str) -> str:
+    """Apply redaction patterns to strip secrets from text."""
+    for pattern, replacement in REDACTION_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+# --- Turn extraction ---
+
+
+@dataclass
+class TurnData:
+    assistant_text: str
+    tool_calls: list[dict]
+    has_productive_action: bool
+
+
+DISCOVERY_TOOLS = frozenset({"Read", "Bash", "Grep", "Glob"})
+PRODUCTIVE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
+EXCLUDED_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "TodoWrite", "Agent", "TaskOutput", "TaskStop"})
+BASH_OUTPUT_LIMIT = 600
+GREP_MATCH_LIMIT = 20
+GLOB_PATH_LIMIT = 50
+
+
+def _classify_bash_failure(output: str, exit_code: int) -> str:
+    if exit_code == 0:
+        return "success"
+    lower = output.lower()
+    if any(m in lower for m in ("pytest", "jest", "mocha")) and any(m in lower for m in ("failed", "failures", "error")):
+        return "test_failure"
+    if any(m in lower for m in ("compile error", "build failed", "syntax error", "compilation")):
+        return "build_error"
+    return "command_error"
+
+
+def _infer_exit_code(tool_output: str) -> int:
+    """Best-effort exit code inference from tool_result content."""
+    if not tool_output:
+        return 0
+    m = re.search(r"exit code:\s*(\d+)", tool_output, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    lower = tool_output.lower()
+    strong_failure_markers = (
+        "command failed", "traceback (most recent call last)",
+        "fatal:", "panic:", "exited with", "non-zero exit",
+    )
+    if any(marker in lower for marker in strong_failure_markers):
+        return 1
+    return 0
+
+
+def _extract_tool_call(name: str, tool_input: dict, tool_output: str) -> dict | None:
+    """Extract a normalized tool call record. Returns None if tool is excluded."""
+    if name in EXCLUDED_TOOLS:
+        return None
+
+    if name == "Read":
+        file_path = tool_input.get("file_path", "")
+        return {"tool": "Read", "file_path": redact_sensitive(file_path)}
+
+    if name == "Bash":
+        command = redact_sensitive(tool_input.get("command", ""))
+        raw_tail = tool_output[-BASH_OUTPUT_LIMIT:] if tool_output else ""
+        exit_code = _infer_exit_code(tool_output)
+        failure_class = _classify_bash_failure(raw_tail, exit_code)
+        output_tail = redact_sensitive(raw_tail)
+        return {
+            "tool": "Bash",
+            "command": command,
+            "exit_code": exit_code,
+            "output_tail": output_tail,
+            "failure_class": failure_class,
+        }
+
+    if name == "Grep":
+        pattern = redact_sensitive(tool_input.get("pattern", ""))
+        path = redact_sensitive(tool_input.get("path", ""))
+        matches = [redact_sensitive(m) for m in tool_output.strip().splitlines()[:GREP_MATCH_LIMIT]] if tool_output else []
+        return {"tool": "Grep", "pattern": pattern, "path": path, "matches": matches}
+
+    if name == "Glob":
+        pattern = redact_sensitive(tool_input.get("pattern", ""))
+        paths = [redact_sensitive(p) for p in tool_output.strip().splitlines()[:GLOB_PATH_LIMIT]] if tool_output else []
+        return {"tool": "Glob", "pattern": pattern, "paths": paths}
+
+    return None
+
+
+def read_turn(transcript_path: str) -> TurnData | None:
+    """Read the last assistant turn, extracting text and tool calls.
+
+    Single-pass replacement for read_last_assistant_turn(). Returns TurnData
+    with assistant response text, filtered/redacted tool calls, and
+    has_productive_action flag.
+    """
+    try:
+        file_size = os.path.getsize(transcript_path)
+    except OSError:
+        return None
+
+    if file_size == 0:
+        return None
+
+    try:
+        if file_size > 10 * 1024 * 1024:
+            with open(transcript_path, "rb") as f:
+                f.seek(-2 * 1024 * 1024, 2)
+                raw = f.read().decode("utf-8", errors="replace")
+            lines = raw.splitlines()
+            if lines:
+                lines = lines[1:]
+        else:
+            with open(transcript_path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.read().splitlines()
+    except OSError:
+        return None
+
+    last_assistant_content = None
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+        role = None
+        content = None
+
+        if "message" in entry and isinstance(entry["message"], dict):
+            role = entry["message"].get("role")
+            content = entry["message"].get("content")
+        elif "role" in entry:
+            role = entry.get("role")
+            content = entry.get("content")
+
+        if role == "assistant" and content is not None:
+            last_assistant_content = content
+
+    if last_assistant_content is None:
+        return None
+
+    text_parts: list[str] = []
+    tool_calls: list[dict] = []
+    has_productive = False
+
+    if isinstance(last_assistant_content, str):
+        text_parts.append(last_assistant_content)
+    elif isinstance(last_assistant_content, list):
+        tool_uses: dict[str, dict] = {}
+        for block in last_assistant_content:
+            if not isinstance(block, dict):
+                continue
+            block_type = block.get("type", "")
+            if block_type == "text":
+                text_parts.append(block.get("text", ""))
+            elif block_type == "tool_use":
+                tool_name = block.get("name", "")
+                tool_id = block.get("id", "")
+                tool_input = block.get("input", {})
+                tool_uses[tool_id] = {"name": tool_name, "input": tool_input}
+                if tool_name in PRODUCTIVE_TOOLS:
+                    has_productive = True
+            elif block_type == "tool_result":
+                tool_use_id = block.get("tool_use_id", "")
+                tool_output_raw = block.get("content", "") or block.get("text", "")
+                if isinstance(tool_output_raw, list):
+                    tool_output = "\n".join(
+                        b.get("text", "") for b in tool_output_raw
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
+                else:
+                    tool_output = str(tool_output_raw) if tool_output_raw else ""
+                if tool_use_id in tool_uses:
+                    use = tool_uses[tool_use_id]
+                    extracted = _extract_tool_call(use["name"], use["input"], tool_output)
+                    if extracted is not None:
+                        tool_calls.append(extracted)
+
+    assistant_text = "\n".join(text_parts)
+    if not assistant_text.strip() and not tool_calls:
+        return None
+
+    return TurnData(
+        assistant_text=assistant_text if assistant_text.strip() else "",
+        tool_calls=tool_calls,
+        has_productive_action=has_productive,
+    )
+
+
+def build_work_trace_metadata(turn_data: TurnData) -> dict | None:
+    """Build agent_work_trace_turn metadata from extracted turn data.
+
+    Returns None if no discovery tool calls are present.
+    """
+    files_read: list[str] = []
+    commands: list[dict] = []
+    grep_patterns: list[str] = []
+
+    for call in turn_data.tool_calls:
+        tool = call.get("tool")
+        if tool == "Read":
+            fp = call.get("file_path", "")
+            if fp and fp not in files_read:
+                files_read.append(fp)
+        elif tool == "Bash":
+            commands.append({
+                "cmd": call["command"],
+                "exit_code": call["exit_code"],
+                "output_tail": call["output_tail"],
+                "failure_class": call["failure_class"],
+            })
+        elif tool == "Grep":
+            pattern = call.get("pattern", "")
+            if pattern and pattern not in grep_patterns:
+                grep_patterns.append(pattern)
+
+    if not files_read and not commands and not grep_patterns:
+        return None
+
+    return {
+        "files_read": files_read,
+        "commands": commands,
+        "grep_patterns": grep_patterns,
+        "has_productive_action": turn_data.has_productive_action,
+    }
