@@ -20,16 +20,21 @@ def main() -> None:
     try:
         payload = read_hook_input()
         cwd = payload.get("cwd", ".")
+        session_id = payload.get("session_id")
         container_ref = derive_container_ref(cwd)
         actor_ref = derive_actor_ref()
 
-        response = pallium_request("POST", "/query", {
+        query_payload = {
             "text": "recent decisions, progress, and open tasks",
             "container_ref": container_ref,
             "actor_ref": actor_ref,
             "visibility": "private",
             "limit": 8,
-        })
+        }
+        if session_id:
+            query_payload["thread_ref"] = session_id
+
+        response = pallium_request("POST", "/query", query_payload)
 
         if not response:
             return
