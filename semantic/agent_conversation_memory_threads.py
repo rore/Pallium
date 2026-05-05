@@ -8,7 +8,7 @@ from typing import Iterable
 
 from capabilities.consolidation import ConsolidationGroup
 from capabilities.thread_aggregation import ThreadAggregate
-from core.contracts import ProcessResult
+from core.contracts import ProcessResult, SupersessionHint
 from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
 from core.models import MemoryObject, QueryResultItem, Relation, SourceItem
 from providers.llm.base import LLMProvider
@@ -785,10 +785,29 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 )
                 for conclusion in carried_conclusions
             )
+        hints = [
+            SupersessionHint(
+                replacement_memory_id=new_obj.id,
+                memory_type=new_obj.type,
+                canonical_key=ck,
+                container_ref=aggregate.container_ref,
+                thread_ref=aggregate.thread_ref,
+                visibility=aggregate.visibility,
+            )
+            for new_obj in memory_objects
+            if new_obj.type in {"decision", "investigation_outcome"}
+            for ck in [str(new_obj.payload.get("canonical_key") or "").strip()]
+            if ck
+            for old_obj in conclusions
+            if old_obj.type == new_obj.type
+            and old_obj.id != new_obj.id
+            and str(old_obj.payload.get("canonical_key") or "").strip() == ck
+        ]
         return ProcessResult(
             memory_objects=memory_objects,
             relations=relations,
             index_entries=index_entries,
+            supersession_hints=hints,
         )
 
 def build_task_checkpoint_memory(
