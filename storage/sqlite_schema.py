@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Session, declarative_base
 
 
@@ -194,6 +194,20 @@ class MemoryFeedbackRecord(Base):
     container_ref = Column(String, nullable=True)
 
 
+class MetricRecord(Base):
+    __tablename__ = "metrics"
+
+    id = Column(String, primary_key=True)
+    timestamp = Column(DateTime(timezone=True), nullable=False)
+    category = Column(String, nullable=False)
+    event_type = Column(String, nullable=False)
+    container_ref = Column(String, nullable=True)
+    thread_ref = Column(String, nullable=True)
+    actor_ref = Column(String, nullable=True)
+    value = Column(Float, nullable=True)
+    payload_json = Column(Text, nullable=True)
+
+
 class SQLiteSchemaMixin:
     _SOURCE_ITEM_MIGRATIONS = {
         "occurred_at": "ALTER TABLE source_items ADD COLUMN occurred_at DATETIME",
@@ -294,6 +308,18 @@ class SQLiteSchemaMixin:
         "idx_source_items_container_top_level": (
             "CREATE INDEX IF NOT EXISTS idx_source_items_container_top_level "
             "ON source_items(container_ref, thread_position, created_at)"
+        ),
+        "idx_metrics_cat_ts": (
+            "CREATE INDEX IF NOT EXISTS idx_metrics_cat_ts "
+            "ON metrics(category, timestamp)"
+        ),
+        "idx_metrics_cat_evt_ts": (
+            "CREATE INDEX IF NOT EXISTS idx_metrics_cat_evt_ts "
+            "ON metrics(category, event_type, timestamp)"
+        ),
+        "idx_metrics_container_ts": (
+            "CREATE INDEX IF NOT EXISTS idx_metrics_container_ts "
+            "ON metrics(container_ref, timestamp)"
         ),
     }
     _QUERY_AUDIT_LOG_INDEX_MIGRATIONS = {
