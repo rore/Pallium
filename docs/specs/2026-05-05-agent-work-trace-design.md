@@ -264,7 +264,7 @@ MemoryObject(
 
 The prior `task_trace` for this thread is superseded. A metric event is appended to the append-only log (separate from supersession).
 
-**BM25 indexed text:** `investigation_subject` + all entries in `exploratory_files` + `productive_files` + `commands_succeeded` joined as a single string. `outcome` is display sugar — it is not indexed and retrieval does not depend on it.
+**BM25 indexed text:** `investigation_subject` + all entries in `exploratory_files` + `productive_files` + `commands_succeeded` + `outcome` (if present) joined as a single string. Structural fields are the primary retrieval signal; `outcome` is appended to improve recall for semantically specific queries. The trace is equally useful when `outcome` is null — retrieval does not depend on it.
 
 ---
 
