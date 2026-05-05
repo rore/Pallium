@@ -1,7 +1,7 @@
 # Agent Work Trace Package Design
 
 **Date:** 2026-05-05
-**Status:** Draft — revised after architect review and product review
+**Status:** Draft — revised after architect review, product review, and final reviewer approval
 **Scope:** New parallel semantic package capturing agent discovery work for reuse across sessions
 
 ## Overview
@@ -9,6 +9,8 @@
 Agents doing engineering work repeatedly pay to discover the same things: which files matter, which commands work, where a bug lives. Pallium currently captures what the agent *said* (via `agent_conversation_memory`), but not what it *did* — which files it read, which commands it ran, what exploration path it took.
 
 `agent_work_trace` is a parallel semantic package that captures the structural trail of agent work per turn, aggregates it into a compact `task_trace` memory object per session, and injects it on session resume so the agent can skip the orientation phase and go directly to the relevant location.
+
+**Determinism model:** the structural trace (files, commands, exploratory/productive split, path normalization, failure classification) is fully deterministic. The optional outcome summary (`outcome` field) is best-effort LLM-derived from agent response texts. The package should not be described as "fully deterministic" — the structural trail is deterministic; the outcome is not.
 
 **What it does not do:** duplicate findings extraction. `agent_conversation_memory` already extracts decisions and investigation outcomes from the agent's response text. `agent_work_trace` captures the file and command trail; findings come from the existing extraction.
 
@@ -110,7 +112,7 @@ Parallel package (`parallel_processing = True`). Processes every ingested item b
 
 **Activation condition:** `source_item.metadata.get("agent_work_trace_turn")` is present.
 
-**Extraction (fully deterministic — no LLM):**
+**Extraction (deterministic — no LLM at item level):**
 
 ```python
 turn = source_item.metadata["agent_work_trace_turn"]
@@ -145,21 +147,42 @@ If no turns found, skip rebuild.
 
 Files read before the first turn with `has_productive_action=True` are `exploratory_files`. Files read in turns where or after `has_productive_action=True` are `productive_files`. This split is the core signal for the orientation-cost metric.
 
+The split tracks Edit/Write actions only. A test command or diagnostic read does not count as a productive action. Use `first_write_action_at_turn` as the field name to make this explicit.
+
 ```python
-first_productive_turn = next(
+first_write_action_turn = next(
     (i for i, t in enumerate(turns) if t["has_productive_action"]), None
 )
 exploratory_files = list(dict.fromkeys(
-    f for t in turns[:first_productive_turn] for f in t["files_read"]
-)) if first_productive_turn is not None else list(dict.fromkeys(
+    f for t in turns[:first_write_action_turn] for f in t["files_read"]
+)) if first_write_action_turn is not None else list(dict.fromkeys(
     f for t in turns for f in t["files_read"]
 ))
 productive_files = list(dict.fromkeys(
-    f for t in turns[first_productive_turn:] for f in t["files_read"]
-)) if first_productive_turn is not None else []
+    f for t in turns[first_write_action_turn:] for f in t["files_read"]
+)) if first_write_action_turn is not None else []
 ```
 
-**Step 3 — Collect turn source items and aggregate commands:**
+**Step 3 — Path normalization:**
+
+All file paths are normalized relative to `metadata.get("cwd")` before dedup and storage. This prevents the same file from appearing multiple times as `src/x.py`, `./src/x.py`, or absolute paths.
+
+```python
+from pathlib import PurePosixPath
+
+def normalize_path(p: str, cwd: str | None) -> str:
+    try:
+        if cwd and os.path.isabs(p):
+            rel = os.path.relpath(p, cwd)
+            return rel.replace("\\", "/")
+        return p.lstrip("./").replace("\\", "/") if p.startswith("./") else p.replace("\\", "/")
+    except ValueError:
+        return p
+```
+
+Apply to all paths in `files_read` before exploratory/productive split computation.
+
+**Step 4 — Collect turn source items and aggregate commands:**
 ```python
 trace_items = [
     item for item in aggregate.items
@@ -173,10 +196,27 @@ commands_failed    = [c for t in turns for c in t["commands"] if c["exit_code"] 
 
 `turn_source_item_ids` enables **query-time correlation** with `investigation_outcome` objects produced by `agent_conversation_memory` from the same source items. No extraction-time dependency — the correlation is a secondary lookup at expand time, not a join during rebuild.
 
-**Step 4 — Deterministic subject:**
+**Step 5 — Payload caps:**
+
+Long sessions can produce large traces even with per-tool truncation. Apply hard caps before building the payload:
+
+```python
+MAX_EXPLORATORY_FILES  = 30
+MAX_PRODUCTIVE_FILES   = 20
+MAX_COMMANDS_SUCCEEDED = 10
+MAX_COMMANDS_FAILED    = 10
+MAX_FAILURE_FRAGMENTS  = 5
+
+exploratory_files  = exploratory_files[:MAX_EXPLORATORY_FILES]
+productive_files   = productive_files[:MAX_PRODUCTIVE_FILES]
+commands_succeeded = commands_succeeded[:MAX_COMMANDS_SUCCEEDED]
+commands_failed    = commands_failed[:MAX_COMMANDS_FAILED]
+```
+
+**Step 6 — Deterministic subject:**
 Most common directory prefix across all files read. Example: if 4 of 6 files are under `retrieval/`, the subject is `retrieval/`. If no clear prefix, use the top 2 file paths. No LLM.
 
-**Step 5 — Best-effort outcome extraction (LLM, may return null):**
+**Step 7 — Best-effort outcome extraction (LLM, may return null):**
 One LLM call using the **agent's response texts** from the trace items — not file content, not command output.
 
 ```python
@@ -185,9 +225,9 @@ response_texts = [item.content for item in trace_items if item.content]
 
 Prompt: *"Given these agent responses from a coding session, produce a 1-2 sentence summary of what was investigated and what if anything was found or resolved. If the responses contain only analysis, planning, or no clear conclusion, return null."*
 
-The output is `outcome: str | None`. If null, the field is omitted from the payload. The task_trace is still valid and useful without it — the structural trail always has value. This failure mode is expected for sessions without clear narrated findings.
+The output is `outcome: str | None`. If null, the field is omitted from the payload and `outcome_source` is set to `"none"`. The task_trace is still valid and useful without it — the structural trail always has value. This failure mode is expected for sessions without clear narrated findings.
 
-**Step 6 — Produce `task_trace` MemoryObject:**
+**Step 8 — Produce `task_trace` MemoryObject:**
 
 ```python
 MemoryObject(
@@ -201,9 +241,11 @@ MemoryObject(
     freshness_at=utc_now(),
     payload={
         "investigation_subject": "retrieval/",          # deterministic dir prefix
-        "outcome": "Investigated FTS retrieval. Found IDF weights not applied at lexical.py:89. Fixed.",  # may be null
+        "outcome": "Investigated FTS retrieval. Found IDF weights not applied at lexical.py:89. Fixed.",  # may be null/absent
+        "outcome_source": "llm_from_agent_responses",   # "llm_from_agent_responses" | "none"
         "repo_ref": aggregate.container_ref,
         "branch_ref": metadata.get("branch_ref"),       # from hook env if available
+        "commit_ref": metadata.get("commit_ref"),       # from hook env if available
         "working_directory": metadata.get("cwd"),       # from hook payload
         "exploratory_files": exploratory_files,
         "productive_files": productive_files,
@@ -211,9 +253,9 @@ MemoryObject(
         "commands_failed":    [c["cmd"] for c in commands_failed],
         "bash_failure_fragments": [
             {"cmd": c["cmd"], "class": c["failure_class"], "tail": c["output_tail"]}
-            for c in commands_failed
+            for c in commands_failed[:MAX_FAILURE_FRAGMENTS]
         ],
-        "first_productive_action_at_turn": first_productive_turn,
+        "first_write_action_at_turn": first_write_action_turn,
         "turn_count": len(turns),
         "turn_source_item_ids": turn_source_item_ids,  # for query-time correlation
     }
@@ -222,7 +264,7 @@ MemoryObject(
 
 The prior `task_trace` for this thread is superseded. A metric event is appended to the append-only log (separate from supersession).
 
-**BM25 indexed text:** `investigation_subject` + all entries in `exploratory_files` + `productive_files` + `commands_succeeded` joined as a single string.
+**BM25 indexed text:** `investigation_subject` + all entries in `exploratory_files` + `productive_files` + `commands_succeeded` joined as a single string. `outcome` is display sugar — it is not indexed and retrieval does not depend on it.
 
 ---
 
@@ -249,7 +291,7 @@ Hard cap: 400 characters. Task trace is injected **after** conversation memory b
 [Task Trace — 2 days ago | ref:abc123]
 Area: retrieval/ — IDF weights not applied at lexical.py:89. Fixed.
 Explored: lexical.py, sqlite_search.py, composite.py
-Tests passing: python -m pytest tests/test_retrieval.py
+Verified with: python -m pytest tests/test_retrieval.py
 [+expand]
 ```
 
@@ -259,9 +301,11 @@ When `outcome` is null (no clear narrated finding), the second line is omitted:
 [Task Trace — 2 days ago | ref:abc123]
 Area: retrieval/
 Explored: lexical.py, sqlite_search.py, composite.py
-Tests passing: python -m pytest tests/test_retrieval.py
+Verified with: python -m pytest tests/test_retrieval.py
 [+expand]
 ```
+
+The label for successful commands is `"Verified with:"` not `"Tests passing:"` — a zero-exit-code command may not be a test command, and a test command may pass only a subset. Use `"Verified with:"` for all successful commands. If the command classifier identifies it as a test runner (pytest/jest/mocha prefix) and exit code is 0, you may optionally use `"Tests passing:"` instead.
 
 `[+expand]` returns the full payload including `bash_failure_fragments`, and performs a secondary lookup for `investigation_outcome` objects whose evidence `source_item_id` appears in `turn_source_item_ids`. This is the correct correlation — by the exact source items both packages processed, not by thread membership.
 
@@ -293,6 +337,8 @@ Redaction patterns (all case-insensitive):
 
 Both integrations implement `read_turn()` in their own `common.py`. Both copies must be kept in sync; any change to the tool call extraction logic must be applied to both.
 
+**Parity enforcement:** add a test in `tests/test_hook_common_parity.py` that imports both `common.py` files and asserts that the `read_turn` function signatures and redaction patterns are identical. This is the maintenance guard against silent behavioral drift between the two copies.
+
 ---
 
 ## Out of Scope
@@ -315,7 +361,7 @@ Both integrations implement `read_turn()` in their own `common.py`. Both copies 
 | `integrations/claude-code/hooks/stop.py` | Use `read_turn()`, populate `metadata["agent_work_trace_turn"]` |
 | `integrations/codex/hooks/common.py` | Same as Claude Code common.py |
 | `integrations/codex/hooks/stop.py` | Same as Claude Code stop.py |
-| `semantic/agent_work_trace.py` | New parallel package (item-level + thread rebuild, fully deterministic) |
+| `semantic/agent_work_trace.py` | New parallel package (deterministic structural trace + best-effort LLM outcome at thread rebuild) |
 | `pallium.local.toml` | Register `agent_work_trace` |
 | `integrations/claude-code/hooks/session_start.py` | Scoped task_trace inject on resume; write state file |
 | `integrations/codex/hooks/session_start.py` | Same |
