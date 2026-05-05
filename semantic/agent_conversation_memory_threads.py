@@ -23,9 +23,9 @@ THREAD_SUMMARY_PROMPT_SCHEMA_ID = "thread_summary_extraction"
 
 MAX_THREAD_WORK_REFS = 5
 
-THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v8"
+THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v9"
 
-THREAD_SUMMARY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "content_quality": "string", "retrieval_context": "string or null", "decisions": [{"decision_text": "string (exact quote)", "evidence": "string (exact quote)"}], "investigations": [{"investigation_text": "string (self-contained finding, exact quote)", "evidence": "string (exact quote)"}]}, indent=2)
+THREAD_SUMMARY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "content_quality": "string", "retrieval_context": "string or null", "decisions": [{"decision_text": "string (concise statement of what was decided)", "evidence": "string (exact quote)"}], "investigations": [{"investigation_text": "string (self-contained finding)", "evidence": "string (exact quote)"}]}, indent=2)
 
 THREAD_SUMMARY_SYSTEM_PROMPT = (
     "Summarize one agent-mediated conversation thread for future recall. "
@@ -43,14 +43,23 @@ THREAD_SUMMARY_SYSTEM_PROMPT = (
     "For retrieval_context: write one short search-friendly context line (12-30 words) that helps this record match later queries, "
     "or null when the summary already has enough search cues. Do not restate the summary. "
     "For decisions: identify choices that were made AND committed during the thread. "
-    "A decision exists when a specific approach was proposed or discussed AND then implemented, confirmed, or accepted. "
+    "A decision exists when a specific approach was proposed AND then confirmed, accepted, or explicitly chosen by the user. "
+    "Implementation is not required — explicit user confirmation is sufficient. "
+    "Look for directional commitments: the user choosing approach A over B, confirming a proposed plan, or explicitly approving a recommendation. "
+    "Design decisions also count: when a user explicitly chooses one approach over alternatives after discussion, that is a committed decision even if code has not been written yet. "
     "Each decision must be self-contained: comprehensible when read in a different conversation weeks later with no surrounding context. "
     "The decision_text must name WHAT was decided about — the subject or system. "
-    "For each decision, decision_text and evidence must be EXACT QUOTES copied verbatim from the thread items. Do not paraphrase. "
+    "decision_text should be a concise self-contained statement of what was decided (synthesized from the discussion — does not need to be a verbatim quote). "
+    "evidence must be an EXACT QUOTE copied verbatim from the thread items that demonstrates the commitment. Do not paraphrase the evidence. "
     "Not decisions: unresolved discussion, proposals without follow-through, questions, status updates, preferences without implementation. "
     "Return an empty array if no decisions were committed in this thread. "
     "For investigations: identify resolved findings or verified conclusions with evidence. "
-    "Each investigation must be self-contained. investigation_text and evidence must be EXACT QUOTES from the thread items. "
+    "Each investigation must be self-contained. "
+    "investigation_text should be a concise self-contained statement of the finding (synthesized — does not need to be a verbatim quote). "
+    "evidence must be an EXACT QUOTE from the thread items. "
+    "Quantitative findings also count: when analysis produces specific numeric results with conclusions "
+    "(precision rates, noise percentages, performance measurements), these are investigation outcomes "
+    "even if no explicit 'investigation' was declared. "
     "Return an empty array if no investigations were resolved. "
     "Write all text fields in the same language as the thread items. Do not translate to English."
 )
@@ -251,15 +260,15 @@ TASK_CHECKPOINT_TEXT_VIEW = "memory_object.task_checkpoint_context"
 
 THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_ID = "thread_summary_with_checkpoint_extraction"
 
-THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v6"
+THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v7"
 
 THREAD_SUMMARY_WITH_CHECKPOINT_SCHEMA_DESCRIPTION = json.dumps(
     {
         "summary": "string",
         "content_quality": "string",
         "retrieval_context": "string or null",
-        "decisions": [{"decision_text": "string (exact quote)", "evidence": "string (exact quote)"}],
-        "investigations": [{"investigation_text": "string (self-contained finding, exact quote)", "evidence": "string (exact quote)"}],
+        "decisions": [{"decision_text": "string (concise statement of what was decided)", "evidence": "string (exact quote)"}],
+        "investigations": [{"investigation_text": "string (self-contained finding)", "evidence": "string (exact quote)"}],
         "task_checkpoint": {
             "summary": "string",
             "task": "string",
@@ -291,14 +300,23 @@ THREAD_SUMMARY_WITH_CHECKPOINT_SYSTEM_PROMPT = (
     '"weak" when the thread is a greeting, phatic exchange, sign-off, or otherwise carries no recallable information. '
     "For the top-level retrieval_context: write one short search-friendly context line (12-30 words) that helps the summary match later queries, or null when the summary already has enough search cues. Do not restate the summary. "
     "For decisions: identify choices that were made AND committed during the thread. "
-    "A decision exists when a specific approach was proposed or discussed AND then implemented, confirmed, or accepted. "
+    "A decision exists when a specific approach was proposed AND then confirmed, accepted, or explicitly chosen by the user. "
+    "Implementation is not required — explicit user confirmation is sufficient. "
+    "Look for directional commitments: the user choosing approach A over B, confirming a proposed plan, or explicitly approving a recommendation. "
+    "Design decisions also count: when a user explicitly chooses one approach over alternatives after discussion, that is a committed decision even if code has not been written yet. "
     "Each decision must be self-contained: comprehensible when read in a different conversation weeks later with no surrounding context. "
     "The decision_text must name WHAT was decided about — the subject or system. "
-    "For each decision, decision_text and evidence must be EXACT QUOTES copied verbatim from the thread items. Do not paraphrase. "
+    "decision_text should be a concise self-contained statement of what was decided (synthesized from the discussion — does not need to be a verbatim quote). "
+    "evidence must be an EXACT QUOTE copied verbatim from the thread items that demonstrates the commitment. Do not paraphrase the evidence. "
     "Not decisions: unresolved discussion, proposals without follow-through, questions, status updates, preferences without implementation. "
     "Return an empty array if no decisions were committed in this thread. "
     "For investigations: identify resolved findings or verified conclusions with evidence. "
-    "Each investigation must be self-contained. investigation_text and evidence must be EXACT QUOTES from the thread items. "
+    "Each investigation must be self-contained. "
+    "investigation_text should be a concise self-contained statement of the finding (synthesized — does not need to be a verbatim quote). "
+    "evidence must be an EXACT QUOTE from the thread items. "
+    "Quantitative findings also count: when analysis produces specific numeric results with conclusions "
+    "(precision rates, noise percentages, performance measurements), these are investigation outcomes "
+    "even if no explicit 'investigation' was declared. "
     "Return an empty array if no investigations were resolved. "
     "For the task_checkpoint section: capture the task, the current state, key findings, blocker or failed-attempt state when present, the next supported step when present, and a concise freshness signal. "
     "Do not turn the checkpoint into a workflow graph, transcript replay, or speculative recommendation. "
@@ -314,9 +332,10 @@ _THREAD_DECISION_USER_LINE_RE = re.compile(
 
 
 def _validate_thread_decisions(raw_decisions, thread_text: str) -> list[dict]:
-    """Validate and filter thread decisions by grounding and substance checks.
+    """Validate and filter thread decisions by evidence grounding and substance checks.
 
-    Both decision_text and evidence must be literal substrings of thread_text.
+    Evidence must be a literal substring of thread_text (exact quote grounding).
+    decision_text may be synthesized and is not required to be a substring.
     Rejects decisions whose evidence is a user-role thread line (indicating
     the LLM quoted a user command rather than extracting a committed decision).
     """
@@ -331,10 +350,7 @@ def _validate_thread_decisions(raw_decisions, thread_text: str) -> list[dict]:
         ev = d.get("evidence", "")
         if not (dt and ev):
             continue
-        if not (
-            _normalize_for_containment(dt) in normalized_thread
-            and _normalize_for_containment(ev) in normalized_thread
-        ):
+        if _normalize_for_containment(ev) not in normalized_thread:
             continue
         if _thread_evidence_is_user_line_only(ev, thread_text):
             continue
@@ -355,9 +371,10 @@ def _validate_thread_decisions(raw_decisions, thread_text: str) -> list[dict]:
 
 
 def _validate_thread_investigations(raw_investigations, thread_text: str) -> list[dict]:
-    """Validate and filter thread investigations by grounding and substance checks.
+    """Validate and filter thread investigations by evidence grounding and substance checks.
 
-    Both investigation_text and evidence must be literal substrings of thread_text.
+    Evidence must be a literal substring of thread_text (exact quote grounding).
+    investigation_text may be synthesized and is not required to be a substring.
     Rejects investigations whose evidence is a user-role thread line (indicating
     the LLM quoted a user command rather than extracting a committed investigation).
     """
@@ -372,10 +389,7 @@ def _validate_thread_investigations(raw_investigations, thread_text: str) -> lis
         ev = d.get("evidence", "")
         if not (it and ev):
             continue
-        if not (
-            _normalize_for_containment(it) in normalized_thread
-            and _normalize_for_containment(ev) in normalized_thread
-        ):
+        if _normalize_for_containment(ev) not in normalized_thread:
             continue
         if _thread_evidence_is_user_line_only(ev, thread_text):
             continue
@@ -509,7 +523,7 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
             incremental_grounding_instruction = (
                 "The prior summary is context only. "
                 "Produce an updated summary that incorporates both the prior context and new developments. "
-                "decision_text, investigation_text, and evidence must be EXACT QUOTES from the NEW thread items below only. "
+                "decision_text and investigation_text may be synthesized, but evidence must be EXACT QUOTES from the NEW thread items below only. "
                 "Do not quote from the prior summary.\n\n"
             )
 

@@ -564,8 +564,8 @@ def test_budget_constants():
     """Verify the budget constants match the spec."""
     assert THREAD_SUMMARY_MAX_TEXT_CHARS == 16000
     assert THREAD_WINDOW_BUDGET_CHARS == 16000
-    assert THREAD_SUMMARY_PROMPT_SCHEMA_VERSION == "v8"
-    assert THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION == "v6"
+    assert THREAD_SUMMARY_PROMPT_SCHEMA_VERSION == "v9"
+    assert THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION == "v7"
 
 
 # ---------------------------------------------------------------------------
