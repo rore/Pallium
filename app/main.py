@@ -15,11 +15,12 @@ from sqlalchemy import func, select
 
 from app.config import AppConfig
 from app.dashboard import mount_dashboard
-from app.dependencies import build_router, build_service
+from app.dependencies import build_router, build_service, build_storage_provider
 from app.snapshot import resolve_live_db_path
 from core.observability import QueryStats
 from core.service import PalliumService
 from semantic.agent_conversation_memory_routing import RoutingOverrides
+from storage.metrics import MetricsStore
 from storage.sqlite import SQLiteStorageProvider
 from storage.sqlite_schema import MemoryObjectRecord, SourceItemRecord
 
@@ -103,7 +104,18 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         logger.warning("MCP endpoint not available: mcp[cli] not installed. Run: pip install 'mcp[cli]'")
 
     resolved_config = config or AppConfig.from_env()
-    query_stats = QueryStats()
+
+    # Create MetricsStore from storage before building the service so we can
+    # wire it into QueryStats at construction time.
+    metrics_store: MetricsStore | None = None
+    try:
+        early_storage = build_storage_provider(resolved_config)
+        if isinstance(early_storage, SQLiteStorageProvider):
+            metrics_store = MetricsStore(early_storage._session_factory)
+    except Exception:
+        logger.warning("MetricsStore could not be initialized; metrics persistence disabled", exc_info=True)
+
+    query_stats = QueryStats(metrics_store=metrics_store)
     build_result = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats)
     service = build_result.service
 
