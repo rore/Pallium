@@ -278,11 +278,7 @@ def mount_dashboard(app: FastAPI) -> None:
         return JSONResponse(content={"items": items})
 
     def _get_metrics_store() -> MetricsStore | None:
-        service = app.state.pallium_service
-        storage = service._storage
-        if not isinstance(storage, SQLiteStorageProvider):
-            return None
-        return MetricsStore(storage._session_factory)
+        return getattr(app.state, "metrics_store", None)
 
     @app.get("/dashboard/api/metrics/query")
     def dashboard_metrics_query(
