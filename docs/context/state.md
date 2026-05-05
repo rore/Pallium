@@ -35,6 +35,7 @@
   - `constraint_memory`
   - `atomic_fact` (from `conversational_knowledge`)
   - `fact_summary` (from `conversational_knowledge` consolidation, `high_value=True`)
+  - `task_trace` (from `agent_work_trace` parallel package — per-session structural trail of agent tool usage)
 - visibility terminology: `"limited"` renamed to `"container"` (visible within this single container); `container_visibility` field renamed to `visibility`; breaking change — requires fresh DB after applying
 - actor-scoped memory and container-driven visibility rules are shipped:
   - `actor_ref` field on MemoryObject tracks who a memory is personal to
