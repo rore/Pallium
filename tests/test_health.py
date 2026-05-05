@@ -164,6 +164,7 @@ class TestStatusResponseShape:
             "oldest_pending_age_seconds",
             "total_source_items",
             "total_memory_objects",
+            "active_memory_objects",
             "snapshot",
             "storage",
             "vector_index_ready",
