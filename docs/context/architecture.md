@@ -109,12 +109,14 @@ Implemented semantic behavior now includes:
 
 - an explicit `agent_conversation_memory` runtime package over the current LLM-backed semantic path
 - a `conversational_knowledge` fact extraction package that extracts atomic facts from threads using the thread rebuild mechanism, runs as a `parallel_processing` package alongside `agent_conversation_memory`, and consolidates cross-thread facts into `fact_summary` objects via `FactConsolidationStrategy`
+- an `agent_work_trace` parallel package that captures the structural trail of agent discovery work (files read, commands run, grep patterns) per turn, aggregates into a compact `task_trace` memory object per session at thread rebuild, with deterministic structural extraction and optional best-effort LLM-derived outcome summary
 - deterministic and LLM-backed semantic plugins
 - promoted typed memory for:
   - `decision`
   - `investigation_outcome`
 - thread-level memory for:
   - `thread_summary`
+  - `task_trace`
 - higher-level memory for:
   - `pattern_memory`
   - `continuity_memory`

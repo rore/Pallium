@@ -156,7 +156,12 @@ def test_codex_stop_hook_ingests_quietly(monkeypatch: pytest.MonkeyPatch) -> Non
             "transcript_path": "transcript.jsonl",
         },
     )
-    monkeypatch.setattr(stop, "read_last_assistant_turn", lambda _: "assistant response")
+    monkeypatch.setattr(stop, "read_turn", lambda _: stop._common.TurnData(
+        assistant_text="assistant response",
+        tool_calls=[],
+        has_productive_action=False,
+    ))
+    monkeypatch.setattr(stop, "build_work_trace_metadata", lambda _: None)
     monkeypatch.setattr(stop, "derive_container_ref", lambda _: "git:github.com/rore/pallium")
     monkeypatch.setattr(stop, "derive_actor_ref", lambda: "Rotem")
 

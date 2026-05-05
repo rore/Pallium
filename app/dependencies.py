@@ -21,6 +21,7 @@ from retrieval.lexical import LexicalRetrievalProvider
 from retrieval.vector import VectorRetrievalProvider
 from semantic.base import SemanticPlugin
 from semantic.agent_conversation_memory import AgentConversationMemoryPlugin
+from semantic.agent_work_trace import AgentWorkTracePlugin
 from semantic.agent_conversation_memory_routing import RoutingOverrides
 from semantic.demo_agent_memory import DemoAgentMemoryPlugin
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin
@@ -177,6 +178,16 @@ def _build_plugin_for_package(*, config: AppConfig, package_config: SemanticPack
             routing_overrides=routing_overrides,
             providers_by_role=providers_by_role or None,
         )
+
+    if implementation == "agent_work_trace":
+        if not package_config.llm_provider or not package_config.model:
+            return None
+        provider = build_llm_provider(
+            config,
+            provider_name=package_config.llm_provider,
+            model=package_config.model,
+        )
+        return AgentWorkTracePlugin(provider=provider)
 
     if implementation == "conversational_knowledge":
         if not package_config.llm_provider or not package_config.model:
