@@ -1,0 +1,489 @@
+{
+  "baseline": {
+    "spec_completion_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "committed",
+          "implementation"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "agent_work_trace spec is fully committed at 13a1dba with all three blocking decisions resolved. the user has now requested an implementation plan as the next concrete deliverable. spec committed at 13a1dba with all three design decisions resolved. implementation plan requested by user but not yet produced. no active blockers for spec. implementation plan not yet written. write the implementation p"
+      },
+      "type": "converge_to_resolved",
+      "description": "Spec committed after 12 turns of unresolved debate — resolution is implicit (commit hash + next request), NOT explicitly stated as 'all resolved'",
+      "user_prompt_chars": 3683,
+      "sys_prompt_chars": 4372
+    },
+    "bug_fix_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "deployed",
+          "baseline"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "race condition in token refresh service was fully resolved. the root cause — cache.write() executing outside the lock scope — was identified and fixed, with the 401 error rate confirmed back at baseline after deployment. resolved and closed — fix deployed, 401 rate returned to baseline none — no blockers remain no further steps required; issue is resolved cache.write() was executing after lock rel"
+      },
+      "type": "converge_to_resolved",
+      "description": "Production bug fixed after 9 turns of inconclusive investigation — resolution is a brief 'fixed, deployed' with no explicit 'incident closed' framing",
+      "user_prompt_chars": 2638,
+      "sys_prompt_chars": 4372
+    },
+    "caching_decision_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "in-memory",
+          "implemented"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "caching layer decision resolved and implemented. in-memory lru cache with 5-minute ttl and max 1000 entries is implemented, tests passing, and merged. completed and merged. in-memory lru cache implemented with 5-minute ttl and max 1000 entries; tests passing. none — task complete. no explicit next step stated in thread. cold-start takes ~3 minutes under load at current volume; acceptable for off-h"
+      },
+      "type": "converge_to_resolved",
+      "description": "Caching strategy decided after 10 turns — resolution is 'implementation done' with no explicit 'we resolved all debates' statement",
+      "user_prompt_chars": 2950,
+      "sys_prompt_chars": 4372
+    },
+    "still_blocked_hard": {
+      "score": {
+        "pass": true,
+        "recall": 0.5,
+        "found_keywords": [
+          "legal"
+        ],
+        "missing_keywords": [
+          "waiting"
+        ],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "payment provider api integration is paused awaiting legal compliance sign-off. a follow-up on the specific token storage question was sent 2 days ago with no response. escalation to legal department head via engineering manager is planned for friday if no reply. paused — sandbox work permitted but live integration blocked on compliance sign-off blocked on legal compliance sign-off; no response to "
+      },
+      "type": "keep_blocker",
+      "description": "Migration still blocked after 8 turns — no resolution signal, checkpoint must keep the blocker",
+      "user_prompt_chars": 2154,
+      "sys_prompt_chars": 4372
+    },
+    "partial_resolution_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "documentation",
+          "tests"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "auth module blocker is resolved — all 47 tests passing after fixing 403 vs 401 mismatch. api documentation (token endpoint, refresh flow, error codes, rate limits; ~6–8 hrs) has not been started and is required before the pr can merge. auth tests fully resolved. api documentation not yet started; work is beginning now. api documentation not started; pr is blocked on docs. complete api documentatio"
+      },
+      "type": "partial_resolve",
+      "description": "One of two blockers resolved after extended discussion — checkpoint should reflect mixed state",
+      "user_prompt_chars": 1884,
+      "sys_prompt_chars": 4372
+    },
+    "regression_no_prior": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "multi-tenancy",
+          "tenant"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "refactoring the user service for multi-tenancy. three changes identified; work is committed to starting with the database migration to add tenant_id to the users table. planning complete; about to begin database migration schema none start with database migration: add tenant_id column to users table. three changes required: add tenant_id to users table, scope all queries by tenant_id, update auth "
+      },
+      "type": "regression_no_prior",
+      "description": "No prior summary — regression baseline, checkpoint should reflect in-progress state",
+      "user_prompt_chars": 823,
+      "sys_prompt_chars": 4372
+    },
+    "production_qa_pivot": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "finalized",
+          "spec"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "agent_work_trace spec is finalized at docs/specs/2026-05-05-agent-work-trace-design.md (commit 13a1dba). session memory qa is in progress: findings documented, user has requested all findings with item references saved to a file before any remediation (deduplication, checkpoint update, or missing-decision ingestion) proceeds. qa analysis complete; findings report produced with item-level reference"
+      },
+      "type": "converge_to_resolved",
+      "description": "Real production failure: spec finalized at items 60-62, then thread pivots to memory QA analysis (4913 chars) full of problem-language. Prior summary says outstanding constraints. Checkpoint should reflect spec done, not QA problems.",
+      "user_prompt_chars": 14603,
+      "sys_prompt_chars": 4372
+    }
+  },
+  "A_checkpoint_recency": {
+    "spec_completion_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "committed",
+          "implementation"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "all three blocking design decisions for the agent_work_trace spec are resolved and committed at 13a1dba: session-resume-only injection, outcome_source='llm_from_agent_responses', posixpath relative to cwd. the user has requested an implementation plan as the next step. spec committed at 13a1dba with all three open decisions resolved. implementation plan requested by user. no explicit blockers rema"
+      },
+      "type": "converge_to_resolved",
+      "description": "Spec committed after 12 turns of unresolved debate — resolution is implicit (commit hash + next request), NOT explicitly stated as 'all resolved'",
+      "user_prompt_chars": 3683,
+      "sys_prompt_chars": 4572
+    },
+    "bug_fix_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "deployed",
+          "baseline"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "race condition in token refresh service causing 1-2% 401 errors in production is fully resolved. root cause was cache.write() outside lock scope; fix deployed and 401 rate confirmed back at baseline. resolved — fix deployed and verified none — issue resolved no immediate next step; monitor production 401 rate to confirm sustained baseline cache.write() was executing outside the lock scope in refre"
+      },
+      "type": "converge_to_resolved",
+      "description": "Production bug fixed after 9 turns of inconclusive investigation — resolution is a brief 'fixed, deployed' with no explicit 'incident closed' framing",
+      "user_prompt_chars": 2638,
+      "sys_prompt_chars": 4572
+    },
+    "caching_decision_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "in-memory",
+          "implemented"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "api response caching layer decision resolved and implemented. in-memory lru cache (5-minute ttl, max 1000 entries) built and merged; redis ruled out due to infrastructure overhead and rare restarts. complete — in-memory lru cache implemented, tests passing, merge approved. none — decision made and implementation merged. no further steps identified in thread; task is closed. cold-start warm-up take"
+      },
+      "type": "converge_to_resolved",
+      "description": "Caching strategy decided after 10 turns — resolution is 'implementation done' with no explicit 'we resolved all debates' statement",
+      "user_prompt_chars": 2950,
+      "sys_prompt_chars": 4572
+    },
+    "still_blocked_hard": {
+      "score": {
+        "pass": true,
+        "recall": 0.5,
+        "found_keywords": [
+          "legal"
+        ],
+        "missing_keywords": [
+          "waiting"
+        ],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "payment provider api integration is paused awaiting legal compliance sign-off. a token storage question (vault vs. direct) was sent to legal 2 days ago with no response; escalation to legal department head is planned if no reply by friday. integration paused; sandbox work is possible but go-live blocked. specific token storage question sent to legal 2 days ago, no response received. blocked on leg"
+      },
+      "type": "keep_blocker",
+      "description": "Migration still blocked after 8 turns — no resolution signal, checkpoint must keep the blocker",
+      "user_prompt_chars": 2154,
+      "sys_prompt_chars": 4572
+    },
+    "partial_resolution_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "documentation",
+          "tests"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "auth module blocker is resolved — all 47 tests pass after fixing 12 tests to expect 403 on expired tokens. api documentation (token endpoint, refresh flow, error codes, rate limits) has not been started and remains the sole blocker for pr merge. auth tests fully fixed. documentation not yet started; work beginning now per user instruction. api documentation not started. required before pr can merg"
+      },
+      "type": "partial_resolve",
+      "description": "One of two blockers resolved after extended discussion — checkpoint should reflect mixed state",
+      "user_prompt_chars": 1884,
+      "sys_prompt_chars": 4572
+    },
+    "regression_no_prior": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "multi-tenancy",
+          "tenant"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "refactoring the user service for multi-tenancy support. three changes identified; the team has committed to starting with the database migration to add tenant_id to the users table. query scoping and auth middleware updates remain pending. planning complete; database migration schema is the agreed starting point, not yet implemented. none identified start with database migration: add tenant_id col"
+      },
+      "type": "regression_no_prior",
+      "description": "No prior summary — regression baseline, checkpoint should reflect in-progress state",
+      "user_prompt_chars": 823,
+      "sys_prompt_chars": 4572
+    },
+    "production_qa_pivot": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "finalized",
+          "spec"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "agent_work_trace spec is finalized at docs/specs/2026-05-05-agent-work-trace-design.md (commit 13a1dba). session memory qa completed; findings with direct item references saved to file to prevent context loss before remediation. qa report produced and findings written to file with direct references to live memory items. remediation actions (flagging stale checkpoint, deduplicating decisions, inges"
+      },
+      "type": "converge_to_resolved",
+      "description": "Real production failure: spec finalized at items 60-62, then thread pivots to memory QA analysis (4913 chars) full of problem-language. Prior summary says outstanding constraints. Checkpoint should reflect spec done, not QA problems.",
+      "user_prompt_chars": 14603,
+      "sys_prompt_chars": 4572
+    }
+  },
+  "B_incremental": {
+    "spec_completion_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "committed",
+          "implementation"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "all three blocking design decisions for agent_work_trace are resolved and committed at 13a1dba: session-resume-only injection, outcome_source='llm_from_agent_responses', posixpath normalization relative to cwd. user has requested an implementation plan as the next work item. spec finalized and committed at 13a1dba. implementation plan requested by user. no active blockers; all three previously ope"
+      },
+      "type": "converge_to_resolved",
+      "description": "Spec committed after 12 turns of unresolved debate — resolution is implicit (commit hash + next request), NOT explicitly stated as 'all resolved'",
+      "user_prompt_chars": 3884,
+      "sys_prompt_chars": 4372
+    },
+    "bug_fix_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "deployed",
+          "baseline"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "race condition in token refresh service resolved. cache.write() was executing outside the lock scope, allowing concurrent threads to read stale tokens. fix deployed; 401 rate returned to baseline. resolved. fix deployed and confirmed effective — 401 error rate returned to baseline. none — issue resolved no immediate next step; monitor 401 rate to confirm sustained baseline cache.write() was execut"
+      },
+      "type": "converge_to_resolved",
+      "description": "Production bug fixed after 9 turns of inconclusive investigation — resolution is a brief 'fixed, deployed' with no explicit 'incident closed' framing",
+      "user_prompt_chars": 2839,
+      "sys_prompt_chars": 4372
+    },
+    "caching_decision_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "in-memory",
+          "implemented"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "caching layer decision resolved and implemented. in-memory lru cache with 5-minute ttl and max 1000 entries is merged and tests are passing. complete — in-memory lru cache implemented (5-minute ttl, max 1000 entries), tests passing, merged none — all blockers resolved no explicit next step stated in thread cold-start warm-up is ~3 minutes under load; acceptable for off-hours restarts but causes la"
+      },
+      "type": "converge_to_resolved",
+      "description": "Caching strategy decided after 10 turns — resolution is 'implementation done' with no explicit 'we resolved all debates' statement",
+      "user_prompt_chars": 3151,
+      "sys_prompt_chars": 4372
+    },
+    "still_blocked_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "legal",
+          "waiting"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "payment provider api integration is paused awaiting legal compliance sign-off. sandbox work is permitted in the interim; the critical unresolved architectural question is token storage vs. vault. escalation via engineering manager is planned for friday if no response. integration paused; sandbox work allowed but go-live blocked. team waiting until friday before escalating. blocked on legal complia"
+      },
+      "type": "keep_blocker",
+      "description": "Migration still blocked after 8 turns — no resolution signal, checkpoint must keep the blocker",
+      "user_prompt_chars": 2355,
+      "sys_prompt_chars": 4372
+    },
+    "partial_resolution_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "documentation",
+          "tests"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "auth tests are resolved (47 passing). api documentation — covering token endpoint, refresh flow, error codes, and rate limits — has not been started but is required before merge and is now being worked on. auth tests fully resolved. documentation not started; work beginning now. blocked on api documentation — not started, work just beginning. complete api documentation (token endpoint, refresh flo"
+      },
+      "type": "partial_resolve",
+      "description": "One of two blockers resolved after extended discussion — checkpoint should reflect mixed state",
+      "user_prompt_chars": 2085,
+      "sys_prompt_chars": 4372
+    },
+    "regression_no_prior": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "multi-tenancy",
+          "tenant"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "refactoring the user service for multi-tenancy. three changes identified; work is starting with the database migration to add tenant_id to the users table. about to begin database migration; schema work confirmed as starting point by user. none start with database migration: add tenant_id column to users table. three changes required: add tenant_id to users table, scope all queries by tenant_id, u"
+      },
+      "type": "regression_no_prior",
+      "description": "No prior summary — regression baseline, checkpoint should reflect in-progress state",
+      "user_prompt_chars": 823,
+      "sys_prompt_chars": 4372
+    },
+    "production_qa_pivot": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "finalized",
+          "spec"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "agent_work_trace spec is finalized at commit 13a1dba. session memory qa completed and findings with direct item references written to file; next action is to flag the stale checkpoint, flag duplicate decisions, and ingest explicit memories for the 8 missing late-session decisions. qa report produced and findings written to file with direct item references to prevent context loss none flag stale ta"
+      },
+      "type": "converge_to_resolved",
+      "description": "Real production failure: spec finalized at items 60-62, then thread pivots to memory QA analysis (4913 chars) full of problem-language. Prior summary says outstanding constraints. Checkpoint should reflect spec done, not QA problems.",
+      "user_prompt_chars": 14804,
+      "sys_prompt_chars": 4372
+    }
+  },
+  "C_both": {
+    "spec_completion_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "committed",
+          "implementation"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "all three blocking design decisions for the agent_work_trace spec have been resolved and committed at 13a1dba. the user has now requested an implementation plan as the next concrete deliverable. spec fully committed at 13a1dba with all three decisions resolved. implementation plan requested by user. no blockers remaining on spec decisions. implementation plan not yet written. write the implementat"
+      },
+      "type": "converge_to_resolved",
+      "description": "Spec committed after 12 turns of unresolved debate — resolution is implicit (commit hash + next request), NOT explicitly stated as 'all resolved'",
+      "user_prompt_chars": 3884,
+      "sys_prompt_chars": 4572
+    },
+    "bug_fix_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "deployed",
+          "baseline"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "race condition in token refresh service fully resolved. cache.write() was executing outside the lock scope in refresh_token(), allowing concurrent threads to read stale tokens. fix deployed; 401 rate returned to baseline. completed. fix deployed and verified; 401 errors resolved. none. all blockers resolved. no further steps identified; issue is closed. cache.write() was executing after lock relea"
+      },
+      "type": "converge_to_resolved",
+      "description": "Production bug fixed after 9 turns of inconclusive investigation — resolution is a brief 'fixed, deployed' with no explicit 'incident closed' framing",
+      "user_prompt_chars": 2839,
+      "sys_prompt_chars": 4572
+    },
+    "caching_decision_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "in-memory",
+          "implemented"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "caching layer decision resolved: in-memory lru cache implemented with 5-minute ttl and 1000-entry max, tests passing, and merged. no blockers remain. completed. in-memory lru cache implemented and merged. none. no next step identified; task is complete. in-memory lru cache chosen over redis due to rare restarts and desire for simple infrastructure. cache configured with 5-minute ttl and max 1000 e"
+      },
+      "type": "converge_to_resolved",
+      "description": "Caching strategy decided after 10 turns — resolution is 'implementation done' with no explicit 'we resolved all debates' statement",
+      "user_prompt_chars": 3151,
+      "sys_prompt_chars": 4572
+    },
+    "still_blocked_hard": {
+      "score": {
+        "pass": true,
+        "recall": 0.5,
+        "found_keywords": [
+          "legal"
+        ],
+        "missing_keywords": [
+          "waiting"
+        ],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "payment provider api integration is paused pending legal compliance sign-off. a specific follow-up on token storage was sent 2 days ago with no response. escalation via engineering manager is planned for friday if no reply. integration paused. sandbox work permitted. awaiting legal response on pci dss review, specifically token storage question. no sign-off received. blocked on legal compliance si"
+      },
+      "type": "keep_blocker",
+      "description": "Migration still blocked after 8 turns — no resolution signal, checkpoint must keep the blocker",
+      "user_prompt_chars": 2355,
+      "sys_prompt_chars": 4572
+    },
+    "partial_resolution_hard": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "documentation",
+          "tests"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "auth tests are fully resolved (47 passing). api documentation — covering token endpoint, refresh flow, error codes, and rate limits — has not been started but is required before merge. work on docs is beginning now. auth tests blocker resolved. documentation blocker still open; work starting now. api documentation not started; confirmed required before merge. pr remains blocked on docs. complete a"
+      },
+      "type": "partial_resolve",
+      "description": "One of two blockers resolved after extended discussion — checkpoint should reflect mixed state",
+      "user_prompt_chars": 2085,
+      "sys_prompt_chars": 4572
+    },
+    "regression_no_prior": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "multi-tenancy",
+          "tenant"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "refactoring the user service for multi-tenancy support. three changes identified; work order confirmed to start with the database migration (adding tenant_id to the users table), followed by query scoping and auth middleware updates. planning complete; starting database migration schema — adding tenant_id column to the users table. none start with database migration: add tenant_id column to users "
+      },
+      "type": "regression_no_prior",
+      "description": "No prior summary — regression baseline, checkpoint should reflect in-progress state",
+      "user_prompt_chars": 823,
+      "sys_prompt_chars": 4572
+    },
+    "production_qa_pivot": {
+      "score": {
+        "pass": true,
+        "recall": 1.0,
+        "found_keywords": [
+          "finalized",
+          "spec"
+        ],
+        "missing_keywords": [],
+        "bad_keywords_found": [],
+        "checkpoint_text_snippet": "agent_work_trace spec is finalized at docs/specs/2026-05-05-agent-work-trace-design.md (commit 13a1dba). session memory qa completed; findings with item references written to file before remediation of duplicates, stale checkpoint, and eight missing decisions. spec finalized at commit 13a1dba. qa findings documented in file. next action is remediation: flag stale checkpoint a6bf4136, flag duplicat"
+      },
+      "type": "converge_to_resolved",
+      "description": "Real production failure: spec finalized at items 60-62, then thread pivots to memory QA analysis (4913 chars) full of problem-language. Prior summary says outstanding constraints. Checkpoint should reflect spec done, not QA problems.",
+      "user_prompt_chars": 14804,
+      "sys_prompt_chars": 4572
+    }
+  }
+}
