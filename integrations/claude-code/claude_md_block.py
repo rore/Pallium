@@ -21,7 +21,9 @@ retrieval quality. Do not skip this even when focused on implementation work.
 - `pallium_query` — injected context is empty or missing something the user asked about
 - `pallium_expand` — you need the original conversation behind a memory card. **If an injected card has `[+expand]` and you rated it relevant, you MUST call `pallium_expand` for it before responding** — the source is substantially richer than the card summary
 - `pallium_flag_memory` — a memory contradicts what you now know to be true
-- `pallium_ingest` — user explicitly asks to remember something. **Pass `artifact_kind="note"`** to preserve content faithfully with retrieval metadata. Without it, standard extraction may lose content. Hooks already ingest routine conversation automatically — only call this for explicit "remember" requests.
+- `pallium_ingest` — user explicitly asks to remember something, or you need to compensate for missed extraction. Hooks already ingest routine conversation automatically — only call this for explicit requests.
+  - Pass `artifact_kind="note"` when preserving a verbatim user-stated fact, preference, or constraint ("remember that...", "keep in mind..."). Notes bypass extraction and store as-is.
+  - Omit `artifact_kind` when the content should go through extraction to produce typed memory objects (decisions, investigation outcomes, etc.) — e.g., backfilling missed design decisions from a session.
 
 **Required parameters for manual tool calls:**
 When calling `pallium_query`, `pallium_expand`, or `pallium_ingest`, always pass:
