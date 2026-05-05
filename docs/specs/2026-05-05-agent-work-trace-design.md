@@ -159,17 +159,33 @@ productive_files = list(dict.fromkeys(
 )) if first_productive_turn is not None else []
 ```
 
-**Step 3 — Aggregate commands:**
+**Step 3 — Collect turn source items and aggregate commands:**
 ```python
+trace_items = [
+    item for item in aggregate.items
+    if "agent_work_trace_turn" in (item.metadata or {})
+]
+turn_source_item_ids = [item.id for item in trace_items]
+
 commands_succeeded = [c for t in turns for c in t["commands"] if c["exit_code"] == 0]
 commands_failed    = [c for t in turns for c in t["commands"] if c["exit_code"] != 0]
 ```
 
-**Step 4 — Deterministic subject (no LLM):**
-Most common directory prefix across all files read. Example: if 4 of 6 files are under `retrieval/`, the subject is `retrieval/`. If no clear prefix, use the top 2 file paths.
+`turn_source_item_ids` enables **query-time correlation** with `investigation_outcome` objects produced by `agent_conversation_memory` from the same source items. No extraction-time dependency — the correlation is a secondary lookup at expand time, not a join during rebuild.
 
-**Step 5 — Collect related findings:**
-Reference `investigation_outcome` and `decision` MemoryObject IDs from `aggregate.memory_by_type`. Not re-extracted — referenced only.
+**Step 4 — Deterministic subject:**
+Most common directory prefix across all files read. Example: if 4 of 6 files are under `retrieval/`, the subject is `retrieval/`. If no clear prefix, use the top 2 file paths. No LLM.
+
+**Step 5 — Best-effort outcome extraction (LLM, may return null):**
+One LLM call using the **agent's response texts** from the trace items — not file content, not command output.
+
+```python
+response_texts = [item.content for item in trace_items if item.content]
+```
+
+Prompt: *"Given these agent responses from a coding session, produce a 1-2 sentence summary of what was investigated and what if anything was found or resolved. If the responses contain only analysis, planning, or no clear conclusion, return null."*
+
+The output is `outcome: str | None`. If null, the field is omitted from the payload. The task_trace is still valid and useful without it — the structural trail always has value. This failure mode is expected for sessions without clear narrated findings.
 
 **Step 6 — Produce `task_trace` MemoryObject:**
 
@@ -185,6 +201,7 @@ MemoryObject(
     freshness_at=utc_now(),
     payload={
         "investigation_subject": "retrieval/",          # deterministic dir prefix
+        "outcome": "Investigated FTS retrieval. Found IDF weights not applied at lexical.py:89. Fixed.",  # may be null
         "repo_ref": aggregate.container_ref,
         "branch_ref": metadata.get("branch_ref"),       # from hook env if available
         "working_directory": metadata.get("cwd"),       # from hook payload
@@ -198,7 +215,7 @@ MemoryObject(
         ],
         "first_productive_action_at_turn": first_productive_turn,
         "turn_count": len(turns),
-        "related_finding_ids": [...],
+        "turn_source_item_ids": turn_source_item_ids,  # for query-time correlation
     }
 )
 ```
@@ -230,13 +247,23 @@ Hard cap: 400 characters. Task trace is injected **after** conversation memory b
 
 ```
 [Task Trace — 2 days ago | ref:abc123]
-Area: retrieval/
+Area: retrieval/ — IDF weights not applied at lexical.py:89. Fixed.
 Explored: lexical.py, sqlite_search.py, composite.py
-Commands: python -m pytest tests/test_retrieval.py
+Tests passing: python -m pytest tests/test_retrieval.py
 [+expand]
 ```
 
-`[+expand]` returns the full payload including `bash_failure_fragments` and referenced `investigation_outcome` / `decision` objects.
+When `outcome` is null (no clear narrated finding), the second line is omitted:
+
+```
+[Task Trace — 2 days ago | ref:abc123]
+Area: retrieval/
+Explored: lexical.py, sqlite_search.py, composite.py
+Tests passing: python -m pytest tests/test_retrieval.py
+[+expand]
+```
+
+`[+expand]` returns the full payload including `bash_failure_fragments`, and performs a secondary lookup for `investigation_outcome` objects whose evidence `source_item_id` appears in `turn_source_item_ids`. This is the correct correlation — by the exact source items both packages processed, not by thread membership.
 
 ### Session state file
 
@@ -272,7 +299,7 @@ Both integrations implement `read_turn()` in their own `common.py`. Both copies 
 
 - **Read content fragments**: path only. No file content stored.
 - **WebFetch capture**: excluded until a clear coding-agent use case is established.
-- **LLM extraction at any stage**: fully deterministic. No model calls in this package.
+- **LLM extraction**: one best-effort call at thread rebuild only, using agent response texts to produce `outcome`. Fully deterministic fallback (null) when quality is low. No per-item LLM calls.
 - **Repo orientation type**: emerges from accumulated task traces via future consolidation. Payload fields (`productive_files`, `exploratory_files`, `commands_succeeded`) are designed to feed that layer.
 - **PostToolUse hook**: not needed. Stop hook with single-pass transcript read provides turn-bounded data.
 - **Graph construction**: no knowledge graph.
