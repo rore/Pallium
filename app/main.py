@@ -204,6 +204,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         oldest_pending_age: float | None = None
         total_source: int | None = None
         total_memory: int | None = None
+        active_memory: int | None = None
         try:
             session_factory = storage._session_factory
             with session_factory() as session:
@@ -225,6 +226,12 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
 
                 total_memory = session.scalar(
                     select(func.count()).select_from(MemoryObjectRecord)
+                ) or 0
+
+                active_memory = session.scalar(
+                    select(func.count()).select_from(MemoryObjectRecord).where(
+                        MemoryObjectRecord.lifecycle == "active"
+                    )
                 ) or 0
 
             if oldest_pending_created is not None:
@@ -307,6 +314,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "oldest_pending_age_seconds": oldest_pending_age,
             "total_source_items": total_source,
             "total_memory_objects": total_memory,
+            "active_memory_objects": active_memory,
             "snapshot": snapshot_info,
             "storage": storage_info,
             "vector_index_ready": vector_index_ready,
