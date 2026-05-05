@@ -3,8 +3,15 @@
     "scenario_id": "p0-cross-container-isolation-001",
     "description": "Non-public memory created in container A must not appear when querying from container B.",
     "_generation_metadata": {
-      "taxonomy_cell": {"container_relation": "different_container", "visibility": "container"},
-      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "taxonomy_cell": {
+        "container_relation": "different_container",
+        "visibility": "container"
+      },
+      "invariant_assertions": [
+        "INV-01",
+        "INV-04",
+        "INV-07"
+      ],
       "priority_tier": "P0",
       "tier_reason": "correctness_invariant",
       "review_status": "authored"
@@ -39,7 +46,11 @@
           "container_ref": "chat:library-uptown",
           "visibility": "container"
         },
-        "invariant_assertions": ["INV-01", "INV-04", "INV-07"]
+        "invariant_assertions": [
+          "INV-01",
+          "INV-04",
+          "INV-07"
+        ]
       }
     ]
   },
@@ -47,8 +58,15 @@
     "scenario_id": "p0-cross-container-isolation-002",
     "description": "Private container memory must not leak to a different container even if topic matches.",
     "_generation_metadata": {
-      "taxonomy_cell": {"container_relation": "different_container", "visibility": "private"},
-      "invariant_assertions": ["INV-01", "INV-04", "INV-07"],
+      "taxonomy_cell": {
+        "container_relation": "different_container",
+        "visibility": "private"
+      },
+      "invariant_assertions": [
+        "INV-01",
+        "INV-04",
+        "INV-07"
+      ],
       "priority_tier": "P0",
       "tier_reason": "correctness_invariant",
       "review_status": "authored"
@@ -83,7 +101,11 @@
           "container_ref": "chat:catalog-production",
           "visibility": "private"
         },
-        "invariant_assertions": ["INV-01", "INV-04", "INV-07"]
+        "invariant_assertions": [
+          "INV-01",
+          "INV-04",
+          "INV-07"
+        ]
       }
     ]
   },
@@ -91,8 +113,14 @@
     "scenario_id": "p0-wrong-role-attribution-001",
     "description": "When assistant elaborates on a user topic, no interest memory should be created from assistant evidence alone.",
     "_generation_metadata": {
-      "taxonomy_cell": {"source_role": "assistant", "memory_type_target": "interest"},
-      "invariant_assertions": ["INV-02", "INV-07"],
+      "taxonomy_cell": {
+        "source_role": "assistant",
+        "memory_type_target": "interest"
+      },
+      "invariant_assertions": [
+        "INV-02",
+        "INV-07"
+      ],
       "priority_tier": "P0",
       "tier_reason": "correctness_invariant",
       "review_status": "authored"
@@ -147,7 +175,10 @@
           "container_ref": "chat:library-help",
           "visibility": "public"
         },
-        "invariant_assertions": ["INV-02", "INV-07"]
+        "invariant_assertions": [
+          "INV-02",
+          "INV-07"
+        ]
       }
     ]
   },
@@ -155,8 +186,14 @@
     "scenario_id": "p0-visibility-scope-001",
     "description": "Non-public results from a different container must not appear in query results.",
     "_generation_metadata": {
-      "taxonomy_cell": {"visibility": "container", "container_relation": "different_container"},
-      "invariant_assertions": ["INV-04", "INV-07"],
+      "taxonomy_cell": {
+        "visibility": "container",
+        "container_relation": "different_container"
+      },
+      "invariant_assertions": [
+        "INV-04",
+        "INV-07"
+      ],
       "priority_tier": "P0",
       "tier_reason": "correctness_invariant",
       "review_status": "authored"
@@ -188,8 +225,15 @@
     "scenario_id": "p1-topic-switch-return-001",
     "description": "After discussing topic A, switching to topic B, then asking about A again, the system should recall A without injecting B.",
     "_generation_metadata": {
-      "taxonomy_cell": {"topic_pattern": "return_to_prior", "query_intent": "backward_recall"},
-      "invariant_assertions": ["INV-03", "INV-05", "INV-07"],
+      "taxonomy_cell": {
+        "topic_pattern": "return_to_prior",
+        "query_intent": "backward_recall"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-05",
+        "INV-07"
+      ],
       "priority_tier": "P1",
       "tier_reason": "quality_invariant",
       "review_status": "authored"
@@ -244,10 +288,21 @@
           "container_ref": "chat:library-help",
           "visibility": "public"
         },
-        "invariant_assertions": ["INV-03", "INV-05", "INV-07"],
+        "invariant_assertions": [
+          "INV-03",
+          "INV-05",
+          "INV-07"
+        ],
         "soft_expectations": {
-          "must_include": ["elasticsearch", "catalog"],
-          "must_not_include": ["badge", "ocean", "summer reading program"]
+          "must_include": [
+            "elasticsearch",
+            "catalog"
+          ],
+          "must_not_include": [
+            "badge",
+            "ocean",
+            "summer reading program"
+          ]
         }
       }
     ]
@@ -256,8 +311,14 @@
     "scenario_id": "p1-greeting-suppression-001",
     "description": "A greeting followed by a domain query must not inject the greeting as evidence.",
     "_generation_metadata": {
-      "taxonomy_cell": {"topic_pattern": "single", "injection_outcome": "inject"},
-      "invariant_assertions": ["INV-06", "INV-07"],
+      "taxonomy_cell": {
+        "topic_pattern": "single",
+        "injection_outcome": "inject"
+      },
+      "invariant_assertions": [
+        "INV-06",
+        "INV-07"
+      ],
       "priority_tier": "P1",
       "tier_reason": "quality_invariant",
       "review_status": "authored"
@@ -312,9 +373,15 @@
           "container_ref": "chat:library-help",
           "visibility": "public"
         },
-        "invariant_assertions": ["INV-06", "INV-07"],
+        "invariant_assertions": [
+          "INV-06",
+          "INV-07"
+        ],
         "soft_expectations": {
-          "must_include": ["sms", "notification"]
+          "must_include": [
+            "sms",
+            "notification"
+          ]
         }
       }
     ]
@@ -323,8 +390,14 @@
     "scenario_id": "p1-cross-thread-recall-001",
     "description": "A decision made in thread 1 should be recallable from thread 2 within the same container.",
     "_generation_metadata": {
-      "taxonomy_cell": {"thread_relation": "cross_thread", "query_intent": "backward_recall"},
-      "invariant_assertions": ["INV-05", "INV-07"],
+      "taxonomy_cell": {
+        "thread_relation": "cross_thread",
+        "query_intent": "backward_recall"
+      },
+      "invariant_assertions": [
+        "INV-05",
+        "INV-07"
+      ],
       "priority_tier": "P1",
       "tier_reason": "quality_invariant",
       "review_status": "authored"
@@ -374,9 +447,15 @@
           "thread_ref": "chat:library-help:thread-xthread-2",
           "visibility": "public"
         },
-        "invariant_assertions": ["INV-05", "INV-07"],
+        "invariant_assertions": [
+          "INV-05",
+          "INV-07"
+        ],
         "soft_expectations": {
-          "must_include": ["event time", "reservation ordering"]
+          "must_include": [
+            "event time",
+            "reservation ordering"
+          ]
         }
       }
     ]
@@ -385,8 +464,14 @@
     "scenario_id": "p1-noise-no-injection-001",
     "description": "A low-value greeting-only query must not trigger memory injection.",
     "_generation_metadata": {
-      "taxonomy_cell": {"topic_pattern": "single", "injection_outcome": "suppress"},
-      "invariant_assertions": ["INV-08", "INV-07"],
+      "taxonomy_cell": {
+        "topic_pattern": "single",
+        "injection_outcome": "suppress"
+      },
+      "invariant_assertions": [
+        "INV-08",
+        "INV-07"
+      ],
       "priority_tier": "P1",
       "tier_reason": "quality_invariant",
       "review_status": "authored"
@@ -421,16 +506,25 @@
           "container_ref": "chat:library-help",
           "visibility": "public"
         },
-        "invariant_assertions": ["INV-08", "INV-07"]
+        "invariant_assertions": [
+          "INV-08",
+          "INV-07"
+        ]
       }
     ]
   },
   {
     "scenario_id": "p0-personal-memory-shared-container-001",
-    "description": "User expresses interest in a public channel — must create turn_summary, not interest. Interest is personal and suppressed in shared containers.",
+    "description": "User expresses interest in a public channel \u00e2\u20ac\u201d must create turn_summary, not interest. Interest is personal and suppressed in shared containers.",
     "_generation_metadata": {
-      "taxonomy_cell": {"visibility": "public", "memory_type_target": "interest"},
-      "invariant_assertions": ["INV-11", "INV-07"],
+      "taxonomy_cell": {
+        "visibility": "public",
+        "memory_type_target": "interest"
+      },
+      "invariant_assertions": [
+        "INV-11",
+        "INV-07"
+      ],
       "priority_tier": "P0",
       "tier_reason": "correctness_invariant",
       "review_status": "authored"
@@ -465,16 +559,25 @@
           "container_ref": "chat:library-help",
           "visibility": "public"
         },
-        "invariant_assertions": ["INV-11", "INV-07"]
+        "invariant_assertions": [
+          "INV-11",
+          "INV-07"
+        ]
       }
     ]
   },
   {
     "scenario_id": "p0-personal-memory-shared-container-002",
-    "description": "User states a constraint in a limited (team) channel — must not create constraint_memory. Falls through to turn_summary.",
+    "description": "User states a constraint in a limited (team) channel \u00e2\u20ac\u201d must not create constraint_memory. Falls through to turn_summary.",
     "_generation_metadata": {
-      "taxonomy_cell": {"visibility": "container", "memory_type_target": "constraint_memory"},
-      "invariant_assertions": ["INV-11", "INV-07"],
+      "taxonomy_cell": {
+        "visibility": "container",
+        "memory_type_target": "constraint_memory"
+      },
+      "invariant_assertions": [
+        "INV-11",
+        "INV-07"
+      ],
       "priority_tier": "P0",
       "tier_reason": "correctness_invariant",
       "review_status": "authored"
@@ -509,7 +612,10 @@
           "container_ref": "chat:catalog-team",
           "visibility": "container"
         },
-        "invariant_assertions": ["INV-11", "INV-07"]
+        "invariant_assertions": [
+          "INV-11",
+          "INV-07"
+        ]
       }
     ]
   },
@@ -517,8 +623,14 @@
     "scenario_id": "p0-cross-actor-leak-001",
     "description": "User A's personal interest memory in a private container must not appear when user B queries the same container.",
     "_generation_metadata": {
-      "taxonomy_cell": {"actor_count": "multi_user", "visibility": "private"},
-      "invariant_assertions": ["INV-12", "INV-07"],
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "visibility": "private"
+      },
+      "invariant_assertions": [
+        "INV-12",
+        "INV-07"
+      ],
       "priority_tier": "P0",
       "tier_reason": "correctness_invariant",
       "review_status": "authored"
@@ -554,7 +666,10 @@
           "visibility": "private",
           "actor_ref": "user:catalog-admin"
         },
-        "invariant_assertions": ["INV-12", "INV-07"]
+        "invariant_assertions": [
+          "INV-12",
+          "INV-07"
+        ]
       }
     ]
   },
@@ -562,8 +677,14 @@
     "scenario_id": "p0-cross-actor-leak-002",
     "description": "In a private container with two actors, querying as actor A must not return actor B's personal memories. Shared memories (actor_ref=null) are fine.",
     "_generation_metadata": {
-      "taxonomy_cell": {"actor_count": "multi_user", "container_relation": "same_container"},
-      "invariant_assertions": ["INV-12", "INV-07"],
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "container_relation": "same_container"
+      },
+      "invariant_assertions": [
+        "INV-12",
+        "INV-07"
+      ],
       "priority_tier": "P0",
       "tier_reason": "correctness_invariant",
       "review_status": "authored"
@@ -619,10 +740,19 @@
           "visibility": "private",
           "actor_ref": "user:branch-librarian"
         },
-        "invariant_assertions": ["INV-12", "INV-07"],
+        "invariant_assertions": [
+          "INV-12",
+          "INV-07"
+        ],
         "soft_expectations": {
-          "must_include": ["express checkout", "interlibrary loan"],
-          "must_not_include": ["overdue notice", "batch runner"]
+          "must_include": [
+            "express checkout",
+            "interlibrary loan"
+          ],
+          "must_not_include": [
+            "overdue notice",
+            "batch runner"
+          ]
         }
       }
     ]
@@ -631,8 +761,15 @@
     "scenario_id": "p0-off-topic-weather-query-001",
     "description": "Weather query must not inject library catalog memories. Reproduces manual chat-lite finding: 'how is the weather today?' injected vector DB thread_summaries.",
     "_generation_metadata": {
-      "taxonomy_cell": {"topic_pattern": "switch", "injection_outcome": "suppress"},
-      "invariant_assertions": ["INV-03", "INV-07", "INV-08"],
+      "taxonomy_cell": {
+        "topic_pattern": "switch",
+        "injection_outcome": "suppress"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-07",
+        "INV-08"
+      ],
       "priority_tier": "P0",
       "tier_reason": "confirmed_manual_regression",
       "review_status": "authored"
@@ -681,9 +818,17 @@
           "container_ref": "chat:library-help",
           "visibility": "public"
         },
-        "invariant_assertions": ["INV-03", "INV-07"],
+        "invariant_assertions": [
+          "INV-03",
+          "INV-07"
+        ],
         "soft_expectations": {
-          "must_not_include": ["reservation", "catalog", "ordering", "arrival"]
+          "must_not_include": [
+            "reservation",
+            "catalog",
+            "ordering",
+            "arrival"
+          ]
         }
       }
     ]
@@ -692,8 +837,14 @@
     "scenario_id": "p0-off-topic-zero-overlap-001",
     "description": "Query with zero topical overlap must not inject structured memory. Reproduces manual finding: 'let's talk about something new' injected thread_summaries and interests.",
     "_generation_metadata": {
-      "taxonomy_cell": {"topic_pattern": "switch", "injection_outcome": "suppress"},
-      "invariant_assertions": ["INV-03", "INV-07"],
+      "taxonomy_cell": {
+        "topic_pattern": "switch",
+        "injection_outcome": "suppress"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-07"
+      ],
       "priority_tier": "P0",
       "tier_reason": "confirmed_manual_regression",
       "review_status": "authored"
@@ -728,19 +879,34 @@
           "container_ref": "chat:library-help",
           "visibility": "public"
         },
-        "invariant_assertions": ["INV-03", "INV-07"],
+        "invariant_assertions": [
+          "INV-03",
+          "INV-07"
+        ],
         "soft_expectations": {
-          "must_not_include": ["catalog", "sync", "staging", "database", "maintenance"]
+          "must_not_include": [
+            "catalog",
+            "sync",
+            "staging",
+            "database",
+            "maintenance"
+          ]
         }
       }
     ]
   },
   {
     "scenario_id": "p0-off-topic-idiom-001",
-    "description": "Idiomatic use of a domain word must not trigger injection. 'Under the weather' is an idiom for feeling sick, not a weather query — but 'weather' as a rare corpus term scores high with IDF.",
+    "description": "Idiomatic use of a domain word must not trigger injection. 'Under the weather' is an idiom for feeling sick, not a weather query \u00e2\u20ac\u201d but 'weather' as a rare corpus term scores high with IDF.",
     "_generation_metadata": {
-      "taxonomy_cell": {"topic_pattern": "mixed", "injection_outcome": "suppress"},
-      "invariant_assertions": ["INV-03", "INV-07"],
+      "taxonomy_cell": {
+        "topic_pattern": "mixed",
+        "injection_outcome": "suppress"
+      },
+      "invariant_assertions": [
+        "INV-03",
+        "INV-07"
+      ],
       "priority_tier": "P1",
       "tier_reason": "confirmed_manual_regression",
       "review_status": "authored"
@@ -795,9 +961,17 @@
           "container_ref": "chat:library-help",
           "visibility": "public"
         },
-        "invariant_assertions": ["INV-03", "INV-07"],
+        "invariant_assertions": [
+          "INV-03",
+          "INV-07"
+        ],
         "soft_expectations": {
-          "must_not_include": ["overdue", "sms", "postal", "notice"]
+          "must_not_include": [
+            "overdue",
+            "sms",
+            "postal",
+            "notice"
+          ]
         }
       }
     ]
@@ -806,8 +980,14 @@
     "scenario_id": "p0-multi-user-shared-container-no-leak",
     "description": "In a public container, user A's interest-like statement must not create personal memory visible to user B.",
     "_generation_metadata": {
-      "taxonomy_cell": {"actor_count": "multi_user", "visibility": "public"},
-      "invariant_assertions": ["INV-11", "INV-12"],
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "visibility": "public"
+      },
+      "invariant_assertions": [
+        "INV-11",
+        "INV-12"
+      ],
       "priority_tier": "P0",
       "tier_reason": "correctness_invariant",
       "review_status": "authored"
@@ -843,7 +1023,10 @@
           "actor_ref": "user:catalog-admin",
           "visibility": "public"
         },
-        "invariant_assertions": ["INV-11", "INV-12"]
+        "invariant_assertions": [
+          "INV-11",
+          "INV-12"
+        ]
       }
     ]
   },
@@ -851,8 +1034,14 @@
     "scenario_id": "p0-multi-user-thread-summary-shared",
     "description": "Two users contribute to the same thread; the resulting thread summary must have actor_ref=null.",
     "_generation_metadata": {
-      "taxonomy_cell": {"actor_count": "multi_user", "visibility": "container"},
-      "invariant_assertions": ["INV-07", "INV-13"],
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "visibility": "container"
+      },
+      "invariant_assertions": [
+        "INV-07",
+        "INV-13"
+      ],
       "priority_tier": "P0",
       "tier_reason": "correctness_invariant",
       "review_status": "authored"
@@ -901,7 +1090,9 @@
           "container_ref": "chat:library-team",
           "visibility": "container"
         },
-        "invariant_assertions": ["INV-13"]
+        "invariant_assertions": [
+          "INV-13"
+        ]
       }
     ]
   },
@@ -909,8 +1100,13 @@
     "scenario_id": "p1-multi-user-cross-thread-recall",
     "description": "User A discusses in thread 1, user B in thread 2; user A queries from thread 3 and recalls memories from both threads.",
     "_generation_metadata": {
-      "taxonomy_cell": {"actor_count": "multi_user", "thread_relation": "cross_thread"},
-      "invariant_assertions": ["INV-07"],
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "thread_relation": "cross_thread"
+      },
+      "invariant_assertions": [
+        "INV-07"
+      ],
       "priority_tier": "P1",
       "tier_reason": "quality_invariant",
       "review_status": "authored"
@@ -981,7 +1177,10 @@
           "visibility": "container"
         },
         "soft_expectations": {
-          "must_include": ["reservation", "ordering"]
+          "must_include": [
+            "reservation",
+            "ordering"
+          ]
         }
       }
     ]
@@ -990,8 +1189,13 @@
     "scenario_id": "p1-multi-user-topic-isolation",
     "description": "User A and user B discuss different topics in the same container; querying about A's topic should not inject B's topic.",
     "_generation_metadata": {
-      "taxonomy_cell": {"actor_count": "multi_user", "topic_pattern": "switch"},
-      "invariant_assertions": ["INV-03"],
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "topic_pattern": "switch"
+      },
+      "invariant_assertions": [
+        "INV-03"
+      ],
       "priority_tier": "P1",
       "tier_reason": "quality_invariant",
       "review_status": "authored"
@@ -1047,9 +1251,16 @@
           "actor_ref": "user:branch-librarian",
           "visibility": "container"
         },
-        "invariant_assertions": ["INV-03"],
+        "invariant_assertions": [
+          "INV-03"
+        ],
         "soft_expectations": {
-          "must_not_include": ["overdue", "inbox", "spam", "notices"]
+          "must_not_include": [
+            "overdue",
+            "inbox",
+            "spam",
+            "notices"
+          ]
         }
       }
     ]
@@ -1058,8 +1269,13 @@
     "scenario_id": "p1-multi-user-shared-decision-visible-to-all",
     "description": "User A posts a decision in a public container; user B queries and sees the decision.",
     "_generation_metadata": {
-      "taxonomy_cell": {"actor_count": "multi_user", "visibility": "public"},
-      "invariant_assertions": ["INV-07"],
+      "taxonomy_cell": {
+        "actor_count": "multi_user",
+        "visibility": "public"
+      },
+      "invariant_assertions": [
+        "INV-07"
+      ],
       "priority_tier": "P1",
       "tier_reason": "quality_invariant",
       "review_status": "authored"
@@ -1096,7 +1312,11 @@
           "visibility": "public"
         },
         "soft_expectations": {
-          "must_include": ["reservation", "ordering", "event time"]
+          "must_include": [
+            "reservation",
+            "ordering",
+            "event time"
+          ]
         }
       }
     ]
@@ -1105,8 +1325,13 @@
     "scenario_id": "p1-hebrew-query-retrieves-english-memory",
     "description": "A Hebrew query should retrieve an English-language decision via cross-language vector retrieval.",
     "_generation_metadata": {
-      "taxonomy_cell": {"query_language": "hebrew", "memory_language": "english"},
-      "invariant_assertions": ["INV-02"],
+      "taxonomy_cell": {
+        "query_language": "hebrew",
+        "memory_language": "english"
+      },
+      "invariant_assertions": [
+        "INV-02"
+      ],
       "priority_tier": "P1",
       "tier_reason": "quality_invariant",
       "review_status": "authored"
@@ -1141,7 +1366,9 @@
           "container_ref": "chat:library-ops",
           "visibility": "private"
         },
-        "invariant_assertions": ["INV-02"]
+        "invariant_assertions": [
+          "INV-02"
+        ]
       }
     ]
   },
@@ -1149,8 +1376,15 @@
     "scenario_id": "p0-hebrew-content-not-leaked-cross-container",
     "description": "Hebrew-language memory in container A must not leak to container B, validating isolation for non-English content.",
     "_generation_metadata": {
-      "taxonomy_cell": {"container_relation": "different_container", "visibility": "container", "content_language": "hebrew"},
-      "invariant_assertions": ["INV-01", "INV-04"],
+      "taxonomy_cell": {
+        "container_relation": "different_container",
+        "visibility": "container",
+        "content_language": "hebrew"
+      },
+      "invariant_assertions": [
+        "INV-01",
+        "INV-04"
+      ],
       "priority_tier": "P0",
       "tier_reason": "correctness_invariant",
       "review_status": "authored"
@@ -1185,7 +1419,10 @@
           "container_ref": "chat:library-uptown",
           "visibility": "container"
         },
-        "invariant_assertions": ["INV-01", "INV-04"]
+        "invariant_assertions": [
+          "INV-01",
+          "INV-04"
+        ]
       }
     ]
   },
@@ -1193,8 +1430,13 @@
     "scenario_id": "p1-hebrew-noise-query-suppressed",
     "description": "Hebrew noise query (greeting) should not inject irrelevant memory",
     "_generation_metadata": {
-      "taxonomy_cell": {"query_language": "hebrew", "injection_outcome": "suppress"},
-      "invariant_assertions": ["INV-03"],
+      "taxonomy_cell": {
+        "query_language": "hebrew",
+        "injection_outcome": "suppress"
+      },
+      "invariant_assertions": [
+        "INV-03"
+      ],
       "priority_tier": "P1",
       "tier_reason": "quality_invariant",
       "review_status": "authored"
@@ -1229,9 +1471,16 @@
           "container_ref": "chat:library-ops",
           "visibility": "private"
         },
-        "invariant_assertions": ["INV-03"],
+        "invariant_assertions": [
+          "INV-03"
+        ],
         "soft_expectations": {
-          "must_not_include": ["catalog sync", "daily schedule", "02:00", "peak-hour"]
+          "must_not_include": [
+            "catalog sync",
+            "daily schedule",
+            "02:00",
+            "peak-hour"
+          ]
         }
       }
     ]
@@ -1240,8 +1489,13 @@
     "scenario_id": "p1-mixed-language-message-retrieval",
     "description": "Mixed Hebrew+English message (Hebrew with embedded English technical terms) should be retrievable",
     "_generation_metadata": {
-      "taxonomy_cell": {"content_language": "mixed_hebrew_english", "query_intent": "backward_recall"},
-      "invariant_assertions": ["INV-02"],
+      "taxonomy_cell": {
+        "content_language": "mixed_hebrew_english",
+        "query_intent": "backward_recall"
+      },
+      "invariant_assertions": [
+        "INV-02"
+      ],
       "priority_tier": "P1",
       "tier_reason": "quality_invariant",
       "review_status": "authored"
@@ -1290,7 +1544,9 @@
           "container_ref": "chat:library-ops",
           "visibility": "private"
         },
-        "invariant_assertions": ["INV-02"]
+        "invariant_assertions": [
+          "INV-02"
+        ]
       }
     ]
   },
@@ -1298,8 +1554,13 @@
     "scenario_id": "p1-chinese-query-retrieves-english-memory",
     "description": "Chinese query should retrieve English memory via cross-language vector retrieval",
     "_generation_metadata": {
-      "taxonomy_cell": {"query_language": "chinese", "memory_language": "english"},
-      "invariant_assertions": ["INV-02"],
+      "taxonomy_cell": {
+        "query_language": "chinese",
+        "memory_language": "english"
+      },
+      "invariant_assertions": [
+        "INV-02"
+      ],
       "priority_tier": "P1",
       "tier_reason": "quality_invariant",
       "review_status": "authored"
@@ -1334,7 +1595,9 @@
           "container_ref": "chat:library-ops",
           "visibility": "private"
         },
-        "invariant_assertions": ["INV-02"]
+        "invariant_assertions": [
+          "INV-02"
+        ]
       }
     ]
   },
@@ -1342,8 +1605,13 @@
     "scenario_id": "p1-chinese-content-chinese-query",
     "description": "Chinese content should be retrievable with Chinese query",
     "_generation_metadata": {
-      "taxonomy_cell": {"query_language": "chinese", "memory_language": "chinese"},
-      "invariant_assertions": ["INV-02"],
+      "taxonomy_cell": {
+        "query_language": "chinese",
+        "memory_language": "chinese"
+      },
+      "invariant_assertions": [
+        "INV-02"
+      ],
       "priority_tier": "P1",
       "tier_reason": "quality_invariant",
       "review_status": "authored"
@@ -1392,7 +1660,9 @@
           "container_ref": "chat:library-ops",
           "visibility": "private"
         },
-        "invariant_assertions": ["INV-02"]
+        "invariant_assertions": [
+          "INV-02"
+        ]
       }
     ]
   },
@@ -1400,8 +1670,13 @@
     "scenario_id": "source-expanded-flag-long-source-001",
     "description": "Investigation outcome seeded with a long source (1500 chars) must surface with source_expanded_available=true.",
     "_generation_metadata": {
-      "taxonomy_cell": {"memory_type_target": "investigation_outcome", "source_length": "long"},
-      "invariant_assertions": ["INV-01"],
+      "taxonomy_cell": {
+        "memory_type_target": "investigation_outcome",
+        "source_length": "long"
+      },
+      "invariant_assertions": [
+        "INV-01"
+      ],
       "priority_tier": "P1",
       "tier_reason": "quality_invariant",
       "review_status": "authored"
@@ -1422,7 +1697,8 @@
             "payload": {
               "investigation_outcome": "Catalog sync failures were traced to stale connection handles in the staging database pool.",
               "rationale": "Reproducing the failure consistently required exhausting the pool; adding idle timeout fixed it.",
-              "confidence": "high"
+              "confidence": "high",
+              "investigation_evidence_text": "Catalog sync failures were traced to stale connection handles in the staging database pool. Reproducing the failure consistently required exhausting the pool; adding idle timeout fixed it."
             },
             "index_text": "catalog sync failure stale connection handles staging database pool",
             "evidence": [
@@ -1460,7 +1736,9 @@
           "container_ref": "chat:library-ops",
           "visibility": "private"
         },
-        "invariant_assertions": ["INV-01"],
+        "invariant_assertions": [
+          "INV-01"
+        ],
         "quality_expectations": {
           "should_inject": true,
           "min_source_expanded_blocks": 1
@@ -1472,8 +1750,13 @@
     "scenario_id": "source-expanded-flag-short-source-001",
     "description": "Investigation outcome seeded with a short source (500 chars) must NOT have source_expanded_available=true.",
     "_generation_metadata": {
-      "taxonomy_cell": {"memory_type_target": "investigation_outcome", "source_length": "short"},
-      "invariant_assertions": ["INV-01"],
+      "taxonomy_cell": {
+        "memory_type_target": "investigation_outcome",
+        "source_length": "short"
+      },
+      "invariant_assertions": [
+        "INV-01"
+      ],
       "priority_tier": "P1",
       "tier_reason": "quality_invariant",
       "review_status": "authored"
@@ -1532,7 +1815,9 @@
           "container_ref": "chat:library-ops",
           "visibility": "private"
         },
-        "invariant_assertions": ["INV-01"],
+        "invariant_assertions": [
+          "INV-01"
+        ],
         "quality_expectations": {
           "should_inject": true,
           "min_source_expanded_blocks": 0,
@@ -1543,10 +1828,15 @@
   },
   {
     "scenario_id": "source-expanded-flag-excluded-type-001",
-    "description": "constraint_memory with a long source (2000 chars) must NOT have source_expanded_available=true — type is excluded from the flag whitelist.",
+    "description": "constraint_memory with a long source (2000 chars) must NOT have source_expanded_available=true \u00e2\u20ac\u201d type is excluded from the flag whitelist.",
     "_generation_metadata": {
-      "taxonomy_cell": {"memory_type_target": "constraint_memory", "source_length": "long"},
-      "invariant_assertions": ["INV-01"],
+      "taxonomy_cell": {
+        "memory_type_target": "constraint_memory",
+        "source_length": "long"
+      },
+      "invariant_assertions": [
+        "INV-01"
+      ],
       "priority_tier": "P1",
       "tier_reason": "quality_invariant",
       "review_status": "authored"
@@ -1566,7 +1856,7 @@
             "container_ref": "chat:library-ops",
             "actor_ref": "user:catalog-admin",
             "payload": {
-              "summary": "Catalog sync must never run during peak hours (09:00–17:00 local time).",
+              "summary": "Catalog sync must never run during peak hours (09:00\u00e2\u20ac\u201c17:00 local time).",
               "constraint_text": "No catalog sync during peak hours 09:00 to 17:00."
             },
             "index_text": "catalog sync peak hours constraint schedule",
@@ -1598,7 +1888,9 @@
           "actor_ref": "user:catalog-admin",
           "visibility": "private"
         },
-        "invariant_assertions": ["INV-01"],
+        "invariant_assertions": [
+          "INV-01"
+        ],
         "quality_expectations": {
           "min_source_expanded_blocks": 0
         }
