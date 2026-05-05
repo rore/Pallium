@@ -80,14 +80,9 @@ BASELINE_INCREMENTAL_INSTRUCTION = (
     "Do not quote from the prior summary.\n\n"
 )
 
-# Variant A: replace the checkpoint instruction section in the system prompt
-# to add a recency gate for current_state and blocker_state.
+# Variant A: recency gate for current_state and blocker_state.
+# This text is now the production baseline (shipped). Variant A is a no-op sanity check.
 _CHECKPOINT_SECTION_ORIGINAL = (
-    "For the task_checkpoint section: capture the task, the current state, key findings, "
-    "blocker or failed-attempt state when present, the next supported step when present, "
-    "and a concise freshness signal. "
-)
-_CHECKPOINT_SECTION_WITH_RECENCY = (
     "For the task_checkpoint section: capture the task, the current state, key findings, "
     "and a concise freshness signal. "
     "For current_state and blocker_state: base them on the MOST RECENT thread items — "
@@ -95,6 +90,7 @@ _CHECKPOINT_SECTION_WITH_RECENCY = (
     "if recent items show it was resolved, reflect the resolved state and omit the blocker. "
     "The next supported step, when present. "
 )
+_CHECKPOINT_SECTION_WITH_RECENCY = _CHECKPOINT_SECTION_ORIGINAL
 
 # Variant B: extend the incremental instruction to add a checkpoint-specific override
 VARIANT_B_INCREMENTAL_INSTRUCTION = (
