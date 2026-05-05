@@ -10,8 +10,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
 
+from storage.metrics import MetricsStore
 from storage.sqlite import SQLiteStorageProvider, _extract_display_text
-from storage.sqlite_schema import MemoryFeedbackRecord, MemoryFlagRecord, MemoryObjectRecord
+from storage.sqlite_schema import MemoryFeedbackRecord, MemoryFlagRecord, MemoryObjectRecord, MetricRecord
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +276,203 @@ def mount_dashboard(app: FastAPI) -> None:
             })
 
         return JSONResponse(content={"items": items})
+
+    def _get_metrics_store() -> MetricsStore | None:
+        service = app.state.pallium_service
+        storage = service._storage
+        if not isinstance(storage, SQLiteStorageProvider):
+            return None
+        return MetricsStore(storage._session_factory)
+
+    @app.get("/dashboard/api/metrics/query")
+    def dashboard_metrics_query(
+        category: str | None = Query(None),
+        event_type: str | None = Query(None),
+        container_ref: str | None = Query(None),
+        thread_ref: str | None = Query(None),
+        since: str | None = Query(None),
+        until: str | None = Query(None),
+        limit: int = Query(100, ge=1),
+    ) -> JSONResponse:
+        metrics_store = _get_metrics_store()
+        if metrics_store is None:
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+
+        limit = min(limit, 1000)
+
+        since_dt: datetime | None = None
+        until_dt: datetime | None = None
+        if since is not None:
+            try:
+                since_dt = datetime.fromisoformat(since)
+                if since_dt.tzinfo is None:
+                    since_dt = since_dt.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return JSONResponse(content={"error": "invalid 'since' datetime"}, status_code=422)
+        if until is not None:
+            try:
+                until_dt = datetime.fromisoformat(until)
+                if until_dt.tzinfo is None:
+                    until_dt = until_dt.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return JSONResponse(content={"error": "invalid 'until' datetime"}, status_code=422)
+
+        rows = metrics_store.query(
+            category=category,
+            event_type=event_type,
+            container_ref=container_ref,
+            thread_ref=thread_ref,
+            since=since_dt,
+            until=until_dt,
+            limit=limit,
+        )
+
+        metrics = []
+        for row in rows:
+            ts = row.timestamp
+            if ts is not None and ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            metrics.append({
+                "id": row.id,
+                "timestamp": ts.isoformat() if ts else None,
+                "category": row.category,
+                "event_type": row.event_type,
+                "container_ref": row.container_ref,
+                "thread_ref": row.thread_ref,
+                "actor_ref": row.actor_ref,
+                "value": row.value,
+                "payload": row.payload,
+            })
+
+        return JSONResponse(content={"metrics": metrics, "count": len(metrics)})
+
+    @app.get("/dashboard/api/metrics/aggregate")
+    def dashboard_metrics_aggregate(
+        category: str = Query(...),
+        event_type: str | None = Query(None),
+        container_ref: str | None = Query(None),
+        since: str | None = Query(None),
+        until: str | None = Query(None),
+        group_by: str | None = Query(None),
+    ) -> JSONResponse:
+        metrics_store = _get_metrics_store()
+        if metrics_store is None:
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+
+        resolved_group_by = group_by or "day"
+        if resolved_group_by not in ("hour", "day", "week"):
+            return JSONResponse(
+                content={"error": "group_by must be one of: hour, day, week"},
+                status_code=422,
+            )
+
+        since_dt: datetime | None = None
+        until_dt: datetime | None = None
+        if since is not None:
+            try:
+                since_dt = datetime.fromisoformat(since)
+                if since_dt.tzinfo is None:
+                    since_dt = since_dt.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return JSONResponse(content={"error": "invalid 'since' datetime"}, status_code=422)
+        if until is not None:
+            try:
+                until_dt = datetime.fromisoformat(until)
+                if until_dt.tzinfo is None:
+                    until_dt = until_dt.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return JSONResponse(content={"error": "invalid 'until' datetime"}, status_code=422)
+
+        buckets = metrics_store.aggregate(
+            category=category,
+            event_type=event_type,
+            container_ref=container_ref,
+            since=since_dt,
+            until=until_dt,
+            group_by=resolved_group_by,
+        )
+
+        return JSONResponse(content={
+            "buckets": [
+                {
+                    "bucket": b.bucket,
+                    "event_type": b.event_type,
+                    "count": b.count,
+                    "sum_value": b.sum_value,
+                    "avg_value": b.avg_value,
+                }
+                for b in buckets
+            ]
+        })
+
+    @app.get("/dashboard/api/metrics/query-activity")
+    def dashboard_metrics_query_activity(
+        days: int = Query(7, ge=1, le=365),
+    ) -> JSONResponse:
+        metrics_store = _get_metrics_store()
+        if metrics_store is None:
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+
+        since_dt = datetime.now(timezone.utc) - timedelta(days=days)
+
+        event_types = ("injection", "skip", "flag", "feedback")
+        buckets = metrics_store.aggregate(
+            category="query",
+            since=since_dt,
+            group_by="day",
+        )
+
+        totals: dict[str, int] = {et: 0 for et in event_types}
+        for b in buckets:
+            if b.event_type in totals:
+                totals[b.event_type] += b.count
+
+        return JSONResponse(content={
+            "buckets": [
+                {
+                    "bucket": b.bucket,
+                    "event_type": b.event_type,
+                    "count": b.count,
+                }
+                for b in buckets
+            ],
+            "totals": totals,
+        })
+
+    @app.get("/dashboard/api/metrics/work-trace")
+    def dashboard_metrics_work_trace(
+        limit: int = Query(20, ge=1),
+    ) -> JSONResponse:
+        service = app.state.pallium_service
+        storage = service._storage
+        if not isinstance(storage, SQLiteStorageProvider):
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+
+        with storage._session_factory() as session:
+            records = session.scalars(
+                select(MemoryObjectRecord)
+                .where(MemoryObjectRecord.type == "task_trace")
+                .order_by(MemoryObjectRecord.created_at.desc())
+                .limit(limit)
+            ).all()
+
+        sessions = []
+        for rec in records:
+            payload = json.loads(rec.payload_json) if rec.payload_json else {}
+            created_at = rec.created_at
+            if created_at and created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            sessions.append({
+                "thread_ref": rec.subject,
+                "timestamp": created_at.isoformat() if created_at else None,
+                "turn_count": payload.get("turn_count", 0),
+                "subject": payload.get("investigation_subject", ""),
+                "exploratory_file_count": len(payload.get("exploratory_files", [])),
+                "productive_file_count": len(payload.get("productive_files", [])),
+                "has_outcome": "outcome" in payload,
+            })
+
+        return JSONResponse(content={"sessions": sessions})
 
     @app.get("/dashboard/api/feedback/stats")
     def dashboard_feedback_stats() -> JSONResponse:
