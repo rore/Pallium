@@ -116,7 +116,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         logger.warning("MetricsStore could not be initialized; metrics persistence disabled", exc_info=True)
 
     query_stats = QueryStats(metrics_store=metrics_store)
-    build_result = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats)
+    build_result = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats, metrics_store=metrics_store)
     service = build_result.service
 
     @contextlib.asynccontextmanager

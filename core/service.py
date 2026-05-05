@@ -51,6 +51,7 @@ class PalliumService:
         type_registry: TypeRegistry | None = None,
         routing_overrides=None,
         query_stats: QueryStats | None = None,
+        metrics_store=None,
     ) -> None:
         self._storage = storage
         self._retrieval = retrieval
@@ -91,6 +92,7 @@ class PalliumService:
             supersede_fn=self.supersede_memory_object,
             get_item_processing_fn=self.get_item_processing,
             get_item_processing_summary_fn=self.get_item_processing_summary,
+            metrics_store=metrics_store,
         )
         self._consolidation_runner = ConsolidationRunner(
             storage=storage,
