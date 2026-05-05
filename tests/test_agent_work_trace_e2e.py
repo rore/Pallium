@@ -6,7 +6,7 @@ Validates:
 3. Supersession on new turns
 4. LLM failure graceful degradation
 5. Lexical retrieval of task_trace
-6. Edge cases: path normalization, caps, metric logging
+6. Edge cases: path normalization and caps
 7. Regressions: normal ingest, mixed items, parallel package coexistence
 """
 from __future__ import annotations
@@ -28,9 +28,6 @@ from semantic.agent_work_trace import (
     TASK_TRACE_SCHEMA_ID,
     normalize_path,
     _compute_subject,
-    _append_metric_event,
-    STATE_DIR,
-    METRICS_LOG_FILENAME,
     MAX_EXPLORATORY_FILES,
     MAX_PRODUCTIVE_FILES,
     MAX_COMMANDS_SUCCEEDED,
@@ -518,12 +515,12 @@ class TestFullPipeline:
 
 
 # ---------------------------------------------------------------------------
-# TestEdgeCases — path normalization, caps, metrics
+# TestEdgeCases — path normalization and caps
 # ---------------------------------------------------------------------------
 
 
 class TestEdgeCases:
-    """Edge case tests for path normalization, caps, and metric logging."""
+    """Edge case tests for path normalization and caps."""
 
     def test_windows_paths_normalized(self):
         """Windows backslash paths are normalized relative to cwd."""
@@ -584,40 +581,6 @@ class TestEdgeCases:
         payload = traces[0].payload
         assert len(payload["exploratory_files"]) == MAX_EXPLORATORY_FILES
 
-    def test_metric_log_appended(self, tmp_path, monkeypatch):
-        """Metric event is appended during thread rebuild."""
-        metrics_dir = tmp_path / "state"
-        monkeypatch.setattr(
-            "semantic.agent_work_trace.STATE_DIR", metrics_dir,
-        )
-
-        storage = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'test.db'}")
-        plugins = {
-            "demo_agent_memory": DemoAgentMemoryPlugin(),
-            "agent_work_trace": AgentWorkTracePlugin(provider=StubOutcomeProvider()),
-        }
-        svc = PalliumService(
-            storage=storage,
-            retrieval=LexicalRetrievalProvider(storage),
-            semantic_plugins=plugins,
-            default_use_case="demo_agent_memory",
-        )
-
-        _ingest_trace_items(svc, [
-            {"files_read": ["/home/user/project/src/main.py"], "commands": [], "grep_patterns": [], "has_productive_action": False},
-            {"files_read": ["/home/user/project/src/utils.py"], "commands": [], "grep_patterns": [], "has_productive_action": False},
-        ])
-        svc.drain_processing_queue(worker_id="e2e-test")
-
-        metrics_path = metrics_dir / METRICS_LOG_FILENAME
-        assert metrics_path.exists()
-        lines = metrics_path.read_text(encoding="utf-8").strip().splitlines()
-        assert len(lines) >= 1
-        event = json.loads(lines[0])
-        assert event["thread_ref"] == THREAD_REF
-        assert event["turn_count"] == 2
-        assert event["exploratory_file_count"] == 2
-        assert event["has_outcome"] is True
 
 
 # ---------------------------------------------------------------------------

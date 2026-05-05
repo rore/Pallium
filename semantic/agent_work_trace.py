@@ -6,7 +6,6 @@ import logging
 import posixpath
 from collections import Counter
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from capabilities.thread_aggregation import ThreadAggregate
@@ -29,9 +28,6 @@ MAX_PRODUCTIVE_FILES = 20
 MAX_COMMANDS_SUCCEEDED = 10
 MAX_COMMANDS_FAILED = 10
 MAX_FAILURE_FRAGMENTS = 5
-
-STATE_DIR = Path.home() / ".pallium" / "hooks" / "state"
-METRICS_LOG_FILENAME = "work_trace_metrics.jsonl"
 
 OUTCOME_SYSTEM_PROMPT = (
     "Given these agent responses from a coding session, produce a 1-2 sentence "
@@ -87,27 +83,6 @@ def _compute_subject(all_files: list[str]) -> str:
     if most_common[0][1] > most_common[1][1]:
         return most_common[0][0]
     return ", ".join(all_files[:2])
-
-
-def _append_metric_event(thread_ref: str | None, payload: dict) -> None:
-    """Append a measurement event to the append-only metrics log."""
-    try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        event = {
-            "timestamp": utc_now().isoformat(),
-            "thread_ref": thread_ref,
-            "turn_count": payload.get("turn_count", 0),
-            "exploratory_file_count": len(payload.get("exploratory_files", [])),
-            "productive_file_count": len(payload.get("productive_files", [])),
-            "commands_succeeded_count": len(payload.get("commands_succeeded", [])),
-            "commands_failed_count": len(payload.get("commands_failed", [])),
-            "has_outcome": "outcome" in payload,
-        }
-        metrics_path = STATE_DIR / METRICS_LOG_FILENAME
-        with open(metrics_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(event) + "\n")
-    except OSError:
-        pass
 
 
 class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
@@ -288,9 +263,6 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
             text_view=index_text,
             text_view_name=LEXICAL_TEXT_VIEW_NAME,
         )
-
-        # Append metric event
-        _append_metric_event(aggregate.thread_ref, payload)
 
         return ProcessResult(
             memory_objects=[memory_obj],
