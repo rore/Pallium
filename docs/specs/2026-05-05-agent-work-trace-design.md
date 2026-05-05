@@ -1,85 +1,102 @@
 # Agent Work Trace Package Design
 
 **Date:** 2026-05-05
-**Status:** Draft
+**Status:** Draft — revised after architect review and product review
 **Scope:** New parallel semantic package capturing agent discovery work for reuse across sessions
 
 ## Overview
 
 Agents doing engineering work repeatedly pay to discover the same things: which files matter, which commands work, where a bug lives. Pallium currently captures what the agent *said* (via `agent_conversation_memory`), but not what it *did* — which files it read, which commands it ran, what exploration path it took.
 
-`agent_work_trace` is a parallel semantic package that captures the structural trail of agent work per turn, aggregates it into a compact `task_trace` memory object per session, and injects it at session start so future sessions — whether a context reset mid-task, a resume next day, or a teammate picking up the same area — can skip the orientation phase and go directly to the relevant location.
+`agent_work_trace` is a parallel semantic package that captures the structural trail of agent work per turn, aggregates it into a compact `task_trace` memory object per session, and injects it on session resume so the agent can skip the orientation phase and go directly to the relevant location.
 
-**What it does not do:** duplicate findings extraction. `agent_conversation_memory` already extracts decisions and investigation outcomes from the agent's response text. `agent_work_trace` captures the file and command trail; the finding comes from the existing extraction.
+**What it does not do:** duplicate findings extraction. `agent_conversation_memory` already extracts decisions and investigation outcomes from the agent's response text. `agent_work_trace` captures the file and command trail; findings come from the existing extraction.
 
 ---
 
 ## Hypothesis and Measurement
 
-**Hypothesis:** injecting a compact task trace at session start reduces the number of exploratory file reads before the agent reaches the correct location.
+**Hypothesis:** injecting a compact task trace on session resume reduces orientation tool calls before first productive action.
 
-**Primary metric — re-discovery rate:** fraction of tool calls in a session that duplicate work already in an injected task trace. Specifically: `(Read calls for files in injected task_trace.files_explored) / (total Read calls in session)`.
+**Why not "re-discovery rate":** a file re-read after trace injection can mean the trace worked (agent went directly to the right file) or that it was irrelevant. Raw duplicate reads are not a clean signal.
 
-**Measurement mechanism:**
-- Each `task_trace` carries a structured `files_explored` list.
-- The SessionStart hook stores the injected file set in session state (temp file alongside the session).
-- The Stop hook (or a lightweight companion) compares each turn's tool calls against the stored set and logs matches to a local metrics file.
-- Over time: compare re-discovery rate for sessions where a task_trace was injected vs. sessions where none was available.
+**Primary metric — orientation cost before first productive action:**
+- Number of Read / Grep / Glob / Bash calls before the first Edit / Write / test command in a session
+- Token volume from discovery tool results before first productive action
+- Repeated broad commands (repo-wide grep, find, ls-tree, full test discovery)
+- Tool calls until the agent first touches a file present in the injected `task_trace.productive_files`
 
-**Validation threshold:** a meaningful reduction in re-discovery rate across 15+ comparable sessions justifies full productionisation. The experiment can be run within a single repo over a few weeks of normal usage.
+**Measurement mechanism (v1):**
+- The SessionStart hook writes the injected `task_trace` payload to `{STATE_DIR}/{session_id}.work_trace_state.json` when a trace is injected.
+- Measurement analysis is done offline: compare orientation call counts between sessions where a trace was injected vs. sessions where none was available.
+- The Stop-side per-turn accumulation loop is deferred — v1 relies on offline log analysis, not real-time metric computation.
+
+**Measurement events (append-only):** at each thread rebuild, a lightweight metric event is appended to a local append-only log (`{STATE_DIR}/work_trace_metrics.jsonl`). This is separate from the superseded `task_trace` memory object. Supersession must not destroy the experiment history.
+
+**Validation threshold:** measurable reduction in orientation call count across 15+ comparable sessions within the same repo over a few weeks of normal use.
 
 ---
 
-## SourceItem Extension
+## Data Capture: `agent_work_trace` Metadata
 
-Add a new first-class field to `SourceItem`:
+The Stop hook populates `metadata["agent_work_trace_turn"]` on the SourceItem it ingests. This keeps the generic `SourceItem` schema clean — no new first-class fields on the core contract.
 
-```python
-tool_use_results: list[ToolUseResult] | None = None
-```
-
-```python
-@dataclass(frozen=True)
-class ToolUseResult:
-    tool_name: str           # "Read", "Bash", "Grep", "Glob", "WebFetch"
-    tool_input: dict         # raw tool_input from Claude Code / Codex
-    output_fragment: str     # truncated output (see truncation rules below)
-```
-
-This field is populated by the Stop hook when discovery tool calls are present in the turn. It is `None` for turns with no discovery calls, for pure conversation turns, and for all items ingested outside agent hook context. All existing packages ignore it.
+`ToolUseResult` is an internal hook-side structure; it is not a public model type.
 
 **Truncation rules by tool type:**
 
-| Tool | `output_fragment` content | Limit |
-|------|--------------------------|-------|
-| `Read` | First 150 chars of file content | 150 chars |
-| `Bash` | Last 600 chars of stdout/stderr (where errors and summaries live) | 600 chars |
-| `Grep` | Full result | — (compact by nature) |
-| `Glob` | Full result | — (compact by nature) |
-| `WebFetch` | First 300 chars (title + opening) | 300 chars |
+| Tool | Captured | Limit |
+|------|----------|-------|
+| `Read` | `tool_input.file_path` only — no content | path string |
+| `Bash` | `tool_input.command` + exit code + last 600 chars of output + detected failure class | 600 chars output |
+| `Grep` | pattern + path + first 20 matches | 20 matches |
+| `Glob` | pattern + first 50 paths | 50 paths |
+| `WebFetch` | excluded in v1 | — |
 
-Tools excluded from capture: `Edit`, `Write`, `NotebookEdit`, `TodoWrite`, `Agent`, `Task*`. These represent work output, not discovery input.
+**Bash failure classification** (deterministic, keyword-based):
+- `"test_failure"` — output contains pytest/jest/mocha failure markers
+- `"build_error"` — output contains compiler error patterns
+- `"command_error"` — non-zero exit code, no specific pattern
+- `"success"` — zero exit code
+
+**Tools excluded:** `Edit`, `Write`, `NotebookEdit`, `TodoWrite`, `Agent`, `Task*`. These represent work output, not discovery. Their presence in a turn is tracked only as a boolean flag for the exploratory/productive split (see payload below).
+
+**Redaction (applied before any storage):** strip values matching these patterns from all captured fields:
+- Bearer tokens, API keys, private keys (`Bearer `, `sk-`, `-----BEGIN`)
+- Environment variable assignments containing `PASSWORD`, `SECRET`, `TOKEN`, `KEY`, `AUTH`
+- Connection strings (`mongodb://`, `postgres://`, `mysql://`)
+- `Authorization:` and `Cookie:` header values
 
 ---
 
 ## Stop Hook Extension
 
-Both `integrations/claude-code/hooks/stop.py` and `integrations/codex/hooks/stop.py` are extended via a shared function in `common.py`.
+Both `integrations/claude-code/hooks/stop.py` and `integrations/codex/hooks/stop.py` are extended via a shared implementation in each `common.py` (both are standalone stdlib-only files — no shared import path between integrations; both copies must be kept in sync).
 
-**New shared function: `extract_tool_use_results(transcript_path, session_id) -> list[ToolUseResult]`**
+**Single-pass transcript read:** `read_last_assistant_turn()` is extended into `read_turn()` which returns both the assistant response text and the tool call pairs from the same JSONL scan. This replaces the current single-purpose function; the Stop hook calls it once.
 
-Implemented once in `integrations/claude-code/hooks/common.py` and copied to `integrations/codex/hooks/common.py` (both are standalone stdlib-only files — no shared import path between integrations).
+**`read_turn(transcript_path) -> TurnData`** where `TurnData` contains:
+- `assistant_text: str` — the final response text (existing behavior)
+- `tool_calls: list[dict]` — tool_use/tool_result pairs since last user message, filtered and redacted
+- `has_productive_action: bool` — True if any Edit/Write call is present in this turn
 
-1. Read the transcript JSONL
-2. Locate the current turn boundary (all entries since the last user message)
-3. Extract `tool_use` / `tool_result` pairs within that boundary
-4. Filter to discovery tool types
-5. Apply per-tool truncation
-6. Return as `list[ToolUseResult]`
+Extraction is best-effort and never ingestion-blocking. Partial results, nested subagent calls, compacted history, and failed tool calls are silently dropped; the hook never raises on parse errors.
 
-The existing `read_last_assistant_turn()` already handles multi-format transcripts (Claude Code and Codex formats). `extract_tool_use_results()` follows the same format detection logic.
+The Stop hook then populates `metadata["agent_work_trace_turn"]` on the SourceItem:
 
-The Stop hook populates `tool_use_results` on the SourceItem before calling `POST /items`. If the function returns an empty list, `tool_use_results` is set to `None` and ingestion proceeds unchanged.
+```python
+{
+    "files_read": ["retrieval/lexical.py", "storage/sqlite_search.py"],
+    "commands": [
+        {"cmd": "python -m pytest tests/ -x -q", "exit_code": 1,
+         "output_tail": "...5 failed, 20 passed...", "failure_class": "test_failure"}
+    ],
+    "grep_patterns": ["IDF"],
+    "has_productive_action": False,   # no Edit/Write in this turn
+}
+```
+
+If `tool_calls` is empty after filtering, `metadata["agent_work_trace_turn"]` is not set and ingestion proceeds unchanged.
 
 ---
 
@@ -87,49 +104,34 @@ The Stop hook populates `tool_use_results` on the SourceItem before calling `POS
 
 ### Registration
 
-Parallel package (`parallel_processing = True`). Processes every ingested item but returns empty results for items without `tool_use_results`. Registered alongside `agent_conversation_memory` in `pallium.local.toml` and the service plugin registry.
+Parallel package (`parallel_processing = True`). Processes every ingested item but returns empty results for items without `metadata["agent_work_trace_turn"]`. Registered alongside `agent_conversation_memory` in `pallium.local.toml` and the service plugin registry.
 
 ### Item-Level Processing
 
-**Activation condition:** `source_item.tool_use_results` is non-empty.
+**Activation condition:** `source_item.metadata.get("agent_work_trace_turn")` is present.
 
-**Extraction (deterministic — no LLM):**
+**Extraction (fully deterministic — no LLM):**
 
 ```python
+turn = source_item.metadata["agent_work_trace_turn"]
 turn_summary = {
-    "files_explored": [
-        r.tool_input["file_path"]
-        for r in source_item.tool_use_results
-        if r.tool_name == "Read"
-    ],
-    "commands_run": [
-        r.tool_input.get("command", "")
-        for r in source_item.tool_use_results
-        if r.tool_name == "Bash"
-    ],
-    "search_patterns": [
-        r.tool_input.get("pattern", "")
-        for r in source_item.tool_use_results
-        if r.tool_name in ("Grep", "Glob")
-    ],
-    "bash_fragments": [
-        r.output_fragment
-        for r in source_item.tool_use_results
-        if r.tool_name == "Bash"
-    ],
+    "files_read":            turn["files_read"],
+    "commands":              turn["commands"],
+    "grep_patterns":         turn["grep_patterns"],
+    "has_productive_action": turn["has_productive_action"],
 }
 ```
 
 **Output:**
 - `memory_objects`: empty — no MemoryObject at item level
-- `source_item_metadata_updates`: stores `turn_summary` under key `"agent_work_trace_turn"`
+- `source_item_metadata_updates`: stores `turn_summary` under `"agent_work_trace_turn"` (already set by hook; this confirms it is retained)
 - `thread_rebuild_requested`: `True`
 
 ### Thread Rebuild
 
-**Input:** `ThreadAggregate` — all SourceItems for the thread, plus `memory_by_type` containing MemoryObjects already created by other packages for this thread.
+**Input:** `ThreadAggregate` — all SourceItems for the thread plus `memory_by_type` from other packages.
 
-**Step 1 — Collect turn summaries:**
+**Step 1 — Collect turn summaries (in thread order):**
 ```python
 turns = [
     item.metadata["agent_work_trace_turn"]
@@ -137,22 +139,39 @@ turns = [
     if "agent_work_trace_turn" in (item.metadata or {})
 ]
 ```
-If no turns found, skip rebuild (return empty ProcessResult).
+If no turns found, skip rebuild.
 
-**Step 2 — Deterministic aggregation:**
+**Step 2 — Exploratory vs. productive split:**
+
+Files read before the first turn with `has_productive_action=True` are `exploratory_files`. Files read in turns where or after `has_productive_action=True` are `productive_files`. This split is the core signal for the orientation-cost metric.
+
 ```python
-files_explored = list(dict.fromkeys([f for t in turns for f in t["files_explored"]]))  # order-preserving dedup
-commands_run   = list(dict.fromkeys([c for t in turns for c in t["commands_run"]]))
-bash_fragments = [f for t in turns for f in t["bash_fragments"] if f]
+first_productive_turn = next(
+    (i for i, t in enumerate(turns) if t["has_productive_action"]), None
+)
+exploratory_files = list(dict.fromkeys(
+    f for t in turns[:first_productive_turn] for f in t["files_read"]
+)) if first_productive_turn is not None else list(dict.fromkeys(
+    f for t in turns for f in t["files_read"]
+))
+productive_files = list(dict.fromkeys(
+    f for t in turns[first_productive_turn:] for f in t["files_read"]
+)) if first_productive_turn is not None else []
 ```
 
-**Step 3 — Collect related findings:**
-Cross-reference `aggregate.memory_by_type` for `investigation_outcome` and `decision` objects from `agent_conversation_memory`. Store their IDs as `related_finding_ids`. These are not re-extracted — they are referenced.
+**Step 3 — Aggregate commands:**
+```python
+commands_succeeded = [c for t in turns for c in t["commands"] if c["exit_code"] == 0]
+commands_failed    = [c for t in turns for c in t["commands"] if c["exit_code"] != 0]
+```
 
-**Step 4 — Generate investigation subject (LLM, one call):**
-Compact prompt: given `files_explored` and `commands_run`, produce a 3-7 word subject phrase describing what was being worked on. Uses the cheapest available model (Haiku / equivalent). Falls back to the most common directory prefix if LLM unavailable.
+**Step 4 — Deterministic subject (no LLM):**
+Most common directory prefix across all files read. Example: if 4 of 6 files are under `retrieval/`, the subject is `retrieval/`. If no clear prefix, use the top 2 file paths.
 
-**Step 5 — Produce `task_trace` MemoryObject:**
+**Step 5 — Collect related findings:**
+Reference `investigation_outcome` and `decision` MemoryObject IDs from `aggregate.memory_by_type`. Not re-extracted — referenced only.
+
+**Step 6 — Produce `task_trace` MemoryObject:**
 
 ```python
 MemoryObject(
@@ -165,50 +184,76 @@ MemoryObject(
     actor_ref=aggregate.actor_ref,
     freshness_at=utc_now(),
     payload={
-        "investigation_subject": "FTS retrieval performance",
-        "files_explored": ["retrieval/lexical.py", "storage/sqlite_search.py"],
-        "commands_run": ["python -m pytest tests/test_retrieval.py -x -q"],
-        "bash_output_fragments": ["...5 failed, 20 passed..."],
-        "turn_count": 3,
-        "related_finding_ids": ["abc123"],  # investigation_outcome IDs from same thread
+        "investigation_subject": "retrieval/",          # deterministic dir prefix
+        "repo_ref": aggregate.container_ref,
+        "branch_ref": metadata.get("branch_ref"),       # from hook env if available
+        "working_directory": metadata.get("cwd"),       # from hook payload
+        "exploratory_files": exploratory_files,
+        "productive_files": productive_files,
+        "commands_succeeded": [c["cmd"] for c in commands_succeeded],
+        "commands_failed":    [c["cmd"] for c in commands_failed],
+        "bash_failure_fragments": [
+            {"cmd": c["cmd"], "class": c["failure_class"], "tail": c["output_tail"]}
+            for c in commands_failed
+        ],
+        "first_productive_action_at_turn": first_productive_turn,
+        "turn_count": len(turns),
+        "related_finding_ids": [...],
     }
 )
 ```
 
-The prior `task_trace` for this thread (if any) is superseded.
+The prior `task_trace` for this thread is superseded. A metric event is appended to the append-only log (separate from supersession).
 
-The `task_trace` MemoryObject's indexed text (for BM25 retrieval) includes the `investigation_subject`, all entries in `files_explored`, and all entries in `commands_run` joined as a single string.
+**BM25 indexed text:** `investigation_subject` + all entries in `exploratory_files` + `productive_files` + `commands_succeeded` joined as a single string.
 
 ---
 
 ## Injection
 
-### SessionStart and PreCompact
+### Rules by session context
 
-The hooks query for the most recent `task_trace` for the current container — pure recency, no semantic matching. This handles session resumption and context reset recovery, which are the primary use cases.
+Recency-only injection for new unrelated sessions produces noise and erodes trust. Injection is scoped:
 
-The SessionStart hook already calls `POST /query`. A dedicated `task_trace` query is added alongside the existing orientation query, or filtered from the same result if the routing layer surfaces it.
+| Context | Rule |
+|---------|------|
+| Session resume (same `thread_ref`) | Inject most recent `task_trace` for this thread — pure recency |
+| PreCompact (Claude Code only) | Inject the current session's `task_trace` if one exists |
+| New session, no `thread_ref` match | Do not inject via recency; rely on UserPromptSubmit BM25 match |
+| UserPromptSubmit | Natural BM25 surfacing — no special handling |
 
-The injected `files_explored` set is written to `{tmpdir}/{session_id}.work_trace_state.json` for use by the measurement layer. The Stop hook reads this file to compare subsequent tool calls.
+**Session resume detection:** the SessionStart hook checks `source` field. `"resume"` or `"clear"` → inject. `"startup"` with no matching thread → skip trace injection.
 
-**Compact injection card:**
+### Injection card format
+
+Hard cap: 400 characters. Task trace is injected **after** conversation memory blocks in priority order — conversation memory is proven higher-value and must not be crowded out.
+
 ```
 [Task Trace — 2 days ago | ref:abc123]
-Working area: FTS retrieval performance
-Explored: retrieval/lexical.py, storage/sqlite_search.py, retrieval/composite.py
+Area: retrieval/
+Explored: lexical.py, sqlite_search.py, composite.py
 Commands: python -m pytest tests/test_retrieval.py
 [+expand]
 ```
 
-`[+expand]` returns the full payload including `bash_output_fragments` and the referenced `investigation_outcome` / `decision` objects by ID.
+`[+expand]` returns the full payload including `bash_failure_fragments` and referenced `investigation_outcome` / `decision` objects.
 
-### UserPromptSubmit
+### Session state file
 
-No special handling. Task traces participate in normal BM25 + vector retrieval. File paths and component names in `files_explored` are indexed and match naturally when the user prompt references the same area.
+When a `task_trace` is injected at SessionStart, the hook writes its payload to `{STATE_DIR}/{session_id}.work_trace_state.json`. Used for offline measurement analysis only — not read by the Stop hook in v1.
 
-### PreCompact (Claude Code only)
+---
 
-Codex has no PreCompact hook. The Claude Code PreCompact hook re-injects the most recent task_trace for the container alongside the existing checkpoint re-query.
+## Privacy and Redaction
+
+All `tool_input` fields and `output_fragment` / `output_tail` values are passed through the redaction filter before being stored in `metadata["agent_work_trace_turn"]`. The redaction runs in the hook, before any network call to Pallium. Redacted values are replaced with `[REDACTED]`. No post-hoc scrubbing.
+
+Redaction patterns (all case-insensitive):
+- `Bearer [^\s]+` → `Bearer [REDACTED]`
+- `(PASSWORD|SECRET|TOKEN|KEY|AUTH)\s*=\s*\S+` → `KEY=[REDACTED]`
+- `-----BEGIN [A-Z ]+ KEY-----.*?-----END` → `[REDACTED KEY BLOCK]`
+- `(mongodb|postgres|mysql|redis)://[^\s]+` → `SCHEME://[REDACTED]`
+- `(Authorization|Cookie):\s*.+` → `HEADER: [REDACTED]`
 
 ---
 
@@ -216,20 +261,22 @@ Codex has no PreCompact hook. The Claude Code PreCompact hook re-injects the mos
 
 | Integration | SessionStart | UserPromptSubmit | Stop (capture) | PreCompact |
 |-------------|-------------|-----------------|----------------|------------|
-| Claude Code | ✓ inject | ✓ BM25 natural | ✓ extended | ✓ inject |
-| Codex       | ✓ inject | ✓ BM25 natural | ✓ extended | — (no hook) |
+| Claude Code | ✓ scoped inject | ✓ BM25 natural | ✓ extended | ✓ current session |
+| Codex       | ✓ scoped inject | ✓ BM25 natural | ✓ extended | — (no hook) |
 
-Both integrations share `extract_tool_use_results()` from `common.py`. Transcript format differences are handled by the existing multi-format detection logic.
+Both integrations implement `read_turn()` in their own `common.py`. Both copies must be kept in sync; any change to the tool call extraction logic must be applied to both.
 
 ---
 
 ## Out of Scope
 
-- **Per-file content summaries**: not stored. Files are tracked by path, not content.
-- **Repo orientation as a separate type**: cross-task repo facts (build commands, test commands) emerge from accumulated task traces over time. No dedicated type in v1.
-- **Cross-session semantic matching**: recency injection is the primary path. BM25 natural surfacing on UserPromptSubmit handles topical matching incidentally.
-- **PostToolUse hook**: not needed. Stop hook with transcript parsing provides all the same data in the correct turn-bounded grouping.
-- **Graph construction**: no knowledge graph. Hybrid retrieval on `files_explored` text is sufficient.
+- **Read content fragments**: path only. No file content stored.
+- **WebFetch capture**: excluded until a clear coding-agent use case is established.
+- **LLM extraction at any stage**: fully deterministic. No model calls in this package.
+- **Repo orientation type**: emerges from accumulated task traces via future consolidation. Payload fields (`productive_files`, `exploratory_files`, `commands_succeeded`) are designed to feed that layer.
+- **PostToolUse hook**: not needed. Stop hook with single-pass transcript read provides turn-bounded data.
+- **Graph construction**: no knowledge graph.
+- **Stop-side real-time metric accumulation**: deferred. v1 uses offline log analysis.
 
 ---
 
@@ -237,14 +284,14 @@ Both integrations share `extract_tool_use_results()` from `common.py`. Transcrip
 
 | File | Change |
 |------|--------|
-| `core/models.py` | Add `ToolUseResult` dataclass and `tool_use_results` field to `SourceItem` |
-| `integrations/claude-code/hooks/common.py` | Add `extract_tool_use_results()` |
-| `integrations/claude-code/hooks/stop.py` | Call `extract_tool_use_results()`, populate `tool_use_results` |
-| `integrations/codex/hooks/common.py` | Add `extract_tool_use_results()` (shared or imported) |
-| `integrations/codex/hooks/stop.py` | Same as Claude Code stop |
-| `semantic/agent_work_trace.py` | New parallel package (item-level + thread rebuild) |
+| `integrations/claude-code/hooks/common.py` | Replace `read_last_assistant_turn()` with `read_turn()` returning text + tool calls; add redaction |
+| `integrations/claude-code/hooks/stop.py` | Use `read_turn()`, populate `metadata["agent_work_trace_turn"]` |
+| `integrations/codex/hooks/common.py` | Same as Claude Code common.py |
+| `integrations/codex/hooks/stop.py` | Same as Claude Code stop.py |
+| `semantic/agent_work_trace.py` | New parallel package (item-level + thread rebuild, fully deterministic) |
 | `pallium.local.toml` | Register `agent_work_trace` |
-| `api/schemas.py` | Expose `tool_use_results` in ingest schema |
-| `integrations/claude-code/hooks/session_start.py` | Add task_trace recency query + session state write |
+| `integrations/claude-code/hooks/session_start.py` | Scoped task_trace inject on resume; write state file |
 | `integrations/codex/hooks/session_start.py` | Same |
-| `integrations/claude-code/hooks/pre_compact.py` | Add task_trace re-injection |
+| `integrations/claude-code/hooks/pre_compact.py` | Inject current session task_trace |
+| `docs/context/state.md` | Add `task_trace` to memory type list |
+| `roadmap/board.md` | Add feature entry |
