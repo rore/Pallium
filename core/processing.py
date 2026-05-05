@@ -40,6 +40,8 @@ DEFAULT_PROCESSING_MAX_ATTEMPTS = 3
 DEFAULT_RETRY_BACKOFF_SECONDS = 5
 MAX_RETRY_BACKOFF_SECONDS = 5 * 60
 REBUILD_ITEM_COUNT_THRESHOLD = 10
+REBUILD_TIME_THRESHOLD_SECONDS = 30 * 60
+REBUILD_TIME_MIN_ITEMS = 3
 
 
 def _observability_state(source_item: SourceItem) -> dict[str, Any]:
@@ -297,7 +299,7 @@ class ItemProcessor:
                     source_item=source_item,
                 )
             if thread_rebuild_scope is None:
-                thread_rebuild_scope = self._should_force_rebuild_by_count(
+                thread_rebuild_scope = self._should_force_rebuild_by_threshold(
                     plugin_name=plugin_name,
                     plugin=plugin,
                     source_item=source_item,
@@ -419,7 +421,7 @@ class ItemProcessor:
         if memory_vectors_added or source_vector_added:
             self._vector_embedder.save_vector_index()
 
-    def _should_force_rebuild_by_count(
+    def _should_force_rebuild_by_threshold(
         self,
         *,
         plugin_name: str,
@@ -441,7 +443,12 @@ class ItemProcessor:
             thread_ref=source_item.thread_ref or "",
             after_created_at=lease.collection_watermark_at,
         )
-        return scope if count >= REBUILD_ITEM_COUNT_THRESHOLD else None
+        if count >= REBUILD_ITEM_COUNT_THRESHOLD:
+            return scope
+        elapsed = utc_now() - lease.collection_watermark_at
+        if elapsed >= timedelta(seconds=REBUILD_TIME_THRESHOLD_SECONDS) and count >= REBUILD_TIME_MIN_ITEMS:
+            return scope
+        return None
 
     @staticmethod
     def _queue_backoff_seconds(attempt_count: int) -> int:

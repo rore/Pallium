@@ -958,3 +958,259 @@ def test_count_threshold_triggers_rebuild_without_per_item_signal(monkeypatch, t
         f"Count-based threshold ({REBUILD_ITEM_COUNT_THRESHOLD} items) should trigger exactly one thread rebuild. "
         f"Got {len(count_rebuild_prompts)} rebuild prompts from {count_stub.call_count} total calls."
     )
+
+
+# ---------------------------------------------------------------------------
+# Test: Time-based threshold triggers rebuild
+# ---------------------------------------------------------------------------
+
+
+def test_time_threshold_triggers_rebuild_with_few_items(monkeypatch, test_db_url: str) -> None:
+    """When <10 items accumulate but 30+ minutes have passed since the watermark,
+    the time-based fallback forces a thread rebuild (as long as ≥3 items exist)."""
+    from core.processing import REBUILD_TIME_MIN_ITEMS, REBUILD_TIME_THRESHOLD_SECONDS
+
+    container_ref = "test:time-trigger"
+    thread_ref = "test:time-trigger:thread-1"
+
+    # Phase 1: Establish a watermark via initial rebuild
+    standard_stub = IncrementalTestStubProvider()
+    client, service, standard_stub = _create_client(monkeypatch, test_db_url, stub=standard_stub)
+
+    initial_messages = [
+        _make_message("time-init-1", "We decided to use event-time ordering for all reservation holds to prevent sync-delay losses across all concurrent processing workers in our distributed system architecture.", container_ref, thread_ref, role="assistant"),
+        _make_message("time-init-2", "This is a follow-up message that provides additional context about the event-time ordering decision and its implications for the distributed catalog synchronization pipeline.", container_ref, thread_ref),
+    ]
+    _post_and_drain(client, service, initial_messages)
+
+    initial_rebuild_prompts = [p for p in standard_stub.prompts if "thread items:" in p.lower()]
+    assert len(initial_rebuild_prompts) >= 1, "Initial rebuild should have triggered"
+
+    # Phase 2: Switch to count-threshold stub (per-item extraction won't trigger rebuild)
+    time_stub = _CountThresholdStub()
+    for plugin in service._semantic_plugins.values():
+        if hasattr(plugin, "_provider"):
+            plugin._provider = time_stub
+        if hasattr(plugin, "_delegate") and hasattr(plugin._delegate, "_provider"):
+            plugin._delegate._provider = time_stub
+
+    # Post exactly REBUILD_TIME_MIN_ITEMS items (below count threshold of 10)
+    few_messages = [
+        _make_message(f"time-few-{i}", f"Design discussion message number {i} with substantive content.", container_ref, thread_ref)
+        for i in range(REBUILD_TIME_MIN_ITEMS)
+    ]
+
+    # Advance clock past time threshold BEFORE posting
+    fake_now = datetime.now(timezone.utc) + timedelta(seconds=REBUILD_TIME_THRESHOLD_SECONDS + 60)
+    monkeypatch.setattr("core.processing.utc_now", lambda: fake_now)
+
+    _post_drain_each(client, service, few_messages)
+
+    rebuild_prompts = [p for p in time_stub.prompts if "thread items:" in p.lower()]
+    assert len(rebuild_prompts) == 1, (
+        f"Time-based threshold (≥{REBUILD_TIME_MIN_ITEMS} items, ≥{REBUILD_TIME_THRESHOLD_SECONDS}s) "
+        f"should trigger exactly one rebuild. Got {len(rebuild_prompts)}."
+    )
+
+
+def test_time_threshold_does_not_trigger_below_min_items(monkeypatch, test_db_url: str) -> None:
+    """When 30+ minutes have passed but fewer than REBUILD_TIME_MIN_ITEMS items
+    exist since the watermark, no time-based rebuild fires."""
+    from core.processing import REBUILD_TIME_MIN_ITEMS, REBUILD_TIME_THRESHOLD_SECONDS
+
+    container_ref = "test:time-nofire"
+    thread_ref = "test:time-nofire:thread-1"
+
+    # Phase 1: Establish watermark
+    standard_stub = IncrementalTestStubProvider()
+    client, service, standard_stub = _create_client(monkeypatch, test_db_url, stub=standard_stub)
+
+    initial_messages = [
+        _make_message("nofire-init-1", "We decided to use event-time ordering for all reservation holds to prevent sync-delay losses across all concurrent processing workers in our distributed system architecture.", container_ref, thread_ref, role="assistant"),
+        _make_message("nofire-init-2", "This is a follow-up message that provides additional context about the event-time ordering decision and its implications for the distributed catalog synchronization pipeline.", container_ref, thread_ref),
+    ]
+    _post_and_drain(client, service, initial_messages)
+
+    # Phase 2: Switch stub, advance clock, but post fewer than min items
+    time_stub = _CountThresholdStub()
+    for plugin in service._semantic_plugins.values():
+        if hasattr(plugin, "_provider"):
+            plugin._provider = time_stub
+        if hasattr(plugin, "_delegate") and hasattr(plugin._delegate, "_provider"):
+            plugin._delegate._provider = time_stub
+
+    # Post only 1 item (below REBUILD_TIME_MIN_ITEMS which is 3)
+    single_message = [
+        _make_message("nofire-single", "Just one message here.", container_ref, thread_ref),
+    ]
+
+    fake_now = datetime.now(timezone.utc) + timedelta(seconds=REBUILD_TIME_THRESHOLD_SECONDS + 60)
+    monkeypatch.setattr("core.processing.utc_now", lambda: fake_now)
+
+    _post_drain_each(client, service, single_message)
+
+    rebuild_prompts = [p for p in time_stub.prompts if "thread items:" in p.lower()]
+    assert len(rebuild_prompts) == 0, (
+        f"Should NOT trigger rebuild with only 1 item (need ≥{REBUILD_TIME_MIN_ITEMS}). "
+        f"Got {len(rebuild_prompts)} rebuild prompts."
+    )
+
+
+def test_time_threshold_does_not_trigger_at_boundary_minus_one(monkeypatch, test_db_url: str) -> None:
+    """When 30+ minutes have passed but exactly REBUILD_TIME_MIN_ITEMS - 1 items
+    exist since the watermark, no time-based rebuild fires (boundary test)."""
+    from core.processing import REBUILD_TIME_MIN_ITEMS, REBUILD_TIME_THRESHOLD_SECONDS
+
+    container_ref = "test:time-boundary"
+    thread_ref = "test:time-boundary:thread-1"
+
+    # Phase 1: Establish watermark
+    standard_stub = IncrementalTestStubProvider()
+    client, service, standard_stub = _create_client(monkeypatch, test_db_url, stub=standard_stub)
+
+    initial_messages = [
+        _make_message("bnd-init-1", "We decided to use event-time ordering for all reservation holds to prevent sync-delay losses across all concurrent processing workers in our distributed system architecture.", container_ref, thread_ref, role="assistant"),
+        _make_message("bnd-init-2", "This is a follow-up message that provides additional context about the event-time ordering decision and its implications for the distributed catalog synchronization pipeline.", container_ref, thread_ref),
+    ]
+    _post_and_drain(client, service, initial_messages)
+
+    # Phase 2: Switch stub, advance clock, post exactly min_items - 1
+    time_stub = _CountThresholdStub()
+    for plugin in service._semantic_plugins.values():
+        if hasattr(plugin, "_provider"):
+            plugin._provider = time_stub
+        if hasattr(plugin, "_delegate") and hasattr(plugin._delegate, "_provider"):
+            plugin._delegate._provider = time_stub
+
+    boundary_messages = [
+        _make_message(f"bnd-{i}", f"Boundary message {i} with some content.", container_ref, thread_ref)
+        for i in range(REBUILD_TIME_MIN_ITEMS - 1)
+    ]
+
+    fake_now = datetime.now(timezone.utc) + timedelta(seconds=REBUILD_TIME_THRESHOLD_SECONDS + 60)
+    monkeypatch.setattr("core.processing.utc_now", lambda: fake_now)
+
+    _post_drain_each(client, service, boundary_messages)
+
+    rebuild_prompts = [p for p in time_stub.prompts if "thread items:" in p.lower()]
+    assert len(rebuild_prompts) == 0, (
+        f"Should NOT trigger rebuild with {REBUILD_TIME_MIN_ITEMS - 1} items "
+        f"(need ≥{REBUILD_TIME_MIN_ITEMS}). Got {len(rebuild_prompts)} rebuild prompts."
+    )
+
+
+def test_time_threshold_does_not_trigger_before_time_elapsed(monkeypatch, test_db_url: str) -> None:
+    """When items exist since the watermark but less than 30 minutes have passed,
+    the time-based trigger does NOT fire (and count threshold doesn't either since <10 items)."""
+    from core.processing import REBUILD_TIME_MIN_ITEMS, REBUILD_TIME_THRESHOLD_SECONDS
+
+    container_ref = "test:time-early"
+    thread_ref = "test:time-early:thread-1"
+
+    # Phase 1: Establish watermark
+    standard_stub = IncrementalTestStubProvider()
+    client, service, standard_stub = _create_client(monkeypatch, test_db_url, stub=standard_stub)
+
+    initial_messages = [
+        _make_message("early-init-1", "We decided to use event-time ordering for all reservation holds to prevent sync-delay losses across all concurrent processing workers in our distributed system architecture.", container_ref, thread_ref, role="assistant"),
+        _make_message("early-init-2", "This is a follow-up message that provides additional context about the event-time ordering decision and its implications for the distributed catalog synchronization pipeline.", container_ref, thread_ref),
+    ]
+    _post_and_drain(client, service, initial_messages)
+
+    # Phase 2: Switch stub, do NOT advance clock past threshold
+    time_stub = _CountThresholdStub()
+    for plugin in service._semantic_plugins.values():
+        if hasattr(plugin, "_provider"):
+            plugin._provider = time_stub
+        if hasattr(plugin, "_delegate") and hasattr(plugin._delegate, "_provider"):
+            plugin._delegate._provider = time_stub
+
+    # Post enough items to satisfy min_items but NOT enough time elapsed
+    messages = [
+        _make_message(f"early-{i}", f"Design message {i} with enough content to be substantive.", container_ref, thread_ref)
+        for i in range(REBUILD_TIME_MIN_ITEMS + 1)
+    ]
+
+    # Only advance 5 minutes — well under threshold
+    fake_now = datetime.now(timezone.utc) + timedelta(seconds=300)
+    monkeypatch.setattr("core.processing.utc_now", lambda: fake_now)
+
+    _post_drain_each(client, service, messages)
+
+    rebuild_prompts = [p for p in time_stub.prompts if "thread items:" in p.lower()]
+    assert len(rebuild_prompts) == 0, (
+        f"Should NOT trigger rebuild when only 5 min elapsed (need ≥{REBUILD_TIME_THRESHOLD_SECONDS}s). "
+        f"Got {len(rebuild_prompts)} rebuild prompts."
+    )
+
+
+def test_count_threshold_still_fires_before_time_threshold(monkeypatch, test_db_url: str) -> None:
+    """The count threshold (≥10) still fires even when less than 30 minutes have elapsed,
+    verifying that both conditions are checked independently (OR logic)."""
+    from core.processing import REBUILD_ITEM_COUNT_THRESHOLD
+
+    container_ref = "test:count-still"
+    thread_ref = "test:count-still:thread-1"
+
+    # Phase 1: Establish watermark
+    standard_stub = IncrementalTestStubProvider()
+    client, service, standard_stub = _create_client(monkeypatch, test_db_url, stub=standard_stub)
+
+    initial_messages = [
+        _make_message("still-init-1", "We decided to use event-time ordering for all reservation holds to prevent sync-delay losses across all concurrent processing workers in our distributed system architecture.", container_ref, thread_ref, role="assistant"),
+        _make_message("still-init-2", "This is a follow-up message that provides additional context about the event-time ordering decision and its implications for the distributed catalog synchronization pipeline.", container_ref, thread_ref),
+    ]
+    _post_and_drain(client, service, initial_messages)
+
+    # Phase 2: Switch stub, do NOT advance clock
+    count_stub = _CountThresholdStub()
+    for plugin in service._semantic_plugins.values():
+        if hasattr(plugin, "_provider"):
+            plugin._provider = count_stub
+        if hasattr(plugin, "_delegate") and hasattr(plugin._delegate, "_provider"):
+            plugin._delegate._provider = count_stub
+
+    # Post exactly the count threshold number of items
+    messages = [
+        _make_message(f"still-{i}", f"Task complete. No message needed. Item number {i} processed.", container_ref, thread_ref)
+        for i in range(REBUILD_ITEM_COUNT_THRESHOLD)
+    ]
+
+    # Clock NOT advanced — stays at "now"
+    _post_drain_each(client, service, messages)
+
+    rebuild_prompts = [p for p in count_stub.prompts if "thread items:" in p.lower()]
+    assert len(rebuild_prompts) == 1, (
+        f"Count threshold should still fire within time window. "
+        f"Got {len(rebuild_prompts)} rebuild prompts."
+    )
+
+
+def test_no_rebuild_without_prior_watermark(monkeypatch, test_db_url: str) -> None:
+    """When a thread has no prior rebuild (no lease/watermark), neither count nor
+    time threshold fires — only per-item extraction can trigger the first rebuild."""
+    from core.processing import REBUILD_TIME_THRESHOLD_SECONDS
+
+    container_ref = "test:no-watermark"
+    thread_ref = "test:no-watermark:thread-1"
+
+    # Use a stub that never triggers per-item rebuild
+    no_trigger_stub = _CountThresholdStub()
+    client, service, _ = _create_client(monkeypatch, test_db_url, stub=no_trigger_stub)
+
+    # Advance clock far into the future
+    fake_now = datetime.now(timezone.utc) + timedelta(seconds=REBUILD_TIME_THRESHOLD_SECONDS * 10)
+    monkeypatch.setattr("core.processing.utc_now", lambda: fake_now)
+
+    # Post messages — no watermark exists so threshold checks return None
+    messages = [
+        _make_message(f"nowm-{i}", f"Message {i} in a thread with no prior rebuild.", container_ref, thread_ref)
+        for i in range(5)
+    ]
+    _post_drain_each(client, service, messages)
+
+    rebuild_prompts = [p for p in no_trigger_stub.prompts if "thread items:" in p.lower()]
+    assert len(rebuild_prompts) == 0, (
+        "No rebuild should fire without a prior watermark (no lease exists). "
+        f"Got {len(rebuild_prompts)} rebuild prompts."
+    )
