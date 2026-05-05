@@ -605,3 +605,64 @@ def test_work_resumption_stale_checkpoint_penalized_when_fresher_cross_thread_ch
     # Without freshness shaping, input order determines which checkpoint wins.
     assert len(result_ids) == 1
     assert result_ids[0] in {'checkpoint-stale-thread-006a', 'checkpoint-fresh-thread-006b'}
+
+
+def test_work_resumption_suppresses_cross_thread_checkpoint_when_local_context_sufficient() -> None:
+    """Cross-thread checkpoints are suppressed during work_resumption when
+    the session already has sufficient local context. This prevents stale
+    checkpoints from old sessions being injected as carry_forward noise."""
+    plugin = AgentConversationMemoryPlugin(
+        provider=TieredMemorySemanticProvider(),
+        prompt_variant='strict_typed_memory_v4_evidence_guarded',
+    )
+    query_filters = QueryFilters(
+        container_ref='chat:library-help',
+        thread_ref='chat:library-help:thread-current-session',
+    )
+    cross_thread_checkpoint = QueryResultItem(
+        result_kind='memory_hit',
+        memory_object_id='checkpoint-old-session-stale',
+        type='task_checkpoint',
+        payload={
+            'summary': 'Improving memory extraction quality by adjusting prompt thresholds.',
+            'task': 'Tune extraction prompts.',
+            'current_state': 'Running experiments on prompt variants.',
+            'next_step': 'Compare results and pick best variant.',
+        },
+        freshness_at=datetime(2026, 5, 3, 10, 0, tzinfo=timezone.utc),
+        score=14,
+        evidence=[
+            EvidenceReference(
+                source_item_id='src-old-session',
+                source_type='assistant_artifact',
+                source_id='artifact-old-session',
+                occurred_at=datetime(2026, 5, 3, 10, 0, tzinfo=timezone.utc),
+                container_ref='chat:library-help',
+                thread_ref='chat:library-help:thread-OLD-session',
+                artifact_kind='tool_use_summary',
+            )
+        ],
+    )
+    retrieval_result = RetrievalQueryResult(
+        results=[cross_thread_checkpoint],
+        trace=QueryTrace(
+            query_text='what should we do next with the extraction prompts?',
+            query_tokens=('extraction', 'prompts', 'next'),
+            limit=6,
+            filters=query_filters,
+            stages=(),
+        ),
+    )
+    outcome = plugin.route_query_results(
+        text='what should we do next with the extraction prompts?',
+        requested_limit=6,
+        retrieval_result=retrieval_result,
+        query_filters=query_filters,
+        runtime_context=QueryRuntimeContext(
+            turn_kind='same_thread_continuation',
+            session_has_sufficient_local_context=True,
+        ),
+        include_trace=True,
+    )
+    assert outcome.should_inject is False
+    assert not outcome.injectable_blocks

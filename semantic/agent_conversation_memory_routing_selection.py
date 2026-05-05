@@ -696,6 +696,20 @@ def _build_injectable_blocks(
             evidence_request=evidence_request,
         )
     ]
+    # Suppress cross-thread task_checkpoints during work_resumption in an
+    # established thread with sufficient local context. Checkpoints are
+    # ephemeral ("what I'm working on now") and stale when carried forward.
+    # Skip this suppression for new/resumed threads (no local context) where
+    # cross-thread checkpoints are the intended orientation answer.
+    _has_local_context = (
+        runtime_context is not None
+        and runtime_context.session_has_sufficient_local_context is True
+    )
+    if intent == "work_resumption" and query_filters and query_filters.thread_ref and _has_local_context:
+        primary_eligible_candidates = [
+            c for c in primary_eligible_candidates
+            if not (c["item"].type == "task_checkpoint" and not c.get("same_thread"))
+        ]
     if not primary_eligible_candidates:
         decision_reason = "only_low_value_candidates" if any(_candidate_is_low_value(candidate) for candidate in final_candidates) else "no_relevant_memory"
         if _INJECTION_VERBOSE:
@@ -1454,7 +1468,9 @@ def _candidate_is_injection_eligible(
         return _fact_summary_is_injection_eligible(candidate, intent=intent)
     if item.type == "atomic_fact":
         return False
-    if item.type in {"decision", "investigation_outcome", "task_checkpoint", "continuity_memory", "pattern_memory", "interest", "thread_summary", CONSTRAINT_MEMORY_TYPE}:
+    if item.type == "task_checkpoint":
+        return True
+    if item.type in {"decision", "investigation_outcome", "continuity_memory", "pattern_memory", "interest", "thread_summary", CONSTRAINT_MEMORY_TYPE}:
         return True
     return False
 
