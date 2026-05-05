@@ -23,7 +23,7 @@ THREAD_SUMMARY_PROMPT_SCHEMA_ID = "thread_summary_extraction"
 
 MAX_THREAD_WORK_REFS = 5
 
-THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v9"
+THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v10"
 
 THREAD_SUMMARY_SCHEMA_DESCRIPTION = json.dumps({"summary": "string", "content_quality": "string", "retrieval_context": "string or null", "decisions": [{"decision_text": "string (concise statement of what was decided)", "evidence": "string (exact quote)"}], "investigations": [{"investigation_text": "string (self-contained finding)", "evidence": "string (exact quote)"}]}, indent=2)
 
@@ -60,6 +60,9 @@ THREAD_SUMMARY_SYSTEM_PROMPT = (
     "Quantitative findings also count: when analysis produces specific numeric results with conclusions "
     "(precision rates, noise percentages, performance measurements), these are investigation outcomes "
     "even if no explicit 'investigation' was declared. "
+    "Not investigations: speculative or hedged findings ('could', 'might', 'possibly', 'likely', 'suggests', 'appears', 'I think', 'I suspect'), "
+    "diagnostic reasoning prose, or causal hypotheses ('X shares a cause with Y:', 'the reason is:', 'this is because:') — "
+    "only extract when the finding rests on concrete observed evidence (errors, test output, metrics, log lines, or explicit confirmation). "
     "Return an empty array if no investigations were resolved. "
     "Write all text fields in the same language as the thread items. Do not translate to English."
 )
@@ -260,7 +263,7 @@ TASK_CHECKPOINT_TEXT_VIEW = "memory_object.task_checkpoint_context"
 
 THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_ID = "thread_summary_with_checkpoint_extraction"
 
-THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v8"
+THREAD_SUMMARY_WITH_CHECKPOINT_PROMPT_SCHEMA_VERSION = "v9"
 
 THREAD_SUMMARY_WITH_CHECKPOINT_SCHEMA_DESCRIPTION = json.dumps(
     {
@@ -317,6 +320,9 @@ THREAD_SUMMARY_WITH_CHECKPOINT_SYSTEM_PROMPT = (
     "Quantitative findings also count: when analysis produces specific numeric results with conclusions "
     "(precision rates, noise percentages, performance measurements), these are investigation outcomes "
     "even if no explicit 'investigation' was declared. "
+    "Not investigations: speculative or hedged findings ('could', 'might', 'possibly', 'likely', 'suggests', 'appears', 'I think', 'I suspect'), "
+    "diagnostic reasoning prose, or causal hypotheses ('X shares a cause with Y:', 'the reason is:', 'this is because:') — "
+    "only extract when the finding rests on concrete observed evidence (errors, test output, metrics, log lines, or explicit confirmation). "
     "Return an empty array if no investigations were resolved. "
     "For the task_checkpoint section: capture the task, the current state, key findings, "
     "and a concise freshness signal. "
