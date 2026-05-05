@@ -624,7 +624,7 @@ class PalliumService:
                 "block_type": block.block_type,
                 "score": getattr(matched, 'score', 0.0) if matched else 0.0,
                 "retrieval_source": getattr(matched, 'retrieval_source', None) if matched else None,
-                "memory_object_id": getattr(matched, 'memory_object_id', None) if matched else None,
+                "memory_object_id": getattr(matched, 'memory_object_id', None) if matched else block.memory_object_id,
                 "title_preview": (block.title or "")[:120],
             })
 
