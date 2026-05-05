@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import posixpath
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -46,7 +47,6 @@ def normalize_path(p: str, cwd: str | None) -> str:
     Uses posixpath for consistent behavior across platforms since agent paths
     are always forward-slash POSIX paths or Windows paths that we normalize.
     """
-    import posixpath
 
     try:
         normalized = p.replace("\\", "/")
@@ -58,7 +58,7 @@ def normalize_path(p: str, cwd: str | None) -> str:
             if posixpath.isabs(normalized):
                 rel = posixpath.relpath(normalized, cwd_normalized)
                 return rel
-        cleaned = normalized.lstrip("./") if normalized.startswith("./") else normalized
+        cleaned = normalized.removeprefix("./") if normalized.startswith("./") else normalized
         return cleaned
     except (ValueError, TypeError):
         return p
