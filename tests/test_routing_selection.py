@@ -129,6 +129,40 @@ class TestTaskTraceCardRenderer:
         assert block.title == "Task Trace"
         assert block.text == ""
 
+    def test_modified_files_shown_in_card(self):
+        candidate = _make_task_trace_candidate({
+            "investigation_subject": "retrieval/",
+            "exploratory_files": ["retrieval/lexical.py"],
+            "files_modified": ["retrieval/lexical.py", "tests/test_retrieval.py"],
+            "commands_succeeded": [],
+            "commands_failed": [],
+        })
+        block = _build_raw_injectable_block(candidate, intent="recall")
+        assert "Modified: retrieval/lexical.py, tests/test_retrieval.py" in block.text
+
+    def test_modified_files_capped_at_three(self):
+        candidate = _make_task_trace_candidate({
+            "investigation_subject": "src/",
+            "exploratory_files": [],
+            "files_modified": [f"src/file{i}.py" for i in range(5)],
+            "commands_succeeded": [],
+            "commands_failed": [],
+        })
+        block = _build_raw_injectable_block(candidate, intent="recall")
+        assert "[+2 more]" in block.text
+        assert "file3" not in block.text
+
+    def test_no_modified_line_when_files_modified_empty(self):
+        candidate = _make_task_trace_candidate({
+            "investigation_subject": "src/",
+            "exploratory_files": ["src/a.py"],
+            "files_modified": [],
+            "commands_succeeded": [],
+            "commands_failed": [],
+        })
+        block = _build_raw_injectable_block(candidate, intent="recall")
+        assert "Modified:" not in block.text
+
 
 def _make_candidate(result_kind: str, score: int, layer: str = "atomic_fact") -> dict:
     """Helper to build a routing candidate dict for testing."""

@@ -995,6 +995,11 @@ def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) ->
             shown = exploratory_files[:5]
             suffix = f" [+{len(exploratory_files) - 5} more]" if len(exploratory_files) > 5 else ""
             card_parts.append(f"Explored: {', '.join(shown)}{suffix}")
+        files_modified_payload: list[str] = list(payload.get("files_modified") or [])
+        if files_modified_payload:
+            shown_mod = files_modified_payload[:3]
+            suffix_mod = f" [+{len(files_modified_payload) - 3} more]" if len(files_modified_payload) > 3 else ""
+            card_parts.append(f"Modified: {', '.join(shown_mod)}{suffix_mod}")
         if commands_succeeded:
             cmd = commands_succeeded[0]
             if len(cmd) > 60:
