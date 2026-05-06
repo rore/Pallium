@@ -585,44 +585,6 @@
     </div>
   </div>
 
-  <!-- ── Historical Query Activity ───────────── -->
-  <div class="section-title">Query Activity (7 days)</div>
-  <div class="card">
-    <table class="hist-table">
-      <thead>
-        <tr>
-          <th>Date</th>
-          <th style="text-align:right">Injections</th>
-          <th style="text-align:right">Skips</th>
-          <th style="text-align:right">Total</th>
-        </tr>
-      </thead>
-      <tbody id="hist-tbody">
-        <tr><td colspan="4" style="color:var(--muted)">Loading…</td></tr>
-      </tbody>
-      <tfoot id="hist-tfoot"></tfoot>
-    </table>
-  </div>
-
-  <!-- ── Work Trace Sessions ───────────────────── -->
-  <div class="section-title">Recent Work Trace Sessions</div>
-  <div class="card">
-    <table class="trace-table">
-      <thead>
-        <tr>
-          <th class="col-time">Time</th>
-          <th class="col-subject">Subject</th>
-          <th class="col-turns" style="text-align:right">Turns</th>
-          <th class="col-files" style="text-align:right">Files (Exp/Prod)</th>
-          <th class="col-outcome" style="text-align:center">Outcome</th>
-        </tr>
-      </thead>
-      <tbody id="trace-tbody">
-        <tr><td colspan="5" style="color:var(--muted)">Loading…</td></tr>
-      </tbody>
-    </table>
-  </div>
-
   <!-- ── Memory Browser ───────────────────────── -->
   <div class="section-title debug-toggle" onclick="toggleMemoryBrowser()">
     <span id="membrowser-arrow">&#9660;</span> Memory Browser
@@ -1492,88 +1454,6 @@ async function runQueryDebug() {
 }
 
 // ──────────────────────────────────────────────────
-// Historical Query Activity (7 days)
-// ──────────────────────────────────────────────────
-async function fetchQueryActivity() {
-  try {
-    const r = await fetch('/dashboard/api/metrics/query-activity?days=7');
-    if (!r.ok) return;
-    const data = await r.json();
-    renderQueryActivity(data);
-  } catch (e) { /* non-fatal */ }
-}
-
-function renderQueryActivity(data) {
-  const tbody = document.getElementById('hist-tbody');
-  const tfoot = document.getElementById('hist-tfoot');
-  const buckets = data.buckets || [];
-  const totals  = data.totals  || {};
-
-  if (buckets.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">No data</td></tr>';
-    tfoot.innerHTML = '';
-    return;
-  }
-
-  tbody.innerHTML = buckets.map(b => {
-    const total = (b.injection || 0) + (b.skip || 0);
-    return '<tr>' +
-      '<td>' + escapeHtml(b.date || '?') + '</td>' +
-      '<td class="num green">' + fmtNum(b.injection || 0) + '</td>' +
-      '<td class="num muted">' + fmtNum(b.skip || 0) + '</td>' +
-      '<td class="num">' + fmtNum(total) + '</td>' +
-    '</tr>';
-  }).join('');
-
-  const totalAll = (totals.injection || 0) + (totals.skip || 0);
-  tfoot.innerHTML = '<tr>' +
-    '<td>Totals</td>' +
-    '<td class="num">' + fmtNum(totals.injection || 0) + '</td>' +
-    '<td class="num">' + fmtNum(totals.skip || 0) + '</td>' +
-    '<td class="num">' + fmtNum(totalAll) + '</td>' +
-  '</tr>';
-}
-
-// ──────────────────────────────────────────────────
-// Work Trace Sessions
-// ──────────────────────────────────────────────────
-async function fetchWorkTrace() {
-  try {
-    const r = await fetch('/dashboard/api/metrics/work-trace?limit=20');
-    if (!r.ok) return;
-    const data = await r.json();
-    renderWorkTrace(data);
-  } catch (e) { /* non-fatal */ }
-}
-
-function renderWorkTrace(data) {
-  const tbody = document.getElementById('trace-tbody');
-  const sessions = data.sessions || [];
-
-  if (sessions.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">No data</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = sessions.map(s => {
-    const subject = s.subject ? (s.subject.length > 40 ? s.subject.slice(0, 39) + '…' : s.subject) : '—';
-    const files   = (s.exploratory_file_count || 0) + ' / ' + (s.productive_file_count || 0);
-    const outcome = s.has_outcome
-      ? '<span class="outcome-yes" title="Has outcome">&#10003;</span>'
-      : '<span class="outcome-no" title="No outcome">—</span>';
-    return '<tr>' +
-      '<td class="col-time" title="' + escapeHtml(s.timestamp || '') + '">' +
-        escapeHtml(timeAgo(s.timestamp)) + '</td>' +
-      '<td class="col-subject" title="' + escapeHtml(s.subject || '') + '">' +
-        escapeHtml(subject) + '</td>' +
-      '<td class="col-turns" style="text-align:right">' + fmtNum(s.turn_count || 0) + '</td>' +
-      '<td class="col-files" style="text-align:right">' + escapeHtml(files) + '</td>' +
-      '<td class="col-outcome" style="text-align:center">' + outcome + '</td>' +
-    '</tr>';
-  }).join('');
-}
-
-// ──────────────────────────────────────────────────
 // Refresh countdown
 // ──────────────────────────────────────────────────
 function startCountdown() {
@@ -1588,8 +1468,6 @@ function startCountdown() {
       fetchStatus();
       fetchQueueHealth();
       fetchFeedbackStats();
-      fetchQueryActivity();
-      fetchWorkTrace();
     }
   }, 1000);
 }
@@ -1601,8 +1479,6 @@ function startCountdown() {
   fetchStatus();
   fetchQueueHealth();
   fetchFeedbackStats();
-  fetchQueryActivity();
-  fetchWorkTrace();
   fetchContainers();
   fetchActors();
   fetchMemories();

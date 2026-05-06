@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 
 from storage.metrics import MetricsStore
 from storage.sqlite import SQLiteStorageProvider, _extract_display_text
-from storage.sqlite_schema import MemoryFeedbackRecord, MemoryFlagRecord, MemoryObjectRecord, MetricRecord
+from storage.sqlite_schema import MemoryFeedbackRecord, MemoryFlagRecord, MemoryObjectRecord
 
 logger = logging.getLogger(__name__)
 
@@ -400,75 +400,6 @@ def mount_dashboard(app: FastAPI) -> None:
                 for b in buckets
             ]
         })
-
-    @app.get("/dashboard/api/metrics/query-activity")
-    def dashboard_metrics_query_activity(
-        days: int = Query(7, ge=1, le=365),
-    ) -> JSONResponse:
-        metrics_store = _get_metrics_store()
-        if metrics_store is None:
-            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
-
-        since_dt = datetime.now(timezone.utc) - timedelta(days=days)
-
-        event_types = ("injection", "skip", "flag", "feedback")
-        buckets = metrics_store.aggregate(
-            category="query",
-            since=since_dt,
-            group_by="day",
-        )
-
-        totals: dict[str, int] = {et: 0 for et in event_types}
-        for b in buckets:
-            if b.event_type in totals:
-                totals[b.event_type] += b.count
-
-        return JSONResponse(content={
-            "buckets": [
-                {
-                    "bucket": b.bucket,
-                    "event_type": b.event_type,
-                    "count": b.count,
-                }
-                for b in buckets
-            ],
-            "totals": totals,
-        })
-
-    @app.get("/dashboard/api/metrics/work-trace")
-    def dashboard_metrics_work_trace(
-        limit: int = Query(20, ge=1),
-    ) -> JSONResponse:
-        service = app.state.pallium_service
-        storage = service._storage
-        if not isinstance(storage, SQLiteStorageProvider):
-            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
-
-        with storage._session_factory() as session:
-            records = session.scalars(
-                select(MemoryObjectRecord)
-                .where(MemoryObjectRecord.type == "task_trace")
-                .order_by(MemoryObjectRecord.created_at.desc())
-                .limit(limit)
-            ).all()
-
-        sessions = []
-        for rec in records:
-            payload = json.loads(rec.payload_json) if rec.payload_json else {}
-            created_at = rec.created_at
-            if created_at and created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=timezone.utc)
-            sessions.append({
-                "thread_ref": rec.subject,
-                "timestamp": created_at.isoformat() if created_at else None,
-                "turn_count": payload.get("turn_count", 0),
-                "subject": payload.get("investigation_subject", ""),
-                "exploratory_file_count": len(payload.get("exploratory_files", [])),
-                "productive_file_count": len(payload.get("productive_files", [])),
-                "has_outcome": "outcome" in payload,
-            })
-
-        return JSONResponse(content={"sessions": sessions})
 
     @app.get("/dashboard/api/feedback/stats")
     def dashboard_feedback_stats() -> JSONResponse:
