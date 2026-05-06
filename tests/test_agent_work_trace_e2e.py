@@ -353,12 +353,14 @@ class TestFullPipeline:
                 "commands": [],
                 "grep_patterns": ["def query"],
                 "has_productive_action": False,
+                "files_modified": [],
             },
             {
                 "files_read": ["/home/user/project/src/retrieval.py"],
                 "commands": [{"cmd": "python -m pytest", "exit_code": 0, "output_tail": "5 passed", "failure_class": "success"}],
                 "grep_patterns": [],
                 "has_productive_action": True,
+                "files_modified": ["/home/user/project/src/retrieval.py"],
             },
         ])
 
@@ -404,8 +406,8 @@ class TestFullPipeline:
 
         # First batch (need >= 2 items for thread rebuild to trigger)
         _ingest_trace_items(service, [
-            {"files_read": ["/home/user/project/src/a.py"], "commands": [], "grep_patterns": [], "has_productive_action": False},
-            {"files_read": ["/home/user/project/src/a2.py"], "commands": [], "grep_patterns": [], "has_productive_action": False},
+            {"files_read": ["/home/user/project/src/a.py"], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
+            {"files_read": ["/home/user/project/src/a2.py"], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
         ])
         service.drain_processing_queue(worker_id="e2e-test")
 
@@ -421,7 +423,7 @@ class TestFullPipeline:
 
         # Second batch in same thread — adds a 3rd turn
         _ingest_trace_items(service, [
-            {"files_read": ["/home/user/project/src/b.py"], "commands": [], "grep_patterns": [], "has_productive_action": True},
+            {"files_read": ["/home/user/project/src/b.py"], "commands": [], "grep_patterns": [], "has_productive_action": True, "files_modified": ["/home/user/project/src/b.py"]},
         ])
         service.drain_processing_queue(worker_id="e2e-test")
 
@@ -445,12 +447,14 @@ class TestFullPipeline:
                 "commands": [{"cmd": "make build", "exit_code": 1, "output_tail": "Error: missing dep", "failure_class": "build_error"}],
                 "grep_patterns": [],
                 "has_productive_action": False,
+                "files_modified": [],
             },
             {
                 "files_read": ["/home/user/project/src/config.py"],
                 "commands": [],
                 "grep_patterns": [],
                 "has_productive_action": False,
+                "files_modified": [],
             },
         ])
 
@@ -479,12 +483,14 @@ class TestFullPipeline:
                 "commands": [],
                 "grep_patterns": [],
                 "has_productive_action": False,
+                "files_modified": [],
             },
             {
                 "files_read": ["/home/user/project/retrieval/vector.py"],
                 "commands": [],
                 "grep_patterns": [],
                 "has_productive_action": True,
+                "files_modified": ["/home/user/project/retrieval/vector.py"],
             },
         ])
         service.drain_processing_queue(worker_id="e2e-test")
@@ -571,8 +577,8 @@ class TestEdgeCases:
 
         many_files = [f"/home/user/project/src/file_{i}.py" for i in range(100)]
         _ingest_trace_items(svc, [
-            {"files_read": many_files[:50], "commands": [], "grep_patterns": [], "has_productive_action": False},
-            {"files_read": many_files[50:], "commands": [], "grep_patterns": [], "has_productive_action": False},
+            {"files_read": many_files[:50], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
+            {"files_read": many_files[50:], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
         ])
         svc.drain_processing_queue(worker_id="e2e-test")
 
@@ -627,12 +633,14 @@ class TestRegressions:
                 "commands": [{"cmd": "python -m pytest", "exit_code": 0, "output_tail": "3 passed", "failure_class": "success"}],
                 "grep_patterns": [],
                 "has_productive_action": False,
+                "files_modified": [],
             },
             {
                 "files_read": ["/home/user/project/src/service.py"],
                 "commands": [],
                 "grep_patterns": [],
                 "has_productive_action": True,
+                "files_modified": ["/home/user/project/src/service.py"],
             },
         ])
 
@@ -654,12 +662,14 @@ class TestRegressions:
                 "commands": [],
                 "grep_patterns": [],
                 "has_productive_action": False,
+                "files_modified": [],
             },
             {
                 "files_read": ["/home/user/project/src/utils.py"],
                 "commands": [],
                 "grep_patterns": [],
                 "has_productive_action": True,
+                "files_modified": ["/home/user/project/src/utils.py"],
             },
         ])
 
