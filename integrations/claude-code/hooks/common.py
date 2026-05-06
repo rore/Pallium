@@ -14,7 +14,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -330,6 +330,7 @@ class TurnData:
     assistant_text: str
     tool_calls: list[dict]
     has_productive_action: bool
+    files_modified: list[str] = field(default_factory=list)
 
 
 DISCOVERY_TOOLS = frozenset({"Read", "Bash", "Grep", "Glob"})
@@ -463,6 +464,7 @@ def read_turn(transcript_path: str) -> TurnData | None:
     text_parts: list[str] = []
     tool_calls: list[dict] = []
     has_productive = False
+    files_modified: list[str] = []
 
     if isinstance(last_assistant_content, str):
         text_parts.append(last_assistant_content)
@@ -481,6 +483,15 @@ def read_turn(transcript_path: str) -> TurnData | None:
                 tool_uses[tool_id] = {"name": tool_name, "input": tool_input}
                 if tool_name in PRODUCTIVE_TOOLS:
                     has_productive = True
+                    fp: str | None = None
+                    if tool_name in ("Edit", "Write"):
+                        fp = tool_input.get("file_path", "")
+                    elif tool_name == "NotebookEdit":
+                        fp = tool_input.get("notebook_path", "")
+                    if fp:
+                        fp = redact_sensitive(fp)
+                        if fp not in files_modified:
+                            files_modified.append(fp)
             elif block_type == "tool_result":
                 tool_use_id = block.get("tool_use_id", "")
                 tool_output_raw = block.get("content", "") or block.get("text", "")
@@ -505,6 +516,7 @@ def read_turn(transcript_path: str) -> TurnData | None:
         assistant_text=assistant_text if assistant_text.strip() else "",
         tool_calls=tool_calls,
         has_productive_action=has_productive,
+        files_modified=files_modified,
     )
 
 
@@ -535,12 +547,15 @@ def build_work_trace_metadata(turn_data: TurnData) -> dict | None:
             if pattern and pattern not in grep_patterns:
                 grep_patterns.append(pattern)
 
-    if not files_read and not commands and not grep_patterns:
+    if not files_read and not commands and not grep_patterns and not turn_data.files_modified:
         return None
 
-    return {
+    result: dict = {
         "files_read": files_read,
         "commands": commands,
         "grep_patterns": grep_patterns,
         "has_productive_action": turn_data.has_productive_action,
     }
+    if turn_data.files_modified:
+        result["files_modified"] = turn_data.files_modified
+    return result
