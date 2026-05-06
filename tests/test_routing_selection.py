@@ -4,9 +4,130 @@ import pytest
 
 from semantic.agent_conversation_memory_routing_selection import (
     _select_compatible_recall_candidates,
+    _build_raw_injectable_block,
     MIN_SOURCE_HIT_SLOTS,
 )
 from core.models import QueryResultItem
+
+
+def _make_task_trace_candidate(payload: dict) -> dict:
+    item = QueryResultItem(
+        result_kind="memory_hit",
+        result_id="trace-1",
+        memory_object_id="mo-trace-1",
+        type="task_trace",
+        payload=payload,
+        score=100,
+        evidence=[],
+    )
+    return {"item": item, "layer": "task_trace", "retrieval_score": 100, "routing_score": 100}
+
+
+class TestTaskTraceCardRenderer:
+    def test_area_and_outcome_in_first_line(self):
+        candidate = _make_task_trace_candidate({
+            "investigation_subject": "retrieval/",
+            "outcome": "Fixed IDF weights.",
+            "exploratory_files": [],
+            "commands_succeeded": [],
+            "commands_failed": [],
+        })
+        block = _build_raw_injectable_block(candidate, intent="recall")
+        assert block.title == "Task Trace"
+        assert block.text.startswith("Area: retrieval/ — Fixed IDF weights.")
+
+    def test_area_without_outcome(self):
+        candidate = _make_task_trace_candidate({
+            "investigation_subject": "semantic/",
+            "exploratory_files": [],
+            "commands_succeeded": [],
+            "commands_failed": [],
+        })
+        block = _build_raw_injectable_block(candidate, intent="recall")
+        assert "Area: semantic/" in block.text
+        assert " — " not in block.text
+
+    def test_explored_files_shown(self):
+        candidate = _make_task_trace_candidate({
+            "investigation_subject": "core/",
+            "exploratory_files": ["core/service.py", "core/models.py"],
+            "commands_succeeded": [],
+            "commands_failed": [],
+        })
+        block = _build_raw_injectable_block(candidate, intent="recall")
+        assert "Explored: core/service.py, core/models.py" in block.text
+
+    def test_explored_files_capped_at_five(self):
+        files = [f"src/file{i}.py" for i in range(8)]
+        candidate = _make_task_trace_candidate({
+            "investigation_subject": "src/",
+            "exploratory_files": files,
+            "commands_succeeded": [],
+            "commands_failed": [],
+        })
+        block = _build_raw_injectable_block(candidate, intent="recall")
+        assert "[+3 more]" in block.text
+        assert "file5" not in block.text
+
+    def test_verified_with_succeeded_command(self):
+        candidate = _make_task_trace_candidate({
+            "investigation_subject": "tests/",
+            "exploratory_files": [],
+            "commands_succeeded": ["python -m pytest tests/ -x -q"],
+            "commands_failed": [],
+        })
+        block = _build_raw_injectable_block(candidate, intent="recall")
+        assert "Verified with: python -m pytest tests/ -x -q" in block.text
+
+    def test_long_command_truncated(self):
+        long_cmd = "python -m pytest tests/integration/test_very_long_path_name.py -v -x --tb=short"
+        candidate = _make_task_trace_candidate({
+            "investigation_subject": "tests/",
+            "exploratory_files": [],
+            "commands_succeeded": [long_cmd],
+            "commands_failed": [],
+        })
+        block = _build_raw_injectable_block(candidate, intent="recall")
+        assert "Verified with: " in block.text
+        verified_line = [l for l in block.text.splitlines() if l.startswith("Verified with:")][0]
+        assert len(verified_line) <= len("Verified with: ") + 60
+
+    def test_had_failures_shown_when_commands_failed(self):
+        candidate = _make_task_trace_candidate({
+            "investigation_subject": "core/",
+            "exploratory_files": [],
+            "commands_succeeded": [],
+            "commands_failed": ["python -m pytest tests/ -x -q"],
+        })
+        block = _build_raw_injectable_block(candidate, intent="recall")
+        assert "Had failures" in block.text
+
+    def test_had_failures_not_shown_when_no_failures(self):
+        candidate = _make_task_trace_candidate({
+            "investigation_subject": "core/",
+            "exploratory_files": [],
+            "commands_succeeded": ["python -m pytest tests/ -x -q"],
+            "commands_failed": [],
+        })
+        block = _build_raw_injectable_block(candidate, intent="recall")
+        assert "Had failures" not in block.text
+
+    def test_memory_type_is_task_trace(self):
+        candidate = _make_task_trace_candidate({
+            "investigation_subject": "core/",
+            "exploratory_files": [],
+            "commands_succeeded": [],
+            "commands_failed": [],
+        })
+        block = _build_raw_injectable_block(candidate, intent="recall")
+        assert block.memory_type == "task_trace"
+        assert block.block_type == "memory"
+
+    def test_empty_payload_produces_empty_text(self):
+        candidate = _make_task_trace_candidate({})
+        block = _build_raw_injectable_block(candidate, intent="recall")
+        assert block.title == "Task Trace"
+        assert block.text == ""
 
 
 def _make_candidate(result_kind: str, score: int, layer: str = "atomic_fact") -> dict:

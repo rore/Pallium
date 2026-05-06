@@ -817,6 +817,8 @@ def _expand_available(item: QueryResultItem) -> bool:
         return len(conclusions) > 1
     if item.type == CONSTRAINT_MEMORY_TYPE:
         return bool(str(payload.get("evidence_context") or "").strip())
+    if item.type == "task_trace":
+        return True
     return False
 
 
@@ -974,6 +976,37 @@ def _build_raw_injectable_block(candidate: dict[str, object], *, intent: str) ->
             block_type="memory",
             title="Thread Summary",
             text=_join_unique_text_parts(parts),
+            evidence=item.evidence,
+            memory_type=item.type,
+            memory_object_id=mo_id,
+        )
+    if item.type == "task_trace":
+        subject = str(payload.get("investigation_subject") or "").strip()
+        outcome = str(payload.get("outcome") or "").strip()
+        exploratory_files: list[str] = list(payload.get("exploratory_files") or [])
+        commands_succeeded: list[str] = list(payload.get("commands_succeeded") or [])
+        commands_failed: list[str] = list(payload.get("commands_failed") or [])
+        card_parts: list[str] = []
+        if subject and outcome:
+            card_parts.append(f"Area: {subject} — {outcome}")
+        elif subject:
+            card_parts.append(f"Area: {subject}")
+        if exploratory_files:
+            shown = exploratory_files[:5]
+            suffix = f" [+{len(exploratory_files) - 5} more]" if len(exploratory_files) > 5 else ""
+            card_parts.append(f"Explored: {', '.join(shown)}{suffix}")
+        if commands_succeeded:
+            cmd = commands_succeeded[0]
+            if len(cmd) > 60:
+                cmd = cmd[:57] + "..."
+            card_parts.append(f"Verified with: {cmd}")
+        if commands_failed:
+            card_parts.append("Had failures")
+        return InjectableBlock(
+            result_id=str(item.result_id),
+            block_type="memory",
+            title="Task Trace",
+            text="\n".join(card_parts),
             evidence=item.evidence,
             memory_type=item.type,
             memory_object_id=mo_id,
