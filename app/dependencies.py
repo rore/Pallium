@@ -290,6 +290,7 @@ def build_service(
     *,
     enable_vector: bool = True,
     query_stats: QueryStats | None = None,
+    metrics_store=None,
 ) -> BuildResult:
     resolved_config = config or AppConfig.from_env()
     storage = build_storage_provider(resolved_config)
@@ -408,6 +409,8 @@ def build_service(
         type_registry=type_registry if len(type_registry) > 0 else None,
         routing_overrides=routing_overrides,
         query_stats=query_stats,
+        metrics_store=metrics_store,
+        metrics_retention_days=resolved_config.observability.metrics_retention_days,
     )
 
     return BuildResult(

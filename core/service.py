@@ -51,6 +51,8 @@ class PalliumService:
         type_registry: TypeRegistry | None = None,
         routing_overrides=None,
         query_stats: QueryStats | None = None,
+        metrics_store=None,
+        metrics_retention_days: int = 0,
     ) -> None:
         self._storage = storage
         self._retrieval = retrieval
@@ -91,6 +93,7 @@ class PalliumService:
             supersede_fn=self.supersede_memory_object,
             get_item_processing_fn=self.get_item_processing,
             get_item_processing_summary_fn=self.get_item_processing_summary,
+            metrics_store=metrics_store,
         )
         self._consolidation_runner = ConsolidationRunner(
             storage=storage,
@@ -101,6 +104,8 @@ class PalliumService:
             supersede_fn=self.supersede_memory_object,
         )
         self._logger = logging.getLogger(__name__)
+        self._metrics_store = metrics_store
+        self._metrics_retention_days = metrics_retention_days
 
         merged_retention = MemoryRetentionPolicy()
         for plugin in self._semantic_plugins.values():
@@ -284,6 +289,24 @@ class PalliumService:
                 claimed_at=lease.claimed_at,
                 stats=stats.as_dict(),
             )
+            # Record retention_run metric (fire-and-forget)
+            if self._metrics_store is not None:
+                try:
+                    self._metrics_store.record(
+                        "system", "retention_run",
+                        payload={
+                            "deleted_source_items": stats.deleted_source_items,
+                            "deleted_memory_objects": stats.deleted_memory_objects,
+                        },
+                    )
+                except Exception:
+                    pass
+            # Metrics retention cleanup
+            if self._metrics_store is not None and self._metrics_retention_days > 0:
+                try:
+                    self._metrics_store.cleanup(self._metrics_retention_days)
+                except Exception:
+                    pass
             return stats
         except Exception as exc:
             released = self._storage.fail_retention_pass(worker_id=worker_id, claimed_at=lease.claimed_at)

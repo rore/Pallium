@@ -28,7 +28,6 @@ import sys
 from pathlib import Path
 
 from app.config import AppConfig
-from app.dependencies import build_llm_provider
 from semantic.agent_conversation_memory_threads import (
     THREAD_SUMMARY_WITH_CHECKPOINT_SCHEMA_DESCRIPTION,
     THREAD_SUMMARY_WITH_CHECKPOINT_SYSTEM_PROMPT,
@@ -64,8 +63,8 @@ class LLMCache:
         path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
 
 
-def _cache_key(variant: str, scenario_id: str) -> str:
-    h = hashlib.sha256(f"{variant}:{scenario_id}".encode()).hexdigest()[:16]
+def _cache_key(variant: str, scenario_id: str, user_prompt: str) -> str:
+    h = hashlib.sha256(f"{variant}:{scenario_id}:{user_prompt}".encode()).hexdigest()[:16]
     return f"checkpoint_conv_{variant}_{h}"
 
 
@@ -81,14 +80,9 @@ BASELINE_INCREMENTAL_INSTRUCTION = (
     "Do not quote from the prior summary.\n\n"
 )
 
-# Variant A: replace the checkpoint instruction section in the system prompt
-# to add a recency gate for current_state and blocker_state.
+# Variant A: recency gate for current_state and blocker_state.
+# This text is now the production baseline (shipped). Variant A is a no-op sanity check.
 _CHECKPOINT_SECTION_ORIGINAL = (
-    "For the task_checkpoint section: capture the task, the current state, key findings, "
-    "blocker or failed-attempt state when present, the next supported step when present, "
-    "and a concise freshness signal. "
-)
-_CHECKPOINT_SECTION_WITH_RECENCY = (
     "For the task_checkpoint section: capture the task, the current state, key findings, "
     "and a concise freshness signal. "
     "For current_state and blocker_state: base them on the MOST RECENT thread items — "
@@ -96,6 +90,7 @@ _CHECKPOINT_SECTION_WITH_RECENCY = (
     "if recent items show it was resolved, reflect the resolved state and omit the blocker. "
     "The next supported step, when present. "
 )
+_CHECKPOINT_SECTION_WITH_RECENCY = _CHECKPOINT_SECTION_ORIGINAL
 
 # Variant B: extend the incremental instruction to add a checkpoint-specific override
 VARIANT_B_INCREMENTAL_INSTRUCTION = (
@@ -196,13 +191,20 @@ def _checkpoint_full_text(parsed: dict) -> str:
     return " ".join(str(p) for p in parts if p).lower()
 
 
+import re as _re
+
+def _kw_in_text(kw: str, text: str) -> bool:
+    pattern = r"\b" + _re.escape(kw.lower()) + r"\b"
+    return bool(_re.search(pattern, text.lower()))
+
+
 def _score_scenario(parsed: dict, expected: dict) -> dict:
     text = _checkpoint_full_text(parsed)
     should_contain = expected.get("checkpoint_should_contain", [])
     should_not_contain = expected.get("checkpoint_should_not_contain", [])
 
-    found = [kw for kw in should_contain if kw.lower() in text]
-    found_bad = [kw for kw in should_not_contain if kw.lower() in text]
+    found = [kw for kw in should_contain if _kw_in_text(kw, text)]
+    found_bad = [kw for kw in should_not_contain if _kw_in_text(kw, text)]
 
     recall = len(found) / len(should_contain) if should_contain else 1.0
     passed = recall >= 0.5 and len(found_bad) == 0
@@ -241,7 +243,7 @@ def run_eval(
         for scenario in corpus:
             sid = scenario["scenario_id"]
             user_prompt = _build_user_prompt(scenario, incr_instruction)
-            cache_key = _cache_key(variant, sid)
+            cache_key = _cache_key(variant, sid, user_prompt)
 
             cached = cache.get(cache_key)
             if cached is not None:
@@ -312,7 +314,7 @@ def _print_report(results: dict, corpus: list[dict]) -> None:
             miss = f"  MISS:{r['missing_keywords']}" if r["missing_keywords"] else ""
             print(f"    {variant:25s}  {status}{bad}{miss}")
             if not r["pass"]:
-                print(f"      → {r['checkpoint_text_snippet'][:200]}")
+                print(f"      -> {r['checkpoint_text_snippet'][:200]}")
 
 
 def main() -> int:
@@ -334,7 +336,18 @@ def main() -> int:
     variants = args.variants or VARIANTS
 
     config = AppConfig.from_env()
-    provider = build_llm_provider(config, role="thread_aggregation")
+    provider_config = config.provider_config("hai_anthropic")
+    from providers.llm.anthropic_claude import AnthropicClaudeLLMProvider
+    provider = AnthropicClaudeLLMProvider(
+        provider_name="hai_anthropic",
+        model="anthropic--claude-sonnet-latest",
+        base_url=provider_config.base_url,
+        api_key=provider_config.api_key,
+        timeout_seconds=provider_config.timeout_seconds,
+        retry_policy=provider_config.retry_policy,
+        auth_style=provider_config.auth_style,
+        max_tokens=4096,
+    )
 
     results = run_eval(corpus, variants, provider, cache, verbose=args.verbose)
 

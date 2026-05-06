@@ -292,7 +292,7 @@ Hard cap: 400 characters. Task trace is injected **after** conversation memory b
 Area: retrieval/ — IDF weights not applied at lexical.py:89. Fixed.
 Explored: lexical.py, sqlite_search.py, composite.py
 Verified with: python -m pytest tests/test_retrieval.py
-[+expand]
+Had failures [+expand]
 ```
 
 When `outcome` is null (no clear narrated finding), the second line is omitted:
@@ -301,9 +301,20 @@ When `outcome` is null (no clear narrated finding), the second line is omitted:
 [Task Trace — 2 days ago | ref:abc123]
 Area: retrieval/
 Explored: lexical.py, sqlite_search.py, composite.py
+Had failures [+expand]
+```
+
+When there are no failures, `[+expand]` appears on its own line as before:
+
+```
+[Task Trace — 2 days ago | ref:abc123]
+Area: retrieval/
+Explored: lexical.py, sqlite_search.py, composite.py
 Verified with: python -m pytest tests/test_retrieval.py
 [+expand]
 ```
+
+**Failure hint rule:** if `commands_failed` is non-empty, show `Had failures [+expand]` as the final card line. No count, no specific command shown in the compact card — the detail is in the expand payload. The hint signals that there is relevant failure context without implying priority or completeness.
 
 The label for successful commands is `"Verified with:"` not `"Tests passing:"` — a zero-exit-code command may not be a test command, and a test command may pass only a subset. Use `"Verified with:"` for all successful commands. If the command classifier identifies it as a test runner (pytest/jest/mocha prefix) and exit code is 0, you may optionally use `"Tests passing:"` instead.
 

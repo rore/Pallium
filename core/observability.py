@@ -29,7 +29,8 @@ _SNAPSHOT_SKIP_REASON_LIMIT = 20
 
 
 class QueryStats:
-    def __init__(self) -> None:
+    def __init__(self, metrics_store=None) -> None:
+        self._metrics_store = metrics_store
         self._lock = threading.Lock()
         self._total_queries = 0
         self._total_injections = 0
@@ -46,6 +47,8 @@ class QueryStats:
             should_inject = getattr(result, "should_inject", False)
             decision_reason = getattr(result, "decision_reason", "unknown")
             injectable_blocks = getattr(result, "injectable_blocks", [])
+            container_ref = getattr(result, "container_ref", None)
+            thread_ref = getattr(result, "thread_ref", None)
             with self._lock:
                 self._total_queries += 1
                 self._last_query_at = datetime.now(timezone.utc).isoformat()
@@ -61,6 +64,25 @@ class QueryStats:
                         self._skip_reasons[reason] = 1
                     else:
                         self._skip_reasons["_other"] = self._skip_reasons.get("_other", 0) + 1
+
+            # Persist to metrics store (fire-and-forget)
+            if self._metrics_store is not None:
+                if should_inject and len(injectable_blocks) > 0:
+                    self._metrics_store.record(
+                        "query", "injection",
+                        container_ref=container_ref,
+                        thread_ref=thread_ref,
+                        value=float(len(injectable_blocks)),
+                        payload={"decision_reason": str(decision_reason) if decision_reason else None},
+                    )
+                else:
+                    reason = str(decision_reason) if decision_reason else "unknown"
+                    self._metrics_store.record(
+                        "query", "skip",
+                        container_ref=container_ref,
+                        thread_ref=thread_ref,
+                        payload={"decision_reason": reason, "skip_reason": reason},
+                    )
         except Exception:
             pass
 
@@ -70,6 +92,24 @@ class QueryStats:
                 self._total_flags += 1
                 if suppressed:
                     self._total_suppressions += 1
+            # Persist to metrics store (fire-and-forget)
+            if self._metrics_store is not None:
+                self._metrics_store.record(
+                    "query", "flag",
+                    payload={"suppressed": suppressed},
+                )
+        except Exception:
+            pass
+
+    def record_feedback(self, memory_object_id: str, rating: str, *, container_ref: str | None = None, thread_ref: str | None = None) -> None:
+        try:
+            if self._metrics_store is not None:
+                self._metrics_store.record(
+                    "query", "feedback",
+                    container_ref=container_ref,
+                    thread_ref=thread_ref,
+                    payload={"memory_object_id": memory_object_id, "rating": rating},
+                )
         except Exception:
             pass
 

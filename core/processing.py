@@ -71,6 +71,7 @@ class ItemProcessor:
         supersede_fn: Callable[[str, str], None],
         get_item_processing_fn: Callable[[str], ItemProcessingResult],
         get_item_processing_summary_fn: Callable[[str], ItemProcessingResult] | None = None,
+        metrics_store=None,
     ) -> None:
         self._storage = storage
         self._semantic_plugins = semantic_plugins
@@ -82,6 +83,7 @@ class ItemProcessor:
         self._supersede_fn = supersede_fn
         self._get_item_processing = get_item_processing_fn
         self._get_item_processing_summary = get_item_processing_summary_fn or get_item_processing_fn
+        self._metrics_store = metrics_store
         self._logger = logging.getLogger(__name__)
 
     def process_next_source_item(
@@ -471,6 +473,33 @@ class ItemProcessor:
             produced_memory_kinds=[memory_object.type for memory_object in result.memory_objects],
             thread_rebuild_ran=thread_rebuild_scope is not None,
         )
+        if self._metrics_store is not None:
+            self._metrics_store.record(
+                "processing", "item_processed",
+                container_ref=source_item.container_ref,
+                thread_ref=source_item.thread_ref,
+                payload={
+                    "package": source_item.use_case or self._default_use_case,
+                    "memory_types_created": [mo.type for mo in result.memory_objects],
+                },
+            )
+            for mo in result.memory_objects:
+                if mo.schema_id == "agent_work_trace.task_trace":
+                    payload_data = mo.payload if isinstance(mo.payload, dict) else {}
+                    self._metrics_store.record(
+                        "work_trace", "thread_rebuild",
+                        container_ref=mo.container_ref,
+                        thread_ref=source_item.thread_ref,
+                        value=float(payload_data.get("turn_count", 0)),
+                        payload={
+                            "exploratory_file_count": len(payload_data.get("exploratory_files", [])),
+                            "productive_file_count": len(payload_data.get("productive_files", [])),
+                            "commands_succeeded": len(payload_data.get("commands_succeeded", [])),
+                            "commands_failed": len(payload_data.get("commands_failed", [])),
+                            "has_outcome": "outcome" in payload_data,
+                            "subject": payload_data.get("subject", ""),
+                        },
+                    )
 
     def _emit_processing_failure(
         self,
@@ -491,6 +520,16 @@ class ItemProcessor:
             failure_category=failure_category,
             error=error,
         )
+        if self._metrics_store is not None:
+            self._metrics_store.record(
+                "processing", "extraction_failed",
+                container_ref=source_item.container_ref,
+                thread_ref=source_item.thread_ref,
+                payload={
+                    "package": source_item.use_case or self._default_use_case,
+                    "error": str(error)[:500],
+                },
+            )
 
     def _emit_memory_creation_provenance(
         self,
