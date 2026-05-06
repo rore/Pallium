@@ -44,23 +44,26 @@ class TestCommonParity:
 
     def test_build_work_trace_metadata_produces_same_output(self):
         """Behavioral parity: same input produces same output in both copies."""
-        turn = cc_common.TurnData(
-            assistant_text="test",
-            tool_calls=[
-                {"tool": "Read", "file_path": "src/x.py"},
-                {"tool": "Bash", "command": "ls", "exit_code": 0, "output_tail": "", "failure_class": "success"},
-            ],
-            has_productive_action=False,
-        )
-        codex_turn = codex_common.TurnData(
-            assistant_text="test",
-            tool_calls=[
-                {"tool": "Read", "file_path": "src/x.py"},
-                {"tool": "Bash", "command": "ls", "exit_code": 0, "output_tail": "", "failure_class": "success"},
-            ],
-            has_productive_action=False,
-        )
-        assert cc_common.build_work_trace_metadata(turn) == codex_common.build_work_trace_metadata(codex_turn)
+        for files_modified in [[], ["src/b.py", "src/c.py"]]:
+            cc_turn = cc_common.TurnData(
+                assistant_text="test",
+                tool_calls=[
+                    {"tool": "Read", "file_path": "src/x.py"},
+                    {"tool": "Bash", "command": "ls", "exit_code": 0, "output_tail": "", "failure_class": "success"},
+                ],
+                has_productive_action=bool(files_modified),
+                files_modified=files_modified,
+            )
+            codex_turn = codex_common.TurnData(
+                assistant_text="test",
+                tool_calls=[
+                    {"tool": "Read", "file_path": "src/x.py"},
+                    {"tool": "Bash", "command": "ls", "exit_code": 0, "output_tail": "", "failure_class": "success"},
+                ],
+                has_productive_action=bool(files_modified),
+                files_modified=files_modified,
+            )
+            assert cc_common.build_work_trace_metadata(cc_turn) == codex_common.build_work_trace_metadata(codex_turn)
 
     def test_tool_constants_match(self):
         assert cc_common.DISCOVERY_TOOLS == codex_common.DISCOVERY_TOOLS
@@ -78,3 +81,36 @@ class TestCommonParity:
         ]
         for s in test_strings:
             assert cc_common.redact_sensitive(s) == codex_common.redact_sensitive(s), f"Mismatch on: {s}"
+
+    def test_turn_data_fields_match(self):
+        """TurnData dataclass fields are identical in both copies."""
+        import dataclasses
+        cc_fields = {f.name: f.type for f in dataclasses.fields(cc_common.TurnData)}
+        codex_fields = {f.name: f.type for f in dataclasses.fields(codex_common.TurnData)}
+        assert cc_fields == codex_fields
+
+
+def test_cc_build_work_trace_metadata_captures_files_modified():
+    """Edit/Write tool calls produce files_modified in turn metadata."""
+    turn = cc_common.TurnData(
+        assistant_text="done",
+        tool_calls=[{"tool": "Read", "file_path": "src/a.py"}],
+        has_productive_action=True,
+        files_modified=["src/b.py"],
+    )
+    result = cc_common.build_work_trace_metadata(turn)
+    assert result is not None
+    assert result["files_modified"] == ["src/b.py"]
+
+
+def test_codex_build_work_trace_metadata_captures_files_modified():
+    """Codex common.py also captures files_modified."""
+    turn = codex_common.TurnData(
+        assistant_text="done",
+        tool_calls=[{"tool": "Read", "file_path": "src/a.py"}],
+        has_productive_action=True,
+        files_modified=["src/b.py"],
+    )
+    result = codex_common.build_work_trace_metadata(turn)
+    assert result is not None
+    assert result["files_modified"] == ["src/b.py"]
