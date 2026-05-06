@@ -29,6 +29,7 @@ def _make_source_item(
     thread_ref: str = "session-1",
     container_ref: str = "git:example.com/repo",
     metadata: dict | None = None,
+    occurred_at: datetime | None = None,
 ) -> SourceItem:
     return SourceItem(
         source_type="claude-code",
@@ -39,11 +40,14 @@ def _make_source_item(
         container_ref=container_ref,
         visibility="private",
         metadata=metadata,
+        occurred_at=occurred_at,
     )
 
 
 def _make_trace_items(turns_data: list[dict], thread_ref: str = "session-1", container_ref: str = "git:example.com/repo") -> list[SourceItem]:
     """Create SourceItems with agent_work_trace_turn metadata."""
+    from datetime import timedelta
+    base_time = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     items = []
     for i, turn in enumerate(turns_data):
         items.append(_make_source_item(
@@ -54,6 +58,7 @@ def _make_trace_items(turns_data: list[dict], thread_ref: str = "session-1", con
                 "agent_work_trace_turn": turn,
                 "cwd": "/home/user/project",
             },
+            occurred_at=base_time + timedelta(minutes=i),
         ))
     return items
 
