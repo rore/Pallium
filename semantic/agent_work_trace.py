@@ -28,6 +28,7 @@ MAX_PRODUCTIVE_FILES = 20
 MAX_COMMANDS_SUCCEEDED = 10
 MAX_COMMANDS_FAILED = 10
 MAX_FAILURE_FRAGMENTS = 5
+MAX_FILES_MODIFIED = 20
 
 OUTCOME_SYSTEM_PROMPT = (
     "Given these agent responses from a coding session, produce a 1-2 sentence "
@@ -178,6 +179,12 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
         commands_succeeded = [c for t in turns for c in t.get("commands", []) if c.get("exit_code") == 0]
         commands_failed = [c for t in turns for c in t.get("commands", []) if c.get("exit_code") != 0]
 
+        # Aggregate modified files (direct signal — not inferred from read phase)
+        files_modified = list(dict.fromkeys(
+            f for t in turns for f in t.get("files_modified", [])
+        ))
+        files_modified = files_modified[:MAX_FILES_MODIFIED]
+
         # Apply caps
         exploratory_files = exploratory_files[:MAX_EXPLORATORY_FILES]
         productive_files = productive_files[:MAX_PRODUCTIVE_FILES]
@@ -218,6 +225,7 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
             "productive_files": productive_files,
             "commands_succeeded": [c["cmd"] for c in commands_succeeded],
             "commands_failed": [c["cmd"] for c in commands_failed],
+            "files_modified": files_modified,
             "bash_failure_fragments": [
                 {"cmd": c["cmd"], "class": c.get("failure_class", ""), "tail": c.get("output_tail", "")}
                 for c in commands_failed[:MAX_FAILURE_FRAGMENTS]
@@ -251,7 +259,7 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
         )
 
         # Build lexical index text
-        index_parts = [subject] + exploratory_files + productive_files + [c["cmd"] for c in commands_succeeded]
+        index_parts = [subject] + exploratory_files + files_modified + productive_files + [c["cmd"] for c in commands_succeeded]
         if outcome:
             index_parts.append(outcome)
         index_text = " ".join(index_parts)

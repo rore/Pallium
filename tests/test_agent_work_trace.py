@@ -68,6 +68,7 @@ class TestItemProcessing:
                 "commands": [],
                 "grep_patterns": [],
                 "has_productive_action": False,
+                "files_modified": [],
             }
         })
         result = plugin.process_item(item)
@@ -110,8 +111,8 @@ class TestThreadRebuild:
         from semantic.agent_work_trace import AgentWorkTracePlugin, TASK_TRACE_TYPE
         plugin = AgentWorkTracePlugin(provider=StubOutcomeProvider())
         items = _make_trace_items([
-            {"files_read": ["/home/user/project/src/main.py"], "commands": [], "grep_patterns": [], "has_productive_action": False},
-            {"files_read": ["/home/user/project/src/utils.py"], "commands": [], "grep_patterns": [], "has_productive_action": True},
+            {"files_read": ["/home/user/project/src/main.py"], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
+            {"files_read": ["/home/user/project/src/utils.py"], "commands": [], "grep_patterns": [], "has_productive_action": True, "files_modified": ["/home/user/project/src/utils.py"]},
         ])
         aggregate = build_thread_aggregate(items)
         result = plugin.build_thread_summary(aggregate, conclusions=[])
@@ -124,8 +125,8 @@ class TestThreadRebuild:
         from semantic.agent_work_trace import AgentWorkTracePlugin
         plugin = AgentWorkTracePlugin(provider=StubOutcomeProvider())
         items = _make_trace_items([
-            {"files_read": ["/home/user/project/src/main.py", "/home/user/project/src/config.py"], "commands": [], "grep_patterns": [], "has_productive_action": False},
-            {"files_read": ["/home/user/project/src/main.py", "/home/user/project/src/fix.py"], "commands": [], "grep_patterns": [], "has_productive_action": True},
+            {"files_read": ["/home/user/project/src/main.py", "/home/user/project/src/config.py"], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
+            {"files_read": ["/home/user/project/src/main.py", "/home/user/project/src/fix.py"], "commands": [], "grep_patterns": [], "has_productive_action": True, "files_modified": ["/home/user/project/src/fix.py"]},
         ])
         aggregate = build_thread_aggregate(items)
         result = plugin.build_thread_summary(aggregate, conclusions=[])
@@ -139,7 +140,7 @@ class TestThreadRebuild:
         from semantic.agent_work_trace import AgentWorkTracePlugin
         plugin = AgentWorkTracePlugin(provider=StubOutcomeProvider())
         items = _make_trace_items([
-            {"files_read": ["/home/user/project/src/main.py", "./src/main.py"], "commands": [], "grep_patterns": [], "has_productive_action": False},
+            {"files_read": ["/home/user/project/src/main.py", "./src/main.py"], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
         ])
         aggregate = build_thread_aggregate(items)
         result = plugin.build_thread_summary(aggregate, conclusions=[])
@@ -153,7 +154,7 @@ class TestThreadRebuild:
             {"files_read": [], "commands": [
                 {"cmd": "python -m pytest", "exit_code": 0, "output_tail": "10 passed", "failure_class": "success"},
                 {"cmd": "python -m pytest tests/broken.py", "exit_code": 1, "output_tail": "FAILED", "failure_class": "test_failure"},
-            ], "grep_patterns": [], "has_productive_action": False},
+            ], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
         ])
         aggregate = build_thread_aggregate(items)
         result = plugin.build_thread_summary(aggregate, conclusions=[])
@@ -165,7 +166,7 @@ class TestThreadRebuild:
         from semantic.agent_work_trace import AgentWorkTracePlugin
         plugin = AgentWorkTracePlugin(provider=StubOutcomeProvider(outcome="Fixed the IDF bug."))
         items = _make_trace_items([
-            {"files_read": ["/home/user/project/src/main.py"], "commands": [], "grep_patterns": [], "has_productive_action": False},
+            {"files_read": ["/home/user/project/src/main.py"], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
         ])
         aggregate = build_thread_aggregate(items)
         result = plugin.build_thread_summary(aggregate, conclusions=[])
@@ -177,7 +178,7 @@ class TestThreadRebuild:
         from semantic.agent_work_trace import AgentWorkTracePlugin
         plugin = AgentWorkTracePlugin(provider=StubOutcomeProvider(outcome=None))
         items = _make_trace_items([
-            {"files_read": ["/home/user/project/src/main.py"], "commands": [], "grep_patterns": [], "has_productive_action": False},
+            {"files_read": ["/home/user/project/src/main.py"], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
         ])
         aggregate = build_thread_aggregate(items)
         result = plugin.build_thread_summary(aggregate, conclusions=[])
@@ -194,7 +195,7 @@ class TestThreadRebuild:
                 "/home/user/project/retrieval/composite.py",
                 "/home/user/project/retrieval/vector.py",
                 "/home/user/project/storage/sqlite.py",
-            ], "commands": [], "grep_patterns": [], "has_productive_action": False},
+            ], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
         ])
         aggregate = build_thread_aggregate(items)
         result = plugin.build_thread_summary(aggregate, conclusions=[])
@@ -205,7 +206,7 @@ class TestThreadRebuild:
         from semantic.agent_work_trace import AgentWorkTracePlugin
         plugin = AgentWorkTracePlugin(provider=StubOutcomeProvider())
         items = _make_trace_items([
-            {"files_read": ["/home/user/project/src/main.py"], "commands": [], "grep_patterns": [], "has_productive_action": False},
+            {"files_read": ["/home/user/project/src/main.py"], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
         ])
         aggregate = build_thread_aggregate(items)
         result = plugin.build_thread_summary(aggregate, conclusions=[])
@@ -225,7 +226,7 @@ class TestThreadRebuild:
         plugin = AgentWorkTracePlugin(provider=StubOutcomeProvider())
         many_files = [f"/home/user/project/src/file_{i}.py" for i in range(50)]
         items = _make_trace_items([
-            {"files_read": many_files, "commands": [], "grep_patterns": [], "has_productive_action": False},
+            {"files_read": many_files, "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
         ])
         aggregate = build_thread_aggregate(items)
         result = plugin.build_thread_summary(aggregate, conclusions=[])
@@ -242,7 +243,7 @@ class TestThreadRebuild:
 
         plugin = AgentWorkTracePlugin(provider=FailingProvider())
         items = _make_trace_items([
-            {"files_read": ["/home/user/project/src/main.py"], "commands": [], "grep_patterns": [], "has_productive_action": False},
+            {"files_read": ["/home/user/project/src/main.py"], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
         ])
         aggregate = build_thread_aggregate(items)
         result = plugin.build_thread_summary(aggregate, conclusions=[])
@@ -254,8 +255,8 @@ class TestThreadRebuild:
         from semantic.agent_work_trace import AgentWorkTracePlugin
         plugin = AgentWorkTracePlugin(provider=StubOutcomeProvider())
         items = _make_trace_items([
-            {"files_read": ["/home/user/project/src/a.py"], "commands": [], "grep_patterns": [], "has_productive_action": False},
-            {"files_read": ["/home/user/project/src/b.py"], "commands": [], "grep_patterns": [], "has_productive_action": False},
+            {"files_read": ["/home/user/project/src/a.py"], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
+            {"files_read": ["/home/user/project/src/b.py"], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
         ])
         aggregate = build_thread_aggregate(items)
         result = plugin.build_thread_summary(aggregate, conclusions=[])
@@ -269,8 +270,8 @@ class TestThreadRebuild:
         from semantic.agent_work_trace import AgentWorkTracePlugin
         plugin = AgentWorkTracePlugin(provider=StubOutcomeProvider())
         items = _make_trace_items([
-            {"files_read": ["/home/user/project/src/a.py"], "commands": [], "grep_patterns": [], "has_productive_action": False},
-            {"files_read": ["/home/user/project/src/b.py"], "commands": [], "grep_patterns": [], "has_productive_action": False},
+            {"files_read": ["/home/user/project/src/a.py"], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
+            {"files_read": ["/home/user/project/src/b.py"], "commands": [], "grep_patterns": [], "has_productive_action": False, "files_modified": []},
         ])
         aggregate = build_thread_aggregate(items)
         result = plugin.build_thread_summary(aggregate, conclusions=[])
@@ -279,3 +280,30 @@ class TestThreadRebuild:
         assert "src/a.py" in payload["exploratory_files"]
         assert "src/b.py" in payload["exploratory_files"]
         assert payload["productive_files"] == []
+
+    def test_payload_includes_files_modified(self):
+        """files_modified from turns is aggregated into task_trace payload."""
+        from semantic.agent_work_trace import AgentWorkTracePlugin
+        plugin = AgentWorkTracePlugin(provider=StubOutcomeProvider(outcome=None))
+        turns = [
+            {
+                "files_read": ["retrieval/lexical.py"],
+                "commands": [],
+                "grep_patterns": [],
+                "has_productive_action": False,
+                "files_modified": [],
+            },
+            {
+                "files_read": ["retrieval/lexical.py"],
+                "commands": [{"cmd": "python -m pytest tests/ -x -q", "exit_code": 0, "output_tail": "1 passed", "failure_class": "success"}],
+                "grep_patterns": [],
+                "has_productive_action": True,
+                "files_modified": ["retrieval/lexical.py", "tests/test_retrieval.py"],
+            },
+        ]
+        items = _make_trace_items(turns)
+        aggregate = build_thread_aggregate(items)
+        result = plugin.build_thread_summary(aggregate, conclusions=[])
+        assert len(result.memory_objects) == 1
+        payload = result.memory_objects[0].payload
+        assert payload["files_modified"] == ["retrieval/lexical.py", "tests/test_retrieval.py"]
