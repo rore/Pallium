@@ -9,10 +9,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import (
     derive_actor_ref,
-    derive_container_ref,
     format_injection,
     pallium_request,
     read_hook_input,
+    resolve_container_ref,
 )
 
 
@@ -21,7 +21,7 @@ def main() -> None:
         payload = read_hook_input()
         cwd = payload.get("cwd", ".")
         session_id = payload.get("session_id")
-        container_ref = derive_container_ref(cwd)
+        container_ref = resolve_container_ref(cwd, session_id)
         actor_ref = derive_actor_ref()
 
         query_payload = {

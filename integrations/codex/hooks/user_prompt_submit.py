@@ -22,6 +22,7 @@ emit_context = _common.emit_context
 format_injection = _common.format_injection
 pallium_request = _common.pallium_request
 read_hook_input = _common.read_hook_input
+resolve_container_ref = _common.resolve_container_ref
 
 _IDE_TAG_RE = re.compile(
     r"<ide_(?:opened_file|selection)>.*?</ide_(?:opened_file|selection)>",
@@ -48,7 +49,7 @@ def main() -> None:
         if check_dedup(prompt, session_id):
             sys.exit(0)
 
-        container_ref = derive_container_ref(cwd)
+        container_ref = resolve_container_ref(cwd, session_id)
         actor_ref = derive_actor_ref()
 
         content = _strip_ide_context(prompt)

@@ -21,6 +21,7 @@ derive_container_ref = _common.derive_container_ref
 pallium_request = _common.pallium_request
 read_hook_input = _common.read_hook_input
 read_turn = _common.read_turn
+resolve_container_ref = _common.resolve_container_ref
 
 CONTENT_LENGTH_GATE = 20_000
 
@@ -44,7 +45,7 @@ def main() -> None:
         if len(content) > CONTENT_LENGTH_GATE:
             sys.exit(0)
 
-        container_ref = derive_container_ref(cwd)
+        container_ref = resolve_container_ref(cwd, session_id)
         actor_ref = derive_actor_ref()
 
         metadata = {}

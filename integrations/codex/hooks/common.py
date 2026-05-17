@@ -118,6 +118,100 @@ def _sanitize_path_label(name: str) -> str:
     return name[:32]
 
 
+# --- Per-session container pinning ---
+#
+# SessionStart pins (session_id -> container_ref) so subsequent hooks in the
+# same session use the same container regardless of mid-session cwd changes.
+# Sticky on resume/clear, atomic write, opportunistic 30-day sweep.
+
+SESSIONS_DIR = STATE_DIR / "sessions"
+SESSION_PIN_TTL_SECONDS = 30 * 24 * 3600
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_RESUME_SOURCES = frozenset({"resume", "clear"})
+
+
+def _safe_session_id(session_id: str | None) -> str | None:
+    if not session_id or not isinstance(session_id, str):
+        return None
+    if not _SESSION_ID_RE.fullmatch(session_id):
+        return None
+    return session_id
+
+
+def _sweep_old_session_pins() -> None:
+    try:
+        if not SESSIONS_DIR.exists():
+            return
+        cutoff = time.time() - SESSION_PIN_TTL_SECONDS
+        for entry in SESSIONS_DIR.iterdir():
+            try:
+                if entry.is_file() and entry.stat().st_mtime < cutoff:
+                    entry.unlink()
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+
+def pin_container(
+    session_id: str | None,
+    container_ref: str,
+    source: str | None = None,
+) -> None:
+    """Pin (session_id -> container_ref). Sticky on resume/clear. Atomic write."""
+    sid = _safe_session_id(session_id)
+    if sid is None or not container_ref or not isinstance(container_ref, str):
+        return
+    try:
+        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    fp = SESSIONS_DIR / f"{sid}.json"
+    if source in _RESUME_SOURCES and fp.exists():
+        return
+
+    tmp = SESSIONS_DIR / f"{sid}.json.tmp"
+    payload = json.dumps({"container_ref": container_ref, "ts": time.time()})
+    try:
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, fp)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    _sweep_old_session_pins()
+
+
+def get_pinned_container(session_id: str | None) -> str | None:
+    sid = _safe_session_id(session_id)
+    if sid is None:
+        return None
+    fp = SESSIONS_DIR / f"{sid}.json"
+    try:
+        if not fp.exists():
+            return None
+        data = json.loads(fp.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    ref = data.get("container_ref")
+    if isinstance(ref, str) and ref:
+        return ref
+    return None
+
+
+def resolve_container_ref(cwd: str, session_id: str | None) -> str:
+    """Pinned container_ref if available, otherwise derive from cwd."""
+    pinned = get_pinned_container(session_id)
+    if pinned:
+        return pinned
+    return derive_container_ref(cwd)
+
+
 def derive_actor_ref() -> str:
     """Get actor_ref from git config user.name, fallback to 'local'."""
     try:

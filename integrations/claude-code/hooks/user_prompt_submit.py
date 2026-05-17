@@ -12,10 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (
     check_dedup,
     derive_actor_ref,
-    derive_container_ref,
     format_injection,
     pallium_request,
     read_hook_input,
+    resolve_container_ref,
 )
 
 _IDE_TAG_RE = re.compile(
@@ -43,7 +43,7 @@ def main() -> None:
         if check_dedup(prompt, session_id):
             return
 
-        container_ref = derive_container_ref(cwd)
+        container_ref = resolve_container_ref(cwd, session_id)
         actor_ref = derive_actor_ref()
 
         content = _strip_ide_context(prompt)

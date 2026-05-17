@@ -12,6 +12,7 @@ from common import (
     derive_container_ref,
     format_injection,
     pallium_request,
+    pin_container,
     read_hook_input,
 )
 
@@ -23,6 +24,7 @@ def main() -> None:
         session_id = payload.get("session_id")
         source = payload.get("source", "")
         container_ref = derive_container_ref(cwd)
+        pin_container(session_id, container_ref, source=source)
         actor_ref = derive_actor_ref()
 
         query_payload = {

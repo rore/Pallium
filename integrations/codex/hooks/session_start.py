@@ -17,6 +17,7 @@ derive_container_ref = _common.derive_container_ref
 emit_context = _common.emit_context
 format_injection = _common.format_injection
 pallium_request = _common.pallium_request
+pin_container = _common.pin_container
 read_hook_input = _common.read_hook_input
 
 
@@ -30,6 +31,7 @@ def main() -> None:
         cwd = payload.get("cwd", ".")
         session_id = payload.get("session_id")
         container_ref = derive_container_ref(cwd)
+        pin_container(session_id, container_ref, source=source)
         actor_ref = derive_actor_ref()
 
         response = pallium_request("POST", "/query", {

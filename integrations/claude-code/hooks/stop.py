@@ -11,10 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (
     build_work_trace_metadata,
     derive_actor_ref,
-    derive_container_ref,
     pallium_request,
     read_hook_input,
     read_turn,
+    resolve_container_ref,
 )
 
 CONTENT_LENGTH_GATE = 20_000
@@ -39,7 +39,7 @@ def main() -> None:
         if len(content) > CONTENT_LENGTH_GATE:
             return
 
-        container_ref = derive_container_ref(cwd)
+        container_ref = resolve_container_ref(cwd, session_id)
         actor_ref = derive_actor_ref()
 
         metadata = {}
