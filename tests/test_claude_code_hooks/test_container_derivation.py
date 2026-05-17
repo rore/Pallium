@@ -68,8 +68,26 @@ class TestDeriveContainerRef:
 
         mock_run.side_effect = side_effect
         result = derive_container_ref("/some/path")
-        assert result.startswith("path:")
-        assert len(result) == len("path:") + 12
+        assert result.startswith("path:path:")
+        assert result.endswith("4f26ba2cd9b3") or len(result.split(":")[-1]) == 12
+
+    @patch("common.subprocess.run")
+    def test_path_label_sanitized(self, mock_run):
+        mock_run.side_effect = FileNotFoundError("git not found")
+        result = derive_container_ref("/some/My Weird Dir!")
+        parts = result.split(":")
+        assert parts[0] == "path"
+        assert parts[1] == "my_weird_dir"
+        assert len(parts[2]) == 12
+
+    @patch("common.subprocess.run")
+    def test_path_root_no_label(self, mock_run):
+        mock_run.side_effect = FileNotFoundError("git not found")
+        result = derive_container_ref("/")
+        parts = result.split(":")
+        assert parts[0] == "path"
+        assert len(parts) == 2
+        assert len(parts[1]) == 12
 
     @patch("common.subprocess.run")
     def test_ssh_remote(self, mock_run):

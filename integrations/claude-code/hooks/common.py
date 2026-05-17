@@ -43,7 +43,7 @@ def derive_container_ref(cwd: str) -> str:
     Priority:
     1. Git remote URL -> "git:<normalized>"
     2. Git repo, no remote -> "repo:<root-commit-hash-prefix>"
-    3. Not a git repo -> "path:<hash-of-cwd>"
+    3. Not a git repo -> "path:<sanitized-dirname>:<hash-of-cwd>" (or "path:<hash>" if dirname is empty)
     """
     try:
         result = subprocess.run(
@@ -91,7 +91,18 @@ def _normalize_remote_url(url: str) -> str:
 
 def _path_container(cwd: str) -> str:
     h = hashlib.sha256(cwd.encode()).hexdigest()[:12]
+    label = _sanitize_path_label(Path(cwd).name)
+    if label:
+        return f"path:{label}:{h}"
     return f"path:{h}"
+
+
+def _sanitize_path_label(name: str) -> str:
+    """Lowercase, collapse non-[a-z0-9._-] to '_', trim, cap at 32 chars."""
+    name = name.strip().lower()
+    name = re.sub(r"[^a-z0-9._-]+", "_", name)
+    name = name.strip("._-")
+    return name[:32]
 
 
 def derive_actor_ref() -> str:
