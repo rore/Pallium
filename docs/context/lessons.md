@@ -228,3 +228,14 @@ Claude follows "only promote when explicit proof exists" instructions more liter
 
 Solution:
 Always include the explicit evidence cue lists (decision cues: "Decision:", "we decided", "we chose"; investigation cues: "Root cause:", "Investigation found", "Verdict:", etc.) in extraction prompts for Claude. The v7_claude_structured variant achieves v4's accuracy (36/37) at 57% fewer tokens (560 vs 1318) by combining cue lists with structured sections. Instruction density helps Claude more than minimalism.
+
+## 2026-05-17 - Hashing user-provided strings requires equivalence-class tests, not just determinism
+
+Problem:
+`_path_container` hashed the raw `cwd` string. On Windows, the same logical directory arrived as `C:\xlm`, `c:\xlm`, or `C:/xlm` from different shells and IDEs, producing three different `path:xlm:<hash>` containers and scattering one project's memories. Existing tests asserted "same input → same output" (`derive_container_ref("/p")` twice) but never "equivalent inputs → same output", so they could not catch a missing-canonicalization bug. The bug was invisible until path-label rendering shipped and made same-label-different-hash containers visually obvious.
+
+Why:
+A test that calls a hash function twice with identical input only proves determinism. It does not prove the function defines the right equivalence class over its inputs. For any function that hashes/keys user-provided values (paths, URLs, identifiers from external systems), the equivalence class is the design contract — and it has to be tested as such.
+
+Solution:
+For any function that produces a key/hash from user-supplied input, the test file must include a normalization-contract section that enumerates surface variants expected to fold together (e.g. trailing slash, redundant separators, case on case-insensitive systems, different valid quote/encoding forms) and asserts they collapse to one output. When writing the function, ask: "what's the equivalence class of inputs that should produce the same output?" — and codify it as tests, not just code. See `tests/test_claude_code_hooks/test_container_derivation.py::TestPathNormalization` for the cwd example.
