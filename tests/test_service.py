@@ -287,8 +287,8 @@ class TestPalliumLockRetry:
         assert result is True
         mock_sleep.assert_called_once_with(0.1)
 
-        if lock._fd is not None:
-            lock.release()
+        assert lock._fd is not None, "fd must be captured on successful second attempt"
+        lock.release()
 
 
 class TestStartWindows:

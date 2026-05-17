@@ -295,8 +295,9 @@ def _uninstall_windows() -> None:
     print(f"  Removed scheduled task '{task_name}'")
 
 
-def _start_windows() -> None:
-    home = _pallium_home()
+def _start_windows(home: Path | None = None) -> None:
+    if home is None:
+        home = _pallium_home()
     vbs_path = home / "run" / "pallium_launcher.vbs"
     if not vbs_path.exists():
         raise RuntimeError(
@@ -394,7 +395,11 @@ def _cmd_install(args: argparse.Namespace) -> int:
     # Start the service
     print("  Starting service...")
     if sys.platform == "win32":
-        _start_windows()
+        try:
+            _start_windows(home)
+        except RuntimeError as exc:
+            print(f"  Error starting service: {exc}", file=sys.stderr)
+            return 1
     elif sys.platform == "linux":
         _start_linux()
     else:
@@ -564,7 +569,7 @@ def _cmd_restart(args: argparse.Namespace) -> int:
 
     # Start
     if sys.platform == "win32":
-        _start_windows()
+        _start_windows(home)
     elif sys.platform == "linux":
         _start_linux()
     else:
