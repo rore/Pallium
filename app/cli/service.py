@@ -110,18 +110,21 @@ class _PalliumLock:
         path = self.path
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(path), os.O_CREAT | os.O_RDWR)
-        try:
-            if sys.platform == "win32":
-                import msvcrt
-                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (OSError, IOError):
-            os.close(fd)
-            return False
-        self._fd = fd
-        return True
+        for attempt in range(2):
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self._fd = fd
+                return True
+            except (OSError, IOError):
+                if attempt == 0:
+                    time.sleep(0.1)
+        os.close(fd)
+        return False
 
     def release(self) -> None:
         if self._fd is None:
@@ -293,25 +296,18 @@ def _uninstall_windows() -> None:
 
 
 def _start_windows() -> None:
-    # Use the VBS wrapper if it exists (written by _install_windows) for truly
-    # invisible launch. Falls back to direct Popen with CREATE_NO_WINDOW.
     home = _pallium_home()
     vbs_path = home / "run" / "pallium_launcher.vbs"
-    if vbs_path.exists():
-        subprocess.Popen(
-            ["wscript.exe", str(vbs_path)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+    if not vbs_path.exists():
+        raise RuntimeError(
+            f"Launcher not found: {vbs_path}\n"
+            "Run 'pallium service install' to create it."
         )
-    else:
-        CREATE_NO_WINDOW = 0x08000000
-        DETACHED_PROCESS = 0x00000008
-        subprocess.Popen(
-            [sys.executable, "-m", "app.run", "service", "run"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
-        )
+    subprocess.Popen(
+        ["wscript.exe", str(vbs_path)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -554,6 +550,14 @@ def _cmd_stop(args: argparse.Namespace) -> int:
 
 def _cmd_restart(args: argparse.Namespace) -> int:
     home = _pallium_home(args.home if hasattr(args, "home") else None)
+
+    # Validate launch preconditions before stopping the running service
+    if sys.platform == "win32":
+        vbs_path = home / "run" / "pallium_launcher.vbs"
+        if not vbs_path.exists():
+            print(f"Error: launcher not found: {vbs_path}", file=sys.stderr)
+            print("Run 'pallium service install' to create it.", file=sys.stderr)
+            return 1
 
     # Stop
     _cmd_stop_impl(home)
