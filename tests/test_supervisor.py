@@ -102,19 +102,22 @@ def test_health_probe_kills_api_after_consecutive_failures():
     def popen_factory(cmd, **kwargs):
         return next(procs)
 
-    # Clock: initial value, then advance past probe interval twice
-    # _last_probe starts at clock() = 0.0
-    # First loop: now_probe = 0.0 → diff = 0 → no probe
-    # Probe 1 fires when now_probe - 0.0 >= 30.0  → give it 31.0
-    # Probe 2 fires when now_probe - 31.0 >= 30.0 → give it 62.0
-    # Then stop
+    # Clock: initial value, then advance past probe interval twice.
+    # clock() is called once per iteration (probe check only — no call during slot poll
+    # when all processes are alive and poll() returns None).
+    # _last_probe init: 0.0
+    # Iter 1 probe: 0.0 - 0.0 = 0 < 30 → no probe
+    # Iter 2 probe: 0.0 - 0.0 = 0 < 30 → no probe
+    # Iter 3 probe: 31.0 - 0.0 = 31 ≥ 30 → probe 1 fires (fail, _last_probe=31.0)
+    # Iter 4 probe: 62.0 - 31.0 = 31 ≥ 30 → probe 2 fires (fail) → kill
+    # Iter 5: should_stop fires → break before probe
     clock_values = [
-        0.0,   # _last_probe init
-        0.0,   # loop iter 1 — slot poll clock (no exit, skip)
-        0.0,   # loop iter 1 — probe check: 0.0 - 0.0 = 0 < 30 → no probe
-        31.0,  # loop iter 2 — probe check: 31.0 - 0.0 >= 30 → probe 1 fires (_last_probe=31.0)
-        62.0,  # loop iter 3 — probe check: 62.0 - 31.0 >= 30 → probe 2 fires → kill
-        62.0,  # padding
+        0.0,   # _last_probe init (before loop)
+        0.0,   # iter 1 — probe check: 0.0 - 0.0 = 0 < 30 → no probe
+        0.0,   # iter 2 — probe check: 0.0 - 0.0 = 0 < 30 → no probe
+        31.0,  # iter 3 — probe check: 31.0 - 0.0 = 31 ≥ 30 → probe 1 fires (fail, _last_probe=31.0)
+        62.0,  # iter 4 — probe check: 62.0 - 31.0 = 31 ≥ 30 → probe 2 fires (fail) → kill
+        62.0,  # padding (iter 5 breaks before probe check)
     ]
     clock = _make_clock(clock_values)
 

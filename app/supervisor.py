@@ -312,6 +312,8 @@ def run_supervisor(
                         f"restarted {slot.label} old_pid={slot.process.pid} new_pid={new_proc.pid}",
                     )
                     slot.process = new_proc
+                    if slot.use_retry_start:
+                        _probe_failures = 0
                 if stop.requested:
                     break
                 # Periodic TCP health probe — detects the WinError 64 stuck-socket case
