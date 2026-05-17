@@ -9,8 +9,6 @@ No real processes are spawned.  Not marked slow (fast, no real sleeping).
 import itertools
 from unittest.mock import patch
 
-import pytest
-
 from app.supervisor import (
     _API_HEALTH_PROBE_FAIL_THRESHOLD,
     _API_HEALTH_PROBE_INTERVAL,
