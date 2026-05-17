@@ -314,6 +314,7 @@ def run_supervisor(
                     slot.process = new_proc
                     if slot.use_retry_start:
                         _probe_failures = 0
+                        _last_probe = clock()  # give new API a full probe interval before first check
                 if stop.requested:
                     break
                 # Periodic TCP health probe — detects the WinError 64 stuck-socket case
@@ -337,6 +338,7 @@ def run_supervisor(
                                 emit_runtime_log("supervisor", "killing api for restart (unresponsive)", stderr=True)
                                 api_slot.process.kill()
                                 _probe_failures = 0
+                                _last_probe = clock()  # replacement gets full probe interval before first check
                 sleep_fn(0.1)
         finally:
             all_processes = [slot.process for slot in slots]

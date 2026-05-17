@@ -115,7 +115,7 @@ def test_health_probe_kills_api_after_consecutive_failures():
         0.0,   # iter 2 — probe check: 0.0 - 0.0 = 0 < 30 → no probe
         31.0,  # iter 3 — probe check: 31.0 - 0.0 = 31 ≥ 30 → probe 1 fires (fail, _last_probe=31.0)
         62.0,  # iter 4 — probe check: 62.0 - 31.0 = 31 ≥ 30 → probe 2 fires (fail) → kill
-        62.0,  # padding (iter 5 breaks before probe check)
+        62.0,  # kill reset: _last_probe = clock() after kill (iter 5 breaks via should_stop before probe)
     ]
     clock = _make_clock(clock_values)
 
