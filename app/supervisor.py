@@ -28,6 +28,11 @@ def _default_popen(cmd: list[str], **kwargs) -> subprocess.Popen:
 _MAX_RAPID_RESTARTS = 3
 _RAPID_RESTART_WINDOW_SECONDS = 60.0
 
+# Health probe: periodically TCP-connect to the API to detect the WinError 64
+# stuck-socket case (process alive but accept loop dead).
+_API_HEALTH_PROBE_INTERVAL = 30.0   # seconds between probes
+_API_HEALTH_PROBE_FAIL_THRESHOLD = 2  # consecutive failures before kill
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run Pallium API with supervised background processors")
@@ -85,6 +90,18 @@ def _wait_for_api(
 
 _API_START_MAX_ATTEMPTS = 5
 _API_START_BACKOFF_SECONDS = 2.0
+
+
+def _tcp_probe(host: str, port: int) -> bool:
+    """Return True if a TCP connection to host:port succeeds, False otherwise."""
+    import socket as _socket
+    try:
+        with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+            s.settimeout(2)
+            s.connect((host, port))
+            return True
+    except OSError:
+        return False
 
 
 def _start_api_with_retry(
@@ -199,7 +216,8 @@ def run_supervisor(
                 command=server_cmd,
                 label="api",
                 process=server,
-                restartable=False,
+                restartable=True,
+                use_retry_start=True,
                 restart_times=[],
             ))
 
@@ -238,6 +256,9 @@ def run_supervisor(
                 ))
                 emit_runtime_log("supervisor", f"started snapshot pid={proc.pid}")
 
+            _last_probe = clock()
+            _probe_failures = 0
+
             while True:
                 if should_stop is not None and should_stop():
                     stop.requested = True
@@ -251,7 +272,7 @@ def run_supervisor(
                         stderr=return_code != 0,
                     )
                     if not slot.restartable:
-                        # API server exit is always fatal
+                        # non-restartable slot exit is always fatal
                         exit_code = return_code
                         stop.requested = True
                         break
@@ -273,14 +294,51 @@ def run_supervisor(
                         break
                     # Restart the child
                     slot.restart_times.append(now)
-                    new_proc = _popen_with_log(slot.command, cwd=os.getcwd())
+                    if slot.use_retry_start:
+                        new_proc = _start_api_with_retry(
+                            slot.command, parsed.host, parsed.port,
+                            popen_factory=_popen_with_log,
+                            sleep_fn=sleep_fn,
+                            wait_for_api_fn=wait_for_api_fn,
+                            stop=stop,
+                        )
+                        if new_proc is None:
+                            stop.requested = True
+                            break
+                    else:
+                        new_proc = _popen_with_log(slot.command, cwd=os.getcwd())
                     emit_runtime_log(
                         "supervisor",
                         f"restarted {slot.label} old_pid={slot.process.pid} new_pid={new_proc.pid}",
                     )
                     slot.process = new_proc
+                    if slot.use_retry_start:
+                        _probe_failures = 0
+                        _last_probe = clock()  # give new API a full probe interval before first check
                 if stop.requested:
                     break
+                # Periodic TCP health probe — detects the WinError 64 stuck-socket case
+                # where the API process is alive but the accept loop is dead (Python 3.13
+                # asyncio IOCP does not exit the process on this error).
+                api_slot = next((s for s in slots if s.label == "api"), None)
+                if api_slot is not None and api_slot.process.poll() is None:
+                    now_probe = clock()
+                    if now_probe - _last_probe >= _API_HEALTH_PROBE_INTERVAL:
+                        _last_probe = now_probe
+                        if _tcp_probe(parsed.host, parsed.port):
+                            _probe_failures = 0
+                        else:
+                            _probe_failures += 1
+                            emit_runtime_log(
+                                "supervisor",
+                                f"api health probe failed ({_probe_failures}/{_API_HEALTH_PROBE_FAIL_THRESHOLD})",
+                                stderr=_probe_failures >= _API_HEALTH_PROBE_FAIL_THRESHOLD,
+                            )
+                            if _probe_failures >= _API_HEALTH_PROBE_FAIL_THRESHOLD:
+                                emit_runtime_log("supervisor", "killing api for restart (unresponsive)", stderr=True)
+                                api_slot.process.kill()
+                                _probe_failures = 0
+                                _last_probe = clock()  # replacement gets full probe interval before first check
                 sleep_fn(0.1)
         finally:
             all_processes = [slot.process for slot in slots]
@@ -326,7 +384,7 @@ def run_supervisor(
 class _ManagedSlot:
     """Tracks a supervised child process and its restart history."""
 
-    __slots__ = ("command", "label", "process", "restartable", "restart_times")
+    __slots__ = ("command", "label", "process", "restartable", "use_retry_start", "restart_times")
 
     def __init__(
         self,
@@ -335,12 +393,14 @@ class _ManagedSlot:
         label: str,
         process: subprocess.Popen,
         restartable: bool,
+        use_retry_start: bool = False,
         restart_times: list[float],
     ) -> None:
         self.command = command
         self.label = label
         self.process = process
         self.restartable = restartable
+        self.use_retry_start = use_retry_start
         self.restart_times = restart_times
 
 

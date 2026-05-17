@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 import subprocess
@@ -17,6 +18,8 @@ from app.cli.service import (
     _seed_config,
     _PalliumLock,
     _find_pallium_cmd,
+    _start_windows,
+    _cmd_restart,
     service_main,
 )
 
@@ -254,3 +257,81 @@ class TestSeedConfig:
 
         assert (home / "config" / "pallium.toml").exists()
         assert not (home / "config" / ".env").exists()
+
+
+class TestPalliumLockRetry:
+    def test_acquire_retries_once_on_transient_failure(self, tmp_path: Path):
+        """Lock acquisition retries once after 100ms on transient failure, then succeeds."""
+        lock = _PalliumLock(tmp_path / "test.lock")
+
+        call_count = [0]
+
+        def mock_locking_win(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise OSError("transient lock failure")
+
+        def mock_flock_linux(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise OSError("transient lock failure")
+
+        with patch("time.sleep") as mock_sleep:
+            if sys.platform == "win32":
+                with patch("msvcrt.locking", side_effect=mock_locking_win):
+                    result = lock.acquire()
+            else:
+                with patch("fcntl.flock", side_effect=mock_flock_linux):
+                    result = lock.acquire()
+
+        assert result is True
+        mock_sleep.assert_called_once_with(0.1)
+
+        assert lock._fd is not None, "fd must be captured on successful second attempt"
+        lock.release()
+
+
+class TestStartWindows:
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only")
+    def test_start_windows_raises_if_vbs_missing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """_start_windows raises RuntimeError when the VBS launcher does not exist."""
+        monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+        (tmp_path / "run").mkdir(parents=True, exist_ok=True)
+
+        with pytest.raises(RuntimeError, match="install"):
+            _start_windows()
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only")
+    def test_start_windows_launches_wscript_when_vbs_exists(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """_start_windows calls Popen with wscript.exe when VBS file is present."""
+        monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+        run_dir = tmp_path / "run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        vbs_path = run_dir / "pallium_launcher.vbs"
+        vbs_path.write_text("' stub\n", encoding="ascii")
+
+        with patch("subprocess.Popen") as mock_popen:
+            _start_windows()
+
+        mock_popen.assert_called_once()
+        call_args = mock_popen.call_args[0][0]
+        assert call_args[0] == "wscript.exe"
+        assert str(vbs_path) in call_args[1]
+
+
+class TestCmdRestart:
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only guard is Windows-specific")
+    def test_cmd_restart_fails_before_stop_if_vbs_missing_on_windows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """On Windows, _cmd_restart returns non-zero without calling _cmd_stop_impl when VBS missing."""
+        monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+        (tmp_path / "run").mkdir(parents=True, exist_ok=True)
+
+        args = argparse.Namespace(home=str(tmp_path))
+
+        with patch("app.cli.service._cmd_stop_impl") as mock_stop:
+            result = _cmd_restart(args)
+
+        assert result != 0
+        mock_stop.assert_not_called()
