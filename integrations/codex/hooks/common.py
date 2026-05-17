@@ -103,8 +103,9 @@ def _normalize_remote_url(url: str) -> str:
 
 
 def _path_container(cwd: str) -> str:
-    h = hashlib.sha256(cwd.encode()).hexdigest()[:12]
-    label = _sanitize_path_label(Path(cwd).name)
+    norm = os.path.normcase(os.path.normpath(cwd))
+    h = hashlib.sha256(norm.encode()).hexdigest()[:12]
+    label = _sanitize_path_label(Path(norm).name)
     if label:
         return f"path:{label}:{h}"
     return f"path:{h}"

@@ -765,8 +765,8 @@ function confClass(c) {
 
 function shortContainer(ref) {
   if (!ref) return '—';
-  const parts = ref.split(':');
-  if (parts.length > 2) return parts.slice(-1)[0];
+  const m = ref.match(/^path:([^:]+):[0-9a-f]+$/);
+  if (m) return 'path:' + m[1];
   return ref;
 }
 

@@ -122,3 +122,54 @@ class TestDeriveContainerRef:
         result1 = derive_container_ref("/path/one")
         result2 = derive_container_ref("/path/two")
         assert result1 != result2
+
+
+class TestPathNormalization:
+    """Same logical directory must produce the same container_ref regardless of
+    superficial path-string differences (case on Windows, trailing slash,
+    redundant separators, dot segments)."""
+
+    @patch("common.subprocess.run")
+    def test_trailing_slash_equivalent(self, mock_run):
+        mock_run.side_effect = FileNotFoundError("git not found")
+        a = derive_container_ref("/work/xlm")
+        b = derive_container_ref("/work/xlm/")
+        assert a == b
+
+    @patch("common.subprocess.run")
+    def test_redundant_separators_equivalent(self, mock_run):
+        mock_run.side_effect = FileNotFoundError("git not found")
+        a = derive_container_ref("/work/xlm")
+        b = derive_container_ref("/work//xlm")
+        assert a == b
+
+    @patch("common.subprocess.run")
+    def test_dot_segment_equivalent(self, mock_run):
+        mock_run.side_effect = FileNotFoundError("git not found")
+        a = derive_container_ref("/work/xlm")
+        b = derive_container_ref("/work/./xlm")
+        assert a == b
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="case-insensitive only on Windows")
+    @patch("common.subprocess.run")
+    def test_windows_drive_letter_case_equivalent(self, mock_run):
+        mock_run.side_effect = FileNotFoundError("git not found")
+        a = derive_container_ref(r"C:\work\xlm")
+        b = derive_container_ref(r"c:\work\xlm")
+        assert a == b
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="case-insensitive only on Windows")
+    @patch("common.subprocess.run")
+    def test_windows_path_case_equivalent(self, mock_run):
+        mock_run.side_effect = FileNotFoundError("git not found")
+        a = derive_container_ref(r"C:\Work\XLM")
+        b = derive_container_ref(r"c:\work\xlm")
+        assert a == b
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="separator normalization only on Windows")
+    @patch("common.subprocess.run")
+    def test_windows_forward_slash_equivalent(self, mock_run):
+        mock_run.side_effect = FileNotFoundError("git not found")
+        a = derive_container_ref(r"C:\work\xlm")
+        b = derive_container_ref("C:/work/xlm")
+        assert a == b
