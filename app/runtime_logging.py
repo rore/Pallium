@@ -13,32 +13,56 @@ class RuntimeLogFormatter(logging.Formatter):
         self._component = component
 
     def format(self, record: logging.LogRecord) -> str:
+        # Honor a per-record component (set via ``extra={"pallium_component": ...}``)
+        # so propagation from one component's logger to another formatter (e.g.
+        # the root FileHandler installed by ``configure_file_logging``) doesn't
+        # rewrite the label. Only fall back to the formatter-level default if
+        # the record carries no component of its own.
         original_component = getattr(record, "pallium_component", None)
-        record.pallium_component = self._component
+        if original_component is None:
+            record.pallium_component = self._component
         try:
             return super().format(record)
         finally:
             if original_component is None:
                 delattr(record, "pallium_component")
-            else:
-                record.pallium_component = original_component
 
     def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
         return datetime.fromtimestamp(record.created, timezone.utc).isoformat()
 
 
 def emit_runtime_log(component: str, message: str, *, stderr: bool = False, level: int = logging.INFO) -> None:
+    """Emit a `[component]` log line.
+
+    Routes through the named logger ``pallium.runtime.<component>.<stream>`` with
+    ``propagate=True`` so that any handlers attached to the root logger (e.g.
+    the ``FileHandler`` installed by ``configure_file_logging``) also receive
+    the record. A local ``StreamHandler`` is also attached so direct process
+    output (tests, foreground CLI) keeps working when no root handler is set.
+
+    The handler is rebuilt on each call rather than cached so that
+    ``pytest``'s ``capsys`` (which swaps ``sys.stdout``/``sys.stderr`` per
+    test) always sees the current stream.
+
+    Under wscript-launched service mode (no console), the StreamHandler writes
+    to a stdout/stderr that is effectively /dev/null, so the FileHandler on the
+    root logger is the only sink that actually persists output. That is the
+    bug this routing fixes.
+    """
     logger_name = f"pallium.runtime.{component}.{'stderr' if stderr else 'stdout'}"
     logger = logging.getLogger(logger_name)
     logger.setLevel(level)
-    logger.propagate = False
+    logger.propagate = True
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
         handler.close()
     handler = logging.StreamHandler(sys.stderr if stderr else sys.stdout)
     handler.setFormatter(RuntimeLogFormatter(component))
     logger.addHandler(handler)
-    logger.log(level, message)
+    # Tag the record with the actual component so any other formatter that
+    # receives it (e.g. the root FileHandler with formatter=RuntimeLogFormatter("service"))
+    # preserves the correct ``[component]`` label instead of overwriting it.
+    logger.log(level, message, extra={"pallium_component": component})
 
 
 def build_uvicorn_log_config(*, component: str = "api") -> dict[str, Any]:

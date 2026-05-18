@@ -107,6 +107,8 @@ class TestSupervisorLogFile:
             ["--host", "127.0.0.1", "--port", "19999", "--processors", "1", "--cleaners", "0"],
             popen_factory=fake_popen,
             sleep_fn=lambda _: None,
+            wait_for_api_fn=lambda *_, **__: True,
+            kill_fn=lambda *_, **__: None,
             should_stop=should_stop,
             log_file=log_file,
         )
@@ -140,6 +142,8 @@ class TestSupervisorLogFile:
             ["--host", "127.0.0.1", "--port", "19999", "--processors", "1", "--cleaners", "0"],
             popen_factory=fake_popen,
             sleep_fn=lambda _: None,
+            wait_for_api_fn=lambda *_, **__: True,
+            kill_fn=lambda *_, **__: None,
             should_stop=should_stop,
             log_file=None,
         )
@@ -176,6 +180,8 @@ class TestSupervisorLogFile:
             ["--host", "127.0.0.1", "--port", "19999", "--processors", "1", "--cleaners", "0"],
             popen_factory=fake_popen,
             sleep_fn=lambda _: None,
+            wait_for_api_fn=lambda *_, **__: True,
+            kill_fn=lambda *_, **__: None,
             should_stop=should_stop,
             log_file=log_file,
         )

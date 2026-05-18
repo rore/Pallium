@@ -439,6 +439,28 @@ class FakeProcess:
         return self.returncode
 
 
+def _fake_kill_tree(process, *, force=False, wait_timeout=5.0, **_kwargs):
+    """Test stand-in for app.supervisor._kill_tree that drives FakeProcess
+    via its public terminate/kill methods so existing assertions on
+    ``.terminated``/``.killed``/``.waited`` continue to mean what they
+    meant before Fix 1 introduced taskkill /T as the production kill path.
+
+    ``wait_timeout=0`` (used by the supervisor's parallel-fan-out finally
+    pass) skips the post-kill ``process.wait`` so the finally block can
+    wait sequentially in its second pass — matching the production
+    behaviour where the supervisor's outer wait drives the lifecycle.
+    """
+    if force:
+        process.kill()
+    else:
+        process.terminate()
+    if wait_timeout and wait_timeout > 0:
+        try:
+            process.wait(timeout=wait_timeout)
+        except TimeoutExpired:
+            pass
+
+
 def test_supervisor_blocks_reload_mode() -> None:
     assert supervisor.run_supervisor(['--reload']) == 2
 
@@ -446,7 +468,7 @@ def test_supervisor_blocks_reload_mode() -> None:
 def test_supervisor_starts_api_and_processors_and_terminates_them(capsys) -> None:
     started: list[FakeProcess] = []
 
-    def popen_factory(command, cwd=None):
+    def popen_factory(command, cwd=None, **_kwargs):
         process = FakeProcess(command, cwd=cwd)
         started.append(process)
         return process
@@ -456,6 +478,7 @@ def test_supervisor_starts_api_and_processors_and_terminates_them(capsys) -> Non
         popen_factory=popen_factory,
         sleep_fn=lambda _: None,
         wait_for_api_fn=lambda *_, **__: True,
+        kill_fn=_fake_kill_tree,
         should_stop=lambda: True,
     )
 
@@ -474,7 +497,7 @@ def test_supervisor_starts_api_and_processors_and_terminates_them(capsys) -> Non
 def test_supervisor_can_disable_cleaners_explicitly(capsys) -> None:
     started: list[FakeProcess] = []
 
-    def popen_factory(command, cwd=None):
+    def popen_factory(command, cwd=None, **_kwargs):
         process = FakeProcess(command, cwd=cwd)
         started.append(process)
         return process
@@ -484,6 +507,7 @@ def test_supervisor_can_disable_cleaners_explicitly(capsys) -> None:
         popen_factory=popen_factory,
         sleep_fn=lambda _: None,
         wait_for_api_fn=lambda *_, **__: True,
+        kill_fn=_fake_kill_tree,
         should_stop=lambda: True,
     )
 
@@ -498,7 +522,7 @@ def test_supervisor_can_disable_cleaners_explicitly(capsys) -> None:
 def test_supervisor_kills_process_that_ignores_terminate(capsys) -> None:
     started: list[FakeProcess] = []
 
-    def popen_factory(command, cwd=None):
+    def popen_factory(command, cwd=None, **_kwargs):
         process = FakeProcess(command, cwd=cwd)
         if 'app.cleaner' in process.command:
             process.wait_timeout = True
@@ -511,6 +535,7 @@ def test_supervisor_kills_process_that_ignores_terminate(capsys) -> None:
         popen_factory=popen_factory,
         sleep_fn=lambda _: None,
         wait_for_api_fn=lambda *_, **__: True,
+        kill_fn=_fake_kill_tree,
         should_stop=lambda: True,
     )
 
@@ -875,7 +900,7 @@ def test_supervisor_restarts_crashed_processor(capsys) -> None:
     started: list[FakeProcess] = []
     poll_count = [0]
 
-    def popen_factory(command, cwd=None):
+    def popen_factory(command, cwd=None, **_kwargs):
         process = FakeProcess(command, cwd=cwd)
         started.append(process)
         return process
@@ -897,6 +922,7 @@ def test_supervisor_restarts_crashed_processor(capsys) -> None:
         popen_factory=popen_factory,
         sleep_fn=sleep_fn,
         wait_for_api_fn=lambda *_, **__: True,
+        kill_fn=_fake_kill_tree,
         should_stop=lambda: poll_count[0] >= 3,
     )
 
@@ -913,7 +939,7 @@ def test_supervisor_shuts_down_on_rapid_crashes(capsys) -> None:
     started: list[FakeProcess] = []
     poll_count = [0]
 
-    def popen_factory(command, cwd=None):
+    def popen_factory(command, cwd=None, **_kwargs):
         process = FakeProcess(command, cwd=cwd)
         # Make every processor crash immediately
         if 'app.processor' in command:
@@ -930,6 +956,7 @@ def test_supervisor_shuts_down_on_rapid_crashes(capsys) -> None:
         popen_factory=popen_factory,
         sleep_fn=sleep_fn,
         wait_for_api_fn=lambda *_, **__: True,
+        kill_fn=_fake_kill_tree,
         clock=lambda: 0.0,  # time never advances
     )
 
@@ -941,31 +968,33 @@ def test_supervisor_shuts_down_on_rapid_crashes(capsys) -> None:
     assert len(processor_starts) == 4  # original + 3 restarts
 
 
-def test_supervisor_api_exit_is_always_fatal(capsys) -> None:
+def test_supervisor_api_exit_propagates_when_restart_budget_exhausted(capsys) -> None:
+    """Since the WinError-64 health-probe work, API slots are restartable.
+    Repeated API exits within the rapid-restart window must therefore
+    propagate the original exit code (not loop forever, not swallow it)."""
     started: list[FakeProcess] = []
-    poll_count = [0]
 
-    def popen_factory(command, cwd=None):
+    def popen_factory(command, cwd=None, **_kwargs):
         process = FakeProcess(command, cwd=cwd)
+        # Every API child crashes immediately with code 2
+        if 'app.run' in command:
+            process.returncode = 2
         started.append(process)
         return process
-
-    def sleep_fn(_):
-        poll_count[0] += 1
-        if poll_count[0] == 1:
-            # Crash the API server
-            started[0].returncode = 2
 
     exit_code = supervisor.run_supervisor(
         ['--host', '127.0.0.1', '--port', '8010', '--processors', '1', '--cleaners', '0'],
         popen_factory=popen_factory,
-        sleep_fn=sleep_fn,
+        sleep_fn=lambda _: None,
         wait_for_api_fn=lambda *_, **__: True,
+        kill_fn=_fake_kill_tree,
+        clock=lambda: 0.0,  # freeze time so every restart lands in window
     )
 
     assert exit_code == 2
-    # No restarts should have happened — only original api + processor
-    assert len(started) == 2
+    api_starts = [p for p in started if 'app.run' in p.command]
+    # original + 3 restarts = 4 (matches _MAX_RAPID_RESTARTS budget)
+    assert len(api_starts) == 4
 
 
 # ── Supervisor snapshot integration ──────────────────────────────────
@@ -982,7 +1011,7 @@ def test_supervisor_spawns_snapshot_worker_when_enabled(capsys, tmp_path, monkey
     monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
 
     started: list[FakeProcess] = []
-    def popen_factory(command, cwd=None):
+    def popen_factory(command, cwd=None, **_kwargs):
         process = FakeProcess(command, cwd=cwd)
         started.append(process)
         return process
@@ -992,6 +1021,7 @@ def test_supervisor_spawns_snapshot_worker_when_enabled(capsys, tmp_path, monkey
         popen_factory=popen_factory,
         sleep_fn=lambda _: None,
         wait_for_api_fn=lambda *_, **__: True,
+        kill_fn=_fake_kill_tree,
         should_stop=lambda: True,
     )
 
@@ -1010,7 +1040,7 @@ def test_supervisor_does_not_spawn_snapshot_when_disabled(capsys, tmp_path, monk
     monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
 
     started: list[FakeProcess] = []
-    def popen_factory(command, cwd=None):
+    def popen_factory(command, cwd=None, **_kwargs):
         process = FakeProcess(command, cwd=cwd)
         started.append(process)
         return process
@@ -1020,6 +1050,7 @@ def test_supervisor_does_not_spawn_snapshot_when_disabled(capsys, tmp_path, monk
         popen_factory=popen_factory,
         sleep_fn=lambda _: None,
         wait_for_api_fn=lambda *_, **__: True,
+        kill_fn=_fake_kill_tree,
         should_stop=lambda: True,
     )
 

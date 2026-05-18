@@ -54,6 +54,20 @@ class FakePopen:
         pass
 
 
+def _fake_kill_fn(process, *, force=False, **kwargs):
+    """Test stand-in for _kill_tree that sets the same flags real terminate()/kill() set.
+
+    Mirrors the production helper's escalation contract: force=False ≈ terminate,
+    force=True ≈ kill. The supervisor's finally block calls force=False then
+    later force=True — both must mark the FakePopen so existing assertions
+    (._killed, ._terminated) keep their meaning.
+    """
+    if force:
+        process._killed = True
+    else:
+        process._terminated = True
+
+
 def _make_clock(times):
     """Return a clock() callable that yields values from *times* in sequence,
     then repeats the last value forever."""
@@ -128,6 +142,7 @@ def test_health_probe_kills_api_after_consecutive_failures():
             wait_for_api_fn=lambda *_, **__: True,
             clock=clock,
             should_stop=_counter_stop(4),
+            kill_fn=_fake_kill_fn,
         )
 
     assert api_proc._killed, "API process should have been killed after 2 consecutive probe failures"
@@ -171,6 +186,7 @@ def test_health_probe_no_kill_on_single_failure():
             wait_for_api_fn=lambda *_, **__: True,
             clock=clock,
             should_stop=_counter_stop(4),
+            kill_fn=_fake_kill_fn,
         )
 
     assert not api_proc._killed, "API must not be killed after only one failure followed by success"
@@ -207,6 +223,7 @@ def test_health_probe_no_kill_when_process_alive_and_healthy():
             wait_for_api_fn=lambda *_, **__: True,
             clock=clock,
             should_stop=_counter_stop(4),
+            kill_fn=_fake_kill_fn,
         )
 
     assert not api_proc._killed, "API must not be killed when health probes always succeed"
@@ -249,6 +266,7 @@ def test_api_restart_uses_retry_start():
             wait_for_api_fn=lambda *_, **__: True,
             clock=_make_clock([0.0] * 20),
             should_stop=_counter_stop(10),
+            kill_fn=_fake_kill_fn,
         )
 
     assert len(retry_calls) >= 2, (
@@ -290,6 +308,7 @@ def test_worker_restart_uses_plain_popen():
             wait_for_api_fn=lambda *_, **__: True,
             clock=_make_clock([0.0] * 20),
             should_stop=_counter_stop(10),
+            kill_fn=_fake_kill_fn,
         )
 
     # _start_api_with_retry should only have been called once (initial startup)
@@ -343,6 +362,7 @@ def test_api_rapid_restart_budget_triggers_shutdown():
             wait_for_api_fn=lambda *_, **__: True,
             clock=clock,
             should_stop=_counter_stop(50),  # generous stop, rely on budget
+            kill_fn=_fake_kill_fn,
         )
 
     # The supervisor should have stopped due to rapid-restart budget
@@ -357,3 +377,349 @@ def test_api_rapid_restart_budget_triggers_shutdown():
         f"got {restart_call_count[0]}"
     )
     assert result != 0, "Supervisor should exit with non-zero code when rapid-restart budget fires"
+
+
+# ---------------------------------------------------------------------------
+# Self-identifying readiness probe (_wait_for_api with launch token)
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+from app.supervisor import _wait_for_api, _generate_launch_token, _start_api_with_retry
+
+
+def _stub_socket_factory(connect_results: list[bool]):
+    """Return a contextlib-managed fake socket that connects per the iterator.
+
+    Each entry maps to one socket() call. True → connect succeeds (TCP probe
+    passes), False → connect raises ConnectionRefusedError.
+    """
+    results = iter(connect_results)
+
+    class _FakeSocket:
+        def __init__(self, *_a, **_kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *_a): return False
+        def settimeout(self, *_): pass
+        def connect(self, *_):
+            try:
+                ok = next(results)
+            except StopIteration:
+                ok = True
+            if not ok:
+                raise ConnectionRefusedError()
+        def close(self): pass
+
+    return _FakeSocket
+
+
+def test_wait_for_api_succeeds_when_token_matches(tmp_path, monkeypatch):
+    """Token file with correct nonce → probe succeeds."""
+    nonce = "expected-token-xyz"
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "api_token").write_text(_json.dumps({"nonce": nonce, "pid": 1234}), encoding="utf-8")
+
+    # TCP succeeds on first try
+    monkeypatch.setattr("socket.socket", _stub_socket_factory([True]))
+
+    times = iter([0.0, 0.1, 0.2])
+    clock = lambda: next(times, 0.5)
+
+    result = _wait_for_api(
+        "127.0.0.1", 19999,
+        timeout=10.0, sleep_fn=lambda _: None,
+        expected_nonce=nonce, run_dir=run_dir,
+        clock=clock,
+    )
+    assert result is True
+
+
+def test_wait_for_api_rejects_token_mismatch(tmp_path, monkeypatch):
+    """Token file with WRONG nonce (foreign bind) → must keep waiting,
+    never trust TCP, eventually timing out.
+
+    Note: a wrong-nonce file makes ``_check_token`` return False, which
+    routes around the grace path entirely. The test additionally sets a
+    high ``grace_period`` value as a defense-in-depth signal, but the
+    primary mechanism under test is the False return arming
+    ``foreign_bind_seen`` and barring any subsequent grace fallback.
+    """
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "api_token").write_text(
+        _json.dumps({"nonce": "old-orphan-token", "pid": 9999}), encoding="utf-8"
+    )
+
+    # TCP always succeeds (orphan is bound)
+    monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 100))
+
+    # Tight clock so timeout fires fast
+    t = [0.0]
+    def clock():
+        v = t[0]
+        t[0] += 0.6
+        return v
+
+    result = _wait_for_api(
+        "127.0.0.1", 19999,
+        timeout=2.0, sleep_fn=lambda _: None,
+        expected_nonce="our-new-token", run_dir=run_dir,
+        grace_period=999.0,  # defense-in-depth; primary mechanism is False → foreign_bind_seen
+        clock=clock,
+    )
+    assert result is False, (
+        "must time out rather than accept a foreign bind whose token nonce differs"
+    )
+
+
+def test_wait_for_api_orphan_then_token_cleanup_must_not_grace_through(tmp_path, monkeypatch):
+    """REGRESSION — orphan held the port, then its lifespan finally deleted
+    the token file mid-probe. The probe must NOT grace-fallback to True
+    because a wrong-nonce was previously observed (orphan signature seen).
+
+    Without the foreign_bind_seen latch, the probe would: see wrong nonce,
+    keep waiting, see token file vanish (orphan cleanup), enter the
+    missing-token grace path, time out → return True for the orphan."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    token_file = run_dir / "api_token"
+
+    # Orphan token initially present
+    token_file.write_text(_json.dumps({"nonce": "orphan-token", "pid": 9999}), encoding="utf-8")
+
+    # TCP always succeeds (orphan stays bound)
+    monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 100))
+
+    # On the 3rd clock tick, simulate the orphan deleting its token file.
+    tick = [0]
+    deletion_armed = [False]
+    def clock():
+        v = tick[0] * 1.0
+        tick[0] += 1
+        if tick[0] >= 3 and not deletion_armed[0]:
+            deletion_armed[0] = True
+            try:
+                token_file.unlink()
+            except FileNotFoundError:
+                pass
+        return v
+
+    result = _wait_for_api(
+        "127.0.0.1", 19999,
+        timeout=20.0, sleep_fn=lambda _: None,
+        expected_nonce="our-new-token", run_dir=run_dir,
+        grace_period=2.0,
+        clock=clock,
+    )
+    assert result is False, (
+        "after seeing a foreign-nonce token, subsequent missing-token must NOT grace through"
+    )
+
+
+def test_wait_for_api_falls_back_after_grace_when_token_missing(tmp_path, monkeypatch):
+    """No token file (e.g. older child not implementing token write) →
+    after grace period, trust TCP alone (back-compat)."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()  # but no api_token file
+
+    monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 100))
+
+    # Each clock() call jumps far enough that grace period elapses on the
+    # second iteration after TCP starts succeeding.
+    t = [0.0]
+    def clock():
+        v = t[0]
+        t[0] += 6.0  # 0, 6, 12, 18, ...
+        return v
+
+    result = _wait_for_api(
+        "127.0.0.1", 19999,
+        timeout=60.0, sleep_fn=lambda _: None,
+        expected_nonce="some-token", run_dir=run_dir,
+        grace_period=10.0,
+        clock=clock,
+    )
+    assert result is True, "missing token + grace expired → should trust TCP"
+
+
+def test_wait_for_api_no_self_id_legacy_path(tmp_path, monkeypatch):
+    """Without expected_nonce/run_dir, behavior is legacy: TCP success → True."""
+    monkeypatch.setattr("socket.socket", _stub_socket_factory([True]))
+    result = _wait_for_api(
+        "127.0.0.1", 19999, timeout=5.0, sleep_fn=lambda _: None,
+    )
+    assert result is True
+
+
+def test_wait_for_api_returns_false_when_process_dies(tmp_path, monkeypatch):
+    """If the spawned process exits, _wait_for_api must return False
+    immediately rather than continuing to TCP-probe."""
+    monkeypatch.setattr("socket.socket", _stub_socket_factory([False] * 100))
+
+    class _DeadProc:
+        pid = 1234
+        def poll(self): return 1  # already exited
+
+    result = _wait_for_api(
+        "127.0.0.1", 19999, timeout=10.0, sleep_fn=lambda _: None,
+        process=_DeadProc(),
+    )
+    assert result is False
+
+
+def test_wait_for_api_handles_corrupt_token_file(tmp_path, monkeypatch):
+    """Garbled token file → treated as 'absent', falls back via grace period.
+    Avoids supervisor wedging on a partially-written file from a crashed write."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "api_token").write_text("not valid json {{{", encoding="utf-8")
+
+    monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 100))
+
+    t = [0.0]
+    def clock():
+        v = t[0]
+        t[0] += 6.0
+        return v
+
+    result = _wait_for_api(
+        "127.0.0.1", 19999,
+        timeout=60.0, sleep_fn=lambda _: None,
+        expected_nonce="x", run_dir=run_dir,
+        grace_period=10.0,
+        clock=clock,
+    )
+    assert result is True, "corrupt JSON → treated as absent, grace fallback applies"
+
+
+def test_generate_launch_token_is_unique():
+    """Each call must produce a different token — otherwise a stale token from
+    a crashed previous attempt could be confused for the next attempt."""
+    tokens = {_generate_launch_token() for _ in range(50)}
+    assert len(tokens) == 50, "launch tokens must be unique"
+    # And reasonably long — guards against accidental short-token regression
+    for t in tokens:
+        assert len(t) >= 16
+
+
+def test_start_api_with_retry_passes_unique_nonce_per_attempt(tmp_path):
+    """Each retry attempt must mint a fresh nonce, and inject it as
+    PALLIUM_API_LAUNCH_TOKEN into the child env."""
+
+    captured_envs = []
+
+    class _DyingPopen:
+        def __init__(self, env):
+            self.pid = 1
+            self.returncode = 1
+            self._env = env
+        def poll(self): return 1  # immediately "dead" → triggers retry
+
+    def popen_factory(cmd, **kwargs):
+        captured_envs.append(kwargs.get("env", {}))
+        return _DyingPopen(kwargs.get("env", {}))
+
+    # wait_for_api always reports failure → exhaust retries
+    def wait_fn(host, port, **kw):
+        return False
+
+    nonce_counter = [0]
+    def gen_token():
+        nonce_counter[0] += 1
+        return f"token-{nonce_counter[0]}"
+
+    _start_api_with_retry(
+        ["dummy"], "127.0.0.1", 19999,
+        popen_factory=popen_factory,
+        sleep_fn=lambda _: None,
+        wait_for_api_fn=wait_fn,
+        run_dir=tmp_path,
+        token_fn=gen_token,
+    )
+
+    assert len(captured_envs) >= 2, "expected multiple attempts"
+    nonces = [e.get("PALLIUM_API_LAUNCH_TOKEN") for e in captured_envs]
+    assert all(n is not None for n in nonces), "every attempt must inject the token env var"
+    assert len(set(nonces)) == len(nonces), f"nonces must differ across attempts, got {nonces}"
+
+
+def test_start_api_with_retry_threads_nonce_to_wait_fn(tmp_path):
+    """The nonce supplied to popen env must be the same one passed to wait_for_api_fn."""
+    seen = {}
+
+    class _AlivePopen:
+        pid = 42
+        returncode = None
+        def poll(self): return None  # alive
+
+    def popen_factory(cmd, **kwargs):
+        seen["env_nonce"] = kwargs.get("env", {}).get("PALLIUM_API_LAUNCH_TOKEN")
+        return _AlivePopen()
+
+    def wait_fn(host, port, *, expected_nonce=None, run_dir=None, **kw):
+        seen["wait_nonce"] = expected_nonce
+        seen["wait_run_dir"] = run_dir
+        return True
+
+    _start_api_with_retry(
+        ["dummy"], "127.0.0.1", 19999,
+        popen_factory=popen_factory,
+        sleep_fn=lambda _: None,
+        wait_for_api_fn=wait_fn,
+        run_dir=tmp_path,
+        token_fn=lambda: "fixed-nonce-abc",
+    )
+
+    assert seen["env_nonce"] == "fixed-nonce-abc"
+    assert seen["wait_nonce"] == "fixed-nonce-abc", (
+        "wait_for_api must receive the same nonce that was injected into child env"
+    )
+    assert seen["wait_run_dir"] == tmp_path
+
+
+def test_start_api_with_retry_kills_alive_unverified_proc(tmp_path, monkeypatch):
+    """REGRESSION — when wait_for_api returns False but the process is still
+    alive (e.g. foreign bind held the port for the whole probe window), the
+    retry path must kill the proc rather than hand the supervisor an
+    'alive but unverified' child that will never serve traffic."""
+
+    killed = []
+
+    class _AliveProc:
+        def __init__(self): self.pid = 7
+        def poll(self): return None  # never exits on its own
+
+    procs = []
+    def popen_factory(cmd, **kwargs):
+        p = _AliveProc()
+        procs.append(p)
+        return p
+
+    # wait_for_api always returns False (probe never verifies)
+    def wait_fn(host, port, **kw): return False
+
+    # Patch _kill_tree at module level so we can observe kill calls
+    def fake_kill(process, *, force=False, **kwargs):
+        killed.append((process.pid, force))
+
+    monkeypatch.setattr("app.supervisor._kill_tree", fake_kill)
+
+    _start_api_with_retry(
+        ["dummy"], "127.0.0.1", 19999,
+        popen_factory=popen_factory,
+        sleep_fn=lambda _: None,
+        wait_for_api_fn=wait_fn,
+        run_dir=tmp_path,
+        token_fn=lambda: "tk",
+    )
+
+    # Each unverified attempt should have triggered a kill (force=True)
+    assert len(killed) >= 1, (
+        f"expected the retry loop to kill alive-but-unverified procs, got kills={killed!r}"
+    )
+    assert all(force is True for _, force in killed), (
+        f"unverified procs must be force-killed (taskkill /F /T), got {killed!r}"
+    )
+    # And the retry budget should have been exhausted (multiple Popen calls)
+    assert len(procs) == 5, f"expected 5 attempts, got {len(procs)}"

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
+import os
 import threading
 import time
 from collections.abc import AsyncIterator
@@ -30,6 +32,46 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 RECONCILE_INTERVAL_SECONDS = 2.0
+
+
+def _write_launch_token() -> Path | None:
+    """Write the supervisor-supplied launch nonce + our pid to the run dir.
+
+    The supervisor uses this file to verify that the process bound to its API
+    port is actually the one it just spawned (not an orphan from a prior
+    generation still holding the socket). See app/supervisor._wait_for_api.
+
+    No-op when ``PALLIUM_API_LAUNCH_TOKEN`` is unset, so this stays compatible
+    with direct invocations (`python -m app.run serve ...`) that don't go
+    through the supervisor.
+    """
+    nonce = os.environ.get("PALLIUM_API_LAUNCH_TOKEN")
+    if not nonce:
+        return None
+    home_env = os.environ.get("PALLIUM_HOME")
+    home = Path(home_env) if home_env else Path.home() / ".pallium"
+    run_dir = home / "run"
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        token_path = run_dir / "api_token"
+        # Write atomically: write to .tmp then rename. Without atomicity the
+        # supervisor can read a half-written file and decide nonce-mismatch.
+        tmp_path = token_path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps({"nonce": nonce, "pid": os.getpid()}), encoding="utf-8")
+        os.replace(tmp_path, token_path)
+        return token_path
+    except OSError as exc:
+        logger.warning("failed to write launch token: %s", exc)
+        return None
+
+
+def _remove_launch_token(path: Path | None) -> None:
+    if path is None:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _start_reconcile_thread(
@@ -131,6 +173,13 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
 
     @contextlib.asynccontextmanager
     async def app_lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
+        # Write the launch token as early as possible so the supervisor's
+        # readiness probe can self-identify this process before any heavy
+        # startup (vector reconcile, rebuild) extends the window during which
+        # an orphan from a prior generation could be mistaken for us.
+        token_path = _write_launch_token()
+        app_instance.state._launch_token_path = token_path
+
         # Start reconcile thread inside lifespan so shutdown stops it cleanly.
         stop: threading.Event | None = None
         rebuild_coordinator: "RebuildCoordinator | None" = None
@@ -178,6 +227,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                 rebuild_coordinator.stop()
             if stop is not None:
                 stop.set()
+            _remove_launch_token(token_path)
 
     app = FastAPI(title="Pallium", version="0.1.0", lifespan=app_lifespan)
     app.state.pallium_service = service

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import secrets
+import signal
 import subprocess
 import sys
 import time
@@ -15,13 +18,118 @@ from app.snapshot import resolve_live_db_path, restore_snapshot, create_snapshot
 
 # On Windows + Python 3.13, onnxruntime has a non-deterministic heap corruption
 # bug during model initialization.  CREATE_NEW_PROCESS_GROUP isolates children.
+# On POSIX, start_new_session puts each child in its own process group so we
+# can kill the whole tree via killpg without taking the supervisor down.
 _POPEN_KWARGS: dict[str, object] = {}
 if sys.platform == "win32":
     _POPEN_KWARGS = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | 0x08000000}
+else:
+    _POPEN_KWARGS = {"start_new_session": True}
 
 
 def _default_popen(cmd: list[str], **kwargs) -> subprocess.Popen:
     return subprocess.Popen(cmd, **{**kwargs, **_POPEN_KWARGS})
+
+
+# taskkill exit codes considered "successful kill or already gone":
+# 0   = killed
+# 128 = process not found (already exited — Windows error 128 surfaces here for /PID targets)
+# Code 1 is NOT included: it means "could not be terminated" (permission denied or
+# generic failure for /PID targets) and treating it as success would silently mask
+# a real failure on low-privilege Scheduled Task accounts.
+_TASKKILL_SUCCESS_CODES = frozenset({0, 128})
+
+
+def _kill_tree(
+    process: subprocess.Popen,
+    *,
+    force: bool = False,
+    wait_timeout: float = 5.0,
+    runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    killpg: Callable[[int, int], None] | None = None,
+    log: Callable[[str, str], None] | None = None,
+) -> None:
+    """Kill ``process`` and all of its descendants, then reap.
+
+    Cross-platform process-tree kill that closes the gap left by
+    ``Popen.terminate()``/``.kill()`` on Windows: those use
+    ``TerminateProcess`` which is non-recursive, so when the spawned binary is
+    a launcher trampoline (e.g. uv's venv ``python.exe`` redirector) the real
+    interpreter survives and keeps holding sockets/files.
+
+    - Windows: ``taskkill /T [/F] /PID``. ``/T`` walks the parent-child tree
+      recorded by Windows.
+    - POSIX:   ``killpg`` on the child's process group. Requires that the
+      child was spawned with ``start_new_session=True`` (handled by
+      ``_default_popen``).
+
+    Pass ``wait_timeout=0`` to skip the post-kill ``process.wait`` (used by the
+    finally block to fan out signals before waiting in parallel). Tolerates
+    "already dead" states without raising.
+    """
+    if process is None:
+        return
+    pid = process.pid
+
+    if sys.platform == "win32":
+        cmd = ["taskkill", "/T", "/PID", str(pid)]
+        if force:
+            cmd.insert(1, "/F")
+        try:
+            run_timeout = wait_timeout if wait_timeout > 0 else 5.0
+            result = runner(cmd, capture_output=True, timeout=run_timeout, check=False)
+            if result.returncode not in _TASKKILL_SUCCESS_CODES:
+                if log is not None:
+                    log(
+                        "supervisor",
+                        f"taskkill returned unexpected code {result.returncode} "
+                        f"for pid={pid}: {result.stderr.decode(errors='replace').strip()}",
+                    )
+        except subprocess.TimeoutExpired:
+            if log is not None:
+                log("supervisor", f"taskkill timed out for pid={pid}")
+        except (OSError, FileNotFoundError) as exc:
+            # taskkill missing or unspawnable — fall back to direct kill
+            if log is not None:
+                log("supervisor", f"taskkill unavailable ({exc}); falling back to process.kill")
+            try:
+                process.kill()
+            except OSError:
+                pass
+    else:
+        sig = signal.SIGKILL if force else signal.SIGTERM
+        _killpg = killpg if killpg is not None else os.killpg
+        try:
+            pgid = os.getpgid(pid)
+            _killpg(pgid, sig)
+        except (ProcessLookupError, PermissionError):
+            # Process already gone or different session — fall back to direct kill
+            try:
+                if force:
+                    process.kill()
+                else:
+                    process.terminate()
+            except OSError:
+                pass
+        except OSError as exc:
+            if log is not None:
+                log("supervisor", f"killpg failed for pid={pid}: {exc}")
+            try:
+                if force:
+                    process.kill()
+                else:
+                    process.terminate()
+            except OSError:
+                pass
+
+    if wait_timeout > 0:
+        try:
+            process.wait(timeout=wait_timeout)
+        except subprocess.TimeoutExpired:
+            if log is not None:
+                log("supervisor", f"process pid={pid} did not exit within {wait_timeout}s after kill")
+        except OSError:
+            pass
 
 # Supervisor restart policy: if a child crashes more than this many times
 # within the window, the supervisor gives up and shuts everything down.
@@ -67,29 +175,106 @@ def _wait_for_api(
     timeout: float = 30.0,
     sleep_fn: Callable[[float], None] = time.sleep,
     process: subprocess.Popen | None = None,
+    expected_nonce: str | None = None,
+    run_dir: Path | None = None,
+    grace_period: float = 3.0,
+    clock: Callable[[], float] = time.monotonic,
 ) -> bool:
     """Block until the API server accepts connections, or timeout/crash.
 
     Returns True if the API became ready, False if it exited or timed out.
+
+    When ``expected_nonce`` and ``run_dir`` are provided, the probe goes
+    beyond a TCP connection check: after the port accepts, it reads
+    ``{run_dir}/api_token`` and verifies the JSON ``nonce`` matches the value
+    we passed via ``PALLIUM_API_LAUNCH_TOKEN``. This rejects orphan
+    "previous-generation" processes that are still bound to the port from a
+    prior supervisor run.
+
+    The grace period exists to cover the small window between uvicorn's port
+    bind and the lifespan startup writing the token (typically sub-second).
+    It is **disabled** the moment we see any wrong-nonce token during the
+    probe, because that proves a foreign process is bound — and an orphan
+    racing its own lifespan-finally cleanup could otherwise launder a stale
+    bind into a successful probe via the missing-file path.
     """
     import socket as _socket
 
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    deadline = clock() + timeout
+    tcp_first_seen: float | None = None
+    foreign_bind_seen = False
+    while clock() < deadline:
         if process is not None and process.poll() is not None:
             return False
         try:
             with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
                 s.settimeout(1)
                 s.connect((host, port))
-                return True
         except (OSError, ConnectionRefusedError):
             sleep_fn(0.5)
+            continue
+
+        # TCP succeeded.
+        if expected_nonce is None or run_dir is None:
+            return True  # legacy / no self-id requested
+
+        token_path = run_dir / "api_token"
+        token_match = _check_token(token_path, expected_nonce)
+        if token_match is True:
+            return True
+        if token_match is False:
+            # Mismatched nonce — definitive proof of a foreign bind. Never
+            # trust the missing-token grace path after seeing this; if the
+            # orphan deletes the file mid-probe, we must not silently accept.
+            foreign_bind_seen = True
+        else:
+            # token_match is None: file absent or unreadable. Apply the grace
+            # period only if we have NOT seen a foreign-bind marker.
+            if not foreign_bind_seen:
+                now = clock()
+                if tcp_first_seen is None:
+                    tcp_first_seen = now
+                elif now - tcp_first_seen >= grace_period:
+                    return True
+        sleep_fn(0.5)
     return False
+
+
+def _check_token(token_path: Path, expected_nonce: str) -> bool | None:
+    """Return True if token file matches, False on mismatch, None if absent/unreadable.
+
+    Reads the file directly without a prior ``exists()`` check to avoid TOCTOU
+    on Windows where atomic ``os.replace`` can swap the file between checks.
+    Any read failure (FileNotFoundError, partial JSON, permission error) is
+    treated uniformly as "absent" so the caller's grace-period logic governs.
+    """
+    try:
+        data = json.loads(token_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return False
+    return data.get("nonce") == expected_nonce
 
 
 _API_START_MAX_ATTEMPTS = 5
 _API_START_BACKOFF_SECONDS = 2.0
+
+
+def _pallium_run_dir() -> Path:
+    """Resolve the runtime directory where the API writes its launch token.
+
+    Uses ``PALLIUM_HOME`` if set, otherwise falls back to ``~/.pallium``.
+    Both supervisor and child API process compute this identically — they
+    inherit the same environment.
+    """
+    home_env = os.environ.get("PALLIUM_HOME")
+    home = Path(home_env) if home_env else Path.home() / ".pallium"
+    return home / "run"
+
+
+def _generate_launch_token() -> str:
+    return secrets.token_urlsafe(16)
 
 
 def _tcp_probe(host: str, port: int) -> bool:
@@ -113,24 +298,56 @@ def _start_api_with_retry(
     sleep_fn: Callable[[float], None] = time.sleep,
     wait_for_api_fn: Callable[..., bool] = _wait_for_api,  # pass lambda *_, **__: True in tests
     stop: object | None = None,
+    run_dir: Path | None = None,
+    token_fn: Callable[[], str] = _generate_launch_token,
 ) -> subprocess.Popen | None:
-    """Start the API server, retrying on startup crashes."""
+    """Start the API server, retrying on startup crashes.
+
+    Each attempt mints a fresh launch token via ``token_fn`` and exports it as
+    ``PALLIUM_API_LAUNCH_TOKEN`` to the child environment. ``wait_for_api_fn``
+    receives ``expected_nonce`` and ``run_dir`` so it can refuse to mistake an
+    orphan from a prior generation for our new child. The token is also
+    threaded through retries so a stale token from a crashed previous attempt
+    can never be confused for the next one.
+    """
+    if run_dir is None:
+        run_dir = _pallium_run_dir()
     for attempt in range(1, _API_START_MAX_ATTEMPTS + 1):
         if stop is not None and getattr(stop, "requested", False):
             return None
-        proc = popen_factory(cmd, cwd=os.getcwd())
+        nonce = token_fn()
+        env = {**os.environ, "PALLIUM_API_LAUNCH_TOKEN": nonce}
+        proc = popen_factory(cmd, cwd=os.getcwd(), env=env)
         emit_runtime_log("supervisor", f"started api pid={proc.pid} host={host} port={port} attempt={attempt}")
-        if wait_for_api_fn(host, port, timeout=30.0, process=proc):
+        if wait_for_api_fn(
+            host, port, timeout=30.0, process=proc,
+            expected_nonce=nonce, run_dir=run_dir,
+        ):
             return proc
-        # If process is still alive but didn't bind port (slow startup), proceed
+        # wait_for_api returned False. Two sub-cases:
+        #   (a) process is alive but probe failed (timeout, foreign bind,
+        #       missing token past grace). Under self-id mode this is NOT
+        #       a "slow startup, give it a chance" scenario — it likely
+        #       means a previous-generation orphan is holding the port and
+        #       our child can never bind. Kill the proc and retry rather
+        #       than handing the supervisor a child that will never serve.
+        #   (b) process exited on its own — fall through to retry log.
         if proc.poll() is None:
-            return proc
-        # Process died during startup — retry
-        emit_runtime_log(
-            "supervisor",
-            f"api startup failed attempt={attempt}/{_API_START_MAX_ATTEMPTS} code={proc.returncode}",
-            stderr=True,
-        )
+            emit_runtime_log(
+                "supervisor",
+                f"api probe failed (process alive but unverified), killing pid={proc.pid} for retry attempt={attempt}/{_API_START_MAX_ATTEMPTS}",
+                stderr=True,
+            )
+            try:
+                _kill_tree(proc, force=True, log=emit_runtime_log)
+            except Exception:
+                pass
+        else:
+            emit_runtime_log(
+                "supervisor",
+                f"api startup failed attempt={attempt}/{_API_START_MAX_ATTEMPTS} code={proc.returncode}",
+                stderr=True,
+            )
         if attempt < _API_START_MAX_ATTEMPTS:
             sleep_fn(_API_START_BACKOFF_SECONDS * attempt)
     return None
@@ -145,6 +362,7 @@ def run_supervisor(
     should_stop: Callable[[], bool] | None = None,
     clock: Callable[[], float] = time.monotonic,
     log_file: Path | None = None,
+    kill_fn: Callable[..., None] = _kill_tree,
 ) -> int:
     parsed = build_parser().parse_args(args)
     if parsed.reload:
@@ -336,15 +554,22 @@ def run_supervisor(
                             )
                             if _probe_failures >= _API_HEALTH_PROBE_FAIL_THRESHOLD:
                                 emit_runtime_log("supervisor", "killing api for restart (unresponsive)", stderr=True)
-                                api_slot.process.kill()
+                                kill_fn(api_slot.process, force=True, log=emit_runtime_log)
                                 _probe_failures = 0
                                 _last_probe = clock()  # replacement gets full probe interval before first check
                 sleep_fn(0.1)
         finally:
             all_processes = [slot.process for slot in slots]
+            # Three-pass shutdown to bound total wall time:
+            #   1. Fan out SIGTERM/taskkill /T to every live child without waiting.
+            #   2. Wait up to 5s per child for graceful exit (sequential, but
+            #      most exit immediately so this is dominated by the slowest).
+            #   3. Escalate to SIGKILL/taskkill /F /T on survivors and reap.
+            # Without pass 1's wait_timeout=0, _kill_tree would block its own
+            # internal wait *and* the outer process.wait, doubling the budget.
             for process in reversed(all_processes):
                 if process.poll() is None:
-                    process.terminate()
+                    kill_fn(process, force=False, wait_timeout=0, log=emit_runtime_log)
             for process in reversed(all_processes):
                 if process.poll() is None:
                     try:
@@ -355,8 +580,7 @@ def run_supervisor(
                             f"forcing process shutdown pid={process.pid} after terminate timeout",
                             stderr=True,
                         )
-                        process.kill()
-                        process.wait(timeout=5)
+                        kill_fn(process, force=True, log=emit_runtime_log)
 
             # Best-effort shutdown snapshot
             if snapshot_config.enabled and snapshot_config.snapshot_path:
