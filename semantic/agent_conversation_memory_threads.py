@@ -12,7 +12,7 @@ from core.contracts import ProcessResult, SupersessionHint
 from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
 from core.models import MemoryObject, QueryResultItem, Relation, SourceItem
 from providers.llm.base import LLMProvider
-from semantic.common import SEMANTIC_SIGNAL_METADATA_KEY, normalize_for_index, _normalize_for_containment
+from semantic.common import CONTENT_STOPWORDS, SEMANTIC_SIGNAL_METADATA_KEY, _is_low_information_content_token, normalize_for_index, _normalize_for_containment
 from semantic.agent_conversation_memory_constraints import CONSTRAINT_MARKERS, CONSTRAINT_TOOL_MARKERS, _merge_subject_anchors, _subject_anchors_from_memory_objects, _subject_anchors_from_source_items
 from semantic.agent_conversation_memory_embedding import VECTOR_EMBEDDING_PROVIDER_NAME, VECTOR_EMBEDDING_PROVIDER_VERSION, build_embedding_text
 from semantic.agent_conversation_memory_enrichment import ENRICHABLE_MEMORY_TYPES, WRITE_ENRICHMENT_PROMPT_ROLE, WRITE_ENRICHMENT_TEXT_VIEW
@@ -22,6 +22,33 @@ from semantic.prompt_provenance import build_prompt_provenance
 THREAD_SUMMARY_PROMPT_SCHEMA_ID = "thread_summary_extraction"
 
 MAX_THREAD_WORK_REFS = 5
+
+_ROLE_PREFIX_RE = re.compile(r'^[a-z_]+/[a-z_]+:\s*', re.IGNORECASE)
+
+
+def _evidence_canonical_key(evidence: str | None) -> str | None:
+    """Stable canonical key for thread-aggregated decisions/investigations.
+
+    Strips an optional role-prefix the LLM intermittently emits
+    (e.g. 'user/message: ...') then keys on a sorted tokenset of
+    stop-word-filtered, non-low-information tokens. Deliberately does NOT
+    use content_tokens — its plural-stem expansion is designed for
+    retrieval overlap and would destabilize keys when only some rebuilds
+    quote a token in pluralized form. Returns None when fewer than 3
+    informative tokens remain so the caller can fall back to a
+    decision-text-based key.
+    """
+    if not evidence:
+        return None
+    stripped = _ROLE_PREFIX_RE.sub('', evidence.strip())
+    tokens = {
+        t for t in set(normalize_for_index(stripped).split()) - CONTENT_STOPWORDS
+        if not _is_low_information_content_token(t)
+    }
+    if len(tokens) < 3:
+        return None
+    return ' '.join(sorted(tokens))
+
 
 THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v10"
 
@@ -660,7 +687,7 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                     "decision": td["decision_text"],
                     "decision_evidence_text": td["evidence"],
                     "rationale": None,
-                    "canonical_key": normalize_for_index(td["decision_text"]),
+                    "canonical_key": _evidence_canonical_key(td["evidence"]) or normalize_for_index(td["decision_text"]),
                     "source_type": "thread_detection",
                     "source_id": f"thread:{aggregate.thread_ref}",
                     "semantic_provenance": semantic_provenance,
@@ -707,7 +734,7 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                     "investigation_outcome": inv["investigation_text"],
                     "investigation_evidence_text": inv["evidence"],
                     "rationale": None,
-                    "canonical_key": normalize_for_index(inv["investigation_text"]),
+                    "canonical_key": _evidence_canonical_key(inv["evidence"]) or normalize_for_index(inv["investigation_text"]),
                     "source_type": "thread_detection",
                     "source_id": f"thread:{aggregate.thread_ref}",
                     "semantic_provenance": semantic_provenance,

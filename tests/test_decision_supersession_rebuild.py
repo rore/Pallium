@@ -21,7 +21,7 @@ from core.models import MemoryObject
 from fastapi.testclient import TestClient
 from providers.llm.base import LLMJsonResponse
 from semantic.agent_conversation_memory import AgentConversationMemoryPlugin
-from semantic.agent_conversation_memory_threads import build_thread_summary
+from semantic.agent_conversation_memory_threads import _evidence_canonical_key, build_thread_summary
 from storage.vector_index import VectorIndexConfig
 
 
@@ -80,31 +80,34 @@ class DecisionStubProvider:
 
 
 class DifferentKeyDecisionStubProvider:
-    """Emits 'Alpha' decision on first rebuild call, 'Beta' on subsequent ones.
+    """Emits 'Alpha' decision when batch-1-only content is in the prompt, 'Beta' when
+    batch-2 content is present. Detection is by user-prompt content (not call counter)
+    because thread rebuilds may run multiple times per drain.
 
-    On the second rebuild call, the thread prompt contains both batches (alpha and beta
-    content), but we emit only Beta. This lets us verify that Beta does NOT supersede Alpha.
-    Evidence uses the common padding text that appears in all messages so that
-    the grounding check passes.
+    Each variant uses distinct evidence text (substring of the corresponding messages)
+    so that the evidence-based canonical_key differs between Alpha and Beta.
     """
-    # Evidence must be a literal substring of thread content (from _substantive() padding)
-    EVIDENCE_TEXT = "thorough discussion and evaluation of the available options and trade-offs"
+    # Evidence must be a literal substring of the corresponding batch's message content.
+    ALPHA_EVIDENCE = "alpha approach for the synchronization module design"
+    BETA_EVIDENCE = "beta strategy for the reconciliation pipeline"
     ALPHA_KEY = "Alpha approach selected for synchronization module design after comprehensive evaluation."
     BETA_KEY = "Beta strategy chosen for reconciliation pipeline implementation after systematic comparison."
 
     def __init__(self):
-        self.rebuild_call_count = 0  # counts only thread-level calls
+        self.rebuild_call_count = 0
 
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
-        # Detect thread rebuild calls by schema (contains "decisions")
         is_thread_rebuild = '"decisions"' in schema_description
         if is_thread_rebuild:
             self.rebuild_call_count += 1
-        if self.rebuild_call_count <= 1:
-            decision_text = self.ALPHA_KEY
-        else:
-            # Second rebuild: emit only Beta (no Alpha — tests that Beta doesn't supersede Alpha)
+        in_batch_2 = "beta strategy" in user_prompt or "Beta strategy" in user_prompt
+        if in_batch_2:
+            # Second batch: emit only Beta (no Alpha — tests that Beta doesn't supersede Alpha)
             decision_text = self.BETA_KEY
+            evidence = self.BETA_EVIDENCE
+        else:
+            decision_text = self.ALPHA_KEY
+            evidence = self.ALPHA_EVIDENCE
         payload = {
             "summary": f"Summary (rebuild #{self.rebuild_call_count}).",
             "content_quality": "substantive",
@@ -112,7 +115,7 @@ class DifferentKeyDecisionStubProvider:
             "decisions": [
                 {
                     "decision_text": decision_text,
-                    "evidence": self.EVIDENCE_TEXT,
+                    "evidence": evidence,
                 }
             ],
             "investigations": [],
@@ -121,21 +124,30 @@ class DifferentKeyDecisionStubProvider:
 
 
 class NewKeyStubProvider:
-    """Each call emits a completely different canonical_key — no supersession expected.
-    Uses call count to produce unique decisions so canonical_keys never match."""
-    # Evidence must be a literal substring of thread content (from _substantive() padding)
-    EVIDENCE_TEXT = "thorough discussion and evaluation of the available options and trade-offs"
+    """Each batch emits a distinct decision (and distinct evidence) — so canonical_keys
+    differ between batches. Detection is by content marker in the user prompt rather than
+    a per-call counter, because thread rebuilds may run multiple times per drain."""
+    BATCH_1_EVIDENCE = "First topic: discussing a completely unique architectural decision for the system module"
+    BATCH_2_EVIDENCE = "Second topic: discussing another separate unique architectural decision for the project component"
 
     def __init__(self):
         self.call_count = 0
 
     def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
         self.call_count += 1
-        # Use the call count to produce a unique decision each time, so canonical_keys never match
-        decision_text = (
-            f"Completely unique architectural decision number {self.call_count} "
-            f"for a distinct subsystem with no overlap to prior choices whatsoever."
-        )
+        in_batch_2 = "Second topic" in user_prompt
+        if in_batch_2:
+            decision_text = (
+                "Completely unique architectural decision number two for a distinct subsystem "
+                "with no overlap to prior choices whatsoever."
+            )
+            evidence = self.BATCH_2_EVIDENCE
+        else:
+            decision_text = (
+                "Completely unique architectural decision number one for a distinct subsystem "
+                "with no overlap to prior choices whatsoever."
+            )
+            evidence = self.BATCH_1_EVIDENCE
         payload = {
             "summary": f"Summary from call {self.call_count}.",
             "content_quality": "substantive",
@@ -143,7 +155,7 @@ class NewKeyStubProvider:
             "decisions": [
                 {
                     "decision_text": decision_text,
-                    "evidence": self.EVIDENCE_TEXT,
+                    "evidence": evidence,
                 }
             ],
             "investigations": [],
@@ -294,8 +306,7 @@ def test_rebuild_decisions_supersede_old_copies_with_same_canonical_key(
 
     # The total may be more than 1 (across all source items), but the number of ACTIVE
     # decisions with the same canonical_key must be 1 — not 2.
-    from semantic.common import normalize_for_index
-    target_key = normalize_for_index(DecisionStubProvider.DECISION_TEXT)
+    target_key = _evidence_canonical_key(DecisionStubProvider.EVIDENCE_TEXT)
     active_matching = [
         mo for mo in active_after_second
         if str(mo.payload.get("canonical_key") or "").strip() == target_key
@@ -346,8 +357,7 @@ def test_rebuild_only_supersedes_matching_canonical_key(
     active_after_first = _get_active_memory(service._storage, container_ref, thread_ref, "decision")
     assert len(active_after_first) >= 1, "Expected at least one active decision after first rebuild"
 
-    from semantic.common import normalize_for_index
-    alpha_key = normalize_for_index(DifferentKeyDecisionStubProvider.ALPHA_KEY)
+    alpha_key = _evidence_canonical_key(DifferentKeyDecisionStubProvider.ALPHA_EVIDENCE)
     alpha_decisions_after_first = [
         mo for mo in active_after_first
         if str(mo.payload.get("canonical_key") or "").strip() == alpha_key
@@ -365,7 +375,7 @@ def test_rebuild_only_supersedes_matching_canonical_key(
     _post_and_drain(client, service, messages2)
 
     all_after_second = _get_all_memory(service._storage, container_ref, thread_ref, "decision")
-    beta_key = normalize_for_index(DifferentKeyDecisionStubProvider.BETA_KEY)
+    beta_key = _evidence_canonical_key(DifferentKeyDecisionStubProvider.BETA_EVIDENCE)
 
     # Alpha from rebuild 1 should NOT be superseded by Beta from rebuild 2
     alpha_active = [
@@ -387,6 +397,13 @@ def test_rebuild_only_supersedes_matching_canonical_key(
     assert len(beta_active) >= 1, (
         f"Expected Beta decision to be active after second rebuild. "
         f"Beta active: {len(beta_active)}"
+    )
+    # Dispatch-coverage guard: if the thread-prompt template ever stops embedding raw
+    # source-item content verbatim, the stub's user_prompt detection silently breaks
+    # and the test would falsely pass. Assert that both branches actually fired.
+    assert stub.rebuild_call_count >= 2, (
+        f"Test stub did not see two distinct thread-rebuild calls "
+        f"(rebuild_call_count={stub.rebuild_call_count}); dispatch logic may be broken."
     )
 
 
@@ -507,10 +524,12 @@ def test_build_thread_summary_emits_supersession_hints_for_matching_conclusions(
     """
     from capabilities.thread_aggregation import ThreadAggregate
     from core.models import MemoryObject, SourceItem
-    from semantic.common import normalize_for_index
 
     decision_text = "We decided to use event-time ordering for all reservation holds."
-    canonical_key = normalize_for_index(decision_text)
+    # Evidence must be a substring of source items' content (asserted below).
+    decision_evidence = "use event-time ordering for all reservation holds"
+    canonical_key = _evidence_canonical_key(decision_evidence)
+    assert canonical_key, "test fixture sanity: evidence must produce a non-null canonical_key"
 
     # Build an old decision that is already in DB (as a conclusion)
     old_decision = MemoryObject(
@@ -519,7 +538,7 @@ def test_build_thread_summary_emits_supersession_hints_for_matching_conclusions(
         schema_version="v1",
         payload={
             "decision": decision_text,
-            "decision_evidence_text": "use event-time ordering to prevent sync losses",
+            "decision_evidence_text": decision_evidence,
             "rationale": None,
             "canonical_key": canonical_key,
             "source_type": "thread_detection",
@@ -642,7 +661,7 @@ def test_rebuild_investigations_supersede_old_copies_with_same_canonical_key(
     _post_and_drain(client, service, messages2)
 
     from semantic.common import normalize_for_index
-    target_key = normalize_for_index(DecisionStubProvider.INVESTIGATION_TEXT)
+    target_key = _evidence_canonical_key(DecisionStubProvider.INVESTIGATION_EVIDENCE_TEXT)
 
     all_after_second = _get_all_memory(service._storage, container_ref, thread_ref, "investigation_outcome")
     active_matching = [
