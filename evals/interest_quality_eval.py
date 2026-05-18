@@ -100,7 +100,7 @@ def _call_proxy(messages: list[dict[str, str]]) -> dict[str, Any]:
     load_dotenv(".env.local")
 
     base_url = os.environ.get("PALLIUM_PROXY_URL", "http://localhost:6655/anthropic/v1")
-    api_key = os.environ.get("HAI_API_KEY", "dummy")
+    api_key = os.environ.get("PALLIUM_API_KEY", "dummy")
     model = os.environ.get("PALLIUM_LLM_MODEL", "anthropic--claude-sonnet-latest")
 
     system_msg = next((m["content"] for m in messages if m["role"] == "system"), "")

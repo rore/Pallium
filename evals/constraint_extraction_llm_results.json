@@ -1,0 +1,47 @@
+{
+  "variant": "strict_typed_memory_v8b_work_refs_separate",
+  "summary": {
+    "total": 2,
+    "correct": 2,
+    "reject_tp": 2,
+    "reject_fn": 0,
+    "keep_tp": 0,
+    "keep_fn": 0,
+    "reject_recall": 1.0,
+    "keep_recall": 0.0,
+    "anaphoric": {
+      "total": 0,
+      "rejected": 0
+    },
+    "by_category": {
+      "vague_reject": {
+        "total": 2,
+        "correct": 2
+      }
+    }
+  },
+  "results": [
+    {
+      "input": "on windows",
+      "category": "vague_reject",
+      "cluster_id": null,
+      "expected_reject": true,
+      "predicted_rejected": true,
+      "predicted_constraint_text": "None",
+      "correct": true,
+      "is_anaphoric_target": false,
+      "notes": "Too short, not a constraint statement"
+    },
+    {
+      "input": "its' not allowed",
+      "category": "vague_reject",
+      "cluster_id": null,
+      "expected_reject": true,
+      "predicted_rejected": true,
+      "predicted_constraint_text": "None",
+      "correct": true,
+      "is_anaphoric_target": false,
+      "notes": "Anaphoric - no subject named, unclear what is not allowed"
+    }
+  ]
+}
