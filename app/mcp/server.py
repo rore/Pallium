@@ -24,7 +24,12 @@ NOT_CONFIGURED_MSG = (
 
 def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     """Create a FastMCP server with Pallium tools registered."""
-    server = FastMCP("pallium", host=host, port=port)
+    # stateless_http: every Pallium MCP tool is a single-shot RPC, so we don't
+    # need server-side session affinity. Stateless mode survives server
+    # restarts (sessions are otherwise in-process only) — without it, clients
+    # holding a session id from before the restart get -32600 "Session not
+    # found" and have to reinitialize.
+    server = FastMCP("pallium", host=host, port=port, stateless_http=True)
 
     @server.tool()
     async def pallium_query(

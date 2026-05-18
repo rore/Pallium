@@ -180,3 +180,148 @@ class TestMcpEndpointReachable:
             query = await http.post("/query", json={"text": "test", "visibility": "public"})
             assert query.status_code == 200
             assert "results" in query.json()
+
+
+class TestMcpStatelessTransport:
+    """Regression: /mcp must serve requests without server-side session affinity.
+
+    In stateful streamable-http mode, sessions live in an in-process dict on the
+    session manager. After a server restart (or when load balanced across processes),
+    clients holding an old mcp-session-id receive `-32600 "Session not found"`. We
+    don't need that affinity — every Pallium MCP tool is a single-shot RPC. Run the
+    server in stateless mode so each POST is self-contained.
+
+    These tests reproduce the "no valid session" failure shape and prove the
+    transport tolerates it.
+    """
+
+    def _make_app(self, test_db_url: str):
+        from storage.vector_index import VectorIndexConfig
+        return create_app(AppConfig(
+            storage_backend="sqlite",
+            sqlite_url=test_db_url,
+            default_use_case="demo_agent_memory",
+            semantic_packages=DEMO_SEMANTIC_PACKAGES,
+            vector_index=VectorIndexConfig(enabled=False),
+        ))
+
+    def _parse_sse(self, text: str) -> dict:
+        import json as json_mod
+        for line in text.split("\n"):
+            line = line.strip()
+            if line.startswith("data: "):
+                return json_mod.loads(line[6:])
+        raise AssertionError(f"No SSE data line found in response: {text[:300]}")
+
+    def test_tools_list_without_initialize_or_session_id(self, test_db_url: str) -> None:
+        """In stateless mode, tools/list with no prior initialize and no
+        mcp-session-id header must succeed. In stateful mode, the server has no
+        session for the request and returns an error — that's the bug.
+        """
+        from starlette.testclient import TestClient
+        app = self._make_app(test_db_url)
+        with TestClient(app, headers={"host": "127.0.0.1:8000"}) as client:
+            response = client.post("/mcp", json={
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "id": 1,
+            }, headers={
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+            })
+            assert response.status_code == 200, (
+                f"tools/list without session_id failed: {response.status_code} {response.text[:300]}"
+            )
+            body = self._parse_sse(response.text)
+            assert "result" in body, f"expected JSON-RPC result, got: {body}"
+            tool_names = {t["name"] for t in body["result"]["tools"]}
+            assert "pallium_status" in tool_names
+
+    def test_tools_call_with_unknown_session_id(self, test_db_url: str) -> None:
+        """A tools/call carrying an mcp-session-id the server has never issued must
+        still succeed. This is the exact failure shape clients hit after a Pallium
+        service restart while they hold an old session id.
+        """
+        from starlette.testclient import TestClient
+        app = self._make_app(test_db_url)
+        with TestClient(app, headers={"host": "127.0.0.1:8000"}) as client:
+            response = client.post("/mcp", json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "pallium_status", "arguments": {}},
+                "id": 2,
+            }, headers={
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+                "mcp-session-id": "stale-id-from-a-previous-server-process",
+            })
+            assert response.status_code == 200, (
+                f"tools/call with stale session_id failed: {response.status_code} {response.text[:300]}"
+            )
+            body = self._parse_sse(response.text)
+            # Must be a JSON-RPC result, not the -32600 "Session not found" error
+            assert "error" not in body or body.get("error", {}).get("code") != -32600, (
+                f"got Session-not-found error: {body}"
+            )
+            assert "result" in body, f"expected result, got: {body}"
+
+    def test_two_independent_calls_without_shared_session(self, test_db_url: str) -> None:
+        """Two consecutive tools/call requests with no shared session state must
+        both succeed independently — proving the stateless guarantee.
+        """
+        from starlette.testclient import TestClient
+        app = self._make_app(test_db_url)
+        with TestClient(app, headers={"host": "127.0.0.1:8000"}) as client:
+            for call_id in (10, 11):
+                response = client.post("/mcp", json={
+                    "jsonrpc": "2.0",
+                    "method": "tools/call",
+                    "params": {"name": "pallium_status", "arguments": {}},
+                    "id": call_id,
+                }, headers={
+                    "Accept": "application/json, text/event-stream",
+                    "Content-Type": "application/json",
+                })
+                assert response.status_code == 200, (
+                    f"tools/call #{call_id} failed: {response.status_code} {response.text[:300]}"
+                )
+                body = self._parse_sse(response.text)
+                assert "result" in body, f"call #{call_id} expected result, got: {body}"
+
+    def test_tools_call_with_arguments_and_unknown_session_id(self, test_db_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Exercise the full argument → context → REST proxy chain under stateless
+        transport. Uses pallium_query (requires a `query` arg + container_ref
+        override), which is the path the user-reported pallium_rate_memory failure
+        actually traverses.
+        """
+        from starlette.testclient import TestClient
+        # PALLIUM_BASE_URL must be set so the server thinks it's configured;
+        # the in-process REST app handles the request — no real network call.
+        monkeypatch.setenv("PALLIUM_BASE_URL", "http://testserver")
+        app = self._make_app(test_db_url)
+        with TestClient(app, headers={"host": "127.0.0.1:8000"}) as client:
+            response = client.post("/mcp", json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "pallium_query",
+                    "arguments": {
+                        "query": "what was decided about caching",
+                        "container_ref": "test-container",
+                        "visibility": "public",
+                    },
+                },
+                "id": 42,
+            }, headers={
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+                "mcp-session-id": "stale-id-after-restart",
+            })
+            assert response.status_code == 200, (
+                f"pallium_query with stale session_id failed: {response.status_code} {response.text[:300]}"
+            )
+            body = self._parse_sse(response.text)
+            assert "error" not in body or body.get("error", {}).get("code") != -32600, (
+                f"got Session-not-found error: {body}"
+            )
+            assert "result" in body, f"expected result, got: {body}"
