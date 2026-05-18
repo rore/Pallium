@@ -1645,6 +1645,7 @@ def _annotate_excluded_candidates(
 
 _CONSTRAINT_FRESHNESS_WINDOW_DAYS = 14
 _CONSTRAINT_SUPPLEMENT_CAP = 1
+_CONSTRAINT_SUPPLEMENT_RANK_FLOOR = 10
 
 
 def _find_constraint_supplements(
@@ -1657,11 +1658,15 @@ def _find_constraint_supplements(
 
     Constraints are cross-cutting — they apply by context, not topic. When the
     normal injection pipeline doesn't select them (e.g., low lexical/vector scores),
-    this supplement adds the most recent retrieved constraints if:
-    - They were actually retrieved (vector/lexical similarity confirmed some relevance)
-    - They are recent (within freshness window)
-    - They are not suppressed
-    - There is room in the injection cap
+    this supplement adds the most recent retrieved constraints if they:
+    - pass the same per-candidate eligibility floor as the main path
+      (`candidate_injection_eligible`), preventing supplement-path bypass of the
+      raw BM25 floor on lex=None candidates;
+    - rank within the top _CONSTRAINT_SUPPLEMENT_RANK_FLOOR by routing score
+      (data shows rank>10 constraint supplements are ~71% noise);
+    - are recent (within freshness window);
+    - are not suppressed and not already selected;
+    - have room in the injection cap.
 
     Returns at most max_count candidates, most recent first.
     """
@@ -1680,6 +1685,11 @@ def _find_constraint_supplements(
         if _routing_result_id(item) in already_selected_ids:
             continue
         if candidate.get("suppression_reason_code"):
+            continue
+        rank = candidate.get("routing_rank")
+        if rank is None or rank > _CONSTRAINT_SUPPLEMENT_RANK_FLOOR:
+            continue
+        if not candidate_injection_eligible(candidate):
             continue
         freshness = getattr(item, "freshness_at", None)
         if freshness is not None and freshness < cutoff:
