@@ -166,6 +166,7 @@ class QueryExecutor:
                 should_inject=outcome.should_inject,
                 decision_reason=outcome.decision_reason,
                 injectable_blocks=outcome.injectable_blocks,
+                injection_method=outcome.injection_method,
             )
             # Attach ranked_candidates for audit logging without modifying QueryResult's public contract
             object.__setattr__(result, '_ranked_candidates', outcome.ranked_candidates)

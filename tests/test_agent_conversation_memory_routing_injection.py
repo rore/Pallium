@@ -3016,6 +3016,105 @@ def test_dedup_preserves_same_type_decisions_with_different_canonical_keys() -> 
     assert len(removed) == 0
 
 
+def test_dedup_collapses_same_type_decision_paraphrase_pair_with_different_canonical_keys() -> None:
+    """Same-type decisions with mismatched canonical_keys but high text overlap collapse via Gate 2."""
+    from semantic.agent_conversation_memory_routing_selection import _dedup_eligible_candidates, _is_content_duplicate
+
+    # Mirror the live shape: ~9-11 content tokens, overlap >= ~0.85.
+    candidate_a = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="decision-paraphrase-a",
+            type="decision",
+            payload={
+                "decision": "Pallium should be delivered as a single deployable runtime package with sidecar mode",
+                "decision_evidence_text": "Pallium should be delivered as a single deployable runtime package with sidecar mode.",
+                "canonical_key": "deliver pallium as single deployable runtime package",
+            },
+            score=18,
+            evidence=[
+                EvidenceReference(source_item_id='src-paraphrase-1', source_type='message', source_id='src-paraphrase-1'),
+            ],
+            container_ref="chat:test",
+        ),
+        "routing_score": 510,
+    }
+    candidate_b = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="decision-paraphrase-b",
+            type="decision",
+            payload={
+                "decision": "Deliver Pallium as one single deployable runtime package using sidecar mode",
+                "decision_evidence_text": "Deliver Pallium as one single deployable runtime package using sidecar mode.",
+                "canonical_key": "pallium delivered single runtime package sidecar decision",
+            },
+            score=17,
+            evidence=[
+                EvidenceReference(source_item_id='src-paraphrase-2', source_type='message', source_id='src-paraphrase-2'),
+            ],
+            container_ref="chat:test",
+        ),
+        "routing_score": 500,
+    }
+
+    assert _is_content_duplicate(candidate_a, candidate_b) is True
+    retained, removed = _dedup_eligible_candidates([candidate_a, candidate_b])
+    assert len(retained) == 1
+    assert len(removed) == 1
+    assert retained[0]["item"].memory_object_id == "decision-paraphrase-a"
+
+
+def test_dedup_does_not_collapse_short_same_type_decisions_below_floor() -> None:
+    """Same-type decisions with mismatched canonical_keys and <4 content tokens stay separate even at 1.0 overlap."""
+    from semantic.agent_conversation_memory_routing_selection import (
+        DEDUP_SAME_TYPE_MIN_TOKENS,
+        _candidate_content_surface,
+        _is_content_duplicate,
+    )
+    from semantic.common import content_tokens
+
+    # Each surface tokenizes to <= 3 content tokens; overlap is 1.0 but below DEDUP_SAME_TYPE_MIN_TOKENS=4.
+    candidate_a = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="decision-short-a",
+            type="decision",
+            payload={
+                "decision": "Adopt monthly review",
+                "canonical_key": "adopt monthly review",
+            },
+            score=18,
+            evidence=[],
+            container_ref="chat:test",
+        ),
+        "routing_score": 510,
+    }
+    candidate_b = {
+        "item": QueryResultItem(
+            result_kind="memory_hit",
+            memory_object_id="decision-short-b",
+            type="decision",
+            payload={
+                "decision": "Adopt monthly review",
+                "canonical_key": "monthly review cadence",
+            },
+            score=17,
+            evidence=[],
+            container_ref="chat:test",
+        ),
+        "routing_score": 500,
+    }
+
+    # Pin the assumption: both surfaces tokenize below the same-type floor.
+    surface_a = _candidate_content_surface(candidate_a["item"])
+    surface_b = _candidate_content_surface(candidate_b["item"])
+    assert len(content_tokens(surface_a)) < DEDUP_SAME_TYPE_MIN_TOKENS
+    assert len(content_tokens(surface_b)) < DEDUP_SAME_TYPE_MIN_TOKENS
+
+    assert _is_content_duplicate(candidate_a, candidate_b) is False
+
+
 def test_dedup_greedy_sweep_preserves_non_transitive_pair() -> None:
     """A~B and B~C but not A~C → A and C survive, only B removed."""
     from semantic.agent_conversation_memory_routing_selection import _dedup_eligible_candidates

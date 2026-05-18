@@ -547,6 +547,7 @@ def route_query_results(
             injectable_blocks=injection_blocks,
             sharp_candidate_diagnostics=sharp_candidate_diagnostics,
             ranked_candidates=ranked_candidates,
+            injection_method=injection_summary.get("injection_method"),
         )
 
 def _build_kind_prefilter_trace_entry(

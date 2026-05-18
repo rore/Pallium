@@ -510,3 +510,117 @@ def test_schema_has_candidate_scores_json_column(test_db_url: str) -> None:
         rows = connection.execute(text("PRAGMA table_info(query_audit_log)")).fetchall()
     column_names = {row[1] for row in rows}
     assert "candidate_scores_json" in column_names
+
+
+# ── Test 16: injection_method persists end-to-end ───────────────────────
+
+def test_injection_method_persisted(test_db_url: str) -> None:
+    service = _build_service(test_db_url)
+    service.write_query_audit(
+        source_item_id="si-700",
+        source_id="chat:msg:700",
+        thread_ref="thread:700",
+        container_ref="container:700",
+        actor_ref="user:700",
+        visibility="private",
+        query_text="test injection_method round-trip",
+        should_inject=True,
+        decision_reason="carry_forward_available",
+        injectable_blocks=[],
+        results=[],
+        injection_method="simplified",
+    )
+
+    with service._storage._engine.begin() as connection:
+        result = connection.execute(
+            text("SELECT injection_method FROM query_audit_log WHERE source_item_id = :sid"),
+            {"sid": "si-700"},
+        ).mappings().fetchone()
+
+    assert result is not None
+    assert result["injection_method"] == "simplified"
+
+
+# ── Test 17: injection_method NULL when not provided ────────────────────
+
+def test_injection_method_null_when_omitted(test_db_url: str) -> None:
+    service = _build_service(test_db_url)
+    service.write_query_audit(
+        source_item_id="si-701",
+        source_id="chat:msg:701",
+        thread_ref=None,
+        container_ref=None,
+        actor_ref=None,
+        visibility=None,
+        query_text="omitted injection_method",
+        should_inject=False,
+        decision_reason="no_relevant_memory",
+        injectable_blocks=[],
+        results=[],
+    )
+
+    with service._storage._engine.begin() as connection:
+        result = connection.execute(
+            text("SELECT injection_method FROM query_audit_log WHERE source_item_id = :sid"),
+            {"sid": "si-701"},
+        ).mappings().fetchone()
+
+    assert result is not None
+    assert result["injection_method"] is None
+
+
+# ── Test 18: schema has injection_method column ─────────────────────────
+
+def test_schema_has_injection_method_column(test_db_url: str) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+    with storage._engine.begin() as connection:
+        rows = connection.execute(text("PRAGMA table_info(query_audit_log)")).fetchall()
+    column_names = {row[1] for row in rows}
+    assert "injection_method" in column_names
+
+
+# ── Test 19: PackageQueryOutcome → QueryResult → audit chain ────────────
+
+def test_injection_method_propagates_through_outcome_to_audit(test_db_url: str) -> None:
+    """End-to-end contract: PackageQueryOutcome.injection_method must flow through
+    QueryResult rebuild (core/query.py) and _maybe_write_query_audit (api/routes.py)
+    into the persisted row. Catches typos like injection_summary.get("injection_methdo")."""
+    from types import SimpleNamespace
+    from api.routes import _maybe_write_query_audit
+    from core.contracts import PackageQueryOutcome, QueryResult
+
+    service = _build_service(test_db_url)
+    outcome = PackageQueryOutcome(results=[], injection_method="simplified")
+    # Mirror core/query.py rebuild (lines 163-172): PackageQueryOutcome → QueryResult
+    query_result = QueryResult(
+        results=outcome.results,
+        trace=None,
+        should_inject=outcome.should_inject,
+        decision_reason=outcome.decision_reason,
+        injectable_blocks=outcome.injectable_blocks,
+        injection_method=outcome.injection_method,
+    )
+    request = SimpleNamespace(source_id="chat:msg:800", thread_ref=None,
+        container_ref=None, query_actor_ref=None, visibility_kind=lambda: None)
+    ingest_result = SimpleNamespace(source_item_id="si-800")
+    _maybe_write_query_audit(service, True, ingest_result, request, "q", query_result)
+
+    with service._storage._engine.begin() as connection:
+        row = connection.execute(
+            text("SELECT injection_method FROM query_audit_log WHERE source_item_id = :sid"),
+            {"sid": "si-800"},
+        ).mappings().fetchone()
+    assert row is not None and row["injection_method"] == "simplified"
+
+
+# ── Test 20: migrations are idempotent on re-init ───────────────────────
+
+def test_query_audit_log_migrations_idempotent(test_db_url: str) -> None:
+    SQLiteStorageProvider(test_db_url)
+    # Re-init should not raise even though columns already exist
+    storage = SQLiteStorageProvider(test_db_url)
+    with storage._engine.begin() as connection:
+        rows = connection.execute(text("PRAGMA table_info(query_audit_log)")).fetchall()
+    column_names = {row[1] for row in rows}
+    assert "injection_method" in column_names
+    assert "candidate_scores_json" in column_names

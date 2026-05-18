@@ -107,6 +107,7 @@ class PackageQueryOutcome:
     injectable_blocks: list[InjectableBlock] = field(default_factory=list)
     sharp_candidate_diagnostics: list[dict[str, Any]] = field(default_factory=list)
     ranked_candidates: list[dict[str, Any]] | None = None
+    injection_method: str | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +125,7 @@ class QueryResult:
     should_inject: bool = False
     decision_reason: str = "injection_policy_unavailable"
     injectable_blocks: list[InjectableBlock] = field(default_factory=list)
+    injection_method: str | None = None
 
 
 @dataclass(frozen=True)

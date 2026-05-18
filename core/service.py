@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.exc import IntegrityError
 
@@ -32,6 +32,107 @@ from semantic.base import SemanticPlugin
 from storage.base import QueueHealthSnapshot, RetentionLeaseLostError, RetentionRunStats, StorageProvider, ThreadProcessingLease
 from storage.vector_index import VectorIndex
 from core.text import normalize_for_index as _normalize_for_index
+
+
+def _orientation_join_unique(parts: list[str]) -> str:
+    """Mirror of routing_selection._join_unique_text_parts for orientation blocks."""
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        normalized = str(part or "").strip()
+        if not normalized:
+            continue
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(normalized)
+    return " ".join(ordered)
+
+
+def _orientation_task_checkpoint_text(payload: dict) -> str:
+    summary = str(payload.get("summary") or "").strip()
+    current_state = str(payload.get("current_state") or "").strip()
+    blocker = str(payload.get("blocker_state") or "").strip()
+    next_step = str(payload.get("next_step") or "").strip()
+    key_findings = [str(f).strip() for f in (payload.get("key_findings") or []) if str(f).strip()]
+    parts: list[str] = []
+    if blocker:
+        parts.append(f"Blocker: {blocker}")
+    if current_state and _normalize_for_index(current_state) not in _normalize_for_index(blocker):
+        parts.append(f"Current state: {current_state}")
+    elif not blocker and summary:
+        parts.append(summary)
+    if next_step:
+        parts.append(f"Next step: {next_step}")
+    if summary and not current_state:
+        parts.append(summary)
+    if key_findings:
+        joined = "; ".join(key_findings[:2])
+        suffix = f" [+{len(key_findings) - 2} more]" if len(key_findings) > 2 else ""
+        parts.append(f"Findings: {joined}{suffix}")
+    return _orientation_join_unique(parts)
+
+
+def _orientation_task_trace_text(payload: dict) -> str:
+    subject = str(payload.get("investigation_subject") or "").strip()
+    outcome = str(payload.get("outcome") or "").strip()
+    exploratory_files = list(payload.get("exploratory_files") or [])
+    files_modified = list(payload.get("files_modified") or [])
+    commands_succeeded = list(payload.get("commands_succeeded") or [])
+    commands_failed = list(payload.get("commands_failed") or [])
+    parts: list[str] = []
+    if subject and outcome:
+        parts.append(f"Area: {subject} — {outcome}")
+    elif subject:
+        parts.append(f"Area: {subject}")
+    if exploratory_files:
+        shown = exploratory_files[:5]
+        suffix = f" [+{len(exploratory_files) - 5} more]" if len(exploratory_files) > 5 else ""
+        parts.append(f"Explored: {', '.join(shown)}{suffix}")
+    if files_modified:
+        shown_mod = files_modified[:3]
+        suffix_mod = f" [+{len(files_modified) - 3} more]" if len(files_modified) > 3 else ""
+        parts.append(f"Modified: {', '.join(shown_mod)}{suffix_mod}")
+    if commands_succeeded:
+        cmd = commands_succeeded[0]
+        if len(cmd) > 60:
+            cmd = cmd[:57] + "..."
+        parts.append(f"Verified with: {cmd}")
+    if commands_failed:
+        parts.append("Had failures")
+    return "\n".join(parts)
+
+
+def _build_orientation_block(memory) -> dict[str, object] | None:
+    """Build a thin InjectableBlock-shaped dict from a MemoryObject for orientation injection.
+
+    Title/text mirror semantic.agent_conversation_memory_routing_selection._build_raw_injectable_block
+    for task_checkpoint and task_trace types. Drift between this helper and the routing
+    builder is guarded by tests (see tests/test_orientation_recency.py drift tests).
+    """
+    payload = memory.payload or {}
+    if memory.type == "task_checkpoint":
+        task = str(payload.get("task") or "").strip()
+        title = f"Task Checkpoint — {task}" if task else "Task Checkpoint"
+        text = _orientation_task_checkpoint_text(payload)
+    elif memory.type == "task_trace":
+        title = "Task Trace"
+        text = _orientation_task_trace_text(payload)
+    else:
+        return None
+    if not text:
+        return None
+    return {
+        "result_id": memory.id,
+        "block_type": "memory",
+        "title": title,
+        "text": text,
+        "memory_type": memory.type,
+        "memory_object_id": memory.id,
+        "expand_available": False,
+        "evidence": [],
+    }
 
 
 class PalliumService:
@@ -631,6 +732,7 @@ class PalliumService:
         injectable_blocks: list[InjectableBlock],
         results: list,
         ranked_candidates: list[dict] | None = None,
+        injection_method: str | None = None,
     ) -> None:
         result_lookup = {}
         for item in results:
@@ -692,6 +794,7 @@ class PalliumService:
             "decision_reason": decision_reason,
             "injected_blocks_json": json.dumps(blocks_json_list),
             "candidate_scores_json": candidate_scores_json,
+            "injection_method": injection_method,
         }
         self._storage.write_query_audit_row(row)
 
@@ -722,3 +825,83 @@ class PalliumService:
             if is_visible(item.visibility, item.container_ref, effective_container, item.actor_ref, query_actor_ref=effective_actor_ref):
                 items.append(item)
         return memory_object.payload, items
+
+    ORIENTATION_RECENCY_SOURCE_SENTINEL = "orientation_recency"
+    ORIENTATION_RECENCY_INJECTION_METHOD = "orientation_recency"
+    ORIENTATION_RECENCY_DECISION_REASON = "orientation_recency"
+
+    def get_recent_orientation_blocks(
+        self,
+        *,
+        container_ref: str,
+        memory_types: list[str],
+        since_days: int,
+        limit: int,
+    ) -> list[dict[str, object]]:
+        """Return orientation injection blocks: most-recent typed memory objects, recency-ordered.
+
+        Bypasses retrieval ranking — pure recency on a typed predicate. Used by SessionStart
+        hooks to deliver orientation memory (task_checkpoint, task_trace) without invoking
+        the lexical-vector hybrid path, which can lexically attract off-topic memories on
+        boilerplate orientation queries.
+        """
+        if since_days <= 0 or limit <= 0 or not memory_types:
+            return []
+        cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+        records = self._storage.list_recent_memory_objects(
+            container_ref=container_ref,
+            memory_types=list(memory_types),
+            since=cutoff,
+            limit=limit,
+        )
+        blocks: list[dict[str, object]] = []
+        for memory in records:
+            block = _build_orientation_block(memory)
+            if block is not None:
+                blocks.append(block)
+        return blocks
+
+    def write_orientation_recency_audit(
+        self,
+        *,
+        container_ref: str,
+        actor_ref: str | None,
+        visibility: str,
+        requested_types: list[str],
+        blocks: list[dict[str, object]],
+    ) -> None:
+        """Write a slim audit row for an orientation_recency call.
+
+        Bypasses the InjectableBlock/results pipeline used by /query. Source columns
+        are filled with sentinel `ORIENTATION_RECENCY_SOURCE_SENTINEL` because there
+        is no source item context for orientation injections.
+        """
+        types_token = ",".join(requested_types) if requested_types else ""
+        block_summaries = [
+            {
+                "memory_object_id": block.get("memory_object_id"),
+                "memory_type": block.get("memory_type"),
+                "block_type": block.get("block_type"),
+                "score": 0.0,
+                "retrieval_source": "orientation_recency",
+                "title_preview": str(block.get("title") or "")[:120],
+            }
+            for block in blocks
+        ]
+        row = {
+            "id": str(uuid.uuid4()),
+            "created_at": datetime.now(timezone.utc),
+            "source_item_id": self.ORIENTATION_RECENCY_SOURCE_SENTINEL,
+            "source_id": self.ORIENTATION_RECENCY_SOURCE_SENTINEL,
+            "thread_ref": None,
+            "container_ref": container_ref,
+            "actor_ref": actor_ref,
+            "visibility": visibility,
+            "query_text": f"[orientation_recency types={types_token}]",
+            "should_inject": 1 if blocks else 0,
+            "decision_reason": self.ORIENTATION_RECENCY_DECISION_REASON,
+            "injected_blocks_json": json.dumps(block_summaries),
+            "candidate_scores_json": None,
+            "injection_method": self.ORIENTATION_RECENCY_INJECTION_METHOD,
+        }
+        self._storage.write_query_audit_row(row)

@@ -511,6 +511,7 @@ def _append_constraint_supplements(
     ranked_candidates: list[dict[str, object]],
 ) -> None:
     """Appends constraint supplement candidates to selection if room permits."""
+    # NOTE: injection_method remains "simplified" even when constraints are appended; this column does not distinguish that case.
     if len(selected_candidates) >= INJECTION_HARD_CEILING:
         return
     _selected_ids = {_routing_result_id(c["item"]) for c in selected_candidates}
@@ -1703,6 +1704,7 @@ INJECTION_HARD_CEILING = 5
 DEDUP_EVIDENCE_TEXT_THRESHOLD = 0.75
 DEDUP_TEXT_ONLY_THRESHOLD = 0.7
 DEDUP_MIN_TOKENS = 2
+DEDUP_SAME_TYPE_MIN_TOKENS = 4  # Stricter floor for same-type non-canonical pairs to bound false positives on short content.
 
 
 def _prefer_duplicate_by_nonfact_mode(
@@ -1845,8 +1847,10 @@ def _is_content_duplicate(
     between same-type decision/investigation memories that share the same
     canonical key.
     Source hits are never deduped (they are raw evidence, not derived memory).
-    Same-type memories are otherwise never deduped (two decisions from the same
-    thread are likely about different things even if they share vocabulary).
+    Same-type decision/investigation_outcome memories with mismatched canonical_keys
+    are deduped via text-overlap (Gate 2 with min_tokens=DEDUP_SAME_TYPE_MIN_TOKENS)
+    to collapse paraphrase pairs from independent extractions. Other same-type pairs
+    (turn_summary, task_checkpoint, etc.) are not deduped.
     Evidence overlap alone is not sufficient (thread-level extractions share
     all source items) — it must be combined with text overlap.
     """
@@ -1859,16 +1863,16 @@ def _is_content_duplicate(
     if item_a.result_kind != "memory_hit" or item_b.result_kind != "memory_hit":
         return False
     same_type_canonical_duplicate = False
+    same_type_non_canonical = False
     if item_a.type == item_b.type:
         if item_a.type not in _SAME_TYPE_DEDUP_CANONICAL_TYPES:
             return False
         canonical_key_a = _candidate_canonical_key(item_a)
         canonical_key_b = _candidate_canonical_key(item_b)
-        if canonical_key_a != canonical_key_b:
-            return False
-        if not canonical_key_a:
-            return False
-        same_type_canonical_duplicate = True
+        if canonical_key_a and canonical_key_a == canonical_key_b:
+            same_type_canonical_duplicate = True
+        else:
+            same_type_non_canonical = True
 
     evidence_a = _candidate_evidence_ids(candidate_a)
     evidence_b = _candidate_evidence_ids(candidate_b)
@@ -1891,8 +1895,11 @@ def _is_content_duplicate(
         if overlap >= DEDUP_EVIDENCE_TEXT_THRESHOLD:
             return True
 
-    # Gate 2: text-only with strict threshold (needs minimum tokens)
-    if min_size >= DEDUP_MIN_TOKENS and overlap >= DEDUP_TEXT_ONLY_THRESHOLD:
+    # Gate 2: text-only with strict threshold (needs minimum tokens).
+    # Same-type pairs with mismatched canonical_keys use a higher token floor to bound
+    # false-positive risk on short, semantically opposite decisions that share key nouns.
+    required_min_tokens = DEDUP_SAME_TYPE_MIN_TOKENS if same_type_non_canonical else DEDUP_MIN_TOKENS
+    if min_size >= required_min_tokens and overlap >= DEDUP_TEXT_ONLY_THRESHOLD:
         return True
 
     return False

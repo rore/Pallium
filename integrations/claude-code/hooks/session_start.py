@@ -1,9 +1,17 @@
-"""SessionStart hook — injects orientation memory at session beginning."""
+"""SessionStart hook — injects orientation memory at session beginning.
+
+Strategy:
+1. Try recency-first: GET /memory-objects/recent for task_checkpoint/task_trace.
+   This bypasses retrieval ranking — pure recency on a typed predicate, immune to
+   lexical attractors on boilerplate orientation queries.
+2. Fall back to /query if no recent typed memories exist.
+"""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -16,6 +24,42 @@ from common import (
     read_hook_input,
 )
 
+ORIENTATION_TYPES = ("task_checkpoint", "task_trace")
+ORIENTATION_SINCE_DAYS = 14
+ORIENTATION_LIMIT = 1
+RETRIEVAL_FALLBACK_QUERY = "recent decisions, progress, and open tasks"
+
+
+def _fetch_recent_orientation(container_ref: str, actor_ref: str | None) -> list[dict]:
+    params: list[tuple[str, str]] = [
+        ("container_ref", container_ref),
+        ("limit", str(ORIENTATION_LIMIT)),
+        ("since_days", str(ORIENTATION_SINCE_DAYS)),
+        ("visibility", "private"),
+    ]
+    for t in ORIENTATION_TYPES:
+        params.append(("types", t))
+    if actor_ref:
+        params.append(("actor_ref", actor_ref))
+    qs = urlencode(params)
+    response = pallium_request("GET", f"/memory-objects/recent?{qs}")
+    if not response:
+        return []
+    return response.get("blocks", []) or []
+
+
+def _fetch_retrieval_fallback(container_ref: str, actor_ref: str) -> list[dict]:
+    response = pallium_request("POST", "/query", {
+        "text": RETRIEVAL_FALLBACK_QUERY,
+        "container_ref": container_ref,
+        "actor_ref": actor_ref,
+        "visibility": "private",
+        "limit": 5,
+    })
+    if not response:
+        return []
+    return response.get("injectable_blocks", []) or []
+
 
 def main() -> None:
     try:
@@ -27,38 +71,9 @@ def main() -> None:
         pin_container(session_id, container_ref, source=source)
         actor_ref = derive_actor_ref()
 
-        query_payload = {
-            "text": "recent decisions, progress, and open tasks",
-            "container_ref": container_ref,
-            "actor_ref": actor_ref,
-            "visibility": "private",
-            "limit": 5,
-        }
-        if session_id:
-            query_payload["thread_ref"] = session_id
-
-        response = pallium_request("POST", "/query", query_payload)
-
-        blocks: list[dict] = []
-        if response:
-            blocks = response.get("injectable_blocks", [])
-
-        # Scoped task_trace injection on session resume
-        if source in ("resume", "clear") and session_id:
-            trace_response = pallium_request("POST", "/query", {
-                "text": f"task_trace for thread {session_id}",
-                "container_ref": container_ref,
-                "actor_ref": actor_ref,
-                "visibility": "private",
-                "thread_ref": session_id,
-                "limit": 1,
-            })
-            if trace_response:
-                trace_blocks = trace_response.get("injectable_blocks", [])
-                for tb in trace_blocks:
-                    if "task_trace" in tb.get("title", "").lower() or "task_trace" in tb.get("text", "").lower():
-                        blocks.append(tb)
-                        break
+        blocks = _fetch_recent_orientation(container_ref, actor_ref)
+        if not blocks:
+            blocks = _fetch_retrieval_fallback(container_ref, actor_ref)
 
         output = format_injection(blocks, container_ref, budget_chars=1200)
         if output:

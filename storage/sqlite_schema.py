@@ -165,6 +165,7 @@ class QueryAuditLogRecord(Base):
     decision_reason = Column(String, nullable=False)
     injected_blocks_json = Column(Text, nullable=False, default="[]")
     candidate_scores_json = Column(Text, nullable=True)
+    injection_method = Column(String, nullable=True)
 
 
 class MemoryFlagRecord(Base):
@@ -360,6 +361,7 @@ class SQLiteSchemaMixin:
     }
     _QUERY_AUDIT_LOG_MIGRATIONS = {
         "candidate_scores_json": "ALTER TABLE query_audit_log ADD COLUMN candidate_scores_json TEXT",
+        "injection_method": "ALTER TABLE query_audit_log ADD COLUMN injection_method VARCHAR",
     }
 
     def _initialize_schema(self) -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Callable, TypeVar
 
 from sqlalchemy import create_engine, event, func, select, text
@@ -767,6 +767,31 @@ class SQLiteStorageProvider(
             if record is None:
                 return None
             return self._to_memory_object(record)
+
+    def list_recent_memory_objects(
+        self,
+        *,
+        container_ref: str,
+        memory_types: list[str],
+        since: datetime,
+        limit: int,
+    ) -> list[MemoryObject]:
+        if not memory_types or limit <= 0:
+            return []
+        with self._session_factory() as session:
+            statement = (
+                select(MemoryObjectRecord)
+                .where(
+                    MemoryObjectRecord.container_ref == container_ref,
+                    MemoryObjectRecord.lifecycle == "active",
+                    MemoryObjectRecord.type.in_(memory_types),
+                    MemoryObjectRecord.freshness_at >= since,
+                )
+                .order_by(MemoryObjectRecord.freshness_at.desc())
+                .limit(limit)
+            )
+            records = session.scalars(statement).all()
+        return [self._to_memory_object(record) for record in records]
 
     def write_query_audit_row(self, row: dict[str, Any]) -> None:
         record = QueryAuditLogRecord(**row)

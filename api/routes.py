@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from api.schemas import (
     FlagMemoryRequest,
@@ -12,6 +12,7 @@ from api.schemas import (
     ItemAndQueryResponse,
     ItemCreateRequest,
     ItemCreateResponse,
+    InjectableBlockResponse,
     MemoryEvidenceItemResponse,
     MemoryExpandResponse,
     MemoryFeedbackRequest,
@@ -21,6 +22,7 @@ from api.schemas import (
     QueryRequest,
     QueryResponse,
     QueueHealthResponse,
+    RecentMemoryObjectsResponse,
 )
 from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
 from core.service import PalliumService
@@ -240,6 +242,7 @@ def _maybe_write_query_audit(
             injectable_blocks=query_result.injectable_blocks,
             results=query_result.results,
             ranked_candidates=ranked_candidates,
+            injection_method=getattr(query_result, 'injection_method', None),
         )
     except Exception:
         logger.warning("query audit log write failed", exc_info=True)
@@ -374,6 +377,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
                     injectable_blocks=result.injectable_blocks,
                     results=result.results,
                     ranked_candidates=ranked_candidates,
+                    injection_method=getattr(result, 'injection_method', None),
                 )
             except Exception:
                 logger.warning("query audit log write failed", exc_info=True)
@@ -576,6 +580,45 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             memory_object_id=memory_object_id,
             rating=request.rating,
             recorded=True,
+        )
+
+    @router.get("/memory-objects/recent", response_model=RecentMemoryObjectsResponse)
+    def get_recent_memory_objects(
+        container_ref: str,
+        types: list[str] = Query(...),
+        limit: int = 1,
+        since_days: int = 14,
+        actor_ref: str | None = None,
+        visibility: str = "private",
+    ) -> RecentMemoryObjectsResponse:
+        if limit < 1 or limit > 5:
+            raise HTTPException(status_code=400, detail="limit must be between 1 and 5")
+        if since_days < 1 or since_days > 90:
+            raise HTTPException(status_code=400, detail="since_days must be between 1 and 90")
+        if visibility != "private":
+            raise HTTPException(
+                status_code=400,
+                detail="orientation endpoint currently supports only visibility='private'",
+            )
+        block_dicts = service.get_recent_orientation_blocks(
+            container_ref=container_ref,
+            memory_types=types,
+            since_days=since_days,
+            limit=limit,
+        )
+        if audit_log_enabled:
+            try:
+                service.write_orientation_recency_audit(
+                    container_ref=container_ref,
+                    actor_ref=actor_ref,
+                    visibility=visibility,
+                    requested_types=list(types),
+                    blocks=block_dicts,
+                )
+            except Exception:
+                logger.warning("orientation_recency audit log write failed", exc_info=True)
+        return RecentMemoryObjectsResponse(
+            blocks=[InjectableBlockResponse(**block) for block in block_dicts],
         )
 
     return router
