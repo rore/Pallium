@@ -162,7 +162,7 @@ def test_codex_stop_hook_ingests_quietly(monkeypatch: pytest.MonkeyPatch) -> Non
         has_productive_action=False,
     ))
     monkeypatch.setattr(stop, "build_work_trace_metadata", lambda _: None)
-    monkeypatch.setattr(stop, "derive_container_ref", lambda _: "git:github.com/rore/pallium")
+    monkeypatch.setattr(stop, "resolve_container_ref", lambda _cwd, _session_id: "git:github.com/rore/pallium")
     monkeypatch.setattr(stop, "derive_actor_ref", lambda: "Rotem")
 
     def fake_request(method: str, path: str, payload: object, *, quiet: bool = False) -> None:
