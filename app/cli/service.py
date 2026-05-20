@@ -610,7 +610,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     # Configure file logging
     from app.runtime_logging import configure_file_logging
-    configure_file_logging(home / "logs")
+    log_stream = configure_file_logging(home / "logs")
 
     # Report active configuration
     import logging as _logging
@@ -635,7 +635,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
             "--processors", "1",
             "--cleaners", "1",
         ]
-        return run_supervisor(supervisor_args, log_file=home / "logs" / "pallium.log")
+        return run_supervisor(
+            supervisor_args,
+            log_file=home / "logs" / "pallium.log",
+            log_stream=log_stream,
+        )
     finally:
         lock.release()
         pid_file = home / "run" / "pallium.pid"

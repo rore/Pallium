@@ -10,6 +10,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import IO
 
 from app.config import AppConfig
 from app.runtime_logging import emit_runtime_log
@@ -362,6 +363,7 @@ def run_supervisor(
     should_stop: Callable[[], bool] | None = None,
     clock: Callable[[], float] = time.monotonic,
     log_file: Path | None = None,
+    log_stream: IO[str] | None = None,
     kill_fn: Callable[..., None] = _kill_tree,
 ) -> int:
     parsed = build_parser().parse_args(args)
@@ -400,11 +402,20 @@ def run_supervisor(
     # Each managed slot: (command, label, process, restart_times)
     slots: list[_ManagedSlot] = []
     exit_code = 0
-    _log_fh = None
+    _log_fh: IO[str] | None = None
+    _owns_log_fh = False
 
-    if log_file is not None:
+    if log_stream is not None:
+        # Shared stream from configure_file_logging — children inherit the
+        # SAME kernel File Object as the root logger's handler. This keeps
+        # the file position coherent across writers (supervisor logs +
+        # child stdout/stderr). Do not close it; the caller owns the
+        # lifecycle (process exit will release it).
+        _log_fh = log_stream
+    elif log_file is not None:
         try:
             _log_fh = open(log_file, "a", encoding="utf-8")  # noqa: SIM115
+            _owns_log_fh = True
         except OSError:
             pass
 
@@ -600,7 +611,7 @@ def run_supervisor(
                         f"shutdown snapshot failed (data loss window ~{snapshot_config.interval_seconds}s): {exc}",
                         stderr=True,
                     )
-    if _log_fh is not None:
+    if _log_fh is not None and _owns_log_fh:
         _log_fh.close()
     return exit_code
 

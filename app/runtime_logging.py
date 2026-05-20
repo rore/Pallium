@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import logging
 import sys
 from datetime import datetime, timezone
@@ -94,24 +95,36 @@ def build_uvicorn_log_config(*, component: str = "api") -> dict[str, Any]:
     }
 
 
-def configure_file_logging(log_dir: Path) -> None:
+def configure_file_logging(log_dir: Path) -> io.TextIOWrapper:
     """Configure root logger to write to a log file (for service mode).
 
+    Returns the open log stream. Callers should pass it to ``run_supervisor``
+    as ``log_stream`` so child Popen stdout/stderr inherit the *same* kernel
+    File Object. On Windows, Python's ``open(path, "a")`` does not use
+    ``FILE_APPEND_DATA`` — the MSVCRT runtime implements append as a
+    user-space ``lseek``+``WriteFile``, which is non-atomic across distinct
+    File Objects. If the supervisor's logging handler and child processes
+    each opened their own handle, their writes would race and clobber each
+    other (verified: supervisor's "started api pid=…" line was overwritten
+    by child stdout/stderr in production). A single shared handle keeps the
+    kernel file position coherent across all writers.
+
     Rotation happens at startup: if the log exceeds 5MB, old files are
-    shifted before opening a fresh one. This avoids conflicts with child
-    processes that share the same file handle.
+    shifted before opening a fresh stream.
     """
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "pallium.log"
 
     _rotate_on_startup(log_file, max_bytes=5 * 1024 * 1024, keep=5)
 
-    handler = logging.FileHandler(log_file, encoding="utf-8")
+    stream = open(log_file, "a", encoding="utf-8")
+    handler = logging.StreamHandler(stream)
     handler.setFormatter(RuntimeLogFormatter("service"))
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     root.addHandler(handler)
+    return stream
 
 
 def _rotate_on_startup(log_file: Path, *, max_bytes: int, keep: int) -> None:

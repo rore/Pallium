@@ -155,7 +155,7 @@ def test_runtime_log_format_includes_component_label(capsys) -> None:
 
 
 def test_root_filehandler_preserves_component_label(tmp_path) -> None:
-    """When emit_runtime_log propagates to the root FileHandler installed by
+    """When emit_runtime_log propagates to the root handler installed by
     configure_file_logging, the actual component label must be preserved.
 
     Regression for the live-service bug where every supervisor/api/processor
@@ -166,21 +166,85 @@ def test_root_filehandler_preserves_component_label(tmp_path) -> None:
     from app.runtime_logging import configure_file_logging
 
     log_dir = tmp_path / "logs"
-    configure_file_logging(log_dir)
+    stream = configure_file_logging(log_dir)
     log_file = log_dir / "pallium.log"
     try:
         emit_runtime_log("supervisor", "started api pid=999")
         emit_runtime_log("processor", "worker_id=p-1 status=ok")
         emit_runtime_log("service", "Active packages: foo")
     finally:
-        # Detach FileHandler we just attached so other tests aren't affected.
+        # Detach the StreamHandler we just attached so other tests aren't
+        # affected, then close the underlying stream we own.
         root = logging.getLogger()
         for h in list(root.handlers):
-            if isinstance(h, logging.FileHandler) and h.baseFilename == str(log_file):
+            if isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) is stream:
                 root.removeHandler(h)
-                h.close()
+                h.flush()
+        stream.close()
 
     content = log_file.read_text(encoding="utf-8")
     assert "[supervisor] started api pid=999" in content, content
     assert "[processor] worker_id=p-1 status=ok" in content, content
     assert "[service] Active packages: foo" in content, content
+
+
+def test_configure_file_logging_returns_shared_stream_for_subprocess(tmp_path) -> None:
+    """Regression for the supervisor-line-clobber bug.
+
+    When the supervisor opens its own ``open(log_file, "a")`` and passes the
+    *separate* file handle to child Popen as stdout/stderr, MSVCRT's
+    user-space ``lseek``+``WriteFile`` append (Python's ``open`` does NOT use
+    Win32 ``FILE_APPEND_DATA``) races across the two distinct File Objects.
+    A child write at the parent's snapshotted offset clobbered the parent's
+    "started api pid=…" line in production.
+
+    The fix: ``configure_file_logging`` returns the same open stream so that
+    child processes inherit the *same* kernel File Object, keeping the file
+    position coherent. This test pins that contract.
+    """
+    import subprocess
+    import sys
+
+    from app.runtime_logging import configure_file_logging
+
+    log_dir = tmp_path / "logs"
+    stream = configure_file_logging(log_dir)
+    log_file = log_dir / "pallium.log"
+
+    try:
+        emit_runtime_log("service", "Active packages: foo")
+        emit_runtime_log("service", "Default use case: bar")
+
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | 0x08000000
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.write('child-stdout-line\\n');"
+                " sys.stderr.write('child-stderr-line\\n')",
+            ],
+            stdout=stream,
+            stderr=stream,
+            creationflags=creationflags,
+        )
+        emit_runtime_log("supervisor", f"started api pid={proc.pid} attempt=1")
+        proc.wait(timeout=10)
+        emit_runtime_log("supervisor", "started processor pid=22222")
+    finally:
+        root = logging.getLogger()
+        for h in list(root.handlers):
+            if isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) is stream:
+                root.removeHandler(h)
+                h.flush()
+        stream.close()
+
+    text = log_file.read_text(encoding="utf-8")
+    assert "[supervisor] started api pid=" in text, (
+        f"supervisor line corrupted/missing — cross-handle race re-introduced. content:\n{text}"
+    )
+    assert "[supervisor] started processor pid=22222" in text, text
+    assert "[service] Active packages: foo" in text, text
+    assert "child-stdout-line" in text, text
+    assert "child-stderr-line" in text, text
