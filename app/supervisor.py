@@ -138,8 +138,11 @@ _MAX_RAPID_RESTARTS = 3
 _RAPID_RESTART_WINDOW_SECONDS = 60.0
 
 # Health probe: periodically TCP-connect to the API to detect the WinError 64
-# stuck-socket case (process alive but accept loop dead).
-_API_HEALTH_PROBE_INTERVAL = 30.0   # seconds between probes
+# stuck-socket case (process alive but accept loop dead). The asyncio accept
+# patch in app/asyncio_windows_accept.py is the primary defense; the probe is
+# a backstop. 10s x 2 = 20s detection window keeps recovery latency bounded
+# without flooding the API with probe traffic.
+_API_HEALTH_PROBE_INTERVAL = 10.0   # seconds between probes
 _API_HEALTH_PROBE_FAIL_THRESHOLD = 2  # consecutive failures before kill
 
 

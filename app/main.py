@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 
+from app.asyncio_windows_accept import apply_patch as _apply_accept_patch
 from app.config import AppConfig
 from app.dashboard import mount_dashboard
 from app.dependencies import build_router, build_service, build_storage_provider
@@ -30,6 +31,11 @@ if TYPE_CHECKING:
     from core.rebuild_coordinator import RebuildCoordinator
 
 logger = logging.getLogger(__name__)
+
+# Patch upstream CPython defect that closes the listening socket on a
+# single misbehaving client (WinError 64 etc.). Must run before uvicorn
+# binds the server, hence module-level. No-op on non-Windows.
+_apply_accept_patch()
 
 RECONCILE_INTERVAL_SECONDS = 2.0
 
