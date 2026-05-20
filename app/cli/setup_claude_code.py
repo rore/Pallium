@@ -61,7 +61,7 @@ def _hook_command(script_name: str) -> str:
 def _register_mcp(port: int) -> None:
     subprocess.run(["claude", "mcp", "remove", "--scope", "user", "pallium"], check=False)
     subprocess.run(
-        ["claude", "mcp", "add", "--transport", "http", "--scope", "user", "pallium", f"http://localhost:{port}/mcp"],
+        ["claude", "mcp", "add", "--transport", "http", "--scope", "user", "pallium", f"http://127.0.0.1:{port}/mcp"],
         check=True,
     )
 
