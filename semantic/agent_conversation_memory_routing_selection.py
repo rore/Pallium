@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from core.models import InjectableBlock, QueryFilters, QueryResultItem, QueryRuntimeContext
+from core.subject import subject_text_for_payload
 from semantic.common import content_tokens, normalize_for_index
 from semantic.agent_conversation_memory_constraints import (
     CONSTRAINT_MEMORY_TYPE,
@@ -29,6 +31,80 @@ from semantic.agent_conversation_memory_routing_scoring import (
     _is_current_query_echo,
     _summary_low_value_reason,
 )
+
+
+# --- R2b post-routing subject-overlap gate ----------------------------------
+# Drop selected blocks whose memory subject shares <2 tokens with the query.
+# Validated offline via evals/anchor_probe/replay_harness.py (R2b rule).
+# Default OFF; flip via env var until production telemetry confirms parity.
+_R2B_GATE_ENABLED = os.environ.get("PALLIUM_R2B_SUBJECT_OVERLAP_GATE", "") == "1"
+_R2B_MIN_OVERLAP = 2
+_R2B_DROP_REASON = "r2b_subject_overlap_insufficient"
+
+
+def _subject_tokens_for_item(item: QueryResultItem) -> set[str]:
+    """Tokenize a memory's subject for the R2b gate.
+
+    Falls back to flattened payload values when the subject is empty so that
+    cards with thin subject metadata (rare) still have a body-derived signal,
+    matching the eval-rule fallback.
+    """
+    payload = getattr(item, "payload", None) or {}
+    subject = subject_text_for_payload(getattr(item, "type", None), payload)
+    tokens = {t for t in normalize_for_index(subject).split() if t}
+    if tokens:
+        return tokens
+    parts: list[str] = []
+    for value in payload.values():
+        if isinstance(value, str):
+            parts.append(value)
+    if parts:
+        return {t for t in normalize_for_index(" ".join(parts)).split() if t}
+    return set()
+
+
+def _r2b_should_keep(item: QueryResultItem, query_tokens: set[str]) -> bool:
+    if not query_tokens:
+        return True
+    stok = _subject_tokens_for_item(item)
+    if not stok:
+        return True
+    return len(query_tokens & stok) >= _R2B_MIN_OVERLAP
+
+
+def _apply_r2b_gate(
+    selected_candidates: list[dict[str, object]],
+    blocks: list[InjectableBlock],
+    query_text: str,
+) -> tuple[list[dict[str, object]], list[InjectableBlock], int]:
+    """Run the R2b subject-overlap filter on already-built injection blocks.
+
+    Annotates dropped candidates with `post_routing_drop_reason` so the audit
+    snapshot records the reason. Returns (kept_candidates, kept_blocks, n_dropped).
+    """
+    qtok = {t for t in normalize_for_index(query_text or "").split() if t}
+    kept_cands: list[dict[str, object]] = []
+    kept_blocks: list[InjectableBlock] = []
+    n_dropped = 0
+    for cand, blk in zip(selected_candidates, blocks):
+        item = cand["item"]
+        if _r2b_should_keep(item, qtok):
+            kept_cands.append(cand)
+            kept_blocks.append(blk)
+        else:
+            cand["post_routing_drop_reason"] = _R2B_DROP_REASON
+            n_dropped += 1
+            if _INJECTION_VERBOSE:
+                subj = subject_text_for_payload(
+                    getattr(item, "type", None),
+                    getattr(item, "payload", None) or {},
+                )
+                _injection_verbose(
+                    f"INJECTION query={(query_text or '')[:80]!r} | R2b DROP "
+                    f"mid={getattr(item, 'memory_object_id', None)} type={getattr(item, 'type', None)} "
+                    f"subject={subj[:80]!r}"
+                )
+    return kept_cands, kept_blocks, n_dropped
 
 
 def _select_final_candidates(
@@ -758,6 +834,30 @@ def _build_injectable_blocks(
     _append_constraint_supplements(selected_candidates, ranked_candidates)
 
     blocks = [_build_injectable_block_from_candidate(candidate, intent=intent) for candidate in selected_candidates]
+
+    # R2b post-routing gate: drop blocks whose memory subject shares <2 tokens
+    # with the query. Annotates dropped candidates so the audit snapshot
+    # records the reason without introducing a new decision_reason.
+    if _R2B_GATE_ENABLED and blocks:
+        selected_candidates, blocks, _r2b_dropped = _apply_r2b_gate(
+            selected_candidates, blocks, query_text
+        )
+        if not blocks:
+            if _INJECTION_VERBOSE:
+                _injection_verbose(
+                    f"INJECTION query={(query_text or '')[:80]!r} intent={intent} | R2b DROP-ALL "
+                    f"reason=no_relevant_memory ({_r2b_dropped} candidates filtered)"
+                )
+            return _make_injection_result(
+                [],
+                should_inject=False,
+                decision_reason="no_relevant_memory",
+                returned_block_ids=[],
+                eligible_result_ids=[],
+                dropped_by_cap_result_ids=[],
+                same_thread_context=same_thread_context,
+            )
+
     eligible_ids, dropped_ids = _compute_eligible_and_dropped_ids(
         blocks,
         primary_eligible_candidates,

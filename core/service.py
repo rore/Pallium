@@ -773,6 +773,7 @@ class PalliumService:
                         "support_grade": candidate.get("support_grade"),
                         "suppression_reason_code": candidate.get("suppression_reason_code"),
                         "excluded_reason_code": candidate.get("excluded_reason_code"),
+                        "post_routing_drop_reason": candidate.get("post_routing_drop_reason"),
                         "injected": result_id in injectable_result_ids if result_id else False,
                     })
                 candidate_scores_json = json.dumps(snapshot)
