@@ -10,6 +10,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import sys
 from dataclasses import replace
@@ -81,11 +82,24 @@ def run_eval(*, db_cache_dir: Path, verbose: bool = False) -> bool:
             config.vector_index,
             index_path=str(vector_path),
         )
+
+        # Pin embedding model to whatever the cached vector index was built with,
+        # so the eval works regardless of the current production default.
+        embedding_providers = dict(config.embedding_providers)
+        meta_path = Path(str(cached_vector_prefix) + ".meta.json")
+        if meta_path.exists():
+            cached_model = json.loads(meta_path.read_text(encoding="utf-8")).get("model_name")
+            provider_name = config.vector_index.embedding_provider or "onnx"
+            current = embedding_providers.get(provider_name)
+            if current is not None and cached_model:
+                embedding_providers[provider_name] = replace(current, model=cached_model)
+
         scenario_config = replace(
             config,
             sqlite_url=database_url,
             default_use_case="agent_conversation_memory",
             vector_index=vector_index_config,
+            embedding_providers=embedding_providers,
         )
 
         with TestClient(create_app(scenario_config)) as client:
