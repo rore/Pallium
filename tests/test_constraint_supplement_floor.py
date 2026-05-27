@@ -9,7 +9,7 @@ Covers:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from core.models import QueryResultItem
 from semantic.agent_conversation_memory_routing_constants import _routing_result_id
@@ -138,10 +138,11 @@ def test_max_count_caps_returned_supplements() -> None:
 
 
 def test_freshness_ordered_most_recent_first() -> None:
+    now = datetime.now(timezone.utc)
     older = _constraint_item("older")
-    object.__setattr__(older, "freshness_at", datetime(2026, 5, 10, tzinfo=timezone.utc))
+    object.__setattr__(older, "freshness_at", now - timedelta(days=12))
     newer = _constraint_item("newer")
-    object.__setattr__(newer, "freshness_at", datetime(2026, 5, 17, tzinfo=timezone.utc))
+    object.__setattr__(newer, "freshness_at", now - timedelta(days=5))
     cands = [
         {
             "item": older, "routing_rank": 1, "routing_score": 300,
