@@ -28,6 +28,7 @@ Read when needed, not upfront:
 - `docs/context/decisions.md` — when verifying a specific accepted decision or rationale
 - `docs/context/state.md` — when checking current test/pipeline state
 - `docs/context/lessons.md` — when debugging a problem that might have a known solution
+- `docs/context/validation.md` — **read before proposing any new eval** — has an Eval Toolbox table mapping intent to existing tool. The repo has 80+ eval scripts and most "would change X have helped" questions are already covered by `evals/anchor_probe/thread_replay.py`, `evals/live_value_scenarios/`, or `evals/validation_runner.py`.
 - `roadmap/board.md` — when doing roadmap or prioritization work
 
 ## Commands

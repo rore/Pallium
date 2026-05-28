@@ -59,6 +59,49 @@ This keeps the deterministic core centered on the current product claim:
 conversation continuity, resumed work, scoped recall, and thin-agent memory
 behavior.
 
+## Eval Toolbox
+
+Before proposing or building a new eval, check whether one of these already
+fits. The repo has 80+ scripts under `evals/`; the table below is the
+short list of tools that map to common questions during development.
+
+All entries are deterministic on the inputs they consume unless noted.
+"Replay" means reads from the live SQLite DB or `query_audit_log`
+snapshots and applies a rule — no LLM in the harness itself.
+
+| Question / intent | Tool | Determinism | Cost |
+|---|---|---|---|
+| Would gating rule X have changed past injections on real threads? | `evals/anchor_probe/thread_replay.py --rule {R1..R7,baseline}` | Replay, no LLM | Seconds |
+| Add a new gating rule and replay it | Add `rule_X` in `evals/anchor_probe/replay_harness.py`, register in `thread_replay.RULES` | Replay, no LLM | 10 LOC |
+| Pass/fail on real-data scenarios with no LLM judge | `evals/live_value_scenarios/runner.py` | Structural assertions | Seconds, needs running service |
+| 4-check + skip-pressure pipeline on rated slice | `evals/validation_runner.py` | Replay on rated cases | Seconds |
+| Sweep injection-gate thresholds against audit data | `evals/injection_precision_eval.py` | Audit replay | Seconds |
+| Replay full injection decisions under counterfactual rules | `evals/injection_replay_simulation.py` | Audit replay | Seconds |
+| End-to-end realistic agent conversations | `evals/agent_conversation_runner.py` | Scenario-driven, runs through TestClient | Minutes |
+| Task-checkpoint resumption (paraphrased / noisy variants) | `evals/work_resumption_benchmark.py` | Scenario-driven | Minutes |
+| Recurring-question recall (did the same answer surface again) | `evals/recurring_question/` (scenarios.json + runner) | Scenario-driven | Minutes |
+| Canonical milestone scenario (positive / no-value / scope-guard) | `evals/integration_readiness_scenario.py` | Scenario-driven | Minutes |
+| Counterfactual hypothesis on real audit data ("would prompt X have helped?") | `evals/anchor_probe/counterfactual_*.py` template family | LLM-judge with seed; not deterministic, judge variance ~20pp | Minutes |
+| LoCoMo / LongMemEval end-to-end accuracy | `evals/locomo_benchmark.py` / `evals/longmemeval_benchmark.py` | LLM-judge, stochastic | Hours, expensive |
+| Exploratory QA invariant scenarios (generated) | `evals/generated_exploratory/invariant_runner.py` | Scenario-driven | Minutes |
+| Fact consolidation retrieval quality | `evals/fact_consolidation_eval.py` | Scenario-driven | Minutes |
+| Low-value promotion / churn drift | `evals/low_value_churn_benchmark.py` | Scenario-driven | Minutes |
+| Routing decision quality | `evals/memory_routing_benchmark.py` | Scenario-driven | Minutes |
+
+### When to reach for which
+
+- **Building a new gating or filter rule** → start in `anchor_probe/replay_harness.py`. Add a `rule_X` function, plug into `thread_replay.RULES`, run against real threads. No production change, no LLM, fast iteration.
+- **Asking "would prompt change Y catch noise?"** → use the `anchor_probe/counterfactual_*.py` template family. These call the production Sonnet judge; expect ~20pp variance across seeds, so run ≥3 seeds and report consensus.
+- **Validating that a known good scenario still passes** → `live_value_scenarios/runner.py`. Categories: `constraint_carry_forward`, `investigation_continuation`, `analysis_handoff`, `decision_recall`, `negative_no_inject`. Structural pass/fail only.
+- **Pre-ship checks on a routing or extraction change** → `validation_runner.py` runs the 4-check + skip-pressure pipeline on the rated slice. This is the production-data validation gate.
+- **End-to-end accuracy comparison vs the field** → `locomo_benchmark.py` / `longmemeval_benchmark.py`. Expensive, judge-driven, not for fast iteration.
+
+### Anti-patterns
+
+- **Don't write a new "deterministic eval slice" before checking whether `live_value_scenarios` or `thread_replay` already fits.** Both shipped 2026-05-27 and cover most "would change X have helped on real data" shapes.
+- **Don't trust single-seed judge calls on small samples.** ~20pp variance is real (see `lessons.md`); use ≥3 seeds and a consensus rule, or pick a deterministic-replay tool instead.
+- **Don't conflate retrieval recall with end-to-end accuracy.** R@5 of 95% on LongMemEval-S is session-id-in-top-5, not QA. Pick the metric that matches the claim.
+
 ## Confidence Gate
 
 The developer-work confidence report now rolls up by lane and tier first.
