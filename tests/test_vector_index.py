@@ -281,7 +281,7 @@ def test_vector_index_config_defaults():
 
     config = VectorIndexConfig()
     assert config.enabled is True
-    assert config.index_path == "./pallium_vector.index"
+    assert config.index_path == "./vector_index"
     assert config.embedding_provider == "onnx"
     assert config.min_similarity is None  # None = use model's recommended value
 

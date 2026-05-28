@@ -66,7 +66,7 @@ class TestVectorIndexConfig:
     def test_default_config_vector_enabled(self) -> None:
         config = AppConfig()
         assert config.vector_index.enabled is True
-        assert config.vector_index.index_path == "./pallium_vector.index"
+        assert config.vector_index.index_path == "./vector_index"
         assert config.vector_index.embedding_provider == "onnx"
         assert config.vector_index.min_similarity is None  # resolved at runtime from model
 

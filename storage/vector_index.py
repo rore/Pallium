@@ -12,7 +12,7 @@ from pathlib import Path
 @dataclass(frozen=True)
 class VectorIndexConfig:
     enabled: bool = True
-    index_path: str = "./pallium_vector.index"
+    index_path: str = "./vector_index"
     embedding_provider: str = "onnx"  # key into embedding_providers
     min_similarity: float | None = None  # None = use model's recommended value
 
