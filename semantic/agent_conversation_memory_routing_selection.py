@@ -163,6 +163,14 @@ def _select_final_candidates(
             if signal_type not in candidate["work_signal_types"]:
                 continue
             if not _candidate_locality_compatible_for_packaging(top_candidate["item"], candidate["item"], query_filters):
+                # A6: locality block prevents an otherwise-eligible candidate
+                # from filling the adjacent-evidence slot. Annotate with a
+                # private marker the audit-promotion helper picks up; this is
+                # observability only and does not change selection logic.
+                candidate.setdefault(
+                    "selection_drop_reason_code",
+                    "displaced_by_locality_compatibility",
+                )
                 continue
             selected_candidates.append(candidate)
             used_result_ids.add(candidate_result_id)
@@ -195,6 +203,12 @@ def _select_final_candidates(
             if candidate["layer"] not in CHECKPOINT_FILL_ALLOWED_LAYERS:
                 continue
             if not _candidate_locality_compatible_for_packaging(top_candidate["item"], candidate["item"], query_filters):
+                # A6 (fill pass): same locality block as the signal-priority
+                # loop above. Annotate before continuing.
+                candidate.setdefault(
+                    "selection_drop_reason_code",
+                    "displaced_by_locality_compatibility",
+                )
                 continue
             selected_candidates.append(candidate)
             used_result_ids.add(candidate_result_id)
@@ -524,6 +538,12 @@ def _select_candidates_with_floor_and_expansion(
         if len(selected) >= floor:
             break
         if not _can_select_candidate_under_fact_summary_limit(candidate, selected):
+            # A2: a fact_summary was already retained in `selected`; this
+            # additional fact_summary is rejected by the cap. Annotate.
+            candidate.setdefault(
+                "selection_drop_reason_code",
+                "displaced_by_fact_summary_cap",
+            )
             continue
         selected.append(candidate)
 
@@ -532,16 +552,40 @@ def _select_candidates_with_floor_and_expansion(
         top_score = int(deduped_candidates[0].get("routing_score") or 0)
         if top_score > 0 and len(deduped_candidates) > len(selected):
             expansion_floor_score = top_score * INJECTION_EXPANSION_RATIO
+            ceiling_reached = False
             for candidate in deduped_candidates:
                 if candidate in selected:
                     continue
                 if len(selected) >= INJECTION_HARD_CEILING:
-                    break
+                    # A4: hard-ceiling reached; tag remaining candidates so
+                    # the audit attribution names the specific mechanism
+                    # rather than collapsing into the lower-routing-score
+                    # fallback. The original control flow exited at this
+                    # point — preserve that by recording state and continuing
+                    # the iteration only to annotate (no selection mutation).
+                    ceiling_reached = True
+                if ceiling_reached:
+                    candidate.setdefault(
+                        "selection_drop_reason_code",
+                        "displaced_by_hard_ceiling",
+                    )
+                    continue
                 if not _can_select_candidate_under_fact_summary_limit(candidate, selected):
+                    candidate.setdefault(
+                        "selection_drop_reason_code",
+                        "displaced_by_fact_summary_cap",
+                    )
                     continue
                 if int(candidate.get("routing_score") or 0) >= expansion_floor_score:
                     selected.append(candidate)
                     expansion_added += 1
+                else:
+                    # A3: candidate below floor*ratio cannot be promoted by
+                    # the expansion pass.
+                    candidate.setdefault(
+                        "selection_drop_reason_code",
+                        "displaced_by_expansion_ratio",
+                    )
 
     return selected, expansion_added
 
@@ -575,8 +619,19 @@ def _fill_companion_candidates(
     ]
     for candidate in companion_candidates:
         if len(selected_candidates) >= INJECTION_HARD_CEILING:
-            break
+            # A5: companion-fill could not place this candidate because the
+            # hard ceiling was already reached. Distinct from A4 in source
+            # (companion_fill vs floor/expansion); namespace is cheap.
+            candidate.setdefault(
+                "selection_drop_reason_code",
+                "displaced_by_companion_fill",
+            )
+            continue
         if not _can_select_candidate_under_fact_summary_limit(candidate, selected_candidates):
+            candidate.setdefault(
+                "selection_drop_reason_code",
+                "displaced_by_fact_summary_cap",
+            )
             continue
         selected_candidates.append(candidate)
         used_result_ids.add(_routing_result_id(candidate["item"]))
@@ -598,8 +653,18 @@ def _append_constraint_supplements(
     )
     for cs in constraint_supplements:
         if _is_duplicate_of_selected(cs, selected_candidates):
+            # A5/edge: constraint supplement collided with an already-selected
+            # block via the duplicate-of-selected check.
+            cs.setdefault(
+                "selection_drop_reason_code",
+                "displaced_by_constraint_supplement",
+            )
             continue
         if not _can_select_candidate_under_fact_summary_limit(cs, selected_candidates):
+            cs.setdefault(
+                "selection_drop_reason_code",
+                "displaced_by_fact_summary_cap",
+            )
             continue
         selected_candidates.append(cs)
 
@@ -761,9 +826,8 @@ def _build_injectable_blocks(
     )
     if source_evidence_resolved is not None:
         return source_evidence_resolved
-    primary_eligible_candidates = [
-        candidate
-        for candidate in final_candidates
+    primary_eligible_candidates = []
+    for candidate in final_candidates:
         if _candidate_is_injection_eligible(
             candidate,
             intent=intent,
@@ -771,8 +835,18 @@ def _build_injectable_blocks(
             allow_discussion_fallback=not primary_non_discussion_eligible,
             allow_source_companion=False,
             evidence_request=evidence_request,
-        )
-    ]
+        ):
+            primary_eligible_candidates.append(candidate)
+        else:
+            # A8: candidate survived routing + selection but a per-candidate
+            # gate (BM25 floor / content overlap / disclaimer / type filter)
+            # rejected it here. Skip annotation when suppression already owns
+            # the candidate so the suppression mirror keeps precedence.
+            if not candidate.get("suppression_reason_code"):
+                candidate.setdefault(
+                    "selection_drop_reason_code",
+                    "displaced_by_per_candidate_eligibility",
+                )
     # Suppress cross-thread task_checkpoints during work_resumption in an
     # established thread with sufficient local context. Checkpoints are
     # ephemeral ("what I'm working on now") and stale when carried forward.
@@ -783,10 +857,19 @@ def _build_injectable_blocks(
         and runtime_context.session_has_sufficient_local_context is True
     )
     if intent == "work_resumption" and query_filters and query_filters.thread_ref and _has_local_context:
-        primary_eligible_candidates = [
-            c for c in primary_eligible_candidates
-            if not (c["item"].type == "task_checkpoint" and not c.get("same_thread"))
-        ]
+        filtered_eligible: list[dict[str, object]] = []
+        for c in primary_eligible_candidates:
+            if c["item"].type == "task_checkpoint" and not c.get("same_thread"):
+                # A7: established-thread work_resumption suppresses cross-thread
+                # checkpoints (stale "what I'm working on now" state). Annotate
+                # for audit attribution.
+                c.setdefault(
+                    "selection_drop_reason_code",
+                    "displaced_by_cross_thread_checkpoint_suppression",
+                )
+                continue
+            filtered_eligible.append(c)
+        primary_eligible_candidates = filtered_eligible
     if not primary_eligible_candidates:
         decision_reason = "only_low_value_candidates" if any(_candidate_is_low_value(candidate) for candidate in final_candidates) else "no_relevant_memory"
         if _INJECTION_VERBOSE:
