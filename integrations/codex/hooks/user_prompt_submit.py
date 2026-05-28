@@ -11,6 +11,7 @@ from pathlib import Path
 _common_path = str(Path(__file__).resolve().parent / "common.py")
 _spec = importlib.util.spec_from_file_location("codex_common", _common_path)
 _common = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
+sys.modules["codex_common"] = _common
 _spec.loader.exec_module(_common)  # type: ignore[union-attr]
 
 AGENT_REF = _common.AGENT_REF

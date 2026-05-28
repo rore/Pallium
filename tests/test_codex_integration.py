@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -225,3 +228,56 @@ def test_codex_agents_block_keeps_manual_memory_tools_optional() -> None:
     assert "If an injected card has `[+source]` and you rated it relevant" not in agents_block
     assert "`pallium_query`" in agents_block
     assert "`pallium_expand`" in agents_block
+
+
+@pytest.mark.parametrize(
+    "hook_name,stdin_payload",
+    [
+        (
+            "session_start.py",
+            {"session_id": "regression-test", "cwd": ".", "source": "startup"},
+        ),
+        (
+            "user_prompt_submit.py",
+            {"session_id": "regression-test", "cwd": ".", "prompt": "x"},
+        ),
+        (
+            "stop.py",
+            {"session_id": "regression-test", "cwd": ".", "transcript_path": ""},
+        ),
+    ],
+)
+def test_codex_hooks_import_cleanly_as_subprocess(
+    hook_name: str, stdin_payload: dict, tmp_path: Path
+) -> None:
+    """Each hook must import cleanly when run as a subprocess (the way Codex invokes it).
+
+    Regression for a silent hook crash: importlib.util.spec_from_file_location loads
+    common.py without registering it in sys.modules, but @dataclass needs the module
+    in sys.modules during class creation on Python 3.13. Missing the registration
+    line crashes hooks at import time, before main() runs — and Codex Desktop swallows
+    stderr, so the failure is invisible. user_prompt_submit.py was missing this line
+    for ~3 weeks before being noticed.
+
+    The bug is unreachable via `from integrations.codex.hooks import X`, so this test
+    invokes each hook the way Codex actually does: subprocess + stdin.
+    """
+    hook_path = Path("integrations/codex/hooks") / hook_name
+    assert hook_path.exists()
+
+    stdin_payload = {**stdin_payload, "cwd": str(tmp_path)}
+
+    result = subprocess.run(
+        [sys.executable, str(hook_path)],
+        input=json.dumps(stdin_payload),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, (
+        f"{hook_name} crashed: stderr={result.stderr!r} stdout={result.stdout!r}"
+    )
+    assert "Traceback" not in result.stderr, (
+        f"{hook_name} raised exception: {result.stderr}"
+    )
