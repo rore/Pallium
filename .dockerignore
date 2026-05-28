@@ -16,7 +16,7 @@ roadmap/
 .env.local
 .env.pelican-wsl
 pallium.local.toml
-pallium_vector.index*
+vector_index*
 .pytest_cache/
 pallium.egg-info/
 build/

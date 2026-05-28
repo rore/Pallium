@@ -453,7 +453,7 @@ enabled = false
 Supported fields today:
 
 - `enabled` — `true` or `false` (default: `true`)
-- `index_path` — file path for the usearch index (default: `./pallium_vector.index`)
+- `index_path` — file path for the usearch index (default: `./vector_index`)
 - `embedding_provider` — references an `[embedding_providers.<name>]` block (default: `"onnx"`)
 - `min_similarity` — minimum cosine similarity threshold (default: `0.55`)
 
@@ -461,7 +461,7 @@ Env overrides:
 
 ```dotenv
 PALLIUM_VECTOR_INDEX_ENABLED=true
-PALLIUM_VECTOR_INDEX_PATH=./pallium_vector.index
+PALLIUM_VECTOR_INDEX_PATH=./vector_index
 PALLIUM_VECTOR_INDEX_EMBEDDING_PROVIDER=onnx
 PALLIUM_VECTOR_INDEX_MIN_SIMILARITY=0.55
 ```
@@ -479,7 +479,7 @@ The following defaults apply when fields are omitted:
   - Exception: `conversational_knowledge.fact_consolidation` auto-upgrades to Sonnet when the package model is Haiku
 - `vector_index.enabled` defaults to `true`
 - `vector_index.embedding_provider` defaults to `"onnx"`
-- `vector_index.index_path` defaults to `"./pallium_vector.index"`
+- `vector_index.index_path` defaults to `"./vector_index"`
 - `vector_index.min_similarity` defaults to `0.55`
 
 You only need to set `llm_provider` and `model` on a semantic package for the

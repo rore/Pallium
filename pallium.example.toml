@@ -71,6 +71,6 @@ model = "intfloat/multilingual-e5-small"
 
 [vector_index]
 enabled = true
-index_path = "./pallium_vector.index"
+index_path = "./vector_index"
 embedding_provider = "onnx"
 min_similarity = 0.55
