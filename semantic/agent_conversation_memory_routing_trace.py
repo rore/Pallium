@@ -19,6 +19,32 @@ from semantic.agent_conversation_memory_routing_constants import (
 )
 
 
+# Maps selection-layer `excluded_reason_code` values to the trace's
+# `loss_stage` bucket. Kept in sync with the new codes introduced in
+# Goal A (see `_collect_selection_drop_codes` in
+# `agent_conversation_memory_routing_selection.py`).
+#
+# Without these maps, new codes silently fall into the catch-all
+# `loss_stage = "injection_cap"` / `"final_injection_cap"` branch, which
+# inverts the debuggability gain the audit consumer relies on (the audit
+# groups by `loss_stage` and `excluded_reason_code` together).
+_PACKAGING_LOSS_STAGE_CODES = frozenset({
+    "displaced_by_adjacent_evidence_packaging",
+    "displaced_by_dedup",
+    "displaced_by_fact_summary_cap",
+    "displaced_by_locality_compatibility",
+    "displaced_by_companion_fill",
+    "displaced_by_constraint_supplement",
+    "displaced_by_r2b_subject_overlap",
+    "displaced_by_cross_thread_checkpoint_suppression",
+})
+_INJECTION_CAP_LOSS_STAGE_CODES = frozenset({
+    "displaced_by_hard_ceiling",
+    "displaced_by_expansion_ratio",
+    "displaced_by_per_candidate_eligibility",
+})
+
+
 def _build_anchor_prefilter_trace_entry(
     item: QueryResultItem,
     *,
@@ -359,8 +385,10 @@ def _build_sharp_candidate_diagnostics(
         loss_reason_code = None
         loss_reason = None
         if result_id not in final_result_ids:
-            if candidate.get("excluded_reason_code") == "displaced_by_adjacent_evidence_packaging":
+            if candidate.get("excluded_reason_code") in _PACKAGING_LOSS_STAGE_CODES:
                 loss_stage = "packaging"
+            elif candidate.get("excluded_reason_code") in _INJECTION_CAP_LOSS_STAGE_CODES:
+                loss_stage = "injection_cap"
             loss_reason_code = candidate.get("excluded_reason_code")
             loss_reason = candidate.get("excluded_reason")
         elif result_id not in selected_injection_ids:
