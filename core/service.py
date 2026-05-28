@@ -23,7 +23,7 @@ from core.turn_inference import resolve_runtime_context
 from core.type_registry import TypeRegistry
 from core.vector_embed import VectorEmbedder
 from core.vector_index_holder import VectorIndexHolder
-from core.models import FlagResult, InjectableBlock, MemoryFlag, QueryRuntimeContext, Relation, SourceItem, utc_now
+from core.models import FlagResult, InjectableBlock, MemoryFlag, MemoryObject, QueryRuntimeContext, Relation, SourceItem, utc_now
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.visibility import is_visible
 from providers.embedding.base import EmbeddingProvider
@@ -846,8 +846,31 @@ class PalliumService:
         the lexical-vector hybrid path, which can lexically attract off-topic memories on
         boilerplate orientation queries.
         """
+        blocks, _records = self._get_recent_orientation_blocks_with_records(
+            container_ref=container_ref,
+            memory_types=memory_types,
+            since_days=since_days,
+            limit=limit,
+        )
+        return blocks
+
+    def _get_recent_orientation_blocks_with_records(
+        self,
+        *,
+        container_ref: str,
+        memory_types: list[str],
+        since_days: int,
+        limit: int,
+    ) -> tuple[list[dict[str, object]], list[MemoryObject]]:
+        """Internal sibling that returns both the rendered blocks AND the underlying
+        memory_object records used to build them.
+
+        Exists so the audit writer can capture the candidate pool considered for an
+        `orientation_recency` audit row (see ``write_orientation_recency_audit``). The
+        public ``get_recent_orientation_blocks`` external contract is preserved.
+        """
         if since_days <= 0 or limit <= 0 or not memory_types:
-            return []
+            return [], []
         cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
         records = self._storage.list_recent_memory_objects(
             container_ref=container_ref,
@@ -860,7 +883,7 @@ class PalliumService:
             block = _build_orientation_block(memory)
             if block is not None:
                 blocks.append(block)
-        return blocks
+        return blocks, list(records)
 
     def write_orientation_recency_audit(
         self,
