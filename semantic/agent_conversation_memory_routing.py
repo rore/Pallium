@@ -487,6 +487,8 @@ def route_query_results(
             requested_limit=requested_limit,
             routing_focus=routing_focus,
             packaging_summary=packaging_summary,
+            injection_summary=injection_summary,
+            selected_injected_result_ids={block.result_id for block in injection_blocks},
         )
         sharp_candidate_diagnostics = _build_sharp_candidate_diagnostics(
             ranked_candidates=ranked_candidates,

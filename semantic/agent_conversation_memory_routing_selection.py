@@ -1789,6 +1789,109 @@ def _source_excerpt_disclaims_exact_evidence(excerpt: str) -> bool:
     ))
 
 
+def _collect_selection_drop_codes(
+    ranked_candidates: list[dict[str, object]],
+    final_candidates: list[dict[str, object]],
+    injection_summary: dict[str, object],
+    selected_injected_result_ids: set[str],
+) -> dict[str, tuple[str, str]]:
+    """Build a result_id -> (excluded_reason_code, human_reason) map for drops
+    that happened in the injection layer (i.e. after `_select_final_candidates`).
+
+    Reads three sources, in precedence order:
+
+    1. R2b post-routing gate: candidates carry `post_routing_drop_reason`.
+       Mirrored into `excluded_reason_code = "displaced_by_r2b_subject_overlap"`.
+    2. Dedup: `injection_summary["dedup_removed_result_ids"]` lists removed
+       candidates; tag them as `displaced_by_dedup`.
+    3. Per-site annotations: `selection_drop_reason_code` written by sites
+       A2–A8 in `_select_final_candidates` and `_build_injectable_blocks`.
+
+    Within each source, only candidates that:
+      - are NOT in `selected_injected_result_ids` (they actually lost their
+        slot — survived selection but were dropped before injection), AND
+      - do NOT carry a `suppression_reason_code` (suppression has higher
+        precedence and is mirrored separately by `_annotate_excluded_candidates`)
+
+    are included in the output. Candidates with both a suppression code and a
+    selection drop tag get filtered out here so the suppression mirror branch
+    keeps precedence (architect F8 / question 7).
+    """
+    drop_codes: dict[str, tuple[str, str]] = {}
+
+    dedup_removed = set(injection_summary.get("dedup_removed_result_ids") or [])
+
+    # Iterate ranked_candidates so we get every observed candidate (not just
+    # those still in final_candidates — e.g. the R2b gate strips entries from
+    # selected_candidates after blocks are built, but the post_routing_drop_reason
+    # marker stays on the candidate dict regardless).
+    for candidate in ranked_candidates:
+        result_id = _routing_result_id(candidate["item"])
+        if result_id in selected_injected_result_ids:
+            continue
+        if candidate.get("suppression_reason_code"):
+            # Suppression wins — handled by the suppression-mirror branch in
+            # `_annotate_excluded_candidates`. Do not record an injection-stage
+            # drop code for this candidate even if a selection-layer marker
+            # was written upstream.
+            continue
+
+        # 1. R2b mirror — populate alongside `post_routing_drop_reason` so
+        #    audit consumers can read either field.
+        if candidate.get("post_routing_drop_reason") == _R2B_DROP_REASON:
+            drop_codes[result_id] = (
+                "displaced_by_r2b_subject_overlap",
+                "R2b post-routing gate dropped the block because its memory subject shared <2 tokens with the query.",
+            )
+            continue
+
+        # 2. Dedup — read from injection_summary.
+        if result_id in dedup_removed:
+            drop_codes[result_id] = (
+                "displaced_by_dedup",
+                "Candidate was dropped because it was a near-duplicate of a higher-ranked retained candidate.",
+            )
+            continue
+
+        # 3. Per-site selection markers from sites A2–A8.
+        site_code = candidate.get("selection_drop_reason_code")
+        if isinstance(site_code, str) and site_code:
+            drop_codes[result_id] = (
+                site_code,
+                _SELECTION_DROP_HUMAN_REASONS.get(
+                    site_code,
+                    "Candidate survived routing but was dropped by a downstream selection mechanism.",
+                ),
+            )
+            continue
+
+    return drop_codes
+
+
+_SELECTION_DROP_HUMAN_REASONS: dict[str, str] = {
+    "displaced_by_dedup":
+        "Candidate was dropped because it was a near-duplicate of a higher-ranked retained candidate.",
+    "displaced_by_fact_summary_cap":
+        "Candidate was a fact_summary and another fact_summary already filled the per-injection cap.",
+    "displaced_by_expansion_ratio":
+        "Candidate scored below the expansion-ratio floor (top_score * INJECTION_EXPANSION_RATIO).",
+    "displaced_by_hard_ceiling":
+        "Candidate was eligible but the running selection list reached the hard injection ceiling first.",
+    "displaced_by_companion_fill":
+        "Companion-fill could not place this candidate because the hard ceiling was already reached.",
+    "displaced_by_constraint_supplement":
+        "Constraint supplement was rejected because it duplicated an already-selected candidate.",
+    "displaced_by_locality_compatibility":
+        "Candidate was filtered by `_candidate_locality_compatible_for_packaging` against the primary item's locality.",
+    "displaced_by_cross_thread_checkpoint_suppression":
+        "Cross-thread task_checkpoint suppressed during work_resumption in an established thread with sufficient local context.",
+    "displaced_by_per_candidate_eligibility":
+        "Per-candidate injection-eligibility check (BM25 floor / content-overlap / disclaimer) rejected this candidate.",
+    "displaced_by_r2b_subject_overlap":
+        "R2b post-routing gate dropped the block because its memory subject shared <2 tokens with the query.",
+}
+
+
 def _annotate_excluded_candidates(
     *,
     ranked_candidates: list[dict[str, object]],
@@ -1796,19 +1899,49 @@ def _annotate_excluded_candidates(
     requested_limit: int,
     routing_focus: dict[str, object],
     packaging_summary: dict[str, object] | None,
+    injection_summary: dict[str, object] | None = None,
+    selected_injected_result_ids: set[str] | None = None,
 ) -> None:
     selected_result_ids = {_routing_result_id(candidate["item"]) for candidate in final_candidates}
+    selected_injected = (
+        set(selected_injected_result_ids) if selected_injected_result_ids is not None else set()
+    )
+    selection_drop_codes: dict[str, tuple[str, str]] = (
+        _collect_selection_drop_codes(
+            ranked_candidates,
+            final_candidates,
+            injection_summary or {},
+            selected_injected,
+        )
+        if injection_summary is not None or selected_injected_result_ids is not None
+        else {}
+    )
     packaging_mode = str((packaging_summary or {}).get("mode") or "")
     for candidate in ranked_candidates:
         result_id = _routing_result_id(candidate["item"])
-        if result_id in selected_result_ids:
+        # A candidate is "kept" only if it survived all the way through to an
+        # injected block. `final_candidates` is upstream of the injection
+        # layer, so use the injected set when available — otherwise fall back
+        # to `final_candidates` (legacy behaviour for callers that haven't
+        # been wired through yet).
+        if selected_injected_result_ids is not None:
+            kept = result_id in selected_injected
+        else:
+            kept = result_id in selected_result_ids
+        if kept:
             candidate["excluded_reason_code"] = None
             candidate["excluded_reason"] = None
             continue
         if candidate.get("suppression_reason_code"):
             candidate["excluded_reason_code"] = candidate.get("suppression_reason_code")
             candidate["excluded_reason"] = candidate.get("suppression_reason")
-        elif (
+            continue
+        if result_id in selection_drop_codes:
+            code, human = selection_drop_codes[result_id]
+            candidate["excluded_reason_code"] = code
+            candidate["excluded_reason"] = human
+            continue
+        if (
             packaging_mode == "task_checkpoint_plus_adjacent_evidence"
             and int(candidate.get("routing_rank", 0)) <= requested_limit
         ):
