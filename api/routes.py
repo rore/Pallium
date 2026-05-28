@@ -600,7 +600,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
                 status_code=400,
                 detail="orientation endpoint currently supports only visibility='private'",
             )
-        block_dicts = service.get_recent_orientation_blocks(
+        block_dicts, candidate_records = service._get_recent_orientation_blocks_with_records(
             container_ref=container_ref,
             memory_types=types,
             since_days=since_days,
@@ -614,6 +614,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
                     visibility=visibility,
                     requested_types=list(types),
                     blocks=block_dicts,
+                    candidates=candidate_records,
                 )
             except Exception:
                 logger.warning("orientation_recency audit log write failed", exc_info=True)

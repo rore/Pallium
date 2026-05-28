@@ -893,12 +893,20 @@ class PalliumService:
         visibility: str,
         requested_types: list[str],
         blocks: list[dict[str, object]],
+        candidates: list[MemoryObject] | None = None,
     ) -> None:
         """Write a slim audit row for an orientation_recency call.
 
         Bypasses the InjectableBlock/results pipeline used by /query. Source columns
         are filled with sentinel `ORIENTATION_RECENCY_SOURCE_SENTINEL` because there
         is no source item context for orientation injections.
+
+        ``candidates`` is the list of memory_object records considered (the records
+        returned from the recency lookup, in recency order). When provided, a
+        candidate snapshot mirroring the routed-query shape (see
+        ``write_query_audit``) is serialized into ``candidate_scores_json``. An
+        empty list serializes to ``"[]"`` (disambiguates "no candidates considered"
+        from rows that predate this instrumentation, which carry NULL).
         """
         types_token = ",".join(requested_types) if requested_types else ""
         block_summaries = [
@@ -912,6 +920,32 @@ class PalliumService:
             }
             for block in blocks
         ]
+        candidate_scores_json: str | None = None
+        if candidates is not None:
+            try:
+                snapshot = []
+                for position, memory in enumerate(candidates):
+                    snapshot.append({
+                        "memory_object_id": getattr(memory, "id", None),
+                        "memory_type": getattr(memory, "type", None),
+                        "routing_score": None,
+                        "lexical_score": None,
+                        "vector_score": None,
+                        "routing_rank": position + 1,
+                        "layer": "orientation_recency",
+                        "support_grade": None,
+                        "suppression_reason_code": None,
+                        "excluded_reason_code": None,
+                        "post_routing_drop_reason": None,
+                        "injected": True,
+                    })
+                candidate_scores_json = json.dumps(snapshot)
+            except Exception:
+                self._logger.warning(
+                    "orientation_recency candidate snapshot serialization failed",
+                    exc_info=True,
+                )
+                candidate_scores_json = None
         row = {
             "id": str(uuid.uuid4()),
             "created_at": datetime.now(timezone.utc),
@@ -925,7 +959,7 @@ class PalliumService:
             "should_inject": 1 if blocks else 0,
             "decision_reason": self.ORIENTATION_RECENCY_DECISION_REASON,
             "injected_blocks_json": json.dumps(block_summaries),
-            "candidate_scores_json": None,
+            "candidate_scores_json": candidate_scores_json,
             "injection_method": self.ORIENTATION_RECENCY_INJECTION_METHOD,
         }
         self._storage.write_query_audit_row(row)

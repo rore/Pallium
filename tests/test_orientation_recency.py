@@ -448,3 +448,180 @@ def test_orientation_task_trace_text_matches_routing_builder() -> None:
     orientation_text = _orientation_task_trace_text(payload)
     assert orientation_text == routing_block.text
     assert routing_block.title == "Task Trace"
+
+
+# ─── Audit candidate snapshot (Goal B) ──────────────────────────────────
+
+
+def _audited_client(tmp_path, db_name: str) -> TestClient:
+    """Build a TestClient with query_audit_log enabled, isolated SQLite DB."""
+    from app.config import AppConfig, ObservabilityConfig
+    from app.main import create_app
+    from storage.vector_index import VectorIndexConfig
+    from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+
+    db_path = tmp_path / db_name
+    app = create_app(
+        AppConfig(
+            storage_backend="sqlite",
+            sqlite_url=f"sqlite:///{db_path}",
+            default_use_case="demo_agent_memory",
+            semantic_packages=DEMO_SEMANTIC_PACKAGES,
+            vector_index=VectorIndexConfig(enabled=False),
+            observability=ObservabilityConfig(query_audit_log=True),
+        )
+    )
+    return TestClient(app)
+
+
+def _orientation_audit_rows(client: TestClient):
+    from sqlalchemy import select
+
+    from storage.sqlite_schema import QueryAuditLogRecord
+
+    storage = client.app.state.pallium_service._storage
+    with storage._session_factory() as session:
+        rows = session.scalars(select(QueryAuditLogRecord)).all()
+        return [r for r in rows if r.injection_method == "orientation_recency"]
+
+
+def test_orientation_recency_audit_records_candidates(tmp_path) -> None:
+    """One typed memory available → audit row carries one candidate snapshot entry."""
+    audited = _audited_client(tmp_path, "audit_b1.db")
+    storage = audited.app.state.pallium_service._storage
+    cp = _checkpoint(task="capture me")
+    storage.create_memory_object(cp)
+
+    response = audited.get(
+        "/memory-objects/recent",
+        params=[("container_ref", CONTAINER), ("types", "task_checkpoint")],
+    )
+    assert response.status_code == 200
+
+    rows = _orientation_audit_rows(audited)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.candidate_scores_json is not None
+    snapshot = json.loads(row.candidate_scores_json)
+    assert isinstance(snapshot, list)
+    assert len(snapshot) == 1
+    entry = snapshot[0]
+    assert entry["memory_object_id"] == cp.id
+    assert entry["memory_type"] == "task_checkpoint"
+    assert entry["routing_rank"] == 1
+    assert entry["layer"] == "orientation_recency"
+    assert entry["injected"] is True
+    for nullable_field in (
+        "routing_score",
+        "lexical_score",
+        "vector_score",
+        "support_grade",
+        "suppression_reason_code",
+        "excluded_reason_code",
+        "post_routing_drop_reason",
+    ):
+        assert entry[nullable_field] is None
+
+
+def test_orientation_recency_audit_with_no_results(tmp_path) -> None:
+    """No matching memories → candidate_scores_json is the JSON literal "[]" (not None)."""
+    audited = _audited_client(tmp_path, "audit_b2.db")
+
+    response = audited.get(
+        "/memory-objects/recent",
+        params=[("container_ref", CONTAINER), ("types", "task_checkpoint")],
+    )
+    assert response.status_code == 200
+
+    rows = _orientation_audit_rows(audited)
+    assert len(rows) == 1
+    row = rows[0]
+    # Architect-approved: write "[]" (empty JSON array), not NULL.
+    # Disambiguates "no candidates considered" from rows that predate this
+    # instrumentation (those carry NULL).
+    assert row.candidate_scores_json == "[]"
+    assert json.loads(row.candidate_scores_json) == []
+
+
+def test_orientation_recency_audit_with_multiple_records(tmp_path) -> None:
+    """Three matching memories, limit=2 → snapshot has 2 entries with ranks 1 and 2."""
+    audited = _audited_client(tmp_path, "audit_b3.db")
+    storage = audited.app.state.pallium_service._storage
+    older = _checkpoint(
+        task="oldest",
+        freshness_at=datetime.now(timezone.utc) - timedelta(days=3),
+    )
+    middle = _checkpoint(
+        task="middle",
+        freshness_at=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+    newest = _checkpoint(
+        task="newest",
+        freshness_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    for cp in (older, middle, newest):
+        storage.create_memory_object(cp)
+
+    response = audited.get(
+        "/memory-objects/recent",
+        params=[
+            ("container_ref", CONTAINER),
+            ("types", "task_checkpoint"),
+            ("limit", 2),
+        ],
+    )
+    assert response.status_code == 200
+
+    rows = _orientation_audit_rows(audited)
+    assert len(rows) == 1
+    snapshot = json.loads(rows[0].candidate_scores_json)
+    assert len(snapshot) == 2
+    assert snapshot[0]["memory_object_id"] == newest.id
+    assert snapshot[0]["routing_rank"] == 1
+    assert snapshot[0]["injected"] is True
+    assert snapshot[1]["memory_object_id"] == middle.id
+    assert snapshot[1]["routing_rank"] == 2
+    assert snapshot[1]["injected"] is True
+
+
+def test_orientation_recency_audit_legacy_null_handling(tmp_path) -> None:
+    """A row with candidate_scores_json=NULL (predates instrumentation) reads back fine."""
+    import uuid as _uuid
+    from datetime import datetime as _datetime, timezone as _timezone
+
+    from sqlalchemy import select
+
+    from storage.sqlite_schema import QueryAuditLogRecord
+
+    audited = _audited_client(tmp_path, "audit_b4.db")
+    storage = audited.app.state.pallium_service._storage
+
+    # Manually insert a legacy-shaped row with NULL candidate_scores_json.
+    legacy_id = str(_uuid.uuid4())
+    with storage._session_factory() as session:
+        session.add(
+            QueryAuditLogRecord(
+                id=legacy_id,
+                created_at=_datetime.now(_timezone.utc),
+                source_item_id="orientation_recency",
+                source_id="orientation_recency",
+                thread_ref=None,
+                container_ref=CONTAINER,
+                actor_ref=None,
+                visibility="private",
+                query_text="[orientation_recency types=task_checkpoint]",
+                should_inject=0,
+                decision_reason="orientation_recency",
+                injected_blocks_json="[]",
+                candidate_scores_json=None,
+                injection_method="orientation_recency",
+            )
+        )
+        session.commit()
+
+    # Read back: must not raise and the legacy row must be visible with NULL preserved.
+    with storage._session_factory() as session:
+        legacy = session.get(QueryAuditLogRecord, legacy_id)
+    assert legacy is not None
+    assert legacy.candidate_scores_json is None
+    assert legacy.decision_reason == "orientation_recency"
