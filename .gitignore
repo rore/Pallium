@@ -93,3 +93,5 @@ evals/agent_efficiency_results.json
 evals/agent_correction_results.json
 evals/injection_replay_results.json
 evals/thread_extraction_prompt_results.json
+evals/subject_enrichment/output/
+evals/same_thread_skip_qualitative/
