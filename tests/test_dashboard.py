@@ -159,6 +159,30 @@ class TestDashboardIntegration:
         assert "fetchStatus" in html
         assert "/dashboard/api/memories" in html
 
+    def test_dashboard_html_has_dual_time_endpoints_wired(self, tmp_path: Path) -> None:
+        """Regression guard: the dashboard must call the new /metrics/totals
+        endpoint and render the dual-time tiles + hourly stacked bar that
+        depend on it. If a refactor accidentally removes any of these, the
+        UI silently falls back to since-restart counters and loses the
+        24h vs all-time comparison the user explicitly asked for."""
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            resp = client.get("/dashboard")
+        html = resp.text
+        # New endpoint wiring
+        assert "/dashboard/api/metrics/totals" in html
+        assert "fetchMetricsTotals" in html
+        # Dual-time atom + sparkline + stacked-bar renderers
+        assert "renderQueryTiles" in html
+        assert "renderSparkline" in html
+        assert "renderStackedBars" in html
+        # Skip-reason trend (24h + 7d + delta)
+        assert "fetchSkipReasonStats" in html
+        assert "renderSkipReasonsTable" in html
+        # Extraction Health card backed by queue/health.recent_failures
+        assert "fetchExtractionFailures" in html
+        assert "extraction-fail-list" in html
+
     def test_memories_display_text_extraction(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
         with TestClient(app) as client:
