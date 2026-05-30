@@ -1,45 +1,114 @@
-# Workstream Consolidation Re-Key — Diagnostic First, Behavior Second
+# Workstream Consolidation Re-Key — Observability Experiment After Mixed Validation
 
 Date: 2026-05-30
-Status: Phase 4A approved · Phase 4B gated on telemetry · routing consumer rejected for this milestone
+Status: Phase 4A approved as a **diagnostic-only observability experiment** · Phase 4B gated on telemetry **and** on closing two open Layer-1 negatives · routing consumer rejected for this milestone
 
-## Problem
+## What this document is, after 2026-05-30 evidence
 
-Pallium's `container_ref` is overloaded. It carries visibility scope,
-extraction scope, *and* the implicit topic boundary used by the consolidation
-strategies in `agent_conversation_memory` and `conversational_knowledge`. In
-focused single-topic containers this is invisible. In broad mixed-topic
-containers and self-referential sessions it collapses retrieval and
-consolidation quality.
+This is **not** a proven workstream architecture. It is a small, behavior-neutral
+slice that lets us answer one question we cannot otherwise answer: **does a
+deterministic structural workstream id, computed cheaply at thread-rebuild time,
+move consolidation grouping toward something useful at production scale?**
 
-A 2026-05-29 night-job investigation under `.local/research/` exhaustively
-tested whether modelling **workstream** as a separate primitive — derived from
-strong structural signals at thread-rebuild time — would lift retrieval and
-consolidation quality. The investigation produced two clear results:
+A 2026-05-29 night-job draft of this design leaned on a positive framing
+(high coverage, sane clusters, 81.5% broad-container mismatch). A subsequent
+2026-05-30 replay (`.local/research/workstream_replay_2026-05-30/RESULTS.md`)
+returned **UNCERTAIN, leaning FAIL**: broad-container contamination drop was
+only 22.7% (bar 40%), focused containers fragmented above the bar
+(1.50 ws/10 items vs gate ≤1.0), and R6 thread-continuity was responsible for
+~67% of all assignments — meaning the gate mostly classifies by thread
+identity, not by structural workstream signal. The consolidation simulation
+direction was inverted: with `atomic_fact` already singleton-grouped under the
+existing key, layering workstream on top can only merge or no-op, not split.
 
-1. **The cluster signal is real.** A deterministic cascade over strong signals
-   (work_refs, file paths, symbol names, command/error tokens, explicit memory
-   titles, subject anchors of kind `workstream`) clusters source items and
-   memories in a way that aligns with human-recognisable workstreams across
-   focused, broad, self-referential, and Slack-style slices. Coverage on
-   strong signals is 73.8–100% per slice. Cluster sizes are sane;
-   fragmentation is acceptable. **81.5% of broad-slice production injections
-   come from a different cascade-tagged workstream than the query** — i.e. the
-   cascade detects a real boundary that production routing currently does not.
+The slice is approved on a tighter framing than the night-job draft asked for:
 
-2. **Using the cluster boundary as a retrieval gate is net-negative.** Sonnet
-   LLM-as-judge on n=300 candidates across four slices and two routing
-   variants (hard equality and -200pp soft prior) returned 60 better / 240
-   worse / 0 neutral. Architect-classified cross-thread sample (n=20) returned
-   4 helpful candidates dropped vs 2 harmful avoided. The cluster boundary is
-   tighter than the human notion of "same work"; ws-equality filtering throws
-   away genuine cross-workstream recall faster than it removes harmful
-   cross-topic noise.
+- Phase 4A ships persistence + audit-log fields + structural dry-run metric.
+  **No retrieval change. No consolidation behavior change.** It is observability
+  only.
+- The dry-run metric kinds are **neutral structural labels**, not quality
+  verdicts (see §"Phase 4A — diagnostic + dry-run consolidation metric"). They
+  describe what the new key would do to the old grouping; whether that is
+  actually better is a separate question this slice does not answer.
+- Phase 4B (turning the new key on for behavior) is **not approved**. It is
+  gated on (a) the §"Acceptance criteria" telemetry, **and** (b) closing the
+  two specific Layer-1 negatives the 2026-05-30 replay surfaced (focused
+  fragmentation, weak structural signal coverage), **and** (c) a redesign of
+  the consolidation-simulation baseline so the metric measures something
+  meaningful on the live `fact_summary` corpus, not the singleton-grouped
+  `atomic_fact` corpus.
+- A future routing consumer is **explicitly rejected** for this milestone. The
+  2026-05-29 Layer-2 evidence (Sonnet judge n=300: 60 better / 240 worse / 0
+  neutral) ruled out workstream-as-routing-gate in both hard-equality and
+  soft-prior forms. A workstream consumer at retrieval time would require a
+  different consumer shape and a fresh investigation.
 
-The re-scoped design ships only what the data supports: workstream as a
-**diagnostic primitive** in Phase 4A, then a **consolidation-only behavior
-consumer** in Phase 4B once live telemetry has earned the behavior change.
-Retrieval routing is **explicitly out of scope** for this milestone.
+## Background — what we know from data, with caveats
+
+A 2026-05-29 night-job exhaustively tested workstream-as-clustering and
+workstream-as-routing-gate. The 2026-05-30 replay re-ran the cluster-side
+metrics with a more rigorous harness. Combining both:
+
+1. **The cluster signal exists, but is signal-thin and continuity-dominated.**
+   Strong-signal coverage clears the ≥30% bar on every slice (35–49%),
+   matching the night-job cascade's ability to extract real structural
+   evidence. But work_refs are present at 4–11% only; commands /
+   error-templates / durable-titles are sparse (<3% in 3 of 4 slices). The
+   load-bearing strong signal is CamelCase symbol matching, which is mostly
+   a side-effect of code references in the conversational corpus — not
+   workstream identity. R6 thread-continuity carries 63–73% of assignments
+   across slices; R1–R5 (the structural rules) seed each thread but R6 does
+   the propagation. **The cascade is closer to "thread-aware grouping" than
+   "structural-signal grouping" on this corpus.**
+
+2. **Wrong-topic contamination drop is real but undersized.** On the 35
+   rated injections in `broad_A`, the workstream gate would correctly drop
+   ~9 of 22 `not_relevant` injections — a relative drop of 22.7%, well
+   below the 40% bar. On `self_ref_A` (n=306 rated) the relative drop is
+   16.7%. **This is structural lift, but a small fraction of what the
+   night-job draft anticipated.** Sample size on `broad_A` is small enough
+   that the 95% Wilson interval easily spans 10–40%; either more ratings or
+   an architect-approved Class B judge pass is needed before declaring a
+   hard FAIL.
+
+3. **Focused containers fragment above the bar.** `focused_A` produces 27
+   workstreams over 180 items (1.50 ws/10 items vs gate ≤1.0); `focused_B`
+   1.17. Only the largest slice `self_ref_A` (0.90) passes. The cascade
+   over-splits coherent topics in focused containers. Whether this is
+   fixable by lengthening R6's thread-lookback or adding an "explicit
+   thread-task continuity" anchor is an open design question, not part of
+   this slice.
+
+4. **Using the cluster boundary as a retrieval gate is net-negative
+   (independent evidence from 2026-05-29 Layer 2).** Sonnet LLM-as-judge
+   on n=300 candidates across four slices and two routing variants (hard
+   equality and -200pp soft prior) returned 60 better / 240 worse / 0
+   neutral. Architect-classified cross-thread sample (n=20) returned 4
+   helpful candidates dropped vs 2 harmful avoided. The cluster boundary
+   is tighter than the human notion of "same work"; ws-equality filtering
+   throws away genuine cross-workstream recall faster than it removes
+   harmful cross-topic noise. **The retrieval consumer is therefore out of
+   scope for this design; a future routing consumer must have a
+   fundamentally different shape than what was tested.**
+
+5. **Consolidation simulation is direction-wrong against `atomic_fact`.**
+   `atomic_fact` rows in the live DB are already singleton-grouped under
+   `(container_ref, subject, category)`; adding workstream as a fourth key
+   dimension can only merge or no-op, not split. The night-job's "1014 →
+   1153 groups (+13.7%)" headline was on a different baseline that the
+   2026-05-30 replay could not reproduce. **The Phase 4A dry-run metric
+   therefore mostly measures `single_workstream_group` events on
+   `atomic_fact`** — which is fine (it confirms the new key doesn't
+   accidentally re-merge facts that should stay split), but it means the
+   metric is not the primary evidence for whether 4B should activate. The
+   primary evidence will come from `fact_summary` and the
+   `agent_conversation_memory` consolidation strategies once the slice
+   runs against live data.
+
+The re-scoped design ships only what 4A's data supports: persistence and
+observability. Phase 4B's evidence requirement is now larger than the night
+job assumed — see §"Acceptance criteria for promoting Phase 4A → Phase 4B"
+below.
 
 ## Goals
 
@@ -48,20 +117,22 @@ Retrieval routing is **explicitly out of scope** for this milestone.
 - Surface workstream ids in `query_audit_log` and `query/debug` so any future
   retrieval investigation can compare candidates by workstream without
   re-running extraction.
-- In Phase 4A, run a **structural dry-run metric** that compares
-  `(container_ref, subject, category)` consolidation grouping with
-  `(container_ref, workstream_id_or_pseudo_id, subject, category)` grouping
-  on every consolidation event, and emit one of four kinds per group:
-  `bad_merge_avoided`, `good_merge_preserved`, `good_merge_lost_suspected`,
-  `novel_split_unknown`. No LLM call.
-- In Phase 4B (gated on Phase 4A telemetry), switch consolidation strategies
+- In Phase 4A, run a **structural dry-run metric** that compares the existing
+  consolidation grouping with a workstream-aware variant on every consolidation
+  event. The metric kinds are **heuristic structural labels, not judged
+  quality**: `split_resolved_groups`, `single_workstream_group`,
+  `split_with_unknown_or_overlap`, `split_all_unknown`. No LLM call. The
+  metric tells us *what the new key would do*; whether that is good or bad
+  is a Class B/C question this slice does not answer.
+- In Phase 4B (gated on Phase 4A telemetry **and** the additional
+  preconditions in §"Acceptance criteria"), switch consolidation strategies
   to the new key behind a feature flag, with a CLI rollback path.
 
 ## Non-Goals
 
-- No retrieval-routing change. The Layer 2 evidence rules out hard
-  ws-equality and a -200pp soft ws prior; a different routing shape is a
-  separate investigation that the diagnostic surface this milestone ships
+- No retrieval-routing change. The 2026-05-29 Layer 2 evidence rules out
+  hard ws-equality and a -200pp soft ws prior; a different routing shape is
+  a separate investigation that the diagnostic surface this milestone ships
   will support.
 - No rewrite of `same_thread_context_sufficient`.
 - No packaging-locality-gate relaxation.
@@ -69,22 +140,31 @@ Retrieval routing is **explicitly out of scope** for this milestone.
   workstream from existing signals only.
 - No new memory type. Workstream is a scope/grouping concept, not a memory
   kind.
+- **No claim that workstream is the right primitive yet.** Phase 4A is
+  observability that lets us decide. Phase 4B activation requires real
+  evidence beyond what 4A's structural metric alone can produce.
 
-## Background
+## Background — full investigation history
 
-The full investigation history is in:
+The investigation that produced this slice ran in two passes with a substantive
+disagreement between them:
 
-- `.local/research/topic_continuity_model_2026-05-29.md` (v5, the original
-  research note — §4 strong-signal definition, §6 cascade lifecycle, §7.4
-  Class A/B/C metric split, §10 explicit "do not build" warnings)
-- `.local/research/topic_continuity_layer1_results_2026-05-29.md` (cluster
-  evidence; consolidation-key dry-run preview)
-- `.local/research/topic_continuity_layer2_results_2026-05-29.md` (the
+- `.local/research/topic_continuity_model_2026-05-29.md` (v5 night-job draft;
+  §4 strong-signal definition, §6 cascade lifecycle, §7.4 Class A/B/C metric
+  split, §10 explicit "do not build" warnings)
+- `.local/research/topic_continuity_layer1_results_2026-05-29.md` (Layer 1
+  cluster evidence; positive framing)
+- `.local/research/topic_continuity_layer2_results_2026-05-29.md` (Layer 2
   routing-gate refutation)
-- `.local/research/topic_continuity_layer3_design_2026-05-29.md` (the
-  rescoped design, of which this `docs/designs/` document is the
-  human-architect-approved promotion)
-- `.local/research/night_job_2026-05-29_log.md` (the execution journal)
+- `.local/research/topic_continuity_layer3_design_2026-05-29.md` (rescoped
+  Layer 3 design; the source of this `docs/designs/` doc)
+- `.local/research/night_job_2026-05-29_log.md` (execution journal)
+- **`.local/research/workstream_replay_2026-05-30/RESULTS.md`** (independent
+  re-run of the Layer 1 cluster metrics with a more rigorous harness;
+  **UNCERTAIN-leaning-FAIL on contamination drop and focused fragmentation**;
+  this is the harder evidence and is reflected in §"What this document is" above)
+- `.local/research/phase_4a_implementation_log.md` (this implementation's
+  pre/post-implementation architect-review journal)
 
 Reference implementation of the cascade and signal extraction lives at
 `.local/research/_workstream_replay/cascade.py` and
@@ -207,31 +287,46 @@ These are additive — readers tolerate their absence on legacy rows.
 
 ### Dry-run consolidation metric
 
-This is the metric that earns Phase 4B.
+This metric is **observability**, not a decision oracle. It tells us what the
+new key would do at production scale; whether the new key is actually better
+is a separate Class B/C question that this slice does not answer.
 
 At consolidation time the existing strategies in
-`semantic/conversational_knowledge.py:FactConsolidationStrategy` and the
+`capabilities/consolidation.py:FactConsolidationStrategy` and the
 `agent_conversation_memory` consolidation strategies (`thread_summary_anchored`,
 `container_topic_window`, `thread_local_carry_forward`) compute **both** keys:
 
-- old: `(container_ref, subject, category)`
-- new: `(container_ref, workstream_id_or_pseudo_id, subject, category)`
+- old: `(container_ref, subject, category)` (or, for fact_consolidation, the
+  4-tuple `(container_ref, subject, category, visibility)` — same idea)
+- new: same key plus `workstream_id_or_pseudo_id` as an additional dimension
 
 Behavior uses the **old** key. The new key is recorded as a structural
-metric:
+metric **with neutral, descriptive kind names** — chosen after the
+2026-05-30 replay rejected the night-job's quality-laden draft names
+(`bad_merge_avoided`, `good_merge_preserved`, `good_merge_lost_suspected`,
+`novel_split_unknown`) as implying judgements the data does not support:
 
 ```
 consolidation.workstream_aware_dryrun{
-    kind="bad_merge_avoided"     // old-key merged 2+ facts; new-key splits them across
-                                  // workstreams; both new groups are resolved ws with
-                                  // distinct signatures → split looks correct
-  | "good_merge_preserved"        // old-key merged; new-key still merges (same workstream)
-  | "good_merge_lost_suspected"   // old-key merged; new-key splits but the splits look
-                                  // structurally suspicious (one workstream is unknown
-                                  // pseudo-id; signatures share dominant signals; etc.)
-  | "novel_split_unknown"         // splits caused by unknown pseudo-id only; informational
+    kind="split_resolved_groups"          // old-key merged ≥2 candidates; new-key splits
+                                          //   them across ≥2 distinct *resolved* workstreams
+                                          //   (no unknown buckets in the partition)
+  | "single_workstream_group"             // old-key merged; new-key sees one workstream
+                                          //   covering the group (no split)
+  | "split_with_unknown_or_overlap"       // old-key merged; new-key splits but at least
+                                          //   one resulting partition is an unknown
+                                          //   pseudo-id (mixed resolved + unknown)
+  | "split_all_unknown"                   // splits caused entirely by unknown pseudo-id
+                                          //   partitioning (every partition is unknown)
 }
 ```
+
+These names are heuristic structural categories: they describe *what would
+happen to the grouping*, not whether the new grouping is correct. A
+`split_resolved_groups` event is **not** a "bad merge avoided" — it is a
+record that the new key would split, and the resulting partitions both
+carry resolved (non-unknown) workstream ids. Whether that split is
+genuinely useful, harmful, or noise is a Class B/C judgement question.
 
 Classification is purely structural — no LLM call, no human-in-the-loop. A
 periodic export rolls events into a daily report under
@@ -239,23 +334,67 @@ periodic export rolls events into a daily report under
 
 ### Acceptance criteria for promoting Phase 4A → Phase 4B
 
+These criteria are **necessary, not sufficient**. They are the minimum
+structural signal Phase 4A can produce. Even if every gate below passes,
+Phase 4B activation requires three additional preconditions (in §"Open
+preconditions" below) that the 2026-05-30 replay surfaced and which Phase
+4A's structural metric alone cannot resolve.
+
 After ≥7 days of live Phase 4A telemetry on the production DB, with at least
 200 consolidation events recorded:
 
-- `good_merge_lost_suspected / total ≤ 5%` (gate; conservative because the
-  offline T1.7 sample was small)
-- `bad_merge_avoided / good_merge_preserved ≥ 0.10` (gate; the new key must
-  *do something useful* often enough to justify shipping it into behavior)
-- Architect spot-check on ≥20 `good_merge_lost_suspected` cases confirms the
-  structural heuristic is not under-reporting real harm
+- `split_with_unknown_or_overlap / total ≤ 5%` (structural gate; high values
+  mean the new key is mostly creating ambiguous splits where unknown buckets
+  contaminate resolved groupings — exactly what the unknown pseudo-id design
+  was trying to prevent at the grouping level)
+- `split_resolved_groups / single_workstream_group ≥ 0.10` (structural gate;
+  the new key has to *do something* often enough to justify the schema
+  change shipping into behavior; if effectively every event is
+  `single_workstream_group`, the new key changes nothing and Phase 4B is
+  pointless)
+- Architect spot-check on ≥20 `split_with_unknown_or_overlap` cases to read
+  whether the events look like real ambiguity or instrumentation artifacts
 - Workstream id stability ≥95% across consecutive rebuilds when no new strong
   signals arrive (gate; instability would mean the cascade is not yet
   deterministic enough to feed a behavior consumer)
 
-If any gate fails, the design either iterates on the cascade signals or
-holds Phase 4B until evidence improves. Phase 4A is permanent regardless —
-the diagnostic surface and dry-run metric are useful even if Phase 4B never
-ships.
+### Open preconditions (in addition to the structural gates above)
+
+The 2026-05-30 replay surfaced three additional gaps that Phase 4A's
+structural metric alone cannot close. Phase 4B activation requires all
+three:
+
+- **Focused-container fragmentation must drop below 1.0 ws / 10 items.** The
+  replay measured `focused_A` 1.50, `focused_B` 1.17. Phase 4A telemetry on
+  live data (using the cascade as shipped) needs to confirm whether this
+  improved or whether the cascade still over-splits focused threads. If
+  focused fragmentation is still above the bar, the cascade itself needs
+  redesign before turning the new key on for behavior — likely a longer
+  R6 thread-lookback, or a thread-pinning anchor.
+
+- **Wrong-topic contamination drop on the broad slice must reach ≥40%
+  relative**, with confidence intervals tight enough to clear the bar. The
+  replay measured 22.7% (n=35); doubling the rated injections (or running
+  an architect-approved Class B Sonnet judge pass on unrated injections)
+  is required before any Phase 4B claim.
+
+- **Consolidation-simulation baseline must be redesigned away from
+  `atomic_fact`.** Atomic facts are already singleton-grouped under the
+  existing key, so the dry-run metric on `atomic_fact` mostly produces
+  `single_workstream_group` events that are uninformative. The simulation
+  needs either a `fact_summary` baseline or a different consolidation seed
+  before the structural metric can be read as evidence for or against the
+  new key.
+
+If any of these three preconditions fails, **Phase 4B is held**. Phase 4A
+is permanent regardless — the diagnostic surface, audit-log fields, and
+dry-run telemetry remain useful even if Phase 4B never ships, because they
+are the workspace for the follow-up investigation that would close the gaps.
+
+If a 4A telemetry window completes and the structural gates above pass but
+the open preconditions do not, the right outcome is **a new investigation
+to address the preconditions**, not a 4B activation. Workstream is the
+right primitive *iff* the data eventually says it is.
 
 ## Design — Phase 4B (guarded consolidation re-key)
 
@@ -341,8 +480,8 @@ dry-run metric being green:
 - `tests/test_audit_log_workstream_field.py` — verify `query_audit_log`
   rows after this lands include the new fields.
 - `tests/test_consolidation_dryrun_metric.py` — ingest a fixture with two
-  clearly-separate workstreams; assert the metric records `bad_merge_avoided`
-  for at least one collision and `good_merge_preserved` for at least one
+  clearly-separate workstreams; assert the metric records `split_resolved_groups`
+  for at least one collision and `single_workstream_group` for at least one
   preserved group.
 
 No new agent-simulation harness required for Phase 4A.

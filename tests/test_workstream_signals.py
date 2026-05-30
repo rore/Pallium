@@ -77,8 +77,15 @@ def test_extract_file_paths_accepts_repo_paths():
 
 
 def test_extract_file_paths_accepts_drive_letter():
-    paths = extract_file_paths("Edit c:/sap-dev/x.py to fix")
-    assert any(p.startswith("c:/sap-dev") or p.startswith("sap-dev") for p in paths)
+    paths = extract_file_paths("Edit c:/project/x.py to fix")
+    assert any(p.startswith("c:/project") or p.startswith("project") for p in paths)
+
+
+def test_extract_file_paths_accepts_workspace_prefix():
+    # Ensures /repo/, /workspace/, /home/ allowlist entries hold up.
+    for prefix in ("/repo/lib/auth.py", "/workspace/svc/handler.go", "/home/user/project/main.py"):
+        paths = extract_file_paths(f"see {prefix} for details")
+        assert paths, f"expected a strong-signal match for {prefix!r}, got none"
 
 
 def test_extract_file_paths_accepts_dot_local_research():

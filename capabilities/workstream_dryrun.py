@@ -6,12 +6,28 @@ inserted as an additional dimension) on the same candidates, classifies
 the structural difference per group, and emits a metric per group via
 :class:`storage.metrics.MetricsStore`.
 
+**The classification kinds emitted here are HEURISTIC STRUCTURAL LABELS,
+not judged quality.** A `split_resolved_groups` event records that the new
+key would have split an old group across two or more *resolved* workstream
+ids; whether the split is genuinely useful is a separate question that
+requires human or LLM judgement (Class B/C work, deferred). Similarly,
+`single_workstream_group` records structural agreement between the keys —
+not that the merge was correct in the first place. Treat the kind names as
+neutral structural categories, not value judgements.
+
+The names were chosen to be neutral after the 2026-05-30 failure-to-eval
+replay (`.local/research/workstream_replay_2026-05-30/RESULTS.md`)
+returned UNCERTAIN-leaning-FAIL on the workstream-as-routing-gate
+hypothesis. Earlier draft names (`bad_merge_avoided`,
+`good_merge_preserved`, `good_merge_lost_suspected`, `novel_split_unknown`)
+implied quality verdicts that the data does not yet support.
+
 Two metric streams are emitted, depending on strategy shape:
 
 * Fixed-key strategies (``thread_local_carry_forward``,
   ``fact_consolidation``) emit ``consolidation.workstream_aware_dryrun``
-  with kinds ``bad_merge_avoided`` / ``good_merge_preserved`` /
-  ``good_merge_lost_suspected`` / ``novel_split_unknown``.
+  with kinds ``split_resolved_groups`` / ``single_workstream_group`` /
+  ``split_with_unknown_or_overlap`` / ``split_all_unknown``.
 * Anchor-based strategies (``container_topic_window``,
   ``thread_summary_anchored``) emit
   ``consolidation.workstream_homogeneity`` with kinds
@@ -171,19 +187,20 @@ def _classify_fixed_key(
     """Structural classification for fixed-key strategies.
 
     Returns the kind, or ``None`` if the group is too small to produce a
-    meaningful merge signal (size < 2).
+    meaningful merge signal (size < 2). Kind names are neutral structural
+    labels, not quality verdicts (see module docstring).
     """
     if old_size < 2:
         return None
     if len(partitions) <= 1:
-        return "good_merge_preserved"
+        return "single_workstream_group"
     # Multiple partitions → split.
     if len(resolved_ws_ids) >= 2 and not unknown_ws_ids:
-        return "bad_merge_avoided"
+        return "split_resolved_groups"
     if unknown_ws_ids and not resolved_ws_ids:
-        return "novel_split_unknown"
+        return "split_all_unknown"
     # Mixed: at least one unknown bucket and at least one resolved.
-    return "good_merge_lost_suspected"
+    return "split_with_unknown_or_overlap"
 
 
 def _emit_anchor_homogeneity(

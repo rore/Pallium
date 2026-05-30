@@ -1,15 +1,16 @@
 """Tests for the workstream-aware consolidation dry-run metric (Phase 4A).
 
 Verifies the structural classification rules of
-``capabilities.workstream_dryrun.emit_dryrun_metrics``:
+``capabilities.workstream_dryrun.emit_dryrun_metrics``. Kinds are
+**neutral structural labels**, not quality verdicts (see module docstring):
 
-* ``bad_merge_avoided`` — old-key merged ≥2 facts; new-key splits them
+* ``split_resolved_groups`` — old-key merged ≥2 facts; new-key splits them
   across ≥2 distinct resolved workstreams.
-* ``good_merge_preserved`` — old-key merged; new-key still merges
+* ``single_workstream_group`` — old-key merged; new-key still merges
   (single workstream covers the group).
-* ``good_merge_lost_suspected`` — old-key merged; new-key splits but at
+* ``split_with_unknown_or_overlap`` — old-key merged; new-key splits but at
   least one resulting subgroup contains an unknown pseudo-id.
-* ``novel_split_unknown`` — splits caused entirely by unknown pseudo-id
+* ``split_all_unknown`` — splits caused entirely by unknown pseudo-id
   partitioning.
 * Anchor strategies emit ``workstream_homogeneity`` instead.
 
@@ -95,7 +96,7 @@ def _group(strategy: str, candidates: list[ConsolidationCandidate], **rationale)
     )
 
 
-def test_bad_merge_avoided_when_two_resolved_ws_split_old_group():
+def test_split_resolved_groups_when_two_resolved_ws_split_old_group():
     cands = [_candidate("m1"), _candidate("m2")]
     capability = WorkstreamCapability(
         _StubStore({"m1": "ws:aaa1", "m2": "ws:bbb2"})
@@ -109,10 +110,10 @@ def test_bad_merge_avoided_when_two_resolved_ws_split_old_group():
         metrics_store=store,
     )
     kinds = [e["payload"]["kind"] for e in store.events]
-    assert "bad_merge_avoided" in kinds
+    assert "split_resolved_groups" in kinds
 
 
-def test_good_merge_preserved_when_single_workstream():
+def test_single_workstream_group_when_one_workstream():
     cands = [_candidate("m1"), _candidate("m2"), _candidate("m3")]
     capability = WorkstreamCapability(
         _StubStore({"m1": "ws:same", "m2": "ws:same", "m3": "ws:same"})
@@ -126,10 +127,10 @@ def test_good_merge_preserved_when_single_workstream():
         metrics_store=store,
     )
     kinds = [e["payload"]["kind"] for e in store.events]
-    assert kinds == ["good_merge_preserved"]
+    assert kinds == ["single_workstream_group"]
 
 
-def test_good_merge_lost_suspected_when_mix_of_resolved_and_unknown():
+def test_split_with_unknown_or_overlap_when_mix_of_resolved_and_unknown():
     cands = [_candidate("m1"), _candidate("m2")]
     # Only m1 resolved; m2 falls back to unknown pseudo-id (synthesized).
     capability = WorkstreamCapability(_StubStore({"m1": "ws:aaa"}))
@@ -142,10 +143,10 @@ def test_good_merge_lost_suspected_when_mix_of_resolved_and_unknown():
         metrics_store=store,
     )
     kinds = [e["payload"]["kind"] for e in store.events]
-    assert kinds == ["good_merge_lost_suspected"]
+    assert kinds == ["split_with_unknown_or_overlap"]
 
 
-def test_novel_split_unknown_when_all_unknown_but_distinct():
+def test_split_all_unknown_when_all_unknown_but_distinct():
     cands = [_candidate("m1"), _candidate("m2")]
     # Neither m1 nor m2 resolved → both get distinct unknown pseudo-ids
     # (the synthesizer uses memory_object_id as disambiguator).
@@ -159,7 +160,7 @@ def test_novel_split_unknown_when_all_unknown_but_distinct():
         metrics_store=store,
     )
     kinds = [e["payload"]["kind"] for e in store.events]
-    assert kinds == ["novel_split_unknown"]
+    assert kinds == ["split_all_unknown"]
 
 
 def test_anchor_strategy_emits_homogeneity():

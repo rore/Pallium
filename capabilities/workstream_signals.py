@@ -126,7 +126,9 @@ TOP_LEVEL_DIRS = frozenset({
 })
 
 _WIN_DRIVE_RE = re.compile(r"^[a-z]:[\\/]")
-_PATH_PREFIX_LITERALS = ("~/", "./", "../", "/c/sap-dev/", "c:/", "c:\\")
+_PATH_PREFIX_LITERALS = (
+    "~/", "./", "../", "/repo/", "/workspace/", "/home/", "c:/", "c:\\",
+)
 
 # Common English nouns/adjectives — when a path is exactly two segments and
 # both sides are in this set, reject (catches `before/after`, `dark/light`,
@@ -179,7 +181,8 @@ def extract_file_paths(text: str) -> list[str]:
       - ends in a known file extension (see :data:`FILE_EXTENSIONS`)
       - starts with a recognized top-level repo dir (see :data:`TOP_LEVEL_DIRS`)
       - starts with a Windows drive letter
-      - starts with ``~/``, ``./``, ``../``, ``/c/sap-dev/``, ``c:/``, or ``c:\\``
+      - starts with one of :data:`_PATH_PREFIX_LITERALS` (``~/``, ``./``,
+        ``../``, ``/repo/``, ``/workspace/``, ``/home/``, ``c:/``, ``c:\\``)
 
     The 2-segment minimum and numeric-only filter are retained. An additional
     English-noun-pair filter (``before/after``, ``dark/light`` etc.) rejects
