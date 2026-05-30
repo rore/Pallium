@@ -274,6 +274,13 @@ class QueryTraceResponse(BaseModel):
 
 class QueryDebugResponse(QueryResponse):
     trace: QueryTraceResponse
+    # Phase 4A (design 014): workstream id of the query item, if assigned.
+    # Per-candidate workstream ids are surfaced via the audit log; this field
+    # is the row-level diagnostic equivalent for /query/debug.
+    query_workstream_id: str | None = None
+    # Per-candidate workstream ids, keyed by memory_object_id. Populated on a
+    # best-effort basis from the ``memory_workstreams`` table.
+    candidate_workstream_ids: dict[str, str] = Field(default_factory=dict)
 
 
 class ItemAndQueryRequest(BaseModel):

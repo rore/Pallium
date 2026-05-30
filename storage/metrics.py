@@ -17,6 +17,8 @@ VALID_EVENTS: dict[str, set[str]] = {
     "work_trace": {"thread_rebuild"},
     "processing": {"item_processed", "thread_rebuilt", "extraction_failed"},
     "system": {"service_start", "retention_run"},
+    # Phase 4A (design 014): structural dry-run telemetry. No LLM call.
+    "consolidation": {"workstream_aware_dryrun", "workstream_homogeneity"},
 }
 
 

@@ -166,6 +166,7 @@ class QueryAuditLogRecord(Base):
     injected_blocks_json = Column(Text, nullable=False, default="[]")
     candidate_scores_json = Column(Text, nullable=True)
     injection_method = Column(String, nullable=True)
+    query_workstream_id = Column(String, nullable=True)
 
 
 class MemoryFlagRecord(Base):
@@ -207,6 +208,41 @@ class MetricRecord(Base):
     actor_ref = Column(String, nullable=True)
     value = Column(Float, nullable=True)
     payload_json = Column(Text, nullable=True)
+
+
+class WorkstreamRecord(Base):
+    """Workstream registry — see docs/designs/014-workstream-consolidation-rekey.md."""
+
+    __tablename__ = "workstreams"
+
+    id = Column(String, primary_key=True)
+    container_ref = Column(String, nullable=False)
+    visibility = Column(String, nullable=False)
+    kind = Column(String, nullable=False)
+    signature_blob = Column(Text, nullable=False)
+    opened_at = Column(DateTime(timezone=True), nullable=False)
+    last_touched_at = Column(DateTime(timezone=True), nullable=False)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    closed_reason = Column(String, nullable=True)
+    canonical_id = Column(String, nullable=True)
+    created_by = Column(String, nullable=False, default="thread_rebuild")
+
+
+class MemoryWorkstreamRecord(Base):
+    __tablename__ = "memory_workstreams"
+
+    memory_object_id = Column(String, primary_key=True)
+    workstream_id = Column(String, primary_key=True)
+    assigned_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class SourceItemWorkstreamRecord(Base):
+    __tablename__ = "source_item_workstreams"
+
+    source_item_id = Column(String, primary_key=True)
+    workstream_id = Column(String, primary_key=True)
+    watermark = Column(String, primary_key=True)
+    assigned_at = Column(DateTime(timezone=True), nullable=False)
 
 
 class SQLiteSchemaMixin:
@@ -322,6 +358,34 @@ class SQLiteSchemaMixin:
             "CREATE INDEX IF NOT EXISTS idx_metrics_container_ts "
             "ON metrics(container_ref, timestamp)"
         ),
+        "idx_workstreams_container_visibility": (
+            "CREATE INDEX IF NOT EXISTS idx_workstreams_container_visibility "
+            "ON workstreams(container_ref, visibility)"
+        ),
+        "idx_workstreams_last_touched": (
+            "CREATE INDEX IF NOT EXISTS idx_workstreams_last_touched "
+            "ON workstreams(last_touched_at)"
+        ),
+        "idx_memory_workstreams_ws": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_workstreams_ws "
+            "ON memory_workstreams(workstream_id)"
+        ),
+        "idx_memory_workstreams_mid": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_workstreams_mid "
+            "ON memory_workstreams(memory_object_id)"
+        ),
+        "idx_source_item_workstreams_si": (
+            "CREATE INDEX IF NOT EXISTS idx_source_item_workstreams_si "
+            "ON source_item_workstreams(source_item_id)"
+        ),
+        "idx_source_item_workstreams_ws": (
+            "CREATE INDEX IF NOT EXISTS idx_source_item_workstreams_ws "
+            "ON source_item_workstreams(workstream_id)"
+        ),
+        "idx_source_item_workstreams_wm": (
+            "CREATE INDEX IF NOT EXISTS idx_source_item_workstreams_wm "
+            "ON source_item_workstreams(watermark)"
+        ),
     }
     _QUERY_AUDIT_LOG_INDEX_MIGRATIONS = {
         "idx_query_audit_log_thread": (
@@ -362,6 +426,7 @@ class SQLiteSchemaMixin:
     _QUERY_AUDIT_LOG_MIGRATIONS = {
         "candidate_scores_json": "ALTER TABLE query_audit_log ADD COLUMN candidate_scores_json TEXT",
         "injection_method": "ALTER TABLE query_audit_log ADD COLUMN injection_method VARCHAR",
+        "query_workstream_id": "ALTER TABLE query_audit_log ADD COLUMN query_workstream_id VARCHAR",
     }
 
     def _initialize_schema(self) -> None:

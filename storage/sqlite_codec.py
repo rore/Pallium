@@ -236,6 +236,13 @@ class SQLiteCodecMixin:
         work_refs: tuple[str, ...] = ()
         if isinstance(raw_work_refs, list):
             work_refs = tuple(str(v) for v in raw_work_refs if isinstance(v, str) and v.strip())
+        # Phase 4A: optional workstream_id, tolerated absent on legacy rows.
+        raw_workstream_id = scope_payload.get("workstream_id") if isinstance(scope_payload, dict) else None
+        workstream_id: str | None = (
+            str(raw_workstream_id)
+            if isinstance(raw_workstream_id, str) and raw_workstream_id.strip()
+            else None
+        )
         prompt_variant, prompt_variant_valid = SQLiteCodecMixin._load_optional_envelope_string(
             derivation_payload,
             "prompt_variant",
@@ -269,6 +276,7 @@ class SQLiteCodecMixin:
                 container_ref=container_ref,
                 thread_ref=thread_ref,
                 work_refs=work_refs,
+                workstream_id=workstream_id,
             ),
             derivation=MemoryEnvelopeDerivation(
                 producer_kind=producer_kind,

@@ -406,12 +406,41 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
         )
         if result.trace is None:
             raise ValueError("debug query must include retrieval trace")
+        # Phase 4A: populate workstream ids best-effort.
+        query_workstream_id: str | None = None
+        candidate_workstream_ids: dict[str, str] = {}
+        ws_capability = getattr(service, "workstream_capability", None)
+        if ws_capability is not None:
+            try:
+                memory_ids = [
+                    item.memory_object_id
+                    for item in result.results
+                    if getattr(item, "memory_object_id", None)
+                ]
+                store = getattr(ws_capability, "_store", None)
+                batch_lookup = getattr(store, "get_memory_workstream_ids", None)
+                if memory_ids and callable(batch_lookup):
+                    candidate_workstream_ids = batch_lookup(memory_ids)
+                elif memory_ids:
+                    for mid in memory_ids:
+                        looked_up = ws_capability.lookup_memory(mid)
+                        if looked_up:
+                            candidate_workstream_ids[mid] = looked_up
+                # Row-level: derived from the originating source_item_id, if
+                # the trace exposes it. Best-effort; harmless if absent.
+                trace_source_item_id = getattr(result.trace, "source_item_id", None)
+                if trace_source_item_id:
+                    query_workstream_id = ws_capability.lookup_query_source_item(trace_source_item_id)
+            except Exception:
+                logger.warning("query/debug workstream lookup failed", exc_info=True)
         return QueryDebugResponse(
             results=[_serialize_result(item) for item in result.results],
             should_inject=result.should_inject,
             decision_reason=result.decision_reason,
             injectable_blocks=[_serialize_injectable_block(block) for block in result.injectable_blocks],
             trace=_serialize_trace(result.trace),
+            query_workstream_id=query_workstream_id,
+            candidate_workstream_ids=candidate_workstream_ids,
         )
 
     @router.post("/item-and-query", response_model=ItemAndQueryResponse)
