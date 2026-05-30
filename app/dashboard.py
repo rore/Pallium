@@ -401,6 +401,56 @@ def mount_dashboard(app: FastAPI) -> None:
             ]
         })
 
+    @app.get("/dashboard/api/metrics/totals")
+    def dashboard_metrics_totals(
+        category: str = Query(...),
+        container_ref: str | None = Query(None),
+        window_hours: int = Query(24, ge=1, le=720),
+    ) -> JSONResponse:
+        """Returns per-event_type totals for two windows in one round-trip:
+        - `recent`: events in the last `window_hours` (default 24h)
+        - `alltime`: every event ever recorded for this category
+
+        Each window maps event_type -> {count, sum_value}. Sum is the
+        SUM(value) — useful for events whose `value` carries a count
+        (e.g. injection.value = blocks_injected).
+        """
+        metrics_store = _get_metrics_store()
+        if metrics_store is None:
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+
+        now = datetime.now(tz=timezone.utc)
+        cutoff = now - timedelta(hours=window_hours)
+
+        recent_buckets = metrics_store.aggregate(
+            category=category,
+            container_ref=container_ref,
+            since=cutoff,
+            group_by="day",
+        )
+        alltime_buckets = metrics_store.aggregate(
+            category=category,
+            container_ref=container_ref,
+            group_by="day",
+        )
+
+        def _fold(buckets) -> dict[str, dict[str, float]]:
+            out: dict[str, dict[str, float]] = {}
+            for b in buckets:
+                slot = out.setdefault(b.event_type, {"count": 0, "sum_value": 0.0})
+                slot["count"] += b.count
+                slot["sum_value"] += b.sum_value
+            return out
+
+        return JSONResponse(content={
+            "category": category,
+            "container_ref": container_ref,
+            "window_hours": window_hours,
+            "recent": _fold(recent_buckets),
+            "alltime": _fold(alltime_buckets),
+            "as_of": now.isoformat(),
+        })
+
     @app.get("/dashboard/api/feedback/stats")
     def dashboard_feedback_stats() -> JSONResponse:
         service = app.state.pallium_service

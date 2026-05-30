@@ -257,3 +257,92 @@ class TestMetricsAggregateEndpoint:
         assert "count" in b
         assert "sum_value" in b
         assert "avg_value" in b
+
+
+# ---------------------------------------------------------------------------
+# /dashboard/api/metrics/totals
+# ---------------------------------------------------------------------------
+
+
+class TestMetricsTotalsEndpoint:
+    """The /totals endpoint backs the dashboard's dual-time pattern.
+    It returns per-event_type counts for two windows (recent + alltime) in
+    one round-trip so the UI doesn't run multiple aggregates."""
+
+    def test_category_required(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            resp = client.get("/dashboard/api/metrics/totals")
+        assert resp.status_code == 422
+
+    def test_empty_returns_empty_dicts(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            resp = client.get("/dashboard/api/metrics/totals?category=query")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["category"] == "query"
+        assert body["window_hours"] == 24
+        assert body["recent"] == {}
+        assert body["alltime"] == {}
+        assert "as_of" in body
+
+    def test_separates_recent_from_alltime(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        old = datetime.now(UTC) - __import__("datetime").timedelta(days=10)
+        recent = datetime.now(UTC)
+        with TestClient(app) as client:
+            # 1 old, 2 recent — both 'injection'
+            _seed_metric(app, event_type="injection", timestamp=old)
+            _seed_metric(app, event_type="injection", timestamp=recent)
+            _seed_metric(app, event_type="injection", timestamp=recent)
+            resp = client.get("/dashboard/api/metrics/totals?category=query")
+        body = resp.json()
+        assert body["recent"]["injection"]["count"] == 2
+        assert body["alltime"]["injection"]["count"] == 3
+
+    def test_sum_value_per_event_type(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            _seed_metric(app, event_type="injection", value=2.0)
+            _seed_metric(app, event_type="injection", value=5.0)
+            _seed_metric(app, event_type="skip", value=None)
+            resp = client.get("/dashboard/api/metrics/totals?category=query")
+        body = resp.json()
+        assert body["recent"]["injection"]["count"] == 2
+        assert body["recent"]["injection"]["sum_value"] == pytest.approx(7.0)
+        assert body["recent"]["skip"]["count"] == 1
+        assert body["recent"]["skip"]["sum_value"] == pytest.approx(0.0)
+
+    def test_window_hours_param(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        from datetime import timedelta as _td
+        now = datetime.now(UTC)
+        with TestClient(app) as client:
+            _seed_metric(app, timestamp=now - _td(hours=2))
+            _seed_metric(app, timestamp=now - _td(hours=8))
+            resp = client.get("/dashboard/api/metrics/totals?category=query&window_hours=4")
+        body = resp.json()
+        # Only the 2-hours-old metric is in the 4-hour window
+        assert body["window_hours"] == 4
+        assert body["recent"]["injection"]["count"] == 1
+        assert body["alltime"]["injection"]["count"] == 2
+
+    def test_window_hours_validated(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            resp = client.get("/dashboard/api/metrics/totals?category=query&window_hours=0")
+        assert resp.status_code == 422
+
+    def test_container_ref_filter(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            _seed_metric(app, container_ref="git:repo/a", event_type="injection")
+            _seed_metric(app, container_ref="git:repo/b", event_type="injection")
+            resp = client.get(
+                "/dashboard/api/metrics/totals?category=query&container_ref=git:repo/a"
+            )
+        body = resp.json()
+        assert body["container_ref"] == "git:repo/a"
+        assert body["recent"]["injection"]["count"] == 1
+        assert body["alltime"]["injection"]["count"] == 1
