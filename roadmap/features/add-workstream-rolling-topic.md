@@ -8,6 +8,31 @@ milestone: Next
 lane: stabilization-semantics
 ---
 
+## Status update — 2026-05-30 eval bootstrap
+
+A diagnostic eval bootstrap ran 34 scenarios across `agent_conversation_runner`
++ `memory_routing_benchmark` against the merged Phase 4A code. Telemetry
+plumbing is sound — tables populate, dry-run metrics emit, no behavior drift.
+The workstream signal, however, is weak on this corpus:
+
+- 0 of 7 resolved workstreams have structural-only signatures; 6 of 7 are
+  language-derived. Likely a corpus artifact (library scenarios contain no
+  paths/symbols), but currently violates the language-agnostic principle.
+- `split_with_unknown_or_overlap / total = 45%` vs design gate ≤ 5%.
+- `split_resolved_groups / single_workstream_group = 0.012` vs design gate
+  ≥ 0.10.
+- Audit-side workstream coverage was unmeasurable (all queries returned
+  `no_relevant_memory` and the skip path bypassed the audit-log writer).
+- Behavior unchanged (fact_summary grouping still uses the old key).
+
+**Verdict: WEAK_SIGNAL.** Workstream is useful as observability only. It has
+not earned consolidation behavior, and it has not earned routing behavior.
+
+Full report: `.local/research/workstream_eval_bootstrap_2026-05-30/RESULTS.md`.
+
+**Phase 4B is held indefinitely. Do not flip the consolidation re-key flag on
+this evidence.**
+
 ## Summary
 
 Add a deterministic structural **workstream** id, computed cheaply at
@@ -134,9 +159,24 @@ after **all** of the following hold:
 - Workstream id stability ≥95% across consecutive rebuilds when no new
   strong signals arrive
 
-**Open preconditions surfaced by the 2026-05-30 replay (additional, not
-substitutes for the structural gates):**
+**Open preconditions surfaced by the 2026-05-30 replay AND the 2026-05-30 eval
+bootstrap (additional, not substitutes for the structural gates):**
 
+- A diagnostic-only schema patch lands first: add `stage` to
+  `source_item_workstreams` (or a sibling event table), populated from
+  `AssignmentResult.stage`. Without it, R6 thread-continuity vs structural
+  attribution cannot be audited from the merged schema, and every gate
+  below is uncheckable.
+- Re-run the eval bootstrap on a software-engineering corpus
+  (`evals/conversational_knowledge/structural_triage_scenarios.json`,
+  `evals/external_memory_pressure/`) and report the F-section
+  structural-vs-language coverage. Structural-only coverage on resolved
+  workstreams must be ≥30% before `language-only signatures dominate`
+  ceases to be a blocker.
+- Build or pick an injection-positive corpus so the audit-log workstream
+  coverage measurement (`query_workstream_id`, per-candidate
+  `workstream_id`) actually produces non-zero rows. The current bootstrap
+  produced 0 audit rows because the skip path bypasses the audit writer.
 - Focused-container fragmentation drops below 1.0 ws / 10 items on live
   data (the replay measured `focused_A` 1.50 — needs to confirm whether
   the cascade as shipped over-splits focused threads at production scale,
