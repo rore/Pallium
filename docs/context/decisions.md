@@ -2,6 +2,25 @@
 
 ## Accepted
 
+### 2026-05-30 - Derived topic and workstream signals must be language-agnostic
+
+Pallium's derived grouping signals must remain language-agnostic. Workstream,
+topic, consolidation, and routing signals should prefer structural evidence such
+as work refs, file paths, module paths, symbols, commands, error codes/classes,
+metadata, and typed memory fields. Natural-language labels such as titles,
+subject anchors, and noun-phrase subjects may help as secondary evidence, but
+must not become the primary reason to merge, split, route, or consolidate memory
+unless evals show the behavior is safe across languages.
+
+Why:
+
+- multilingual support is a core architecture property, not a best-effort add-on
+- English phrase cues and topic words would recreate brittle, language-specific
+  behavior in the workstream layer
+- structural signals survive language changes and are easier to audit
+- future topic/workstream evals must report structural-only coverage separately
+  from language-derived coverage before a change is considered shippable
+
 ### 2026-03-07 - Generic core with semantic layer
 
 Pallium will be built as a generic memory core with an extensible semantic

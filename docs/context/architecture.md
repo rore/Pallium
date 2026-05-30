@@ -96,6 +96,20 @@ Multilingual retrieval properties:
 - content-overlap injection gate includes cross-script bypass for cross-language containers
 - embedding provider supports query/passage prefix modes for multilingual models
 
+Language-agnostic derived-signal principle:
+
+- derived grouping, routing, consolidation, and workstream signals must not depend
+  on English phrase cues or English-only topic words
+- primary grouping signals should be structural whenever possible: work refs,
+  file paths, module paths, symbols, commands, error codes/classes, metadata, and
+  typed memory fields
+- natural-language labels such as titles, subject anchors, and noun-phrase
+  subjects are allowed only as secondary evidence unless an eval proves they are
+  safe across languages
+- any new topic/workstream eval must report structural-only coverage separately
+  from language-derived coverage, so English-dependent behavior is visible before
+  it ships
+
 Embedding write path:
 
 - embedding happens at background processing time, not at ingest
