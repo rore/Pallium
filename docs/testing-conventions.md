@@ -34,3 +34,7 @@ The invariant runner supports two performance flags:
 Example: `python -m evals.generated_exploratory.invariant_runner --workers 4 --cache-dir .local/llm-cache`
 
 The LLM cache (`providers/llm/cached.py`) wraps any `LLMProvider` and can be reused by other eval runners.
+
+## Driving evals from live failures
+
+When the goal is to validate a routing/extraction/consolidation hypothesis against observed audit failures (rather than authored scenarios), follow the process in [docs/context/eval-from-live-failures.md](context/eval-from-live-failures.md). Live-data replays are stdlib-only, live under `.local/research/<topic>-<YYYY-MM-DD>/`, and produce a normalized `failure_rows.jsonl` plus a `RESULTS.md` verdict before any production change is proposed.

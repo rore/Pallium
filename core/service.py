@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.exc import IntegrityError
 
 from capabilities.consolidation import ConsolidationRunResult
+from capabilities.workstreams import WorkstreamCapability
 from core.consolidation_runner import ConsolidationRunner
 from core.contracts import IngestResult, ItemProcessingResult, MemoryRetentionPolicy, ProcessResult, QueryResult, build_source_item
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
@@ -135,6 +136,21 @@ def _build_orientation_block(memory) -> dict[str, object] | None:
     }
 
 
+def _build_workstream_capability(storage) -> WorkstreamCapability | None:
+    """Wire a SQLite-backed WorkstreamCapability when the storage exposes a
+    session factory. Returns ``None`` for non-SQLite/in-memory backends so
+    Phase 4A is purely additive — the capability never breaks existing code.
+    """
+    session_factory = getattr(storage, "_session_factory", None)
+    if session_factory is None:
+        return None
+    try:
+        from storage.sqlite_workstream import SQLiteWorkstreamStore
+    except Exception:
+        return None
+    return WorkstreamCapability(SQLiteWorkstreamStore(session_factory))
+
+
 class PalliumService:
     def __init__(
         self,
@@ -168,6 +184,7 @@ class PalliumService:
         self._type_registry = type_registry
         self._vector_embedder = VectorEmbedder(storage, embedding_provider, index_holder=self._index_holder)
         self._query_stats = query_stats
+        self._workstream_capability = _build_workstream_capability(storage)
         self._query_executor = QueryExecutor(
             storage, retrieval, semantic_plugins, default_use_case,
             type_registry=type_registry,
@@ -182,6 +199,7 @@ class PalliumService:
             persist_fn=self._persist_process_result,
             supersede_fn=self.supersede_memory_object,
             consolidation_fn=self._run_targeted_fact_consolidation,
+            workstream_capability=self._workstream_capability,
         )
         self._processor = ItemProcessor(
             storage=storage,
@@ -203,6 +221,8 @@ class PalliumService:
             observability=self._observability,
             persist_fn=self._persist_process_result,
             supersede_fn=self.supersede_memory_object,
+            workstream_capability=self._workstream_capability,
+            metrics_store=metrics_store,
         )
         self._logger = logging.getLogger(__name__)
         self._metrics_store = metrics_store
@@ -223,6 +243,12 @@ class PalliumService:
     def _vector_index(self) -> VectorIndex | None:
         """Backward-compat property for app/main.py health/status checks."""
         return self._index_holder.index
+
+    @property
+    def workstream_capability(self) -> WorkstreamCapability | None:
+        """Phase 4A (design 014): expose the workstream capability for debug
+        consumers (e.g. ``/query/debug``)."""
+        return self._workstream_capability
 
     def ingest_item(
         self,
@@ -755,6 +781,28 @@ class PalliumService:
 
         # Serialize top-20 candidate scores for diagnostics
         candidate_scores_json = None
+        # Phase 4A: per-candidate workstream_id lookup (one DB read).
+        candidate_ws_map: dict[str, str] = {}
+        if ranked_candidates is not None:
+            try:
+                memory_object_ids = [
+                    getattr(c["item"], "memory_object_id", None)
+                    for c in ranked_candidates[:20]
+                ]
+                memory_object_ids = [m for m in memory_object_ids if m]
+                if memory_object_ids and self._workstream_capability is not None:
+                    store = getattr(self._workstream_capability, "_store", None)
+                    batch_lookup = getattr(store, "get_memory_workstream_ids", None)
+                    if callable(batch_lookup):
+                        candidate_ws_map = batch_lookup(memory_object_ids)
+                    else:
+                        for mid in memory_object_ids:
+                            looked_up = self._workstream_capability.lookup_memory(mid)
+                            if looked_up:
+                                candidate_ws_map[mid] = looked_up
+            except Exception:
+                self._logger.warning("candidate workstream lookup failed", exc_info=True)
+                candidate_ws_map = {}
         if ranked_candidates is not None:
             try:
                 injectable_result_ids = {block.result_id for block in injectable_blocks}
@@ -762,8 +810,9 @@ class PalliumService:
                 for candidate in ranked_candidates[:20]:
                     item = candidate["item"]
                     result_id = getattr(item, "result_id", None)
+                    mid = getattr(item, "memory_object_id", None)
                     snapshot.append({
-                        "memory_object_id": getattr(item, "memory_object_id", None),
+                        "memory_object_id": mid,
                         "memory_type": getattr(item, "type", None),
                         "routing_score": candidate.get("routing_score"),
                         "lexical_score": candidate.get("lexical_score"),
@@ -775,11 +824,22 @@ class PalliumService:
                         "excluded_reason_code": candidate.get("excluded_reason_code"),
                         "post_routing_drop_reason": candidate.get("post_routing_drop_reason"),
                         "injected": result_id in injectable_result_ids if result_id else False,
+                        "workstream_id": candidate_ws_map.get(mid) if mid else None,
                     })
                 candidate_scores_json = json.dumps(snapshot)
             except Exception:
                 self._logger.warning("candidate scores serialization failed", exc_info=True)
                 candidate_scores_json = None
+
+        # Phase 4A: row-level query workstream_id from the most-recent
+        # source_item_workstreams row for the query's source_item_id.
+        query_workstream_id: str | None = None
+        if source_item_id and self._workstream_capability is not None:
+            try:
+                query_workstream_id = self._workstream_capability.lookup_query_source_item(source_item_id)
+            except Exception:
+                self._logger.warning("query workstream_id lookup failed", exc_info=True)
+                query_workstream_id = None
 
         row = {
             "id": str(uuid.uuid4()),
@@ -796,6 +856,7 @@ class PalliumService:
             "injected_blocks_json": json.dumps(blocks_json_list),
             "candidate_scores_json": candidate_scores_json,
             "injection_method": injection_method,
+            "query_workstream_id": query_workstream_id,
         }
         self._storage.write_query_audit_row(row)
 

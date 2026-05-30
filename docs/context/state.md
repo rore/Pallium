@@ -185,6 +185,7 @@
 - accepted architecture and decisions: `docs/context/architecture.md`, `docs/context/decisions.md`
 - fuller design rationale: `docs/designs/`
 - semantic baseline: `evals/semantic/baseline.md`
+- live-failure-driven eval process: `docs/context/eval-from-live-failures.md` (turn observed live audit failures into bounded replay tasks with explicit pass/fail bars before proposing production work)
 
 ## Next Hardening Direction
 

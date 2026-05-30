@@ -76,6 +76,7 @@ class MemoryEnvelopeScope:
     container_ref: str | None = None
     thread_ref: str | None = None
     work_refs: tuple[str, ...] = ()
+    workstream_id: str | None = None
 
 
 @dataclass(frozen=True)

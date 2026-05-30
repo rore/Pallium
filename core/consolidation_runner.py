@@ -5,6 +5,8 @@ from collections import defaultdict
 from typing import Callable
 
 from capabilities.consolidation import ConsolidationCapability, ConsolidationGroup, ConsolidationRunGroupResult, ConsolidationRunResult
+from capabilities.workstream_dryrun import emit_dryrun_metrics
+from capabilities.workstreams import WorkstreamCapability
 from core.contracts import ProcessResult
 from core.models import MemoryObject, Relation
 from core.observability import IntegrationDebugLogger
@@ -27,6 +29,8 @@ class ConsolidationRunner:
         observability: IntegrationDebugLogger,
         persist_fn: Callable[[ProcessResult], None],
         supersede_fn: Callable[[str, str], None],
+        workstream_capability: WorkstreamCapability | None = None,
+        metrics_store=None,
     ) -> None:
         self._storage = storage
         self._semantic_plugins = semantic_plugins
@@ -35,6 +39,8 @@ class ConsolidationRunner:
         self._persist_fn = persist_fn
         self._supersede_fn = supersede_fn
         self._consolidation_capability = ConsolidationCapability()
+        self._workstream_capability = workstream_capability
+        self._metrics_store = metrics_store
         self._logger = logging.getLogger(__name__)
 
     def run_consolidation_pass(
@@ -68,6 +74,16 @@ class ConsolidationRunner:
             strategy=strategy,
             candidates=candidates,
             policy=policy,
+        )
+
+        # Phase 4A (design 014): emit workstream-aware dry-run metrics.
+        # Behavior is unchanged; this is structural-only telemetry.
+        emit_dryrun_metrics(
+            strategy_name=strategy.name,
+            candidates=candidates,
+            groups=groups,
+            workstream_capability=self._workstream_capability,
+            metrics_store=self._metrics_store,
         )
 
         if not groups:
@@ -140,6 +156,15 @@ class ConsolidationRunner:
         # cross-thread relevance; a fact_summary (thread_ref=None) + new atomic_fact
         # from one thread is a valid group for re-consolidation.
         groups = self._build_targeted_groups(candidates, container_ref)
+
+        # Phase 4A: dry-run metric for the targeted (post-rebuild) path too.
+        emit_dryrun_metrics(
+            strategy_name="fact_consolidation",
+            candidates=candidates,
+            groups=groups,
+            workstream_capability=self._workstream_capability,
+            metrics_store=self._metrics_store,
+        )
 
         for group in groups:
             self._process_consolidation_group(plugin, group)

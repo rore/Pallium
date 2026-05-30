@@ -6,6 +6,13 @@ from datetime import datetime
 from typing import Any, Callable
 
 from capabilities.thread_aggregation import build_thread_aggregate
+from capabilities.workstream_signals import parse_json_safe, signals_from_item
+from capabilities.workstreams import (
+    WorkstreamCapability,
+    WorkstreamRegistry,
+    assign_workstream_for_item,
+    watermark_for,
+)
 from core.contracts import ProcessResult
 from core.models import MemoryObject, SourceItem
 from core.observability import IntegrationDebugLogger, OBSERVABILITY_METADATA_KEY
@@ -80,6 +87,32 @@ def truncate_processing_error(error: Exception) -> str:
     return text[:MAX_PROCESSING_ERROR_LENGTH]
 
 
+def _envelope_to_dict(memory: MemoryObject) -> dict:
+    """Render the memory envelope as a JSON-friendly dict for signal extraction."""
+    env = memory.envelope
+    if env is None:
+        return {}
+    scope = env.scope
+    return {
+        "scope": {
+            "container_ref": scope.container_ref if scope else None,
+            "thread_ref": scope.thread_ref if scope else None,
+            "work_refs": list(scope.work_refs) if scope else [],
+        },
+        "subjects": [
+            {"kind": s.kind, "value": s.value} for s in env.subjects
+        ],
+    }
+
+
+def _max_created_at(items: list[SourceItem]) -> datetime:
+    latest = max(item.created_at for item in items)
+    if latest.tzinfo is None:
+        from datetime import timezone as _tz
+        return latest.replace(tzinfo=_tz.utc)
+    return latest
+
+
 def build_memory_provenance(
     result: ProcessResult,
     *,
@@ -134,6 +167,7 @@ class ThreadRebuilder:
         persist_fn: Callable[[ProcessResult], None],
         supersede_fn: Callable[[str, str], None],
         consolidation_fn: Callable[[str, str, list[str]], None] | None = None,
+        workstream_capability: WorkstreamCapability | None = None,
     ) -> None:
         self._storage = storage
         self._semantic_plugins = semantic_plugins
@@ -142,6 +176,7 @@ class ThreadRebuilder:
         self._persist_fn = persist_fn
         self._supersede_fn = supersede_fn
         self._consolidation_fn = consolidation_fn
+        self._workstream_capability = workstream_capability
         self._logger = logging.getLogger(__name__)
 
     def process_next_thread_rebuild(
@@ -304,6 +339,13 @@ class ThreadRebuilder:
                     raise
                 if self._vector_embedder.embed_process_result(thread_result):
                     self._vector_embedder.save_vector_index()
+                self._maybe_assign_workstreams(
+                    thread_items=thread_items,
+                    thread_result=thread_result,
+                    container_ref=current_lease.container_ref,
+                    visibility=current_lease.visibility,
+                    prior_watermark=current_lease.collection_watermark_at,
+                )
                 self._maybe_trigger_fact_consolidation(
                     thread_result=thread_result,
                     use_case=current_lease.use_case,
@@ -339,6 +381,159 @@ class ThreadRebuilder:
             scope_key=current_lease.scope_key,
             thread_ref=current_lease.thread_ref,
         )
+
+    def _maybe_assign_workstreams(
+        self,
+        *,
+        thread_items: list[SourceItem],
+        thread_result: ProcessResult,
+        container_ref: str | None,
+        visibility: str | None,
+        prior_watermark: datetime | None,
+    ) -> None:
+        """Phase 4A — workstream assignment via M1 delayed mechanism.
+
+        Runs the deterministic cascade against thread_items new since
+        ``prior_watermark`` for ``(container_ref, visibility)``. Writes
+        ``source_item_workstreams`` rows (idempotent on the composite PK)
+        and ``memory_workstreams`` rows for memories whose source items
+        just received a resolved id.
+
+        Diagnostic-only — does NOT change any other behavior. See
+        docs/designs/014-workstream-consolidation-rekey.md.
+        """
+        if self._workstream_capability is None:
+            return
+        if not container_ref or not visibility:
+            return
+        if not thread_items:
+            return
+
+        # Filter to items new since prior watermark (M1 delayed assignment).
+        if prior_watermark is not None:
+            new_items = [item for item in thread_items if item.created_at > prior_watermark]
+        else:
+            new_items = list(thread_items)
+        if not new_items:
+            return
+
+        try:
+            registry = self._workstream_capability.load_registry(
+                container_ref=container_ref, visibility=visibility
+            )
+
+            # Pre-load memories attached to these source items so signal
+            # extraction can use envelope subjects + payload titles.
+            source_ids = [item.id for item in new_items]
+            memories_by_source: dict[str, list[MemoryObject]] = (
+                self._storage.list_memory_objects_for_source_items(source_ids)
+            )
+
+            # Track the (item -> assigned ws_id) tuples we wrote so we can
+            # link memories afterwards.
+            assigned_now: dict[str, str] = {}
+
+            for item in sorted(new_items, key=lambda i: (i.created_at, i.id)):
+                created_at = item.created_at
+                memory_records = [
+                    {
+                        "type": mo.type,
+                        "payload": mo.payload,
+                        "envelope": _envelope_to_dict(mo),
+                    }
+                    for mo in memories_by_source.get(item.id, [])
+                ]
+                metadata_dict = item.metadata or {}
+                if not isinstance(metadata_dict, dict):
+                    metadata_dict = parse_json_safe(metadata_dict if isinstance(metadata_dict, str) else None)
+                signals = signals_from_item(
+                    content_text=item.content or "",
+                    metadata_json=metadata_dict,
+                    memory_records=memory_records,
+                )
+                wm = watermark_for(created_at)
+                result = assign_workstream_for_item(
+                    item_signals=signals,
+                    container_ref=container_ref,
+                    thread_ref=item.thread_ref,
+                    visibility=visibility,
+                    created_at=created_at,
+                    watermark=wm,
+                    registry=registry,
+                )
+                ws_id = result.workstream_id
+                # Persist the registry row first so junction FKs resolve.
+                if ws_id.kind == "unknown":
+                    self._workstream_capability.record_unknown_workstream(
+                        ws_id=ws_id,
+                        container_ref=container_ref,
+                        visibility=visibility,
+                        opened_at=created_at,
+                    )
+                # Note: resolved-id rows are flushed via persist_registry()
+                # at the end of the cascade run for this lease.
+                self._workstream_capability.link_source_item(
+                    source_item_id=item.id,
+                    workstream_id=ws_id.id,
+                    watermark=wm,
+                    assigned_at=created_at,
+                )
+                assigned_now[item.id] = ws_id.id
+
+            # Flush the (now-mutated) registry — persists newly opened ws
+            # rows + last_touched updates. INSERT OR UPSERT is idempotent.
+            self._workstream_capability.persist_registry(registry, now=_max_created_at(new_items))
+
+            # Link any memories whose source items received an assignment
+            # (only for memories produced in this rebuild — safer to scope
+            # to thread_result.memory_objects).
+            self._link_thread_result_memories(thread_result, assigned_now)
+        except Exception:  # never let workstream assignment break rebuild
+            self._logger.warning(
+                "Workstream assignment failed for container=%s visibility=%s; continuing",
+                container_ref, visibility, exc_info=True,
+            )
+
+    def _link_thread_result_memories(
+        self,
+        thread_result: ProcessResult,
+        assigned_now: dict[str, str],
+    ) -> None:
+        if self._workstream_capability is None or not assigned_now:
+            return
+        # Build supported_by mapping from the result's relations.
+        memory_to_sources: dict[str, list[str]] = {}
+        for relation in thread_result.relations:
+            if relation.from_kind != "memory_object":
+                continue
+            if relation.relation_type != "supported_by":
+                continue
+            if relation.to_kind != "source_item":
+                continue
+            memory_to_sources.setdefault(relation.from_id, []).append(relation.to_id)
+        for memory in thread_result.memory_objects:
+            sources = memory_to_sources.get(memory.id, [])
+            ws_ids: list[str] = []
+            for sid in sources:
+                ws_id = assigned_now.get(sid)
+                if ws_id is None:
+                    # Fall back to a lookup in case it was assigned by an
+                    # earlier rebuild (carry-forward across watermarks).
+                    looked_up = self._workstream_capability.lookup_query_source_item(sid)
+                    if looked_up:
+                        ws_id = looked_up
+                if ws_id and ws_id not in ws_ids:
+                    ws_ids.append(ws_id)
+            # Prefer the resolved (non-unknown) id if the memory spans both.
+            chosen = next((w for w in ws_ids if not w.startswith("unknown:")), None)
+            if chosen is None and ws_ids:
+                chosen = ws_ids[0]
+            if chosen:
+                self._workstream_capability.link_memory(
+                    memory_object_id=memory.id,
+                    workstream_id=chosen,
+                    assigned_at=memory.created_at,
+                )
 
     def _maybe_trigger_fact_consolidation(
         self,
