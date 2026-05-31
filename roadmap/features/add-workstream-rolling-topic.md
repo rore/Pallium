@@ -8,6 +8,38 @@ milestone: Next
 lane: stabilization-semantics
 ---
 
+## Status update — 2026-05-31 SE-corpus rerun
+
+Step 2 follow-up to the 2026-05-30 library-corpus run. Synthesized an
+8-scenario software-engineering corpus (file paths under `/repo/`,
+distinct CamelCase symbols, work_refs, command tokens) under
+`.local/research/workstream_eval_bootstrap_2026-05-30/se_corpus/` and
+re-ran via `bootstrap_se_runner.py`. Verdict: **MIXED_SIGNAL** — the
+cascade is healthy; Phase 4B as drafted is wrong-targeted.
+
+Pre-declared gates:
+
+- `structural_pct ≥ 30%` → **PASS** at 80.0% (vs 0.6% on library corpus)
+- `language_pct ≤ 70%` → **PASS** at 0.0% (vs 89% on library corpus)
+- fragmentation `≤ 1.0 ws/10 items` → **FAIL** at 2.0 (but the gate is
+  mis-calibrated for high-cardinality SE corpora; cascade is correctly
+  identifying separate workstreams)
+- `split_resolved_groups ≥ 1` on fixed-key strategies → **FAIL** at 0
+
+Decisive new finding: **anchor-based consolidation strategies produced 28
+`cluster_mixed_resolved` events** (clusters mixing memories from ≥2
+distinct resolved workstreams). The design's Phase 4B feature flag
+targets fixed-key strategies (`fact_consolidation`,
+`thread_local_carry_forward`), not anchor-based ones — so Phase 4B as
+drafted would change nothing or the wrong thing on this corpus.
+
+Conclusion: Phase 4B as drafted **should be retired or re-targeted**.
+Workstream-aware **anchor-based** consolidation re-keying is a possible
+re-scope, but it requires a separate investigation, not a Phase 4B
+activation. Routing remains explicitly rejected.
+
+Full report: `.local/research/workstream_eval_bootstrap_2026-05-30/SE_RESULTS.md`.
+
 ## Status update — 2026-05-30 eval bootstrap
 
 A diagnostic eval bootstrap ran 34 scenarios across `agent_conversation_runner`
