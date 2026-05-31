@@ -477,6 +477,7 @@ class ThreadRebuilder:
                     workstream_id=ws_id.id,
                     watermark=wm,
                     assigned_at=created_at,
+                    stage=result.stage,
                 )
                 assigned_now[item.id] = ws_id.id
 

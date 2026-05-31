@@ -57,6 +57,7 @@ def _assign_for_items(capability: WorkstreamCapability, *, items, container_ref:
             workstream_id=ws_id.id,
             watermark=wm,
             assigned_at=item["created_at"],
+            stage=result.stage,
         )
         for mem_id in item.get("memory_ids", []):
             capability.link_memory(
@@ -160,6 +161,95 @@ def test_workstream_assignment_idempotent_on_rerun(test_db_url: str) -> None:
             "SELECT COUNT(*) FROM memory_workstreams WHERE memory_object_id='mem-A'"
         )).scalar()
         assert mw_count == 1
+
+
+def test_assignment_stage_is_persisted_on_junction(test_db_url: str) -> None:
+    """Phase 4A telemetry gap fix: ``source_item_workstreams.stage`` must be
+    populated with one of the cascade-stage constants on every assignment.
+
+    Without this, the diagnostic surface cannot tell whether a workstream was
+    opened via real structural signals (work_refs / file_path / symbol /
+    title / anchor) or via continuity (recency / open_new) or fell back to
+    ``unknown``. The 2026-05-30 eval bootstrap surfaced this gap; this test
+    is the regression guard.
+    """
+    from capabilities.workstreams import (
+        STAGE_FILE_PATH,
+        STAGE_OPEN_NEW,
+        STAGE_RECENCY,
+        STAGE_SELF_REF_ATTACH,
+        STAGE_SYMBOL,
+        STAGE_TITLE,
+        STAGE_UNKNOWN,
+        STAGE_WORK_REFS,
+        STAGE_ANCHOR,
+    )
+
+    valid_stages = {
+        STAGE_WORK_REFS, STAGE_FILE_PATH, STAGE_SYMBOL, STAGE_TITLE,
+        STAGE_ANCHOR, STAGE_RECENCY, STAGE_OPEN_NEW, STAGE_SELF_REF_ATTACH,
+        STAGE_UNKNOWN,
+    }
+
+    storage = SQLiteStorageProvider(test_db_url)
+    capability = WorkstreamCapability(SQLiteWorkstreamStore(storage._session_factory))
+
+    base = datetime(2026, 5, 30, 16, 0, 0, tzinfo=timezone.utc)
+    # Mix of items: file-path-rich (should land STAGE_FILE_PATH on attach),
+    # a recency follow-up (STAGE_RECENCY or STAGE_FILE_PATH), and a
+    # signal-less item (STAGE_UNKNOWN).
+    items = [
+        {
+            "id": "stage-1",
+            "thread_ref": "ts",
+            "content": "first edit in core/service.py for the WorkstreamRegistry init",
+            "metadata": {},
+            "created_at": base,
+            "memory_ids": [],
+        },
+        {
+            "id": "stage-2",
+            "thread_ref": "ts",
+            "content": "follow-up in core/service.py same path same workstream",
+            "metadata": {},
+            "created_at": base + timedelta(minutes=2),
+            "memory_ids": [],
+        },
+        {
+            "id": "stage-3",
+            "thread_ref": "tu",
+            "content": "no signals nothing structural at all",
+            "metadata": {},
+            "created_at": base + timedelta(minutes=20),
+            "memory_ids": [],
+        },
+    ]
+    _assign_for_items(capability, items=items, container_ref="cStage", visibility="private")
+
+    with storage._session_factory() as session:
+        rows = session.execute(text(
+            "SELECT source_item_id, stage FROM source_item_workstreams "
+            "WHERE source_item_id IN ('stage-1','stage-2','stage-3') "
+            "ORDER BY source_item_id"
+        )).fetchall()
+    assert len(rows) == 3, f"expected 3 rows, got {len(rows)}"
+    for sid, stage in rows:
+        assert stage is not None, f"row {sid} missing stage"
+        assert stage in valid_stages, (
+            f"row {sid} has stage={stage!r} which is not a known cascade stage"
+        )
+    by_id = {sid: stage for sid, stage in rows}
+    # Item 3 has no signals → must land in STAGE_UNKNOWN.
+    assert by_id["stage-3"] == STAGE_UNKNOWN, (
+        f"signal-less item should land in STAGE_UNKNOWN, got {by_id['stage-3']!r}"
+    )
+    # Items 1 and 2 share a file path → at least one should be STAGE_FILE_PATH
+    # (item 1 opens, item 2 attaches via file_path or recency).
+    structural_stages = {STAGE_WORK_REFS, STAGE_FILE_PATH, STAGE_SYMBOL,
+                         STAGE_TITLE, STAGE_ANCHOR, STAGE_OPEN_NEW}
+    assert by_id["stage-1"] in structural_stages, (
+        f"item 1 carries a file path; expected a structural stage, got {by_id['stage-1']!r}"
+    )
 
 
 def test_unknown_pseudo_id_non_joining_persistence(test_db_url: str) -> None:

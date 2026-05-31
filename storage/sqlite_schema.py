@@ -243,6 +243,11 @@ class SourceItemWorkstreamRecord(Base):
     workstream_id = Column(String, primary_key=True)
     watermark = Column(String, primary_key=True)
     assigned_at = Column(DateTime(timezone=True), nullable=False)
+    # Cascade stage that produced this assignment (work_refs / file_path /
+    # symbol / title / anchor / recency / open_new / self_ref_attach /
+    # unknown). Nullable for legacy rows written before this column landed.
+    # Diagnostic-only; nothing reads it for behavior decisions.
+    stage = Column(String, nullable=True)
 
 
 class SQLiteSchemaMixin:
@@ -292,6 +297,9 @@ class SQLiteSchemaMixin:
     }
     _THREAD_PROCESSING_LEASE_MIGRATIONS = {
         "collection_watermark_at": "ALTER TABLE thread_processing_leases ADD COLUMN collection_watermark_at DATETIME",
+    }
+    _SOURCE_ITEM_WORKSTREAM_MIGRATIONS = {
+        "stage": "ALTER TABLE source_item_workstreams ADD COLUMN stage VARCHAR",
     }
     _UNIQUE_INDEX_MIGRATIONS = {
         "uq_source_items_source_type_source_id": (
@@ -435,6 +443,7 @@ class SQLiteSchemaMixin:
             self._ensure_thread_processing_lease_nullable_thread_ref()
             self._ensure_thread_processing_lease_columns()
             self._ensure_source_item_columns()
+            self._ensure_source_item_workstream_columns()
             self._ensure_memory_object_columns()
             self._ensure_index_entry_columns()
             self._ensure_maintenance_state_columns()
@@ -546,6 +555,13 @@ class SQLiteSchemaMixin:
         with self._engine.begin() as connection:
             existing_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(thread_processing_leases)"))}
             for column_name, migration_sql in self._THREAD_PROCESSING_LEASE_MIGRATIONS.items():
+                if column_name not in existing_columns:
+                    connection.execute(text(migration_sql))
+
+    def _ensure_source_item_workstream_columns(self) -> None:
+        with self._engine.begin() as connection:
+            existing_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(source_item_workstreams)"))}
+            for column_name, migration_sql in self._SOURCE_ITEM_WORKSTREAM_MIGRATIONS.items():
                 if column_name not in existing_columns:
                     connection.execute(text(migration_sql))
 

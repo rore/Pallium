@@ -551,12 +551,14 @@ class WorkstreamCapability:
         workstream_id: str,
         watermark: str,
         assigned_at: datetime,
+        stage: str | None = None,
     ) -> None:
         self._store.insert_source_item_workstream(
             source_item_id=source_item_id,
             workstream_id=workstream_id,
             watermark=watermark,
             assigned_at=assigned_at,
+            stage=stage,
         )
 
     def link_memory(
@@ -627,6 +629,7 @@ class WorkstreamStore:
         workstream_id: str,
         watermark: str,
         assigned_at: datetime,
+        stage: str | None = None,
     ) -> None:
         raise NotImplementedError
 

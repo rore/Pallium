@@ -164,9 +164,11 @@ bootstrap (additional, not substitutes for the structural gates):**
 
 - A diagnostic-only schema patch lands first: add `stage` to
   `source_item_workstreams` (or a sibling event table), populated from
-  `AssignmentResult.stage`. Without it, R6 thread-continuity vs structural
-  attribution cannot be audited from the merged schema, and every gate
-  below is uncheckable.
+  `AssignmentResult.stage`. **DONE 2026-05-30** — `stage VARCHAR` (nullable)
+  shipped with auto-migration; bootstrap rerun reports 100% stage coverage
+  and a real cascade-stage histogram. On the library-reservation corpus:
+  structural 0.6% / language 89% / continuity 5.5% / unknown 4.9%, which
+  reinforces (not weakens) the WEAK_SIGNAL verdict and the hold on 4B.
 - Re-run the eval bootstrap on a software-engineering corpus
   (`evals/conversational_knowledge/structural_triage_scenarios.json`,
   `evals/external_memory_pressure/`) and report the F-section

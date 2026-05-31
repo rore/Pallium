@@ -106,14 +106,15 @@ class SQLiteWorkstreamStore(WorkstreamStore):
         workstream_id: str,
         watermark: str,
         assigned_at: datetime,
+        stage: str | None = None,
     ) -> None:
         with self._session_factory.begin() as session:
             session.execute(
                 text(
                     "INSERT OR IGNORE INTO source_item_workstreams ("
-                    "  source_item_id, workstream_id, watermark, assigned_at"
+                    "  source_item_id, workstream_id, watermark, assigned_at, stage"
                     ") VALUES ("
-                    "  :source_item_id, :workstream_id, :watermark, :assigned_at"
+                    "  :source_item_id, :workstream_id, :watermark, :assigned_at, :stage"
                     ")"
                 ),
                 {
@@ -121,6 +122,7 @@ class SQLiteWorkstreamStore(WorkstreamStore):
                     "workstream_id": workstream_id,
                     "watermark": watermark,
                     "assigned_at": _to_utc(assigned_at),
+                    "stage": stage,
                 },
             )
 
