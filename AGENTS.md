@@ -17,3 +17,39 @@ Repo-level non-negotiables:
 - if `apply_patch` fails because of sandbox or environment limitations on this machine, delegated workers may use the smallest deterministic local file-write fallback and must report that fallback explicitly
 
 Testing and eval conventions: see `docs/testing-conventions.md`.
+
+---
+
+## agent-redline
+
+This repo uses [agent-redline](https://github.com/rore/agent-redline). Before making changes:
+
+1. Read `agent-policy.yaml`.
+2. Classify your intended change as blue / red / gray (see `docs/agent/`), and note any `watch` paths touched — those are surfaced in the PR comment regardless of the primary classification.
+3. Refuse to work around boundary rules. Fix the structure or escalate.
+
+Per-checkpoint guidance lives in `docs/agent/`. Read the file matching the situation:
+
+- `blue-zone-work.md` — autonomous work
+- `red-zone-change.md` — architectural change
+- `gray-zone-change.md` — unclassified path
+- `boundary-violation.md` — the boundary backend reported a forbidden import
+- `pr-discipline.md` — PR shape and description rules
+- `api-change-checkpoint.md`, `persistence-change-checkpoint.md`, `security-change-checkpoint.md` — when those checkpoints apply
+
+Run the local check before pushing:
+
+```bash
+./scripts/agent-redline-check.sh
+```
+
+### Known import-graph smells (not enforced as layer contracts)
+
+These are real cross-layer couplings the code lives with today. Two are **tripwired** in `pyproject.toml` via `ignore_imports` — adding a second offender to either fails CI. The rest are gated by red-zone classification on the relevant files. Captured here so the analysis isn't re-derived later:
+
+- **`storage.sqlite → app.transient_errors`** — `transient_errors` is retryable-exception classification; arguably belongs in `core/`. Tripwired (one baselined import).
+- **`storage.sqlite_workstream → capabilities.workstreams`** — storage owning a capability-shaped store. Tripwired (one baselined import).
+- **`api.routes → semantic.llm_agent_memory._normalize_work_ref`** — `api/routes.py` lazy-imports a private normalization helper from `semantic`. The right fix is to expose normalization through `core.*` or move it there; for now tripwired (one baselined import).
+- **`core ↔ semantic` peer tangle** — `core/{service,routing,query,processing,consolidation_runner}.py` import from `semantic`; `semantic` imports `core.models` and `core.contracts`. Not enforceable as a `layers` contract; gated via red-zone on the relevant `core/*` files.
+- **`core → capabilities`** — `core/consolidation_runner.py` and `core/service.py` import `capabilities.*`. Deliberate orchestration coupling, not an accident; gated via red-zone on those `core/*` files.
+

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/rore/agent-redline/core/schema/boundary-violations.schema.json",
+  "title": "agent-redline boundary-violations report v1",
+  "description": "Schema for the json-violations output format. An adapter (in an extension's scripts/ directory or built into the boundary-rule backend itself) emits a file matching this schema; the reporter ingests it via --boundary-format json-violations. See docs/EXTENSIONS.md § 'Backends without machine-readable output' for the pattern.",
+  "type": "object",
+  "required": ["violations"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Currently must be 1. Optional for v1 producers; required when the schema introduces a non-additive change."
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifier of the boundary-rule backend that produced this report (e.g. 'import-linter', 'archunit', 'dependency-cruiser'). Surfaced in the PR comment."
+    },
+    "violations": {
+      "type": "array",
+      "description": "Each entry is one boundary-rule violation. Empty array means the backend ran cleanly.",
+      "items": {
+        "type": "object",
+        "required": ["rule", "detail"],
+        "additionalProperties": false,
+        "properties": {
+          "rule": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The contract / rule name from the backend (e.g. the import-linter contract name, the ArchUnit @ArchTest method name)."
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable description of the specific violation. Single line; concrete (which import / which class)."
+          },
+          "severity": {
+            "enum": ["error", "warning"],
+            "default": "error",
+            "description": "Reporter currently treats both as boundary-violations; severity is recorded for future use."
+          }
+        }
+      }
+    }
+  }
+}
