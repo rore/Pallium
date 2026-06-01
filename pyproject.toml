@@ -94,12 +94,10 @@ root_packages = ["api", "app", "capabilities", "core", "providers", "retrieval",
 exclude_type_checking_imports = true
 include_external_packages = false
 
-# Note: every `forbidden` contract sets `allow_indirect_imports = true`.
-# import-linter checks `forbidden` transitively by default; with this repo's
-# tangled core ↔ semantic / core → capabilities couplings, transitive checks
-# would make every layer unsatisfiable (e.g. api → core → semantic). The
-# rules below assert *direct* import boundaries, which is the actual
-# architectural intent.
+# Every `forbidden` contract sets `allow_indirect_imports = true` to assert
+# DIRECT boundaries only. The core ↔ semantic / core → capabilities tangle
+# (see AGENTS.md "Known import-graph smells") would make transitive checks
+# unsatisfiable (e.g. api → core → semantic).
 
 # 1. providers is a leaf — never imports siblings.
 [[tool.importlinter.contracts]]
