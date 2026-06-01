@@ -67,11 +67,16 @@ fi
 HEAD_SHA=$(git rev-parse HEAD)
 
 # Compute the changed-files list and total lines changed.
+# Empty diffs (BASE == HEAD) produce no shortstat output; the awk pipeline
+# would emit nothing without the END block, and `--lines-changed ""` would
+# be rejected by argparse `type=int`. END{print s+0} guarantees a numeric
+# value; the `:-0` is belt-and-suspenders.
 CHANGED_FILES_LIST="$(mktemp)"
 trap 'rm -f "$CHANGED_FILES_LIST"' EXIT
 git diff --name-only "$BASE_SHA"..."$HEAD_SHA" > "$CHANGED_FILES_LIST"
 LINES_CHANGED=$(git diff --shortstat "$BASE_SHA"..."$HEAD_SHA" \
-  | awk '{for (i=1;i<=NF;i++) if ($i ~ /insertions?|deletions?/) s+=$(i-1); print s+0}')
+  | awk '{for (i=1;i<=NF;i++) if ($i ~ /insertions?|deletions?/) s+=$(i-1)} END{print s+0}')
+LINES_CHANGED=${LINES_CHANGED:-0}
 
 # Optional pre-step: run the Python extension's adapter so the reporter has
 # a fresh json-violations report to read. Skipped silently if the adapter

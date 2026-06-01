@@ -173,10 +173,12 @@ modules = [
 ]
 
 # 5. Hygiene: top-level package siblings don't form import cycles.
+# `ancestors` (plural, required SetField in import-linter 2.x) lists the
+# packages whose direct subpackages get the cycle check.
 [[tool.importlinter.contracts]]
 name = "Acyclic siblings"
 type = "acyclic_siblings"
-container = "<pkg>"
+ancestors = ["<pkg>"]
 ```
 
 **For multi-package layouts**, replace the block above with `root_packages` (plural) and top-level layer names — each layer is its own root package, no parent. Use `forbidden` between layer pairs instead of a single linear `layers` list when the layer graph isn't strictly linear (e.g., several lower layers all callable from the API layer).
@@ -189,17 +191,25 @@ include_external_packages = true
 
 # Lower layers must not import higher layers. One forbidden contract per
 # illegal direction; bootstrap generates these from the actual layer set.
+#
+# Set `allow_indirect_imports = true`. import-linter's `forbidden` checks
+# TRANSITIVE imports by default; in multi-package layouts where one layer
+# (e.g. core) bridges many siblings, every other forbidden contract becomes
+# unsatisfiable transitively (api -> core -> storage breaks "api ↛ storage").
+# These contracts express DIRECT boundaries — set the flag.
 [[tool.importlinter.contracts]]
 name = "core stays independent of higher layers"
 type = "forbidden"
 source_modules = ["core"]
 forbidden_modules = ["api", "application", "providers", "storage"]
+allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 name = "storage stays independent of higher layers"
 type = "forbidden"
 source_modules = ["storage"]
 forbidden_modules = ["api", "application", "providers"]
+allow_indirect_imports = true
 # (and so on for each lower layer)
 ```
 
@@ -361,7 +371,7 @@ allowed_importers = ["<pkg>"]
 [[tool.importlinter.contracts]]
 name = "Acyclic siblings"
 type = "acyclic_siblings"
-container = "<pkg>"
+ancestors = ["<pkg>"]
 ```
 
 Only generate the `protected` contract when the repo actually has leading-underscore modules; don't fabricate.

@@ -91,11 +91,13 @@ exclude_type_checking_imports = true
 include_external_packages = true
 
 # Use `forbidden` between layer pairs instead of a single linear `layers` list.
+# Set `allow_indirect_imports = true` (see profile.md "multi-package" note).
 [[tool.importlinter.contracts]]
 name = "core stays independent of higher layers"
 type = "forbidden"
 source_modules = ["core"]
 forbidden_modules = ["api", "storage"]
+allow_indirect_imports = true
 ```
 
 Bootstrap derives the layer order from the repo's architecture docs (`docs/`, `AGENTS.md`) when present; ask the developer when not. Generate one `forbidden` contract per illegal direction.
