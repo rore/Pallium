@@ -68,6 +68,12 @@ zones:
     - path: "pyproject.toml"
       reason: build config & [tool.importlinter] dependency rules
       checkpoint: architecture-review
+    - path: ".github/workflows/agent-redline.yml"
+      reason: agent-redline CI workflow (the enforcer; weakening it bypasses governance)
+      checkpoint: architecture-review
+    - path: ".github/CODEOWNERS"
+      reason: review-routing definitions; weakening allows checkpoint bypass
+      checkpoint: architecture-review
 
   watch:
     # Layer entry surfaces — surfaced in PR comment, no checkpoint
