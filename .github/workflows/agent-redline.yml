@@ -63,6 +63,14 @@ jobs:
           python-version: "3.12"
       - run: pip install pyyaml jsonschema
       - name: Run reporter
+        # The reporter exits non-zero when it finds red-zone changes,
+        # missing checkpoints, etc. — a real signal we want to keep, but in
+        # the shadow window it shouldn't fail the workflow before the
+        # sticky-comment + artifact-upload steps run. continue-on-error
+        # lets the verdict surface in the PR comment instead. Drop this
+        # alongside the boundary job's continue-on-error once Window 1
+        # calibration is done (see header).
+        continue-on-error: true
         run: |
           mkdir -p build
           git diff --name-only \
