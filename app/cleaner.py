@@ -10,7 +10,7 @@ from app.config import AppConfig
 from app.dependencies import build_service
 from app.runtime_logging import emit_runtime_log
 from app.signal_context import graceful_stop
-from app.transient_errors import is_transient_error
+from core.errors import is_transient_error
 from storage.base import RetentionLeaseLostError, RetentionRunStats
 
 _TRANSIENT_MAX_CONSECUTIVE = 10

@@ -139,16 +139,13 @@ name = "semantic siblings acyclic"
 type = "acyclic_siblings"
 ancestors = ["semantic"]
 
-# 6. storage → app: one baselined import. Adding a second offender fails CI.
-#    The exception (storage.sqlite -> app.transient_errors) is documented in
-#    AGENTS.md "Known import-graph smells".
+# 6. storage → app: no direct imports allowed.
 [[tool.importlinter.contracts]]
-name = "storage stays out of app (one baselined exception)"
+name = "storage stays out of app"
 type = "forbidden"
 source_modules = ["storage"]
 forbidden_modules = ["app"]
 allow_indirect_imports = true
-ignore_imports = ["storage.sqlite -> app.transient_errors"]
 
 # 7. storage → capabilities: one baselined import. Adding a second offender
 #    fails CI. The exception (storage.sqlite_workstream ->

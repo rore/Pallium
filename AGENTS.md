@@ -45,9 +45,8 @@ Run the local check before pushing:
 
 ### Known import-graph smells (not enforced as layer contracts)
 
-These are real cross-layer couplings the code lives with today. Two are **tripwired** in `pyproject.toml` via `ignore_imports` — adding a second offender to either fails CI. The rest are gated by red-zone classification on the relevant files. Captured here so the analysis isn't re-derived later:
+These are real cross-layer couplings the code lives with today. One is **tripwired** in `pyproject.toml` via `ignore_imports` — adding a second offender fails CI. The rest are gated by red-zone classification on the relevant files. Captured here so the analysis isn't re-derived later:
 
-- **`storage.sqlite → app.transient_errors`** — `transient_errors` is retryable-exception classification; arguably belongs in `core/`. Tripwired (one baselined import).
 - **`storage.sqlite_workstream → capabilities.workstreams`** — storage owning a capability-shaped store. Tripwired (one baselined import).
 - **`core ↔ semantic` peer tangle** — `core/{service,routing,query,processing,consolidation_runner}.py` import from `semantic`; `semantic` imports `core.models` and `core.contracts`. Not enforceable as a `layers` contract; gated via red-zone on the relevant `core/*` files.
 - **`core → capabilities`** — `core/consolidation_runner.py` and `core/service.py` import `capabilities.*`. Deliberate orchestration coupling, not an accident; gated via red-zone on those `core/*` files.
