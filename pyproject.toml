@@ -132,10 +132,6 @@ type = "forbidden"
 source_modules = ["api"]
 forbidden_modules = ["app", "capabilities", "semantic", "retrieval", "storage", "providers"]
 allow_indirect_imports = true
-# api.routes pulls a private normalization helper from semantic
-# (lazy import inside _normalize_query_work_refs). Documented as a smell
-# in AGENTS.md; one baselined exception. Adding a second fails CI.
-ignore_imports = ["api.routes -> semantic.llm_agent_memory"]
 
 # 5. semantic.* submodules don't form import cycles.
 [[tool.importlinter.contracts]]

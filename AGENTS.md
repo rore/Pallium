@@ -49,7 +49,6 @@ These are real cross-layer couplings the code lives with today. Two are **tripwi
 
 - **`storage.sqlite → app.transient_errors`** — `transient_errors` is retryable-exception classification; arguably belongs in `core/`. Tripwired (one baselined import).
 - **`storage.sqlite_workstream → capabilities.workstreams`** — storage owning a capability-shaped store. Tripwired (one baselined import).
-- **`api.routes → semantic.llm_agent_memory._normalize_work_ref`** — `api/routes.py` lazy-imports a private normalization helper from `semantic`. The right fix is to expose normalization through `core.*` or move it there; for now tripwired (one baselined import).
 - **`core ↔ semantic` peer tangle** — `core/{service,routing,query,processing,consolidation_runner}.py` import from `semantic`; `semantic` imports `core.models` and `core.contracts`. Not enforceable as a `layers` contract; gated via red-zone on the relevant `core/*` files.
 - **`core → capabilities`** — `core/consolidation_runner.py` and `core/service.py` import `capabilities.*`. Deliberate orchestration coupling, not an accident; gated via red-zone on those `core/*` files.
 

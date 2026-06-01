@@ -33,7 +33,7 @@ from core.visibility import QueryVisibilityTrace, VisibilityExclusion
 def _normalize_query_work_refs(raw: list[str] | None) -> tuple[str, ...]:
     if not raw:
         return ()
-    from semantic.llm_agent_memory import _normalize_work_ref
+    from core.work_ref import _normalize_work_ref
     return tuple(ref for ref in (
         _normalize_work_ref(r) for r in raw
     ) if ref is not None)
