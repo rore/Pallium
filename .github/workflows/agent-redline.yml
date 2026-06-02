@@ -76,11 +76,17 @@ jobs:
         #      Enforce step below) because there is no PR comment surface.
         #   2  binding-mode hard fail — always fails CI.
         #
-        # Push-mode-specific: BEFORE/AFTER diff handles "first push to a
-        # branch" (BEFORE is all-zeros) and force-push (BEFORE may be a
-        # SHA the runner doesn't have) by falling back to merge-base
-        # against the default branch. set +e so the sticky-style steps
-        # (artifact upload, enforce) still run on non-zero reporter exit.
+        # Push-mode-specific:
+        #   - BEFORE/AFTER diff handles "first push to a branch"
+        #     (BEFORE is all-zeros) and force-push (BEFORE may be a
+        #     SHA the runner doesn't have) by falling back to merge-base
+        #     against the default branch.
+        #   - --flow-mode push tells the reporter to render checkpoint
+        #     satisfier text as a review obligation on the already-landed
+        #     commit, NOT as "Satisfy by: CODEOWNER approval or label X"
+        #     (neither mechanism exists on a direct push).
+        #   - set +e so the verdict-summary, artifact, and enforce steps
+        #     still run on non-zero reporter exit.
         run: |
           set +e
           mkdir -p build
@@ -97,6 +103,7 @@ jobs:
             --policy agent-policy.yaml \
             --changed-files build/changed-files.txt \
             --lines-changed "${LINES_CHANGED:-0}" \
+            --flow-mode push \
             --json-out build/verdict.json \
             --comment-out build/comment.md
           EXIT=$?

@@ -782,7 +782,7 @@ def _render_api_spec_diff(spec_diff: dict[str, Any]) -> list[str]:
     return out
 
 
-def render_markdown(verdict: Verdict) -> str:
+def render_markdown(verdict: Verdict, flow_mode: str = "pr") -> str:
     lines: list[str] = []
     lines.append(f"## agent-redline: {verdict.verdict}")
     lines.append("")
@@ -809,8 +809,18 @@ def render_markdown(verdict: Verdict) -> str:
         lines.append("**Required checkpoints:**")
         for cp in verdict.checkpoints:
             box = "[x]" if cp.satisfied else "[ ]"
-            satisfy = " or ".join(cp.satisfy_by) if cp.satisfy_by else "(see policy)"
-            lines.append(f"- {box} `{cp.id}` — {cp.reason}. Satisfy by: {satisfy}")
+            if flow_mode == "push":
+                # Push-mode: the change has already landed. Satisfier text
+                # frames the checkpoint as a review obligation on the commit
+                # that already exists, not a gate to be satisfied before
+                # merge. CODEOWNER approval / PR labels don't apply (no PR).
+                lines.append(
+                    f"- {box} `{cp.id}` — {cp.reason}. "
+                    f"Action: review the commit; revert if unintended, otherwise the red CI run on this commit is the audit record."
+                )
+            else:
+                satisfy = " or ".join(cp.satisfy_by) if cp.satisfy_by else "(see policy)"
+                lines.append(f"- {box} `{cp.id}` — {cp.reason}. Satisfy by: {satisfy}")
         lines.append("")
 
     # Boundary violations
@@ -953,6 +963,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--pr-labels", default="", help="Comma-separated PR labels")
     p.add_argument("--codeowner-approvals", default="",
                    help="Comma-separated CODEOWNER approver logins")
+    p.add_argument("--flow-mode", default="pr", choices=["pr", "push"],
+                   help="Flow shape of the surrounding CI workflow. 'pr' (default) "
+                        "renders checkpoint satisfier text as 'Satisfy by: CODEOWNER "
+                        "approval or label X' (PR-mode mechanics). 'push' renders "
+                        "it as a review obligation on the commit that already "
+                        "landed, since CODEOWNER approval / labels don't apply on a "
+                        "direct push.")
     p.add_argument("--default-mode", default="shadow", choices=["shadow", "binding"],
                    help="Fallback for modes.default when the policy does not set it. The policy always wins if it pins modes.default; this flag only fills in a missing value.")
     p.add_argument("--mode", dest="default_mode_legacy", default=None,
@@ -1007,7 +1024,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(json.dumps(verdict.to_dict(), indent=2))
 
-    comment = render_markdown(verdict)
+    comment = render_markdown(verdict, flow_mode=args.flow_mode)
     if args.comment_out:
         args.comment_out.write_text(comment, encoding="utf-8")
 

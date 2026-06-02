@@ -80,7 +80,7 @@ Pick one. Affects Phase 5's CI proposal — not the policy, not the skill discip
 | Solo developer, no PRs (or PRs only for meta-changes), trunk-based | push-driven |
 | Mixed (some PR work, some direct push) | dominant signal wins; ask the developer |
 
-PR-driven proposes a workflow on `pull_request:` with a sticky comment surfacing the verdict; CI fails only on exit 2 (binding-mode hard fail). Push-driven proposes `on: push:` with the verdict in a CI artifact + workflow log; CI fails on exit 1 OR 2 (no sticky-comment surface, so warnings need CI red as their visibility channel). Both reference `extensions/<name>/scaffold.md` §5 (Python) or §6 (Spring) for the specific YAML.
+PR-driven proposes a workflow on `pull_request:` with a sticky comment surfacing the verdict; CI fails only on exit 2 (binding-mode hard fail). Push-driven proposes `on: push:` with the verdict in `$GITHUB_STEP_SUMMARY`; the workflow fails on `EXIT != 0` (both RED warnings and BOUNDARY_VIOLATION hard fails) so GitHub's default workflow-failure email fires for the user who triggered the run. The reporter is invoked with `--flow-mode push` so checkpoint text reads as a review obligation on the commit (no CODEOWNER / label phrasing — neither applies on a direct push). agent-redline ships as its own `.github/workflows/` file in both modes; its failure does not affect other workflows in the repo. Both reference `extensions/<name>/scaffold.md` §5 (Python) or §6 (Spring) for the specific YAML.
 
 Ask the developer for confirmation before drafting the CI proposal in Phase 5.
 

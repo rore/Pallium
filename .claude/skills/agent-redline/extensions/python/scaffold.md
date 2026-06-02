@@ -257,7 +257,9 @@ jobs:
 
 ### 5b. Push-driven flow — `on: push:`
 
-For solo developers and trunk-based teams. No PR comment surface, so the verdict goes to the workflow log + an artifact. Without a sticky-comment surface, exit 1 (warnings) needs CI red as its visibility channel — otherwise warnings become invisible. The enforce step therefore fails on either exit 1 or exit 2 in this mode (configurable; see the comment).
+For solo developers and trunk-based teams. No PR comment surface, so the verdict surfaces via the run-page summary; the workflow itself fails on `EXIT != 0` (both RED warnings and BOUNDARY_VIOLATION hard fails) so GitHub's default email-on-failure notification fires for the user who triggered the run.
+
+**The agent-redline workflow is its own file in `.github/workflows/`. It runs independently of the repo's other CI workflows (tests, builds, linters). A red agent-redline run does not fail those workflows; it produces an independent red badge + email. Branch protection (if used) can require agent-redline to be green for merge, or treat it as informational, per repo policy.**
 
 ```yaml
 on:
@@ -290,10 +292,15 @@ jobs:
         # Same exit-code contract as PR mode (0/1/2). See PR-mode comment
         # block for full description.
         #
-        # Push-mode-specific: BEFORE/AFTER diff handles "first push to a
-        # branch" (BEFORE is all-zeros) and force-push (BEFORE may be a
-        # SHA the runner doesn't have) by falling back to merge-base
-        # against the default branch.
+        # Push-mode-specific:
+        # - BEFORE/AFTER diff handles "first push to a branch" (BEFORE
+        #   is all-zeros) and force-push (BEFORE may be a SHA the runner
+        #   doesn't have) by falling back to merge-base against the
+        #   default branch.
+        # - --flow-mode push tells the reporter to render checkpoint
+        #   satisfier text as a review obligation on the commit, NOT as
+        #   "Satisfy by: CODEOWNER approval or label X" (neither
+        #   mechanism exists on a direct push).
         run: |
           set +e
           mkdir -p build
@@ -308,6 +315,7 @@ jobs:
             | awk '{for (i=1;i<=NF;i++) if ($i ~ /insertions?|deletions?/) s+=$(i-1)} END{print s+0}')
           python scripts/agent-redline-report.py \
             --policy agent-policy.yaml \
+            --flow-mode push \
             --changed-files build/changed-files.txt \
             --lines-changed "${LINES_CHANGED:-0}" \
             --json-out build/verdict.json \
@@ -319,12 +327,8 @@ jobs:
           echo "reporter exit code: $EXIT"
 
       - name: Write verdict to job summary
-        # Without a PR sticky comment, the run page itself is the
-        # primary visibility surface. Appending comment.md to
-        # $GITHUB_STEP_SUMMARY makes the verdict show up at the top of
-        # the workflow run's summary page on github.com — visible with
-        # one click from the commit, no artifact download required.
-        # The artifact below stays as the machine-readable copy.
+        # Run-page summary is the human-readable surface; one click from
+        # the failure-notification email, no artifact download.
         if: always()
         run: |
           {
@@ -343,17 +347,19 @@ jobs:
             build/comment.md
 
       - name: Enforce reporter exit code
-        # Push-mode default: fail CI on exit 1 OR 2. Without a PR comment,
-        # CI red is the only surface for exit-1 warnings — silencing them
-        # silences shadow-mode signal entirely. If you prefer informational
-        # warnings, change `[[ "$EXIT" != "0" ]]` to `[[ "$EXIT" == "2" ]]`
-        # — the verdict still appears in the run summary above, so warnings
-        # remain visible without blocking CI.
+        # Push-mode: fail the workflow on EXIT != 0 (both RED warnings
+        # and BOUNDARY_VIOLATION hard fails). The red badge on this
+        # commit's agent-redline run is the audit record that the change
+        # required human review; the next push that touches no red zone
+        # produces a green run. GitHub's default workflow-failure email
+        # notification fires for the user who triggered this run, which
+        # is the "summon reviewer" channel for push-driven flow. Other
+        # workflows in this repo are unaffected.
         run: |
           EXIT="${{ steps.report.outputs.exit_code }}"
           if [[ "$EXIT" != "0" ]]; then
-            echo "Reporter exited $EXIT. Failing the check."
-            echo "See the run summary above (or the agent-redline-verdict artifact) for the full verdict."
+            echo "Reporter exited $EXIT. Failing the agent-redline workflow."
+            echo "See the run summary above for the full verdict."
             exit 1
           fi
           echo "Reporter exited 0 — clean."

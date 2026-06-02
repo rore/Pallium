@@ -92,7 +92,7 @@ ArchUnit produces JUnit XML through Gradle's default test reporting. Verify noth
 Two flow modes — bootstrap-mode.md Phase 1 picks one:
 
 - **PR-driven flow** — `on: pull_request:`; verdict surfaces via a sticky PR comment; enforce step fails CI on exit 2 only. The §6 OpenAPI block below shows this in full.
-- **Push-driven flow** — `on: push: branches: [main]`; no sticky comment (no PR to comment on); verdict goes to a CI artifact + the workflow log; enforce step fails CI on exit 1 OR 2 (without a comment surface, exit 1 warnings need CI red as their visibility channel). The structural shape matches Python's scaffold.md §5b — adapt the install step for Gradle/Maven; the reporter call is identical.
+- **Push-driven flow** — `on: push: branches: [main]`; no sticky comment (no PR to comment on); verdict surfaces in `$GITHUB_STEP_SUMMARY` (run page, one click from the workflow-failure email); the workflow fails on `EXIT != 0` so GitHub's default email-on-failure notification fires. The agent-redline workflow ships as its own file in `.github/workflows/`, separate from the repo's other CI — a red agent-redline run does not fail other workflows. Pass `--flow-mode push` to the reporter so checkpoint text reads as a review obligation on the commit (CODEOWNER / label phrasing doesn't apply on a direct push). The structural shape matches Python's scaffold.md §5b — adapt the install step for Gradle/Maven; the reporter call is identical.
 
 The boundary job runs the same way in either mode:
 
