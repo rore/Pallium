@@ -339,11 +339,27 @@ export function createTextAnchor(text, options = {}) {
   }
 
   const occurrences = findQuoteOccurrences(text, quote);
-  if (occurrences.length !== 1) {
-    throw new AppError("Text anchor quote must match exactly one location.", 422, occurrences.length === 0 ? "anchor_orphaned" : "anchor_ambiguous");
+  if (occurrences.length === 0) {
+    throw new AppError("Text anchor quote must match exactly one location.", 422, "anchor_orphaned");
   }
 
-  const occurrence = occurrences[0];
+  // Disambiguation: when the same phrase appears more than once (common in
+  // specs that mention something in prose AND inside a fenced code block),
+  // prefer the occurrence whose lineStart matches the caller's hint. The
+  // hint is optional — if absent or no occurrence matches, we keep the
+  // existing strict-uniqueness behavior so old callers see the same error.
+  // When there is exactly one occurrence the hint is irrelevant.
+  let occurrence;
+  if (occurrences.length === 1) {
+    occurrence = occurrences[0];
+  } else {
+    const hint = Number.isInteger(options.lineStart) ? options.lineStart : null;
+    occurrence = hint !== null ? occurrences.find((o) => o.lineStart === hint) : null;
+    if (!occurrence) {
+      throw new AppError("Text anchor quote must match exactly one location.", 422, "anchor_ambiguous");
+    }
+  }
+
   const headingPath = Array.isArray(options.headingPath) ? options.headingPath : headingPathForLine(text, occurrence.lineStart);
 
   return {
@@ -670,6 +686,10 @@ function makeCommentAnchor(text, input) {
     return createTextAnchor(text, {
       quote,
       headingPath: Array.isArray(input.headingPath) ? input.headingPath : undefined,
+      // Optional disambiguation hint for duplicate quotes. Only forwarded
+      // when the caller passed a positive integer line number; everything
+      // else is dropped so we don't smuggle through a stale hint.
+      lineStart: Number.isInteger(input.lineStart) && input.lineStart > 0 ? input.lineStart : undefined,
     });
   }
 

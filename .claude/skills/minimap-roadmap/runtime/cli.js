@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from "node:fs/promises";
 import { AppError } from "./src/roadmap.js";
 import {
   addFileSessionSuggestion,
@@ -37,17 +38,21 @@ function usage() {
   return `Usage:
   minimap attach <file> [--json]
   minimap context <file> --json
-  minimap comment add <file> --by <actor> --kind <kind> --text <text> [--global|--heading <path>|--quote <text>] [--json]
-  minimap comment reply <file> <comment-id> --by <actor> --text <text> [--json]
+  minimap comment add <file> --by <actor> --kind <kind> (--text <text>|--text-file <path>) [--global|--heading <path>|--quote <text>|--quote-file <path>] [--json]
+  minimap comment reply <file> <comment-id> --by <actor> (--text <text>|--text-file <path>) [--json]
   minimap comment resolve <file> <comment-id> --by <actor> [--json]
   minimap comment reopen <file> <comment-id> --by <actor> [--json]
-  minimap suggest add <file> --by <actor> --kind <replace|insert_after|delete> --quote <text> --content <text> [--rationale <text>] [--json]
+  minimap suggest add <file> --by <actor> --kind <replace|insert_after|delete> (--quote <text>|--quote-file <path>) (--content <text>|--content-file <path>) [--rationale <text>|--rationale-file <path>] [--json]
   minimap suggest accept <file> <suggestion-id> --by <actor> [--json]
   minimap suggest reject <file> <suggestion-id> --by <actor> [--json]
   minimap suggest preview <file> <suggestion-id> [--json]
   minimap suggest apply <file> <suggestion-id> --by <actor> [--json]
   minimap session list [--json]
   minimap session move <from-file> <to-file> [--json]
+
+For any --foo-file flag, the file contents (UTF-8) are used in place of inline --foo.
+Useful when text contains shell-hostile characters (apostrophes, backticks, newlines) —
+write the text to a file first, then pass --text-file path/to/text.md.
 `;
 }
 
@@ -65,6 +70,31 @@ function valueAfter(args, flag) {
     return "";
   }
   return args[index + 1] || "";
+}
+
+// Resolve a value that can be passed inline (--foo "...") or from a file
+// (--foo-file path/to/text.md). Inline value wins if present. The file
+// contents are used as UTF-8 with trailing newline trimmed — agents
+// generally pass a file when they have multi-line or special-character
+// text that's hostile to shell quoting (especially PowerShell).
+async function valueFromInlineOrFile(args, inlineFlag, fileFlag) {
+  const inline = valueAfter(args, inlineFlag);
+  if (inline) {
+    if (args.includes(fileFlag)) {
+      throw new AppError(`Pass either ${inlineFlag} or ${fileFlag}, not both.`, 400, "bad_request");
+    }
+    return inline;
+  }
+  const filePath = valueAfter(args, fileFlag);
+  if (!filePath) {
+    return "";
+  }
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    return raw.replace(/\r?\n$/, "");
+  } catch (error) {
+    throw new AppError(`Could not read ${fileFlag} ${filePath}: ${error.message}`, 400, "bad_request");
+  }
 }
 
 function headingPathFromValue(value) {
@@ -117,11 +147,13 @@ async function main(argv) {
     const { flags, positional } = parseFlags(rest);
     const file = requireFile(positional, "comment add");
     const headingPath = headingPathFromValue(valueAfter(rest, "--heading"));
+    const text = await valueFromInlineOrFile(rest, "--text", "--text-file");
+    const quote = await valueFromInlineOrFile(rest, "--quote", "--quote-file");
     const input = {
       by: valueAfter(rest, "--by"),
       kind: valueAfter(rest, "--kind"),
-      text: valueAfter(rest, "--text"),
-      quote: valueAfter(rest, "--quote"),
+      text,
+      quote,
       scope: flags.has("--global") ? "global" : headingPath.length > 0 ? "section" : "",
       headingPath,
     };
@@ -144,9 +176,10 @@ async function main(argv) {
       throw new AppError("comment reply requires a comment id.", 400, "bad_request");
     }
 
+    const text = await valueFromInlineOrFile(rest, "--text", "--text-file");
     const result = await addFileSessionCommentReply(file, commentId, {
       by: valueAfter(rest, "--by"),
-      text: valueAfter(rest, "--text"),
+      text,
     });
     if (flags.has("--json")) {
       printJson(result);
@@ -181,13 +214,16 @@ async function main(argv) {
     const { flags, positional } = parseFlags(rest);
     const file = requireFile(positional, "suggest add");
     const headingPath = headingPathFromValue(valueAfter(rest, "--heading"));
+    const content = await valueFromInlineOrFile(rest, "--content", "--content-file");
+    const rationale = await valueFromInlineOrFile(rest, "--rationale", "--rationale-file");
+    const quote = await valueFromInlineOrFile(rest, "--quote", "--quote-file");
     const input = {
       by: valueAfter(rest, "--by"),
       kind: valueAfter(rest, "--kind"),
-      content: valueAfter(rest, "--content"),
-      rationale: valueAfter(rest, "--rationale"),
+      content,
+      rationale,
       confidence: valueAfter(rest, "--confidence"),
-      quote: valueAfter(rest, "--quote"),
+      quote,
       scope: headingPath.length > 0 ? "section" : "",
       headingPath,
     };
