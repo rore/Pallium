@@ -110,6 +110,8 @@ const specResolvedToggleButton = document.querySelector("#spec-resolved-toggle")
 const specCommentForm = document.querySelector("#spec-comment-form");
 const specCommentCancelButton = document.querySelector("#spec-comment-cancel-button");
 const specCommentByInput = document.querySelector("#spec-comment-by");
+const specParticipantsFacepile = document.querySelector("#spec-participants-facepile");
+const specParticipantsPopover = document.querySelector("#spec-participants-popover");
 const specCommentKindInput = document.querySelector("#spec-comment-kind");
 const specCommentAnchorInput = document.querySelector("#spec-comment-anchor");
 const specCommentAnchorLabelElement = document.querySelector("#spec-comment-anchor-label");
@@ -4085,6 +4087,163 @@ function applyAppMode() {
 //                     downward-only collision pass so they never overlap.
 // ──────────────────────────────────────────────────────────────────────
 
+// ── Participants facepile ───────────────────────────────────────────────
+// A Google-Docs-style stacked-circle indicator over the comments column.
+// Surfaces who has touched this spec — comment / reply / suggestion authors
+// across all four kinds — plus the current viewer (whatever is in the actor
+// input, defaulting to "human"). The viewer is always present, even before
+// they comment, because looking at the doc IS a form of presence.
+
+const FACEPILE_COLORS = [
+  // Distinct, accessible-on-light backgrounds. Hash-stable per actor name.
+  "#1f6feb", "#cf222e", "#2da44e", "#9333ea", "#bf8700",
+  "#0969da", "#a40e26", "#1a7f37", "#6639ba", "#7d4900",
+];
+
+function colorForActor(name) {
+  // Simple deterministic hash → palette index. Same name always gets the
+  // same color across sessions and across views.
+  const str = String(name || "");
+  let hash = 0;
+  for (let i = 0; i < str.length; i += 1) {
+    hash = (hash * 31 + str.charCodeAt(i)) | 0;
+  }
+  return FACEPILE_COLORS[Math.abs(hash) % FACEPILE_COLORS.length];
+}
+
+function initialsForActor(name) {
+  const cleaned = String(name || "").trim();
+  if (!cleaned) return "?";
+  // Split on non-letter/digit; take first letter of up to 2 segments.
+  const parts = cleaned.split(/[^A-Za-z0-9]+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+function currentSpecActor() {
+  const value = (specCommentByInput?.value || "").trim();
+  return value || "human";
+}
+
+function collectSpecParticipants() {
+  // Returns [{ name, count, isViewer }] sorted by count desc, name asc.
+  // The viewer is always present (with isViewer:true). If the viewer has
+  // also authored content, their count includes it.
+  const counts = new Map();
+  const ctx = state.spec?.context;
+  const bump = (name) => {
+    const key = String(name || "").trim();
+    if (!key) return;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  };
+  for (const comment of (ctx?.comments || [])) {
+    bump(comment.by);
+    for (const reply of (comment.replies || [])) bump(reply.by);
+  }
+  for (const suggestion of (ctx?.suggestions || [])) {
+    bump(suggestion.by);
+    for (const reply of (suggestion.replies || [])) bump(reply.by);
+  }
+
+  const viewer = currentSpecActor();
+  if (!counts.has(viewer)) {
+    counts.set(viewer, 0);
+  }
+
+  return Array.from(counts.entries())
+    .map(([name, count]) => ({ name, count, isViewer: name === viewer }))
+    .sort((left, right) => {
+      // Viewer first, then by action count desc, then by name asc — gives a
+      // stable order that puts "you" front-and-center but doesn't lie about
+      // counts.
+      if (left.isViewer && !right.isViewer) return -1;
+      if (right.isViewer && !left.isViewer) return 1;
+      if (left.count !== right.count) return right.count - left.count;
+      return left.name.localeCompare(right.name);
+    });
+}
+
+function renderSpecParticipantsFacepile() {
+  if (!specParticipantsFacepile) return;
+  // Hide entirely when there is no spec session loaded.
+  if (!state.spec?.context && !state.spec?.selectedPath) {
+    specParticipantsFacepile.hidden = true;
+    return;
+  }
+  specParticipantsFacepile.hidden = false;
+
+  const participants = collectSpecParticipants();
+  const total = participants.length;
+  const visible = participants.slice(0, 3);
+  const overflow = Math.max(0, total - visible.length);
+
+  const circlesHtml = visible.map((p) => `
+    <span class="spec-facepile-circle${p.isViewer ? " is-viewer" : ""}"
+          style="background:${escapeHtml(colorForActor(p.name))}"
+          title="${escapeHtml(p.name)}${p.isViewer ? " (you)" : ""}"
+    >${escapeHtml(initialsForActor(p.name))}</span>
+  `).join("");
+  specParticipantsFacepile.querySelector(".spec-facepile-circles").innerHTML = circlesHtml;
+
+  const overflowEl = specParticipantsFacepile.querySelector(".spec-facepile-overflow");
+  if (overflow > 0) {
+    overflowEl.textContent = `+${overflow}`;
+    overflowEl.hidden = false;
+  } else {
+    overflowEl.hidden = true;
+  }
+
+  const label = specParticipantsFacepile.querySelector("[data-spec-participants-label]");
+  if (label) {
+    label.textContent = total === 1 ? "1 participant" : `${total} participants`;
+  }
+
+  // If the popover is open, refresh its contents in place so updates flow
+  // through (e.g. a comment arrives while the popover is open).
+  if (specParticipantsPopover && !specParticipantsPopover.hidden) {
+    renderSpecParticipantsPopover(participants);
+  }
+}
+
+function renderSpecParticipantsPopover(participants = collectSpecParticipants()) {
+  if (!specParticipantsPopover) return;
+  const itemsHtml = participants.map((p) => {
+    const meta = p.isViewer
+      ? (p.count > 0 ? `${p.count} action${p.count === 1 ? "" : "s"} · you` : "viewing")
+      : `${p.count} action${p.count === 1 ? "" : "s"}`;
+    return `
+      <li class="spec-popover-item${p.isViewer ? " is-viewer" : ""}">
+        <span class="spec-facepile-circle"
+              style="background:${escapeHtml(colorForActor(p.name))}"
+              aria-hidden="true"
+        >${escapeHtml(initialsForActor(p.name))}</span>
+        <span class="spec-popover-name">${escapeHtml(p.name)}</span>
+        <span class="spec-popover-meta">${escapeHtml(meta)}</span>
+      </li>
+    `;
+  }).join("");
+  specParticipantsPopover.innerHTML = `
+    <div class="spec-popover-head">Participants <span class="spec-popover-count">${participants.length}</span></div>
+    <ul class="spec-popover-list" role="list">${itemsHtml}</ul>
+  `;
+}
+
+function toggleSpecParticipantsPopover(forceState) {
+  if (!specParticipantsFacepile || !specParticipantsPopover) return;
+  const willOpen = typeof forceState === "boolean"
+    ? forceState
+    : specParticipantsPopover.hidden;
+  if (willOpen) {
+    renderSpecParticipantsPopover();
+    specParticipantsPopover.hidden = false;
+    specParticipantsFacepile.setAttribute("aria-expanded", "true");
+  } else {
+    specParticipantsPopover.hidden = true;
+    specParticipantsFacepile.setAttribute("aria-expanded", "false");
+  }
+}
+
 function syncSpecToolbarChrome() {
   const ctx = state.spec.context;
   const comments = ctx?.comments || [];
@@ -4093,6 +4252,7 @@ function syncSpecToolbarChrome() {
   const totalS = suggestions.length;
   document.querySelectorAll('[data-spec-count="comments"]').forEach((el) => { el.textContent = totalC; });
   document.querySelectorAll('[data-spec-count="suggestions"]').forEach((el) => { el.textContent = totalS; });
+  renderSpecParticipantsFacepile();
   specViewSegButtons.forEach((btn) => {
     const active = btn.dataset.specView === state.spec.viewMode;
     btn.classList.toggle("is-on", active);
@@ -5870,6 +6030,47 @@ specCommentCancelButton.addEventListener("click", () => {
   specCommentAnchorInput.value = "";
   setSpecCommentAnchorMode("global");
 });
+
+// ── Participants facepile interactions ────────────────────────────────
+// Click toggles the popover. Document click closes it (except clicks on
+// the facepile or inside the popover). Esc closes it. The viewer's actor
+// input is live-bound — typing in it updates the facepile in real time so
+// they see "themselves" change name as they type.
+
+if (specParticipantsFacepile) {
+  specParticipantsFacepile.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleSpecParticipantsPopover();
+  });
+}
+
+if (specParticipantsPopover) {
+  // Clicks inside the popover should not close it (allows future interactive
+  // children, e.g. filter-by-participant).
+  specParticipantsPopover.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+}
+
+document.addEventListener("click", (event) => {
+  if (!specParticipantsPopover || specParticipantsPopover.hidden) return;
+  if (specParticipantsFacepile?.contains(event.target)) return;
+  if (specParticipantsPopover.contains(event.target)) return;
+  toggleSpecParticipantsPopover(false);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && specParticipantsPopover && !specParticipantsPopover.hidden) {
+    toggleSpecParticipantsPopover(false);
+    specParticipantsFacepile?.focus();
+  }
+});
+
+if (specCommentByInput) {
+  specCommentByInput.addEventListener("input", () => {
+    renderSpecParticipantsFacepile();
+  });
+}
 
 specSuggestionCancelButton.addEventListener("click", () => {
   hideSpecComposerForm();

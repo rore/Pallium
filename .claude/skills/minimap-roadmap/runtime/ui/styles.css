@@ -1680,10 +1680,6 @@ body[data-app-mode="spec"] .app-mode-button.is-active {
   box-shadow: inset 0 0 0 0.5px var(--spec-line-strong, #d6d6df);
 }
 body[data-app-mode="spec"] .topbar-meta { gap: 6px; }
-body[data-app-mode="spec"] #refresh-button {
-  padding: 4px 10px;
-  font-size: 0.78rem;
-}
 
 .layout[data-scope-collapsed="true"] {
   grid-template-columns: minmax(290px, 340px) minmax(620px, 1fr) 0px var(--scope-width-collapsed);
@@ -4108,4 +4104,164 @@ body[data-setup-mode="true"] .setup-side-stack {
 .board-item-missing-copy:hover {
   background: #fff;
   border-color: rgba(193, 119, 47, 0.55);
+}
+
+/* ── Participants facepile (spec view) ───────────────────────────────────
+   Google Docs-style stacked initial circles indicating who has touched
+   this spec. Sits at the right edge of the comments-column toolbar.
+   Visible in both Review and Read modes (presence is presence). */
+
+.spec-pane:has(.spec-doc[data-view-mode="read"]) .spec-pane-toolbar-margin > #spec-participants-facepile,
+.spec-pane:has(.spec-doc[data-view-mode="read"]) .spec-pane-toolbar-margin > #spec-participants-popover {
+  display: revert;
+}
+
+.spec-facepile {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 3px 6px 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--spec-muted, #6c7385);
+  font-size: 0.78rem;
+  font-weight: 500;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.spec-facepile:hover,
+.spec-facepile[aria-expanded="true"] {
+  background: var(--spec-panel-soft, #f8f8fa);
+  border-color: var(--spec-line, #e6e6ec);
+}
+
+.spec-facepile-circles {
+  display: inline-flex;
+  align-items: center;
+}
+
+.spec-facepile-circles .spec-facepile-circle + .spec-facepile-circle {
+  margin-left: -8px;
+}
+
+.spec-facepile-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #888;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  /* White ring so overlapping circles read as separate disks. */
+  box-shadow: 0 0 0 1.5px var(--spec-panel, #ffffff);
+  user-select: none;
+}
+
+.spec-facepile-circle.is-viewer {
+  /* Subtle outline so the viewer is identifiable in the stack. */
+  box-shadow: 0 0 0 1.5px var(--spec-panel, #ffffff), 0 0 0 2.5px var(--spec-line-strong, #d6d6df);
+}
+
+.spec-facepile-overflow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--spec-panel-soft, #f8f8fa);
+  color: var(--spec-text, #1c2331);
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--spec-line, #e6e6ec);
+}
+
+.spec-popover {
+  position: absolute;
+  /* Anchored relative to the topbar/toolbar — JS does no positioning, so we
+     pin it to the viewport's right edge, top, with a gap. Good enough for
+     the desktop layouts the spec view targets. */
+  top: 96px;
+  right: 28px;
+  z-index: 30;
+  width: 260px;
+  max-height: 360px;
+  overflow: auto;
+  background: var(--spec-panel, #ffffff);
+  border: 1px solid var(--spec-line-strong, #d6d6df);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.10);
+  padding: 8px 4px;
+  font-size: 0.82rem;
+}
+
+.spec-popover-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--spec-muted, #6c7385);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.spec-popover-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  padding: 0 5px;
+  height: 18px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--spec-text, #1c2331);
+  background: var(--spec-panel-soft, #f8f8fa);
+  border-radius: 999px;
+}
+
+.spec-popover-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.spec-popover-item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 6px;
+}
+
+.spec-popover-item:hover {
+  background: var(--spec-panel-soft, #f8f8fa);
+}
+
+.spec-popover-item.is-viewer .spec-popover-name {
+  font-weight: 600;
+  color: var(--spec-text, #1c2331);
+}
+
+.spec-popover-name {
+  color: var(--spec-text, #1c2331);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spec-popover-meta {
+  color: var(--spec-muted, #6c7385);
+  font-size: 0.72rem;
+  white-space: nowrap;
 }
