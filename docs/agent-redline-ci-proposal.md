@@ -1,20 +1,33 @@
 # agent-redline CI Proposal
 
-**Status:** proposal — NOT applied automatically. Review with whoever owns CI, apply when ready.
+**Status:** Applied. The workflow at [.github/workflows/agent-redline.yml](../.github/workflows/agent-redline.yml) is live on `main` in **push-driven mode**. This document is preserved for the original PR-driven shape (§1 below) and the rollout decisions (§4–§7) that still apply.
 
 This bootstrap committed `agent-policy.yaml`, `[tool.importlinter]` rules in `pyproject.toml`, the local pre-push script, the PR template, and per-checkpoint docs in `docs/agent/`. **CI integration affects every push** and is left to a human decision.
 
+## Why Pallium uses push-driven mode
+
+The PR-driven shape in §1 is the agent-redline default. Pallium picked the push-driven shape (`on: push: branches: [main]`) instead because the actual flow is direct-to-main: 141 commits / 30 days, 2 PRs total. PR-shaped governance would only fire on ~1.4% of changes.
+
+Trade-offs:
+- **No sticky PR comment.** Verdict goes to the workflow log + an `agent-redline-verdict` artifact.
+- **Enforce step fails CI on exit 1 OR exit 2** (not just exit 2). Without a PR comment, CI red is the only visibility channel for exit-1 warnings (gray zone, watch-list touched, unmet checkpoint in shadow, pr-size warn).
+- **Calibration ran via the tuner's `--push-history` mode** rather than `--pr-dir`. Output: every red rule fires below 15%; tuner had no demotion suggestions.
+
+The push-driven shape and tuner mode are documented in the agent-redline skill at `.claude/skills/agent-redline/extensions/python/scaffold.md` §5b.
+
 ## What this proposal covers
 
-1. A new `.github/workflows/agent-redline.yml` workflow
+1. The PR-driven workflow shape (the framework default; not what Pallium uses)
 2. CODEOWNERS additions
 3. Branch-protection updates
 4. The recommended initial mode (shadow)
 5. The boundary-backend baseline question
+6. Verifying locally
+7. Decisions explicitly flagged for human judgment
 
-## 1. Proposed workflow file
+## 1. PR-driven workflow shape (framework default — not what Pallium uses)
 
-Write this to `.github/workflows/agent-redline.yml` when ready to apply:
+Pallium's live workflow uses the push-driven shape (see "Why Pallium uses push-driven mode" above and the workflow file directly). The PR-driven shape below is preserved as documentation for teams that operate through PRs.
 
 ```yaml
 name: agent-redline
@@ -163,7 +176,7 @@ Until owners exist, checkpoint satisfaction falls back to the labels declared in
 
 ## 3. Branch protection
 
-When you flip the workflow on, update `main` branch protection to include the new check as required:
+The current workflow runs **on push to `main`**, so branch-protection-as-required-status-checks is moot for Pallium today (status checks gate PRs, but Pallium's flow is direct-push). If/when collaborators arrive and PRs become normal, switch the workflow to PR-driven (or list both triggers) and then add to required-status-checks:
 
 - Settings → Branches → Branch protection rules for `main`
 - Required status checks:
@@ -174,7 +187,7 @@ When you flip the workflow on, update `main` branch protection to include the ne
   - **`Boundary check (import-linter)` ← new**
   - **`agent-redline report` ← new**
 
-For the soft-launch (shadow mode), do NOT add the new checks to required-status-checks yet. Watch the PR comments / job results for 4 weeks or 30 PRs, tune `agent-policy.yaml` based on what fires often, then promote to required.
+For the soft-launch (shadow mode), do NOT add the new checks to required-status-checks yet. Watch the workflow log + verdict artifact for 4 weeks or 30 changesets, tune `agent-policy.yaml` based on what fires often, then promote to required.
 
 ## 4. Recommended initial mode: shadow
 
@@ -239,17 +252,16 @@ The pre-push check runs the import-linter adapter automatically when it's presen
 
 These were not decided automatically — pick when you're ready:
 
-1. **When to apply this workflow file.** Now, in a soft-launch branch, or after watching shadow-mode signal for a Window? **(Already applied — `.github/workflows/agent-redline.yml` exists in the repo.)**
-2. **CODEOWNERS handles.** Solo dev today; replace `TODO(owner):` with `@your-handle` when ready, or skip until collaborators exist.
-3. **Whether to drop `continue-on-error: true` on the boundary job.** Keep it during shadow; drop it once you flip `modes.default: shadow → binding` in `agent-policy.yaml`. After the flip, the reporter's exit-2 path will catch boundary violations through `boundaryAdapter`, making the boundary job's `continue-on-error` redundant — drop both together.
-4. **Whether to baseline pre-existing violations.** Bootstrap analysis says contracts pass today; verify with `python scripts/run-import-linter.py` before flipping.
-5. **`storage.sqlite_workstream → capabilities.workstreams` follow-up refactor.** Move `WorkstreamStore` out of `capabilities/` (or out of `storage/`, depending on which side you want to own it) and drop the last baselined exception. Tracked in AGENTS.md "Known import-graph smells"; not bootstrap work.
+1. **When to apply this workflow file.** **(Decided: applied; live in push-driven mode on `main`.)**
+2. **PR-driven vs push-driven shape.** **(Decided: push-driven — see "Why Pallium uses push-driven mode" above.)** Switch to PR-driven (or list both triggers) when PRs become a normal part of the flow.
+3. **CODEOWNERS handles.** Solo dev today; replace `TODO(owner):` with `@your-handle` when ready, or skip until collaborators exist.
+4. **Whether to flip `modes.default: shadow → binding`.** The tuner's `--push-history --branch main --limit 30` run shows every red rule firing below 15% (no demotion suggestions). Calibration supports flipping. After the flip, drop `continue-on-error: true` from the boundary job in the same change — the reporter's exit-2 path catches boundary violations through `boundaryAdapter`, making the boundary job's `continue-on-error` redundant.
+5. **Whether to baseline pre-existing violations.** Bootstrap analysis says contracts pass today (verified by every CI run since); no baselines needed beyond the one already in `pyproject.toml` for `storage.sqlite_workstream → capabilities.workstreams`.
+6. **`storage.sqlite_workstream → capabilities.workstreams` follow-up refactor.** Move `WorkstreamStore` out of `capabilities/` (or out of `storage/`, depending on which side you want to own it) and drop the last baselined exception. Tracked in AGENTS.md "Known import-graph smells"; not bootstrap work.
 
 ## What still needs human action after applying this
 
-- [x] Write `.github/workflows/agent-redline.yml` (copy from §1 above)
+- [x] Write `.github/workflows/agent-redline.yml` (live, push-driven shape)
 - [ ] Decide on CODEOWNERS (§2) — skip or add with placeholders
-- [ ] Update branch protection on `main` (§3) — only after Window
-- [ ] Run shadow mode for 4 weeks / 30 PRs (§4)
-- [ ] Validate boundary baseline on `main` (§5)
+- [ ] Decide on `modes.default: shadow → binding` flip (§7.4) — tuner says yes
 - [ ] Replace placeholder owner handles when collaborators arrive
