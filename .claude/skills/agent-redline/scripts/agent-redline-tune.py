@@ -50,14 +50,33 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+# Also add this script's own directory so the dist-mode `_reporter`
+# sibling import resolves regardless of the caller's cwd.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from core.reporter.reporter import (  # noqa: E402
-    Diff,
-    classify,
-    classify_files,
-    load_policy,
-    matches,
-)
+# Two import paths:
+#   - source repo: classification logic lives at core/reporter/reporter.py
+#   - packaged skill (dist): classification logic ships as a private
+#     sibling `_reporter.py` next to this script, because core/ is not
+#     vendored into dist/agent-redline/. See scripts/package-skill.sh §6
+#     for why the dist gets two copies (importable name + user-facing
+#     hyphenated name).
+try:
+    from core.reporter.reporter import (  # noqa: E402
+        Diff,
+        classify,
+        classify_files,
+        load_policy,
+        matches,
+    )
+except ModuleNotFoundError:
+    from _reporter import (  # type: ignore[no-redef]  # noqa: E402
+        Diff,
+        classify,
+        classify_files,
+        load_policy,
+        matches,
+    )
 
 
 def load_prs_from_dir(pr_dir: Path) -> dict[str, list[str]]:
