@@ -846,9 +846,12 @@ def render_markdown(verdict: Verdict, flow_mode: str = "pr") -> str:
     if verdict.security_changes.get("detected"):
         lines.append("**Security check:** changes detected")
 
-    # PR size
+    # Change-size line. PR-mode calls it "PR size" (matches the surface
+    # the reviewer sees — a pull request); push-mode calls it "Change
+    # size" (no PR exists; the unit is the push diff).
     sz = verdict.pr_size
-    lines.append(f"**PR size:** {sz['files']} files / {sz['lines']} lines ({sz['verdict']})")
+    size_label = "Change size" if flow_mode == "push" else "PR size"
+    lines.append(f"**{size_label}:** {sz['files']} files / {sz['lines']} lines ({sz['verdict']})")
 
     return "\n".join(lines).rstrip() + "\n"
 
