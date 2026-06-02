@@ -234,6 +234,7 @@ excludes:
   - "vector_index.idmap.json"
   - "vector_index.meta.json"
   - "data/longmemeval/**"
+  - ".claude/skills/**"   # vendored skill content; provenance and tests live upstream
 
 boundaryAdapter:
   outputFormat: json-violations
