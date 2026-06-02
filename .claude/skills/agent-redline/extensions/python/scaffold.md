@@ -318,7 +318,23 @@ jobs:
           echo "--- comment.md ---" && cat build/comment.md
           echo "reporter exit code: $EXIT"
 
+      - name: Write verdict to job summary
+        # Without a PR sticky comment, the run page itself is the
+        # primary visibility surface. Appending comment.md to
+        # $GITHUB_STEP_SUMMARY makes the verdict show up at the top of
+        # the workflow run's summary page on github.com — visible with
+        # one click from the commit, no artifact download required.
+        # The artifact below stays as the machine-readable copy.
+        if: always()
+        run: |
+          {
+            echo "## agent-redline verdict"
+            echo
+            cat build/comment.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload verdict artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: agent-redline-verdict
@@ -331,12 +347,13 @@ jobs:
         # CI red is the only surface for exit-1 warnings — silencing them
         # silences shadow-mode signal entirely. If you prefer informational
         # warnings, change `[[ "$EXIT" != "0" ]]` to `[[ "$EXIT" == "2" ]]`
-        # and add an artifact-or-comment surface elsewhere.
+        # — the verdict still appears in the run summary above, so warnings
+        # remain visible without blocking CI.
         run: |
           EXIT="${{ steps.report.outputs.exit_code }}"
           if [[ "$EXIT" != "0" ]]; then
             echo "Reporter exited $EXIT. Failing the check."
-            echo "See the agent-redline-verdict artifact for the verdict."
+            echo "See the run summary above (or the agent-redline-verdict artifact) for the full verdict."
             exit 1
           fi
           echo "Reporter exited 0 — clean."
