@@ -1,17 +1,4 @@
----
-name: minimap
-description: Use when reading, updating, or reorganizing roadmap state in a repo that uses the minimap file convention. Apply for roadmap planning and status changes; do not use for general engineering workflow unless the task is specifically about roadmap files.
----
-
-# Minimap
-
-## Intent
-
-Use the minimap roadmap files as the canonical source of roadmap and feature planning truth for the repo.
-
-The UI is only a human-friendly lens over those files. Agents and humans must operate on the same file state.
-
-For the exact roadmap contract and package boundary, read `CONTRACT.md` in the same minimap package.
+# Roadmap Contract
 
 ## Discovery
 
@@ -36,6 +23,7 @@ Do not create parallel roadmap trackers outside this structure unless the user e
 Each roadmap item is a markdown file with YAML frontmatter.
 
 Required core frontmatter:
+
 - `id`
 - `title`
 - `status`
@@ -43,9 +31,11 @@ Required core frontmatter:
 - `commitment`
 
 Optional common frontmatter supported by minimap v1:
+
 - `milestone`
 
 Expected core sections:
+
 - `Summary`
 - `Why`
 - `In Scope`
@@ -56,6 +46,7 @@ Expected core sections:
 Additional sections are allowed.
 
 When editing items:
+
 - change status, priority, commitment, and title in frontmatter, not only in prose
 - use optional common frontmatter like `milestone` in frontmatter when the repo uses it
 - preserve unknown frontmatter keys if they already exist
@@ -84,8 +75,9 @@ If the structured editor does not fit the file cleanly, prefer a valid raw markd
 ```
 
 Rules:
+
 - headings are freeform board groups chosen by the repo
-- repos can group by status, release, milestone, stream, team, or any other planning model
+- repos can group work by status, release, milestone, stream, team, or any other planning model
 - `Now`, `Next`, and `Ideas` are examples, not required semantics
 - empty board groups are still canonical structure and should be preserved when they are meaningful to the repo
 - do not prune or delete an existing board group only because it currently has no items
@@ -111,7 +103,6 @@ Do not put item status changes only in `scope.md`. Item state still belongs in t
 
 ## Recommended Agent Behavior
 
-When a roadmap task is requested:
 1. Read the relevant roadmap files first.
 2. Change the smallest set of files that actually own the requested truth.
 3. If group or order changes, update `board.md`.

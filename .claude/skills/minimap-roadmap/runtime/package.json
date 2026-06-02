@@ -1,7 +1,10 @@
 {
-  "name": "minimap-package",
+  "name": "minimap-spec-review-runtime",
   "private": true,
   "type": "module",
+  "bin": {
+    "minimap": "./cli.js"
+  },
   "scripts": {
     "start": "node server.js"
   }

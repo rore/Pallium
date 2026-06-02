@@ -1,5 +1,3 @@
-tools/minimap/.minimap-stdout.log
-tools/minimap/.minimap-stderr.log
 __pycache__/
 .pytest_cache/
 .venv/

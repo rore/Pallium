@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Minimap</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="title-wrap">
+          <p id="mode-eyebrow" class="eyebrow"></p>
+          <h1><span id="repo-name"></span> <span id="mode-title">Roadmap</span></h1>
+        </div>
+        <div class="topbar-meta">
+          <div class="app-mode-switcher" role="tablist" aria-label="Workspace mode">
+            <button id="roadmap-mode-button" class="ghost-button app-mode-button is-active" type="button" role="tab" aria-selected="true">Roadmap</button>
+            <button id="spec-mode-button" class="ghost-button app-mode-button" type="button" role="tab" aria-selected="false">Spec sessions</button>
+          </div>
+          <span id="workspace-summary" class="chip chip-muted">Loading items...</span>
+          <span id="roadmap-path" class="chip">Loading...</span>
+          <button id="refresh-button" class="ghost-button" type="button">Refresh</button>
+        </div>
+      </header>
+
+      <div id="status-banner" class="status-banner" hidden></div>
+
+      <section id="spec-workbench" class="spec-workbench" hidden>
+        <aside class="spec-sidebar" id="spec-sidebar" data-collapsed="false">
+          <div class="spec-sidebar-head">
+            <h2>Files</h2>
+            <button id="spec-files-toggle" class="spec-sidebar-toggle" type="button" aria-expanded="true" aria-label="Collapse files">‹</button>
+          </div>
+          <div class="spec-sidebar-search-wrap">
+            <input id="spec-sidebar-search" class="spec-sidebar-search" type="search" placeholder="Search files…" spellcheck="false" />
+          </div>
+          <div id="spec-session-list" class="spec-session-list"></div>
+          <form id="spec-attach-form" class="spec-attach-form">
+            <input id="spec-attach-path" type="text" placeholder="docs/my-new-feature.md" spellcheck="false" />
+            <button class="spec-attach-button" type="submit" title="Attach file">+ Attach</button>
+          </form>
+        </aside>
+
+        <main class="spec-pane">
+          <div class="spec-pane-toolbar">
+            <div class="spec-pane-toolbar-doc">
+              <div class="spec-pane-title">
+                <span id="spec-file-subtitle" class="spec-pane-file-path"></span>
+                <span id="spec-file-title" class="spec-pane-file-name">File</span>
+              </div>
+              <div class="spec-pane-toolbar-spacer"></div>
+              <div class="spec-seg" role="tablist" aria-label="Spec view">
+                <button id="spec-view-read" class="spec-seg-button" type="button" data-spec-view="read" role="tab" aria-selected="false">Read</button>
+                <button id="spec-view-review" class="spec-seg-button is-on" type="button" data-spec-view="review" role="tab" aria-selected="true">Review</button>
+              </div>
+            </div>
+            <div class="spec-pane-toolbar-margin">
+              <div class="spec-seg" id="spec-layer-seg" aria-label="Layers">
+                <button class="spec-seg-button is-on" type="button" data-spec-layer="comments" aria-pressed="true">Comments <span class="spec-seg-count" data-spec-count="comments">0</span></button>
+                <button class="spec-seg-button is-on" type="button" data-spec-layer="suggestions" aria-pressed="true">Suggestions <span class="spec-seg-count" data-spec-count="suggestions">0</span></button>
+              </div>
+              <button id="spec-resolved-toggle" class="spec-toolbar-button" type="button" aria-pressed="false">Resolved</button>
+              <button id="spec-refresh-button" class="spec-toolbar-icon-button" type="button" title="Refresh review state" aria-label="Refresh">↻</button>
+            </div>
+          </div>
+
+          <div class="spec-doc" id="spec-doc">
+            <div class="spec-body" id="spec-file-content">No spec session selected.</div>
+            <div class="spec-gutter" id="spec-gutter" role="separator" aria-orientation="vertical" aria-label="Resize comments column">
+              <span class="spec-gutter-rail"></span>
+            </div>
+            <div class="spec-margin" id="spec-margin"></div>
+          </div>
+        </main>
+
+        <div id="spec-context-toolbar" class="spec-context-toolbar" hidden>
+          <button type="button" data-spec-context-action="comment">Comment</button>
+          <button type="button" data-spec-context-action="suggest">Suggest</button>
+        </div>
+
+        <!-- Hidden composers — reused by JS for both inline and modal flows.
+             These keep all the existing form fields (and the JS that drives them) intact. -->
+        <form id="spec-comment-form" class="spec-composer" hidden>
+          <p id="spec-comment-anchor-summary" class="spec-anchor-summary">Global comment</p>
+          <label class="spec-composer-text">
+            <textarea id="spec-comment-text" rows="3" placeholder="Write a comment…"></textarea>
+          </label>
+          <div class="spec-form-grid spec-advanced-fields" hidden>
+            <label>
+              <span>Actor</span>
+              <input id="spec-comment-by" type="text" value="human" spellcheck="false" />
+            </label>
+            <label>
+              <span>Kind</span>
+              <select id="spec-comment-kind">
+                <option value="concern">concern</option>
+                <option value="question">question</option>
+                <option value="instruction">instruction</option>
+                <option value="recommendation">recommendation</option>
+                <option value="confirmation">confirmation</option>
+                <option value="disagreement">disagreement</option>
+                <option value="evidence">evidence</option>
+                <option value="conclusion">conclusion</option>
+              </select>
+            </label>
+          </div>
+          <div class="spec-anchor-mode spec-advanced-fields" role="tablist" aria-label="Comment anchor mode" hidden>
+            <button class="spec-anchor-mode-button is-active" type="button" data-comment-anchor-mode="global" role="tab" aria-selected="true">Global</button>
+            <button class="spec-anchor-mode-button" type="button" data-comment-anchor-mode="section" role="tab" aria-selected="false">Section</button>
+            <button class="spec-anchor-mode-button" type="button" data-comment-anchor-mode="quote" role="tab" aria-selected="false">Quote</button>
+          </div>
+          <label class="spec-advanced-fields" hidden>
+            <span id="spec-comment-anchor-label">Quote or heading</span>
+            <input id="spec-comment-anchor" type="text" placeholder="Exact quote, or Heading > Subheading" spellcheck="false" />
+          </label>
+          <div class="spec-composer-actions">
+            <label class="spec-global-toggle" hidden>
+              <input id="spec-comment-global" type="checkbox" />
+              <span>Global</span>
+            </label>
+            <span class="spec-composer-actions-spacer"></span>
+            <button id="spec-comment-cancel-button" class="spec-toolbar-button" type="button">Cancel</button>
+            <button class="spec-primary-button" type="submit">Comment</button>
+          </div>
+        </form>
+        <form id="spec-suggestion-form" class="spec-composer" hidden>
+          <p id="spec-suggestion-anchor-summary" class="spec-anchor-summary">Anchored to selected text</p>
+          <div class="spec-form-grid">
+            <label class="spec-advanced-fields" hidden>
+              <span>Actor</span>
+              <input id="spec-suggestion-by" type="text" value="human" spellcheck="false" />
+            </label>
+            <label>
+              <span>Change</span>
+              <select id="spec-suggestion-kind">
+                <option value="replace">replace</option>
+                <option value="insert_after">insert after</option>
+                <option value="delete">delete</option>
+              </select>
+            </label>
+          </div>
+          <div class="spec-anchor-mode spec-advanced-fields" role="tablist" aria-label="Suggestion anchor mode" hidden>
+            <button class="spec-anchor-mode-button is-active" type="button" data-suggestion-anchor-mode="quote" role="tab" aria-selected="true">Quote</button>
+            <button class="spec-anchor-mode-button" type="button" data-suggestion-anchor-mode="section" role="tab" aria-selected="false">Section</button>
+          </div>
+          <label class="spec-advanced-fields" hidden>
+            <span id="spec-suggestion-anchor-label">Quote</span>
+            <input id="spec-suggestion-anchor" type="text" placeholder="Exact quote from the file" spellcheck="false" />
+          </label>
+          <label>
+            <span>Suggested content</span>
+            <textarea id="spec-suggestion-content" rows="3" placeholder="Replacement or inserted text. Leave empty for delete."></textarea>
+          </label>
+          <label>
+            <span>Rationale</span>
+            <textarea id="spec-suggestion-rationale" rows="2" placeholder="Why this change should be considered."></textarea>
+          </label>
+          <div class="spec-composer-actions">
+            <span class="spec-composer-actions-spacer"></span>
+            <button id="spec-suggestion-cancel-button" class="spec-toolbar-button" type="button">Cancel</button>
+            <button class="spec-primary-button" type="submit">Suggest</button>
+          </div>
+        </form>
+      </section>
+
+      <main class="layout" id="layout-shell" data-scope-collapsed="false">
+        <section class="panel board-panel" id="board-panel">
+          <div class="panel-header">
+            <div class="panel-header-main">
+              <h2>Board</h2>
+            </div>
+            <div class="panel-actions">
+              <button id="board-edit-button" class="ghost-button" type="button">Edit</button>
+              <button id="board-save-button" class="ghost-button" type="button" hidden>Save</button>
+              <button id="board-cancel-button" class="ghost-button" type="button" hidden>Cancel</button>
+              <button id="jump-to-editor" class="ghost-button mobile-nav-button" type="button" hidden>Open item</button>
+            </div>
+          </div>
+          <div class="board-controls" id="board-controls">
+            <div class="board-mode-row">
+              <div class="board-mode-actions">
+                <button id="board-view-toggle" class="ghost-button board-view-toggle" type="button" aria-expanded="false">Group by</button>
+                <div id="board-layout-controls" class="board-layout-controls" role="tablist" aria-label="Board layout">
+                  <button id="board-layout-list" class="ghost-button board-layout-button is-active" type="button" role="tab" aria-selected="true">List</button>
+                  <button id="board-layout-columns" class="ghost-button board-layout-button" type="button" role="tab" aria-selected="false">Columns</button>
+                </div>
+              </div>
+            </div>
+            <div id="board-lens-switcher" class="board-lens-panel" hidden></div>
+            <div class="board-toolbar-row">
+              <label class="board-search-field" for="board-search">
+                <span class="visually-hidden">Search roadmap</span>
+                <input id="board-search" type="search" placeholder="Search" autocomplete="off" spellcheck="false" />
+              </label>
+              <div class="board-control-actions">
+                <button id="board-filter-toggle" class="ghost-button board-filter-toggle" type="button" aria-expanded="false">Filters</button>
+                <button id="board-clear-filters" class="ghost-button board-clear-button" type="button">Clear</button>
+              </div>
+            </div>
+            <div id="board-filters" class="board-filters" hidden></div>
+          </div>
+          <div id="board-groups" class="board-groups"></div>
+        </section>
+
+        <section class="panel editor-panel" id="editor-panel" data-editor-mode="structured">
+          <div class="panel-header editor-header">
+            <div class="editor-heading">
+              <div class="editor-heading-top">
+                <h2 id="editor-title">Item</h2>
+              </div>
+              <p id="editor-subtitle" class="muted">Choose an item from the board.</p>
+            </div>
+            <div class="editor-tabs" id="editor-tabs" role="tablist" aria-label="Item editor modes">
+              <button class="editor-tab is-active" id="tab-preview" data-editor-mode="preview" type="button" role="tab" aria-selected="true">Read</button>
+              <button class="editor-tab" id="tab-structured" data-editor-mode="structured" type="button" role="tab" aria-selected="false">Edit</button>
+              <button class="editor-tab" id="tab-raw" data-editor-mode="raw" type="button" role="tab" aria-selected="false">Raw</button>
+            </div>
+            <div class="editor-actions">
+              <button id="jump-to-board" class="ghost-button mobile-nav-button" type="button">Board</button>
+              <button id="open-in-spec-button" class="ghost-button" type="button" hidden title="Open this item as a spec session for anchored comments and suggestions">Review</button>
+              <button id="editor-cancel-button" class="ghost-button" type="button" hidden>Cancel</button>
+              <button id="editor-overlay-close" class="ghost-button" type="button" hidden>Close</button>
+              <button id="save-button" class="primary-button" type="button" disabled>Save</button>
+            </div>
+          </div>
+
+          <div class="editor-panels">
+            <section id="setup-view" class="editor-pane setup-view" hidden></section>
+
+            <form id="item-form" class="item-form editor-pane" data-mode-pane="structured">
+              <details class="metadata-details">
+                <summary id="metadata-toggle" class="metadata-summary">
+                  <span class="metadata-summary-title">Item details</span>
+                  <span class="metadata-summary-copy">Title, board group, status, priority, commitment, milestone, and repo metadata</span>
+                </summary>
+
+                <div class="metadata-grid">
+                  <label>
+                    <span>ID</span>
+                    <input id="field-id" name="id" type="text" readonly />
+                  </label>
+
+                  <label>
+                    <span>Title</span>
+                    <input id="field-title" name="title" type="text" />
+                  </label>
+
+                  <label>
+                    <span>Status</span>
+                    <select id="field-status" name="status">
+                      <option value="queued">queued</option>
+                      <option value="in-progress">in-progress</option>
+                      <option value="blocked">blocked</option>
+                      <option value="done">done</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    <span>Priority</span>
+                    <select id="field-priority" name="priority">
+                      <option value="high">high</option>
+                      <option value="medium">medium</option>
+                      <option value="low">low</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    <span>Commitment</span>
+                    <select id="field-commitment" name="commitment">
+                      <option value="committed">committed</option>
+                      <option value="uncommitted">uncommitted</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    <span>Board group</span>
+                    <select id="field-board-group" name="boardGroup"></select>
+                  </label>
+
+                  <label>
+                    <span>Milestone</span>
+                    <input id="field-milestone" name="milestone" type="text" placeholder="Optional" />
+                  </label>
+
+                  <div id="extra-metadata-fields" class="metadata-extra-fields" hidden></div>
+                </div>
+
+                <p class="muted editor-note">Markdown is allowed inside every section. Minimap keeps unknown frontmatter and extra sections intact.</p>
+              </details>
+
+              <div id="sections-container" class="section-stack structured-sections"></div>
+            </form>
+
+            <section class="editor-pane" data-mode-pane="preview" hidden>
+              <div id="item-preview" class="preview-surface preview-empty">Choose an item from the board to read it here.</div>
+            </section>
+
+            <section class="editor-pane raw-pane" data-mode-pane="raw" hidden>
+              <div class="raw-pane-header">
+                <h3>Raw Markdown</h3>
+                <p class="muted">Use this for uncommon metadata or formatting that does not fit the structured editor.</p>
+              </div>
+              <textarea id="raw-text" class="raw-textarea" spellcheck="false"></textarea>
+            </section>
+          </div>
+        </section>
+        <div id="editor-panel-anchor" hidden></div>
+
+        <div class="scope-resizer" id="scope-resizer" role="separator" aria-orientation="vertical" aria-label="Resize scope panel"></div>
+
+        <section class="panel scope-panel" id="scope-panel">
+          <div class="panel-header">
+            <div class="panel-header-main">
+              <h2>Scope</h2>
+              <span id="scope-subtitle" class="muted" hidden></span>
+            </div>
+            <div class="panel-actions">
+              <button id="scope-edit-button" class="ghost-button" type="button">Edit</button>
+              <button id="scope-save-button" class="ghost-button" type="button" hidden>Save</button>
+              <button id="scope-cancel-button" class="ghost-button" type="button" hidden>Cancel</button>
+              <button id="scope-toggle" class="scope-toggle-button" type="button" aria-expanded="true">Collapse</button>
+            </div>
+          </div>
+          <div id="scope-content" class="scope-content"></div>
+          <textarea id="scope-text" class="scope-textarea" hidden spellcheck="false"></textarea>
+        </section>
+      </main>
+
+      <div id="editor-overlay" class="editor-overlay" hidden aria-hidden="true">
+        <button id="editor-overlay-backdrop" class="editor-overlay-backdrop" type="button" aria-label="Close item overlay"></button>
+        <div id="editor-overlay-slot" class="editor-overlay-slot"></div>
+      </div>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
+

@@ -327,6 +327,7 @@ function makeItemSummary(itemRecord) {
     commitment: itemRecord.parsed.frontmatter.commitment,
     milestone: itemRecord.parsed.frontmatter.milestone ?? "",
     kind: itemRecord.kind,
+    filePath: itemRecord.filePath,
     metadata,
     overviewHeading: overview.heading,
     overviewExcerpt: overview.excerpt,

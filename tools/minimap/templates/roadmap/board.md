@@ -1,5 +1,0 @@
-# Now
-
-# Next
-
-# Ideas
