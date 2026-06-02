@@ -52,6 +52,7 @@ dev = [
     "pytest>=8.3,<9.0",
     "pytest-asyncio>=0.24,<1.0",
     "pytest-xdist>=3.6,<4.0",
+    "import-linter>=2.0,<3",
 ]
 
 [tool.pytest.ini_options]
@@ -80,3 +81,77 @@ packages = [
     "semantic",
     "storage",
 ]
+
+# ----------------------------------------------------------------------
+# import-linter — enforces the boundary contracts declared in
+# agent-policy.yaml (boundaries:). See AGENTS.md for the framing.
+#
+# Run:    python -m importlinter
+# CI:     python scripts/run-import-linter.py --out build/import-linter-report.json
+# ----------------------------------------------------------------------
+[tool.importlinter]
+root_packages = ["api", "app", "capabilities", "core", "providers", "retrieval", "semantic", "storage"]
+exclude_type_checking_imports = true
+include_external_packages = false
+
+# Every `forbidden` contract sets `allow_indirect_imports = true` to assert
+# DIRECT boundaries only. The core ↔ semantic / core → capabilities tangle
+# (see AGENTS.md "Known import-graph smells") would make transitive checks
+# unsatisfiable (e.g. api → core → semantic).
+
+# 1. providers is a leaf — never imports siblings.
+[[tool.importlinter.contracts]]
+name = "providers stays leaf"
+type = "forbidden"
+source_modules = ["providers"]
+forbidden_modules = ["api", "app", "capabilities", "core", "retrieval", "semantic", "storage"]
+allow_indirect_imports = true
+
+# 2. retrieval stays below orchestration.
+[[tool.importlinter.contracts]]
+name = "retrieval stays below orchestration"
+type = "forbidden"
+source_modules = ["retrieval"]
+forbidden_modules = ["api", "app", "capabilities", "semantic"]
+allow_indirect_imports = true
+
+# 3. semantic stays below the runtime/HTTP entry layers.
+[[tool.importlinter.contracts]]
+name = "semantic stays below runtime"
+type = "forbidden"
+source_modules = ["semantic"]
+forbidden_modules = ["api", "app"]
+allow_indirect_imports = true
+
+# 4. api stays thin — only depends on core.
+[[tool.importlinter.contracts]]
+name = "api stays thin"
+type = "forbidden"
+source_modules = ["api"]
+forbidden_modules = ["app", "capabilities", "semantic", "retrieval", "storage", "providers"]
+allow_indirect_imports = true
+
+# 5. semantic.* submodules don't form import cycles.
+[[tool.importlinter.contracts]]
+name = "semantic siblings acyclic"
+type = "acyclic_siblings"
+ancestors = ["semantic"]
+
+# 6. storage → app: no direct imports allowed.
+[[tool.importlinter.contracts]]
+name = "storage stays out of app"
+type = "forbidden"
+source_modules = ["storage"]
+forbidden_modules = ["app"]
+allow_indirect_imports = true
+
+# 7. storage → capabilities: one baselined import. Adding a second offender
+#    fails CI. The exception (storage.sqlite_workstream ->
+#    capabilities.workstreams) is documented in AGENTS.md.
+[[tool.importlinter.contracts]]
+name = "storage stays out of capabilities (one baselined exception)"
+type = "forbidden"
+source_modules = ["storage"]
+forbidden_modules = ["capabilities"]
+allow_indirect_imports = true
+ignore_imports = ["storage.sqlite_workstream -> capabilities.workstreams"]

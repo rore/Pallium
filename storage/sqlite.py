@@ -9,7 +9,7 @@ from typing import Any, Callable, TypeVar
 from sqlalchemy import create_engine, event, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.transient_errors import is_transient_error
+from core.errors import is_transient_error
 from core.contracts import ProcessResult
 from core.models import EvidenceReference, IndexEntry, MemoryFeedback, MemoryFlag, MemoryObject, Relation, SourceItem, utc_now
 from core.turn_inference import ThreadStats

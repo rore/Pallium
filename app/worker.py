@@ -10,7 +10,7 @@ from app.config import AppConfig
 from app.dependencies import build_service
 from app.runtime_logging import emit_runtime_log
 from app.signal_context import graceful_stop
-from app.transient_errors import is_transient_error
+from core.errors import is_transient_error
 from core.contracts import ItemProcessingResult
 from storage.base import ThreadProcessingLease
 from core.service import DEFAULT_PROCESSING_LEASE_SECONDS, DEFAULT_PROCESSING_MAX_ATTEMPTS

@@ -1,0 +1,21 @@
+# python adapter config
+#
+# Tells the agent-redline reporter where the boundary-rule backend writes its
+# output and what format it's in. import-linter has no built-in machine-readable
+# output, so the extension ships scripts/run-import-linter.py which runs
+# import-linter's internal Report API and emits the json-violations format
+# documented at core/schema/boundary-violations.schema.json.
+
+boundaryAdapter:
+  outputFormat: json-violations
+  outputPath: build/import-linter-report.json
+
+# Notes for the reporter:
+# - The json-violations document already contains only boundary-rule
+#   violations (one entry per broken import-linter contract). No
+#   violationFilter is needed.
+# - The CI workflow runs scripts/run-import-linter.py before the reporter; the
+#   reporter then reads outputPath and dispatches on outputFormat.
+# - For zone-only Python repos (data pipelines, notebooks, libraries that
+#   choose not to enforce contracts), bootstrap writes outputFormat: none in
+#   the consuming repo's policy and the reporter skips boundary parsing.

@@ -1,0 +1,24 @@
+# spring-archunit adapter config
+#
+# Tells the agent-redline reporter where to find ArchUnit's output and what
+# format it's in. ArchUnit produces standard JUnit XML through Gradle's
+# default test reporting.
+
+boundaryAdapter:
+  outputFormat: junit-xml
+  outputPath: build/test-results/test/TEST-*ArchitectureTest.xml
+
+  # How to identify boundary-rule violations vs other test failures in the JUnit XML.
+  # Architecture tests live in a class named *ArchitectureTest by convention.
+  violationFilter:
+    matchClassName: "ArchitectureTest"
+    matchTestNamePattern: "(?i).*depend.*|.*should_not.*|.*must_not.*"
+
+# Notes for the reporter:
+# - JUnit XML is read with the reporter's built-in junit-xml parser.
+# - The matchClassName/matchTestNamePattern filter ensures non-architecture
+#   test failures (e.g., a normal unit test failure) are NOT misreported as
+#   boundary-rule violations.
+# - If the build writes results to a non-standard path (Maven's
+#   target/surefire-reports/ or a custom Gradle reportsDir), the bootstrap
+#   skill should update outputPath in the consuming repo's policy.

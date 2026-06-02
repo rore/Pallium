@@ -15,7 +15,7 @@ from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES, _vector_index_path_for_sqlite
 from app.processor import run_processor
 from app.worker import run_worker
-from app.transient_errors import is_transient_error
+from core.errors import is_transient_error
 from app import supervisor
 from core.contracts import ProcessResult, build_source_item
 from core.service import DEFAULT_PROCESSING_LEASE_SECONDS, PalliumService

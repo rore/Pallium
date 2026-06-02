@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/rore/agent-redline/core/schema/agent-policy.schema.json",
+  "title": "agent-redline policy schema v1",
+  "description": "Schema for agent-policy.yaml. See docs/POLICY_SCHEMA.md for the normative reference.",
+  "type": "object",
+  "required": ["version", "project", "zones"],
+  "additionalProperties": false,
+
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Currently must be 1."
+    },
+
+    "project": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "extension": {
+          "type": "string",
+          "description": "Names the language extension, e.g. spring-archunit."
+        }
+      }
+    },
+
+    "zones": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "red":   { "$ref": "#/$defs/zoneList" },
+        "blue":  { "$ref": "#/$defs/zoneList" },
+        "watch": { "$ref": "#/$defs/zoneList" }
+      },
+      "anyOf": [
+        { "required": ["red"] },
+        { "required": ["blue"] }
+      ],
+      "description": "Red and blue are exclusive zone classifications; at least one must be non-empty. Watch is an additive tag — paths listed under watch are surfaced in the PR comment regardless of how they're otherwise classified (red, blue, or implicit gray). Files not matched by any zone are treated as gray (the residual bucket)."
+    },
+
+    "boundaries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "description", "from", "forbidImports"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "description": "kebab-case-string; unique within file."
+          },
+          "description": { "type": "string", "minLength": 1 },
+          "from":         { "type": "string", "minLength": 1 },
+          "forbidImports": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "severity": { "enum": ["error", "warn"] }
+        }
+      }
+    },
+
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": ["openapi-spec-file", "openapi-from-controllers", "graphql", "proto", "none"]
+        },
+        "specPath": { "type": "string" },
+        "generationCommand": {
+          "type": "string",
+          "description": "For openapi-from-controllers: command the CI workflow runs at base and head SHAs to produce the OpenAPI spec. The reporter does not run this command itself; the workflow generates spec_base.yaml and spec_head.yaml and passes them to the reporter via --api-spec-base / --api-spec-head."
+        },
+        "diffMode": { "enum": ["structural", "full"] },
+        "checkpoint": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "openapi-from-controllers" } }, "required": ["type"] },
+          "then": { "required": ["generationCommand"] }
+        }
+      ]
+    },
+
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "migrationPaths": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "checkpoint": { "type": "string" },
+        "notes":      { "type": "string" }
+      },
+      "required": ["migrationPaths"]
+    },
+
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "checkpoint": { "type": "string" }
+      },
+      "required": ["paths"]
+    },
+
+    "runtimeConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "checkpoint": { "type": "string" }
+      },
+      "required": ["paths"]
+    },
+
+    "prRules": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxChangedFiles":  { "$ref": "#/$defs/warnFail" },
+        "maxLinesChanged":  { "$ref": "#/$defs/warnFail" }
+      }
+    },
+
+    "checkpoints": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z0-9]+(-[a-z0-9]+)*$": {
+          "type": "object",
+          "required": ["satisfiedBy"],
+          "additionalProperties": false,
+          "properties": {
+            "description": { "type": "string" },
+            "satisfiedBy": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "oneOf": [
+                  { "const": "codeownerApproval" },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": { "label": { "type": "string", "minLength": 1 } },
+                    "required": ["label"]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "modes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": { "enum": ["shadow", "binding"] },
+        "perCheck": {
+          "type": "object",
+          "additionalProperties": { "enum": ["shadow", "binding"] }
+        }
+      }
+    },
+
+    "excludes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+
+    "boundaryAdapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How the boundary-rule backend's output is delivered to the reporter. Mirrors the contract declared in extensions/<name>/adapter.yaml. When present and the reporter CLI is not given an explicit --boundary-format, the reporter dispatches on this block.",
+      "required": ["outputFormat"],
+      "properties": {
+        "outputFormat": {
+          "enum": ["junit-xml", "json-violations", "none"],
+          "description": "junit-xml: standard JUnit XML (used by ArchUnit). json-violations: see core/schema/boundary-violations.schema.json. none: extension declares no machine-readable boundary report; reporter skips boundary parsing."
+        },
+        "outputPath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path or glob where the backend writes its output. Required when outputFormat != 'none'."
+        },
+        "violationFilter": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Only meaningful for outputFormat: junit-xml. Identifies boundary-rule failures vs unrelated test failures in the same XML.",
+          "properties": {
+            "matchClassName": { "type": "string", "minLength": 1 },
+            "matchTestNamePattern": { "type": "string", "minLength": 1 }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "outputFormat": { "not": { "const": "none" } } },
+            "required": ["outputFormat"]
+          },
+          "then": { "required": ["outputPath"] }
+        }
+      ]
+    }
+  },
+
+  "$defs": {
+    "zoneList": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "path":       { "type": "string", "minLength": 1 },
+          "reason":     { "type": "string", "minLength": 1 },
+          "checkpoint": { "type": "string" }
+        }
+      }
+    },
+    "warnFail": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "warn": { "type": "integer", "minimum": 1 },
+        "fail": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

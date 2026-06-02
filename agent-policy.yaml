@@ -1,0 +1,240 @@
+# agent-policy.yaml — Pallium
+#
+# Bootstrapped by agent-redline (https://github.com/rore/agent-redline).
+# See AGENTS.md for the framing and known import-graph smells.
+#
+# Treat this file as red-zone: changes go through architecture-review.
+
+version: 1
+
+project:
+  name: pallium
+  extension: python
+
+# Multi-package layout: api / app / capabilities / core / providers /
+# retrieval / semantic / storage. Schema lives in storage/sqlite_schema.py
+# (no Alembic). No committed openapi.json — api: type is none; api-review
+# fires on red-zone touches to api/routes.py and api/schemas.py.
+#
+# Calibration: 0 merged PRs at bootstrap → tuner skipped. Tune red-zone
+# fire rates during Window 1 of shadow mode.
+
+zones:
+  red:
+    # --- Architecture core: cross-package contracts and runtime wiring
+    - path: "core/contracts.py"
+      reason: cross-package data contracts
+      checkpoint: architecture-review
+    - path: "core/models.py"
+      reason: cross-package domain models
+      checkpoint: architecture-review
+    - path: "core/service.py"
+      reason: PalliumService orchestrator wiring
+      checkpoint: architecture-review
+    - path: "core/routing.py"
+      reason: core ↔ semantic coupling point (see AGENTS.md smells)
+      checkpoint: architecture-review
+
+    # --- Persistence: schema + codec (schema-as-code; no migrations dir)
+    - path: "storage/sqlite_schema.py"
+      reason: SQLite schema definition (schema-as-code, no Alembic)
+      checkpoint: persistence-review
+    - path: "storage/sqlite_codec.py"
+      reason: persisted-payload encoding
+      checkpoint: persistence-review
+
+    # --- Storage→capabilities smell — gate further spread
+    - path: "storage/sqlite_workstream.py"
+      reason: storage reaching into capabilities (see AGENTS.md smells)
+      checkpoint: architecture-review
+
+    # --- API surface
+    - path: "api/schemas.py"
+      reason: HTTP request/response contracts
+      checkpoint: api-review
+    - path: "api/routes.py"
+      reason: HTTP routing surface
+      checkpoint: api-review
+
+    # --- Visibility/scoping (closest thing to authz in this codebase)
+    - path: "core/visibility.py"
+      reason: visibility/scoping rules — security-sensitive
+      checkpoint: security-review
+
+    # --- Self-protection
+    - path: "agent-policy.yaml"
+      reason: governance source of truth
+      checkpoint: architecture-review
+    - path: "pyproject.toml"
+      reason: build config & [tool.importlinter] dependency rules
+      checkpoint: architecture-review
+    - path: ".github/workflows/agent-redline.yml"
+      reason: agent-redline CI workflow (the enforcer; weakening it bypasses governance)
+      checkpoint: architecture-review
+    - path: ".github/CODEOWNERS"
+      reason: review-routing definitions; weakening allows checkpoint bypass
+      checkpoint: architecture-review
+
+  watch:
+    # Layer entry surfaces — surfaced in PR comment, no checkpoint
+    - path: "api/**"
+      reason: HTTP layer
+    - path: "app/**"
+      reason: runtime / process layer
+    - path: "capabilities/**"
+      reason: reusable capability layer
+    - path: "core/**"
+      reason: generic core
+    - path: "providers/**"
+      reason: provider abstractions (LLM, embedding)
+    - path: "retrieval/**"
+      reason: retrieval providers
+    - path: "semantic/**"
+      reason: semantic packages (package-specific)
+    - path: "storage/**"
+      reason: persistence layer
+    - path: "uv.lock"
+      reason: dependency lockfile
+
+  blue:
+    - path: "tests/**"
+      reason: tests
+    - path: "**/test_*.py"
+      reason: tests
+    - path: "**/conftest.py"
+      reason: pytest config
+    - path: "evals/**"
+      reason: eval harness — diagnostic, not production
+    - path: "docs/**"
+      reason: documentation
+    - path: "roadmap/**"
+      reason: roadmap workspace
+    - path: "scripts/**"
+      reason: local tooling
+    - path: "bruno/**"
+      reason: API client collections
+    - path: "examples/**"
+      reason: examples
+
+# Boundary contracts (metadata; enforcement lives in [tool.importlinter] in
+# pyproject.toml). Five protective layer rules + two narrow forbidden
+# contracts for known smells (one baselined import each — adding a SECOND
+# offender will fail the contract).
+boundaries:
+  - id: providers-stays-leaf
+    description: providers/* must not import any sibling package
+    from: providers
+    forbidImports: [api, app, capabilities, core, retrieval, semantic, storage]
+    severity: error
+
+  - id: retrieval-below-orchestration
+    description: retrieval/* must not import api, app, capabilities, or semantic
+    from: retrieval
+    forbidImports: [api, app, capabilities, semantic]
+    severity: error
+
+  - id: semantic-below-runtime
+    description: semantic/* must not import api or app
+    from: semantic
+    forbidImports: [api, app]
+    severity: error
+
+  - id: api-stays-thin
+    description: api/* may only import core (no other siblings)
+    from: api
+    forbidImports: [app, capabilities, semantic, retrieval, storage, providers]
+    severity: error
+
+  # Note: a "semantic siblings acyclic" contract is enforced in
+  # pyproject.toml's [tool.importlinter] (acyclic_siblings type) but does
+  # not fit this schema's {from, forbidImports} shape, so it is not
+  # mirrored here.
+
+  - id: storage-out-of-app
+    description: storage/* must not import app/* (one baselined exception in pyproject.toml)
+    from: storage
+    forbidImports: [app]
+    severity: error
+
+  - id: storage-out-of-capabilities
+    description: storage/* must not import capabilities/* (one baselined exception in pyproject.toml)
+    from: storage
+    forbidImports: [capabilities]
+    severity: error
+
+# No committed OpenAPI spec; api-review is driven by red-zone touches to
+# api/routes.py and api/schemas.py.
+api:
+  type: none
+
+# No Alembic — schema is in code. migrationPaths points at the schema
+# definition file; persistence-review fires on touches there.
+persistence:
+  migrationPaths:
+    - "storage/sqlite_schema.py"
+  checkpoint: persistence-review
+  notes: "Schema-as-code: SQLite DDL is built directly in storage/sqlite_schema.py rather than versioned migrations. Persistence-review covers schema and codec changes."
+
+security:
+  paths:
+    - "core/visibility.py"
+  checkpoint: security-review
+
+runtimeConfig:
+  paths:
+    - "pallium.example.toml"
+    - "pallium.local.toml"
+    - "pallium.docker.toml"
+    - "pallium.aicore-test.toml"
+
+prRules:
+  maxChangedFiles:
+    warn: 50
+    fail: 100
+  maxLinesChanged:
+    warn: 1000
+    fail: 2000
+
+checkpoints:
+  architecture-review:
+    description: Architecture review for structural changes
+    satisfiedBy:
+      - codeownerApproval
+      - label: architecture-reviewed
+  api-review:
+    description: API contract review
+    satisfiedBy:
+      - codeownerApproval
+      - label: api-reviewed
+  persistence-review:
+    description: Persistence / schema review
+    satisfiedBy:
+      - codeownerApproval
+      - label: persistence-reviewed
+  security-review:
+    description: Security-sensitive change review
+    satisfiedBy:
+      - codeownerApproval
+      - label: security-reviewed
+
+modes:
+  default: shadow
+  perCheck:
+    boundary_violation: binding
+
+# Generated / runtime / build artifacts not under classification.
+excludes:
+  - "build/**"
+  - "pallium.egg-info/**"
+  - "**/__pycache__/**"
+  - "*.db"
+  - "*.db.schema.lock"
+  - "tmp/**"
+  - "vector_index"
+  - "vector_index.idmap.json"
+  - "vector_index.meta.json"
+  - "data/longmemeval/**"
+
+boundaryAdapter:
+  outputFormat: json-violations
+  outputPath: build/import-linter-report.json
