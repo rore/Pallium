@@ -290,6 +290,79 @@ function setBanner(message, tone = "info") {
   `;
 }
 
+async function copyTextToClipboard(text) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to legacy path
+  }
+  try {
+    const helper = document.createElement("textarea");
+    helper.value = text;
+    helper.setAttribute("readonly", "");
+    helper.style.position = "absolute";
+    helper.style.left = "-9999px";
+    document.body.appendChild(helper);
+    helper.select();
+    document.execCommand("copy");
+    document.body.removeChild(helper);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function bindMissingItemCopyButtons() {
+  // Wire Copy buttons (and id-text spans) on rendered "missing item" placeholder
+  // cards. The card carries data-copy-text attributes; clicking copies them and
+  // briefly flashes a confirmation banner so the user sees the click registered.
+  for (const node of boardGroupsElement.querySelectorAll("[data-copy-text]")) {
+    if (node.dataset.copyBound === "1") {
+      continue;
+    }
+    node.dataset.copyBound = "1";
+    node.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const text = node.dataset.copyText || "";
+      if (!text) return;
+      const ok = await copyTextToClipboard(text);
+      setBanner(ok ? "Copied to clipboard." : "Could not copy to clipboard.", ok ? "success" : "error");
+    });
+  }
+}
+
+function renderWorkspaceWarnings() {
+  // Surface non-fatal warnings emitted by loadWorkspace (e.g. orphan board ids).
+  // The placeholder cards in the columns are the primary affordance; this banner
+  // gives a one-line summary so the warning is visible even if the user is
+  // looking at a different column.
+  const warnings = Array.isArray(state.workspace?.warnings) ? state.workspace.warnings : [];
+  if (warnings.length === 0) {
+    return false;
+  }
+  const message = warnings.map((entry) => entry.message || "").filter(Boolean).join(" ");
+  if (!message) {
+    return false;
+  }
+  setBanner(message, "warning");
+  return true;
+}
+
+function clearTransientBanner() {
+  // Clears the status banner unless there are sticky workspace-level warnings,
+  // in which case re-renders them. Use this instead of setBanner("") whenever
+  // an in-flow operation finishes successfully (item load, save, etc.) so that
+  // workspace warnings (e.g. orphan board items) stay visible.
+  if (renderWorkspaceWarnings()) {
+    return;
+  }
+  setBanner("");
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -814,7 +887,7 @@ function getFilteredBoardItemIds(workspace = state.workspace) {
     return [];
   }
 
-  const orderedIds = workspace.boardGroups.flatMap((group) => group.items.map((item) => item.id));
+  const orderedIds = workspace.boardGroups.flatMap((group) => group.items.filter((item) => !item.missing).map((item) => item.id));
   return isSearchActive() ? orderedIds.filter((itemId) => itemMatchesCurrentFilters(itemId, workspace)) : orderedIds;
 }
 
@@ -927,11 +1000,15 @@ function getVisibleBoardItemIds(workspace = state.workspace) {
 }
 
 function getFirstBoardItemId(workspace = state.workspace) {
-  return workspace?.boardGroups.flatMap((group) => group.items).at(0)?.id ?? null;
+  return workspace?.boardGroups.flatMap((group) => group.items).find((item) => !item?.missing)?.id ?? null;
 }
 
 function getFirstVisibleBoardItemId(workspace = state.workspace) {
   return getVisibleBoardItemIds(workspace).at(0) ?? null;
+}
+
+function isMissingBoardItem(item) {
+  return Boolean(item && item.missing === true);
 }
 
 function canDragItemsInActiveLens(workspace = state.workspace) {
@@ -2234,6 +2311,44 @@ function buildBoardCardBodyMarkup(item, activeLensKey, extraMetaHtml = "") {
   `;
 }
 
+function buildMissingBoardCardInner(item) {
+  // Inert placeholder for an id listed in board.md that has no matching
+  // feature/idea file. Surfaces enough context for the user (or an agent)
+  // to fix the drift: the orphan id, where it appears, what's missing, and
+  // a copy-to-clipboard for both the id and a one-line fix instruction.
+  const groupHeading = item.groupName ? ` under "${item.groupName}"` : "";
+  const fixInstruction = `The roadmap board references "${item.id}"${groupHeading} but the feature file is missing. Either create roadmap/features/${item.id}.md or remove the line from roadmap/board.md.`;
+  return `
+    <span class="board-item-missing-header">
+      <span class="board-item-missing-icon" aria-hidden="true">⚠</span>
+      <span class="board-item-missing-label">Missing roadmap item</span>
+    </span>
+    <span class="board-item-missing-id" title="Click to copy id" data-copy-text="${escapeHtml(item.id)}">${escapeHtml(item.id)}</span>
+    <span class="board-item-missing-explain">Listed in board.md${groupHeading ? ` ${escapeHtml(groupHeading.trim())}` : ""} but no matching file in <code>roadmap/features/</code> or <code>roadmap/ideas/</code>.</span>
+    <span class="board-item-missing-fix">Fix: create <code>roadmap/features/${escapeHtml(item.id)}.md</code>, or remove the line from <code>roadmap/board.md</code>.</span>
+    <span class="board-item-missing-actions">
+      <button class="ghost-button board-item-missing-copy" type="button" data-copy-text="${escapeHtml(item.id)}" title="Copy the missing id">Copy id</button>
+      <button class="ghost-button board-item-missing-copy" type="button" data-copy-text="${escapeHtml(fixInstruction)}" title="Copy a one-line fix instruction you can paste to an agent">Copy fix instructions</button>
+    </span>
+  `;
+}
+
+function renderMissingBoardCardColumn(item) {
+  return `
+    <article class="board-column-card board-column-card-missing" title="Missing roadmap item: ${escapeHtml(item.id)}" aria-label="Missing roadmap item ${escapeHtml(item.id)}">
+      ${buildMissingBoardCardInner(item)}
+    </article>
+  `;
+}
+
+function renderMissingBoardCardRead(item) {
+  return `
+    <div class="board-item board-item-missing" role="group" aria-label="Missing roadmap item ${escapeHtml(item.id)}" title="Missing roadmap item: ${escapeHtml(item.id)}">
+      ${buildMissingBoardCardInner(item)}
+    </div>
+  `;
+}
+
 function buildSpecBadgeTitle(specLink) {
   const parts = [];
   if (specLink.openComments > 0) {
@@ -2395,6 +2510,9 @@ function renderBoardColumnsMode() {
     const reorderAttributes = allowColumnReorder ? `data-board-column-drop-index="${group.originalIndex}"` : "";
 
     const cardsHtml = group.items.map((item) => {
+      if (isMissingBoardItem(item)) {
+        return renderMissingBoardCardColumn(item);
+      }
       const activeClass = item.id === state.selectedItemId && state.editorOverlayOpen ? " board-column-card-active" : "";
       const dragHandle = allowColumnDrag
         ? `<span class="board-column-card-drag" data-drag-item-id="${escapeHtml(item.id)}" draggable="true" role="button" tabindex="0" aria-label="Move ${escapeHtml(item.title)}" title="Drag to move ${escapeHtml(item.title)}">::</span>`
@@ -2446,6 +2564,8 @@ function renderBoardColumnsMode() {
       await openBoardItemPreview(button.dataset.itemOpen);
     });
   }
+
+  bindMissingItemCopyButtons();
 
   for (const panel of boardGroupsElement.querySelectorAll("[data-item-dblopen]")) {
     panel.addEventListener("dblclick", async () => {
@@ -2647,6 +2767,9 @@ function renderBoardReadMode() {
   const html = visibleGroups.map((group) => {
     const collapsed = state.collapsedGroups.has(group.name);
     const items = group.items.map((item) => {
+      if (isMissingBoardItem(item)) {
+        return renderMissingBoardCardRead(item);
+      }
       const active = item.id === state.selectedItemId ? " board-item-active" : "";
       const dragHint = allowDerivedDrag ? '<span class="board-item-drag">Move</span>' : "";
       return `
@@ -2692,6 +2815,8 @@ function renderBoardReadMode() {
       await openBoardItemPreview(button.dataset.itemId);
     });
   }
+
+  bindMissingItemCopyButtons();
 
   for (const button of boardGroupsElement.querySelectorAll("[data-group-toggle]")) {
     button.addEventListener("click", () => {
@@ -5191,7 +5316,7 @@ async function loadWorkspace(preferredItemId = state.selectedItemId, options = {
     state.editorMode = normalizeEditorMode(options.preferredMode ?? state.editorMode);
     roadmapPathElement.textContent = workspace.roadmapPath;
     renderScope();
-    setBanner("");
+    clearTransientBanner();
 
     const fallbackItemId = shouldUseEditorOverlay() ? "" : (getFirstVisibleBoardItemId(workspace) || getFirstBoardItemId(workspace));
     await syncVisibleSelection({
@@ -5241,7 +5366,7 @@ async function loadItem(itemId, rerenderBoard = true, options = {}) {
     if (options.syncRoute !== false) {
       syncRouteState({ replace: options.replaceRoute === true });
     }
-    setBanner("");
+    clearTransientBanner();
   } catch (error) {
     setBanner(error.message, "error");
   }

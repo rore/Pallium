@@ -350,6 +350,27 @@ function makeBoardItemSummary(itemSummary) {
   };
 }
 
+function makeMissingBoardItemSummary(itemId, groupName) {
+  // Placeholder for an id listed in board.md that has no matching feature/idea
+  // file. Inert by design — has no filePath, no metadata, and is excluded from
+  // the workspace items index, filters, and lenses. The UI renders it as a
+  // labelled "missing item" tile so the drift is visible and actionable.
+  return {
+    id: itemId,
+    title: itemId,
+    status: "",
+    priority: "",
+    commitment: "",
+    milestone: "",
+    kind: "missing",
+    metadata: {},
+    overviewHeading: "",
+    overviewExcerpt: "",
+    missing: true,
+    groupName,
+  };
+}
+
 function buildAvailableFilters(itemSummaries) {
   const facets = new Map();
 
@@ -1024,13 +1045,19 @@ export async function loadWorkspace(repoRoot) {
   const groups = parseBoardText(boardText, boardPath);
   const itemIndex = await loadItemIndex(workspace.resolvedPath);
   const itemSummaries = {};
+  const orphanIds = [];
   const boardGroups = groups.map((group) => ({
     name: group.name,
     items: group.itemIds.map((id) => {
       const item = itemIndex.get(id);
 
       if (!item) {
-        throw new AppError(`Board references missing item "${id}".`, 422, "parse_error");
+        // A board id with no matching feature/idea file is metadata drift,
+        // not a structural failure. Surface it as a placeholder so the rest
+        // of the workspace still renders and the UI can display the orphan
+        // in-place. saveBoardByGroups still rejects unknown ids on write.
+        orphanIds.push(id);
+        return makeMissingBoardItemSummary(id, group.name);
       }
 
       const summary = itemSummaries[id] || makeItemSummary(item);
@@ -1045,6 +1072,17 @@ export async function loadWorkspace(repoRoot) {
     }
   }
 
+  const warnings = [];
+  if (orphanIds.length > 0) {
+    warnings.push({
+      code: "orphan_board_item",
+      ids: orphanIds,
+      message: orphanIds.length === 1
+        ? `Board references missing item "${orphanIds[0]}".`
+        : `Board references ${orphanIds.length} missing items: ${orphanIds.map((id) => `"${id}"`).join(", ")}.`,
+    });
+  }
+
   return {
     repoName: path.basename(path.resolve(repoRoot)),
     roadmapPath: workspace.roadmapPath,
@@ -1054,6 +1092,7 @@ export async function loadWorkspace(repoRoot) {
     items: itemSummaries,
     availableFilters: buildAvailableFilters(itemSummaries),
     availableLenses: deriveAvailableLenses(itemSummaries, workspace),
+    warnings,
   };
 }
 

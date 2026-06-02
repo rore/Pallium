@@ -3987,3 +3987,99 @@ body[data-setup-mode="true"] .setup-side-stack {
     max-height: calc(100vh - 28px);
   }
 }
+
+/* Warning banner — non-fatal workspace warnings (e.g. orphan board ids). */
+.status-banner[data-tone="warning"] {
+  background: rgba(193, 119, 47, 0.07);
+  border-color: rgba(193, 119, 47, 0.22);
+  color: #8a5a14;
+}
+
+/* Missing-item placeholder card. Inert by design: dashed border, muted bg, no
+   open/drag affordances. The card itself is the receipt — id, where it came
+   from, how to fix — plus two copy buttons. */
+.board-column-card-missing,
+.board-item-missing {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px dashed rgba(193, 119, 47, 0.45);
+  border-radius: 6px;
+  background: rgba(193, 119, 47, 0.05);
+  color: #6b4710;
+  position: relative;
+  text-align: left;
+  width: 100%;
+  box-sizing: border-box;
+  cursor: default;
+}
+
+.board-item-missing-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8a5a14;
+}
+
+.board-item-missing-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.board-item-missing-id {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a2f06;
+  word-break: break-all;
+  cursor: copy;
+  user-select: all;
+}
+
+.board-item-missing-id:hover {
+  text-decoration: underline;
+}
+
+.board-item-missing-explain,
+.board-item-missing-fix {
+  font-size: 12px;
+  line-height: 1.4;
+  color: #6b4710;
+}
+
+.board-item-missing-explain code,
+.board-item-missing-fix code {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  background: rgba(193, 119, 47, 0.10);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #4a2f06;
+}
+
+.board-item-missing-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.board-item-missing-copy {
+  font-size: 12px;
+  padding: 3px 8px;
+  border: 1px solid rgba(193, 119, 47, 0.32);
+  background: rgba(255, 255, 255, 0.65);
+  color: #6b4710;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.board-item-missing-copy:hover {
+  background: #fff;
+  border-color: rgba(193, 119, 47, 0.55);
+}

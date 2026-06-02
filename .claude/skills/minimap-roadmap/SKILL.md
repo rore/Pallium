@@ -13,16 +13,37 @@ The UI is only a lens over those files. Agents and humans must operate on the sa
 
 ## Quick Workflow
 
+When the user asks to see the roadmap, give them a URL. When they ask to edit roadmap state, edit the files directly. The two paths share step 1.
+
+### 1. Make sure the server is running
+
+```bash
+node <path-to-this-skill>/scripts/start-server.mjs
+```
+
+Output is one line, either `Minimap running at http://localhost:<port>` (just started) or `Minimap already running at http://localhost:<port>` (reused). Either way, capture the port from that line. The default is 4312 but the launcher falls forward if busy. To check status, stop, or restart, use the matching scripts in the same directory (`status.mjs`, `stop-server.mjs`, `restart-server.mjs`). Do not curl the server, send signals, or edit `$MINIMAP_HOME/server.json` by hand.
+
+### 2a. Showing the roadmap to the user
+
+Build the URL with the active repo's absolute path and reply with it:
+
+```text
+http://localhost:<port>/#repo=<absolute-path-to-the-active-repo>&view=board
+```
+
+The active repo is the directory the user is working in (e.g. `process.cwd()` of the agent session, or the project root they're asking about). Always pass an absolute path. The same server can serve any number of repos — switching repos is just a URL change.
+
+Tell the user the URL plainly. They don't need to know about the server, the port-fallback, or the registry.
+
+### 2b. Editing roadmap state
+
+For roadmap planning, status changes, or item updates, work on the files directly:
+
 1. Find the roadmap root from `roadmap.config.json`, or use `roadmap/` when no config exists.
-2. Start or verify the bundled server:
-   `node <path-to-this-skill>/scripts/start-server.mjs`
-   To check status, stop, or restart, use the matching scripts in the same directory (`status.mjs`, `stop-server.mjs`, `restart-server.mjs`). Do not curl the server, send signals, or edit `$MINIMAP_HOME/server.json` by hand.
-3. Open the UI for *this repo*:
-   `http://localhost:4312/#repo=<absolute-path-to-repo>&view=board`
-4. Read the files that own the requested truth before editing.
-5. Edit the smallest owning file set.
-6. Preserve unknown metadata and sections.
-7. Run the repo's normal validation if behavior or generated roadmap output could be affected.
+2. Read the files that own the requested truth before editing.
+3. Edit the smallest owning file set.
+4. Preserve unknown metadata and sections.
+5. Run the repo's normal validation if behavior or generated roadmap output could be affected.
 
 A single running minimap server can serve roadmap for any number of repos. The launcher detects an already-running instance and reuses it; switching repos in the UI means changing the `repo=` value in the URL.
 
