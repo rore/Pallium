@@ -223,10 +223,18 @@ jobs:
           git diff --name-only \
             ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} \
             > build/changed-files.txt
+          # `--numstat` so the reporter can apply policy.excludes to the
+          # size budget. Without this, excludes affect zone classification
+          # but NOT prSize, which silently double-counts generated /
+          # vendored / excluded files in the line budget.
+          git diff --numstat \
+            ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} \
+            > build/lines-per-file.txt
           LABELS="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | paste -sd,)"
           python scripts/agent-redline-report.py \
             --policy agent-policy.yaml \
             --changed-files build/changed-files.txt \
+            --lines-per-file build/lines-per-file.txt \
             --pr-labels "$LABELS" \
             --json-out build/verdict.json \
             --comment-out build/comment.md
@@ -311,13 +319,14 @@ jobs:
             BEFORE="$(git merge-base origin/main "$AFTER" 2>/dev/null || echo "$AFTER^")"
           fi
           git diff --name-only "$BEFORE"..."$AFTER" > build/changed-files.txt
-          LINES_CHANGED=$(git diff --shortstat "$BEFORE"..."$AFTER" \
-            | awk '{for (i=1;i<=NF;i++) if ($i ~ /insertions?|deletions?/) s+=$(i-1)} END{print s+0}')
+          # `--numstat` so the reporter can apply policy.excludes to
+          # the size budget (excludes-aware prSize).
+          git diff --numstat "$BEFORE"..."$AFTER" > build/lines-per-file.txt
           python scripts/agent-redline-report.py \
             --policy agent-policy.yaml \
             --flow-mode push \
             --changed-files build/changed-files.txt \
-            --lines-changed "${LINES_CHANGED:-0}" \
+            --lines-per-file build/lines-per-file.txt \
             --json-out build/verdict.json \
             --comment-out build/comment.md
           EXIT=$?

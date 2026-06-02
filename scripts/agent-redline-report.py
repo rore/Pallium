@@ -27,10 +27,19 @@ except ImportError:
 
 @dataclass
 class Diff:
-    """A simplified diff: list of changed files plus line-count totals."""
+    """A simplified diff: list of changed files plus line-count totals.
+
+    `lines_by_file` (when present) maps each changed-file path to its
+    insertion+deletion count, derived from `git diff --numstat`. With it,
+    `_pr_size_status` can subtract excludes-matched files from the size
+    budget; without it, the legacy scalar `lines_changed` is used as-is
+    and `excludes` does not affect size accounting (PR-mode pre-v0.3
+    behavior).
+    """
     changed_files: list[str]
     files_changed: int
     lines_changed: int
+    lines_by_file: dict[str, int] | None = None
 
 
 @dataclass
@@ -565,6 +574,23 @@ def _is_architecture_test_file(path: str) -> bool:
 
 
 def _pr_size_status(diff: Diff, policy: dict[str, Any]) -> dict[str, Any]:
+    """Compute size verdict.
+
+    When `diff.lines_by_file` is available AND `policy.excludes` is set,
+    files matching any excludes glob are excluded from both the file
+    count and the line count. Without per-file line counts the reporter
+    falls back to the scalar `diff.lines_changed` (which already
+    represents the full unfiltered diff) and the file count is filtered
+    only on the changed-files list (file count IS excludes-aware in the
+    fallback path; line count is not, because per-file lines aren't
+    known).
+
+    The returned dict surfaces `excludedFiles` and `excludedLines` so
+    the comment can show "(N files / M lines excluded)" — a
+    transparency line that prevents users from re-discovering this
+    bug class by being surprised at numbers that don't match
+    git-shortstat.
+    """
     pr_rules = policy.get("prRules", {}) or {}
     files_rule = pr_rules.get("maxChangedFiles", {}) or {}
     lines_rule = pr_rules.get("maxLinesChanged", {}) or {}
@@ -574,15 +600,33 @@ def _pr_size_status(diff: Diff, policy: dict[str, Any]) -> dict[str, Any]:
     fail_lines = lines_rule.get("fail", 2000)
     warn_lines = lines_rule.get("warn", 1000)
 
+    excludes = policy.get("excludes", []) or []
+    excluded_paths = [f for f in diff.changed_files if matches_any(f, excludes)]
+    included_paths = [f for f in diff.changed_files if f not in excluded_paths]
+
+    files = len(included_paths)
+    excluded_files = len(excluded_paths)
+
+    if diff.lines_by_file is not None:
+        lines = sum(diff.lines_by_file.get(p, 0) for p in included_paths)
+        excluded_lines = sum(diff.lines_by_file.get(p, 0) for p in excluded_paths)
+    else:
+        # No per-file breakdown available. The scalar represents the
+        # unfiltered diff; we can't subtract the excluded portion.
+        lines = diff.lines_changed
+        excluded_lines = 0
+
     verdict = "ok"
-    if diff.files_changed > fail_files or diff.lines_changed > fail_lines:
+    if files > fail_files or lines > fail_lines:
         verdict = "fail"
-    elif diff.files_changed > warn_files or diff.lines_changed > warn_lines:
+    elif files > warn_files or lines > warn_lines:
         verdict = "warn"
 
     return {
-        "files": diff.files_changed,
-        "lines": diff.lines_changed,
+        "files": files,
+        "lines": lines,
+        "excludedFiles": excluded_files,
+        "excludedLines": excluded_lines,
         "verdict": verdict,
     }
 
@@ -848,10 +892,19 @@ def render_markdown(verdict: Verdict, flow_mode: str = "pr") -> str:
 
     # Change-size line. PR-mode calls it "PR size" (matches the surface
     # the reviewer sees — a pull request); push-mode calls it "Change
-    # size" (no PR exists; the unit is the push diff).
+    # size" (no PR exists; the unit is the push diff). When the policy's
+    # excludes filtered out files from the size budget, surface the
+    # subtracted totals so the math is visible (prevents users from
+    # being surprised that the verdict's lines/files don't match
+    # `git diff --shortstat`).
     sz = verdict.pr_size
     size_label = "Change size" if flow_mode == "push" else "PR size"
-    lines.append(f"**{size_label}:** {sz['files']} files / {sz['lines']} lines ({sz['verdict']})")
+    suffix = ""
+    excluded_files = sz.get("excludedFiles", 0) or 0
+    excluded_lines = sz.get("excludedLines", 0) or 0
+    if excluded_files or excluded_lines:
+        suffix = f" — {excluded_files} files / {excluded_lines} lines excluded by policy"
+    lines.append(f"**{size_label}:** {sz['files']} files / {sz['lines']} lines ({sz['verdict']}){suffix}")
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -868,9 +921,42 @@ def load_policy(path: Path) -> dict[str, Any]:
     return data
 
 
-def load_diff_from_files(changed_files_path: Path, lines_changed: int = 0) -> Diff:
+def load_diff_from_files(
+    changed_files_path: Path,
+    lines_changed: int = 0,
+    lines_per_file_path: Path | None = None,
+) -> Diff:
     files = [line.strip() for line in changed_files_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    return Diff(changed_files=files, files_changed=len(files), lines_changed=lines_changed)
+
+    lines_by_file: dict[str, int] | None = None
+    if lines_per_file_path is not None and lines_per_file_path.exists():
+        # `git diff --numstat` rows: <added>\t<deleted>\t<path>. Either
+        # numeric column may be "-" for binary files; treat those as 0.
+        lines_by_file = {}
+        for raw in lines_per_file_path.read_text(encoding="utf-8").splitlines():
+            row = raw.rstrip("\n")
+            if not row.strip():
+                continue
+            parts = row.split("\t")
+            if len(parts) < 3:
+                continue
+            added_s, deleted_s, path = parts[0], parts[1], "\t".join(parts[2:])
+            added = int(added_s) if added_s.isdigit() else 0
+            deleted = int(deleted_s) if deleted_s.isdigit() else 0
+            lines_by_file[path] = added + deleted
+        # When numstat is given, derive the scalar from it for consistency.
+        # (The workflow's `git diff --shortstat` and `git diff --numstat`
+        # see the same diff, so the totals should match; we recompute
+        # locally to avoid silent disagreement.)
+        if lines_by_file:
+            lines_changed = sum(lines_by_file.values())
+
+    return Diff(
+        changed_files=files,
+        files_changed=len(files),
+        lines_changed=lines_changed,
+        lines_by_file=lines_by_file,
+    )
 
 
 def load_archunit_xml(path: Path | None) -> str | None:
@@ -946,7 +1032,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--changed-files", type=Path,
                    help="Path to a newline-separated list of changed files (overrides --base/--head)")
     p.add_argument("--lines-changed", type=int, default=0,
-                   help="Total lines changed (for PR-size check)")
+                   help="Total lines changed (size check). Used as the fallback "
+                        "when --lines-per-file is not given. The scalar is "
+                        "NOT excludes-aware on its own — pass --lines-per-file "
+                        "to make excludes apply to size accounting.")
+    p.add_argument("--lines-per-file", type=Path,
+                   help="Path to a `git diff --numstat` output file (one row "
+                        "per changed file: added<TAB>deleted<TAB>path). When "
+                        "provided, `policy.excludes` is applied to the size "
+                        "check: files matching any excludes glob are subtracted "
+                        "from both file and line counts. Without this flag, "
+                        "excludes affects only zone classification, not size.")
     p.add_argument("--archunit-xml", type=Path,
                    help="(Deprecated) Path to an ArchUnit JUnit XML report. Use "
                         "--boundary-report with --boundary-format=junit-xml instead.")
@@ -996,7 +1092,11 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write("error: --changed-files required in v0.1 (git-driven mode is roadmap)\n")
         return 1
 
-    diff = load_diff_from_files(args.changed_files, args.lines_changed)
+    diff = load_diff_from_files(
+        args.changed_files,
+        args.lines_changed,
+        lines_per_file_path=args.lines_per_file,
+    )
 
     if args.archunit_xml is not None:
         sys.stderr.write(

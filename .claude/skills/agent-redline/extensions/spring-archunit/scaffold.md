@@ -171,12 +171,19 @@ api:
         git diff --name-only \
           ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} \
           > build/changed-files.txt
+        # Per-file line counts so policy.excludes applies to prSize
+        # (without --lines-per-file, excluded files silently inflate
+        # the size budget).
+        git diff --numstat \
+          ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} \
+          > build/lines-per-file.txt
         # The reporter reads policy.boundaryAdapter to find the ArchUnit
         # JUnit XML; for openapi-from-controllers it also takes the two
         # generated specs explicitly.
         python scripts/agent-redline-report.py \
           --policy agent-policy.yaml \
           --changed-files build/changed-files.txt \
+          --lines-per-file build/lines-per-file.txt \
           --api-spec-base /tmp/spec_base.yaml \
           --api-spec-head /tmp/spec_head.yaml \
           --pr-labels "$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | paste -sd,)" \

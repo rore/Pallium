@@ -66,14 +66,22 @@ if ! BASE_SHA=$(git rev-parse "$BASE_REF" 2>/dev/null); then
 fi
 HEAD_SHA=$(git rev-parse HEAD)
 
-# Compute the changed-files list and total lines changed.
+# Compute the changed-files list, per-file line counts, and total lines.
 # Empty diffs (BASE == HEAD) produce no shortstat output; the awk pipeline
 # would emit nothing without the END block, and `--lines-changed ""` would
 # be rejected by argparse `type=int`. END{print s+0} guarantees a numeric
 # value; the `:-0` is belt-and-suspenders.
+#
+# `git diff --numstat` emits one row per changed file: added<TAB>deleted<TAB>path.
+# The reporter uses it (when --lines-per-file is passed) to apply
+# policy.excludes to the prSize check. Without it, excludes affects only
+# zone classification and excluded files (generated/, vendored/, *_pb2.py,
+# etc.) silently inflate the size budget.
 CHANGED_FILES_LIST="$(mktemp)"
-trap 'rm -f "$CHANGED_FILES_LIST"' EXIT
+LINES_PER_FILE="$(mktemp)"
+trap 'rm -f "$CHANGED_FILES_LIST" "$LINES_PER_FILE"' EXIT
 git diff --name-only "$BASE_SHA"..."$HEAD_SHA" > "$CHANGED_FILES_LIST"
+git diff --numstat   "$BASE_SHA"..."$HEAD_SHA" > "$LINES_PER_FILE"
 LINES_CHANGED=$(git diff --shortstat "$BASE_SHA"..."$HEAD_SHA" \
   | awk '{for (i=1;i<=NF;i++) if ($i ~ /insertions?|deletions?/) s+=$(i-1)} END{print s+0}')
 LINES_CHANGED=${LINES_CHANGED:-0}
@@ -94,5 +102,6 @@ fi
 exec python "$REPORTER_PY" \
   --policy "$POLICY" \
   --changed-files "$CHANGED_FILES_LIST" \
+  --lines-per-file "$LINES_PER_FILE" \
   --lines-changed "$LINES_CHANGED" \
   --default-mode "${MODE:-shadow}"
