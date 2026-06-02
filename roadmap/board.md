@@ -1,5 +1,6 @@
 # Next
 - investigate-thread-level-interest-and-threadless-aggregation
+- add-operational-fact-memory
 
 # Later
 - add-bounded-memory-lifecycle-hardening
