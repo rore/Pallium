@@ -32,7 +32,8 @@ Read what's in the repo:
 - Build files (`build.gradle`, `pom.xml`, `package.json`, `pyproject.toml`, `setup.py`, `setup.cfg`, `go.mod`, `Cargo.toml`)
 - Source layout. For Python: `src/<pkg>/` vs flat `<pkg>/` vs multi-package (multiple top-level `__init__.py` dirs, none matching the project name). For Django: `manage.py` at root.
 - Existing agent-instruction file: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `copilot-instructions.md`, or any `*-instructions.md` at repo root
-- Existing CI (`.github/workflows/`, `.gitlab-ci.yml`)
+- Existing CI (`.github/workflows/`, `.gitlab-ci.yml`) — note the trigger (`pull_request:` vs `push:`)
+- Recent flow signal: `gh pr list --state merged --limit 30 --json number` count vs `git log --since="3 months ago" --pretty=format:%h | wc -l`. Compare to gauge dominant flow (PR-driven vs push-driven)
 - Existing CODEOWNERS
 - Existing **boundary-rule backend setup**:
   - JVM/Spring: ArchUnit test classes (search `src/test/**` for files importing `com.tngtech.archunit`).
@@ -67,6 +68,21 @@ Don't modify anything yet. Produce a written summary; wait for developer confirm
 | None match | zone-only fallback |
 
 Confirm before loading `profile.md` details. If two shapes could fire, present both. Layout (src-layout / flat / multi-package) is bootstrap-derived, not a separate shape.
+
+### Flow mode (CI shape)
+
+Pick one. Affects Phase 5's CI proposal — not the policy, not the skill discipline.
+
+| Signal | Flow mode |
+|---|---|
+| Existing workflow has `on: pull_request:`, multiple recent merged PRs, multiple committers | PR-driven |
+| Existing workflow has `on: push:`, ~zero merged PRs, dominant flow is `git push` to main | push-driven |
+| Solo developer, no PRs (or PRs only for meta-changes), trunk-based | push-driven |
+| Mixed (some PR work, some direct push) | dominant signal wins; ask the developer |
+
+PR-driven proposes a workflow on `pull_request:` with a sticky comment surfacing the verdict; CI fails only on exit 2 (binding-mode hard fail). Push-driven proposes `on: push:` with the verdict in a CI artifact + workflow log; CI fails on exit 1 OR 2 (no sticky-comment surface, so warnings need CI red as their visibility channel). Both reference `extensions/<name>/scaffold.md` §5 (Python) or §6 (Spring) for the specific YAML.
+
+Ask the developer for confirmation before drafting the CI proposal in Phase 5.
 
 ## Phase 2 — Extension-driven proposal
 
@@ -126,12 +142,18 @@ For each red entry in the draft policy, walk through:
 
 This is a **starting hypothesis**. The first 2-4 weeks of shadow mode is where the team confirms or corrects it (Phase 5 / CI proposal).
 
-### 3b. PR-history calibration (when applicable)
+### 3b. History-based calibration (when applicable)
 
-1. Count merged PRs: `gh pr list --state merged --limit 1 --json number`. If fewer than 30, skip 3b; note in the policy comment that calibration will complete in Window 1 of shadow mode. If 30 or more, ask the developer: *"I can run the tuner against the last 30 merged PRs to see which red rules fire too often. Run it?"*
-2. On approval, run the tuner from the agent-redline skill (not the consuming repo): `python <skill-root>/scripts/agent-redline-tune.py --policy <draft-path> --repo <gh-slug> --limit 30 --suggest`. The tuner queries GitHub via `gh` and writes nothing into the consuming repo.
-3. Present each suggestion: path, firing rate, current zone, proposed action. Ask the developer to approve, override, or split.
-4. For approved demotions, move the path from `red` to `watch` in the draft. For overrides, add a one-line comment in the policy: `# kept red despite NN% rate: <reason>`.
+The tuner takes a list of changesets and reports which red/watch rules fire most often. The unit of changeset depends on the flow mode:
+
+- **PR-driven flow:** count merged PRs via `gh pr list --state merged --limit 1 --json number`. If 30+, run the tuner with `--repo <gh-slug> --limit 30`.
+- **Push-driven flow:** count commits to the long-lived branch via `git rev-list --count main`. If 30+, run with `--push-history --branch main --limit 30`. Each push range (or commit, for solo repos pushing one commit at a time) becomes one changeset.
+
+If fewer than 30 changesets exist either way, skip 3b; note in the policy comment that calibration will complete in Window 1 of shadow mode. Otherwise ask: *"I can run the tuner against the last 30 changesets to see which red rules fire too often. Run it?"*
+
+On approval, run the tuner from the agent-redline skill (not the consuming repo): `python <skill-root>/scripts/agent-redline-tune.py --policy <draft-path> [--repo <slug> --limit 30 | --push-history --branch main --limit 30] --suggest`. The tuner reads only — it queries GitHub via `gh` (PR mode) or `git log` (push mode) and writes nothing into the consuming repo.
+
+Present each suggestion: path, firing rate, current zone, proposed action. Ask the developer to approve, override, or split. For approved demotions, move the path from `red` to `watch` in the draft. For overrides, add a one-line comment in the policy: `# kept red despite NN% rate: <reason>`.
 
 Never auto-apply suggestions. Never run the tuner without confirmation.
 
@@ -184,10 +206,10 @@ Tell the developer:
 > CI integration affects every developer and may need platform-admin approval. I've written everything I'm allowed to write directly. Open `docs/agent-redline-ci-proposal.md`, review with whoever owns CI, apply when ready.
 
 The proposal contains:
-1. Proposed workflow file (ready to copy)
-2. Required-status-check additions for branch protection
-3. CODEOWNERS additions, mapped best-effort to teams from Phase 3
-4. **Recommended initial mode: shadow.** 4 weeks or 30 PRs of shadow before flipping anything to binding.
+1. Proposed workflow file (ready to copy) — pick the PR-driven or push-driven shape per Phase 1's flow-mode triage
+2. Required-status-check additions for branch protection (PR-driven only — solo / push-driven repos skip this)
+3. CODEOWNERS additions, mapped best-effort to teams from Phase 3 (PR-driven only — push-driven repos skip)
+4. **Recommended initial mode: shadow.** 4 weeks or 30 PRs of shadow before flipping anything to binding. Push-driven repos use commits (not PRs) as the calibration unit — see Phase 3b for the `--push-history` tuner mode.
 5. **Boundary-backend baseline** if running the backend on `main` surfaces existing violations: capture them, fail CI for *new* violations only.
 6. Decisions explicitly flagged for human judgment.
 

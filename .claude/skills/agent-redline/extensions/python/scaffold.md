@@ -112,6 +112,15 @@ The script is self-contained — no further integration needed. CI invokes it (�
 
 ## 4. CI snippet
 
+Two flow modes — bootstrap-mode.md Phase 1 elicits which one applies:
+
+- **PR-driven flow** — pull requests are the unit of review; the verdict surfaces via a sticky PR comment. Use `on: pull_request:`.
+- **Push-driven flow** — solo or trunk-based; commits go straight to a long-lived branch. No PR, so the verdict surfaces via the CI run + a JSON artifact. Use `on: push:`.
+
+Both modes share the boundary job. They differ only in trigger, in how changed-files is computed, and in how the report job surfaces the verdict.
+
+### Boundary job (same for both modes)
+
 Add to the CI proposal:
 
 ```yaml
@@ -156,82 +165,181 @@ boundaryAdapter:
   outputPath: build/import-linter-report.json
 ```
 
-The reporter dispatches on `outputFormat` automatically when no explicit `--boundary-format` flag is passed. The CI workflow's reporter step:
+The reporter dispatches on `outputFormat` automatically when no explicit `--boundary-format` flag is passed. Two flow modes follow.
+
+### 5a. PR-driven flow — `on: pull_request:`
 
 ```yaml
-report:
-  needs: boundary
-  runs-on: ubuntu-latest
-  steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-    - uses: actions/download-artifact@v4
-      with:
-        name: boundary-report
-        path: build/
-    - uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-    - run: pip install pyyaml jsonschema
+on:
+  pull_request:
+    branches: [main]
 
-    - name: Run reporter
-      id: report
-      # Capture the reporter's exit code without failing the step yet —
-      # we want the sticky comment to post regardless. The "Enforce
-      # reporter exit code" step below translates exit code 2
-      # (binding-mode hard fail) into a step failure.
-      #
-      # Reporter exit codes:
-      #   0  clean (BLUE / no checkpoints / contracts pass)
-      #   1  warnings (gray-zone / unmet checkpoint in shadow mode /
-      #      watch-list touched / pr-size warn) — surfaces in the comment,
-      #      does NOT block CI
-      #   2  binding-mode hard fail (boundary violation, unsatisfied
-      #      checkpoint under binding, pr-size fail under binding) —
-      #      blocks CI
-      #
-      # Without the `set +e` + capture pattern, bash's default `-e` mode
-      # makes ANY non-zero reporter exit fail the step. The comment
-      # action and the enforce step never run, the verdict computes but
-      # never reaches a human, and shadow mode's "surface, don't block"
-      # contract silently breaks.
-      run: |
-        set +e
-        mkdir -p build
-        git diff --name-only \
-          ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} \
-          > build/changed-files.txt
-        LABELS="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | paste -sd,)"
-        python scripts/agent-redline-report.py \
-          --policy agent-policy.yaml \
-          --changed-files build/changed-files.txt \
-          --pr-labels "$LABELS" \
-          --json-out build/verdict.json \
-          --comment-out build/comment.md
-        EXIT=$?
-        echo "exit_code=$EXIT" >> "$GITHUB_OUTPUT"
-        echo "--- verdict.json ---" && cat build/verdict.json
-        echo "--- comment.md ---" && cat build/comment.md
-        echo "reporter exit code: $EXIT"
+permissions:
+  contents: read
+  pull-requests: write   # required for the sticky comment
 
-    - name: Post sticky PR comment
-      uses: marocchino/sticky-pull-request-comment@v2
-      with:
-        path: build/comment.md
-        header: agent-redline
+jobs:
+  # boundary: ... (see §4)
+  report:
+    needs: boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: boundary-report
+          path: build/
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pyyaml jsonschema
 
-    - name: Enforce reporter exit code
-      # Fail the report job (and thus the required check) only on exit 2.
-      # Exit codes 0 and 1 leave the job green; the comment surfaces
-      # warnings without blocking merge.
-      run: |
-        EXIT="${{ steps.report.outputs.exit_code }}"
-        if [[ "$EXIT" == "2" ]]; then
-          echo "Reporter exited 2 (binding-mode hard fail). Failing the report check."
-          exit 1
-        fi
-        echo "Reporter exited $EXIT — non-blocking."
+      - name: Run reporter
+        id: report
+        # Capture the reporter's exit code without failing the step yet —
+        # we want the sticky comment to post regardless. The "Enforce
+        # reporter exit code" step below translates exit code 2
+        # (binding-mode hard fail) into a step failure.
+        #
+        # Reporter exit codes:
+        #   0  clean (BLUE / no checkpoints / contracts pass)
+        #   1  warnings (gray-zone / unmet checkpoint in shadow mode /
+        #      watch-list touched / pr-size warn) — surfaces in the comment,
+        #      does NOT block CI
+        #   2  binding-mode hard fail (boundary violation, unsatisfied
+        #      checkpoint under binding, pr-size fail under binding) —
+        #      blocks CI
+        #
+        # Without the `set +e` + capture pattern, bash's default `-e` mode
+        # makes ANY non-zero reporter exit fail the step. The comment
+        # action and the enforce step never run, the verdict computes but
+        # never reaches a human, and shadow mode's "surface, don't block"
+        # contract silently breaks.
+        run: |
+          set +e
+          mkdir -p build
+          git diff --name-only \
+            ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} \
+            > build/changed-files.txt
+          LABELS="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | paste -sd,)"
+          python scripts/agent-redline-report.py \
+            --policy agent-policy.yaml \
+            --changed-files build/changed-files.txt \
+            --pr-labels "$LABELS" \
+            --json-out build/verdict.json \
+            --comment-out build/comment.md
+          EXIT=$?
+          echo "exit_code=$EXIT" >> "$GITHUB_OUTPUT"
+          echo "--- verdict.json ---" && cat build/verdict.json
+          echo "--- comment.md ---" && cat build/comment.md
+          echo "reporter exit code: $EXIT"
+
+      - name: Post sticky PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: build/comment.md
+          header: agent-redline
+
+      - name: Enforce reporter exit code
+        # Fail the report job (and thus the required check) only on exit 2.
+        # Exit codes 0 and 1 leave the job green; the comment surfaces
+        # warnings without blocking merge.
+        run: |
+          EXIT="${{ steps.report.outputs.exit_code }}"
+          if [[ "$EXIT" == "2" ]]; then
+            echo "Reporter exited 2 (binding-mode hard fail). Failing the report check."
+            exit 1
+          fi
+          echo "Reporter exited $EXIT — non-blocking."
+```
+
+### 5b. Push-driven flow — `on: push:`
+
+For solo developers and trunk-based teams. No PR comment surface, so the verdict goes to the workflow log + an artifact. Without a sticky-comment surface, exit 1 (warnings) needs CI red as its visibility channel — otherwise warnings become invisible. The enforce step therefore fails on either exit 1 or exit 2 in this mode (configurable; see the comment).
+
+```yaml
+on:
+  push:
+    branches: [main]   # adjust to the long-lived branch(es) you push to
+
+permissions:
+  contents: read
+
+jobs:
+  # boundary: ... (see §4)
+  report:
+    needs: boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: boundary-report
+          path: build/
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pyyaml jsonschema
+
+      - name: Run reporter
+        id: report
+        # Same exit-code contract as PR mode (0/1/2). See PR-mode comment
+        # block for full description.
+        #
+        # Push-mode-specific: BEFORE/AFTER diff handles "first push to a
+        # branch" (BEFORE is all-zeros) and force-push (BEFORE may be a
+        # SHA the runner doesn't have) by falling back to merge-base
+        # against the default branch.
+        run: |
+          set +e
+          mkdir -p build
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+          if [[ "$BEFORE" == "0000000000000000000000000000000000000000" || -z "$BEFORE" ]] || \
+             ! git rev-parse --verify "$BEFORE^{commit}" >/dev/null 2>&1; then
+            BEFORE="$(git merge-base origin/main "$AFTER" 2>/dev/null || echo "$AFTER^")"
+          fi
+          git diff --name-only "$BEFORE"..."$AFTER" > build/changed-files.txt
+          LINES_CHANGED=$(git diff --shortstat "$BEFORE"..."$AFTER" \
+            | awk '{for (i=1;i<=NF;i++) if ($i ~ /insertions?|deletions?/) s+=$(i-1)} END{print s+0}')
+          python scripts/agent-redline-report.py \
+            --policy agent-policy.yaml \
+            --changed-files build/changed-files.txt \
+            --lines-changed "${LINES_CHANGED:-0}" \
+            --json-out build/verdict.json \
+            --comment-out build/comment.md
+          EXIT=$?
+          echo "exit_code=$EXIT" >> "$GITHUB_OUTPUT"
+          echo "--- verdict.json ---" && cat build/verdict.json
+          echo "--- comment.md ---" && cat build/comment.md
+          echo "reporter exit code: $EXIT"
+
+      - name: Upload verdict artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-redline-verdict
+          path: |
+            build/verdict.json
+            build/comment.md
+
+      - name: Enforce reporter exit code
+        # Push-mode default: fail CI on exit 1 OR 2. Without a PR comment,
+        # CI red is the only surface for exit-1 warnings — silencing them
+        # silences shadow-mode signal entirely. If you prefer informational
+        # warnings, change `[[ "$EXIT" != "0" ]]` to `[[ "$EXIT" == "2" ]]`
+        # and add an artifact-or-comment surface elsewhere.
+        run: |
+          EXIT="${{ steps.report.outputs.exit_code }}"
+          if [[ "$EXIT" != "0" ]]; then
+            echo "Reporter exited $EXIT. Failing the check."
+            echo "See the agent-redline-verdict artifact for the verdict."
+            exit 1
+          fi
+          echo "Reporter exited 0 — clean."
 ```
 
 (The reporter dispatches on `policy.boundaryAdapter`, which declares `outputFormat: json-violations` and `outputPath: build/import-linter-report.json` — the file the boundary job uploaded.)

@@ -135,6 +135,58 @@ def fetch_prs(repo: str, limit: int = 30) -> dict[str, list[str]]:
     return out
 
 
+def fetch_push_history(
+    repo_path: Path,
+    branch: str = "main",
+    limit: int = 30,
+) -> dict[str, list[str]]:
+    """
+    Walk `git log <branch>` for the most-recent `limit` commits and return
+    {commit-<sha>: [changed_file_paths]} — same shape as fetch_prs, treating
+    each commit as one changeset.
+
+    For push-driven repos this is the calibration analogue of fetch_prs:
+    each commit is one bootstrap-style "push to main" event. Squash-merged
+    PRs naturally collapse to one commit each here, so push-mode and
+    PR-mode samples are roughly comparable on volume.
+
+    Read-only — uses `git log` and `git show --name-only`. No fetches, no
+    writes. Reflects the local repo's current view of `branch`.
+
+    Raises SystemExit on git failure so bootstrap can stop cleanly.
+    Per-commit failures are skipped so a partial sample is still useful.
+    """
+    if not (repo_path / ".git").exists():
+        raise SystemExit(f"error: {repo_path} is not a git repository")
+    list_cmd = [
+        "git", "-C", str(repo_path), "log", branch,
+        f"--max-count={limit}", "--format=%H",
+    ]
+    p = subprocess.run(
+        list_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    if p.returncode != 0:
+        raise SystemExit(f"error: git log {branch} failed: {p.stderr}")
+    shas = [line.strip() for line in p.stdout.splitlines() if line.strip()]
+
+    out: dict[str, list[str]] = {}
+    for sha in shas:
+        # `git show --name-only --format=` for that one commit's files only.
+        show_cmd = [
+            "git", "-C", str(repo_path), "show",
+            "--name-only", "--format=", sha,
+        ]
+        v = subprocess.run(
+            show_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        if v.returncode != 0:
+            continue
+        files = [line.strip() for line in v.stdout.splitlines() if line.strip()]
+        if files:
+            out[f"commit-{sha[:8]}"] = files
+    return out
+
+
 def firing_rates(
     prs: dict[str, list[str]],
     policy: dict[str, Any],
@@ -186,7 +238,7 @@ def classify_rate(rate: float) -> str:
     if rate >= 0.30:
         return "AMBIGUOUS — may be split-able; re-evaluate after window 2."
     if rate >= 0.05:
-        return "PROBABLY RIGHT — fires on a minority of PRs."
+        return "PROBABLY RIGHT — fires on a minority of changesets."
     return "RARE — confirm this is the structural surface you wanted to flag, not dead code."
 
 
@@ -243,15 +295,15 @@ def render_markdown(
     n_prs: int,
 ) -> str:
     lines: list[str] = []
-    lines.append(f"# agent-redline tuning report — {n_prs} PR(s)")
+    lines.append(f"# agent-redline tuning report — {n_prs} changeset(s)")
     lines.append("")
-    lines.append("Firing rate per zone entry. Red entries that fire on most PRs are alert-fatigue traps and should move to the `watch` list or split.")
+    lines.append("Firing rate per zone entry. Red entries that fire on most changesets are alert-fatigue traps and should move to the `watch` list or split. (A changeset is a merged PR or, for push-driven repos, a single commit.)")
     lines.append("")
 
     # Verdict distribution
     lines.append("## Verdict distribution")
     lines.append("")
-    lines.append("| Verdict | PRs | Share |")
+    lines.append("| Verdict | Changesets | Share |")
     lines.append("|---|---:|---:|")
     for verdict, n in sorted(dist.items(), key=lambda x: -x[1]):
         share = (n / n_prs * 100) if n_prs else 0
@@ -265,7 +317,7 @@ def render_markdown(
             continue
         lines.append(f"## {zone_label} zone — firing rates")
         lines.append("")
-        lines.append("| Path | Reason | PRs hit | Rate | Recommendation |")
+        lines.append("| Path | Reason | Changesets hit | Rate | Recommendation |")
         lines.append("|---|---|---:|---:|---|")
         rows = sorted(entries.items(), key=lambda kv: -kv[1])
         for (path, reason), n in rows:
@@ -289,11 +341,30 @@ def main(argv: list[str] | None = None) -> int:
         help="Fetch from `gh pr list --repo <repo>` directly. "
              "Format: owner/name (default host) or host/owner/name (e.g., github.example.com/owner/repo).",
     )
+    src.add_argument(
+        "--push-history",
+        action="store_true",
+        help="Calibrate against the consuming repo's git push history (each commit is one "
+             "changeset). For push-driven repos. Use with --branch and optionally --repo-path.",
+    )
+    p.add_argument(
+        "--branch",
+        type=str,
+        default="main",
+        help="With --push-history: which branch's commits to walk (default: main).",
+    )
+    p.add_argument(
+        "--repo-path",
+        type=Path,
+        default=Path.cwd(),
+        help="With --push-history: filesystem path to the consuming git repo (default: cwd).",
+    )
     p.add_argument(
         "--limit",
         type=int,
         default=30,
-        help="When --repo is set: number of merged PRs to fetch (default 30).",
+        help="With --repo: number of merged PRs to fetch. With --push-history: number of "
+             "commits to walk. Default 30.",
     )
     p.add_argument("--out", type=Path, help="Write report to this file (default: stdout)")
     p.add_argument(
@@ -310,6 +381,8 @@ def main(argv: list[str] | None = None) -> int:
         prs = load_prs_from_dir(args.pr_dir)
     elif args.pr_list:
         prs = load_prs_from_list(args.pr_list)
+    elif args.push_history:
+        prs = fetch_push_history(args.repo_path, branch=args.branch, limit=args.limit)
     else:
         prs = fetch_prs(args.repo, limit=args.limit)
 

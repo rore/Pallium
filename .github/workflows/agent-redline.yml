@@ -1,31 +1,29 @@
 name: agent-redline
 
-# Soft-launch configuration:
-# - boundary job runs import-linter with continue-on-error so violations
-#   surface but don't fail the PR yet.
-# - report job posts a sticky PR comment regardless of verdict and uses
-#   the reporter's exit code to decide whether to fail the check
-#   (exit 0 = clean, exit 1 = warnings/non-blocking, exit 2 = binding-
-#   mode hard fail). With agent-policy.yaml's modes.default = shadow,
-#   the reporter only emits exit 2 for boundary_violation (per the
-#   policy's modes.perCheck override), so the report job stays green
-#   for everything else and gives a sticky-comment verdict.
+# Push-driven flow: this repo's actual workflow is direct-to-main (141
+# commits / 30 days, 2 PRs total). PR-shaped governance would only fire
+# on ~1.4% of changes, which would mean ~0% governance coverage. The
+# push-driven shape gives every push to main a verdict. Tuner output
+# (--push-history --branch main --limit 30) confirms every red rule
+# fires below 15% — alert-fatigue risk is low.
 #
-# After ~30 PRs or 4 weeks of shadow, tune red-zone fire rates against
-# observed PR history (see docs/agent-redline-ci-proposal.md §4) and:
-#   1. drop continue-on-error on the boundary job
-#   2. flip modes.default to binding in agent-policy.yaml — the reporter
-#      will then emit exit 2 for unmet checkpoints / pr-size fail too
-#   3. add the two checks to main's required-status-checks (Settings →
-#      Branches), if collaborators exist
+# Trade-off: no PR comment surface. The verdict goes to the workflow
+# log + an `agent-redline-verdict` artifact. The "Enforce" step fails
+# CI on exit 1 OR exit 2 (not just exit 2 like the PR-driven shape) —
+# without a sticky comment, CI red is the only visibility channel for
+# warnings. See agent-redline skill's extensions/python/scaffold.md
+# §5b for the canonical pattern this implements.
+#
+# Boundary job stays with continue-on-error: true through the shadow
+# window. After flipping agent-policy.yaml's modes.default to binding,
+# drop both this and the boundary's continue-on-error together.
 
 on:
-  pull_request:
+  push:
     branches: [main]
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   boundary:
@@ -43,8 +41,8 @@ jobs:
         run: |
           mkdir -p build
           python scripts/run-import-linter.py --out build/import-linter-report.json
-        # Exits 1 on violations; reporter step surfaces them. Drop this once
-        # shadow window is done (see header comment).
+        # Exits 1 on violations; reporter step surfaces them through its
+        # boundaryAdapter dispatch. Drop this once the shadow window is done.
         continue-on-error: true
       - uses: actions/upload-artifact@v4
         with:
@@ -71,39 +69,34 @@ jobs:
 
       - name: Run reporter
         id: report
-        # Capture the reporter's exit code without failing the step yet —
-        # the sticky comment must post regardless. The "Enforce reporter
-        # exit code" step below translates exit 2 (binding-mode hard fail)
-        # into a check failure.
-        #
-        # Reporter exit codes:
+        # Same exit-code contract as PR mode (0/1/2):
         #   0  clean (BLUE / no checkpoints / contracts pass)
-        #   1  warnings (gray-zone / unmet checkpoint in shadow mode /
-        #      watch-list touched / pr-size warn) — surfaces in comment,
-        #      does NOT block CI
-        #   2  binding-mode hard fail (boundary violation, unsatisfied
-        #      checkpoint under binding, pr-size fail under binding) —
-        #      blocks CI
+        #   1  warnings (gray-zone / unmet checkpoint in shadow / watch
+        #      touched / pr-size warn) — fails CI in push mode (see
+        #      Enforce step below) because there is no PR comment surface.
+        #   2  binding-mode hard fail — always fails CI.
         #
-        # Without the `set +e` + capture pattern, bash's default `-e` mode
-        # makes ANY non-zero reporter exit fail the step. The comment
-        # action and the enforce step never run, the verdict computes but
-        # never reaches a human, and shadow mode's "surface, don't block"
-        # contract silently breaks.
+        # Push-mode-specific: BEFORE/AFTER diff handles "first push to a
+        # branch" (BEFORE is all-zeros) and force-push (BEFORE may be a
+        # SHA the runner doesn't have) by falling back to merge-base
+        # against the default branch. set +e so the sticky-style steps
+        # (artifact upload, enforce) still run on non-zero reporter exit.
         run: |
           set +e
           mkdir -p build
-          git diff --name-only \
-            "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" \
-            > build/changed-files.txt
-          LINES_CHANGED=$(git diff --shortstat \
-            "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" \
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+          if [[ "$BEFORE" == "0000000000000000000000000000000000000000" || -z "$BEFORE" ]] || \
+             ! git rev-parse --verify "$BEFORE^{commit}" >/dev/null 2>&1; then
+            BEFORE="$(git merge-base origin/main "$AFTER" 2>/dev/null || echo "$AFTER^")"
+          fi
+          git diff --name-only "$BEFORE"..."$AFTER" > build/changed-files.txt
+          LINES_CHANGED=$(git diff --shortstat "$BEFORE"..."$AFTER" \
             | awk '{for (i=1;i<=NF;i++) if ($i ~ /insertions?|deletions?/) s+=$(i-1)} END{print s+0}')
           python scripts/agent-redline-report.py \
             --policy agent-policy.yaml \
             --changed-files build/changed-files.txt \
             --lines-changed "${LINES_CHANGED:-0}" \
-            --pr-labels "${{ join(github.event.pull_request.labels.*.name, ',') }}" \
             --json-out build/verdict.json \
             --comment-out build/comment.md
           EXIT=$?
@@ -111,12 +104,6 @@ jobs:
           echo "--- verdict.json ---" && cat build/verdict.json
           echo "--- comment.md ---" && cat build/comment.md
           echo "reporter exit code: $EXIT"
-
-      - name: Post sticky PR comment
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          path: build/comment.md
-          header: agent-redline
 
       - name: Upload verdict artifact
         uses: actions/upload-artifact@v4
@@ -127,13 +114,14 @@ jobs:
             build/comment.md
 
       - name: Enforce reporter exit code
-        # Fail the report job (and thus the required check) only on exit 2.
-        # Exit codes 0 and 1 leave the job green; the comment surfaces
-        # warnings without blocking merge.
+        # Push-mode default: fail CI on exit 1 OR 2. Without a PR comment,
+        # CI red is the only surface for exit-1 warnings — silencing them
+        # silences shadow-mode signal entirely.
         run: |
           EXIT="${{ steps.report.outputs.exit_code }}"
-          if [[ "$EXIT" == "2" ]]; then
-            echo "Reporter exited 2 (binding-mode hard fail). Failing the report check."
+          if [[ "$EXIT" != "0" ]]; then
+            echo "Reporter exited $EXIT. Failing the check."
+            echo "See the agent-redline-verdict artifact for the verdict."
             exit 1
           fi
-          echo "Reporter exited $EXIT — non-blocking."
+          echo "Reporter exited 0 — clean."

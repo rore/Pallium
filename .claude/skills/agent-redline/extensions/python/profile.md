@@ -12,7 +12,7 @@ Globs use `**/<pkg>/**` form so they match both src-layout (`src/<pkg>/...`) and
 |---|---|
 | `manage.py` at root **and** `django` in deps | layered service + Django addendum |
 | Web framework dep (`fastapi`, `flask`, `starlette`, `aiohttp`, `sanic`, `litestar`, `falcon`, `bottle`) | layered service |
-| Layer dirs: `domain/`, `application/`, `adapters/`, `infrastructure/`, `core/`, `services/`, `usecases/`, `ports/` | layered service |
+| Layer dirs: `api/`, `domain/`, `application/`, `adapters/`, `infrastructure/`, `core/`, `services/`, `usecases/`, `ports/` | layered service |
 | `pyproject.toml` `[project]`, no web dep, package with `__init__.py` re-exports | library / package |
 | `apache-airflow`, `prefect`, `dagster`, `luigi` deps; or `dags/`, `pipelines/`, `notebooks/` | zone-only fallback |
 | None match | zone-only fallback (developer can adjust) |

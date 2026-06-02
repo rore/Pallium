@@ -89,7 +89,12 @@ ArchUnit produces JUnit XML through Gradle's default test reporting. Verify noth
 
 ## 4. CI snippet
 
-Add to the CI proposal:
+Two flow modes — bootstrap-mode.md Phase 1 picks one:
+
+- **PR-driven flow** — `on: pull_request:`; verdict surfaces via a sticky PR comment; enforce step fails CI on exit 2 only. The §6 OpenAPI block below shows this in full.
+- **Push-driven flow** — `on: push: branches: [main]`; no sticky comment (no PR to comment on); verdict goes to a CI artifact + the workflow log; enforce step fails CI on exit 1 OR 2 (without a comment surface, exit 1 warnings need CI red as their visibility channel). The structural shape matches Python's scaffold.md §5b — adapt the install step for Gradle/Maven; the reporter call is identical.
+
+The boundary job runs the same way in either mode:
 
 ```yaml
 boundary:
