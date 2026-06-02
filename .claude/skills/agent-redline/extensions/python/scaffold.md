@@ -174,23 +174,67 @@ report:
       with:
         python-version: '3.11'
     - run: pip install pyyaml jsonschema
-    - run: |
-        # Compute changed-files list at PR time and run the reporter.
+
+    - name: Run reporter
+      id: report
+      # Capture the reporter's exit code without failing the step yet —
+      # we want the sticky comment to post regardless. The "Enforce
+      # reporter exit code" step below translates exit code 2
+      # (binding-mode hard fail) into a step failure.
+      #
+      # Reporter exit codes:
+      #   0  clean (BLUE / no checkpoints / contracts pass)
+      #   1  warnings (gray-zone / unmet checkpoint in shadow mode /
+      #      watch-list touched / pr-size warn) — surfaces in the comment,
+      #      does NOT block CI
+      #   2  binding-mode hard fail (boundary violation, unsatisfied
+      #      checkpoint under binding, pr-size fail under binding) —
+      #      blocks CI
+      #
+      # Without the `set +e` + capture pattern, bash's default `-e` mode
+      # makes ANY non-zero reporter exit fail the step. The comment
+      # action and the enforce step never run, the verdict computes but
+      # never reaches a human, and shadow mode's "surface, don't block"
+      # contract silently breaks.
+      run: |
+        set +e
         mkdir -p build
         git diff --name-only \
           ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} \
           > build/changed-files.txt
+        LABELS="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | paste -sd,)"
         python scripts/agent-redline-report.py \
           --policy agent-policy.yaml \
           --changed-files build/changed-files.txt \
-          --pr-labels "$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | paste -sd,)" \
+          --pr-labels "$LABELS" \
           --json-out build/verdict.json \
           --comment-out build/comment.md
+        EXIT=$?
+        echo "exit_code=$EXIT" >> "$GITHUB_OUTPUT"
+        echo "--- verdict.json ---" && cat build/verdict.json
+        echo "--- comment.md ---" && cat build/comment.md
+        echo "reporter exit code: $EXIT"
+
+    - name: Post sticky PR comment
+      uses: marocchino/sticky-pull-request-comment@v2
+      with:
+        path: build/comment.md
+        header: agent-redline
+
+    - name: Enforce reporter exit code
+      # Fail the report job (and thus the required check) only on exit 2.
+      # Exit codes 0 and 1 leave the job green; the comment surfaces
+      # warnings without blocking merge.
+      run: |
+        EXIT="${{ steps.report.outputs.exit_code }}"
+        if [[ "$EXIT" == "2" ]]; then
+          echo "Reporter exited 2 (binding-mode hard fail). Failing the report check."
+          exit 1
+        fi
+        echo "Reporter exited $EXIT — non-blocking."
 ```
 
-(The reporter dispatches on `policy.boundaryAdapter`, which declares
-`outputFormat: json-violations` and `outputPath:
-build/import-linter-report.json` — the file the boundary job uploaded.)
+(The reporter dispatches on `policy.boundaryAdapter`, which declares `outputFormat: json-violations` and `outputPath: build/import-linter-report.json` — the file the boundary job uploaded.)
 
 ## 6. Pre-push integration
 
