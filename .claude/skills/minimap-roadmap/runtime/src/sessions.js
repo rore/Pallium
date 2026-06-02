@@ -202,6 +202,20 @@ function headingPathForLine(text, lineNumber) {
   return current;
 }
 
+// Strip markdown syntax characters that often disappear when text is
+// extracted from a rendered view, copy-pasted across editors, or escaped by
+// a shell. This is intentionally conservative: it removes only inline
+// markers (backticks, asterisks, underscores, leading heading hashes) and
+// normalizes whitespace. It does NOT touch link/image syntax or fenced
+// code blocks — those would change semantics.
+function stripMarkdownSyntax(value) {
+  return String(value || "")
+    .replace(/^#{1,6}\s+/gm, "")     // strip `### ` heading prefixes
+    .replace(/[`*_]/g, "")           // strip inline code/bold/italic markers
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function findQuoteOccurrences(text, quote) {
   if (!quote) {
     return [];
@@ -218,11 +232,104 @@ function findQuoteOccurrences(text, quote) {
     offset = text.indexOf(quote, offset + Math.max(quote.length, 1));
   }
 
-  return occurrences;
+  if (occurrences.length > 0) {
+    return occurrences;
+  }
+
+  // Literal search missed. Retry with markdown syntax stripped from both
+  // sides — catches the common case where the quote was captured from a
+  // rendered view (no backticks, no `### ` prefix) but the file has them,
+  // or vice versa. We map the stripped match back to a line range using
+  // the strippedQuote's location in a strippedText copy and then use the
+  // first non-empty line in the original text whose stripped form contains
+  // the stripped quote. This is approximate but lets the anchor resolve.
+  const strippedQuote = stripMarkdownSyntax(quote);
+  if (!strippedQuote) {
+    return [];
+  }
+
+  const lines = text.split(/\r?\n/);
+  const fallback = [];
+  let lineOffset = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const stripped = stripMarkdownSyntax(lines[i]);
+    if (stripped && stripped.includes(strippedQuote)) {
+      fallback.push({
+        offset: lineOffset,
+        lineStart: i + 1,
+        lineEnd: i + 1,
+        approximate: true,
+      });
+    }
+    lineOffset += lines[i].length + 1; // +1 for the newline
+  }
+  return fallback;
 }
 
 function sameHeadingPath(left = [], right = []) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+// Loose comparator: case-insensitive, Unicode NFC-normalized, with em-dashes
+// and en-dashes folded to hyphens. Catches the common typography drift you
+// see when a heading title was retyped (or PowerShell normalized it). Used
+// only as a fallback when strict equality misses.
+function normalizeHeadingValue(value) {
+  return String(value || "")
+    .normalize("NFC")
+    .replace(/[—–]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function sameHeadingPathLoose(left = [], right = []) {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    if (normalizeHeadingValue(left[i]) !== normalizeHeadingValue(right[i])) return false;
+  }
+  return true;
+}
+
+function endsWithHeadingPath(haystack = [], suffix = []) {
+  if (suffix.length === 0 || suffix.length > haystack.length) return false;
+  const offset = haystack.length - suffix.length;
+  for (let i = 0; i < suffix.length; i += 1) {
+    if (normalizeHeadingValue(haystack[offset + i]) !== normalizeHeadingValue(suffix[i])) return false;
+  }
+  return true;
+}
+
+// Resolve a heading anchor through a tolerance cascade:
+//   1. exact full-path match
+//   2. exact full-path match with Unicode/case normalization
+//   3. unique suffix match (the user gave a tail of the canonical path)
+//   4. unique leaf match (the user gave just the heading title)
+// Returns the matched outline entry, or { ambiguous: candidates } when more
+// than one outline entry matches at a tier (we surface that distinctly so
+// callers can tell "no match" from "too many matches").
+function resolveHeadingAnchor(outline, headingPath) {
+  if (!Array.isArray(headingPath) || headingPath.length === 0) return null;
+
+  const exact = outline.find((heading) => sameHeadingPath(heading.headingPath, headingPath));
+  if (exact) return { match: exact };
+
+  const loose = outline.filter((heading) => sameHeadingPathLoose(heading.headingPath, headingPath));
+  if (loose.length === 1) return { match: loose[0] };
+  if (loose.length > 1) return { ambiguous: loose };
+
+  const suffix = outline.filter((heading) => endsWithHeadingPath(heading.headingPath, headingPath));
+  if (suffix.length === 1) return { match: suffix[0] };
+  if (suffix.length > 1) return { ambiguous: suffix };
+
+  if (headingPath.length === 1) {
+    const leafTarget = normalizeHeadingValue(headingPath[0]);
+    const leaf = outline.filter((heading) => normalizeHeadingValue(heading.title) === leafTarget);
+    if (leaf.length === 1) return { match: leaf[0] };
+    if (leaf.length > 1) return { ambiguous: leaf };
+  }
+
+  return null;
 }
 
 export function createTextAnchor(text, options = {}) {
@@ -256,10 +363,26 @@ export function resolveTextAnchor(text, anchor = {}) {
   }
 
   if (anchor.scope === "section") {
-    const found = parseMarkdownOutline(text).find((heading) => sameHeadingPath(heading.headingPath, anchor.headingPath || []));
-    return found
-      ? { status: "resolved", strategy: "heading_path", lineStart: found.lineStart, lineEnd: found.lineStart }
-      : { status: "orphaned", strategy: "heading_path" };
+    const resolution = resolveHeadingAnchor(parseMarkdownOutline(text), anchor.headingPath || []);
+    if (resolution?.match) {
+      return {
+        status: "resolved",
+        strategy: "heading_path",
+        lineStart: resolution.match.lineStart,
+        lineEnd: resolution.match.lineStart,
+        // The canonical full path of the matched heading. May differ from
+        // the input when the user passed a leaf-only or suffix path.
+        headingPath: resolution.match.headingPath,
+      };
+    }
+    if (resolution?.ambiguous) {
+      return {
+        status: "orphaned",
+        strategy: "heading_path",
+        ambiguous: resolution.ambiguous.map((heading) => heading.headingPath),
+      };
+    }
+    return { status: "orphaned", strategy: "heading_path" };
   }
 
   const quote = String(anchor.quote || "");
@@ -527,7 +650,17 @@ function makeCommentAnchor(text, input) {
     };
     const resolved = resolveTextAnchor(text, anchor);
     if (resolved.status !== "resolved") {
+      if (Array.isArray(resolved.ambiguous) && resolved.ambiguous.length > 1) {
+        const rendered = resolved.ambiguous.map((path) => path.join(" > ")).join("; ");
+        throw new AppError(`Section anchor matched multiple headings: ${rendered}. Pass the full heading path.`, 422, "anchor_ambiguous");
+      }
       throw new AppError("Section anchor could not be resolved.", 422, "anchor_orphaned");
+    }
+    // Store the canonical full path (the user may have passed a leaf-only or
+    // suffix path; we resolve to the unambiguous one once on creation so future
+    // resolves are stable).
+    if (Array.isArray(resolved.headingPath) && resolved.headingPath.length > 0) {
+      anchor.headingPath = resolved.headingPath;
     }
     return anchor;
   }

@@ -42,7 +42,9 @@ For ownership rules, item shape, board rules, and edit constraints, read [refere
 
 ## Composing With Spec Review
 
-A roadmap item is just a markdown file. To open a review thread on one item (anchored comments, suggestions), attach the item file via [`minimap-spec-review`](../minimap-spec-review/SKILL.md). Spec sessions never auto-mutate the file, so the layers compose safely.
+A roadmap item is just a markdown file. To open a review thread on one item (anchored comments, suggestions), attach the item file via the `minimap-spec-review` skill if it is installed alongside this one. Spec sessions never auto-mutate the file, so the layers compose safely.
+
+If only this skill is installed, the user can still drive the conversation through any other client (the running minimap server serves both modes).
 
 ## Guardrails
 

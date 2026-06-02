@@ -353,6 +353,26 @@ h3 {
   color: var(--text);
 }
 
+.ghost-button.icon-button {
+  /* Square icon-only buttons (e.g. topbar Refresh). Match the height of
+     the adjacent text buttons so the row stays aligned. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  color: var(--muted);
+}
+
+.ghost-button.icon-button:hover {
+  color: var(--text);
+}
+
+.ghost-button.icon-button svg {
+  display: block;
+}
+
 .mobile-nav-button {
   display: none;
   padding: 5px 10px;
@@ -866,16 +886,6 @@ h3 {
   cursor: not-allowed;
   pointer-events: none;
 }
-.spec-toolbar-icon-button {
-  width: 28px; height: 28px; border-radius: 6px;
-  border: 1px solid var(--spec-line);
-  background: var(--spec-panel);
-  display: grid; place-items: center;
-  cursor: pointer;
-  color: var(--spec-muted);
-  font-size: 0.95rem; line-height: 1;
-}
-.spec-toolbar-icon-button:hover { background: var(--spec-panel-soft); color: var(--spec-text); }
 
 .spec-primary-button {
   border: 1px solid var(--spec-text);
