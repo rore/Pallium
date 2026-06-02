@@ -36,13 +36,17 @@ jobs:
       - name: Install package + dev deps (incl. import-linter)
         run: pip install -e ".[dev]"
       - name: Run import-linter via adapter
-        run: python scripts/run-import-linter.py --out build/import-linter-report.json
-        # Exits 1 on violations; CI continues so the reporter step can surface them.
+        run: |
+          mkdir -p build
+          python scripts/run-import-linter.py --out build/import-linter-report.json
+        # Exits 1 on violations; reporter step surfaces them. Drop this once
+        # shadow window is done.
         continue-on-error: true
       - uses: actions/upload-artifact@v4
         with:
           name: boundary-report
           path: build/import-linter-report.json
+          if-no-files-found: error
 
   report:
     name: agent-redline report
@@ -60,26 +64,71 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pyyaml jsonschema
-      - name: Run agent-redline reporter
+
+      - name: Run reporter
+        id: report
+        # Capture the reporter's exit code without failing the step yet —
+        # the sticky comment must post regardless. The "Enforce reporter
+        # exit code" step below translates exit 2 into a check failure.
+        #
+        # Reporter exit codes:
+        #   0  clean (BLUE / no checkpoints / contracts pass)
+        #   1  warnings (gray-zone / unmet checkpoint in shadow mode /
+        #      watch-list touched / pr-size warn) — surfaces in comment,
+        #      does NOT block CI
+        #   2  binding-mode hard fail (boundary violation, unsatisfied
+        #      checkpoint under binding, pr-size fail under binding) —
+        #      blocks CI
         run: |
+          set +e
           mkdir -p build
           git diff --name-only \
-            ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} \
+            "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" \
             > build/changed-files.txt
+          LINES_CHANGED=$(git diff --shortstat \
+            "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" \
+            | awk '{for (i=1;i<=NF;i++) if ($i ~ /insertions?|deletions?/) s+=$(i-1)} END{print s+0}')
           python scripts/agent-redline-report.py \
             --policy agent-policy.yaml \
             --changed-files build/changed-files.txt \
-            --pr-labels "$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | paste -sd,)" \
+            --lines-changed "${LINES_CHANGED:-0}" \
+            --pr-labels "${{ join(github.event.pull_request.labels.*.name, ',') }}" \
             --json-out build/verdict.json \
             --comment-out build/comment.md
-      - name: Post / update PR comment
-        # The reporter writes build/comment.md; post it via marocchino or
-        # peter-evans/create-or-update-comment to keep one sticky comment.
-        # Implementation left to whoever applies this workflow.
-        run: cat build/comment.md
+          EXIT=$?
+          echo "exit_code=$EXIT" >> "$GITHUB_OUTPUT"
+          echo "reporter exit code: $EXIT"
+
+      - name: Post sticky PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: build/comment.md
+          header: agent-redline
+
+      - name: Upload verdict artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-redline-verdict
+          path: |
+            build/verdict.json
+            build/comment.md
+
+      - name: Enforce reporter exit code
+        # Fail the report job (and thus the required check) only on exit 2.
+        # Exit codes 0 and 1 leave the job green; the comment surfaces
+        # warnings without blocking merge.
+        run: |
+          EXIT="${{ steps.report.outputs.exit_code }}"
+          if [[ "$EXIT" == "2" ]]; then
+            echo "Reporter exited 2 (binding-mode hard fail). Failing the report check."
+            exit 1
+          fi
+          echo "Reporter exited $EXIT — non-blocking."
 ```
 
 The reporter dispatches on `agent-policy.yaml`'s `boundaryAdapter:` block (declared `outputFormat: json-violations` + `outputPath: build/import-linter-report.json`) — no explicit `--boundary-format` flag needed.
+
+The `set +e` + `EXIT=$?` capture is the canonical pattern from the agent-redline skill's `extensions/python/scaffold.md` §5. It's load-bearing: without it, `bash -e` propagates a non-zero reporter exit (exit 1 = warnings is the common case for non-blue PRs) and the sticky-comment step never runs — verdict computes but never reaches a human. The earlier `continue-on-error: true` workaround is no longer needed; the reporter's three-level exit code (0/1/2) is the explicit shadow-vs-binding signal.
 
 ## 2. CODEOWNERS additions
 
@@ -190,15 +239,15 @@ The pre-push check runs the import-linter adapter automatically when it's presen
 
 These were not decided automatically — pick when you're ready:
 
-1. **When to apply this workflow file.** Now, in a soft-launch branch, or after watching shadow-mode signal for a Window?
+1. **When to apply this workflow file.** Now, in a soft-launch branch, or after watching shadow-mode signal for a Window? **(Already applied — `.github/workflows/agent-redline.yml` exists in the repo.)**
 2. **CODEOWNERS handles.** Solo dev today; replace `TODO(owner):` with `@your-handle` when ready, or skip until collaborators exist.
-3. **Whether to drop `continue-on-error: true` on the boundary job.** Keep it during shadow; drop it to make import-linter violations fail PRs.
+3. **Whether to drop `continue-on-error: true` on the boundary job.** Keep it during shadow; drop it once you flip `modes.default: shadow → binding` in `agent-policy.yaml`. After the flip, the reporter's exit-2 path will catch boundary violations through `boundaryAdapter`, making the boundary job's `continue-on-error` redundant — drop both together.
 4. **Whether to baseline pre-existing violations.** Bootstrap analysis says contracts pass today; verify with `python scripts/run-import-linter.py` before flipping.
-5. **`storage.sqlite → app.transient_errors` follow-up refactor.** Move `transient_errors` to `core/errors.py` and drop the baselined exception. Tracked in AGENTS.md "Known import-graph smells"; not bootstrap work.
+5. **`storage.sqlite_workstream → capabilities.workstreams` follow-up refactor.** Move `WorkstreamStore` out of `capabilities/` (or out of `storage/`, depending on which side you want to own it) and drop the last baselined exception. Tracked in AGENTS.md "Known import-graph smells"; not bootstrap work.
 
 ## What still needs human action after applying this
 
-- [ ] Write `.github/workflows/agent-redline.yml` (copy from §1 above)
+- [x] Write `.github/workflows/agent-redline.yml` (copy from §1 above)
 - [ ] Decide on CODEOWNERS (§2) — skip or add with placeholders
 - [ ] Update branch protection on `main` (§3) — only after Window
 - [ ] Run shadow mode for 4 weeks / 30 PRs (§4)

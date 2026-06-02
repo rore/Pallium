@@ -138,7 +138,29 @@ api:
         cp /tmp/base/build/openapi.json /tmp/spec_base.yaml
         git worktree remove /tmp/base --force
 
-    - run: |
+    - name: Run reporter
+      id: report
+      # Capture the reporter's exit code without failing the step yet —
+      # we want the sticky comment to post regardless. The "Enforce
+      # reporter exit code" step below translates exit code 2
+      # (binding-mode hard fail) into a step failure.
+      #
+      # Reporter exit codes:
+      #   0  clean
+      #   1  warnings (gray-zone, unmet checkpoint in shadow, watch-list
+      #      touched, pr-size warn) — surfaces in the comment, does NOT
+      #      block CI
+      #   2  binding-mode hard fail (boundary violation, unsatisfied
+      #      checkpoint under binding, pr-size fail under binding) —
+      #      blocks CI
+      #
+      # Without the `set +e` + capture pattern, bash's default `-e` mode
+      # makes ANY non-zero reporter exit fail the step. The comment
+      # action and the enforce step never run, the verdict computes but
+      # never reaches a human, and shadow mode's "surface, don't block"
+      # contract silently breaks.
+      run: |
+        set +e
         # Compute the changed-files list at PR time.
         mkdir -p build
         git diff --name-only \
@@ -155,6 +177,26 @@ api:
           --pr-labels "$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | paste -sd,)" \
           --json-out build/verdict.json \
           --comment-out build/comment.md
+        EXIT=$?
+        echo "exit_code=$EXIT" >> "$GITHUB_OUTPUT"
+        echo "--- verdict.json ---" && cat build/verdict.json
+        echo "--- comment.md ---" && cat build/comment.md
+        echo "reporter exit code: $EXIT"
+
+    - name: Post sticky PR comment
+      uses: marocchino/sticky-pull-request-comment@v2
+      with:
+        path: build/comment.md
+        header: agent-redline
+
+    - name: Enforce reporter exit code
+      run: |
+        EXIT="${{ steps.report.outputs.exit_code }}"
+        if [[ "$EXIT" == "2" ]]; then
+          echo "Reporter exited 2 (binding-mode hard fail). Failing the report check."
+          exit 1
+        fi
+        echo "Reporter exited $EXIT — non-blocking."
 ```
 
 The reporter consumes the two specs via `--api-spec-base` / `--api-spec-head` and computes a structural diff (paths added / removed, methods added / removed / modified). The output is a list of changed surface points; reviewers judge severity. The reporter does NOT classify breaking-vs-additive — false certainty there would be worse than no signal.
