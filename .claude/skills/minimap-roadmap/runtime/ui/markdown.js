@@ -23,10 +23,24 @@ export function renderInlineMarkdown(value) {
   return html;
 }
 
-export function renderMarkdownToHtml(markdown) {
+export function renderMarkdownToHtml(markdown, options = {}) {
   const normalized = String(markdown || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const sourceLines = normalized.split("\n");
   const blocks = [];
+
+  // Source-line attribute helper. The spec-review UI uses these to anchor
+  // margin cards to the exact line each block came from in the source file —
+  // see spec/render.js for the lookup. 1-based to match the line numbering
+  // the server emits in `anchor.lineStart` / `anchorStatus.lineStart`.
+  //
+  // Off by default — only the spec-review render path opts in via
+  // `options.emitLines: true`. Other callers (the scope panel preview, the
+  // setup readme, etc.) don't care about line metadata and would only pay
+  // the HTML-weight cost. `options.lineOffset` shifts the values, e.g. to
+  // skip past frontmatter that the caller stripped before rendering.
+  const emitLines = options.emitLines === true;
+  const lineOffset = Number.isFinite(options.lineOffset) ? options.lineOffset : 0;
+  const lineAttr = (sourceLineIndex) => emitLines ? ` data-spec-source-line="${sourceLineIndex + 1 + lineOffset}"` : "";
 
   function expandIndentation(value) {
     return String(value || "").replace(/\t/g, "    ");
@@ -94,19 +108,24 @@ export function renderMarkdownToHtml(markdown) {
     const rows = [];
     let index = startIndex + 2;
 
+    // Per-row source lines so the rendered <tr> can carry the line it came
+    // from. Used by the spec-review UI to anchor a comment to the row.
+    const headerLineAttr = lineAttr(startIndex);
+    const rowLineAttrs = [];
     while (index < sourceLines.length && sourceLines[index].trim() && sourceLines[index].includes("|")) {
+      rowLineAttrs.push(lineAttr(index));
       rows.push(splitTableRow(sourceLines[index]));
       index += 1;
     }
 
     const alignStyle = (cellIndex) => ` style="text-align: ${alignments[cellIndex] || "left"}"`;
-    const header = `<thead><tr>${headerCells.map((cell, cellIndex) => `<th${alignStyle(cellIndex)}>${renderInlineMarkdown(cell)}</th>`).join("")}</tr></thead>`;
+    const header = `<thead><tr${headerLineAttr}>${headerCells.map((cell, cellIndex) => `<th${alignStyle(cellIndex)}>${renderInlineMarkdown(cell)}</th>`).join("")}</tr></thead>`;
     const body = rows.length
-      ? `<tbody>${rows.map((row) => `<tr>${headerCells.map((_, cellIndex) => `<td${alignStyle(cellIndex)}>${renderInlineMarkdown(row[cellIndex] || "")}</td>`).join("")}</tr>`).join("")}</tbody>`
+      ? `<tbody>${rows.map((row, rowIndex) => `<tr${rowLineAttrs[rowIndex]}>${headerCells.map((_, cellIndex) => `<td${alignStyle(cellIndex)}>${renderInlineMarkdown(row[cellIndex] || "")}</td>`).join("")}</tr>`).join("")}</tbody>`
       : "";
 
     return {
-      html: `<div class="markdown-table-wrap"><table>${header}${body}</table></div>`,
+      html: `<div class="markdown-table-wrap"${lineAttr(startIndex)}><table>${header}${body}</table></div>`,
       nextIndex: index,
     };
   }
@@ -124,9 +143,15 @@ export function renderMarkdownToHtml(markdown) {
       index += 1;
     }
 
-    const quoteHtml = renderMarkdownToHtml(quoteLines.join("\n"));
+    // Inner blockquote content is rendered with its own line numbering, but
+    // we suppress the attribute on inner blocks because their lines aren't
+    // a direct mapping back to the outer document (we'd need to track the
+    // `>` prefix offsets to be accurate, and the placement use case
+    // doesn't need this granularity — the outer <blockquote> already has
+    // a line attr that pins the whole region).
+    const quoteHtml = renderMarkdownToHtml(quoteLines.join("\n"), { emitLines: false });
     return {
-      html: `<blockquote>${quoteHtml}</blockquote>`,
+      html: `<blockquote${lineAttr(startIndex)}>${quoteHtml}</blockquote>`,
       nextIndex: index,
     };
   }
@@ -145,7 +170,7 @@ export function renderMarkdownToHtml(markdown) {
     }
 
     return {
-      html: `<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`,
+      html: `<pre${lineAttr(startIndex)}><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`,
       nextIndex: index,
     };
   }
@@ -169,7 +194,7 @@ export function renderMarkdownToHtml(markdown) {
     }
 
     return {
-      html: `<p>${renderInlineMarkdown(paragraphLines.join(" "))}</p>`,
+      html: `<p${lineAttr(startIndex)}>${renderInlineMarkdown(paragraphLines.join(" "))}</p>`,
       nextIndex: index,
     };
   }
@@ -185,6 +210,9 @@ export function renderMarkdownToHtml(markdown) {
         break;
       }
 
+      // Source line of THIS list item's marker. Captured before we consume
+      // the line so each <li> carries its own line, not the list's.
+      const itemStartIndex = index;
       const paragraphLines = [marker.content.trim()];
       const children = [];
       index += 1;
@@ -249,15 +277,16 @@ export function renderMarkdownToHtml(markdown) {
       }
 
       const paragraphHtml = renderInlineMarkdown(paragraphLines.join(" "));
+      const itemAttr = lineAttr(itemStartIndex);
       if (children.length > 0) {
-        items.push(`<li><p>${paragraphHtml}</p>${children.join("")}</li>`);
+        items.push(`<li${itemAttr}><p>${paragraphHtml}</p>${children.join("")}</li>`);
       } else {
-        items.push(`<li>${paragraphHtml}</li>`);
+        items.push(`<li${itemAttr}>${paragraphHtml}</li>`);
       }
     }
 
     return {
-      html: `<${tagName}>${items.join("")}</${tagName}>`,
+      html: `<${tagName}${lineAttr(startIndex)}>${items.join("")}</${tagName}>`,
       nextIndex: index,
     };
   }
@@ -289,7 +318,7 @@ export function renderMarkdownToHtml(markdown) {
     const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
     if (headingMatch) {
       const level = headingMatch[1].length;
-      blocks.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
+      blocks.push(`<h${level}${lineAttr(index)}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
       index += 1;
       continue;
     }
@@ -303,7 +332,7 @@ export function renderMarkdownToHtml(markdown) {
     }
 
     if (isHorizontalRule(trimmed)) {
-      blocks.push("<hr />");
+      blocks.push(`<hr${lineAttr(index)} />`);
       index += 1;
       continue;
     }

@@ -1335,6 +1335,55 @@ export async function previewFileSessionSuggestion(filePath, suggestionId, optio
   };
 }
 
+// Did `candidate`'s anchor range overlap the span that the applied
+// suggestion replaced? Used by the apply cascade to find OTHER comments
+// and suggestions that pointed inside the same region — they should be
+// re-anchored to the new replacement quote so the conversation thread
+// stays connected to the spec at the location it lives.
+//
+// Three signals, in order of strength:
+//   1. char-offset overlap when both sides have `offset` and a quote
+//      length to define a range. Strongest — handles substring,
+//      partial overlap, identical-quote-but-different-occurrence.
+//   2. line-range overlap when at least one side lacks offset. Coarse
+//      but correct: a comment on line 21 inside a replace that spans
+//      lines 21-24 is the same region.
+//   3. exact quote-string equality. Final fallback for legacy data
+//      where neither offset nor line range is present (pre-2026-05).
+//
+// Returns true when `candidate` should be re-anchored. Excludes the
+// suggestion that's GENERATING the cascade (its anchor is updated
+// separately).
+function anchorOverlapsReplacedSpan(candidate, replacedAnchor) {
+  if (!candidate || candidate.scope !== "anchor") return false;
+  if (!replacedAnchor || replacedAnchor.scope !== "anchor") return false;
+  const replacedQuote = typeof replacedAnchor.quote === "string" ? replacedAnchor.quote : "";
+
+  // 1. char-offset overlap
+  const cOff = Number.isFinite(candidate.offset) ? candidate.offset : null;
+  const rOff = Number.isFinite(replacedAnchor.offset) ? replacedAnchor.offset : null;
+  const cQuote = typeof candidate.quote === "string" ? candidate.quote : "";
+  if (cOff !== null && rOff !== null && replacedQuote.length > 0) {
+    const cStart = cOff;
+    const cEnd = cOff + cQuote.length;
+    const rStart = rOff;
+    const rEnd = rOff + replacedQuote.length;
+    return cStart < rEnd && rStart < cEnd;
+  }
+
+  // 2. line-range overlap (defensive: works when comment.offset is missing)
+  const cLineStart = Number.isFinite(candidate.lineStart) ? candidate.lineStart : null;
+  const cLineEnd = Number.isFinite(candidate.lineEnd) ? candidate.lineEnd : cLineStart;
+  const rLineStart = Number.isFinite(replacedAnchor.lineStart) ? replacedAnchor.lineStart : null;
+  const rLineEnd = Number.isFinite(replacedAnchor.lineEnd) ? replacedAnchor.lineEnd : rLineStart;
+  if (cLineStart !== null && rLineStart !== null) {
+    return cLineStart <= rLineEnd && rLineStart <= cLineEnd;
+  }
+
+  // 3. exact quote-string equality (legacy fallback)
+  return cQuote.length > 0 && cQuote === replacedQuote;
+}
+
 export async function applyFileSessionSuggestion(filePath, suggestionId, input = {}, options = {}) {
   const { session, paths, text, suggestions } = await loadSuggestionState(filePath, options);
   const index = findSuggestionIndex(suggestions, suggestionId);
@@ -1410,15 +1459,17 @@ export async function applyFileSessionSuggestion(filePath, suggestionId, input =
     afterHash,
   };
   suggestions[index] = appliedSuggestion;
-  // Also re-anchor any OTHER suggestions in the same file that were anchored
-  // to the same old quote (e.g. a follow-up suggestion against the same
-  // sentence). Match by exact quote string under the same scope.
+  // Also re-anchor any OTHER suggestions in the same file that pointed
+  // inside the same region (e.g. a follow-up suggestion against the same
+  // sentence, or one that targeted a substring of the replaced span).
+  // Match by anchor-range overlap, not exact quote equality — see
+  // anchorOverlapsReplacedSpan for the cascade.
   if (isReplaceSuggestion) {
-    const oldQuote = suggestion.anchor.quote;
+    const replacedAnchor = suggestion.anchor;
     for (let i = 0; i < suggestions.length; i += 1) {
       if (i === index) continue;
       const other = suggestions[i];
-      if (other.anchor?.scope !== "anchor" || other.anchor?.quote !== oldQuote) continue;
+      if (!anchorOverlapsReplacedSpan(other.anchor, replacedAnchor)) continue;
       suggestions[i] = {
         ...other,
         anchor: { ...other.anchor, ...updatedAnchor, quote: updatedAnchor.quote },
@@ -1427,14 +1478,16 @@ export async function applyFileSessionSuggestion(filePath, suggestionId, input =
     }
   }
 
-  // And update comments anchored to the same quote.
+  // And update comments anchored inside the replaced region. Same overlap
+  // rule as the suggestion cascade — substring, partial, or identical
+  // quote, on the same line range or at overlapping char offsets.
   const comments = await readJsonLines(paths.commentsJsonl);
   let commentsChanged = false;
   if (isReplaceSuggestion) {
-    const oldQuote = suggestion.anchor.quote;
+    const replacedAnchor = suggestion.anchor;
     for (let i = 0; i < comments.length; i += 1) {
       const c = comments[i];
-      if (c.anchor?.scope !== "anchor" || c.anchor?.quote !== oldQuote) continue;
+      if (!anchorOverlapsReplacedSpan(c.anchor, replacedAnchor)) continue;
       comments[i] = {
         ...c,
         anchor: { ...c.anchor, ...updatedAnchor, quote: updatedAnchor.quote },

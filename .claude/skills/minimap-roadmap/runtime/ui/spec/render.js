@@ -84,6 +84,53 @@ function headingElementForPath(headingPath = []) {
   return null;
 }
 
+// ── Line-based anchor lookup ───────────────────────────────────────────
+//
+// The markdown renderer stamps every top-level block (and list item, and
+// table row) with `data-spec-source-line="N"` — a 1-based line number in
+// the FULL spec file (frontmatter included; see render.js where we pass
+// the frontmatter offset). On read, the server re-resolves each anchor
+// and reports `anchorStatus.lineStart` against the same line space, so
+// going line → element is exact and survives quote drift.
+//
+// We rebuild the line→element map once per render and cache it on STATE
+// so the per-card lookup in indexSpecAnchors is O(1) instead of an
+// O(blocks × cards) text scan.
+
+export function rebuildSpecLineIndex() {
+  const map = new Map();
+  if (DOM.specFileContentElement) {
+    const elements = DOM.specFileContentElement.querySelectorAll("[data-spec-source-line]");
+    for (const el of elements) {
+      const line = parseInt(el.dataset.specSourceLine, 10);
+      if (!Number.isFinite(line) || line < 1) continue;
+      // First write wins — multiple elements can share a line (e.g. a list
+      // and its first <li>). The list item is more specific and renders
+      // AFTER the list opening tag, so we'd overwrite the parent. To pin
+      // to the OUTERMOST block, keep the first.
+      if (!map.has(line)) map.set(line, el);
+    }
+  }
+  STATE.spec.lineToElement = map;
+}
+
+export function elementForSourceLine(line) {
+  if (!Number.isFinite(line) || line < 1) return null;
+  const map = STATE.spec.lineToElement;
+  if (!map || !map.size) return null;
+  const exact = map.get(line);
+  if (exact) return exact;
+  // Anchors can target lines that have no block of their own (blank lines,
+  // mid-paragraph lines, lines inside fenced code). Walk back to the
+  // nearest block that opens at or before the requested line — that's
+  // the block the line belongs to.
+  for (let probe = line - 1; probe >= 1; probe -= 1) {
+    const hit = map.get(probe);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 function blockElementForQuote(quote) {
   const normalizedQuote = normalizeVisibleText(quote);
   if (!normalizedQuote) {
@@ -131,6 +178,30 @@ export function anchorTargetElement(item) {
   const anchor = item?.anchor || {};
   if (anchor.scope === "global") {
     return DOM.specFileContentElement.firstElementChild;
+  }
+  // Server-resolved line is the most authoritative signal. anchorStatus is
+  // recomputed on every read, so it tracks file edits the original anchor
+  // text cannot. Fall through to the original anchor.lineStart so an
+  // orphaned-but-on-an-existing-line card lands visually near where the
+  // user wrote it instead of stacked at the bottom of the margin. The
+  // orphan styling is set independently in the layout pass — placement
+  // and "this anchor is gone" visibility are separate concerns. Final
+  // fallback is the heading-or-quote text-matching path for legacy
+  // anchors that have no line metadata at all.
+  const status = item?.anchorStatus || {};
+  const resolvedLine = (status.status === "resolved" && Number.isFinite(status.lineStart))
+    ? status.lineStart
+    : null;
+  const originalLine = Number.isFinite(anchor.lineStart) ? anchor.lineStart : null;
+  // Try the resolved line first (server's re-resolution against the current
+  // file). If absent (orphaned, ambiguous, or pre-line-metadata anchor),
+  // try the original lineStart — the location the user authored the anchor
+  // against. Either gives us the right visual placement; only when both
+  // miss do we fall through to slow text matching.
+  const lineCandidate = resolvedLine !== null ? resolvedLine : originalLine;
+  if (lineCandidate !== null) {
+    const byLine = elementForSourceLine(lineCandidate);
+    if (byLine) return byLine;
   }
   if (anchor.scope === "section") {
     return headingElementForPath(anchor.headingPath || []);
@@ -629,13 +700,28 @@ export function renderSpecFile() {
     if (frontmatter && typeof frontmatter.title === "string" && frontmatter.title.trim()) {
       DOM.specFileTitleElement.textContent = frontmatter.title.trim();
     }
-    DOM.specFileContentElement.innerHTML = headerHtml + renderMarkdownToHtml(HELPERS.stripLeadingFrontmatter(STATE.spec.content));
+    // Body is rendered without the frontmatter so the renderer's local
+    // line indices start at 1. The server reports anchor lines against
+    // the FULL file (frontmatter included), so pass the number of lines
+    // the frontmatter consumed as an offset — the rendered DOM blocks
+    // then carry data-spec-source-line values that line up with the
+    // server's anchor.lineStart / anchorStatus.lineStart.
+    const body = HELPERS.stripLeadingFrontmatter(STATE.spec.content);
+    const original = String(STATE.spec.content || "");
+    const consumed = original.length - body.length;
+    const frontmatterLineCount = consumed > 0 ? original.slice(0, consumed).split(/\r?\n/).length - 1 : 0;
+    DOM.specFileContentElement.innerHTML = headerHtml + renderMarkdownToHtml(body, { emitLines: true, lineOffset: frontmatterLineCount });
   } else {
     DOM.specFileContentElement.innerHTML = `<pre><code>${escapeHtml(STATE.spec.content)}</code></pre>`;
   }
 
   // Wrap quote-anchored ranges so they're hoverable + clickable.
   decorateSpecAnchors();
+
+  // Index every block that carries a source-line attribute so anchorTargetElement
+  // can do an O(1) line lookup instead of re-doing text matching against the
+  // anchor.quote on every render. Built once after the DOM is in place.
+  rebuildSpecLineIndex();
 
   STATE.spec.selectedQuote = "";
   STATE.spec.selectedQuoteLineRange = null;

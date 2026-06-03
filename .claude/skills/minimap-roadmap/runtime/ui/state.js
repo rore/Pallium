@@ -44,6 +44,11 @@ function makeInitial() {
       selectedQuote: "",
       selectedQuoteLineRange: null,
       selectedQuoteOffset: null,
+      // Map<sourceLine, Element> rebuilt after each render pass so anchor
+      // lookups can do an O(1) line→element lookup instead of re-doing
+      // text matching for every margin card. Populated by
+      // rebuildSpecLineIndex; consumed by anchorTargetElement.
+      lineToElement: new Map(),
       activeAnchorCommentId: "",
       anchorHighlightTimer: null,
       reviewTab: "comments",
