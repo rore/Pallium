@@ -35,6 +35,33 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+// Render a comment / reply / rationale body as paragraph-broken HTML.
+// Comments authored by agents often arrive with structure that we want to
+// preserve in the rendered card:
+//   - Real newlines → blank lines split paragraphs, single newlines become
+//     <br> so numbered/bulleted lists stay readable.
+//   - Literal "\n" / "\t" / "\r" escapes (some models emit the two-char
+//     sequence instead of the actual control char) get decoded the same
+//     conservative way the server decodes suggestion content. We reuse
+//     decodeLiteralEscapes from anchors.js for this.
+//   - All output is HTML-escaped before any of the above structural HTML
+//     is added — no markdown parsing, no link rendering, no risk of
+//     injection.
+function formatCommentBodyHtml(value) {
+  const decoded = decodeLiteralEscapes(String(value || ""));
+  const trimmed = decoded.replace(/^\s+|\s+$/g, "");
+  if (!trimmed) return "";
+  // Split on a blank line (one or more in a row). Within each paragraph,
+  // single newlines become <br> so lists / multi-line prose stay legible.
+  const paragraphs = trimmed.split(/\r?\n\s*\r?\n+/);
+  return paragraphs
+    .map((para) => {
+      const lines = para.split(/\r?\n/).map((line) => escapeHtml(line));
+      return `<p>${lines.join("<br>")}</p>`;
+    })
+    .join("");
+}
+
 // ── Anchor target resolution ───────────────────────────────────────────
 
 function headingElementForPath(headingPath = []) {
@@ -72,8 +99,32 @@ function blockElementForQuote(quote) {
   // `### ` heading prefix that the rendered HTML's textContent doesn't,
   // or vice versa. Stripping both sides catches that drift.
   const strippedQuote = stripMarkdownSyntaxForUi(quote);
-  if (!strippedQuote) return null;
-  return candidates.find((element) => stripMarkdownSyntaxForUi(element.textContent).includes(strippedQuote)) || null;
+  if (strippedQuote) {
+    const stripped = candidates.find((element) => stripMarkdownSyntaxForUi(element.textContent).includes(strippedQuote)) || null;
+    if (stripped) return stripped;
+  }
+
+  // 3. multi-block fallback. The quote spans more than one rendered block
+  // (e.g. a heading PLUS the code fence beneath it, or a section header
+  // PLUS several paragraphs). Walk the quote's lines top-down and return
+  // the first rendered block that contains any of them — this is the
+  // "first line of the spanned region", which is where we want the card
+  // pinned. Without this the card has no anchor and gets stacked at the
+  // bottom of the margin like an orphan, even though the server's
+  // anchorStatus is `resolved`.
+  const lines = String(quote || "").split(/\r?\n/);
+  for (const line of lines) {
+    const normalizedLine = normalizeVisibleText(line);
+    if (!normalizedLine) continue;
+    const literalLine = candidates.find((element) => normalizeVisibleText(element.textContent).includes(normalizedLine));
+    if (literalLine) return literalLine;
+    const strippedLine = stripMarkdownSyntaxForUi(line);
+    if (!strippedLine) continue;
+    const strippedHit = candidates.find((element) => stripMarkdownSyntaxForUi(element.textContent).includes(strippedLine));
+    if (strippedHit) return strippedHit;
+  }
+
+  return null;
 }
 
 export function anchorTargetElement(item) {
@@ -751,7 +802,7 @@ function renderMarginCommentCard(comment) {
   const replies = (comment.replies || []).map((reply) => `
     <div class="spec-card-reply">
       <span class="spec-card-reply-author ${actorColorClass(reply.by)}">${escapeHtml(formatActorLabel(reply.by))}</span>
-      <p>${escapeHtml(reply.text)}</p>
+      <div class="spec-card-text">${formatCommentBodyHtml(reply.text)}</div>
     </div>`).join("");
 
   const isReplying = STATE.spec.replyComposerCommentId === comment.id;
@@ -799,7 +850,7 @@ function renderMarginCommentCard(comment) {
           <button class="spec-card-action" type="button" data-comment-action="reopen">Reopen</button>
         </div>
       ` : `
-        <p class="spec-card-text">${escapeHtml(comment.text)}</p>
+        <div class="spec-card-text">${formatCommentBodyHtml(comment.text)}</div>
         ${replies ? `<div class="spec-card-replies">${replies}</div>` : ""}
         ${orphanWarning}
         ${anchorRewritten}
@@ -878,7 +929,7 @@ function renderMarginSuggestionCard(suggestion) {
   const rationale = suggestion.rationale
     ? `<div class="spec-card-field">
          <span class="spec-card-field-label">Why</span>
-         <p class="spec-card-field-text">${escapeHtml(suggestion.rationale)}</p>
+         <div class="spec-card-field-text">${formatCommentBodyHtml(suggestion.rationale)}</div>
        </div>`
     : "";
 
@@ -905,7 +956,7 @@ function renderMarginSuggestionCard(suggestion) {
   const replies = (suggestion.replies || []).map((reply) => `
     <div class="spec-card-reply">
       <span class="spec-card-reply-author ${actorColorClass(reply.by)}">${escapeHtml(formatActorLabel(reply.by))}</span>
-      <p>${escapeHtml(reply.text)}</p>
+      <div class="spec-card-text">${formatCommentBodyHtml(reply.text)}</div>
     </div>`).join("");
   const replyForm = isReplying ? `
     <form class="spec-card-reply-form" data-suggestion-reply-id="${escapeHtml(suggestion.id)}">

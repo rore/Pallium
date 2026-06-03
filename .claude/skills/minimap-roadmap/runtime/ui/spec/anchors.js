@@ -257,6 +257,11 @@ export function normalizeVisibleText(value) {
 export function stripMarkdownSyntaxForUi(value) {
   return String(value || "")
     .replace(/^#{1,6}\s+/gm, "")
+    // Strip leading list markers — `- `, `* `, and `1. ` — at the start of a
+    // line. The rendered DOM puts list bullets in CSS, so an `<li>`'s
+    // textContent has no `- ` prefix and a quote like "- foo" otherwise
+    // wouldn't substring-match against it.
+    .replace(/^\s*(?:[-*+]|\d+\.)\s+/gm, "")
     .replace(/[`*_]/g, "")
     .replace(/\s+/g, " ")
     .trim();

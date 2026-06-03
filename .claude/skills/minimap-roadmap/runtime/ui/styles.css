@@ -1515,6 +1515,16 @@ body.is-resizing-spec-margin { cursor: col-resize; user-select: none; }
   overflow-wrap: break-word;
 }
 .spec-card-text:last-child { margin-bottom: 0; }
+/* Comment/reply bodies are now rendered as <div class=spec-card-text> with
+   <p> children so paragraph breaks survive. Reset the browser default
+   margin so the first line starts flush, then space subsequent paragraphs
+   from each other. */
+.spec-card-text > p {
+  margin: 0;
+}
+.spec-card-text > p + p {
+  margin-top: 0.5em;
+}
 .spec-card-collapsed-summary {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -1556,6 +1566,12 @@ body.is-resizing-spec-margin { cursor: col-resize; user-select: none; }
   color: var(--spec-text);
   word-wrap: break-word;
   overflow-wrap: break-word;
+}
+.spec-card-field-text > p {
+  margin: 0;
+}
+.spec-card-field-text > p + p {
+  margin-top: 0.5em;
 }
 
 /* "Edit shown inline in the spec" pointer — clarifies that the card is
