@@ -36,7 +36,7 @@ function parseFlags(args) {
 function usage() {
   return `Usage:
   minimap attach <file> [--json]
-  minimap context <file> --json
+  minimap context <file> --json [--summary] [--filter <open|resolved|all>]
   minimap comment add <file> --by <actor> --kind <kind> --text <text> [--global|--heading <path>|--quote <text>] [--json]
   minimap comment add <file> --json-stdin [--json]   # body: {by, kind, text, scope?, headingPath?, quote?, quoteOffset?, lineStart?, lineEnd?, confidence?}
   minimap comment reply <file> <comment-id> --by <actor> --text <text> [--json]
@@ -110,6 +110,108 @@ function headingPathFromValue(value) {
   return value.split(">").map((part) => part.trim()).filter(Boolean);
 }
 
+// Status sets used by `mm context --filter`. "open" and "resolved" are
+// agent-friendly review verbs that fan out to the underlying comment and
+// suggestion enums; "all" is the no-op pass-through.
+const FILTER_COMMENT_STATUSES = {
+  open: new Set(["open"]),
+  resolved: new Set(["resolved", "accepted", "rejected", "deferred", "stale"]),
+  all: null,
+};
+const FILTER_SUGGESTION_STATUSES = {
+  open: new Set(["pending"]),
+  resolved: new Set(["accepted", "rejected", "applied", "stale"]),
+  all: null,
+};
+
+// Compact per-item row for `mm context --summary`. Includes everything an
+// agent typically wants on first read: id, author, kind, current status,
+// re-resolved anchor location, and a short snippet of the body/rationale.
+// The full record is one CLI call away (`--filter all` without --summary),
+// so this projection optimizes for "scan the review state in one screen."
+function summarizeComment(comment) {
+  const anchor = comment.anchor || {};
+  const status = comment.anchorStatus || {};
+  const snippet = (comment.text || "").replace(/\s+/g, " ").trim().slice(0, 120);
+  return {
+    id: comment.id,
+    by: comment.by,
+    kind: comment.kind,
+    status: comment.status,
+    statusBy: comment.statusBy,
+    anchorScope: anchor.scope,
+    anchorStatus: status.status,
+    lineStart: status.lineStart ?? anchor.lineStart ?? null,
+    headingPath: anchor.headingPath || [],
+    replyCount: Array.isArray(comment.replies) ? comment.replies.length : 0,
+    text: snippet + ((comment.text || "").length > 120 ? "..." : ""),
+  };
+}
+
+function summarizeSuggestion(suggestion) {
+  const anchor = suggestion.anchor || {};
+  const status = suggestion.anchorStatus || {};
+  // Suggestions carry both a rationale (why) and a content (the proposed
+  // edit). Rationale is the more useful scan signal — it tells the
+  // reviewer what the suggestion is FOR, not what it would change.
+  const body = suggestion.rationale || suggestion.content || "";
+  const snippet = body.replace(/\s+/g, " ").trim().slice(0, 120);
+  return {
+    id: suggestion.id,
+    by: suggestion.by,
+    kind: suggestion.kind,
+    status: suggestion.status,
+    statusBy: suggestion.statusBy,
+    appliedBy: suggestion.appliedBy,
+    appliedAt: suggestion.appliedAt,
+    anchorScope: anchor.scope,
+    anchorStatus: status.status,
+    lineStart: status.lineStart ?? anchor.lineStart ?? null,
+    headingPath: anchor.headingPath || [],
+    replyCount: Array.isArray(suggestion.replies) ? suggestion.replies.length : 0,
+    rationale: snippet + (body.length > 120 ? "..." : ""),
+  };
+}
+
+// Apply --filter status narrowing AND optional --summary projection. Always
+// returns the full {session, outline, comments, suggestions} shape so
+// downstream code can pattern-match on the same keys regardless of flags.
+// `counts` is added unconditionally so a single call surfaces both the
+// row data and the high-level numbers an agent wants to scan first.
+function projectContextWithFilter(context, filterName, wantsSummary) {
+  const commentStatuses = FILTER_COMMENT_STATUSES[filterName];
+  const suggestionStatuses = FILTER_SUGGESTION_STATUSES[filterName];
+
+  const filteredComments = (context.comments || []).filter((c) => !commentStatuses || commentStatuses.has(c.status));
+  const filteredSuggestions = (context.suggestions || []).filter((s) => !suggestionStatuses || suggestionStatuses.has(s.status));
+
+  const counts = {
+    // High-level review counts. Always against the FULL context, not the
+    // filtered view — answering "what's outstanding" doesn't depend on
+    // what slice the caller asked for, and an agent that filtered to
+    // `resolved` still wants to know the open count.
+    commentsOpen: (context.comments || []).filter((c) => c.status === "open").length,
+    commentsResolved: (context.comments || []).filter((c) => c.status !== "open").length,
+    suggestionsPending: (context.suggestions || []).filter((s) => s.status === "pending").length,
+    suggestionsApplied: (context.suggestions || []).filter((s) => s.status === "applied").length,
+    suggestionsRejected: (context.suggestions || []).filter((s) => s.status === "rejected").length,
+    suggestionsAccepted: (context.suggestions || []).filter((s) => s.status === "accepted").length,
+  };
+
+  const comments = wantsSummary ? filteredComments.map(summarizeComment) : filteredComments;
+  const suggestions = wantsSummary ? filteredSuggestions.map(summarizeSuggestion) : filteredSuggestions;
+
+  return {
+    session: context.session,
+    outline: wantsSummary ? undefined : context.outline,
+    counts,
+    filter: filterName,
+    summary: wantsSummary,
+    comments,
+    suggestions,
+  };
+}
+
 async function main(argv) {
   const [command, subcommand, ...rest] = argv;
 
@@ -145,7 +247,44 @@ async function main(argv) {
     if (!flags.has("--json")) {
       throw new AppError("context currently requires --json.", 400, "bad_request");
     }
-    printJson(context);
+
+    // --summary and --filter are opt-in projections layered on top of the
+    // raw context. Without them the full shape is returned so existing
+    // callers (tests, HTTP equivalents, scripted consumers) keep working.
+    //
+    // --summary  : compact per-item rows (id, by, kind, status, anchor
+    //              line + status, ~120-char snippet of text/rationale).
+    //              Cuts the JSON ~30x for a typical review session.
+    // --filter X : narrows the items returned. Sensible review-time slices:
+    //                open      — comments status=open + suggestions status=pending
+    //                            (the "what's still on my plate" view; default
+    //                            when --summary is on without an explicit filter)
+    //                resolved  — comments resolved + suggestions accepted/rejected/applied
+    //                            (the "what's been dealt with" view)
+    //                all       — every comment and suggestion regardless of status
+    //              These names match the agent's review mental model;
+    //              status-typed slices (accept-only, applied-only) are
+    //              available via --filter all + downstream parsing.
+    const wantsSummary = flags.has("--summary");
+    const filterRaw = valueAfter([subcommand, ...rest].filter(Boolean), "--filter");
+    const wantsFilter = wantsSummary || filterRaw !== "";
+
+    if (!wantsFilter) {
+      // No projection flags — print the raw context exactly as before so
+      // every existing caller (HTTP equivalents, scripted readers, the 11
+      // integration tests) keeps working unchanged.
+      printJson(context);
+      return;
+    }
+
+    const filterName = filterRaw || "open";
+    const ALLOWED_FILTERS = new Set(["open", "resolved", "all"]);
+    if (!ALLOWED_FILTERS.has(filterName)) {
+      throw new AppError(`Unknown --filter value "${filterName}". Allowed: open | resolved | all.`, 400, "bad_request");
+    }
+
+    const filtered = projectContextWithFilter(context, filterName, wantsSummary);
+    printJson(filtered);
     return;
   }
 

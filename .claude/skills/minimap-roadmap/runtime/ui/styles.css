@@ -1131,10 +1131,12 @@ h3 {
   --spec-toc-w: 200px;
 }
 .spec-doc:has(.spec-toc[data-collapsed="true"]) {
-  --spec-toc-w: 32px;
+  --spec-toc-w: 18px;
+  padding-left: 6px;
 }
 .spec-doc:has(.spec-toc[data-empty="true"]) {
-  --spec-toc-w: 32px;
+  --spec-toc-w: 18px;
+  padding-left: 6px;
 }
 
 .spec-toc {
@@ -1192,8 +1194,13 @@ h3 {
   width: 24px; height: 24px; border-radius: 4px;
   border: 0; background: transparent; cursor: pointer;
   color: var(--spec-muted); display: grid; place-items: center;
-  font-size: 0.95rem; line-height: 1;
+  font-size: 1.15rem; font-weight: 600; line-height: 1;
   flex: none;
+}
+.spec-toc[data-collapsed="true"] .spec-toc-toggle,
+.spec-toc[data-empty="true"] .spec-toc-toggle {
+  width: 18px; height: 32px; border-radius: 3px;
+  font-size: 1.1rem;
 }
 .spec-toc-toggle:hover {
   background: var(--spec-panel-soft);
@@ -1235,7 +1242,7 @@ h3 {
 
 /* Narrow widths: default to collapsed. Users can still toggle open. */
 @media (max-width: 900px) {
-  .spec-doc { --spec-toc-w: 32px; }
+  .spec-doc { --spec-toc-w: 18px; padding-left: 6px; }
   .spec-toc { padding: 22px 0; align-items: center; }
   .spec-toc .spec-toc-nav,
   .spec-toc .spec-toc-title { display: none; }
