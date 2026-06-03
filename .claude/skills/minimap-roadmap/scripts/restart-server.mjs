@@ -22,6 +22,12 @@ const requestedPort = Number(process.env.PORT || 4312);
 const STOP_WAIT_TIMEOUT_MS = 5000;
 const START_WAIT_TIMEOUT_MS = 10000;
 const POLL_INTERVAL_MS = 100;
+// Port range we sweep for stray minimap servers before starting a new one.
+// The bundled server's listenOnAvailablePort falls forward across this range
+// when its preferred port is in TIME_WAIT, so a previous session that exited
+// without updating the registry can leave a live server somewhere in here.
+const SWEEP_PORTS_FROM = 4312;
+const SWEEP_PORTS_TO = 4320;
 
 // Test whether the port is actually bindable — survives the Windows TIME_WAIT
 // window after a graceful stop, where /health is gone but the kernel still
@@ -45,6 +51,41 @@ function canBindPort(port) {
       finish(false);
     }
   });
+}
+
+// Politely ask any minimap server on `port` to shut down. Returns true when
+// /api/shutdown returned ok (or we determined no minimap was there). Used as
+// a defensive sweep — the registry only tracks ONE server, but earlier
+// sessions can leave others alive on adjacent ports if a prior restart
+// fell forward into TIME_WAIT.
+async function shutdownIfMinimap(port) {
+  const found = await probePort(port);
+  if (!found) return false;
+  try {
+    const resp = await fetch(`http://localhost:${port}/api/shutdown`, { method: "POST" });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Sweep the canonical port range for stray minimap servers and shut them
+// down. Survives multiple parallel sessions that each only knew about
+// "their" registry entry.
+async function sweepStrayMinimaps(skipPort = null) {
+  const reaped = [];
+  for (let port = SWEEP_PORTS_FROM; port <= SWEEP_PORTS_TO; port += 1) {
+    if (port === skipPort) continue;
+    const ok = await shutdownIfMinimap(port);
+    if (ok) reaped.push(port);
+  }
+  if (reaped.length > 0) {
+    process.stderr.write(`Reaped stray minimap servers on ports: ${reaped.join(", ")}\n`);
+  }
+  // Brief grace period so each shutdown finishes before the next bind.
+  if (reaped.length > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
 }
 
 // 1. Stop whatever is running.
@@ -84,6 +125,13 @@ if (existing && typeof existing.port === "number") {
     await deleteServerRegistry();
   }
 }
+
+// 1b. Belt-and-suspenders: sweep the canonical port range for any minimap
+// server that the registry didn't know about. Catches the case where a
+// previous restart fell forward into a TIME_WAIT'd port and updated the
+// registry to that fall-forward port, leaving the original port's server
+// alive but untracked. Without this, restarts compound rather than cycling.
+await sweepStrayMinimaps();
 
 // 2. Spawn the new server, detached, so it outlives this script.
 //    Note: we do NOT set MINIMAP_NO_PORT_FALLBACK here. If the kernel still

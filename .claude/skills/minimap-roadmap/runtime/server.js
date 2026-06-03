@@ -30,6 +30,12 @@ import {
   updateFileSessionCommentStatus,
 } from "./src/sessions.js";
 import { writeServerRegistry, deleteServerRegistry } from "./src/server-registry.js";
+import { matchRoute } from "./src/router.js";
+
+// Re-exported so test/server-router.test.js can import the matcher without
+// booting the HTTP server here. (server.js still auto-starts on import — that
+// is how the launcher scripts run it.)
+export { matchRoute };
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -103,6 +109,18 @@ function requireQueryParam(requestUrl, name) {
   return value;
 }
 
+async function withJsonBody(request) {
+  const raw = await readRequestBody(request);
+  return parseJsonBody(raw);
+}
+
+function requireFileFromBody(body, message) {
+  if (typeof body.file !== "string" || body.file.trim() === "") {
+    throw new AppError(message, 400, "bad_request");
+  }
+  return body.file;
+}
+
 async function resolveRoadmapRepo(request) {
   const headerRepo = request.headers["x-minimap-repo"];
   const candidate = (typeof headerRepo === "string" && headerRepo.trim()) || cwdFallback;
@@ -162,267 +180,229 @@ async function buildSpecSessionsByItemId(repoRoot, workspace) {
   return linked;
 }
 
+// ---------------------------------------------------------------------------
+// Route handlers. Each handler has signature (request, response, ctx) where
+// ctx = { url, params }. params is the array of regex captures (if any).
+// ---------------------------------------------------------------------------
+
+async function handleHealth(request, response) {
+  sendJson(response, 200, { ok: true });
+}
+
+async function handleShutdown(request, response) {
+  // Cross-platform graceful shutdown. On Windows, child_process.kill() does
+  // not deliver SIGTERM/SIGINT to the JS event loop, so a signal-based stop
+  // from another process is unreliable. POST /api/shutdown works everywhere
+  // because it's plain HTTP and runs on the same code path as the signal
+  // handler. We send the response first, then exit on the next tick so the
+  // client sees a clean 200 before the socket closes.
+  sendJson(response, 200, { shuttingDown: true });
+  if (!shuttingDown) {
+    shuttingDown = true;
+    response.on("finish", () => {
+      // Defer one tick so the kernel has flushed the response.
+      setImmediate(() => { void shutdown("SHUTDOWN_API"); });
+    });
+  }
+}
+
+async function handleSpecAttach(request, response) {
+  const body = await withJsonBody(request);
+  const file = requireFileFromBody(body, "Spec-session attach requires a file path.");
+  const result = await attachFileSession(file, { cwd: cwdFallback });
+  sendJson(response, 200, result);
+}
+
+async function handleListSpecSessions(request, response) {
+  const sessions = await listFileSessions();
+  sendJson(response, 200, { sessions });
+}
+
+async function handleGetSpecSession(request, response, ctx) {
+  const file = requireQueryParam(ctx.url, "path");
+  const session = await getFileSession(file, { cwd: cwdFallback });
+  sendJson(response, 200, { session });
+}
+
+async function handleGetSpecContext(request, response, ctx) {
+  const file = requireQueryParam(ctx.url, "path");
+  const context = await getFileSessionContext(file, { cwd: cwdFallback });
+  sendJson(response, 200, context);
+}
+
+async function handleGetSpecContent(request, response, ctx) {
+  const file = requireQueryParam(ctx.url, "path");
+  const content = await getFileSessionFileContent(file, { cwd: cwdFallback });
+  sendJson(response, 200, content);
+}
+
+async function handleRemoveSpecSession(request, response, ctx) {
+  const file = requireQueryParam(ctx.url, "path");
+  const result = await removeFileSession(file, { cwd: cwdFallback });
+  sendJson(response, 200, result);
+}
+
+async function handleMoveSpecSession(request, response) {
+  const body = await withJsonBody(request);
+
+  if (typeof body.from !== "string" || body.from.trim() === "" || typeof body.to !== "string" || body.to.trim() === "") {
+    throw new AppError("Spec-session move requires from and to file paths.", 400, "bad_request");
+  }
+
+  const result = await moveFileSession(body.from, body.to, { cwd: cwdFallback });
+  sendJson(response, 200, result);
+}
+
+async function handleAddComment(request, response) {
+  const body = await withJsonBody(request);
+  const file = requireFileFromBody(body, "Comment creation requires a file path.");
+  const result = await addFileSessionComment(file, body, { cwd: cwdFallback });
+  sendJson(response, 200, result);
+}
+
+async function handleCommentReply(request, response, ctx) {
+  const body = await withJsonBody(request);
+  const file = requireFileFromBody(body, "Comment reply requires a file path.");
+  const result = await addFileSessionCommentReply(file, decodeURIComponent(ctx.params[0]), body, { cwd: cwdFallback });
+  sendJson(response, 200, result);
+}
+
+async function handleSuggestionReply(request, response, ctx) {
+  const body = await withJsonBody(request);
+  const file = requireFileFromBody(body, "Suggestion reply requires a file path.");
+  const result = await addFileSessionSuggestionReply(file, decodeURIComponent(ctx.params[0]), body, { cwd: cwdFallback });
+  sendJson(response, 200, result);
+}
+
+async function handleCommentStatus(request, response, ctx) {
+  const body = await withJsonBody(request);
+  const file = requireFileFromBody(body, "Comment status update requires a file path.");
+  const status = ctx.params[1] === "resolve" ? "resolved" : "open";
+  const result = await updateFileSessionCommentStatus(file, decodeURIComponent(ctx.params[0]), status, body, { cwd: cwdFallback });
+  sendJson(response, 200, result);
+}
+
+async function handleAddSuggestion(request, response) {
+  const body = await withJsonBody(request);
+  const file = requireFileFromBody(body, "Suggestion creation requires a file path.");
+  const result = await addFileSessionSuggestion(file, body, { cwd: cwdFallback });
+  sendJson(response, 200, result);
+}
+
+async function handleSuggestionStatus(request, response, ctx) {
+  const body = await withJsonBody(request);
+  const file = requireFileFromBody(body, "Suggestion status update requires a file path.");
+  const statusByAction = {
+    accept: "accepted",
+    reject: "rejected",
+    reopen: "pending",
+  };
+  const status = statusByAction[ctx.params[1]];
+  const result = await updateFileSessionSuggestionStatus(file, decodeURIComponent(ctx.params[0]), status, body, { cwd: cwdFallback });
+  sendJson(response, 200, result);
+}
+
+async function handleSuggestionPreviewApply(request, response, ctx) {
+  const body = await withJsonBody(request);
+  const file = requireFileFromBody(body, "Suggestion preview/apply/rollback requires a file path.");
+  const suggestionId = decodeURIComponent(ctx.params[0]);
+  const action = ctx.params[1];
+  let result;
+  if (action === "apply") {
+    result = await applyFileSessionSuggestion(file, suggestionId, body, { cwd: cwdFallback });
+  } else if (action === "rollback") {
+    result = await rollbackFileSessionSuggestion(file, suggestionId, body, { cwd: cwdFallback });
+  } else {
+    result = await previewFileSessionSuggestion(file, suggestionId, { cwd: cwdFallback });
+  }
+  sendJson(response, 200, result);
+}
+
+async function handleWorkspace(request, response) {
+  const repoRoot = await resolveRoadmapRepo(request);
+  const workspace = await loadWorkspace(repoRoot);
+  workspace.specSessionsByItemId = await buildSpecSessionsByItemId(repoRoot, workspace);
+  sendJson(response, 200, workspace);
+}
+
+async function handleInitialize(request, response) {
+  const repoRoot = await resolveRoadmapRepo(request);
+  const workspace = await initializeWorkspace(repoRoot);
+  sendJson(response, 200, workspace);
+}
+
+async function handleBoard(request, response) {
+  const repoRoot = await resolveRoadmapRepo(request);
+  const body = await withJsonBody(request);
+  const workspace = await saveBoardByGroups(repoRoot, body.groups);
+  sendJson(response, 200, workspace);
+}
+
+async function handleScope(request, response) {
+  const repoRoot = await resolveRoadmapRepo(request);
+  const body = await withJsonBody(request);
+
+  if (typeof body.scopeText !== "string") {
+    throw new AppError("Scope update must provide scopeText.", 400, "bad_request");
+  }
+
+  const workspace = await saveScopeText(repoRoot, body.scopeText);
+  sendJson(response, 200, workspace);
+}
+
+async function handleGetItem(request, response, ctx) {
+  const repoRoot = await resolveRoadmapRepo(request);
+  const item = await readItemById(repoRoot, decodeURIComponent(ctx.params[0]));
+  sendJson(response, 200, item);
+}
+
+async function handleSaveItem(request, response, ctx) {
+  const repoRoot = await resolveRoadmapRepo(request);
+  const id = decodeURIComponent(ctx.params[0]);
+  const body = await withJsonBody(request);
+
+  if (body.id && body.id !== id) {
+    throw new AppError("Item id in request body must match the URL.", 400, "bad_request");
+  }
+
+  const item = await saveItemById(repoRoot, id, body);
+  sendJson(response, 200, item);
+}
+
+// Route ORDER matches the original if/else chain. Some patterns overlap
+// (e.g. /comments/:id/reply vs /comments/:id/resolve), so the more specific
+// patterns must come first. Keep this list in declaration order.
+const routes = [
+  { method: "GET",    pattern: /^\/health$/, handler: handleHealth },
+  { method: "POST",   pattern: /^\/api\/shutdown$/, handler: handleShutdown },
+  { method: "POST",   pattern: /^\/api\/spec-sessions\/attach$/, handler: handleSpecAttach },
+  { method: "GET",    pattern: /^\/api\/spec-sessions$/, handler: handleListSpecSessions },
+  { method: "GET",    pattern: /^\/api\/spec-sessions\/by-file$/, handler: handleGetSpecSession },
+  { method: "GET",    pattern: /^\/api\/spec-sessions\/by-file\/context$/, handler: handleGetSpecContext },
+  { method: "GET",    pattern: /^\/api\/spec-sessions\/by-file\/content$/, handler: handleGetSpecContent },
+  { method: "DELETE", pattern: /^\/api\/spec-sessions\/by-file$/, handler: handleRemoveSpecSession },
+  { method: "DELETE", pattern: /^\/api\/spec-sessions\/by-file\/context$/, handler: handleRemoveSpecSession },
+  { method: "POST",   pattern: /^\/api\/spec-sessions\/by-file\/move$/, handler: handleMoveSpecSession },
+  { method: "POST",   pattern: /^\/api\/spec-sessions\/by-file\/comments$/, handler: handleAddComment },
+  { method: "POST",   pattern: /^\/api\/spec-sessions\/by-file\/comments\/([^/]+)\/reply$/, handler: handleCommentReply },
+  { method: "POST",   pattern: /^\/api\/spec-sessions\/by-file\/suggestions\/([^/]+)\/reply$/, handler: handleSuggestionReply },
+  { method: "POST",   pattern: /^\/api\/spec-sessions\/by-file\/comments\/([^/]+)\/(resolve|reopen)$/, handler: handleCommentStatus },
+  { method: "POST",   pattern: /^\/api\/spec-sessions\/by-file\/suggestions$/, handler: handleAddSuggestion },
+  { method: "POST",   pattern: /^\/api\/spec-sessions\/by-file\/suggestions\/([^/]+)\/(accept|reject|reopen)$/, handler: handleSuggestionStatus },
+  { method: "POST",   pattern: /^\/api\/spec-sessions\/by-file\/suggestions\/([^/]+)\/(preview|apply|rollback)$/, handler: handleSuggestionPreviewApply },
+  { method: "GET",    pattern: /^\/api\/workspace$/, handler: handleWorkspace },
+  { method: "POST",   pattern: /^\/api\/setup\/initialize$/, handler: handleInitialize },
+  { method: "POST",   pattern: /^\/api\/board$/, handler: handleBoard },
+  { method: "POST",   pattern: /^\/api\/scope$/, handler: handleScope },
+  { method: "GET",    pattern: /^\/api\/items\/([^/]+)$/, handler: handleGetItem },
+  { method: "POST",   pattern: /^\/api\/items\/([^/]+)$/, handler: handleSaveItem },
+];
+
 async function handleApi(request, response, requestUrl) {
-  const pathname = requestUrl.pathname;
-
-  if (request.method === "GET" && pathname === "/health") {
-    sendJson(response, 200, { ok: true });
-    return true;
-  }
-
-  if (request.method === "POST" && pathname === "/api/shutdown") {
-    // Cross-platform graceful shutdown. On Windows, child_process.kill() does
-    // not deliver SIGTERM/SIGINT to the JS event loop, so a signal-based stop
-    // from another process is unreliable. POST /api/shutdown works everywhere
-    // because it's plain HTTP and runs on the same code path as the signal
-    // handler. We send the response first, then exit on the next tick so the
-    // client sees a clean 200 before the socket closes.
-    sendJson(response, 200, { shuttingDown: true });
-    if (!shuttingDown) {
-      shuttingDown = true;
-      response.on("finish", () => {
-        // Defer one tick so the kernel has flushed the response.
-        setImmediate(() => { void shutdown("SHUTDOWN_API"); });
-      });
-    }
-    return true;
-  }
-
-  if (request.method === "POST" && pathname === "/api/spec-sessions/attach") {
-    const rawBody = await readRequestBody(request);
-    const body = parseJsonBody(rawBody);
-
-    if (typeof body.file !== "string" || body.file.trim() === "") {
-      throw new AppError("Spec-session attach requires a file path.", 400, "bad_request");
-    }
-
-    const result = await attachFileSession(body.file, { cwd: cwdFallback });
-    sendJson(response, 200, result);
-    return true;
-  }
-
-  if (request.method === "GET" && pathname === "/api/spec-sessions") {
-    const sessions = await listFileSessions();
-    sendJson(response, 200, { sessions });
-    return true;
-  }
-
-  if (request.method === "GET" && pathname === "/api/spec-sessions/by-file") {
-    const file = requireQueryParam(requestUrl, "path");
-    const session = await getFileSession(file, { cwd: cwdFallback });
-    sendJson(response, 200, { session });
-    return true;
-  }
-
-  if (request.method === "GET" && pathname === "/api/spec-sessions/by-file/context") {
-    const file = requireQueryParam(requestUrl, "path");
-    const context = await getFileSessionContext(file, { cwd: cwdFallback });
-    sendJson(response, 200, context);
-    return true;
-  }
-
-  if (request.method === "GET" && pathname === "/api/spec-sessions/by-file/content") {
-    const file = requireQueryParam(requestUrl, "path");
-    const content = await getFileSessionFileContent(file, { cwd: cwdFallback });
-    sendJson(response, 200, content);
-    return true;
-  }
-
-  if (request.method === "DELETE" && (pathname === "/api/spec-sessions/by-file" || pathname === "/api/spec-sessions/by-file/context")) {
-    const file = requireQueryParam(requestUrl, "path");
-    const result = await removeFileSession(file, { cwd: cwdFallback });
-    sendJson(response, 200, result);
-    return true;
-  }
-
-  if (request.method === "POST" && pathname === "/api/spec-sessions/by-file/move") {
-    const rawBody = await readRequestBody(request);
-    const body = parseJsonBody(rawBody);
-
-    if (typeof body.from !== "string" || body.from.trim() === "" || typeof body.to !== "string" || body.to.trim() === "") {
-      throw new AppError("Spec-session move requires from and to file paths.", 400, "bad_request");
-    }
-
-    const result = await moveFileSession(body.from, body.to, { cwd: cwdFallback });
-    sendJson(response, 200, result);
-    return true;
-  }
-
-  if (request.method === "POST" && pathname === "/api/spec-sessions/by-file/comments") {
-    const rawBody = await readRequestBody(request);
-    const body = parseJsonBody(rawBody);
-
-    if (typeof body.file !== "string" || body.file.trim() === "") {
-      throw new AppError("Comment creation requires a file path.", 400, "bad_request");
-    }
-
-    const result = await addFileSessionComment(body.file, body, { cwd: cwdFallback });
-    sendJson(response, 200, result);
-    return true;
-  }
-
-  const commentReplyMatch = pathname.match(/^\/api\/spec-sessions\/by-file\/comments\/([^/]+)\/reply$/);
-  if (request.method === "POST" && commentReplyMatch) {
-    const rawBody = await readRequestBody(request);
-    const body = parseJsonBody(rawBody);
-
-    if (typeof body.file !== "string" || body.file.trim() === "") {
-      throw new AppError("Comment reply requires a file path.", 400, "bad_request");
-    }
-
-    const result = await addFileSessionCommentReply(body.file, decodeURIComponent(commentReplyMatch[1]), body, { cwd: cwdFallback });
-    sendJson(response, 200, result);
-    return true;
-  }
-
-  const suggestionReplyMatch = pathname.match(/^\/api\/spec-sessions\/by-file\/suggestions\/([^/]+)\/reply$/);
-  if (request.method === "POST" && suggestionReplyMatch) {
-    const rawBody = await readRequestBody(request);
-    const body = parseJsonBody(rawBody);
-
-    if (typeof body.file !== "string" || body.file.trim() === "") {
-      throw new AppError("Suggestion reply requires a file path.", 400, "bad_request");
-    }
-
-    const result = await addFileSessionSuggestionReply(body.file, decodeURIComponent(suggestionReplyMatch[1]), body, { cwd: cwdFallback });
-    sendJson(response, 200, result);
-    return true;
-  }
-
-  const commentStatusMatch = pathname.match(/^\/api\/spec-sessions\/by-file\/comments\/([^/]+)\/(resolve|reopen)$/);
-  if (request.method === "POST" && commentStatusMatch) {
-    const rawBody = await readRequestBody(request);
-    const body = parseJsonBody(rawBody);
-
-    if (typeof body.file !== "string" || body.file.trim() === "") {
-      throw new AppError("Comment status update requires a file path.", 400, "bad_request");
-    }
-
-    const status = commentStatusMatch[2] === "resolve" ? "resolved" : "open";
-    const result = await updateFileSessionCommentStatus(body.file, decodeURIComponent(commentStatusMatch[1]), status, body, { cwd: cwdFallback });
-    sendJson(response, 200, result);
-    return true;
-  }
-
-  if (request.method === "POST" && pathname === "/api/spec-sessions/by-file/suggestions") {
-    const rawBody = await readRequestBody(request);
-    const body = parseJsonBody(rawBody);
-
-    if (typeof body.file !== "string" || body.file.trim() === "") {
-      throw new AppError("Suggestion creation requires a file path.", 400, "bad_request");
-    }
-
-    const result = await addFileSessionSuggestion(body.file, body, { cwd: cwdFallback });
-    sendJson(response, 200, result);
-    return true;
-  }
-
-  const suggestionStatusMatch = pathname.match(/^\/api\/spec-sessions\/by-file\/suggestions\/([^/]+)\/(accept|reject|reopen)$/);
-  if (request.method === "POST" && suggestionStatusMatch) {
-    const rawBody = await readRequestBody(request);
-    const body = parseJsonBody(rawBody);
-
-    if (typeof body.file !== "string" || body.file.trim() === "") {
-      throw new AppError("Suggestion status update requires a file path.", 400, "bad_request");
-    }
-
-    const statusByAction = {
-      accept: "accepted",
-      reject: "rejected",
-      reopen: "pending",
-    };
-    const status = statusByAction[suggestionStatusMatch[2]];
-    const result = await updateFileSessionSuggestionStatus(body.file, decodeURIComponent(suggestionStatusMatch[1]), status, body, { cwd: cwdFallback });
-    sendJson(response, 200, result);
-    return true;
-  }
-
-  const suggestionPreviewApplyMatch = pathname.match(/^\/api\/spec-sessions\/by-file\/suggestions\/([^/]+)\/(preview|apply|rollback)$/);
-  if (request.method === "POST" && suggestionPreviewApplyMatch) {
-    const rawBody = await readRequestBody(request);
-    const body = parseJsonBody(rawBody);
-
-    if (typeof body.file !== "string" || body.file.trim() === "") {
-      throw new AppError("Suggestion preview/apply/rollback requires a file path.", 400, "bad_request");
-    }
-
-    const suggestionId = decodeURIComponent(suggestionPreviewApplyMatch[1]);
-    const action = suggestionPreviewApplyMatch[2];
-    let result;
-    if (action === "apply") {
-      result = await applyFileSessionSuggestion(body.file, suggestionId, body, { cwd: cwdFallback });
-    } else if (action === "rollback") {
-      result = await rollbackFileSessionSuggestion(body.file, suggestionId, body, { cwd: cwdFallback });
-    } else {
-      result = await previewFileSessionSuggestion(body.file, suggestionId, { cwd: cwdFallback });
-    }
-    sendJson(response, 200, result);
-    return true;
-  }
-
-  if (request.method === "GET" && pathname === "/api/workspace") {
-    const repoRoot = await resolveRoadmapRepo(request);
-    const workspace = await loadWorkspace(repoRoot);
-    workspace.specSessionsByItemId = await buildSpecSessionsByItemId(repoRoot, workspace);
-    sendJson(response, 200, workspace);
-    return true;
-  }
-
-  if (request.method === "POST" && pathname === "/api/setup/initialize") {
-    const repoRoot = await resolveRoadmapRepo(request);
-    const workspace = await initializeWorkspace(repoRoot);
-    sendJson(response, 200, workspace);
-    return true;
-  }
-
-  if (request.method === "POST" && pathname === "/api/board") {
-    const repoRoot = await resolveRoadmapRepo(request);
-    const rawBody = await readRequestBody(request);
-    const body = parseJsonBody(rawBody);
-    const workspace = await saveBoardByGroups(repoRoot, body.groups);
-    sendJson(response, 200, workspace);
-    return true;
-  }
-
-  if (request.method === "POST" && pathname === "/api/scope") {
-    const repoRoot = await resolveRoadmapRepo(request);
-    const rawBody = await readRequestBody(request);
-    const body = parseJsonBody(rawBody);
-
-    if (typeof body.scopeText !== "string") {
-      throw new AppError("Scope update must provide scopeText.", 400, "bad_request");
-    }
-
-    const workspace = await saveScopeText(repoRoot, body.scopeText);
-    sendJson(response, 200, workspace);
-    return true;
-  }
-
-  const itemMatch = pathname.match(/^\/api\/items\/([^/]+)$/);
-
-  if (itemMatch && request.method === "GET") {
-    const repoRoot = await resolveRoadmapRepo(request);
-    const item = await readItemById(repoRoot, decodeURIComponent(itemMatch[1]));
-    sendJson(response, 200, item);
-    return true;
-  }
-
-  if (itemMatch && request.method === "POST") {
-    const repoRoot = await resolveRoadmapRepo(request);
-    const id = decodeURIComponent(itemMatch[1]);
-    const rawBody = await readRequestBody(request);
-    const body = parseJsonBody(rawBody);
-
-    if (body.id && body.id !== id) {
-      throw new AppError("Item id in request body must match the URL.", 400, "bad_request");
-    }
-
-    const item = await saveItemById(repoRoot, id, body);
-    sendJson(response, 200, item);
-    return true;
-  }
-
-  return false;
+  const match = matchRoute(routes, request.method, requestUrl.pathname);
+  if (!match) return false;
+  await match.handler(request, response, { url: requestUrl, params: match.params });
+  return true;
 }
 
 async function requestListener(request, response) {

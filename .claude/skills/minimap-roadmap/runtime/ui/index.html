@@ -62,11 +62,40 @@
               </div>
             </div>
             <div class="spec-pane-toolbar-margin">
-              <div class="spec-seg" id="spec-layer-seg" aria-label="Layers">
-                <button class="spec-seg-button is-on" type="button" data-spec-layer="comments" aria-pressed="true">Comments <span class="spec-seg-count" data-spec-count="comments">0</span></button>
-                <button class="spec-seg-button is-on" type="button" data-spec-layer="suggestions" aria-pressed="true">Suggestions <span class="spec-seg-count" data-spec-count="suggestions">0</span></button>
+              <div class="spec-toolbar-nav" role="group" aria-label="Navigate cards">
+                <button id="spec-nav-prev" class="spec-toolbar-icon-button" type="button" title="Previous comment" aria-label="Previous comment" disabled>
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 9.5l4-3 4 3"></path>
+                  </svg>
+                </button>
+                <button id="spec-nav-next" class="spec-toolbar-icon-button" type="button" title="Next comment" aria-label="Next comment" disabled>
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 6.5l4 3 4-3"></path>
+                  </svg>
+                </button>
               </div>
-              <button id="spec-resolved-toggle" class="spec-toolbar-button" type="button" aria-pressed="false">Resolved</button>
+              <div class="spec-seg" id="spec-layer-seg" aria-label="Layers">
+                <button class="spec-seg-button is-on" type="button" data-spec-layer="comments" aria-pressed="true" aria-label="Comments" title="Comments">
+                  <svg class="spec-seg-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2.5 4.5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H7l-3 2.5V11.5h-.5a2 2 0 0 1-2-2v-5z"></path>
+                  </svg>
+                  <span class="spec-seg-label">Comments</span>
+                  <span class="spec-seg-count" data-spec-count="comments">0</span>
+                </button>
+                <button class="spec-seg-button is-on" type="button" data-spec-layer="suggestions" aria-pressed="true" aria-label="Suggestions" title="Suggestions">
+                  <svg class="spec-seg-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M11.4 2.6l2 2-7.4 7.4H4v-2L11.4 2.6z"></path>
+                  </svg>
+                  <span class="spec-seg-label">Suggestions</span>
+                  <span class="spec-seg-count" data-spec-count="suggestions">0</span>
+                </button>
+              </div>
+              <button id="spec-resolved-toggle" class="spec-toolbar-button" type="button" aria-pressed="false" aria-label="Resolved" title="Show resolved">
+                <svg class="spec-toolbar-button-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3.5 8.2l3 3 6-6"></path>
+                </svg>
+                <span class="spec-toolbar-button-label">Resolved</span>
+              </button>
               <button id="spec-participants-facepile"
                       class="spec-facepile"
                       type="button"

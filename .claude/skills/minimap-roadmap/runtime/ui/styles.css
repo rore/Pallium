@@ -795,6 +795,116 @@ h3 {
   border-left: 1px solid var(--spec-line);
   margin-left: -7px;
   padding-left: 7px;
+  /* Container query scope: when this slot gets too narrow, the children
+     opt into compact (icon-only) variants below. */
+  container-type: inline-size;
+  container-name: spec-margin-toolbar;
+}
+
+/* Icons next to the layer/Resolved labels are normally hidden — labels
+   carry the meaning at full width. They only appear when the container
+   query swaps to compact mode below. */
+.spec-seg-icon,
+.spec-toolbar-button-icon {
+  display: none;
+}
+
+/* Compact mode: as the right toolbar slot narrows, swap the longest text
+   labels for icons one at a time so we only sacrifice information when
+   we actually have to. Order is longest-first (Suggestions → Comments →
+   Resolved). Thresholds derived from measured component widths in the
+   default workbench (full labels sum to ~461px in the slot):
+     <460px: drop "Suggestions"  → ~411px
+     <410px: also drop "Comments" → ~367px
+     <365px: also drop "Resolved" → ~320px
+
+   The icon stays inline with the label until the label is hidden, at
+   which point the pill tightens up to icon+count only. */
+.spec-seg-button {
+  /* Make room for both the icon and the label so the icon doesn't
+     suddenly appear at the next breakpoint and shove things around. */
+  gap: 6px;
+}
+.spec-pane-toolbar-margin .spec-seg-icon,
+.spec-pane-toolbar-margin .spec-toolbar-button-icon {
+  display: none;
+}
+
+/* Visually hidden but accessible. Used by the staged collapses below. */
+.spec-pane-toolbar-margin .is-label-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@container spec-margin-toolbar (max-width: 460px) {
+  /* Stage 1: drop "Suggestions" (longest label). */
+  .spec-pane-toolbar-margin [data-spec-layer="suggestions"] .spec-seg-label {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .spec-pane-toolbar-margin [data-spec-layer="suggestions"] .spec-seg-icon {
+    display: inline-flex;
+  }
+  .spec-pane-toolbar-margin [data-spec-layer="suggestions"] {
+    padding: 4px 6px;
+    gap: 4px;
+  }
+}
+
+@container spec-margin-toolbar (max-width: 410px) {
+  /* Stage 2: also drop "Comments". */
+  .spec-pane-toolbar-margin [data-spec-layer="comments"] .spec-seg-label {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .spec-pane-toolbar-margin [data-spec-layer="comments"] .spec-seg-icon {
+    display: inline-flex;
+  }
+  .spec-pane-toolbar-margin [data-spec-layer="comments"] {
+    padding: 4px 6px;
+    gap: 4px;
+  }
+}
+
+@container spec-margin-toolbar (max-width: 365px) {
+  /* Stage 3: also drop "Resolved". The check icon takes over and the
+     button collapses to a 26x22 icon-only square, height-matched to the
+     .spec-seg pills next to it. */
+  .spec-pane-toolbar-margin .spec-toolbar-button-label {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .spec-pane-toolbar-margin .spec-toolbar-button-icon {
+    display: inline-flex;
+  }
+  .spec-pane-toolbar-margin #spec-resolved-toggle {
+    padding: 0;
+    width: 26px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 .spec-pane-title,
@@ -885,6 +995,54 @@ h3 {
   opacity: 0.45;
   cursor: not-allowed;
   pointer-events: none;
+}
+
+/* Compact icon buttons used in the spec margin toolbar (prev / next). The
+   group sits at the left edge of the right toolbar slot so the chevrons
+   read as "navigate the comments column" rather than as a global filter.
+   Pair the two buttons together visually with a shared border and a thin
+   internal divider so they read as one control.
+
+   Height is matched to .spec-seg (Comments/Suggestions): the segmented
+   group is 22px tall (2px outer padding + 18px button content) so we
+   build the nav group to the same outer dimension. */
+.spec-toolbar-nav {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--spec-line);
+  border-radius: 7px;
+  background: var(--spec-bg);
+  overflow: hidden;
+  flex: none;
+  height: 22px;
+}
+.spec-toolbar-icon-button {
+  border: 0;
+  background: transparent;
+  width: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--spec-text);
+  cursor: pointer;
+  font: inherit;
+}
+.spec-toolbar-icon-button + .spec-toolbar-icon-button {
+  /* A hairline separator that spans the full inner height of the group. */
+  box-shadow: inset 1px 0 0 var(--spec-line);
+}
+.spec-toolbar-icon-button:hover:not(:disabled) {
+  background: var(--spec-panel-soft);
+  color: var(--spec-text);
+}
+.spec-toolbar-icon-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  color: var(--spec-muted);
+}
+.spec-toolbar-icon-button svg {
+  display: block;
 }
 
 .spec-primary-button {

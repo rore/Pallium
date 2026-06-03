@@ -1,3 +1,68 @@
+import { createApi } from "/api.js";
+import { renderMarkdownToHtml } from "/markdown.js";
+import {
+  normalizeFilterMap,
+  itemMatchesFilters,
+  filterBoardItemIds,
+  buildDerivedVisibleGroups,
+} from "/filters.js";
+import {
+  buildWhitespaceNormalizedMap,
+  buildRenderedNormalizedMap,
+  sourceQuoteForRenderedSelection as specSourceQuoteForRenderedSelection,
+  resolveSourceQuoteFromRendered as specResolveSourceQuoteFromRendered,
+  nthOccurrence,
+  computeLineRange,
+  normalizeVisibleText,
+  stripMarkdownSyntaxForUi,
+  decodeLiteralEscapes,
+} from "/spec/anchors.js";
+import {
+  anchorTargetElement,
+  clearSpecAnchorHighlight,
+  clearSpecSuggestionPreview,
+  scrollSpecTargetIntoView,
+  focusSpecAnchorItem,
+  renderSpecInlineSuggestionPreview,
+  renderSpecParticipantsFacepile,
+  renderSpecParticipantsPopover,
+  toggleSpecParticipantsPopover,
+  renderSpecSessions,
+  renderSpecFile,
+  captureSpecReplyDraft,
+  focusActiveSpecReplyDraft,
+  scrollSpecReviewCardIntoView,
+  renderSpecComments,
+  renderSpecDiffBlocks,
+  decorateSpecAnchors,
+  undecorateSpecAnchors,
+  layoutSpecMargin,
+} from "/spec/render.js";
+import {
+  getSpecSelectionText,
+  captureSpecSelectedQuote,
+  renderedSelectionOccurrenceIndex,
+  specAnchorSummary,
+  setSpecCommentAnchorMode,
+  renderSpecCommentAnchorMode,
+  setSpecSuggestionAnchorMode,
+  renderSpecSuggestionAnchorMode,
+  specBlockCandidates,
+  quoteForSpecBlock,
+  hideSpecContextToolbar,
+  showSpecContextToolbar,
+  showSpecToolbarForSelection,
+  openSpecComposer,
+  openSpecComposerForBlock,
+  showSpecComposerForm,
+  hideSpecComposerForm,
+  previewSpecSuggestion,
+  applySpecSuggestion,
+  rollbackSpecSuggestion,
+} from "/spec/composer.js";
+import { initSpec } from "/spec/index.js";
+import { createState } from "/state.js";
+
 const FIXED_SECTIONS = ["Summary", "Why", "In Scope", "Out of Scope", "Done When", "Notes"];
 const SCOPE_STORAGE_KEY = "roadmap-ui.scope-collapsed";
 const SCOPE_WIDTH_STORAGE_KEY = "roadmap-ui.scope-width";
@@ -27,73 +92,64 @@ const UNASSIGNED_GROUP_KEY = "__unassigned__";
 const UNASSIGNED_GROUP_LABEL = "Unassigned";
 const EDITOR_MODES = new Set(["preview", "structured", "raw"]);
 
-const state = {
-  appMode: "roadmap",
-  repoPath: "",
-  workspace: null,
-  setupState: null,
-  selectedItemId: null,
-  currentItem: null,
-  activeLens: DEFAULT_LENS_KEY,
-  boardLayout: DEFAULT_BOARD_LAYOUT,
-  dragItemId: null,
-  dragColumnIndex: null,
-  dragClickSuppressUntil: 0,
-  lensesExpanded: false,
-  searchQuery: "",
-  activeFilters: {},
-  filtersExpanded: false,
-  collapsedGroups: new Set(),
+function loadStoredScopePreference() {
+  try {
+    return window.localStorage.getItem(SCOPE_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function clampScopeWidth(width) {
+  return Math.max(MIN_SCOPE_WIDTH, Math.min(MAX_SCOPE_WIDTH, Math.round(width)));
+}
+
+function loadStoredScopeWidth() {
+  try {
+    const rawValue = Number(window.localStorage.getItem(SCOPE_WIDTH_STORAGE_KEY));
+    return Number.isFinite(rawValue) && rawValue > 0 ? clampScopeWidth(rawValue) : DEFAULT_SCOPE_WIDTH;
+  } catch {
+    return DEFAULT_SCOPE_WIDTH;
+  }
+}
+
+function loadStoredSpecFilesPreference() {
+  try {
+    const stored = window.localStorage.getItem(SPEC_FILES_COLLAPSED_STORAGE_KEY);
+    return stored === "true";
+  } catch {
+    return false;
+  }
+}
+
+function clampSpecBodyFrac(frac) {
+  if (!Number.isFinite(frac)) return DEFAULT_SPEC_BODY_FRAC;
+  return Math.min(MAX_SPEC_BODY_FRAC, Math.max(MIN_SPEC_BODY_FRAC, frac));
+}
+
+function loadStoredSpecBodyFrac() {
+  try {
+    const raw = Number(window.localStorage.getItem(SPEC_BODY_WIDTH_STORAGE_KEY));
+    if (Number.isFinite(raw) && raw > 0 && raw <= 1) return clampSpecBodyFrac(raw);
+    // One-time migration: older builds stored a pixel width. Discard it.
+    window.localStorage.removeItem(LEGACY_SPEC_BODY_WIDTH_STORAGE_KEY);
+    return DEFAULT_SPEC_BODY_FRAC;
+  } catch {
+    return DEFAULT_SPEC_BODY_FRAC;
+  }
+}
+
+const stateContainer = createState({
   scopeCollapsed: loadStoredScopePreference(),
   scopeWidth: loadStoredScopeWidth(),
-  editorMode: "preview",
-  dirtyStructured: false,
-  dirtyRaw: false,
-  boardEditMode: false,
-  boardDraft: null,
-  boardDirty: false,
-  scopeEditMode: false,
-  scopeDraft: "",
-  scopeDirty: false,
   spec: {
-    sessions: [],
-    selectedPath: "",
-    context: null,
-    content: "",
-    commentComposerOpen: false,
-    replyComposerCommentId: "",
-    selectedQuote: "",
-    // Line range in state.spec.content for the most recently captured quote.
-    // Used as a disambiguation hint when posting comments/suggestions: if the
-    // same quote appears more than once (e.g. in prose and again inside a
-    // fenced code block), the hint lets the server pick the occurrence the
-    // user actually selected. Cleared whenever selectedQuote is cleared so
-    // it can never point at the wrong content.
-    selectedQuoteLineRange: null,
-    activeAnchorCommentId: "",
-    anchorHighlightTimer: null,
-    reviewTab: "comments",
-    commentFilter: "open",
-    commentSort: "newest",
-    expandedResolvedCommentIds: new Set(),
-    replyDrafts: new Map(),
-    loadError: null,
-    commentAnchorMode: "global",
-    suggestionComposerOpen: false,
-    suggestionAnchorMode: "quote",
-    previewSuggestionId: "",
-    suggestionPreview: null,
     filesCollapsed: loadStoredSpecFilesPreference(),
     bodyFrac: loadStoredSpecBodyFrac(),
-    resizingMargin: false,
-    viewMode: "review",          // "read" | "review"
-    showComments: true,
-    showSuggestions: true,
-    showResolved: false,
-    sidebarSearch: "",
-    composerTarget: null,        // { kind: "comment" | "suggestion", anchorId: string|"__file" }
   },
-};
+});
+const state = stateContainer.get();
+
+const api = createApi({ getRepo: () => state.repoPath });
 
 const roadmapModeButton = document.querySelector("#roadmap-mode-button");
 const specModeButton = document.querySelector("#spec-mode-button");
@@ -114,6 +170,8 @@ const specMarginElement = document.querySelector("#spec-margin");
 const specViewSegButtons = Array.from(document.querySelectorAll("[data-spec-view]"));
 const specLayerSegButtons = Array.from(document.querySelectorAll("[data-spec-layer]"));
 const specResolvedToggleButton = document.querySelector("#spec-resolved-toggle");
+const specNavPrevButton = document.querySelector("#spec-nav-prev");
+const specNavNextButton = document.querySelector("#spec-nav-next");
 const specCommentForm = document.querySelector("#spec-comment-form");
 const specCommentCancelButton = document.querySelector("#spec-comment-cancel-button");
 const specCommentByInput = document.querySelector("#spec-comment-by");
@@ -203,32 +261,72 @@ const fields = {
   extraMetadataContainer: document.querySelector("#extra-metadata-fields"),
 };
 
-function loadStoredScopePreference() {
-  try {
-    return window.localStorage.getItem(SCOPE_STORAGE_KEY) === "true";
-  } catch {
-    return false;
-  }
-}
+// Wire the spec subsystem in one call. initSpec aggregates wireSpecRender
+// and wireSpecComposer so app.js doesn't have to know they're two modules.
+// The DOM bag is the union of what each side needs; helpers likewise.
+// Function decls referenced here are hoisted within this module, so they're
+// safe to capture before they appear physically further down.
+initSpec({
+  dom: {
+    // Render side
+    specSessionListElement,
+    specFileTitleElement,
+    specFileSubtitleElement,
+    specFileContentElement,
+    specMarginElement,
+    specGutterElement,
+    specParticipantsFacepile,
+    specParticipantsPopover,
+    // Composer side (forms + toolbar)
+    specContextToolbarElement,
+    specCommentForm,
+    specCommentByInput,
+    specCommentKindInput,
+    specCommentAnchorInput,
+    specCommentAnchorLabelElement,
+    specCommentAnchorSummaryElement,
+    specCommentTextInput,
+    specCommentGlobalInput,
+    specCommentAnchorModeButtons,
+    specSuggestionForm,
+    specSuggestionByInput,
+    specSuggestionKindInput,
+    specSuggestionAnchorInput,
+    specSuggestionAnchorLabelElement,
+    specSuggestionAnchorSummaryElement,
+    specSuggestionContentInput,
+    specSuggestionRationaleInput,
+    specSuggestionAnchorModeButtons,
+  },
+  state,
+  api,
+  helpers: {
+    setBanner,
+    sameSpecUiPath,
+    parseLeadingFrontmatter,
+    buildSpecDocHeaderHtml,
+    stripLeadingFrontmatter,
+    hideSpecContextToolbar,
+    specBlockCandidates,
+    syncSpecToolbarChrome,
+    updateSpecNavButtons,
+    SPEC_COMMENT_ANCHOR_MODES,
+    SPEC_SUGGESTION_ANCHOR_MODES,
+    normalizeAnchorWhitespace,
+    sourceQuoteForRenderedSelection,
+    resolveSourceQuoteFromRendered,
+    clearSpecSuggestionPreview,
+    renderSpecComments,
+    renderSpecInlineSuggestionPreview,
+    loadSpecSession,
+  },
+});
 
 function persistScopePreference() {
   try {
     window.localStorage.setItem(SCOPE_STORAGE_KEY, String(state.scopeCollapsed));
   } catch {
     // Ignore storage failures.
-  }
-}
-
-function clampScopeWidth(width) {
-  return Math.max(MIN_SCOPE_WIDTH, Math.min(MAX_SCOPE_WIDTH, Math.round(width)));
-}
-
-function loadStoredScopeWidth() {
-  try {
-    const rawValue = Number(window.localStorage.getItem(SCOPE_WIDTH_STORAGE_KEY));
-    return Number.isFinite(rawValue) && rawValue > 0 ? clampScopeWidth(rawValue) : DEFAULT_SCOPE_WIDTH;
-  } catch {
-    return DEFAULT_SCOPE_WIDTH;
   }
 }
 
@@ -240,37 +338,11 @@ function persistScopeWidth() {
   }
 }
 
-function loadStoredSpecFilesPreference() {
-  try {
-    const stored = window.localStorage.getItem(SPEC_FILES_COLLAPSED_STORAGE_KEY);
-    return stored === "true";
-  } catch {
-    return false;
-  }
-}
-
 function persistSpecFilesPreference() {
   try {
     window.localStorage.setItem(SPEC_FILES_COLLAPSED_STORAGE_KEY, String(state.spec.filesCollapsed));
   } catch {
     // Ignore storage failures.
-  }
-}
-
-function clampSpecBodyFrac(frac) {
-  if (!Number.isFinite(frac)) return DEFAULT_SPEC_BODY_FRAC;
-  return Math.min(MAX_SPEC_BODY_FRAC, Math.max(MIN_SPEC_BODY_FRAC, frac));
-}
-
-function loadStoredSpecBodyFrac() {
-  try {
-    const raw = Number(window.localStorage.getItem(SPEC_BODY_WIDTH_STORAGE_KEY));
-    if (Number.isFinite(raw) && raw > 0 && raw <= 1) return clampSpecBodyFrac(raw);
-    // One-time migration: older builds stored a pixel width. Discard it.
-    window.localStorage.removeItem(LEGACY_SPEC_BODY_WIDTH_STORAGE_KEY);
-    return DEFAULT_SPEC_BODY_FRAC;
-  } catch {
-    return DEFAULT_SPEC_BODY_FRAC;
   }
 }
 
@@ -380,14 +452,6 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function renderInlineMarkdown(value) {
-  let html = escapeHtml(value);
-  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-  return html;
-}
-
 function stripLeadingFrontmatter(text) {
   // YAML frontmatter at the start of a markdown file: a `---` fence on its
   // own line, then arbitrary content, then a closing `---` fence. We render
@@ -457,305 +521,6 @@ function buildSpecDocHeaderHtml(frontmatter) {
   return `<header class="spec-doc-header">${titleHtml}${badgesHtml}</header>`;
 }
 
-function renderMarkdownToHtml(markdown) {
-  const normalized = String(markdown || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const sourceLines = normalized.split("\n");
-  const blocks = [];
-
-  function expandIndentation(value) {
-    return String(value || "").replace(/\t/g, "    ");
-  }
-
-  function getIndentation(value) {
-    const expanded = expandIndentation(value);
-    const match = expanded.match(/^(\s*)/);
-    return match ? match[1].length : 0;
-  }
-
-  function getListMarker(value) {
-    const expanded = expandIndentation(value);
-    let match = expanded.match(/^(\s*)([-*])\s+(.+)$/);
-    if (match) {
-      return { indent: match[1].length, ordered: false, content: match[3] };
-    }
-
-    match = expanded.match(/^(\s*)(\d+)\.\s+(.+)$/);
-    if (match) {
-      return { indent: match[1].length, ordered: true, content: match[3] };
-    }
-
-    return null;
-  }
-
-  function isHorizontalRule(value) {
-    return /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/.test(value);
-  }
-
-  function splitTableRow(value) {
-    const trimmed = String(value || "").trim();
-    const withoutEdges = trimmed.replace(/^\|/, "").replace(/\|$/, "");
-    return withoutEdges.split("|").map((cell) => cell.trim());
-  }
-
-  function isTableDelimiterLine(value) {
-    const cells = splitTableRow(value);
-    return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
-  }
-
-  function tableAlignments(value) {
-    return splitTableRow(value).map((cell) => {
-      const left = cell.startsWith(":");
-      const right = cell.endsWith(":");
-      if (left && right) {
-        return "center";
-      }
-      if (right) {
-        return "right";
-      }
-      return "left";
-    });
-  }
-
-  function isTableStart(index) {
-    return index + 1 < sourceLines.length
-      && sourceLines[index].includes("|")
-      && isTableDelimiterLine(sourceLines[index + 1]);
-  }
-
-  function parseTable(startIndex) {
-    const headerCells = splitTableRow(sourceLines[startIndex]);
-    const alignments = tableAlignments(sourceLines[startIndex + 1]);
-    const rows = [];
-    let index = startIndex + 2;
-
-    while (index < sourceLines.length && sourceLines[index].trim() && sourceLines[index].includes("|")) {
-      rows.push(splitTableRow(sourceLines[index]));
-      index += 1;
-    }
-
-    const alignStyle = (cellIndex) => ` style="text-align: ${alignments[cellIndex] || "left"}"`;
-    const header = `<thead><tr>${headerCells.map((cell, cellIndex) => `<th${alignStyle(cellIndex)}>${renderInlineMarkdown(cell)}</th>`).join("")}</tr></thead>`;
-    const body = rows.length
-      ? `<tbody>${rows.map((row) => `<tr>${headerCells.map((_, cellIndex) => `<td${alignStyle(cellIndex)}>${renderInlineMarkdown(row[cellIndex] || "")}</td>`).join("")}</tr>`).join("")}</tbody>`
-      : "";
-
-    return {
-      html: `<div class="markdown-table-wrap"><table>${header}${body}</table></div>`,
-      nextIndex: index,
-    };
-  }
-
-  function parseBlockquote(startIndex) {
-    const quoteLines = [];
-    let index = startIndex;
-
-    while (index < sourceLines.length) {
-      const match = sourceLines[index].match(/^>\s?(.*)$/);
-      if (!match) {
-        break;
-      }
-      quoteLines.push(match[1]);
-      index += 1;
-    }
-
-    const quoteHtml = renderMarkdownToHtml(quoteLines.join("\n"));
-    return {
-      html: `<blockquote>${quoteHtml}</blockquote>`,
-      nextIndex: index,
-    };
-  }
-
-  function parseCodeBlock(startIndex) {
-    const codeLines = [];
-    let index = startIndex + 1;
-
-    while (index < sourceLines.length && !sourceLines[index].startsWith("```")) {
-      codeLines.push(sourceLines[index]);
-      index += 1;
-    }
-
-    if (index < sourceLines.length && sourceLines[index].startsWith("```")) {
-      index += 1;
-    }
-
-    return {
-      html: `<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`,
-      nextIndex: index,
-    };
-  }
-
-  function parseParagraph(startIndex) {
-    const paragraphLines = [];
-    let index = startIndex;
-
-    while (index < sourceLines.length) {
-      const rawLine = sourceLines[index];
-      const trimmed = rawLine.trim();
-      if (!trimmed) {
-        break;
-      }
-      if (trimmed.startsWith("```") || trimmed.startsWith(">") || trimmed.match(/^(#{1,6})\s+(.+)$/) || getListMarker(rawLine) || isHorizontalRule(trimmed) || isTableStart(index)) {
-        break;
-      }
-
-      paragraphLines.push(trimmed);
-      index += 1;
-    }
-
-    return {
-      html: `<p>${renderInlineMarkdown(paragraphLines.join(" "))}</p>`,
-      nextIndex: index,
-    };
-  }
-
-  function parseList(startIndex, baseIndent, ordered) {
-    const tagName = ordered ? "ol" : "ul";
-    const items = [];
-    let index = startIndex;
-
-    while (index < sourceLines.length) {
-      const marker = getListMarker(sourceLines[index]);
-      if (!marker || marker.indent !== baseIndent || marker.ordered !== ordered) {
-        break;
-      }
-
-      const paragraphLines = [marker.content.trim()];
-      const children = [];
-      index += 1;
-
-      while (index < sourceLines.length) {
-        const rawLine = sourceLines[index];
-        const trimmed = rawLine.trim();
-
-        if (!trimmed) {
-          let lookahead = index + 1;
-          while (lookahead < sourceLines.length && !sourceLines[lookahead].trim()) {
-            lookahead += 1;
-          }
-          if (lookahead >= sourceLines.length) {
-            index = lookahead;
-            break;
-          }
-
-          const nextMarker = getListMarker(sourceLines[lookahead]);
-          const nextIndent = getIndentation(sourceLines[lookahead]);
-          const nextTrimmed = sourceLines[lookahead].trim();
-          if ((nextMarker && nextMarker.indent <= baseIndent) || (!nextMarker && nextIndent <= baseIndent && !nextTrimmed.startsWith("```") && !nextTrimmed.match(/^(#{1,6})\s+(.+)$/))) {
-            index = lookahead;
-            break;
-          }
-
-          index = lookahead;
-          continue;
-        }
-
-        if (trimmed.startsWith("```")) {
-          const parsedCode = parseCodeBlock(index);
-          children.push(parsedCode.html);
-          index = parsedCode.nextIndex;
-          continue;
-        }
-
-        const nestedMarker = getListMarker(rawLine);
-        if (nestedMarker) {
-          if (nestedMarker.indent > baseIndent) {
-            const parsedList = parseList(index, nestedMarker.indent, nestedMarker.ordered);
-            children.push(parsedList.html);
-            index = parsedList.nextIndex;
-            continue;
-          }
-
-          break;
-        }
-
-        const indent = getIndentation(rawLine);
-        if (trimmed.match(/^(#{1,6})\s+(.+)$/) && indent <= baseIndent) {
-          break;
-        }
-
-        if (indent > baseIndent) {
-          paragraphLines.push(trimmed);
-          index += 1;
-          continue;
-        }
-
-        break;
-      }
-
-      const paragraphHtml = renderInlineMarkdown(paragraphLines.join(" "));
-      if (children.length > 0) {
-        items.push(`<li><p>${paragraphHtml}</p>${children.join("")}</li>`);
-      } else {
-        items.push(`<li>${paragraphHtml}</li>`);
-      }
-    }
-
-    return {
-      html: `<${tagName}>${items.join("")}</${tagName}>`,
-      nextIndex: index,
-    };
-  }
-
-  let index = 0;
-  while (index < sourceLines.length) {
-    const rawLine = sourceLines[index];
-    const trimmed = rawLine.trim();
-
-    if (!trimmed) {
-      index += 1;
-      continue;
-    }
-
-    if (trimmed.startsWith("```")) {
-      const parsedCode = parseCodeBlock(index);
-      blocks.push(parsedCode.html);
-      index = parsedCode.nextIndex;
-      continue;
-    }
-
-    if (trimmed.startsWith(">")) {
-      const parsedQuote = parseBlockquote(index);
-      blocks.push(parsedQuote.html);
-      index = parsedQuote.nextIndex;
-      continue;
-    }
-
-    const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
-    if (headingMatch) {
-      const level = headingMatch[1].length;
-      blocks.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
-      index += 1;
-      continue;
-    }
-
-    const listMarker = getListMarker(rawLine);
-    if (listMarker) {
-      const parsedList = parseList(index, listMarker.indent, listMarker.ordered);
-      blocks.push(parsedList.html);
-      index = parsedList.nextIndex;
-      continue;
-    }
-
-    if (isHorizontalRule(trimmed)) {
-      blocks.push("<hr />");
-      index += 1;
-      continue;
-    }
-
-    if (isTableStart(index)) {
-      const parsedTable = parseTable(index);
-      blocks.push(parsedTable.html);
-      index = parsedTable.nextIndex;
-      continue;
-    }
-
-    const paragraph = parseParagraph(index);
-    blocks.push(paragraph.html);
-    index = paragraph.nextIndex;
-  }
-
-  return blocks.join("");
-}
 function ensureSelectValue(select, value) {
   if (!Array.from(select.options).some((option) => option.value === value)) {
     const option = document.createElement("option");
@@ -807,30 +572,6 @@ function normalizeSearchQuery(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
-function normalizeFilterValues(value) {
-  if (Array.isArray(value)) {
-    return value.map((entry) => String(entry).trim()).filter(Boolean);
-  }
-
-  const normalized = String(value ?? "").trim();
-  return normalized ? [normalized] : [];
-}
-
-function normalizeFilterMap(filters) {
-  const normalized = {};
-
-  for (const [key, values] of Object.entries(filters || {})) {
-    const cleanKey = String(key || "").trim();
-    const cleanValues = Array.from(new Set(normalizeFilterValues(values))).sort((left, right) => left.localeCompare(right));
-    if (!cleanKey || cleanValues.length === 0) {
-      continue;
-    }
-    normalized[cleanKey] = cleanValues;
-  }
-
-  return normalized;
-}
-
 function parseRouteFilters(params) {
   const filters = {};
 
@@ -872,114 +613,11 @@ function isSearchActive() {
 
 function itemMatchesCurrentFilters(itemId, workspace = state.workspace) {
   const item = getBoardItemById(itemId, workspace);
-  if (!item) {
-    return false;
-  }
-
-  if (state.searchQuery && !String(item.searchText || "").includes(state.searchQuery)) {
-    return false;
-  }
-
-  for (const [key, selectedValues] of Object.entries(state.activeFilters)) {
-    const itemValues = normalizeFilterValues(item.metadata?.[key]);
-    if (!selectedValues.some((value) => itemValues.includes(value))) {
-      return false;
-    }
-  }
-
-  return true;
+  return itemMatchesFilters(item, { searchQuery: state.searchQuery, activeFilters: state.activeFilters });
 }
 
 function getFilteredBoardItemIds(workspace = state.workspace) {
-  if (!workspace) {
-    return [];
-  }
-
-  const orderedIds = workspace.boardGroups.flatMap((group) => group.items.filter((item) => !item.missing).map((item) => item.id));
-  return isSearchActive() ? orderedIds.filter((itemId) => itemMatchesCurrentFilters(itemId, workspace)) : orderedIds;
-}
-
-function getItemLensGroupValue(item, lensKey) {
-  if (!item || lensKey === DEFAULT_LENS_KEY) {
-    return "";
-  }
-
-  if (lensKey === "kind") {
-    return item.kind || UNASSIGNED_GROUP_KEY;
-  }
-
-  return normalizeFilterValues(item.metadata?.[lensKey])[0] || UNASSIGNED_GROUP_KEY;
-}
-
-function buildDerivedVisibleGroups(workspace, lens) {
-  const groups = new Map();
-  const preferredValues = Array.isArray(lens?.values) ? lens.values : [];
-  const showEmptyGroups = isColumnsLayoutActive() && preferredValues.length > 0;
-
-  preferredValues.forEach((value, index) => {
-    groups.set(value, {
-      name: value,
-      groupKey: value,
-      originalIndex: index,
-      dropValue: value,
-      items: [],
-    });
-  });
-
-  const unassignedItems = [];
-  for (const itemId of getFilteredBoardItemIds(workspace)) {
-    const item = getBoardItemById(itemId, workspace);
-    if (!item) {
-      continue;
-    }
-
-    const groupValue = getItemLensGroupValue(item, lens.key);
-    if (groupValue === UNASSIGNED_GROUP_KEY) {
-      unassignedItems.push(item);
-      continue;
-    }
-
-    if (!groups.has(groupValue)) {
-      groups.set(groupValue, {
-        name: groupValue,
-        groupKey: groupValue,
-        originalIndex: preferredValues.length + groups.size,
-        dropValue: groupValue,
-        items: [],
-      });
-    }
-
-    groups.get(groupValue).items.push(item);
-  }
-
-  const visibleGroups = Array.from(groups.values())
-    .filter((group) => group.items.length > 0 || showEmptyGroups)
-    .sort((left, right) => {
-      if (left.originalIndex !== right.originalIndex) {
-        return left.originalIndex - right.originalIndex;
-      }
-      return left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" });
-    })
-    .map((group, index) => ({
-      ...group,
-      originalIndex: index,
-      isDerived: true,
-      draggable: Boolean(lens.draggable && group.dropValue),
-    }));
-
-  if (unassignedItems.length > 0) {
-    visibleGroups.push({
-      name: UNASSIGNED_GROUP_LABEL,
-      groupKey: UNASSIGNED_GROUP_KEY,
-      originalIndex: visibleGroups.length,
-      dropValue: "",
-      items: unassignedItems,
-      isDerived: true,
-      draggable: false,
-    });
-  }
-
-  return visibleGroups;
+  return filterBoardItemIds(workspace, { searchQuery: state.searchQuery, activeFilters: state.activeFilters });
 }
 
 function getVisibleBoardGroups(workspace = state.workspace) {
@@ -1000,7 +638,14 @@ function getVisibleBoardGroups(workspace = state.workspace) {
       .filter((group) => group.items.length > 0 || !isSearchActive());
   }
 
-  return buildDerivedVisibleGroups(workspace, activeLens);
+  return buildDerivedVisibleGroups(workspace, activeLens, {
+    searchQuery: state.searchQuery,
+    activeFilters: state.activeFilters,
+    defaultLensKey: DEFAULT_LENS_KEY,
+    unassignedKey: UNASSIGNED_GROUP_KEY,
+    unassignedLabel: UNASSIGNED_GROUP_LABEL,
+    showEmptyGroups: isColumnsLayoutActive() && Array.isArray(activeLens.values) && activeLens.values.length > 0,
+  });
 }
 
 function getVisibleBoardItemIds(workspace = state.workspace) {
@@ -2039,11 +1684,7 @@ function cancelBoardEditMode(force = false) {
 }
 
 async function persistImmediateBoardOrder(groups) {
-  const workspace = await fetchJson("/api/board", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ groups }),
-  });
+  const workspace = await api.saveBoard(groups);
 
   state.workspace = workspace;
   syncWorkspaceChrome();
@@ -2089,11 +1730,7 @@ async function saveBoardDraft() {
   setBanner("Saving board...");
 
   try {
-    const workspace = await fetchJson("/api/board", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ groups: state.boardDraft }),
-    });
+    const workspace = await api.saveBoard(state.boardDraft);
 
     state.workspace = workspace;
     state.boardEditMode = false;
@@ -2391,11 +2028,7 @@ async function persistBoardColumnMove(itemId, targetGroupIndex) {
   setBanner("Updating board group...");
 
   try {
-    const workspace = await fetchJson("/api/board", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ groups }),
-    });
+    const workspace = await api.saveBoard(groups);
 
     const keepItemOpen = !shouldUseEditorOverlay() || (state.editorOverlayOpen && state.selectedItemId === itemId);
     state.workspace = workspace;
@@ -2427,11 +2060,7 @@ async function persistBoardItemPlacement(itemId, targetGroupIndex, beforeItemId 
   setBanner("Updating board order...");
 
   try {
-    const workspace = await fetchJson("/api/board", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ groups }),
-    });
+    const workspace = await api.saveBoard(groups);
 
     const keepItemOpen = !shouldUseEditorOverlay() || (state.editorOverlayOpen && state.selectedItemId === itemId);
     state.workspace = workspace;
@@ -2460,14 +2089,10 @@ async function persistDerivedLensMove(itemId, targetValue) {
   setBanner(`Updating ${activeLens.label.toLowerCase()}...`);
 
   try {
-    await fetchJson(`/api/items/${encodeURIComponent(itemId)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        metadata: {
-          [activeLens.key]: targetValue,
-        },
-      }),
+    await api.saveItem(itemId, {
+      metadata: {
+        [activeLens.key]: targetValue,
+      },
     });
 
     const keepItemOpen = !shouldUseEditorOverlay() || (state.editorOverlayOpen && state.selectedItemId === itemId);
@@ -3279,39 +2904,6 @@ function renderItem(item) {
   syncMobileNavigation();
 }
 
-async function fetchJson(url, options = {}) {
-  const isRoadmapEndpoint =
-    url.startsWith("/api/workspace")
-    || url.startsWith("/api/board")
-    || url.startsWith("/api/scope")
-    || url.startsWith("/api/items/")
-    || url.startsWith("/api/setup/");
-
-  let finalOptions = options;
-  // Empty state.repoPath is deliberate single-repo cwd-fallback mode — the server
-  // resolves to its own cwd. Don't "fix" this by sending an empty header; do that
-  // and any user without #repo= will get a 400 if the server is launched from a
-  // directory unrelated to the repo they expect to see.
-  if (isRoadmapEndpoint && state.repoPath) {
-    const headers = new Headers(options.headers || {});
-    headers.set("X-Minimap-Repo", state.repoPath);
-    finalOptions = { ...options, headers };
-  }
-
-  const response = await fetch(url, finalOptions);
-  const payload = await response.json();
-
-  if (!response.ok) {
-    const error = new Error(payload?.error?.message || "Request failed.");
-    error.code = payload?.error?.code || "request_failed";
-    error.details = payload?.error?.details || null;
-    error.statusCode = response.status;
-    throw error;
-  }
-
-  return payload;
-}
-
 function specPathParam(filePath) {
   return encodeURIComponent(filePath || state.spec.selectedPath || "");
 }
@@ -3343,739 +2935,15 @@ function normalizeAnchorWhitespace(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function buildWhitespaceNormalizedMap(value) {
-  const normalized = [];
-  const originalIndexes = [];
-  let lastWasSpace = true;
-
-  const source = String(value || "");
-  for (let index = 0; index < source.length; index += 1) {
-    const char = source[index];
-    if (/\s/.test(char)) {
-      if (!lastWasSpace) {
-        normalized.push(" ");
-        originalIndexes.push(index);
-        lastWasSpace = true;
-      }
-      continue;
-    }
-
-    normalized.push(char);
-    originalIndexes.push(index);
-    lastWasSpace = false;
-  }
-
-  if (normalized.at(-1) === " ") {
-    normalized.pop();
-    originalIndexes.pop();
-  }
-
-  return {
-    text: normalized.join(""),
-    originalIndexes,
-  };
-}
-
-// Like buildWhitespaceNormalizedMap, but also strips inline markdown markers
-// that the spec renderer hides (backtick code spans, **bold**, *italic*) so a
-// rendered DOM selection like "Both shipped (ClawMem, agentmemory)" can be
-// matched back to source markdown that was "Both shipped (`ClawMem`, `agentmemory`)".
-//
-// Each char in the returned text maps to its origin source offset via
-// originalIndexes — for stripped markers (backticks, asterisks) the markers
-// themselves are excluded; only inner-span chars survive in the map. Match
-// against the same renderer that renderInlineMarkdown uses (only those three
-// patterns); other markdown ([](), ![]) is left literal because the renderer
-// does not strip them either.
-function buildRenderedNormalizedMap(value) {
-  const source = String(value || "");
-  const normalized = [];
-  const originalIndexes = [];
-  let lastWasSpace = true;
-
-  const pushChar = (char, sourceIndex) => {
-    if (/\s/.test(char)) {
-      if (!lastWasSpace) {
-        normalized.push(" ");
-        originalIndexes.push(sourceIndex);
-        lastWasSpace = true;
-      }
-      return;
-    }
-    normalized.push(char);
-    originalIndexes.push(sourceIndex);
-    lastWasSpace = false;
-  };
-
-  // Try to detect the start of an inline marker at `index`. Returns the
-  // 1-or-2-char marker string if a balanced closer exists later in the
-  // source, or "" otherwise. This deliberately mirrors renderInlineMarkdown's
-  // greedy-but-non-nested matching; complex markdown (escapes, nesting) is
-  // left literal so we never lose chars from the source map.
-  const detectMarker = (index) => {
-    const ch = source[index];
-    const next = source[index + 1];
-    if (ch === "`") {
-      const close = source.indexOf("`", index + 1);
-      // Renderer requires non-empty inner content: `[^`]+`
-      if (close > index + 1) return "`";
-      return "";
-    }
-    if (ch === "*" && next === "*") {
-      // Match ** ... ** (non-greedy on first ** close)
-      const close = source.indexOf("**", index + 2);
-      if (close > index + 2) return "**";
-      return "";
-    }
-    if (ch === "*") {
-      // Single * for italics — renderer matches /\*([^*]+)\*/ (no nested *).
-      // Find the next unescaped single * that is NOT part of **.
-      let cursor = index + 1;
-      while (cursor < source.length) {
-        if (source[cursor] === "*") {
-          // Bare star is the closer if it's not the start of **.
-          if (source[cursor + 1] !== "*") return "*";
-          // ** sequence inside an italic span — bail; renderer wouldn't match.
-          return "";
-        }
-        cursor += 1;
-      }
-      return "";
-    }
-    return "";
-  };
-
-  let i = 0;
-  while (i < source.length) {
-    const marker = detectMarker(i);
-    if (!marker) {
-      pushChar(source[i], i);
-      i += 1;
-      continue;
-    }
-
-    const innerStart = i + marker.length;
-    const close = source.indexOf(marker, innerStart);
-    if (close === -1 || close === innerStart) {
-      // detectMarker promised a closer, but be defensive.
-      pushChar(source[i], i);
-      i += 1;
-      continue;
-    }
-
-    // Emit inner chars with their actual source offsets; markers themselves
-    // are skipped (they don't appear in the rendered text).
-    for (let k = innerStart; k < close; k += 1) {
-      pushChar(source[k], k);
-    }
-    i = close + marker.length;
-  }
-
-  if (normalized.at(-1) === " ") {
-    normalized.pop();
-    originalIndexes.pop();
-  }
-
-  return {
-    text: normalized.join(""),
-    originalIndexes,
-  };
-}
-
+// State-aware wrappers around the pure helpers in spec/anchors.js. The pure
+// versions take `sourceContent` explicitly; these bind it to state.spec.content
+// so existing call sites stay unchanged.
 function sourceQuoteForRenderedSelection(selectionText) {
-  return resolveSourceQuoteFromRendered(selectionText).quote;
+  return specSourceQuoteForRenderedSelection(selectionText, state.spec.content);
 }
 
-// Like sourceQuoteForRenderedSelection but also returns a 1-based line range
-// in state.spec.content for the matched source slice. The line range is
-// what we forward to the server as a disambiguation hint when the same
-// quote appears more than once in the file (e.g. once in prose and once
-// inside a fenced code block). Returns lineRange = null when the rendered
-// selection couldn't be mapped back to the source.
-//
-// `occurrenceIndex` is optional: a 0-based count of which match of the
-// selected text the user picked. When the same rendered text appears more
-// than once and we know which one (because we counted occurrences in the
-// rendered DOM before the live selection's start), we pick the matching
-// source occurrence — without it, indexOf would always return the first
-// match and the line hint would point at the wrong spot.
 function resolveSourceQuoteFromRendered(selectionText, occurrenceIndex = 0) {
-  const normalizedSelection = normalizeAnchorWhitespace(selectionText);
-  if (!normalizedSelection) {
-    return { quote: "", lineRange: null };
-  }
-
-  // Try the markdown-aware map first — selections from the rendered DOM lack
-  // backticks / ** / * that the source carries, so a literal source lookup
-  // would miss. The map walks markers as the renderer does, so the rendered
-  // selection lines up with the stripped view.
-  const renderedSource = buildRenderedNormalizedMap(state.spec.content);
-  let matchIndex = nthOccurrence(renderedSource.text, normalizedSelection, occurrenceIndex);
-  let mapped = renderedSource;
-
-  // Fall back to the plain whitespace-normalized map (preserves markers).
-  // Matters when the user selects a code-span itself: rendered text contains
-  // the inner content, but if the user copied source-form text (with backticks)
-  // we still want to find it.
-  if (matchIndex === -1) {
-    const literalSource = buildWhitespaceNormalizedMap(state.spec.content);
-    matchIndex = nthOccurrence(literalSource.text, normalizedSelection, occurrenceIndex);
-    mapped = literalSource;
-  }
-
-  if (matchIndex === -1) {
-    return { quote: selectionText.trim(), lineRange: null };
-  }
-
-  const start = mapped.originalIndexes[matchIndex];
-  const end = mapped.originalIndexes[matchIndex + normalizedSelection.length - 1] + 1;
-  const sliced = state.spec.content.slice(start, end);
-  // Trim adjusts the start/end. Recompute the trimmed span so the line
-  // range still describes the visible text the user selected.
-  const leading = sliced.length - sliced.replace(/^\s+/, "").length;
-  const trailing = sliced.length - sliced.replace(/\s+$/, "").length;
-  const trimmedStart = start + leading;
-  const trimmedEnd = end - trailing;
-  const lineRange = computeLineRange(state.spec.content, trimmedStart, trimmedEnd - trimmedStart);
-  return { quote: sliced.trim(), lineRange };
-}
-
-// Index of the nth (0-based) occurrence of `needle` in `haystack`, or
-// the index of the LAST occurrence when n is past the end (clamps so a
-// stale rendered count never silently rolls back to occurrence 0).
-// Returns -1 when there are no matches at all.
-function nthOccurrence(haystack, needle, n) {
-  let cursor = haystack.indexOf(needle);
-  if (cursor === -1) return -1;
-  let last = cursor;
-  let i = 0;
-  while (i < n) {
-    cursor = haystack.indexOf(needle, cursor + 1);
-    if (cursor === -1) return last;
-    last = cursor;
-    i += 1;
-  }
-  return last;
-}
-
-// 1-based line range for a [start, start+length) span in `text`. Mirrors the
-// server's lineRangeForOffset in src/sessions.js so the hint we send lines
-// up with what createTextAnchor computes server-side.
-function computeLineRange(text, start, length) {
-  if (typeof start !== "number" || start < 0) {
-    return null;
-  }
-  const before = text.slice(0, start);
-  const selected = text.slice(start, start + Math.max(0, length));
-  const lineStart = before.split(/\r?\n/).length;
-  const lineEnd = lineStart + selected.split(/\r?\n/).length - 1;
-  return { lineStart, lineEnd };
-}
-
-function getSpecSelectionText() {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-    return "";
-  }
-
-  const range = selection.getRangeAt(0);
-  const container = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
-    ? range.commonAncestorContainer
-    : range.commonAncestorContainer.parentElement;
-  if (!container || !specFileContentElement.contains(container)) {
-    return "";
-  }
-
-  return selection.toString().trim();
-}
-
-function captureSpecSelectedQuote() {
-  const selectedText = getSpecSelectionText();
-  if (!selectedText) {
-    state.spec.selectedQuote = "";
-    state.spec.selectedQuoteLineRange = null;
-    return;
-  }
-  // Count how many times the selected text appears in the rendered body
-  // BEFORE the live selection's start. That gives us the occurrence index
-  // (0-based) the user actually selected, which we then use to pick the
-  // matching occurrence in the source map. Without this, indexOf in the
-  // source map always picks the first match — wrong when the same phrase
-  // appears more than once.
-  const occurrenceIndex = renderedSelectionOccurrenceIndex(selectedText);
-  const resolved = resolveSourceQuoteFromRendered(selectedText, occurrenceIndex);
-  state.spec.selectedQuote = resolved.quote;
-  state.spec.selectedQuoteLineRange = resolved.lineRange;
-}
-
-// 0-based count of how many times `needle` appears in the rendered body
-// before the live selection's start, matching whatever normalization the
-// renderer uses on textContent. Returns 0 (treat as first occurrence) when
-// there's no selection or no match in front of it. Whitespace is collapsed
-// the same way normalizeAnchorWhitespace handles it so the count lines up
-// with what the source-map matcher will see.
-function renderedSelectionOccurrenceIndex(needle) {
-  const trimmedNeedle = normalizeAnchorWhitespace(needle);
-  if (!trimmedNeedle) return 0;
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) return 0;
-  const range = selection.getRangeAt(0);
-  if (!specFileContentElement.contains(range.startContainer)) return 0;
-
-  // textContent up to the selection start.
-  const beforeRange = document.createRange();
-  beforeRange.selectNodeContents(specFileContentElement);
-  beforeRange.setEnd(range.startContainer, range.startOffset);
-  const before = normalizeAnchorWhitespace(beforeRange.toString());
-
-  let count = 0;
-  let cursor = before.indexOf(trimmedNeedle);
-  while (cursor !== -1) {
-    count += 1;
-    cursor = before.indexOf(trimmedNeedle, cursor + 1);
-  }
-  return count;
-}
-
-function specAnchorSummary(mode, value) {
-  if (mode === "global") {
-    return "File-level comment";
-  }
-  if (mode === "section") {
-    return value ? `Anchored to section: ${value}` : "Anchored to section";
-  }
-  if (!value) {
-    return "Anchored to selected text";
-  }
-  const normalized = normalizeVisibleText(value);
-  return `Anchored to: ${normalized.length > 96 ? `${normalized.slice(0, 96)}...` : normalized}`;
-}
-
-function setSpecCommentAnchorMode(mode) {
-  state.spec.commentAnchorMode = SPEC_COMMENT_ANCHOR_MODES.has(mode) ? mode : "global";
-  renderSpecCommentAnchorMode();
-}
-
-function renderSpecCommentAnchorMode() {
-  specCommentAnchorModeButtons.forEach((button) => {
-    const active = button.dataset.commentAnchorMode === state.spec.commentAnchorMode;
-    button.classList.toggle("is-active", active);
-    button.setAttribute("aria-selected", active ? "true" : "false");
-  });
-
-  const globalMode = state.spec.commentAnchorMode === "global";
-  specCommentGlobalInput.checked = globalMode;
-  specCommentAnchorInput.closest("label").hidden = globalMode;
-  specCommentAnchorSummaryElement.textContent = specAnchorSummary(state.spec.commentAnchorMode, specCommentAnchorInput.value);
-  if (globalMode) {
-    specCommentAnchorInput.value = "";
-    return;
-  }
-
-  if (state.spec.commentAnchorMode === "section") {
-    specCommentAnchorLabelElement.textContent = "Section";
-    specCommentAnchorInput.placeholder = "Heading > Subheading";
-    return;
-  }
-
-  specCommentAnchorLabelElement.textContent = "Quote";
-  specCommentAnchorInput.placeholder = "Exact quote from the file";
-}
-
-function setSpecSuggestionAnchorMode(mode) {
-  state.spec.suggestionAnchorMode = SPEC_SUGGESTION_ANCHOR_MODES.has(mode) ? mode : "quote";
-  renderSpecSuggestionAnchorMode();
-}
-
-function renderSpecSuggestionAnchorMode() {
-  specSuggestionAnchorModeButtons.forEach((button) => {
-    const active = button.dataset.suggestionAnchorMode === state.spec.suggestionAnchorMode;
-    button.classList.toggle("is-active", active);
-    button.setAttribute("aria-selected", active ? "true" : "false");
-  });
-
-  if (state.spec.suggestionAnchorMode === "section") {
-    specSuggestionAnchorLabelElement.textContent = "Section";
-    specSuggestionAnchorInput.placeholder = "Heading > Subheading";
-    specSuggestionAnchorSummaryElement.textContent = specAnchorSummary("section", specSuggestionAnchorInput.value);
-    return;
-  }
-
-  specSuggestionAnchorLabelElement.textContent = "Quote";
-  specSuggestionAnchorInput.placeholder = "Exact quote from the file";
-  specSuggestionAnchorSummaryElement.textContent = specAnchorSummary("quote", specSuggestionAnchorInput.value);
-}
-
-function normalizeVisibleText(value) {
-  return String(value || "").replace(/\s+/g, " ").trim();
-}
-
-// Mirror of stripMarkdownSyntax in src/sessions.js (kept in sync via the
-// tri-tree parity test). Strips inline markdown markers and leading heading
-// hashes so a quote captured from a rendered view (no backticks, no `### `)
-// still finds its block in the rendered HTML, and vice versa.
-function stripMarkdownSyntaxForUi(value) {
-  return String(value || "")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/[`*_]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-// Decode literal backslash escapes (\n, \r, \t, \\) in suggestion content.
-// Authors — particularly LLMs — sometimes emit `\n` as a two-character
-// literal instead of a real newline. Without this the diff body renders the
-// `\n` glyphs verbatim, which is unreadable. We decode conservatively: only
-// the four common escapes, only when not already a real newline.
-function decodeLiteralEscapes(value) {
-  if (typeof value !== "string" || value.indexOf("\\") === -1) return String(value || "");
-  return value.replace(/\\([nrt\\])/g, (_, ch) => {
-    if (ch === "n") return "\n";
-    if (ch === "r") return "\r";
-    if (ch === "t") return "\t";
-    return "\\";
-  });
-}
-
-function specBlockCandidates() {
-  return Array.from(specFileContentElement.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li, pre, th, td"));
-}
-
-function quoteForSpecBlock(element) {
-  const visibleText = normalizeVisibleText(element?.textContent || "");
-  return visibleText ? sourceQuoteForRenderedSelection(visibleText) : "";
-}
-
-function hideSpecContextToolbar() {
-  specContextToolbarElement.hidden = true;
-  specContextToolbarElement.dataset.quote = "";
-}
-
-function showSpecContextToolbar(quote, rect) {
-  if (!quote || !rect || !state.spec.context) {
-    hideSpecContextToolbar();
-    return;
-  }
-  // Position above the selection, centered horizontally on its midpoint.
-  // Falls back below the selection if there's no room above.
-  const toolbarWidth = 152;
-  const toolbarHeight = 32;
-  const cx = rect.left + rect.width / 2;
-  let left = Math.round(cx - toolbarWidth / 2);
-  left = Math.min(Math.max(8, left), window.innerWidth - toolbarWidth - 8);
-  let top = Math.round(rect.top - toolbarHeight - 6);
-  if (top < 8) {
-    top = Math.round(rect.bottom + 6);
-  }
-  specContextToolbarElement.dataset.quote = quote;
-  specContextToolbarElement.style.left = `${left}px`;
-  specContextToolbarElement.style.top = `${top}px`;
-  specContextToolbarElement.hidden = false;
-}
-
-function selectedSpecRangeRect() {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-    return null;
-  }
-  const range = selection.getRangeAt(0);
-  const rect = range.getBoundingClientRect();
-  return rect.width || rect.height ? rect : null;
-}
-
-function showSpecToolbarForSelection() {
-  captureSpecSelectedQuote();
-  const rect = selectedSpecRangeRect();
-  if (!state.spec.selectedQuote || !rect) {
-    return false;
-  }
-  showSpecContextToolbar(state.spec.selectedQuote, rect);
-  return true;
-}
-
-function openSpecComposer(kind, quote = "") {
-  const cleanQuote = quote.trim();
-  // Preserve the captured line range when the caller is opening on the same
-  // quote we just captured from a live DOM selection. Other entry points
-  // (paragraph "+" gutter, programmatic) pass a quote that didn't come from
-  // a tracked selection — drop the range so we don't smuggle a stale hint
-  // onto an unrelated occurrence.
-  if (cleanQuote !== state.spec.selectedQuote) {
-    state.spec.selectedQuoteLineRange = null;
-  }
-  if (kind === "suggestion") {
-    if (!cleanQuote) {
-      setBanner("Select text or use a paragraph action to suggest an edit.", "error");
-      return;
-    }
-    state.spec.selectedQuote = cleanQuote;
-    state.spec.commentComposerOpen = false;
-    state.spec.suggestionComposerOpen = true;
-    specSuggestionAnchorInput.value = cleanQuote;
-    setSpecSuggestionAnchorMode("quote");
-    showSpecComposerForm("suggestion");
-    specSuggestionContentInput.focus();
-    return;
-  }
-
-  state.spec.selectedQuote = cleanQuote;
-  state.spec.suggestionComposerOpen = false;
-  state.spec.commentComposerOpen = true;
-  if (cleanQuote) {
-    specCommentAnchorInput.value = cleanQuote;
-    setSpecCommentAnchorMode("quote");
-  } else {
-    // No selection → anchor to the document's first H1 if available.
-    // The legacy `__file` (global) anchor is kept in the schema but no
-    // longer surfaced as an authoring choice.
-    const firstHeading = specFileContentElement.querySelector("h1, h2, h3");
-    const headingText = firstHeading ? normalizeVisibleText(firstHeading.textContent) : "";
-    if (headingText) {
-      specCommentAnchorInput.value = headingText;
-      setSpecCommentAnchorMode("section");
-    } else {
-      specCommentAnchorInput.value = "";
-      setSpecCommentAnchorMode("global");
-    }
-  }
-  showSpecComposerForm("comment");
-  specCommentTextInput.focus();
-}
-
-// Open the comment composer pre-anchored to a specific block in the spec
-// body. Used by the hover-to-add `+` button in the gutter — gives the
-// user an obvious way to add a comment without having to first select
-// text. Headings get a section anchor (matches what they'd get if they
-// typed the heading by hand); paragraphs and list items get a quote
-// anchor against the block's visible text.
-function openSpecComposerForBlock(block) {
-  if (!block) return;
-  const tag = (block.tagName || "").toLowerCase();
-  // selectedQuote is for live text selection only; the gutter "+" path
-  // doesn't need it. Leaving it stale would suppress the hover button
-  // on the next mousemove.
-  state.spec.selectedQuote = "";
-  state.spec.selectedQuoteLineRange = null;
-  state.spec.suggestionComposerOpen = false;
-  state.spec.commentComposerOpen = true;
-  if (tag.startsWith("h") && tag.length === 2) {
-    const headingText = normalizeVisibleText(block.textContent);
-    specCommentAnchorInput.value = headingText;
-    setSpecCommentAnchorMode("section");
-  } else {
-    const quote = quoteForSpecBlock(block);
-    if (quote) {
-      specCommentAnchorInput.value = quote;
-      setSpecCommentAnchorMode("quote");
-    } else {
-      specCommentAnchorInput.value = "";
-      setSpecCommentAnchorMode("global");
-    }
-  }
-  showSpecComposerForm("comment");
-  specCommentTextInput.focus();
-}
-
-// Show the (hidden) composer form as a floating panel anchored to the file pane.
-// It overlays the spec doc so it doesn't shift layout while open.
-function showSpecComposerForm(kind) {
-  const form = kind === "suggestion" ? specSuggestionForm : specCommentForm;
-  const other = kind === "suggestion" ? specCommentForm : specSuggestionForm;
-  if (other) other.hidden = true;
-  if (!form) return;
-  form.hidden = false;
-  // Position the form: center horizontally over the spec body, near the top.
-  // (Keep CSS simple: it's `position: fixed` styled below.)
-}
-
-function hideSpecComposerForm() {
-  if (specCommentForm) specCommentForm.hidden = true;
-  if (specSuggestionForm) specSuggestionForm.hidden = true;
-  state.spec.commentComposerOpen = false;
-  state.spec.suggestionComposerOpen = false;
-}
-
-function headingElementForPath(headingPath = []) {
-  if (!headingPath.length) {
-    return null;
-  }
-
-  const headings = Array.from(specFileContentElement.querySelectorAll("h1, h2, h3, h4, h5, h6"));
-  const stack = [];
-
-  for (const heading of headings) {
-    const level = Number(heading.tagName.slice(1));
-    stack.length = level - 1;
-    stack[level - 1] = normalizeVisibleText(heading.textContent);
-    if (stack.length === headingPath.length && headingPath.every((part, index) => normalizeVisibleText(part) === stack[index])) {
-      return heading;
-    }
-  }
-
-  return null;
-}
-
-function blockElementForQuote(quote) {
-  const normalizedQuote = normalizeVisibleText(quote);
-  if (!normalizedQuote) {
-    return null;
-  }
-
-  const candidates = specBlockCandidates();
-  // 1. literal whitespace-normalized match — fastest and most precise
-  const literal = candidates.find((element) => normalizeVisibleText(element.textContent).includes(normalizedQuote));
-  if (literal) return literal;
-
-  // 2. markdown-stripped fallback — the quote may include backticks or a
-  // `### ` heading prefix that the rendered HTML's textContent doesn't,
-  // or vice versa. Stripping both sides catches that drift.
-  const strippedQuote = stripMarkdownSyntaxForUi(quote);
-  if (!strippedQuote) return null;
-  return candidates.find((element) => stripMarkdownSyntaxForUi(element.textContent).includes(strippedQuote)) || null;
-}
-
-function clearSpecAnchorHighlight() {
-  if (state.spec.anchorHighlightTimer) {
-    window.clearTimeout(state.spec.anchorHighlightTimer);
-    state.spec.anchorHighlightTimer = null;
-  }
-  specFileContentElement.querySelectorAll(".is-spec-anchor-highlight").forEach((element) => {
-    element.classList.remove("is-spec-anchor-highlight");
-  });
-}
-
-function clearSpecSuggestionPreview() {
-  specFileContentElement.querySelectorAll("[data-spec-diff-preview-id]").forEach((element) => {
-    element.remove();
-  });
-  specFileContentElement.querySelectorAll(".is-spec-suggestion-preview-anchor").forEach((element) => {
-    element.classList.remove("is-spec-suggestion-preview-anchor");
-  });
-}
-
-function scrollSpecTargetIntoView(target) {
-  // Find the first scrollable ancestor (the spec-doc grid is the scroll
-  // container in the workbench). Falls back to the spec body element if
-  // no ancestor is scrollable, and finally to the window.
-  const scroller = findScrollableAncestor(target);
-  if (!scroller || scroller === document.scrollingElement) {
-    // Window-level scroll: only act if the target is fully off-screen.
-    const rect = target.getBoundingClientRect();
-    const viewportTop = 0;
-    const viewportBottom = window.innerHeight;
-    if (rect.top >= viewportTop && rect.bottom <= viewportBottom) return;
-    target.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    return;
-  }
-
-  // Container-level scroll: compute the minimum delta needed to bring
-  // the target into the visible area, with a small padding so the
-  // highlighted text doesn't hug the edge. If the target is already
-  // fully visible, do nothing — scrolling on a click that didn't need
-  // to scroll loses the reader's place.
-  const targetRect = target.getBoundingClientRect();
-  const scrollerRect = scroller.getBoundingClientRect();
-  const padding = 24;
-  const above = targetRect.top - (scrollerRect.top + padding);
-  const below = targetRect.bottom - (scrollerRect.bottom - padding);
-  let delta = 0;
-  if (above < 0) {
-    // Target is above the visible area → scroll up just enough.
-    delta = above;
-  } else if (below > 0) {
-    // Target is below → scroll down just enough.
-    delta = below;
-  } else {
-    // Already visible. Don't scroll.
-    return;
-  }
-  scroller.scrollTo({
-    top: Math.max(0, scroller.scrollTop + delta),
-    behavior: "smooth",
-  });
-}
-
-function findScrollableAncestor(element) {
-  let current = element?.parentElement;
-  while (current && current !== document.body) {
-    const style = getComputedStyle(current);
-    const canScrollY = (style.overflowY === "auto" || style.overflowY === "scroll");
-    if (canScrollY && current.scrollHeight > current.clientHeight + 1) return current;
-    current = current.parentElement;
-  }
-  return document.scrollingElement || document.documentElement;
-}
-
-function anchorTargetElement(item) {
-  const anchor = item?.anchor || {};
-  if (anchor.scope === "global") {
-    return specFileContentElement.firstElementChild;
-  }
-  if (anchor.scope === "section") {
-    return headingElementForPath(anchor.headingPath || []);
-  }
-  return blockElementForQuote(anchor.quote);
-}
-
-function focusSpecAnchorItem(item, activeKey) {
-  if (!item) {
-    return;
-  }
-
-  state.spec.activeAnchorCommentId = activeKey;
-  clearSpecAnchorHighlight();
-  renderSpecComments();
-
-  if (item.anchorStatus?.status && item.anchorStatus.status !== "resolved") {
-    // The anchor's quote/section is no longer in the file (often after a
-    // suggestion was applied that rewrote the anchored text). Tell the
-    // user calmly — this is expected, not an error condition.
-    setBanner("The anchored text is no longer in the file — nothing to jump to.", "info");
-    return;
-  }
-
-  const target = anchorTargetElement(item);
-  if (!target) {
-    setBanner("Could not find the anchored text in the rendered file.", "error");
-    return;
-  }
-
-  // If the anchored quote has been hidden by a replace/delete diff
-  // block (the quote's span gets `.spec-anchor-hidden-by-diff` so the
-  // diff visually stands in for it), the literal anchor element can
-  // collapse to zero height — pulsing it is invisible. Pulse the
-  // adjacent diff block instead so the reader sees what the comment
-  // is anchored to.
-  const hiddenAnchorSpan = item.anchor?.quote
-    ? findInlineQuoteSpan(target, item.anchor.quote)
-    : null;
-  let pulseTarget = target;
-  let pulseAsDiff = false;
-  if (hiddenAnchorSpan && hiddenAnchorSpan.classList.contains("spec-anchor-hidden-by-diff")) {
-    // The diff block was inserted right after the target paragraph.
-    const diff = target.nextElementSibling && target.nextElementSibling.classList?.contains("spec-diff-block")
-      ? target.nextElementSibling
-      : null;
-    if (diff) {
-      pulseTarget = diff;
-      pulseAsDiff = true;
-    }
-  }
-
-  // The CSS animation runs for 1.6s and ends transparent, so visually
-  // the pulse is already gone by then. Strip the class shortly after
-  // so a re-click can re-trigger the animation (animations don't
-  // restart while the class is present).
-  const pulseClass = pulseAsDiff ? "is-spec-diff-pulse" : "is-spec-anchor-highlight";
-  pulseTarget.classList.remove(pulseClass);
-  void pulseTarget.offsetWidth;
-  pulseTarget.classList.add(pulseClass);
-  scrollSpecTargetIntoView(pulseTarget);
-  state.spec.anchorHighlightTimer = window.setTimeout(() => {
-    pulseTarget.classList.remove(pulseClass);
-    state.spec.anchorHighlightTimer = null;
-  }, 1700);
-  setBanner("");
+  return specResolveSourceQuoteFromRendered(selectionText, state.spec.content, occurrenceIndex);
 }
 
 function focusSpecCommentAnchor(commentId) {
@@ -4112,53 +2980,6 @@ function focusSpecSuggestionAnchor(suggestionId) {
   // No diff in the body (resolved suggestion, Resolved toggle off, or
   // orphaned). Fall back to the anchor jump and the regular reasons.
   focusSpecAnchorItem(suggestion, `suggestion:${suggestionId}`);
-}
-
-function renderSpecInlineSuggestionPreview(suggestion, preview) {
-  clearSpecSuggestionPreview();
-  const target = anchorTargetElement(suggestion);
-  if (!target) {
-    return;
-  }
-
-  const previewElement = document.createElement("div");
-  previewElement.className = "spec-diff-block is-preview";
-  previewElement.dataset.specDiffPreviewId = suggestion.id;
-  const beforeHtml = (preview.before || "")
-    .split(/\r?\n/)
-    .map((line) => `<span class="spec-diff-line del">${escapeHtml(line)}</span>`)
-    .join("");
-  const afterHtml = (preview.after || "")
-    .split(/\r?\n/)
-    .map((line) => `<span class="spec-diff-line add">${escapeHtml(line)}</span>`)
-    .join("");
-  previewElement.innerHTML = `
-    <div class="spec-diff-meta">
-      <span class="spec-diff-pill is-preview">Preview · ${escapeHtml(suggestion.kind)}</span>
-      <span>· not applied</span>
-    </div>
-    ${beforeHtml}${afterHtml}`;
-
-  target.classList.add("is-spec-suggestion-preview-anchor");
-  target.insertAdjacentElement("afterend", previewElement);
-  scrollSpecTargetIntoView(previewElement);
-  layoutSpecMargin();
-}
-
-function formatRelativeTime(value) {
-  if (!value) {
-    return "";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function applyAppMode() {
@@ -4209,156 +3030,8 @@ function applyAppMode() {
 // across all four kinds — plus the current viewer (whatever is in the actor
 // input, defaulting to "human"). The viewer is always present, even before
 // they comment, because looking at the doc IS a form of presence.
-
-const FACEPILE_COLORS = [
-  // Distinct, accessible-on-light backgrounds. Hash-stable per actor name.
-  "#1f6feb", "#cf222e", "#2da44e", "#9333ea", "#bf8700",
-  "#0969da", "#a40e26", "#1a7f37", "#6639ba", "#7d4900",
-];
-
-function colorForActor(name) {
-  // Simple deterministic hash → palette index. Same name always gets the
-  // same color across sessions and across views.
-  const str = String(name || "");
-  let hash = 0;
-  for (let i = 0; i < str.length; i += 1) {
-    hash = (hash * 31 + str.charCodeAt(i)) | 0;
-  }
-  return FACEPILE_COLORS[Math.abs(hash) % FACEPILE_COLORS.length];
-}
-
-function initialsForActor(name) {
-  const cleaned = String(name || "").trim();
-  if (!cleaned) return "?";
-  // Split on non-letter/digit; take first letter of up to 2 segments.
-  const parts = cleaned.split(/[^A-Za-z0-9]+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
-}
-
-function currentSpecActor() {
-  const value = (specCommentByInput?.value || "").trim();
-  return value || "human";
-}
-
-function collectSpecParticipants() {
-  // Returns [{ name, count, isViewer }] sorted by count desc, name asc.
-  // The viewer is always present (with isViewer:true). If the viewer has
-  // also authored content, their count includes it.
-  const counts = new Map();
-  const ctx = state.spec?.context;
-  const bump = (name) => {
-    const key = String(name || "").trim();
-    if (!key) return;
-    counts.set(key, (counts.get(key) || 0) + 1);
-  };
-  for (const comment of (ctx?.comments || [])) {
-    bump(comment.by);
-    for (const reply of (comment.replies || [])) bump(reply.by);
-  }
-  for (const suggestion of (ctx?.suggestions || [])) {
-    bump(suggestion.by);
-    for (const reply of (suggestion.replies || [])) bump(reply.by);
-  }
-
-  const viewer = currentSpecActor();
-  if (!counts.has(viewer)) {
-    counts.set(viewer, 0);
-  }
-
-  return Array.from(counts.entries())
-    .map(([name, count]) => ({ name, count, isViewer: name === viewer }))
-    .sort((left, right) => {
-      // Viewer first, then by action count desc, then by name asc — gives a
-      // stable order that puts "you" front-and-center but doesn't lie about
-      // counts.
-      if (left.isViewer && !right.isViewer) return -1;
-      if (right.isViewer && !left.isViewer) return 1;
-      if (left.count !== right.count) return right.count - left.count;
-      return left.name.localeCompare(right.name);
-    });
-}
-
-function renderSpecParticipantsFacepile() {
-  if (!specParticipantsFacepile) return;
-  // Hide entirely when there is no spec session loaded.
-  if (!state.spec?.context && !state.spec?.selectedPath) {
-    specParticipantsFacepile.hidden = true;
-    return;
-  }
-  specParticipantsFacepile.hidden = false;
-
-  const participants = collectSpecParticipants();
-  const total = participants.length;
-  const visible = participants.slice(0, 3);
-  const overflow = Math.max(0, total - visible.length);
-
-  const circlesHtml = visible.map((p) => `
-    <span class="spec-facepile-circle${p.isViewer ? " is-viewer" : ""}"
-          style="background:${escapeHtml(colorForActor(p.name))}"
-          title="${escapeHtml(p.name)}${p.isViewer ? " (you)" : ""}"
-    >${escapeHtml(initialsForActor(p.name))}</span>
-  `).join("");
-  specParticipantsFacepile.querySelector(".spec-facepile-circles").innerHTML = circlesHtml;
-
-  const overflowEl = specParticipantsFacepile.querySelector(".spec-facepile-overflow");
-  if (overflow > 0) {
-    overflowEl.textContent = `+${overflow}`;
-    overflowEl.hidden = false;
-  } else {
-    overflowEl.hidden = true;
-  }
-
-  const label = specParticipantsFacepile.querySelector("[data-spec-participants-label]");
-  if (label) {
-    label.textContent = total === 1 ? "1 participant" : `${total} participants`;
-  }
-
-  // If the popover is open, refresh its contents in place so updates flow
-  // through (e.g. a comment arrives while the popover is open).
-  if (specParticipantsPopover && !specParticipantsPopover.hidden) {
-    renderSpecParticipantsPopover(participants);
-  }
-}
-
-function renderSpecParticipantsPopover(participants = collectSpecParticipants()) {
-  if (!specParticipantsPopover) return;
-  const itemsHtml = participants.map((p) => {
-    const meta = p.isViewer
-      ? (p.count > 0 ? `${p.count} action${p.count === 1 ? "" : "s"} · you` : "viewing")
-      : `${p.count} action${p.count === 1 ? "" : "s"}`;
-    return `
-      <li class="spec-popover-item${p.isViewer ? " is-viewer" : ""}">
-        <span class="spec-facepile-circle"
-              style="background:${escapeHtml(colorForActor(p.name))}"
-              aria-hidden="true"
-        >${escapeHtml(initialsForActor(p.name))}</span>
-        <span class="spec-popover-name">${escapeHtml(p.name)}</span>
-        <span class="spec-popover-meta">${escapeHtml(meta)}</span>
-      </li>
-    `;
-  }).join("");
-  specParticipantsPopover.innerHTML = `
-    <div class="spec-popover-head">Participants <span class="spec-popover-count">${participants.length}</span></div>
-    <ul class="spec-popover-list" role="list">${itemsHtml}</ul>
-  `;
-}
-
-function toggleSpecParticipantsPopover(forceState) {
-  if (!specParticipantsFacepile || !specParticipantsPopover) return;
-  const willOpen = typeof forceState === "boolean"
-    ? forceState
-    : specParticipantsPopover.hidden;
-  if (willOpen) {
-    renderSpecParticipantsPopover();
-    specParticipantsPopover.hidden = false;
-    specParticipantsFacepile.setAttribute("aria-expanded", "true");
-  } else {
-    specParticipantsPopover.hidden = true;
-    specParticipantsFacepile.setAttribute("aria-expanded", "false");
-  }
-}
+// (Implementation moved to spec/render.js; toggleSpecParticipantsPopover and
+// renderSpecParticipantsFacepile are imported.)
 
 function syncSpecToolbarChrome() {
   const ctx = state.spec.context;
@@ -4391,846 +3064,88 @@ function syncSpecToolbarChrome() {
     specResolvedToggleButton.setAttribute("aria-pressed", state.spec.showResolved ? "true" : "false");
     specResolvedToggleButton.disabled = !isReview;
   }
+  updateSpecNavButtons();
 }
 
-function renderSpecSessions() {
-  const sessions = state.spec.sessions;
-  const search = state.spec.sidebarSearch.trim().toLowerCase();
-  const filtered = !search
-    ? sessions
-    : sessions.filter((s) => (
-        (s.title || "").toLowerCase().includes(search)
-          || (s.relativePath || "").toLowerCase().includes(search)
-          || (s.targetFile || "").toLowerCase().includes(search)
-      ));
-
-  if (!filtered.length) {
-    specSessionListElement.innerHTML = sessions.length
-      ? '<p class="spec-sidebar-empty">No files match this search.</p>'
-      : '<p class="spec-sidebar-empty">No attached files yet.</p>';
-    return;
-  }
-
-  // Group by repo root (or "tmp"/"unfiled" for files without one).
-  const groups = new Map();
-  for (const session of filtered) {
-    const repoRoot = (session.repoRoot || "").trim();
-    let groupKey;
-    let groupLabel;
-    if (repoRoot) {
-      groupLabel = repoRoot.split("/").filter(Boolean).pop() || repoRoot;
-      groupKey = repoRoot.toLowerCase();
-    } else {
-      groupKey = "__unfiled";
-      groupLabel = "unfiled";
-    }
-    if (!groups.has(groupKey)) {
-      groups.set(groupKey, { label: groupLabel, sessions: [] });
-    }
-    groups.get(groupKey).sessions.push(session);
-  }
-
-  // Sort each group's sessions by lastActiveAt desc.
-  const groupArray = Array.from(groups.values());
-  groupArray.sort((a, b) => a.label.localeCompare(b.label));
-  groupArray.forEach((g) => {
-    g.sessions.sort((left, right) => String(right.lastActiveAt || "").localeCompare(String(left.lastActiveAt || "")));
-  });
-
-  const html = groupArray.map((group) => {
-    const rows = group.sessions.map((session) => {
-      const active = sameSpecUiPath(session.targetFile, state.spec.selectedPath);
-      const summary = sessionActivitySummary(session);
-      const pulseAttr = summary.pulseAttr ? ` data-pulse="${summary.pulseAttr}"` : "";
-      return `
-        <div class="spec-session-row-wrap${active ? " is-active" : ""}">
-          <button class="spec-session-row${active ? " is-active" : ""}" type="button" data-spec-session-path="${escapeHtml(session.targetFile)}"${pulseAttr}>
-            <span class="spec-session-icon" aria-hidden="true"></span>
-            <span class="spec-session-meta">
-              <span class="spec-session-name" title="${escapeHtml(session.title || session.targetFile)}">${escapeHtml(session.title || session.targetFile)}</span>
-              <span class="spec-session-sub">
-                <span class="spec-session-time">${escapeHtml(formatRelativeTime(session.lastActiveAt))}</span>
-                ${summary.pulses}
-              </span>
-            </span>
-          </button>
-          <button class="spec-session-remove" type="button" data-spec-session-remove="${escapeHtml(session.targetFile)}" aria-label="Remove session" title="Remove session">×</button>
-        </div>`;
-    }).join("");
-    return `<div class="spec-session-group-label" title="${escapeHtml(group.label)}"><span>${escapeHtml(group.label)}</span></div>${rows}`;
-  }).join("");
-
-  specSessionListElement.innerHTML = html;
-}
-
-function sessionActivitySummary(session) {
-  // Counts come from two sources:
-  // - For the currently-loaded session, prefer state.spec.context (live,
-  //   reflects local edits before refreshSpecReviewState catches up).
-  // - For other sessions, fall back to session.counts which the list
-  //   endpoint now precomputes from the JSONL files.
-  // The list endpoint can't compute "orphan" without re-resolving each
-  // anchor against the file, so orphan counts only show on the active
-  // session.
-  const isActive = sameSpecUiPath(session.targetFile, state.spec.selectedPath) && state.spec.context;
-  let open = 0, pending = 0, orphan = 0;
-  if (isActive) {
-    open = (state.spec.context.comments || []).filter((c) => c.status !== "resolved").length;
-    pending = (state.spec.context.suggestions || []).filter((s) => s.status === "pending" || s.status === "accepted").length;
-    orphan = [
-      ...(state.spec.context.comments || []),
-      ...(state.spec.context.suggestions || []),
-    ].filter((item) => item.anchorStatus && item.anchorStatus.status && item.anchorStatus.status !== "resolved").length;
-  } else if (session.counts) {
-    open = session.counts.openComments || 0;
-    pending = session.counts.pendingSuggestions || 0;
-  }
-  let pulseAttr = "";
-  const parts = [];
-  if (open) {
-    parts.push(`<span class="spec-pulse" title="${open} open comment${open === 1 ? "" : "s"}"><span class="spec-pulse-dot is-open"></span>${open}</span>`);
-    pulseAttr = "open";
-  }
-  if (pending) {
-    parts.push(`<span class="spec-pulse" title="${pending} pending suggestion${pending === 1 ? "" : "s"}"><span class="spec-pulse-dot is-pending"></span>${pending}</span>`);
-    if (!pulseAttr) pulseAttr = "pending";
-  }
-  if (orphan) {
-    parts.push(`<span class="spec-pulse" title="${orphan} item${orphan === 1 ? "" : "s"} with broken anchors"><span class="spec-pulse-dot is-orphan"></span>${orphan}</span>`);
-    pulseAttr = "orphan";
-  }
-  return { pulses: parts.join(""), pulseAttr };
-}
-
-function renderSpecFile() {
-  const context = state.spec.context;
-  if (state.spec.loadError) {
-    const session = state.spec.sessions.find((candidate) => candidate.targetFile === state.spec.selectedPath);
-    const missingTarget = state.spec.loadError.code === "target_missing";
-    specFileTitleElement.textContent = session?.title || "Missing file";
-    specFileSubtitleElement.textContent = session?.relativePath || session?.targetFile || state.spec.selectedPath || "Attached file";
-    specFileContentElement.className = "spec-body spec-body-error";
-    specFileContentElement.innerHTML = `
-      <div class="spec-file-error-card">
-        <p class="spec-file-error-kicker">${missingTarget ? "File no longer exists" : "Could not load file"}</p>
-        <h2>${escapeHtml(missingTarget ? "This attached file is missing." : "This session could not be loaded.")}</h2>
-        <p>${escapeHtml(state.spec.loadError.message || "The file could not be loaded.")}</p>
-        <button class="spec-toolbar-button" type="button" data-spec-missing-remove="${escapeHtml(state.spec.selectedPath)}">Remove session</button>
-      </div>
-    `;
-    specMarginElement.innerHTML = "";
-    hideSpecContextToolbar();
-    return;
-  }
-
-  if (!context) {
-    specFileTitleElement.textContent = "File";
-    specFileSubtitleElement.textContent = "";
-    specFileContentElement.className = "spec-body spec-body-empty";
-    specFileContentElement.textContent = "Choose or attach a spec session.";
-    specMarginElement.innerHTML = "";
-    hideSpecContextToolbar();
-    return;
-  }
-
-  specFileTitleElement.textContent = context.session.title || "File";
-  specFileSubtitleElement.textContent = context.session.relativePath || context.session.targetFile;
-  specFileContentElement.className = context.session.markdown ? "spec-body spec-body-markdown" : "spec-body spec-body-plain";
-  if (context.session.markdown) {
-    const frontmatter = parseLeadingFrontmatter(state.spec.content);
-    const headerHtml = buildSpecDocHeaderHtml(frontmatter);
-    // If the frontmatter has a title, mirror it into the toolbar slot so the
-    // tab title and the doc heading agree. Roadmap items reach this branch.
-    if (frontmatter && typeof frontmatter.title === "string" && frontmatter.title.trim()) {
-      specFileTitleElement.textContent = frontmatter.title.trim();
-    }
-    specFileContentElement.innerHTML = headerHtml + renderMarkdownToHtml(stripLeadingFrontmatter(state.spec.content));
-  } else {
-    specFileContentElement.innerHTML = `<pre><code>${escapeHtml(state.spec.content)}</code></pre>`;
-  }
-
-  // Wrap quote-anchored ranges so they're hoverable + clickable.
-  decorateSpecAnchors();
-
-  state.spec.selectedQuote = "";
-  state.spec.selectedQuoteLineRange = null;
-  state.spec.activeAnchorCommentId = "";
-  clearSpecAnchorHighlight();
-  hideSpecContextToolbar();
-}
-
-function commentMatchesFilter(comment) {
-  // Resolved visibility now comes from showResolved; orphan-and-stale stay visible.
-  if (state.spec.showResolved) {
-    return true;
-  }
-  return comment.status !== "resolved";
-}
-
-function specCommentTimestamp(comment) {
-  return Date.parse(comment.createdAt || "") || 0;
-}
-
-function sortedSpecComments(comments) {
-  return [...comments].sort((left, right) => specCommentTimestamp(right) - specCommentTimestamp(left));
-}
-
-function captureSpecReplyDraft() {
-  if (!state.spec.replyComposerCommentId) {
-    return;
-  }
-  const textarea = specMarginElement.querySelector(`.spec-card-reply-form[data-comment-id="${CSS.escape(state.spec.replyComposerCommentId)}"] textarea`);
-  if (textarea) {
-    state.spec.replyDrafts.set(state.spec.replyComposerCommentId, textarea.value);
-  }
-}
-
-function focusActiveSpecReplyDraft() {
-  if (!state.spec.replyComposerCommentId) {
-    return;
-  }
-  const textarea = specMarginElement.querySelector(`.spec-card-reply-form[data-comment-id="${CSS.escape(state.spec.replyComposerCommentId)}"] textarea`);
-  if (textarea) {
-    textarea.focus();
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-  }
-}
-
-function scrollSpecReviewCardIntoView(cardId, type = "comment") {
-  const selector = type === "suggestion"
-    ? `[data-suggestion-id="${CSS.escape(cardId)}"]`
-    : `[data-comment-id="${CSS.escape(cardId)}"]`;
-  const card = specMarginElement.querySelector(selector);
-  if (!card) {
-    return;
-  }
-  card.scrollIntoView({ behavior: "smooth", block: "center" });
-}
-
-// Build a dictionary describing where each comment / suggestion lives in the
-// rendered body — used by the margin layout pass to align cards next to text.
-// Returns: { byId: Map<id, { el, top }>, idsInOrder: [...] }
-function indexSpecAnchors() {
-  const map = new Map();
-  if (!specFileContentElement) return map;
-  const bodyTop = specFileContentElement.getBoundingClientRect().top + specFileContentElement.scrollTop;
-
-  function pushAnchor(id, el) {
-    if (!el || map.has(id)) return;
-    const r = el.getBoundingClientRect();
-    map.set(id, { el, top: r.top - bodyTop + specFileContentElement.scrollTop });
-  }
-
-  // File-level pin: top of body.
-  pushAnchor("__file", specFileContentElement);
-
-  for (const comment of state.spec.context?.comments || []) {
-    const target = anchorTargetElement(comment);
-    if (target) pushAnchor(`comment:${comment.id}`, target);
-  }
-  for (const suggestion of state.spec.context?.suggestions || []) {
-    const diffEl = specFileContentElement.querySelector(`[data-spec-diff-suggestion-id="${CSS.escape(suggestion.id)}"]`);
-    const target = (diffEl && diffEl.offsetParent !== null) ? diffEl : anchorTargetElement(suggestion);
-    if (target) pushAnchor(`suggestion:${suggestion.id}`, target);
-  }
-  return map;
-}
-
-function renderSpecComments() {
-  if (!specMarginElement) return;
-  const ctx = state.spec.context;
-  syncSpecToolbarChrome();
-
-  if (state.spec.loadError) {
-    specMarginElement.innerHTML = '<p class="spec-margin-empty">Remove this stale session or restore the missing file to continue reviewing.</p>';
-    closeAllComposers();
-    return;
-  }
-  if (!ctx) {
-    specMarginElement.innerHTML = '<p class="spec-margin-empty">Choose a spec session to review.</p>';
-    closeAllComposers();
-    return;
-  }
-
-  // Render diff blocks first (they affect layout for suggestions).
-  renderSpecDiffBlocks();
-  // Then capture any open reply draft, then rebuild the margin DOM.
-  captureSpecReplyDraft();
-
-  const comments = (ctx.comments || []).filter(commentMatchesFilter);
-  // Active vs. resolved bucket: pending suggestions stay in the active
-  // margin; applied/rejected get tucked under the Resolved toggle so the
-  // active list focuses on what still needs attention.
-  const suggestions = (ctx.suggestions || []).filter((s) => {
-    if (s.status === "pending" || s.status === "accepted") return true;
-    return state.spec.showResolved;
-  });
-  const showComments = state.spec.showComments;
-  const showSuggestions = state.spec.showSuggestions;
-
-  const items = [];
-  if (showComments) {
-    for (const comment of sortedSpecComments(comments)) {
-      items.push({ kind: "comment", item: comment });
-    }
-  }
-  if (showSuggestions) {
-    for (const suggestion of suggestions) {
-      items.push({ kind: "suggestion", item: suggestion });
-    }
-  }
-
-  if (!items.length) {
-    specMarginElement.innerHTML = comments.length || suggestions.length
-      ? '<p class="spec-margin-empty">No items match the current view.</p>'
-      : '<p class="spec-margin-empty">Hover a paragraph and click the + in the gutter to add the first comment.</p>';
-    layoutSpecMargin();
-    return;
-  }
-
-  const html = items.map(({ kind, item }) => {
-    return kind === "comment" ? renderMarginCommentCard(item) : renderMarginSuggestionCard(item);
-  }).join("");
-  specMarginElement.innerHTML = html;
-  layoutSpecMargin();
-}
-
-function renderMarginCommentCard(comment) {
-  const anchor = comment.anchor || {};
-  const isFile = anchor.scope === "global";
-  const isSection = anchor.scope === "section";
-  // "File-level" is a legacy anchor scope no longer offered when authoring;
-  // existing comments still render with a quiet "Whole file" label.
-  const anchorTag = isFile
-    ? "Whole file"
-    : isSection
-      ? (anchor.headingPath || []).join(" › ")
-      : truncate(anchor.quote || "", 64);
-
-  const isResolved = comment.status === "resolved";
-  const collapsedResolved = isResolved && !state.spec.expandedResolvedCommentIds.has(comment.id);
-  const isActive = state.spec.activeAnchorCommentId === comment.id;
-
-  const replies = (comment.replies || []).map((reply) => `
-    <div class="spec-card-reply">
-      <span class="spec-card-reply-author ${actorColorClass(reply.by)}">${escapeHtml(formatActorLabel(reply.by))}</span>
-      <p>${escapeHtml(reply.text)}</p>
-    </div>`).join("");
-
-  const isReplying = state.spec.replyComposerCommentId === comment.id;
-  const replyForm = isReplying ? `
-    <form class="spec-card-reply-form" data-comment-id="${escapeHtml(comment.id)}">
-      <textarea rows="2" placeholder="Reply">${escapeHtml(state.spec.replyDrafts.get(comment.id) || "")}</textarea>
-      <div class="spec-card-actions">
-        <button class="spec-card-action" type="button" data-comment-action="cancel-reply">Cancel</button>
-        <span class="spec-card-actions-spacer"></span>
-        <button class="spec-card-action is-primary" type="submit">Send</button>
-      </div>
-    </form>` : "";
-
-  const orphanWarning = comment.anchorStatus && comment.anchorStatus.status && comment.anchorStatus.status !== "resolved"
-    ? `<p class="spec-card-orphan">Anchor ${escapeHtml(comment.anchorStatus.status)}</p>`
-    : "";
-  const anchorRewritten = comment.anchorRewrittenAt && !orphanWarning
-    ? `<p class="spec-card-anchor-rewritten">Anchor updated after edit</p>`
-    : "";
-
-  const dataAnchorId = isFile ? "__file" : `comment:${comment.id}`;
-  // Note: the schema still carries comment.kind (concern/question/etc.)
-  // for backward compatibility, but the UI no longer maps it to color
-  // or any other visual treatment. Comments are visually uniform.
-  const cls = [
-    "spec-margin-card",
-    isFile ? "is-global" : "",
-    isResolved ? "is-resolved" : "",
-    isActive ? "is-active" : "",
-    collapsedResolved ? "is-collapsed" : "",
-  ].filter(Boolean).join(" ");
-
-  return `
-    <article class="${cls}" data-comment-id="${escapeHtml(comment.id)}" data-card-anchor-id="${escapeHtml(dataAnchorId)}" title="Click to jump to anchor">
-      <header class="spec-card-head">
-        <span class="spec-card-author ${actorColorClass(comment.by)}">${escapeHtml(formatActorLabel(comment.by))}</span>
-        <span class="spec-card-anchor-tag${isFile ? " is-file" : ""}">${escapeHtml(anchorTag || "")}</span>
-        <span class="spec-card-when">${escapeHtml(formatRelativeTime(comment.createdAt))}</span>
-      </header>
-      ${collapsedResolved ? `
-        <p class="spec-card-text spec-card-collapsed-summary">${escapeHtml(comment.text)}</p>
-        <div class="spec-card-actions">
-          <button class="spec-card-action" type="button" data-comment-action="toggle-resolved">Show</button>
-          <span class="spec-card-actions-spacer"></span>
-          <button class="spec-card-action" type="button" data-comment-action="reopen">Reopen</button>
-        </div>
-      ` : `
-        <p class="spec-card-text">${escapeHtml(comment.text)}</p>
-        ${replies ? `<div class="spec-card-replies">${replies}</div>` : ""}
-        ${orphanWarning}
-        ${anchorRewritten}
-        ${isReplying ? replyForm : `
-          <div class="spec-card-actions">
-            <button class="spec-card-action" type="button" data-comment-action="reply">Reply</button>
-            <span class="spec-card-actions-spacer"></span>
-            <button class="spec-card-action" type="button" data-comment-action="${isResolved ? "reopen" : "resolve"}">${isResolved ? "Reopen" : "Resolve"}</button>
-          </div>
-        `}
-      `}
-    </article>`;
-}
-
-function renderMarginSuggestionCard(suggestion) {
-  const status = suggestion.status;
-  const pending = status === "pending";
-  const accepted = status === "accepted";
-  const applied = status === "applied";
-  const rejected = status === "rejected";
-  const reviewed = accepted || rejected;
-  // The inline diff block in the body IS the preview — there's no separate
-  // "Preview" action. Apply / Dismiss / Accept act on the visible diff.
-  const canApply = pending || accepted;
-  const isActive = state.spec.activeAnchorCommentId === `suggestion:${suggestion.id}`;
-  const dataAnchorId = `suggestion:${suggestion.id}`;
-
-  const anchor = suggestion.anchor || {};
-  const anchorTag = anchor.scope === "section"
-    ? (anchor.headingPath || []).join(" › ")
-    : truncate(anchor.quote || "", 64);
-
-  const cls = [
-    "spec-margin-card is-suggestion",
-    `is-status-${status}`,
-    isActive ? "is-active" : "",
-    applied ? "is-applied" : "",
-  ].filter(Boolean).join(" ");
-
-  const orphanWarning = suggestion.anchorStatus && suggestion.anchorStatus.status && suggestion.anchorStatus.status !== "resolved"
-    ? `<p class="spec-card-orphan">Anchor ${escapeHtml(suggestion.anchorStatus.status)}</p>`
-    : "";
-
-  const actions = [];
-  // Replies are available on every suggestion (pending or terminal) —
-  // a comment thread on the change itself is useful at any stage.
-  const replyKey = `suggestion:${suggestion.id}`;
-  const isReplying = state.spec.replyComposerCommentId === replyKey;
-  if (!isReplying) {
-    actions.push('<button class="spec-card-action" type="button" data-suggestion-action="reply">Reply</button>');
-  }
-  if (!applied) {
-    if (pending) {
-      // Two-action lifecycle: Dismiss removes from review; Apply writes
-      // the change to the file. The legacy `accepted` state still exists
-      // in the schema but no longer has a UI affordance — pending →
-      // applied/rejected is the only path you can take from here.
-      actions.push('<button class="spec-card-action is-danger" type="button" data-suggestion-action="reject">Dismiss</button>');
-    }
-    if (reviewed) {
-      actions.push('<button class="spec-card-action" type="button" data-suggestion-action="reopen">Reopen</button>');
-    }
-    if (canApply) {
-      actions.push('<button class="spec-card-action is-primary" type="button" data-suggestion-action="apply">Apply</button>');
-    }
-  } else {
-    // Applied suggestions are normally read-only, but offer a Rollback
-    // action that reverts the file change and puts the suggestion back
-    // to pending. The server refuses if the file has drifted since
-    // apply, so this is safe to expose.
-    if (suggestion.kind !== "delete" && suggestion.originalAnchor) {
-      actions.push('<button class="spec-card-action" type="button" data-suggestion-action="rollback" title="Revert this change in the file and put the suggestion back to pending">Roll back</button>');
-    }
-  }
-
-  const rationale = suggestion.rationale
-    ? `<div class="spec-card-field">
-         <span class="spec-card-field-label">Why</span>
-         <p class="spec-card-field-text">${escapeHtml(suggestion.rationale)}</p>
-       </div>`
-    : "";
-
-  // Suggestion cards no longer carry an explicit "Anchored to" field
-  // or a separate "view in body" link. Both are redundant: the diff
-  // block in the body IS the change, and clicking anywhere on the
-  // suggestion card now scrolls + pulses that diff. Same single
-  // affordance the reader's eye expects ("click the card to find what
-  // it's about"), but pointing at the change rather than the bare
-  // anchor — which is what the reader actually wants to evaluate.
-
-  // Status appears in the kind tag only when it's something the user
-  // should notice: "applied" or "rejected" reach a terminal state worth
-  // calling out; "pending" is the default and adds no information; the
-  // legacy "accepted" status no longer has a UI authoring path.
-  const showStatusInTag = status === "applied" || status === "rejected";
-  const kindTag = showStatusInTag
-    ? `${escapeHtml(suggestion.kind)} · ${escapeHtml(status)}`
-    : escapeHtml(suggestion.kind);
-  const anchorRewritten = suggestion.anchorRewrittenAt
-    ? `<p class="spec-card-anchor-rewritten">Anchor updated after edit</p>`
-    : "";
-
-  const replies = (suggestion.replies || []).map((reply) => `
-    <div class="spec-card-reply">
-      <span class="spec-card-reply-author ${actorColorClass(reply.by)}">${escapeHtml(formatActorLabel(reply.by))}</span>
-      <p>${escapeHtml(reply.text)}</p>
-    </div>`).join("");
-  const replyForm = isReplying ? `
-    <form class="spec-card-reply-form" data-suggestion-reply-id="${escapeHtml(suggestion.id)}">
-      <textarea rows="2" placeholder="Reply">${escapeHtml(state.spec.replyDrafts.get(replyKey) || "")}</textarea>
-      <div class="spec-card-actions">
-        <button class="spec-card-action" type="button" data-suggestion-action="cancel-reply">Cancel</button>
-        <span class="spec-card-actions-spacer"></span>
-        <button class="spec-card-action is-primary" type="submit">Send</button>
-      </div>
-    </form>` : "";
-
-  return `
-    <article class="${cls}" data-suggestion-id="${escapeHtml(suggestion.id)}" data-card-anchor-id="${escapeHtml(dataAnchorId)}" title="Click to view the change in the spec">
-      <header class="spec-card-head">
-        <span class="spec-card-author ${actorColorClass(suggestion.by)}">${escapeHtml(formatActorLabel(suggestion.by))}</span>
-        <span class="spec-card-anchor-tag is-suggestion">${kindTag}</span>
-        <span class="spec-card-when">${escapeHtml(formatRelativeTime(suggestion.createdAt))}</span>
-      </header>
-      ${rationale}
-      ${replies ? `<div class="spec-card-replies">${replies}</div>` : ""}
-      ${orphanWarning}
-      ${anchorRewritten}
-      ${replyForm}
-      ${actions.length ? `<div class="spec-card-actions">${actions.join("")}</div>` : ""}
-    </article>`;
-}
-
-function truncate(text, max = 64) {
-  const value = String(text || "").replace(/\s+/g, " ").trim();
-  if (value.length <= max) return value;
-  return value.slice(0, max - 1) + "…";
-}
-
-// Actor strings have drifted across forms over the project's life:
-// the original plan used `human:local` / `ai:claude` / `ai:codex`;
-// the CLI reference at one point switched to `claude:local` /
-// `codex:local`; new defaults emit short names (`human`, `claude`,
-// `codex`).  The display layer normalizes all of these to a short
-// label so the card header stays readable.
-//
-// Rule: strip a trailing `:local` first (so `human:local` collapses
-// to `human` rather than to `local` after the kind prefix is
-// removed), then strip a leading `human:` or `ai:`, then strip a
-// trailing `@host` suffix.  Whatever's left is the label.  Unknown
-// shapes pass through unchanged.
-function formatActorLabel(by) {
-  let value = String(by || "").trim();
-  if (!value) return "";
-  value = value.replace(/:local$/i, "");
-  value = value.replace(/^(human|ai):/i, "");
-  value = value.replace(/@.+$/, "");
-  return value;
-}
-
-// Map a normalized actor label to a CSS class so cards can color the
-// author by channel (human / claude / codex) without each card having
-// to know the palette.  Anything we don't recognize falls back to the
-// neutral `is-other` class, which inherits the default text color.
-function actorColorClass(by) {
-  const label = formatActorLabel(by).toLowerCase();
-  if (!label) return "is-other";
-  if (label === "human") return "is-human";
-  if (label === "claude") return "is-claude";
-  if (label === "codex") return "is-codex";
-  return "is-other";
-}
-
-function closeAllComposers() {
-  if (specCommentForm) specCommentForm.hidden = true;
-  if (specSuggestionForm) specSuggestionForm.hidden = true;
-}
-
-// Render the inline diff blocks for visible suggestions.  When the
-// suggestions layer is off, we strip them.  Each diff block carries a
-// data-spec-diff-suggestion-id so renderSpecComments can find them as
-// anchor targets. We only remove blocks that are tied to a suggestion;
-// preview-only blocks (data-spec-diff-preview-id) are left alone.
-function renderSpecDiffBlocks() {
-  if (!specFileContentElement) return;
-  // Remove only suggestion-tied diff blocks. Preview blocks survive.
-  specFileContentElement.querySelectorAll(".spec-diff-block[data-spec-diff-suggestion-id]").forEach((el) => el.remove());
-  // And clear any "anchor hidden because diff is showing" state.
-  specFileContentElement.querySelectorAll(".spec-anchor-hidden-by-diff").forEach((el) => {
-    el.classList.remove("spec-anchor-hidden-by-diff");
-  });
-
-  // Read mode shows the pure spec — no diffs, no anchor decorations. Bail
-  // before reinserting, otherwise the periodic refresh would silently add
-  // diffs back into a Read-mode body a few seconds after the user switched.
-  if (state.spec.viewMode !== "review") return;
-  if (!state.spec.showSuggestions) return;
-
-  for (const suggestion of state.spec.context?.suggestions || []) {
-    // Resolved suggestions (applied / rejected) only show their inline
-    // diff when the user explicitly opts in via the Resolved toggle.
-    if ((suggestion.status === "rejected" || suggestion.status === "applied") && !state.spec.showResolved) continue;
-    insertSpecDiffBlock(suggestion);
-  }
-}
-
-function insertSpecDiffBlock(suggestion) {
-  const target = anchorTargetElement(suggestion);
-  if (!target) return;
-  const block = document.createElement("div");
-  block.className = `spec-diff-block is-status-${suggestion.status}`;
-  block.dataset.specDiffSuggestionId = suggestion.id;
-
-  const beforeText = suggestion.anchor?.quote
-    || (suggestion.anchor?.scope === "section" ? `# ${(suggestion.anchor.headingPath || []).join(" > ")}` : "");
-  // Some suggestion authors (LLMs especially) write a literal `\n` instead of
-  // a real newline. Decode common backslash escapes before splitting so the
-  // diff renders as line content, not as `\n` glyphs in the body. Trim
-  // leading/trailing blank lines for a tighter diff visual; the stored
-  // content is unchanged.
-  const afterTextRaw = suggestion.kind === "delete" ? "" : (suggestion.content || "");
-  const afterText = decodeLiteralEscapes(afterTextRaw).replace(/^[\r\n]+|[\r\n]+$/g, "");
-
-  // Pick `before` / `after` lines for the diff body. For replace+delete the
-  // before line is the anchored quote; for insert_after we only show the
-  // added lines, with a dim header indicating where they go.
-  const beforeHtml = (suggestion.kind === "insert_after" || !beforeText)
-    ? ""
-    : beforeText.split(/\r?\n/).map((line) => `<span class="spec-diff-line del">${escapeHtml(line)}</span>`).join("");
-  const afterHtml = afterText
-    ? afterText.split(/\r?\n/).map((line) => `<span class="spec-diff-line add">${escapeHtml(line)}</span>`).join("")
-    : "";
-
-  block.innerHTML = `
-    <div class="spec-diff-meta">
-      <span class="spec-diff-pill is-${escapeHtml(suggestion.kind)}">${escapeHtml(suggestion.kind)}</span>
-      <span>· <span class="${actorColorClass(suggestion.by)}">${escapeHtml(formatActorLabel(suggestion.by))}</span></span>
-      <span class="spec-diff-meta-spacer"></span>
-      <span class="spec-diff-status is-${escapeHtml(suggestion.status)}">${escapeHtml(suggestion.status)}</span>
-    </div>
-    ${beforeHtml}${afterHtml}`;
-
-  // For replace and delete we want the anchored quote span itself to be
-  // hidden so the diff visually replaces it. For insert_after we just sit
-  // below the anchor.
-  if ((suggestion.kind === "replace" || suggestion.kind === "delete") && suggestion.anchor?.quote) {
-    // Try to hide a sub-element matching the quote inside the target.
-    const span = findInlineQuoteSpan(target, suggestion.anchor.quote);
-    if (span) {
-      span.classList.add("spec-anchor-hidden-by-diff");
-      // Insert the diff AFTER the target block, not inside it. Putting a
-      // <div> directly inside a <p> is invalid HTML (browsers auto-fix
-      // by closing the <p> early, which collapses the visible block to
-      // zero height) and breaks click-to-jump on comments anchored to
-      // the same quote — the pulse would land on a hidden span.
-      target.insertAdjacentElement("afterend", block);
-      return;
-    }
-  }
-
-  target.insertAdjacentElement("afterend", block);
-}
-
-function findInlineQuoteSpan(scope, quote) {
-  if (!scope || !quote) return null;
-  const normalized = normalizeVisibleText(quote);
-  // Quote anchors don't pre-wrap text, so we look for a span we may have
-  // injected in decorateSpecAnchors.
-  return Array.from(scope.querySelectorAll(".spec-anchor-quote")).find((el) => {
-    return normalizeVisibleText(el.textContent) === normalized;
-  });
-}
-
-// Wrap each unique quote-anchored substring in a hoverable span so the
-// margin card can highlight it. Only items that would actually appear in
-// the active margin get a body-level mark — if the only thing anchored
-// to a phrase is hidden (e.g. resolved with the Resolved toggle off),
-// the underline is hidden too. The body and the comment pane stay in
-// sync: an underline always corresponds to a card you can click.
-function decorateSpecAnchors() {
-  const ctx = state.spec.context;
-  if (!ctx || !specFileContentElement) return;
-  // Strip any anchor-quote spans from a previous pass before re-walking.
-  // This lets the function be called when toggle state changes without
-  // having to rebuild the whole body.
-  undecorateSpecAnchors();
-
-  // Read mode shows the spec without any review chrome — no anchor
-  // underlines, no diff blocks, no margin cards. Skip decoration so the
-  // periodic refresh can't silently re-add underlines a few seconds in.
-  if (state.spec.viewMode !== "review") return;
-
-  const visibleComments = (ctx.comments || []).filter(commentMatchesFilter);
-  const visibleSuggestions = (ctx.suggestions || []).filter((s) => {
-    if (s.status === "pending" || s.status === "accepted") return true;
-    return state.spec.showResolved;
-  });
-  const layerComments = state.spec.showComments ? visibleComments : [];
-  const layerSuggestions = state.spec.showSuggestions ? visibleSuggestions : [];
-
-  const quoteAnchors = [...layerComments, ...layerSuggestions]
-    .map((item) => item.anchor)
-    .filter((a) => a && a.scope === "anchor" && a.quote)
-    .map((a) => a.quote);
-
-  // De-duplicate while preserving order.
-  const seen = new Set();
-  const unique = [];
-  for (const q of quoteAnchors) { if (!seen.has(q)) { seen.add(q); unique.push(q); } }
-
-  for (const quote of unique) {
-    decorateSpecAnchorQuote(quote);
-  }
-}
-
-function undecorateSpecAnchors() {
-  if (!specFileContentElement) return;
-  // Replace each anchor-quote span with its text content, merging
-  // adjacent text nodes back together via normalize().
-  const spans = specFileContentElement.querySelectorAll(".spec-anchor-quote");
-  for (const span of spans) {
-    const parent = span.parentNode;
-    if (!parent) continue;
-    parent.replaceChild(document.createTextNode(span.textContent || ""), span);
-    parent.normalize();
-  }
-}
-
-function decorateSpecAnchorQuote(quote) {
-  // Walk text nodes inside the spec body, find the first one that contains
-  // the literal quote, and wrap it in a span. We only wrap one occurrence.
-  const walker = document.createTreeWalker(specFileContentElement, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
-      // Skip text inside spans we already inserted, or inside diff blocks.
-      const parent = node.parentElement;
-      if (!parent) return NodeFilter.FILTER_REJECT;
-      if (parent.closest(".spec-anchor-quote")) return NodeFilter.FILTER_REJECT;
-      if (parent.closest(".spec-diff-block")) return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  while (walker.nextNode()) {
-    const node = walker.currentNode;
-    const idx = node.nodeValue.indexOf(quote);
-    if (idx === -1) continue;
-    const before = node.nodeValue.slice(0, idx);
-    const match = node.nodeValue.slice(idx, idx + quote.length);
-    const after = node.nodeValue.slice(idx + quote.length);
-    const span = document.createElement("span");
-    span.className = "spec-anchor-quote";
-    span.dataset.specAnchorQuote = "1";
-    span.textContent = match;
-    const frag = document.createDocumentFragment();
-    if (before) frag.appendChild(document.createTextNode(before));
-    frag.appendChild(span);
-    if (after) frag.appendChild(document.createTextNode(after));
-    node.parentNode.replaceChild(frag, node);
-    return;
-  }
-}
-
-// Place each margin card next to its anchor's y position; if cards
-// would overlap, slide the lower one down. Also draws gutter dots.
-// Orphaned cards (anchor no longer exists in the file) are stacked
-// at the bottom so they don't collide with anchored cards.
-// The trailing "+ comment" button is placed below the last card.
-// Place each margin card next to its anchor's y position; if cards
-// would overlap, slide the lower one down. Also draws gutter dots.
-// Orphaned cards (anchor no longer exists in the file) are stacked
-// at the bottom so they don't collide with anchored cards.
-function layoutSpecMargin() {
-  if (!specMarginElement || !specGutterElement) return;
-  if (state.spec.viewMode !== "review") return;
-
+// Visible cards in the order the reader sees them down the margin column.
+// Re-sorted by visual top because layoutSpecMargin shuffles cards to align
+// with their anchor positions in the body — DOM order is the insertion
+// order (comments then suggestions), not the reading order. Orphan cards
+// at the bottom land last, which matches their visual position too.
+function visibleSpecMarginCards() {
+  if (!specMarginElement) return [];
   const cards = Array.from(specMarginElement.querySelectorAll(".spec-margin-card"));
-  const anchors = indexSpecAnchors();
+  return cards
+    .map((card) => ({ card, top: card.getBoundingClientRect().top }))
+    .sort((a, b) => a.top - b.top)
+    .map(({ card }) => card);
+}
 
-  // Clear gutter dots (the hover-add button is kept; it's not a dot).
-  specGutterElement.querySelectorAll(".spec-gutter-dot").forEach((el) => el.remove());
+function activeSpecCardKey() {
+  return state.spec.activeAnchorCommentId || "";
+}
 
-  const placements = [];
-  const orphanCards = [];
-  for (const card of cards) {
-    const anchorId = card.dataset.cardAnchorId;
-    if (!anchorId) continue;
-    const anchor = anchors.get(anchorId);
-    if (!anchor && anchorId !== "__file") {
-      // Orphan: anchor in the file is gone (e.g. after applying a suggestion
-      // that replaced or deleted the anchored quote). Keep the card visible
-      // by stacking it at the bottom of the margin instead of leaving it
-      // at the implicit top, where it would overlap the first anchored card.
-      orphanCards.push(card);
-      continue;
-    }
-    const desired = anchor ? anchor.top : 0;
-    placements.push({ card, desired, anchorId });
+function specCardKey(card) {
+  if (card.dataset.suggestionId) return `suggestion:${card.dataset.suggestionId}`;
+  return card.dataset.commentId || "";
+}
+
+// Step to the previous or next visible card and trigger the same code path
+// a click on the card would. `direction` is -1 (prev) or +1 (next).
+// When nothing is active yet, prev jumps to the LAST card and next to the
+// FIRST so the buttons always do something on first press.
+function navigateSpecMarginCard(direction) {
+  const cards = visibleSpecMarginCards();
+  if (cards.length === 0) return;
+
+  const activeKey = activeSpecCardKey();
+  let index = cards.findIndex((card) => specCardKey(card) === activeKey);
+  if (index === -1) {
+    index = direction > 0 ? -1 : cards.length;
   }
-  // File-level cards float to the top regardless.
-  placements.sort((a, b) => {
-    const af = a.anchorId === "__file";
-    const bf = b.anchorId === "__file";
-    if (af && !bf) return -1;
-    if (bf && !af) return 1;
-    return a.desired - b.desired;
-  });
+  const next = index + direction;
+  if (next < 0 || next >= cards.length) return;
 
-  let cursor = 0;
-  const gap = 10;
-  // Track which gutter Y positions already got a dot — multiple cards
-  // anchored to the same place in the body (a comment + a suggestion on
-  // the same quote, for example) should share a single dot, otherwise
-  // duplicates stack invisibly on top of each other and the later cards
-  // look anchorless. We treat anchors within 12px of each other as the
-  // same group — comments anchor to the source paragraph, suggestions
-  // can anchor to the diff block right next to it, and visually they
-  // sit at the same gutter level.
-  const placedDots = []; // { y, el }
-  const sameRowTolerance = 12;
-  for (const p of placements) {
-    const top = Math.max(p.desired, cursor);
-    p.card.style.top = top + "px";
-    cursor = top + p.card.offsetHeight + gap;
-
-    if (p.anchorId !== "__file") {
-      const isSuggestion = p.card.classList.contains("is-suggestion");
-      const isApplied = p.card.classList.contains("is-applied");
-      const isActive = p.card.classList.contains("is-active");
-      const existing = placedDots.find((d) => Math.abs(d.y - p.desired) <= sameRowTolerance);
-      if (existing) {
-        // Promote the shared dot's styling to suggestion/applied if any
-        // card sharing this anchor is more "actionable" — suggestion
-        // outranks comment visually so the dot type matches what's at
-        // the anchor.
-        if (isSuggestion) existing.el.classList.add("is-suggestion");
-        if (isApplied) existing.el.classList.add("is-applied");
-        if (isActive) existing.el.classList.add("is-active");
-        continue;
-      }
-      const dot = document.createElement("span");
-      dot.className = "spec-gutter-dot" + (isSuggestion ? " is-suggestion" : "") + (isApplied ? " is-applied" : "") + (isActive ? " is-active" : "");
-      dot.style.top = p.desired + "px";
-      specGutterElement.appendChild(dot);
-      placedDots.push({ y: p.desired, el: dot });
-    }
-  }
-
-  // Orphan cards: stack below the anchored ones, with extra spacing
-  // so they read as a separate group. No gutter dots — they have no
-  // anchor to point to.
-  if (orphanCards.length) {
-    cursor += 16;
-    for (const card of orphanCards) {
-      card.classList.add("is-orphan");
-      card.style.top = cursor + "px";
-      cursor += card.offsetHeight + gap;
-    }
-  }
-  // Strip the class from any cards that recovered an anchor on this pass.
-  for (const p of placements) {
-    p.card.classList.remove("is-orphan");
+  const target = cards[next];
+  if (target.dataset.suggestionId) {
+    focusSpecSuggestionAnchor(target.dataset.suggestionId);
+  } else if (target.dataset.commentId) {
+    focusSpecCommentAnchor(target.dataset.commentId);
   }
 }
 
+// Reflect the prev/next button enabled state. Called from the toolbar
+// state-render path AND from layoutSpecMargin (so re-flowing cards updates
+// the boundary state without a full re-render).
+function updateSpecNavButtons() {
+  if (!specNavPrevButton || !specNavNextButton) return;
+  const isReview = state.spec.viewMode === "review";
+  if (!isReview) {
+    specNavPrevButton.disabled = true;
+    specNavNextButton.disabled = true;
+    return;
+  }
+  const cards = visibleSpecMarginCards();
+  if (cards.length === 0) {
+    specNavPrevButton.disabled = true;
+    specNavNextButton.disabled = true;
+    return;
+  }
+  const activeKey = activeSpecCardKey();
+  const index = cards.findIndex((card) => specCardKey(card) === activeKey);
+  // Nothing active → both directions are usable (we'll jump to first/last).
+  if (index === -1) {
+    specNavPrevButton.disabled = false;
+    specNavNextButton.disabled = false;
+    return;
+  }
+  specNavPrevButton.disabled = index <= 0;
+  specNavNextButton.disabled = index >= cards.length - 1;
+}
 
 
 async function loadSpecSessions(options = {}) {
-  const payload = await fetchJson("/api/spec-sessions");
+  const payload = await api.listSessions();
   state.spec.sessions = payload.sessions || [];
   if (state.spec.selectedPath && !state.spec.sessions.some((session) => sameSpecUiPath(session.targetFile, state.spec.selectedPath))) {
     state.spec.selectedPath = "";
@@ -5261,8 +3176,8 @@ async function loadSpecSession(filePath, options = {}) {
   let context;
   let content;
   try {
-    context = await fetchJson(`/api/spec-sessions/by-file/context?path=${specPathParam(filePath)}`);
-    content = await fetchJson(`/api/spec-sessions/by-file/content?path=${specPathParam(filePath)}`);
+    context = await api.getSessionContext(filePath);
+    content = await api.getSessionContent(filePath);
   } catch (error) {
     state.spec.context = null;
     state.spec.content = "";
@@ -5310,9 +3225,7 @@ async function removeSpecSession(filePath) {
     return;
   }
 
-  await fetchJson(`/api/spec-sessions/by-file?path=${specPathParam(filePath)}`, {
-    method: "DELETE",
-  });
+  await api.removeSession(filePath);
 
   state.spec.sessions = state.spec.sessions.filter((candidate) => !sameSpecUiPath(candidate.targetFile, filePath));
   if (sameSpecUiPath(state.spec.selectedPath, filePath)) {
@@ -5340,7 +3253,7 @@ async function refreshSpecReviewState() {
   const shouldRestoreReplyFocus = Boolean(activeReplyId && specMarginElement.contains(document.activeElement));
   captureSpecReplyDraft();
 
-  const context = await fetchJson(`/api/spec-sessions/by-file/context?path=${specPathParam(state.spec.selectedPath)}`);
+  const context = await api.getSessionContext(state.spec.selectedPath);
   state.spec.context = context;
   renderSpecComments();
   syncSpecToolbarChrome();
@@ -5387,11 +3300,7 @@ async function openCurrentItemAsSpecSession() {
 }
 
 async function attachSpecSession(filePath) {
-  const result = await fetchJson("/api/spec-sessions/attach", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ file: filePath }),
-  });
+  const result = await api.attachSession(filePath);
   state.spec.selectedPath = result.session.targetFile;
   await loadSpecSessions();
   syncRouteState({ replace: true });
@@ -5417,25 +3326,35 @@ async function addSpecComment() {
     body.headingPath = sectionHeadingPathFromInput(anchorValue);
   } else {
     body.quote = anchorValue;
-    // Disambiguation hint: only forward the captured line range when the
-    // anchor in the input still matches the live selection that produced
-    // it. The user may have edited the input by hand, in which case the
-    // hint would point at the wrong occurrence — drop it and let the
-    // server fall back to its strict-uniqueness behavior.
-    if (state.spec.selectedQuoteLineRange && anchorValue === state.spec.selectedQuote) {
-      body.lineStart = state.spec.selectedQuoteLineRange.lineStart;
-      body.lineEnd = state.spec.selectedQuoteLineRange.lineEnd;
+    // Disambiguation hints: forward the captured line range AND char offset
+    // when the input value still looks like the live selection that produced
+    // them. Exact equality is the strongest signal; a substring match also
+    // counts — the user may have trimmed the prefilled paragraph quote down
+    // to a shorter, common phrase, and the original line range/offset still
+    // bracket the trimmed quote, so the server can disambiguate.
+    // A typed value that ISN'T a substring of selectedQuote is something
+    // the user wrote from scratch — we drop both hints there.
+    if (state.spec.selectedQuote
+        && (anchorValue === state.spec.selectedQuote || state.spec.selectedQuote.includes(anchorValue))) {
+      if (state.spec.selectedQuoteLineRange) {
+        body.lineStart = state.spec.selectedQuoteLineRange.lineStart;
+        body.lineEnd = state.spec.selectedQuoteLineRange.lineEnd;
+      }
+      if (Number.isInteger(state.spec.selectedQuoteOffset)) {
+        body.quoteOffset = state.spec.selectedQuoteOffset;
+      }
     }
   }
 
-  await fetchJson("/api/spec-sessions/by-file/comments", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  state.spec.commentComposerOpen = false;
+  await api.addComment(body.file, body);
+  // Form visibility is driven by `form.hidden`, not the state flag — flipping
+  // commentComposerOpen alone leaves the form on screen. Use hideSpecComposerForm
+  // to actually take it down, mirroring the cancel/escape paths.
+  hideSpecComposerForm();
+  state.spec.composerTarget = null;
   state.spec.selectedQuote = "";
   state.spec.selectedQuoteLineRange = null;
+  state.spec.selectedQuoteOffset = null;
   setSpecCommentAnchorMode("global");
   specCommentAnchorInput.value = "";
   specCommentTextInput.value = "";
@@ -5464,20 +3383,23 @@ async function addSpecSuggestion() {
     body.quote = anchorValue;
     // Same hint plumbing as comments — see addSpecComment for the rationale
     // on guarding by anchorValue === selectedQuote.
-    if (state.spec.selectedQuoteLineRange && anchorValue === state.spec.selectedQuote) {
-      body.lineStart = state.spec.selectedQuoteLineRange.lineStart;
-      body.lineEnd = state.spec.selectedQuoteLineRange.lineEnd;
+    if (state.spec.selectedQuote && anchorValue === state.spec.selectedQuote) {
+      if (state.spec.selectedQuoteLineRange) {
+        body.lineStart = state.spec.selectedQuoteLineRange.lineStart;
+        body.lineEnd = state.spec.selectedQuoteLineRange.lineEnd;
+      }
+      if (Number.isInteger(state.spec.selectedQuoteOffset)) {
+        body.quoteOffset = state.spec.selectedQuoteOffset;
+      }
     }
   }
 
-  await fetchJson("/api/spec-sessions/by-file/suggestions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  state.spec.suggestionComposerOpen = false;
+  await api.addSuggestion(body.file, body);
+  hideSpecComposerForm();
+  state.spec.composerTarget = null;
   state.spec.selectedQuote = "";
   state.spec.selectedQuoteLineRange = null;
+  state.spec.selectedQuoteOffset = null;
   setSpecSuggestionAnchorMode("quote");
   specSuggestionAnchorInput.value = "";
   specSuggestionContentInput.value = "";
@@ -5487,14 +3409,9 @@ async function addSpecSuggestion() {
 }
 
 async function replyToSpecComment(commentId, text) {
-  await fetchJson(`/api/spec-sessions/by-file/comments/${encodeURIComponent(commentId)}/reply`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      file: state.spec.selectedPath,
-      by: specCommentByInput.value || "human",
-      text,
-    }),
+  await api.addCommentReply(state.spec.selectedPath, commentId, {
+    by: specCommentByInput.value || "human",
+    text,
   });
   state.spec.replyComposerCommentId = "";
   state.spec.replyDrafts.delete(commentId);
@@ -5504,14 +3421,9 @@ async function replyToSpecComment(commentId, text) {
 }
 
 async function replyToSpecSuggestion(suggestionId, text) {
-  await fetchJson(`/api/spec-sessions/by-file/suggestions/${encodeURIComponent(suggestionId)}/reply`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      file: state.spec.selectedPath,
-      by: specSuggestionByInput.value || specCommentByInput.value || "human",
-      text,
-    }),
+  await api.addSuggestionReply(state.spec.selectedPath, suggestionId, {
+    by: specSuggestionByInput.value || specCommentByInput.value || "human",
+    text,
   });
   // We share the reply-composer state with comments — keyed by the
   // suggestion id, prefixed to avoid colliding with a same-id comment.
@@ -5523,13 +3435,8 @@ async function replyToSpecSuggestion(suggestionId, text) {
 }
 
 async function setSpecCommentStatus(commentId, action) {
-  await fetchJson(`/api/spec-sessions/by-file/comments/${encodeURIComponent(commentId)}/${action}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      file: state.spec.selectedPath,
-      by: specCommentByInput.value || "human",
-    }),
+  await api.setCommentStatus(state.spec.selectedPath, commentId, action, {
+    by: specCommentByInput.value || "human",
   });
   await refreshSpecReviewState();
   setBanner(action === "resolve" ? "Comment resolved." : "Comment reopened.", "success");
@@ -5541,72 +3448,11 @@ async function setSpecSuggestionStatus(suggestionId, action) {
     state.spec.suggestionPreview = null;
     clearSpecSuggestionPreview();
   }
-  await fetchJson(`/api/spec-sessions/by-file/suggestions/${encodeURIComponent(suggestionId)}/${action}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      file: state.spec.selectedPath,
-      by: specSuggestionByInput.value || specCommentByInput.value || "human",
-    }),
+  await api.setSuggestionStatus(state.spec.selectedPath, suggestionId, action, {
+    by: specSuggestionByInput.value || specCommentByInput.value || "human",
   });
   await refreshSpecReviewState();
   setBanner(action === "accept" ? "Suggestion accepted." : action === "reopen" ? "Suggestion reopened." : "Suggestion dismissed.", "success");
-}
-
-async function previewSpecSuggestion(suggestionId) {
-  if (state.spec.previewSuggestionId === suggestionId) {
-    state.spec.previewSuggestionId = "";
-    state.spec.suggestionPreview = null;
-    clearSpecSuggestionPreview();
-    renderSpecComments();
-    setBanner("Suggestion preview hidden.", "success");
-    return;
-  }
-
-  const result = await fetchJson(`/api/spec-sessions/by-file/suggestions/${encodeURIComponent(suggestionId)}/preview`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      file: state.spec.selectedPath,
-    }),
-  });
-  state.spec.previewSuggestionId = suggestionId;
-  state.spec.suggestionPreview = result.preview;
-  renderSpecInlineSuggestionPreview(result.suggestion, result.preview);
-  renderSpecComments();
-  setBanner("Suggestion preview shown in the spec.", "success");
-}
-
-async function applySpecSuggestion(suggestionId) {
-  await fetchJson(`/api/spec-sessions/by-file/suggestions/${encodeURIComponent(suggestionId)}/apply`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      file: state.spec.selectedPath,
-      by: specSuggestionByInput.value || specCommentByInput.value || "human",
-    }),
-  });
-  state.spec.previewSuggestionId = "";
-  state.spec.suggestionPreview = null;
-  clearSpecSuggestionPreview();
-  await loadSpecSession(state.spec.selectedPath);
-  setBanner("Suggestion applied.", "success");
-}
-
-async function rollbackSpecSuggestion(suggestionId) {
-  await fetchJson(`/api/spec-sessions/by-file/suggestions/${encodeURIComponent(suggestionId)}/rollback`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      file: state.spec.selectedPath,
-      by: specSuggestionByInput.value || specCommentByInput.value || "human",
-    }),
-  });
-  state.spec.previewSuggestionId = "";
-  state.spec.suggestionPreview = null;
-  clearSpecSuggestionPreview();
-  await loadSpecSession(state.spec.selectedPath);
-  setBanner("Suggestion rolled back.", "success");
 }
 
 async function switchAppMode(nextMode) {
@@ -5740,7 +3586,7 @@ async function applyRouteStateFromLocation() {
 }
 async function loadWorkspace(preferredItemId = state.selectedItemId, options = {}) {
   try {
-    const workspace = await fetchJson("/api/workspace");
+    const workspace = await api.loadWorkspace();
     resetAncillaryEditModes();
     state.setupState = null;
     state.workspace = workspace;
@@ -5788,7 +3634,7 @@ async function loadItem(itemId, rerenderBoard = true, options = {}) {
     if (typeof options.openOverlay === "boolean") {
       state.editorOverlayOpen = options.openOverlay;
     }
-    const item = await fetchJson(`/api/items/${encodeURIComponent(itemId)}`);
+    const item = await api.readItem(itemId);
     state.selectedItemId = itemId;
     renderItem(item);
     applyEditorMode();
@@ -5840,11 +3686,7 @@ async function initializeWorkspaceFromSetup() {
   setBanner("Creating starter roadmap workspace...");
 
   try {
-    await fetchJson("/api/setup/initialize", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
+    await api.initializeWorkspace();
     await loadWorkspace("", { replaceRoute: true });
     setBanner("Roadmap workspace created.", "success");
   } catch (error) {
@@ -5978,20 +3820,12 @@ async function saveCurrentItem() {
       : -1;
     const currentBoardGroupIndex = getBoardGroupIndexForItem(state.selectedItemId);
 
-    await fetchJson(`/api/items/${encodeURIComponent(state.selectedItemId)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    await api.saveItem(state.selectedItemId, payload);
 
     if (state.editorMode === "structured" && Number.isInteger(nextBoardGroupIndex) && nextBoardGroupIndex >= 0 && nextBoardGroupIndex !== currentBoardGroupIndex) {
       const groups = buildBoardGroupsWithMovedItem(state.selectedItemId, nextBoardGroupIndex);
       if (groups) {
-        await fetchJson("/api/board", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ groups }),
-        });
+        await api.saveBoard(groups);
       }
     }
 
@@ -6039,11 +3873,7 @@ async function saveScopeDraft() {
   setBanner("Saving scope...");
 
   try {
-    const workspace = await fetchJson("/api/scope", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scopeText: state.scopeDraft }),
-    });
+    const workspace = await api.saveScope(state.scopeDraft);
 
     state.workspace = workspace;
     state.scopeEditMode = false;
@@ -6150,6 +3980,13 @@ if (specResolvedToggleButton) {
   });
 }
 
+if (specNavPrevButton) {
+  specNavPrevButton.addEventListener("click", () => navigateSpecMarginCard(-1));
+}
+if (specNavNextButton) {
+  specNavNextButton.addEventListener("click", () => navigateSpecMarginCard(1));
+}
+
 if (specSidebarSearchInput) {
   specSidebarSearchInput.addEventListener("input", () => {
     state.spec.sidebarSearch = specSidebarSearchInput.value;
@@ -6161,6 +3998,7 @@ specCommentCancelButton.addEventListener("click", () => {
   hideSpecComposerForm();
   state.spec.selectedQuote = "";
   state.spec.selectedQuoteLineRange = null;
+  state.spec.selectedQuoteOffset = null;
   specCommentTextInput.value = "";
   specCommentAnchorInput.value = "";
   setSpecCommentAnchorMode("global");
@@ -6211,6 +4049,7 @@ specSuggestionCancelButton.addEventListener("click", () => {
   hideSpecComposerForm();
   state.spec.selectedQuote = "";
   state.spec.selectedQuoteLineRange = null;
+  state.spec.selectedQuoteOffset = null;
   specSuggestionAnchorInput.value = "";
   specSuggestionContentInput.value = "";
   specSuggestionRationaleInput.value = "";
@@ -6260,17 +4099,29 @@ document.addEventListener("selectionchange", () => {
   const selection = window.getSelection();
   if (!selection) return;
   const collapsed = selection.rangeCount === 0 || selection.isCollapsed;
+  // Once a composer is open, the captured quote+range are committed — don't
+  // wipe them when the selection collapses (which it does as soon as the
+  // user clicks into the form's textarea). Just hide the floating toolbar.
+  const composerOpen = state.spec.commentComposerOpen || state.spec.suggestionComposerOpen;
   if (collapsed) {
-    state.spec.selectedQuote = "";
-    state.spec.selectedQuoteLineRange = null;
+    if (!composerOpen) {
+      state.spec.selectedQuote = "";
+      state.spec.selectedQuoteLineRange = null;
+  state.spec.selectedQuoteOffset = null;
+    state.spec.selectedQuoteOffset = null;
+    }
     hideSpecContextToolbar();
     return;
   }
   // Selection still alive but moved outside the spec body — hide too.
   const range = selection.getRangeAt(0);
   if (!specFileContentElement.contains(range.commonAncestorContainer)) {
-    state.spec.selectedQuote = "";
-    state.spec.selectedQuoteLineRange = null;
+    if (!composerOpen) {
+      state.spec.selectedQuote = "";
+      state.spec.selectedQuoteLineRange = null;
+  state.spec.selectedQuoteOffset = null;
+    state.spec.selectedQuoteOffset = null;
+    }
     hideSpecContextToolbar();
   }
 });
@@ -6761,6 +4612,8 @@ document.addEventListener("keydown", (event) => {
     // gutter "+" hover button on the next mousemove.
     state.spec.selectedQuote = "";
     state.spec.selectedQuoteLineRange = null;
+  state.spec.selectedQuoteOffset = null;
+    state.spec.selectedQuoteOffset = null;
     return;
   }
 
@@ -6791,6 +4644,7 @@ document.addEventListener("click", (event) => {
   state.spec.composerTarget = null;
   state.spec.selectedQuote = "";
   state.spec.selectedQuoteLineRange = null;
+  state.spec.selectedQuoteOffset = null;
 });
 
 boardFilterToggleButton.addEventListener("click", () => {
@@ -6947,27 +4801,27 @@ void loadWorkspace(state.appMode === "spec" ? "" : (initialRoute.itemId || state
 // Test hook — exposes pure helpers for Playwright to verify in-browser
 // without driving full UI flows. Kept minimal; only stable helpers go here.
 window.__minimapSpec = Object.freeze({
+  // Read-only snapshot of spec state used by Playwright tests to verify what
+  // the live-selection capture path stored in state. Returning a frozen copy
+  // keeps consumers from mutating internals.
+  getSpecStateSnapshot: () => Object.freeze({
+    selectedQuote: state.spec.selectedQuote,
+    selectedQuoteLineRange: state.spec.selectedQuoteLineRange
+      ? { ...state.spec.selectedQuoteLineRange }
+      : null,
+    selectedQuoteOffset: state.spec.selectedQuoteOffset,
+    commentComposerOpen: state.spec.commentComposerOpen,
+    suggestionComposerOpen: state.spec.suggestionComposerOpen,
+  }),
   buildRenderedNormalizedMap,
   buildWhitespaceNormalizedMap,
   sourceQuoteForRenderedSelection: (renderedText, sourceContent) => {
-    const previous = state.spec.content;
-    state.spec.content = String(sourceContent || "");
-    try {
-      return sourceQuoteForRenderedSelection(renderedText);
-    } finally {
-      state.spec.content = previous;
-    }
+    return specSourceQuoteForRenderedSelection(renderedText, sourceContent || state.spec.content);
   },
   // Same as the above, but exposes the line range too so tests can verify
   // the disambiguation hint we'd send for a given rendered selection.
   resolveSourceQuoteFromRendered: (renderedText, sourceContent) => {
-    const previous = state.spec.content;
-    state.spec.content = String(sourceContent || "");
-    try {
-      return resolveSourceQuoteFromRendered(renderedText);
-    } finally {
-      state.spec.content = previous;
-    }
+    return specResolveSourceQuoteFromRendered(renderedText, sourceContent || state.spec.content);
   },
   // Open the comment composer with a given rendered selection text —
   // equivalent to selecting in the doc and clicking the floating toolbar's
@@ -6979,6 +4833,14 @@ window.__minimapSpec = Object.freeze({
     const resolved = resolveSourceQuoteFromRendered(String(selectionText || ""), occurrenceIndex);
     state.spec.selectedQuote = resolved.quote;
     state.spec.selectedQuoteLineRange = resolved.lineRange;
+    state.spec.selectedQuoteOffset = resolved.quoteOffset;
     openSpecComposer("comment", resolved.quote);
+  },
+  // Open the comment composer anchored to a specific block element — what
+  // the gutter "+" button does when the user hovers a paragraph and clicks.
+  // Lets tests exercise the paragraph-anchored path (and its line-range hint
+  // capture) without depending on hover-button geometry.
+  openCommentComposerForBlock: (block) => {
+    openSpecComposerForBlock(block);
   },
 });
