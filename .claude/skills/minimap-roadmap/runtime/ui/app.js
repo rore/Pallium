@@ -167,6 +167,9 @@ const specContextToolbarElement = document.querySelector("#spec-context-toolbar"
 const specDocElement = document.querySelector("#spec-doc");
 const specGutterElement = document.querySelector("#spec-gutter");
 const specMarginElement = document.querySelector("#spec-margin");
+const specTocElement = document.querySelector("#spec-toc");
+const specTocListElement = document.querySelector("#spec-toc-list");
+const specTocToggleElement = document.querySelector("[data-spec-toc-toggle]");
 const specViewSegButtons = Array.from(document.querySelectorAll("[data-spec-view]"));
 const specLayerSegButtons = Array.from(document.querySelectorAll("[data-spec-layer]"));
 const specResolvedToggleButton = document.querySelector("#spec-resolved-toggle");
@@ -274,6 +277,9 @@ initSpec({
     specFileSubtitleElement,
     specFileContentElement,
     specMarginElement,
+    specTocElement,
+    specTocListElement,
+    specTocToggleElement,
     specGutterElement,
     specParticipantsFacepile,
     specParticipantsPopover,

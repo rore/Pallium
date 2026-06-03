@@ -13,6 +13,7 @@ import {
   stripMarkdownSyntaxForUi,
   decodeLiteralEscapes,
 } from "/spec/anchors.js";
+import { buildSpecToc } from "/spec/toc.js";
 
 let DOM, STATE, API, HELPERS;
 
@@ -675,6 +676,13 @@ export function renderSpecFile() {
       </div>
     `;
     DOM.specMarginElement.innerHTML = "";
+    if (DOM.specTocElement) {
+      buildSpecToc({
+        bodyEl: DOM.specFileContentElement,
+        tocEl: DOM.specTocElement,
+        listEl: DOM.specTocListElement,
+      });
+    }
     HELPERS.hideSpecContextToolbar();
     return;
   }
@@ -685,6 +693,13 @@ export function renderSpecFile() {
     DOM.specFileContentElement.className = "spec-body spec-body-empty";
     DOM.specFileContentElement.textContent = "Choose or attach a spec session.";
     DOM.specMarginElement.innerHTML = "";
+    if (DOM.specTocElement) {
+      buildSpecToc({
+        bodyEl: DOM.specFileContentElement,
+        tocEl: DOM.specTocElement,
+        listEl: DOM.specTocListElement,
+      });
+    }
     HELPERS.hideSpecContextToolbar();
     return;
   }
@@ -717,6 +732,15 @@ export function renderSpecFile() {
 
   // Wrap quote-anchored ranges so they're hoverable + clickable.
   decorateSpecAnchors();
+
+  // Rebuild the "On this page" TOC against the freshly-rendered body.
+  // Safe to call on every render — buildSpecToc tears down its own
+  // observer first, so re-renders don't leak observers.
+  buildSpecToc({
+    bodyEl: DOM.specFileContentElement,
+    tocEl: DOM.specTocElement,
+    listEl: DOM.specTocListElement,
+  });
 
   // Index every block that carries a source-line attribute so anchorTargetElement
   // can do an O(1) line lookup instead of re-doing text matching against the
