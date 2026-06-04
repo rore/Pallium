@@ -115,6 +115,12 @@ zones:
       reason: API client collections
     - path: "examples/**"
       reason: examples
+    - path: "app/dashboard.html"
+      reason: dashboard UI markup — routine, not structural
+    - path: "app/dashboard.css"
+      reason: dashboard UI styles — routine, not structural
+    - path: "app/dashboard.js"
+      reason: dashboard UI scripts — routine, not structural
 
 # Boundary contracts (metadata; enforcement lives in [tool.importlinter] in
 # pyproject.toml). Five protective layer rules + two narrow forbidden
