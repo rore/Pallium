@@ -7,12 +7,14 @@ import time
 from collections.abc import Callable
 
 from app.config import AppConfig
-from app.dependencies import build_service
+from app.dependencies import build_service, build_storage_provider
 from app.runtime_logging import emit_runtime_log
 from app.signal_context import graceful_stop
 from core.errors import is_transient_error
 from core.contracts import ItemProcessingResult
 from storage.base import ThreadProcessingLease
+from storage.metrics import MetricsStore
+from storage.sqlite import SQLiteStorageProvider
 from core.service import DEFAULT_PROCESSING_LEASE_SECONDS, DEFAULT_PROCESSING_MAX_ATTEMPTS
 
 MAX_REBUILD_WAIT_SECONDS = 5.0
@@ -47,7 +49,21 @@ def run_worker(
     clock: Callable[[], float] = time.monotonic,
 ) -> int:
     parsed = build_parser().parse_args(args)
-    service = build_service(config, enable_vector=False).service
+    resolved_config = config or AppConfig.from_env()
+
+    # Wire MetricsStore so processor-side events (processing.*, work_trace.*)
+    # actually persist. Mirrors app/main.py:155-167 — only SQLite backends
+    # expose a session_factory, otherwise metrics persistence is skipped.
+    metrics_store: MetricsStore | None = None
+    early_storage = build_storage_provider(resolved_config)
+    if isinstance(early_storage, SQLiteStorageProvider):
+        metrics_store = MetricsStore(early_storage._session_factory)
+
+    service = build_service(
+        resolved_config,
+        enable_vector=False,
+        metrics_store=metrics_store,
+    ).service
     worker_id = parsed.worker_id or default_worker_id()
     last_rebuild_check = clock()
 
