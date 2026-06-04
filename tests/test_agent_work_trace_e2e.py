@@ -686,3 +686,116 @@ class TestRegressions:
             items = session.scalars(select(SourceItemRecord)).all()
             for item in items:
                 assert item.processing_status == "completed"
+
+
+# ---------------------------------------------------------------------------
+# TestPatchBodiesContract — pin the deliberate boundary that patch_bodies
+# survive on source_items.metadata_json.agent_work_trace_turn but are NOT
+# aggregated into the thread-level task_trace.payload.
+# ---------------------------------------------------------------------------
+
+
+class TestPatchBodiesContract:
+    """The patch_bodies field is the operational-fact extractor's read surface
+    (per docs/specs/2026-05-31-operational-fact-memory-design.md §Extraction
+    Predicate, which operates on source_items.metadata_json directly).
+
+    The thread-level task_trace.payload is intentionally a "what happened"
+    summary at file/command granularity, NOT a carrier for raw apply_patch
+    bodies. This test pins both halves of the contract so a future "fix" to
+    propagate patch_bodies into task_trace doesn't silently drop the
+    deliberate boundary in semantic/agent_work_trace.py::build_thread_summary.
+    """
+
+    def test_patch_bodies_present_in_source_metadata(self, service):
+        """Per-turn patch_bodies survive on source_items.metadata_json
+        exactly as the hook wrote them (read-side of the contract)."""
+        turn_with_patch = {
+            "files_read": [],
+            "commands": [],
+            "grep_patterns": [],
+            "has_productive_action": True,
+            "files_modified": [],
+            "patch_bodies": [
+                {"body": "*** Begin Patch\n*** Update File: src/x.py\n+x\n*** End Patch"},
+                {"operation": {"type": "create_file", "path": "new.py", "diff": "+content"}},
+            ],
+        }
+        # Need 2+ turns for thread-rebuild; second turn establishes the
+        # thread shape but doesn't need patch_bodies for this assertion.
+        _ingest_trace_items(service, [
+            turn_with_patch,
+            {"files_read": ["src/y.py"], "commands": [], "grep_patterns": [],
+             "has_productive_action": False, "files_modified": []},
+        ])
+        service.drain_processing_queue(worker_id="patch-bodies-test")
+
+        # Assert: at least one source_item carries patch_bodies on its metadata.
+        from storage.sqlite_schema import SourceItemRecord
+        from sqlalchemy import select
+        with service._storage._session_factory() as session:
+            items = session.scalars(select(SourceItemRecord)).all()
+            metas = [json.loads(i.metadata_json) for i in items if i.metadata_json]
+            patch_metas = [
+                m["agent_work_trace_turn"]["patch_bodies"]
+                for m in metas
+                if isinstance(m, dict)
+                and "agent_work_trace_turn" in m
+                and "patch_bodies" in m["agent_work_trace_turn"]
+            ]
+            assert len(patch_metas) >= 1, (
+                "Expected at least one source_item to carry "
+                "agent_work_trace_turn.patch_bodies; got none."
+            )
+            # Verify the contents survive verbatim.
+            pbs = patch_metas[0]
+            assert any("body" in p and "*** Begin Patch" in p["body"] for p in pbs)
+            assert any(
+                "operation" in p and p["operation"].get("path") == "new.py"
+                for p in pbs
+            )
+
+    def test_patch_bodies_not_in_task_trace_payload(self, service):
+        """patch_bodies is intentionally NOT propagated into the thread-level
+        task_trace.payload (write-side of the contract).
+
+        If a future change adds patch_bodies aggregation into
+        build_thread_summary's payload dict at semantic/agent_work_trace.py,
+        this test fails — by design, to force a deliberate contract update
+        rather than a silent boundary erosion.
+        """
+        turn_with_patch = {
+            "files_read": [],
+            "commands": [],
+            "grep_patterns": [],
+            "has_productive_action": True,
+            "files_modified": [],
+            "patch_bodies": [
+                {"body": "*** Begin Patch\n*** Update File: src/x.py\n+x\n*** End Patch"},
+                {"operation": {"type": "update_file", "path": "src/x.py",
+                               "diff": "+marker_xyz_abc"}},
+            ],
+        }
+        _ingest_trace_items(service, [
+            turn_with_patch,
+            {"files_read": ["src/y.py"], "commands": [], "grep_patterns": [],
+             "has_productive_action": False, "files_modified": []},
+        ])
+        service.drain_processing_queue(worker_id="patch-bodies-test")
+
+        traces = _get_task_traces(service)
+        assert len(traces) == 1
+        payload = traces[0].payload
+
+        # Hard contract: patch_bodies key NOT in task_trace.payload.
+        assert "patch_bodies" not in payload, (
+            "patch_bodies was added to task_trace.payload — this breaks the "
+            "deliberate boundary at semantic/agent_work_trace.py::"
+            "build_thread_summary. If this is intentional, also update "
+            "the operational-fact spec extraction predicate to read from "
+            "memory_objects.payload instead of source_items.metadata_json."
+        )
+        # Defense in depth: no patch body content leaked into any payload field.
+        payload_repr = json.dumps(payload)
+        assert "*** Begin Patch" not in payload_repr
+        assert "marker_xyz_abc" not in payload_repr

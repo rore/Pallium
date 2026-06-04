@@ -185,6 +185,17 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
         ))
         files_modified = files_modified[:MAX_FILES_MODIFIED]
 
+        # NOTE: per-turn `patch_bodies` (apply_patch raw body / structured
+        # operation) is intentionally NOT aggregated into the task_trace
+        # payload. The thread-level task_trace summary describes "what
+        # happened" at file/command granularity; the raw patch body is
+        # turn-level evidence for the operational-fact extractor (per
+        # docs/specs/2026-05-31-operational-fact-memory-design.md
+        # §Extraction Predicate, which reads source_items.metadata_json
+        # directly, not memory_objects.payload). Adding patch_bodies here
+        # would be a contract change. Pinned by
+        # tests/test_agent_work_trace_e2e.py::test_patch_bodies_not_in_task_trace_payload.
+
         # Apply caps
         exploratory_files = exploratory_files[:MAX_EXPLORATORY_FILES]
         productive_files = productive_files[:MAX_PRODUCTIVE_FILES]
