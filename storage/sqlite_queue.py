@@ -32,8 +32,27 @@ from storage.sqlite_schema import (
     insert_lexical_fts_row,
 )
 
-_CONTAINER_SCOPED_SUPERSESSION_TYPES = frozenset({"constraint_memory"})
+_CONTAINER_SCOPED_SUPERSESSION_TYPES = frozenset({
+    "constraint_memory",
+    "decision",
+    "investigation_outcome",
+})
+# Only constraints take the Jaccard-overlap branch. Decisions and
+# investigation_outcomes were widened to container scope in T2
+# (2026-06-04) but their canonical_key is now
+# ``normalize_for_index(decision_text)`` — Jaccard at container scope on
+# decision text would risk merging distinct decisions, so they stay on
+# exact-equality only.
+_JACCARD_ELIGIBLE_TYPES = frozenset({"constraint_memory"})
 _CONTAINER_SCOPED_JACCARD_THRESHOLD = 0.5
+
+# Sliding-window cap on the merge-history lists kept on the winner payload
+# (`merged_from`, `previous_evidence_text`, `previous_rationale`). Without a
+# cap, decisions on a hot thread accumulate evidence variants on every rebuild
+# and the active winner's payload_json grows unbounded. Keep-last-K with
+# K=16 covers realistic rebuild churn (the live DB shows 2-3 distinct evidence
+# variants per group; K=16 gives 5x headroom without unbounded growth).
+_MERGE_HISTORY_KEEP_LAST = 16
 
 
 class SQLiteQueueMixin:
@@ -659,6 +678,26 @@ class SQLiteQueueMixin:
                 raise ValueError("Supersession requires matching memory object types")
             if superseded.lifecycle == "superseded":
                 continue
+
+            # Merge-not-collapse for decisions/investigations: union the loser's
+            # evidence quote, rationale, and supported_by relations onto the
+            # winner before flipping lifecycle. Avoids losing the loser's
+            # distinct evidence text — see merge_policy.md (T2, 2026-06-04).
+            if replacement.type in {"decision", "investigation_outcome"}:
+                winner_payload = self._loads(replacement.payload_json)
+                loser_payload = self._loads(superseded.payload_json)
+                self._merge_decision_payload_into_winner(
+                    winner_payload=winner_payload,
+                    loser_payload=loser_payload,
+                    loser_id=superseded_id,
+                )
+                replacement.payload_json = self._dumps(winner_payload) or "{}"
+                self._reparent_supported_by_relations(
+                    session,
+                    from_memory_id=superseded_id,
+                    to_memory_id=replacement_id,
+                )
+
             superseded.lifecycle = "superseded"
             session.add(
                 RelationRecord(
@@ -674,6 +713,108 @@ class SQLiteQueueMixin:
                 session, "memory_object", superseded_id,
             )
 
+    @staticmethod
+    def _merge_decision_payload_into_winner(
+        *,
+        winner_payload: dict,
+        loser_payload: dict,
+        loser_id: str,
+    ) -> None:
+        """Append loser provenance fields onto winner payload in-place.
+
+        Winner schema gains three optional list fields:
+          - ``merged_from`` — loser memory ids (deduped, preserves order)
+          - ``previous_evidence_text`` — older evidence quotes
+          - ``previous_rationale`` — older non-null rationales
+
+        The loser's *own* prior merge-history (``merged_from``,
+        ``previous_evidence_text``, ``previous_rationale``) is also unioned
+        into the winner so a multi-step chain A→B→C does not lose A's
+        evidence when C absorbs B. Transitivity matters for hot rebuild
+        chains; without it ``previous_evidence_text`` would only ever
+        contain the immediate loser's quote.
+
+        Each list is sliding-window bounded by ``_MERGE_HISTORY_KEEP_LAST``;
+        the oldest entries fall off when the cap is reached. This prevents
+        unbounded payload growth on hot threads where decisions are rebuilt
+        many times with drifting evidence quotes.
+
+        Winner's own ``decision_evidence_text`` / ``rationale`` are unchanged.
+        """
+        keep = _MERGE_HISTORY_KEEP_LAST
+
+        def _append_unique(target: list, value) -> None:
+            if value is None or value == "":
+                return
+            if value in target:
+                return
+            target.append(value)
+
+        # merged_from = winner's existing chain + loser's chain + loser id.
+        merged_from = list(winner_payload.get("merged_from") or [])
+        for prior_id in (loser_payload.get("merged_from") or []):
+            _append_unique(merged_from, prior_id)
+        _append_unique(merged_from, loser_id)
+        winner_payload["merged_from"] = merged_from[-keep:]
+
+        # previous_evidence_text = winner's chain + loser's chain + loser's primary evidence.
+        prev_ev = list(winner_payload.get("previous_evidence_text") or [])
+        for prior_ev in (loser_payload.get("previous_evidence_text") or []):
+            _append_unique(prev_ev, prior_ev)
+        loser_evidence = (
+            loser_payload.get("decision_evidence_text")
+            or loser_payload.get("investigation_evidence_text")
+        )
+        _append_unique(prev_ev, loser_evidence)
+        if prev_ev:
+            winner_payload["previous_evidence_text"] = prev_ev[-keep:]
+
+        # previous_rationale = winner's chain + loser's chain + loser's primary rationale.
+        prev_r = list(winner_payload.get("previous_rationale") or [])
+        for prior_r in (loser_payload.get("previous_rationale") or []):
+            _append_unique(prev_r, prior_r)
+        _append_unique(prev_r, loser_payload.get("rationale"))
+        if prev_r:
+            winner_payload["previous_rationale"] = prev_r[-keep:]
+
+    @staticmethod
+    def _reparent_supported_by_relations(
+        session: Session,
+        *,
+        from_memory_id: str,
+        to_memory_id: str,
+    ) -> None:
+        """Move ``supported_by`` relations from loser memory to winner memory.
+
+        Deduplicates: if winner already has a ``supported_by`` edge to the same
+        ``to_id``, the loser's edge is deleted rather than reparented (a memory
+        cannot link to the same source item twice).
+        """
+        loser_relations = session.scalars(
+            select(RelationRecord).where(
+                RelationRecord.from_kind == "memory_object",
+                RelationRecord.from_id == from_memory_id,
+                RelationRecord.relation_type == "supported_by",
+            )
+        ).all()
+        if not loser_relations:
+            return
+        existing_winner_targets = set(
+            session.scalars(
+                select(RelationRecord.to_id).where(
+                    RelationRecord.from_kind == "memory_object",
+                    RelationRecord.from_id == to_memory_id,
+                    RelationRecord.relation_type == "supported_by",
+                )
+            ).all()
+        )
+        for relation in loser_relations:
+            if relation.to_id in existing_winner_targets:
+                session.delete(relation)
+                continue
+            relation.from_id = to_memory_id
+            existing_winner_targets.add(relation.to_id)
+
     def _resolve_supersession_pairs_in_session(
         self,
         session: Session,
@@ -682,6 +823,12 @@ class SQLiteQueueMixin:
         if not result.supersession_hints:
             return []
         replacements = {memory_object.id: memory_object for memory_object in result.memory_objects}
+        # Exclude every replacement id in this ProcessResult from the
+        # existing-record scan, not just the current hint's. Without this,
+        # two new memories that share a canonical_key produce reciprocal
+        # pairs (A→B and B→A), and `_apply_supersession_pairs_in_session`
+        # then flips both — leaving zero active rows for that key. See P1.
+        replacement_ids: set[str] = set(replacements.keys())
         pairs: list[tuple[str, str]] = []
         seen: set[tuple[str, str]] = set()
         for hint in result.supersession_hints:
@@ -698,11 +845,17 @@ class SQLiteQueueMixin:
                         MemoryObjectRecord.container_ref == hint.container_ref,
                         MemoryObjectRecord.type == hint.memory_type,
                         MemoryObjectRecord.lifecycle == "active",
-                        MemoryObjectRecord.id != hint.replacement_memory_id,
+                        MemoryObjectRecord.id.notin_(replacement_ids),
                     )
                 ).all()
                 new_key_tokens = set(hint.canonical_key.split()) if hint.canonical_key else set()
                 for existing_record in existing_records:
+                    # Visibility scope guard: never collapse a memory across visibility
+                    # boundaries. Thread-scoped path enforces this via
+                    # visibility_matches_exact on the source_item; the container-scoped
+                    # path must enforce it on the memory_object directly.
+                    if not visibility_matches_exact(existing_record.visibility, hint.visibility):
+                        continue
                     existing_payload = self._loads(existing_record.payload_json)
                     existing_key = str(existing_payload.get("canonical_key") or "").strip()
                     if not existing_key:
@@ -714,8 +867,11 @@ class SQLiteQueueMixin:
                             seen.add(pair)
                             pairs.append(pair)
                         continue
-                    # Jaccard overlap on canonical_key tokens (catches paraphrases)
-                    if new_key_tokens:
+                    # Jaccard overlap on canonical_key tokens (catches paraphrases).
+                    # Restricted to constraints — decisions/investigations key on
+                    # decision_text and Jaccard at container scope would risk
+                    # merging distinct decisions (see T2, 2026-06-04).
+                    if hint.memory_type in _JACCARD_ELIGIBLE_TYPES and new_key_tokens:
                         existing_key_tokens = set(existing_key.split())
                         if existing_key_tokens:
                             intersection = new_key_tokens & existing_key_tokens
@@ -756,7 +912,11 @@ class SQLiteQueueMixin:
                 ).all()
                 for candidate_record in candidate_records:
                     candidate = self._to_memory_object(candidate_record)
-                    if candidate.id == replacement.id:
+                    # Skip every replacement memory in this ProcessResult, not
+                    # just the current hint's replacement. Same reasoning as
+                    # the container-scoped path: avoids reciprocal A→B / B→A
+                    # supersession that would leave zero active rows. See P1.
+                    if candidate.id in replacement_ids:
                         continue
                     if candidate.lifecycle != "active" or candidate.type != hint.memory_type:
                         continue

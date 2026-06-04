@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from providers.llm.base import LLMJsonResponse
 from semantic.agent_conversation_memory import AgentConversationMemoryPlugin
 from semantic.agent_conversation_memory_threads import _evidence_canonical_key, build_thread_summary
+from semantic.common import normalize_for_index
 from storage.vector_index import VectorIndexConfig
 
 
@@ -300,19 +301,20 @@ def test_rebuild_decisions_supersede_old_copies_with_same_canonical_key(
     ]
     _post_and_drain(client, service, messages2)
 
-    # After second rebuild, the same decision (same canonical_key) should supersede the old one
-    active_after_second = _get_active_memory(service._storage, container_ref, thread_ref, "decision")
-    all_after_second = _get_all_memory(service._storage, container_ref, thread_ref, "decision")
-
-    # The total may be more than 1 (across all source items), but the number of ACTIVE
-    # decisions with the same canonical_key must be 1 — not 2.
-    target_key = _evidence_canonical_key(DecisionStubProvider.EVIDENCE_TEXT)
+    # After second rebuild, the same decision (same canonical_key) should supersede the old one.
+    # Post-T2: canonical_key is normalize_for_index(decision_text), and merge-not-collapse
+    # reparents the loser's supported_by relations onto the winner — so the loser is no
+    # longer reachable via thread→source_item joins. We assert the merge invariant
+    # directly via list_memory_objects(container_ref=...).
+    target_key = normalize_for_index(DecisionStubProvider.DECISION_TEXT)
+    all_in_container = service._storage.list_memory_objects(memory_types=["decision"], container_ref=container_ref)
     active_matching = [
-        mo for mo in active_after_second
+        mo for mo in all_in_container
         if str(mo.payload.get("canonical_key") or "").strip() == target_key
+        and mo.lifecycle == "active"
     ]
     superseded_matching = [
-        mo for mo in all_after_second
+        mo for mo in all_in_container
         if str(mo.payload.get("canonical_key") or "").strip() == target_key
         and mo.lifecycle == "superseded"
     ]
@@ -320,11 +322,16 @@ def test_rebuild_decisions_supersede_old_copies_with_same_canonical_key(
     assert len(active_matching) == 1, (
         f"Expected exactly 1 active decision with canonical_key={target_key!r}, "
         f"got {len(active_matching)}. "
-        f"All decisions: {[(mo.id[:8], mo.lifecycle, mo.payload.get('canonical_key','')[:30]) for mo in all_after_second]}"
+        f"All decisions in container: {[(mo.id[:8], mo.lifecycle, mo.payload.get('canonical_key','')[:30]) for mo in all_in_container]}"
     )
     assert len(superseded_matching) >= 1, (
         f"Expected at least 1 superseded decision after second rebuild, got {len(superseded_matching)}. "
-        "This means the old decision was NOT superseded."
+        "This means the old decision was NOT superseded (merge-not-collapse should still flip lifecycle)."
+    )
+    # Merge-not-collapse: winner payload should record the merged loser id and previous evidence.
+    winner = active_matching[0]
+    assert winner.payload.get("merged_from"), (
+        f"Expected winner to record merged_from after merge, got payload={winner.payload}"
     )
 
 
@@ -357,7 +364,8 @@ def test_rebuild_only_supersedes_matching_canonical_key(
     active_after_first = _get_active_memory(service._storage, container_ref, thread_ref, "decision")
     assert len(active_after_first) >= 1, "Expected at least one active decision after first rebuild"
 
-    alpha_key = _evidence_canonical_key(DifferentKeyDecisionStubProvider.ALPHA_EVIDENCE)
+    # Post-T2: canonical_key is normalize_for_index(decision_text), not evidence-derived.
+    alpha_key = normalize_for_index(DifferentKeyDecisionStubProvider.ALPHA_KEY)
     alpha_decisions_after_first = [
         mo for mo in active_after_first
         if str(mo.payload.get("canonical_key") or "").strip() == alpha_key
@@ -375,7 +383,7 @@ def test_rebuild_only_supersedes_matching_canonical_key(
     _post_and_drain(client, service, messages2)
 
     all_after_second = _get_all_memory(service._storage, container_ref, thread_ref, "decision")
-    beta_key = _evidence_canonical_key(DifferentKeyDecisionStubProvider.BETA_EVIDENCE)
+    beta_key = normalize_for_index(DifferentKeyDecisionStubProvider.BETA_KEY)
 
     # Alpha from rebuild 1 should NOT be superseded by Beta from rebuild 2
     alpha_active = [
@@ -528,8 +536,9 @@ def test_build_thread_summary_emits_supersession_hints_for_matching_conclusions(
     decision_text = "We decided to use event-time ordering for all reservation holds."
     # Evidence must be a substring of source items' content (asserted below).
     decision_evidence = "use event-time ordering for all reservation holds"
-    canonical_key = _evidence_canonical_key(decision_evidence)
-    assert canonical_key, "test fixture sanity: evidence must produce a non-null canonical_key"
+    # Post-T2: canonical_key is normalize_for_index(decision_text), not evidence-derived.
+    canonical_key = normalize_for_index(decision_text)
+    assert canonical_key, "test fixture sanity: decision text must produce a non-null canonical_key"
 
     # Build an old decision that is already in DB (as a conclusion)
     old_decision = MemoryObject(
@@ -661,16 +670,18 @@ def test_rebuild_investigations_supersede_old_copies_with_same_canonical_key(
     _post_and_drain(client, service, messages2)
 
     from semantic.common import normalize_for_index
-    target_key = _evidence_canonical_key(DecisionStubProvider.INVESTIGATION_EVIDENCE_TEXT)
+    # Post-T2: canonical_key is normalize_for_index(investigation_text); merge-not-collapse
+    # reparents loser supported_by, so query directly by container, not via thread join.
+    target_key = normalize_for_index(DecisionStubProvider.INVESTIGATION_TEXT)
 
-    all_after_second = _get_all_memory(service._storage, container_ref, thread_ref, "investigation_outcome")
+    all_in_container = service._storage.list_memory_objects(memory_types=["investigation_outcome"], container_ref=container_ref)
     active_matching = [
-        mo for mo in all_after_second
+        mo for mo in all_in_container
         if str(mo.payload.get("canonical_key") or "").strip() == target_key
         and mo.lifecycle == "active"
     ]
     superseded_matching = [
-        mo for mo in all_after_second
+        mo for mo in all_in_container
         if str(mo.payload.get("canonical_key") or "").strip() == target_key
         and mo.lifecycle == "superseded"
     ]
@@ -678,7 +689,7 @@ def test_rebuild_investigations_supersede_old_copies_with_same_canonical_key(
     assert len(active_matching) == 1, (
         f"Expected exactly 1 active investigation with canonical_key={target_key!r}, "
         f"got {len(active_matching)}. "
-        f"All investigations: {[(mo.id[:8], mo.lifecycle) for mo in all_after_second]}"
+        f"All investigations in container: {[(mo.id[:8], mo.lifecycle) for mo in all_in_container]}"
     )
     assert len(superseded_matching) >= 1, (
         f"Expected at least 1 superseded investigation, got {len(superseded_matching)}"

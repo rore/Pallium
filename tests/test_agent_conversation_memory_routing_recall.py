@@ -613,7 +613,10 @@ def test_process_item_emits_same_thread_supersession_hint_for_sharp_conclusion()
     hint = result.supersession_hints[0]
     assert hint.memory_type == 'decision'
     assert hint.container_ref == 'chat:library-help'
-    assert hint.thread_ref == 'chat:library-help:thread-supersession'
+    # Post-T2: decision/investigation supersession hints are container-scoped
+    # (thread_ref=None) so cross-thread duplicates collapse. Visibility scope is
+    # enforced separately at resolution time. See proto/T2_canonical_key/findings.md.
+    assert hint.thread_ref is None
     assert hint.canonical_key == 'use item event time for reservation ordering'
 
 def test_indirect_investigative_prompt_uses_sharp_conclusion_shape(monkeypatch, test_db_url: str) -> None:
