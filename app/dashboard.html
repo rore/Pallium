@@ -901,8 +901,24 @@ function confClass(c) {
 
 function shortContainer(ref) {
   if (!ref) return '—';
-  const m = ref.match(/^path:([^:]+):[0-9a-f]+$/);
-  if (m) return 'path:' + m[1];
+  // git:<host>/<rest>  →  <rest>   (e.g. git:github.com/rore/pallium → rore/pallium)
+  // Drops the host since it's rarely informative; keeps owner/repo (and any
+  // deeper segments for GitLab-style subgroups). Falls back to the full body
+  // when there's no '/' to split on.
+  if (ref.startsWith('git:')) {
+    const body = ref.slice(4);
+    const slash = body.indexOf('/');
+    return slash > 0 ? body.slice(slash + 1) : body;
+  }
+  // path:<label>:<hash>  →  path: <label>
+  const labelled = ref.match(/^path:([^:]+):[0-9a-f]+$/);
+  if (labelled) return 'path: ' + labelled[1];
+  // path:<hash>          →  path: <hash-prefix>
+  const pathHash = ref.match(/^path:([0-9a-f]+)$/);
+  if (pathHash) return 'path: ' + pathHash[1].slice(0, 8);
+  // repo:<hash>          →  repo: <hash-prefix>   (git repo with no remote)
+  const repoHash = ref.match(/^repo:([0-9a-f]+)$/);
+  if (repoHash) return 'repo: ' + repoHash[1].slice(0, 8);
   return ref;
 }
 
@@ -1303,7 +1319,8 @@ function populateContainerDropdowns() {
     for (const c of _containers) {
       const opt = document.createElement('option');
       opt.value = c;
-      opt.textContent = c;
+      opt.textContent = shortContainer(c);
+      opt.title = c;
       sel.appendChild(opt);
     }
     sel.value = current;
