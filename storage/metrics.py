@@ -2,14 +2,28 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from sqlalchemy import select, func, delete
 
+from core.errors import is_transient_error
 from core.models import new_id
 from storage.sqlite_schema import MetricRecord
+
+
+logger = logging.getLogger(__name__)
+
+# Transient-error retry policy. Mirrors storage/sqlite.py deliberately so
+# operators have one mental model for "transient SQLite contention". The
+# transient predicate itself is the shared core.errors.is_transient_error so
+# both code paths recognise the same class of failure (locked, disk i/o,
+# unable to open database file, etc.).
+_TRANSIENT_MAX_RETRIES = 3
+_TRANSIENT_BACKOFF_BASE = 0.2  # seconds; total upper bound ~ 0.2 + 0.4 = 0.6s
 
 
 VALID_EVENTS: dict[str, set[str]] = {
@@ -54,23 +68,55 @@ class MetricsStore:
                actor_ref: str | None = None,
                value: float | None = None,
                payload: dict | None = None) -> None:
-        try:
-            record = MetricRecord(
-                id=new_id(),
-                timestamp=datetime.now(timezone.utc),
-                category=category,
-                event_type=event_type,
-                container_ref=container_ref,
-                thread_ref=thread_ref,
-                actor_ref=actor_ref,
-                value=value,
-                payload_json=json.dumps(payload) if payload is not None else None,
+        """Persist one metric event. Fire-and-forget by spec; never blocks the caller.
+
+        On any transient SQLite error (per `core.errors.is_transient_error` —
+        locked, disk i/o, busy, unable to open), retry up to
+        `_TRANSIENT_MAX_RETRIES` with exponential backoff. On any other
+        exception (including non-serializable payloads), OR after retries
+        are exhausted, log at WARNING with metric name, exception class,
+        and a 200-char message prefix. Never raise.
+        """
+        last_exc: BaseException | None = None
+        for attempt in range(_TRANSIENT_MAX_RETRIES):
+            try:
+                # Serialise + build inside the guarded block so that
+                # non-JSON-serialisable payloads degrade to a WARNING rather
+                # than raising out of the fire-and-forget contract.
+                record = MetricRecord(
+                    id=new_id(),
+                    timestamp=datetime.now(timezone.utc),
+                    category=category,
+                    event_type=event_type,
+                    container_ref=container_ref,
+                    thread_ref=thread_ref,
+                    actor_ref=actor_ref,
+                    value=value,
+                    payload_json=json.dumps(payload) if payload is not None else None,
+                )
+                with self._session_factory() as session:
+                    session.add(record)
+                    session.commit()
+                return  # success
+            except Exception as exc:  # noqa: BLE001 — fire-and-forget by spec
+                last_exc = exc
+                if is_transient_error(exc) and attempt < _TRANSIENT_MAX_RETRIES - 1:
+                    time.sleep(_TRANSIENT_BACKOFF_BASE * (2 ** attempt))
+                    continue
+                break  # non-transient OR retries exhausted
+
+        # If we got here, we did not succeed.
+        if last_exc is not None:
+            message = str(last_exc)
+            if len(message) > 200:
+                message = message[:200] + "..."
+            logger.warning(
+                "metrics.record dropped event "
+                "category=%s event_type=%s exc=%s message=%s",
+                category, event_type, type(last_exc).__name__, message,
             )
-            with self._session_factory() as session:
-                session.add(record)
-                session.commit()
-        except Exception:
-            pass  # fire-and-forget — never block the caller
+        # Do NOT raise; metrics are fire-and-forget per
+        # docs/specs/2026-05-05-metrics-collection-and-dashboard.md.
 
     def query(self, *,
               category: str | None = None,

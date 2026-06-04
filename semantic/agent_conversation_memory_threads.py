@@ -27,16 +27,22 @@ _ROLE_PREFIX_RE = re.compile(r'^[a-z_]+/[a-z_]+:\s*', re.IGNORECASE)
 
 
 def _evidence_canonical_key(evidence: str | None) -> str | None:
-    """Stable canonical key for thread-aggregated decisions/investigations.
+    """DEPRECATED — no longer used on the production path (T2, 2026-06-04).
 
-    Strips an optional role-prefix the LLM intermittently emits
-    (e.g. 'user/message: ...') then keys on a sorted tokenset of
-    stop-word-filtered, non-low-information tokens. Deliberately does NOT
-    use content_tokens — its plural-stem expansion is designed for
-    retrieval overlap and would destabilize keys when only some rebuilds
-    quote a token in pluralized form. Returns None when fewer than 3
-    informative tokens remain so the caller can fall back to a
-    decision-text-based key.
+    The thread-aggregation writer now keys decisions/investigations on
+    ``normalize_for_index(decision_text)`` /
+    ``normalize_for_index(investigation_text)`` directly. Keying on
+    evidence tokens caused canonical_key drift across rebuilds whenever
+    the LLM tightened or trimmed the supporting quote, which produced
+    duplicate decisions instead of supersession.
+
+    This helper is retained because the legacy supersession-rebuild
+    test suite (``tests/test_decision_supersession_rebuild.py``)
+    imports it by name. Behaviour is unchanged: strips an optional
+    role-prefix the LLM intermittently emits (e.g. ``user/message: ...``)
+    then keys on a sorted tokenset of stop-word-filtered,
+    non-low-information tokens. Returns None when fewer than 3
+    informative tokens remain.
     """
     if not evidence:
         return None
@@ -682,12 +688,12 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
             decision_memory = MemoryObject(
                 type="decision",
                 schema_id=f"{plugin_name}.thread_decision",
-                schema_version="v1",
+                schema_version="v2",
                 payload={
                     "decision": td["decision_text"],
                     "decision_evidence_text": td["evidence"],
                     "rationale": None,
-                    "canonical_key": _evidence_canonical_key(td["evidence"]) or normalize_for_index(td["decision_text"]),
+                    "canonical_key": normalize_for_index(td["decision_text"]),
                     "source_type": "thread_detection",
                     "source_id": f"thread:{aggregate.thread_ref}",
                     "semantic_provenance": semantic_provenance,
@@ -729,12 +735,12 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
             investigation_memory = MemoryObject(
                 type="investigation_outcome",
                 schema_id=f"{plugin_name}.thread_investigation",
-                schema_version="v1",
+                schema_version="v2",
                 payload={
                     "investigation_outcome": inv["investigation_text"],
                     "investigation_evidence_text": inv["evidence"],
                     "rationale": None,
-                    "canonical_key": _evidence_canonical_key(inv["evidence"]) or normalize_for_index(inv["investigation_text"]),
+                    "canonical_key": normalize_for_index(inv["investigation_text"]),
                     "source_type": "thread_detection",
                     "source_id": f"thread:{aggregate.thread_ref}",
                     "semantic_provenance": semantic_provenance,
@@ -829,7 +835,7 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 memory_type=new_obj.type,
                 canonical_key=ck,
                 container_ref=aggregate.container_ref,
-                thread_ref=aggregate.thread_ref,
+                thread_ref=None,
                 visibility=aggregate.visibility,
             )
             for new_obj in memory_objects

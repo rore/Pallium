@@ -26,6 +26,17 @@ WRITE_TIME_MODEL_ROLE = "write_time_extraction"
 
 WORK_REFS_METADATA_KEY = "pallium_work_refs"
 
+# Memory types whose supersession hints are emitted at container scope
+# (thread_ref dropped). Decisions and investigation_outcomes were widened
+# from thread scope as part of T2 (2026-06-04) — same canonical decision
+# text in different threads of the same container should collapse onto one
+# active row. Constraints have always been container-scoped.
+_CONTAINER_SCOPED_HINT_TYPES = frozenset({
+    CONSTRAINT_MEMORY_TYPE,
+    "decision",
+    "investigation_outcome",
+})
+
 
 def _work_refs_from_metadata(metadata: dict[str, object] | None) -> tuple[str, ...]:
     """Read and normalize work_refs from source item metadata (runtime hints)."""
@@ -287,25 +298,26 @@ def _apply_direct_memory_envelopes(
 
 
 def build_supersession_hints(source_item: SourceItem, result: ProcessResult) -> list[SupersessionHint]:
-    if not source_item.container_ref or not source_item.thread_ref:
+    if not source_item.container_ref:
         return []
     hints: list[SupersessionHint] = []
     for memory_object in result.memory_objects:
-        if memory_object.type not in {'decision', 'investigation_outcome'} and memory_object.type != CONSTRAINT_MEMORY_TYPE:
+        if memory_object.type not in _CONTAINER_SCOPED_HINT_TYPES:
             continue
         canonical_key = str(memory_object.payload.get('canonical_key') or '').strip()
         if not canonical_key:
             continue
-        # Constraints are container-scoped: same constraint stated in different
-        # threads should supersede. Decisions/investigations remain thread-scoped.
-        hint_thread_ref = None if memory_object.type == CONSTRAINT_MEMORY_TYPE else source_item.thread_ref
+        # All eligible types are container-scoped: same canonical_key in different
+        # threads should supersede. Decisions/investigations were thread-scoped
+        # before T2; widening to container scope catches the cross-thread rebuild
+        # collisions observed in production (see merge_policy.md).
         hints.append(
             SupersessionHint(
                 replacement_memory_id=memory_object.id,
                 memory_type=memory_object.type,
                 canonical_key=canonical_key,
                 container_ref=source_item.container_ref,
-                thread_ref=hint_thread_ref,
+                thread_ref=None,
                 visibility=source_item.visibility,
             )
         )
