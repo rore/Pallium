@@ -387,13 +387,13 @@
   .type-chip.investigation_outcome { color: var(--purple); border-color: var(--purple); background: rgba(170,102,255,0.1); }
   .type-chip.thread_summary        { color: var(--teal);   border-color: var(--teal);   background: rgba(102,170,102,0.1); }
   .type-chip.task_checkpoint       { color: var(--orange); border-color: var(--orange); background: rgba(204,136,68,0.1); }
+  .type-chip.task_trace            { color: #ffb86c;       border-color: #ffb86c;       background: rgba(255,184,108,0.1); }
   .type-chip.interest              { color: var(--yellow); border-color: var(--yellow); background: rgba(170,170,102,0.1); }
   .type-chip.constraint_memory     { color: var(--red);    border-color: var(--red);    background: rgba(255,102,102,0.1); }
-  .type-chip.pattern_memory        { color: #b0a0ff;       border-color: #b0a0ff;       background: rgba(176,160,255,0.1); }
-  .type-chip.continuity_memory     { color: #8fd0ff;       border-color: #8fd0ff;       background: rgba(143,208,255,0.1); }
+  .type-chip.note                  { color: #ffd966;       border-color: #ffd966;       background: rgba(255,217,102,0.1); }
   .type-chip.atomic_fact           { color: #aaffcc;       border-color: #aaffcc;       background: rgba(170,255,204,0.1); }
   .type-chip.fact_summary          { color: var(--green);  border-color: var(--green);  background: rgba(0,255,51,0.08); }
-  .type-chip.turn_summary    { color: var(--muted);  border-color: var(--border); background: transparent; }
+  .type-chip.turn_summary          { color: var(--muted);  border-color: var(--border); background: transparent; }
 
   .lc-chip {
     display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px;
@@ -730,17 +730,17 @@
       <input type="text" id="search-input" placeholder="Search memories…">
       <select id="type-filter">
         <option value="">All types</option>
-        <option value="decision">decision</option>
-        <option value="investigation_outcome">investigation_outcome</option>
-        <option value="thread_summary">thread_summary</option>
-        <option value="task_checkpoint">task_checkpoint</option>
-        <option value="interest">interest</option>
-        <option value="constraint_memory">constraint_memory</option>
-        <option value="pattern_memory">pattern_memory</option>
-        <option value="continuity_memory">continuity_memory</option>
         <option value="atomic_fact">atomic_fact</option>
+        <option value="constraint_memory">constraint_memory</option>
+        <option value="decision">decision</option>
         <option value="fact_summary">fact_summary</option>
-        <option value="turn_summary">Turn Summary</option>
+        <option value="interest">interest</option>
+        <option value="investigation_outcome">investigation_outcome</option>
+        <option value="note">note</option>
+        <option value="task_checkpoint">task_checkpoint</option>
+        <option value="task_trace">task_trace</option>
+        <option value="thread_summary">thread_summary</option>
+        <option value="turn_summary">turn_summary</option>
       </select>
       <select id="lc-filter">
         <option value="">All lifecycles</option>
