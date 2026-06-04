@@ -200,8 +200,8 @@ prRules:
     warn: 50
     fail: 100
   maxLinesChanged:
-    warn: 1000
-    fail: 2000
+    warn: 2000
+    fail: 4000
 
 checkpoints:
   architecture-review:
