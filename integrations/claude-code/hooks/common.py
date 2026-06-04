@@ -455,7 +455,7 @@ class TurnData:
 
 
 DISCOVERY_TOOLS = frozenset({"Read", "Bash", "Grep", "Glob"})
-PRODUCTIVE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
+PRODUCTIVE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "apply_patch"})
 EXCLUDED_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "TodoWrite", "Agent", "TaskOutput", "TaskStop"})
 BASH_OUTPUT_LIMIT = 600
 GREP_MATCH_LIMIT = 20
@@ -524,84 +524,156 @@ def _extract_tool_call(name: str, tool_input: dict, tool_output: str) -> dict | 
         paths = [redact_sensitive(p) for p in tool_output.strip().splitlines()[:GLOB_PATH_LIMIT]] if tool_output else []
         return {"tool": "Glob", "pattern": pattern, "paths": paths}
 
+    if name == "apply_patch":
+        # Codex apply_patch (function_call freeform body OR top-level
+        # apply_patch_call structured operation). Claude Code transcripts
+        # do not natively emit this, but the extractor must handle it
+        # because the Codex translator emits synthetic apply_patch tool_use
+        # blocks and parity requires the Claude Code path to recognize the
+        # name when it appears (e.g., synthetic test fixtures or any
+        # future Codex variant via shared message content).
+        body_raw = tool_input.get("body")
+        operation_raw = tool_input.get("operation")
+        result: dict = {"tool": "apply_patch"}
+        if isinstance(body_raw, str) and body_raw:
+            body_clean = redact_sensitive(body_raw)
+            result["body"] = body_clean[:BASH_OUTPUT_LIMIT]
+        if isinstance(operation_raw, dict) and operation_raw:
+            op_clean = dict(operation_raw)
+            diff = op_clean.get("diff")
+            if isinstance(diff, str):
+                op_clean["diff"] = redact_sensitive(diff)[:BASH_OUTPUT_LIMIT]
+            path = op_clean.get("path")
+            if isinstance(path, str):
+                op_clean["path"] = redact_sensitive(path)
+            result["operation"] = op_clean
+        # Drop the entry entirely if we have no body and no operation —
+        # nothing useful to record.
+        if "body" not in result and "operation" not in result:
+            return None
+        return result
+
     return None
 
 
-def read_turn(transcript_path: str) -> TurnData | None:
-    """Read the last assistant turn, extracting text and tool calls.
+@dataclass
+class _Line:
+    """Decoded JSONL line for the turn-bracket pipeline.
 
-    Single-pass replacement for read_last_assistant_turn(). Returns TurnData
-    with assistant response text, filtered/redacted tool calls, and
-    has_productive_action flag.
+    role: "user" | "assistant" | None for non-message lines (which are dropped)
+    content: str | list of blocks (Anthropic-style)
+    uuid / parent_uuid: reserved for future use; not currently consumed
     """
-    try:
-        file_size = os.path.getsize(transcript_path)
-    except OSError:
+    role: str | None
+    content: Any
+    uuid: str | None = None
+    parent_uuid: str | None = None
+
+
+def _decode_line(entry: dict) -> _Line | None:
+    """Decode a Claude Code JSONL entry into a _Line, or None if it carries
+    no message content (attachments, queue-operation, file-history-snapshot,
+    custom-title, last-prompt, etc.)."""
+    role = None
+    content = None
+    if "message" in entry and isinstance(entry["message"], dict):
+        role = entry["message"].get("role")
+        content = entry["message"].get("content")
+    elif "role" in entry:
+        role = entry.get("role")
+        content = entry.get("content")
+    if role is None or content is None:
         return None
+    return _Line(
+        role=role,
+        content=content,
+        uuid=entry.get("uuid"),
+        parent_uuid=entry.get("parentUuid"),
+    )
 
-    if file_size == 0:
-        return None
 
-    try:
-        if file_size > 10 * 1024 * 1024:
-            with open(transcript_path, "rb") as f:
-                f.seek(-2 * 1024 * 1024, 2)
-                raw = f.read().decode("utf-8", errors="replace")
-            lines = raw.splitlines()
-            if lines:
-                lines = lines[1:]
-        else:
-            with open(transcript_path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.read().splitlines()
-    except OSError:
-        return None
+def _is_real_user_prompt(content: Any) -> bool:
+    """True if user content is anything other than exclusively tool_result blocks.
 
-    last_assistant_content = None
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
-            continue
+    A user line whose content is a string, or whose content list contains any
+    non-tool_result block (text, image, etc.), is a real user prompt and bounds
+    a turn. A user line whose content list is empty or contains only
+    tool_result blocks is just tool plumbing, not a turn boundary.
+    """
+    if not isinstance(content, list):
+        return True  # string content is a real user prompt
+    if not content:
+        return False  # empty list: not a real prompt
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_result":
+            return True
+    return False
 
-        role = None
-        content = None
 
-        if "message" in entry and isinstance(entry["message"], dict):
-            role = entry["message"].get("role")
-            content = entry["message"].get("content")
-        elif "role" in entry:
-            role = entry.get("role")
-            content = entry.get("content")
+def _find_turn_start_index(lines: list[_Line]) -> int:
+    """Find the index of the first line in the most-recent turn.
 
-        if role == "assistant" and content is not None:
-            last_assistant_content = content
+    Walks backward from the end looking for a user line that is a real prompt.
+    Returns the index AFTER that boundary (start of the turn). If no boundary
+    is found, returns 0 — the entire stream is treated as one turn (handles
+    legacy single-line synthetic shape and tail-truncated transcripts).
+    """
+    for i in range(len(lines) - 1, -1, -1):
+        line = lines[i]
+        if line.role == "user" and _is_real_user_prompt(line.content):
+            return i + 1
+    return 0
 
-    if last_assistant_content is None:
-        return None
 
+def _extract_turn(turn_lines: list[_Line]) -> tuple[str, list[dict], bool, list[str]]:
+    """Walk the turn forward and aggregate text, tool_uses, tool_results.
+
+    Returns (assistant_text, tool_calls, has_productive_action, files_modified).
+
+    Codex append-only invariant: tool_use blocks always appear before their
+    matching tool_result blocks, so a single forward pass with a tool_uses
+    table is sufficient. tool_result blocks are accepted from ANY line role
+    (user lines in real Claude Code, assistant lines in legacy synthetic
+    fixtures) — extraction gates on tool_use_id lookup, not on line role.
+
+    apply_patch tool_uses without matching tool_results are surfaced anyway
+    in a post-pass: their structured operation / freeform body is the
+    payload, the (absent) tool_result would only carry status text.
+    """
     text_parts: list[str] = []
     tool_calls: list[dict] = []
     has_productive = False
     files_modified: list[str] = []
+    tool_uses: dict[str, dict] = {}
+    resolved_tool_use_ids: set[str] = set()
 
-    if isinstance(last_assistant_content, str):
-        text_parts.append(last_assistant_content)
-    elif isinstance(last_assistant_content, list):
-        tool_uses: dict[str, dict] = {}
-        for block in last_assistant_content:
+    for line in turn_lines:
+        content = line.content
+        if isinstance(content, str):
+            # Treat string content as text only on assistant lines; user
+            # string content is the user prompt itself (not part of the
+            # assistant response).
+            if line.role == "assistant" and content:
+                text_parts.append(content)
+            continue
+        if not isinstance(content, list):
+            continue
+
+        for block in content:
             if not isinstance(block, dict):
                 continue
             block_type = block.get("type", "")
+
             if block_type == "text":
-                text_parts.append(block.get("text", ""))
+                # Only assistant text contributes to the response text.
+                if line.role == "assistant":
+                    text_parts.append(block.get("text", ""))
             elif block_type == "tool_use":
                 tool_name = block.get("name", "")
                 tool_id = block.get("id", "")
-                tool_input = block.get("input", {})
-                tool_uses[tool_id] = {"name": tool_name, "input": tool_input}
+                tool_input = block.get("input", {}) if isinstance(block.get("input"), dict) else {}
+                if tool_id:
+                    tool_uses[tool_id] = {"name": tool_name, "input": tool_input}
                 if tool_name in PRODUCTIVE_TOOLS:
                     has_productive = True
                     fp: str | None = None
@@ -609,11 +681,21 @@ def read_turn(transcript_path: str) -> TurnData | None:
                         fp = tool_input.get("file_path", "")
                     elif tool_name == "NotebookEdit":
                         fp = tool_input.get("notebook_path", "")
+                    elif tool_name == "apply_patch":
+                        # Structured form (Codex apply_patch_call) carries
+                        # the path; freeform form does not.
+                        op = tool_input.get("operation")
+                        if isinstance(op, dict):
+                            p = op.get("path")
+                            if isinstance(p, str):
+                                fp = p
                     if fp:
                         fp = redact_sensitive(fp)
                         if fp not in files_modified:
                             files_modified.append(fp)
             elif block_type == "tool_result":
+                # tool_result blocks are accepted regardless of line role
+                # (real Claude Code: user line; legacy synthetic: assistant line).
                 tool_use_id = block.get("tool_use_id", "")
                 tool_output_raw = block.get("content", "") or block.get("text", "")
                 if isinstance(tool_output_raw, list):
@@ -628,9 +710,76 @@ def read_turn(transcript_path: str) -> TurnData | None:
                     extracted = _extract_tool_call(use["name"], use["input"], tool_output)
                     if extracted is not None:
                         tool_calls.append(extracted)
+                    resolved_tool_use_ids.add(tool_use_id)
 
-    assistant_text = "\n".join(text_parts)
-    if not assistant_text.strip() and not tool_calls:
+    # Post-pass: surface apply_patch tool_uses with no matching tool_result.
+    # The structured operation / freeform body is itself the payload; the
+    # missing output would only have carried status text.
+    for use_id, use in tool_uses.items():
+        if use["name"] != "apply_patch":
+            continue
+        if use_id in resolved_tool_use_ids:
+            continue
+        extracted = _extract_tool_call("apply_patch", use["input"], "")
+        if extracted is not None:
+            tool_calls.append(extracted)
+
+    return ("\n".join(text_parts), tool_calls, has_productive, files_modified)
+
+
+def read_turn(transcript_path: str) -> TurnData | None:
+    """Read the most-recent turn from a Claude Code JSONL transcript.
+
+    Three-step pipeline:
+      1. Read JSONL lines (full read for <=10 MB; tail 2 MB for larger).
+      2. Decode to _Line records and find the turn-start boundary.
+      3. Walk turn forward, aggregate tool_use/tool_result via tool_use_id table.
+    """
+    try:
+        file_size = os.path.getsize(transcript_path)
+    except OSError:
+        return None
+    if file_size == 0:
+        return None
+
+    try:
+        if file_size > 10 * 1024 * 1024:
+            with open(transcript_path, "rb") as f:
+                f.seek(-2 * 1024 * 1024, 2)
+                raw = f.read().decode("utf-8", errors="replace")
+            raw_lines = raw.splitlines()
+            if raw_lines:
+                raw_lines = raw_lines[1:]  # drop first (likely partial) line
+        else:
+            with open(transcript_path, "r", encoding="utf-8", errors="replace") as f:
+                raw_lines = f.read().splitlines()
+    except OSError:
+        return None
+
+    lines: list[_Line] = []
+    for raw_line in raw_lines:
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            entry = json.loads(raw_line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        decoded = _decode_line(entry)
+        if decoded is not None:
+            lines.append(decoded)
+
+    if not lines:
+        return None
+
+    start_idx = _find_turn_start_index(lines)
+    turn_lines = lines[start_idx:]
+    if not turn_lines:
+        return None
+
+    assistant_text, tool_calls, has_productive, files_modified = _extract_turn(turn_lines)
+
+    if not assistant_text.strip() and not tool_calls and not has_productive:
         return None
 
     return TurnData(
@@ -649,6 +798,7 @@ def build_work_trace_metadata(turn_data: TurnData) -> dict | None:
     files_read: list[str] = []
     commands: list[dict] = []
     grep_patterns: list[str] = []
+    patch_bodies: list[dict] = []
 
     for call in turn_data.tool_calls:
         tool = call.get("tool")
@@ -667,8 +817,22 @@ def build_work_trace_metadata(turn_data: TurnData) -> dict | None:
             pattern = call.get("pattern", "")
             if pattern and pattern not in grep_patterns:
                 grep_patterns.append(pattern)
+        elif tool == "apply_patch":
+            entry: dict = {}
+            if "body" in call:
+                entry["body"] = call["body"]
+            if "operation" in call:
+                entry["operation"] = call["operation"]
+            if entry:
+                patch_bodies.append(entry)
 
-    if not files_read and not commands and not grep_patterns and not turn_data.files_modified:
+    if (
+        not files_read
+        and not commands
+        and not grep_patterns
+        and not turn_data.files_modified
+        and not patch_bodies
+    ):
         return None
 
     result: dict = {
@@ -679,4 +843,6 @@ def build_work_trace_metadata(turn_data: TurnData) -> dict | None:
     }
     if turn_data.files_modified:
         result["files_modified"] = turn_data.files_modified
+    if patch_bodies:
+        result["patch_bodies"] = patch_bodies
     return result

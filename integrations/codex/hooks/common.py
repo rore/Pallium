@@ -459,7 +459,7 @@ class TurnData:
 
 
 DISCOVERY_TOOLS = frozenset({"Read", "Bash", "Grep", "Glob"})
-PRODUCTIVE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
+PRODUCTIVE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "apply_patch"})
 EXCLUDED_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "TodoWrite", "Agent", "TaskOutput", "TaskStop"})
 BASH_OUTPUT_LIMIT = 600
 GREP_MATCH_LIMIT = 20
@@ -528,84 +528,315 @@ def _extract_tool_call(name: str, tool_input: dict, tool_output: str) -> dict | 
         paths = [redact_sensitive(p) for p in tool_output.strip().splitlines()[:GLOB_PATH_LIMIT]] if tool_output else []
         return {"tool": "Glob", "pattern": pattern, "paths": paths}
 
+    if name == "apply_patch":
+        # Codex apply_patch — function_call with freeform body, OR top-level
+        # apply_patch_call with structured operation.
+        body_raw = tool_input.get("body")
+        operation_raw = tool_input.get("operation")
+        result: dict = {"tool": "apply_patch"}
+        if isinstance(body_raw, str) and body_raw:
+            body_clean = redact_sensitive(body_raw)
+            result["body"] = body_clean[:BASH_OUTPUT_LIMIT]
+        if isinstance(operation_raw, dict) and operation_raw:
+            op_clean = dict(operation_raw)
+            diff = op_clean.get("diff")
+            if isinstance(diff, str):
+                op_clean["diff"] = redact_sensitive(diff)[:BASH_OUTPUT_LIMIT]
+            path = op_clean.get("path")
+            if isinstance(path, str):
+                op_clean["path"] = redact_sensitive(path)
+            result["operation"] = op_clean
+        if "body" not in result and "operation" not in result:
+            return None
+        return result
+
     return None
 
 
-def read_turn(transcript_path: str) -> TurnData | None:
-    """Read the last assistant turn, extracting text and tool calls."""
-    try:
-        file_size = os.path.getsize(transcript_path)
-    except OSError:
-        return None
+@dataclass
+class _Line:
+    """Decoded JSONL line for the turn-bracket pipeline.
 
-    if file_size == 0:
-        return None
+    role: "user" | "assistant" | None for non-message lines (which are dropped)
+    content: str | list of blocks (Anthropic-style synthetic for Codex)
+    uuid / parent_uuid: reserved for future use; not currently consumed
+    """
+    role: str | None
+    content: Any
+    uuid: str | None = None
+    parent_uuid: str | None = None
 
-    try:
-        if file_size > 10 * 1024 * 1024:
-            with open(transcript_path, "rb") as f:
-                f.seek(-2 * 1024 * 1024, 2)
-                raw = f.read().decode("utf-8", errors="replace")
-            lines = raw.splitlines()
-            if lines:
-                lines = lines[1:]
-        else:
-            with open(transcript_path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.read().splitlines()
-    except OSError:
-        return None
 
-    last_assistant_content = None
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
+# Codex tool-name aliases — small enrichment layer per design §3.3.
+# Shape-tolerant decoding does the heavy lifting; aliases are the small
+# version-independent bit. Sources: codex-rs core/src/tools/handlers/* and
+# OpenAI Responses API docs (deep-research 2026-06-04).
+_CODEX_SHELL_ALIASES = frozenset({
+    "shell_command", "exec_command", "cmd", "run_terminal_cmd",
+})
+_CODEX_PATCH_ALIASES = frozenset({"apply_patch"})
+_CODEX_EXCLUDED_ALIASES = frozenset({
+    "update_plan", "plan",
+    "view_image",
+    "request_user_input", "request_permissions",
+    "spawn_agent", "send_input", "resume_agent", "wait_agent", "close_agent",
+})
+
+
+def _codex_synthetic_tool_use(call_id: str, mapped_name: str, parsed_input: dict) -> dict:
+    return {
+        "type": "tool_use",
+        "id": call_id,
+        "name": mapped_name,
+        "input": parsed_input,
+    }
+
+
+def _codex_synthetic_tool_result(call_id: str, output_str: str) -> dict:
+    return {
+        "type": "tool_result",
+        "tool_use_id": call_id,
+        "content": output_str,
+    }
+
+
+def _codex_normalize_output(raw: Any) -> str:
+    """Fold function_call_output / shell_call_output / apply_patch_call_output
+    into a string for _extract_tool_call's existing Bash regex (per §3.4).
+
+    raw is one of: str | dict | list.
+    """
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, list):
+        # typed-block array (e.g. view_image input_image, MCP output_text):
+        # concatenate text fields, drop image/binary data.
+        parts: list[str] = []
+        for b in raw:
+            if isinstance(b, dict) and isinstance(b.get("text"), str):
+                parts.append(b["text"])
+        return "\n".join(parts)
+    if isinstance(raw, dict):
+        # apply_patch_call_output.output is {status, output?}; flatten.
+        if "status" in raw:
+            inner = raw.get("output") or ""
+            if not isinstance(inner, str):
+                inner = _codex_normalize_output(inner)
+            return f"Status: {raw['status']}\n{inner}".strip()
+        # shell_call_output structured shape (Responses): {outcome:{...}, stdout, stderr}.
+        # Synthesize the legacy "Exit code: N" string for the Bash regex.
+        outcome = raw.get("outcome")
+        if isinstance(outcome, dict):
+            exit_code = (
+                outcome.get("exit")
+                or outcome.get("exit_code")
+                or outcome.get("code")
+                or 0
+            )
+            stdout = raw.get("stdout") or ""
+            stderr = raw.get("stderr") or ""
+            return f"Exit code: {exit_code}\nOutput:\n{stdout}\nStderr:\n{stderr}"
+        # unknown object shape — JSON-encode, truncate downstream.
         try:
-            entry = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
-            continue
+            return json.dumps(raw)[:BASH_OUTPUT_LIMIT * 4]
+        except (TypeError, ValueError):
+            return ""
+    return ""
 
-        role = None
-        content = None
 
-        if entry.get("type") == "response_item" and isinstance(entry.get("payload"), dict):
-            payload = entry["payload"]
-            if payload.get("type") == "message":
-                role = payload.get("role")
-                content = payload.get("content")
-        elif "message" in entry and isinstance(entry["message"], dict):
-            role = entry["message"].get("role")
-            content = entry["message"].get("content")
-        elif "role" in entry:
-            role = entry.get("role")
-            content = entry.get("content")
+def _codex_classify_tool_call(payload: dict) -> tuple[str, dict] | None:
+    """Map a Codex function_call / shell_call / apply_patch_call payload to
+    (mapped_name, parsed_input). Returns None if the tool should be dropped.
 
-        if role == "assistant" and content is not None:
-            last_assistant_content = content
+    Mapping rules per design §3.3.
+    """
+    pt = payload.get("type", "")
+    if pt == "function_call":
+        name = payload.get("name", "")
+        args_raw = payload.get("arguments", "")
+        if name in _CODEX_SHELL_ALIASES:
+            try:
+                parsed = json.loads(args_raw or "{}")
+                if not isinstance(parsed, dict):
+                    return None
+                cmd = parsed.get("command") or parsed.get("cmd") or ""
+                if isinstance(cmd, list):
+                    cmd = " ".join(str(c) for c in cmd)
+                if not isinstance(cmd, str) or not cmd:
+                    return None
+                return ("Bash", {"command": cmd})
+            except (ValueError, TypeError):
+                return None
+        if name in _CODEX_PATCH_ALIASES:
+            # apply_patch arguments: freeform DSL string OR JSON-wrapped {body}.
+            body = ""
+            if isinstance(args_raw, str):
+                # Try JSON first; fall back to freeform body.
+                try:
+                    parsed = json.loads(args_raw or "{}")
+                    if isinstance(parsed, dict):
+                        body = parsed.get("body") or parsed.get("patch") or ""
+                        if not isinstance(body, str):
+                            body = ""
+                    else:
+                        body = args_raw
+                except (ValueError, TypeError):
+                    body = args_raw
+            return ("apply_patch", {"body": body})
+        if name in _CODEX_EXCLUDED_ALIASES:
+            return None
+        return None  # unknown function name — drop (rule 7)
+    if pt == "shell_call":
+        action = payload.get("action") or {}
+        if isinstance(action, dict):
+            cmd = action.get("command") or action.get("cmd") or ""
+            if isinstance(cmd, list):
+                cmd = " ".join(str(c) for c in cmd)
+            if isinstance(cmd, str) and cmd:
+                return ("Bash", {"command": cmd})
+        return None
+    if pt == "apply_patch_call":
+        return ("apply_patch", {"operation": payload.get("operation") or {}})
+    return None
 
-    if last_assistant_content is None:
+
+def _decode_line(entry: dict) -> _Line | None:
+    """Decode a Codex JSONL line into a synthetic _Line, or None if dropped.
+
+    Translates OpenAI Responses items (function_call / shell_call /
+    apply_patch_call and their _output variants) into Anthropic-shape
+    synthetic blocks so the turn-bracket pipeline runs unchanged.
+
+    Per design §3.3 / §3.7. Per research findings, real Codex rollouts
+    do NOT emit Anthropic-style nested blocks — but a `message` whose
+    content list contains them would still resolve correctly through
+    the same tool_use_id table mechanism.
+    """
+    line_type = entry.get("type")
+
+    if line_type == "response_item":
+        payload = entry.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        pt = payload.get("type", "")
+
+        if pt == "message":
+            role = payload.get("role")
+            if role not in ("user", "assistant"):
+                # developer / system / unknown — context only, not turn-bounding
+                return None
+            content = payload.get("content")
+            if content is None:
+                return None
+            return _Line(role=role, content=content)
+
+        if pt in ("function_call", "shell_call", "apply_patch_call"):
+            classified = _codex_classify_tool_call(payload)
+            if classified is None:
+                return None
+            mapped_name, parsed_input = classified
+            call_id = payload.get("call_id", "")
+            if not call_id:
+                return None
+            block = _codex_synthetic_tool_use(call_id, mapped_name, parsed_input)
+            return _Line(role="assistant", content=[block])
+
+        if pt in ("function_call_output", "shell_call_output", "apply_patch_call_output"):
+            call_id = payload.get("call_id", "")
+            if not call_id:
+                return None
+            output_str = _codex_normalize_output(payload.get("output"))
+            block = _codex_synthetic_tool_result(call_id, output_str)
+            return _Line(role="user", content=[block])
+
+        # reasoning, web_search_call, tool_search_call, computer_call_*,
+        # code_interpreter_call_*, and any future hosted tool — drop.
         return None
 
+    if line_type == "event_msg":
+        payload = entry.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("type") == "user_message":
+            text = payload.get("message") or payload.get("text") or ""
+            if isinstance(text, str) and text.strip():
+                return _Line(role="user", content=text)
+        return None
+
+    # Legacy/Anthropic-style fallback (Codex variants that wrap messages
+    # the Claude Code way) — preserved for forward-compat per §3.6.
+    if "message" in entry and isinstance(entry["message"], dict):
+        role = entry["message"].get("role")
+        content = entry["message"].get("content")
+        if role in ("user", "assistant") and content is not None:
+            return _Line(role=role, content=content)
+
+    # session_meta, turn_context, compacted, unknown — drop.
+    return None
+
+
+def _is_real_user_prompt(content: Any) -> bool:
+    """True if user content is anything other than exclusively tool_result blocks."""
+    if not isinstance(content, list):
+        return True
+    if not content:
+        return False
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_result":
+            return True
+    return False
+
+
+def _find_turn_start_index(lines: list[_Line]) -> int:
+    """Walk backward to the first real user prompt; return the index AFTER it."""
+    for i in range(len(lines) - 1, -1, -1):
+        line = lines[i]
+        if line.role == "user" and _is_real_user_prompt(line.content):
+            return i + 1
+    return 0
+
+
+def _extract_turn(turn_lines: list[_Line]) -> tuple[str, list[dict], bool, list[str]]:
+    """Walk the turn forward and aggregate text, tool_uses, tool_results.
+
+    Codex append-only invariant: tool_use blocks always appear before their
+    matching tool_result blocks, so a single forward pass with a tool_uses
+    table is sufficient. tool_result blocks are accepted from ANY line role.
+
+    apply_patch tool_uses without matching tool_results are surfaced via a
+    post-pass (§3.9: the structured operation / freeform body is itself the
+    payload).
+    """
     text_parts: list[str] = []
     tool_calls: list[dict] = []
     has_productive = False
     files_modified: list[str] = []
+    tool_uses: dict[str, dict] = {}
+    resolved_tool_use_ids: set[str] = set()
 
-    if isinstance(last_assistant_content, str):
-        text_parts.append(last_assistant_content)
-    elif isinstance(last_assistant_content, list):
-        tool_uses: dict[str, dict] = {}
-        for block in last_assistant_content:
+    for line in turn_lines:
+        content = line.content
+        if isinstance(content, str):
+            if line.role == "assistant" and content:
+                text_parts.append(content)
+            continue
+        if not isinstance(content, list):
+            continue
+
+        for block in content:
             if not isinstance(block, dict):
                 continue
             block_type = block.get("type", "")
+
             if block_type in ("text", "output_text", "input_text"):
-                text_parts.append(block.get("text", ""))
+                if line.role == "assistant":
+                    text_parts.append(block.get("text", ""))
             elif block_type == "tool_use":
                 tool_name = block.get("name", "")
                 tool_id = block.get("id", "")
-                tool_input = block.get("input", {})
-                tool_uses[tool_id] = {"name": tool_name, "input": tool_input}
+                tool_input = block.get("input", {}) if isinstance(block.get("input"), dict) else {}
+                if tool_id:
+                    tool_uses[tool_id] = {"name": tool_name, "input": tool_input}
                 if tool_name in PRODUCTIVE_TOOLS:
                     has_productive = True
                     fp: str | None = None
@@ -613,6 +844,12 @@ def read_turn(transcript_path: str) -> TurnData | None:
                         fp = tool_input.get("file_path", "")
                     elif tool_name == "NotebookEdit":
                         fp = tool_input.get("notebook_path", "")
+                    elif tool_name == "apply_patch":
+                        op = tool_input.get("operation")
+                        if isinstance(op, dict):
+                            p = op.get("path")
+                            if isinstance(p, str):
+                                fp = p
                     if fp:
                         fp = redact_sensitive(fp)
                         if fp not in files_modified:
@@ -632,9 +869,75 @@ def read_turn(transcript_path: str) -> TurnData | None:
                     extracted = _extract_tool_call(use["name"], use["input"], tool_output)
                     if extracted is not None:
                         tool_calls.append(extracted)
+                    resolved_tool_use_ids.add(tool_use_id)
 
-    assistant_text = "\n".join(text_parts)
-    if not assistant_text.strip() and not tool_calls:
+    # Post-pass: surface apply_patch tool_uses without matching tool_results.
+    for use_id, use in tool_uses.items():
+        if use["name"] != "apply_patch":
+            continue
+        if use_id in resolved_tool_use_ids:
+            continue
+        extracted = _extract_tool_call("apply_patch", use["input"], "")
+        if extracted is not None:
+            tool_calls.append(extracted)
+
+    return ("\n".join(text_parts), tool_calls, has_productive, files_modified)
+
+
+def read_turn(transcript_path: str) -> TurnData | None:
+    """Read the most-recent turn from a Codex JSONL rollout transcript.
+
+    Three-step pipeline (per design §4):
+      1. Read JSONL lines (full read for <=10 MB; tail 2 MB for larger).
+      2. Decode to _Line records via the Codex translator (§3.7) and
+         find the turn-start boundary (§3.2).
+      3. Walk turn forward, aggregate via tool_use_id table.
+    """
+    try:
+        file_size = os.path.getsize(transcript_path)
+    except OSError:
+        return None
+    if file_size == 0:
+        return None
+
+    try:
+        if file_size > 10 * 1024 * 1024:
+            with open(transcript_path, "rb") as f:
+                f.seek(-2 * 1024 * 1024, 2)
+                raw = f.read().decode("utf-8", errors="replace")
+            raw_lines = raw.splitlines()
+            if raw_lines:
+                raw_lines = raw_lines[1:]
+        else:
+            with open(transcript_path, "r", encoding="utf-8", errors="replace") as f:
+                raw_lines = f.read().splitlines()
+    except OSError:
+        return None
+
+    lines: list[_Line] = []
+    for raw_line in raw_lines:
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            entry = json.loads(raw_line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        decoded = _decode_line(entry)
+        if decoded is not None:
+            lines.append(decoded)
+
+    if not lines:
+        return None
+
+    start_idx = _find_turn_start_index(lines)
+    turn_lines = lines[start_idx:]
+    if not turn_lines:
+        return None
+
+    assistant_text, tool_calls, has_productive, files_modified = _extract_turn(turn_lines)
+
+    if not assistant_text.strip() and not tool_calls and not has_productive:
         return None
 
     return TurnData(
@@ -653,6 +956,7 @@ def build_work_trace_metadata(turn_data: TurnData) -> dict | None:
     files_read: list[str] = []
     commands: list[dict] = []
     grep_patterns: list[str] = []
+    patch_bodies: list[dict] = []
 
     for call in turn_data.tool_calls:
         tool = call.get("tool")
@@ -671,8 +975,22 @@ def build_work_trace_metadata(turn_data: TurnData) -> dict | None:
             pattern = call.get("pattern", "")
             if pattern and pattern not in grep_patterns:
                 grep_patterns.append(pattern)
+        elif tool == "apply_patch":
+            entry: dict = {}
+            if "body" in call:
+                entry["body"] = call["body"]
+            if "operation" in call:
+                entry["operation"] = call["operation"]
+            if entry:
+                patch_bodies.append(entry)
 
-    if not files_read and not commands and not grep_patterns and not turn_data.files_modified:
+    if (
+        not files_read
+        and not commands
+        and not grep_patterns
+        and not turn_data.files_modified
+        and not patch_bodies
+    ):
         return None
 
     result: dict = {
@@ -683,4 +1001,6 @@ def build_work_trace_metadata(turn_data: TurnData) -> dict | None:
     }
     if turn_data.files_modified:
         result["files_modified"] = turn_data.files_modified
+    if patch_bodies:
+        result["patch_bodies"] = patch_bodies
     return result

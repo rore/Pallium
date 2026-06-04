@@ -1,0 +1,8 @@
+{"type":"user","uuid":"u00000001","parentUuid":null,"message":{"role":"user","content":"First task: read foo.py."}}
+{"type":"assistant","uuid":"a00000001","parentUuid":"u00000001","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_t1_01","name":"Read","input":{"file_path":"src/foo.py"}}]}}
+{"type":"user","uuid":"u00000002","parentUuid":"a00000001","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_t1_01","content":"foo content"}]}}
+{"type":"assistant","uuid":"a00000002","parentUuid":"u00000002","message":{"role":"assistant","content":[{"type":"text","text":"Read foo.py."}]}}
+{"type":"user","uuid":"u00000003","parentUuid":"a00000002","message":{"role":"user","content":"Second task: now read bar.py."}}
+{"type":"assistant","uuid":"a00000003","parentUuid":"u00000003","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_t2_01","name":"Read","input":{"file_path":"src/bar.py"}}]}}
+{"type":"user","uuid":"u00000004","parentUuid":"a00000003","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_t2_01","content":"bar content"}]}}
+{"type":"assistant","uuid":"a00000004","parentUuid":"u00000004","message":{"role":"assistant","content":[{"type":"text","text":"Read bar.py."}]}}
