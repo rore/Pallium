@@ -1,0 +1,9 @@
+{"type":"session_meta","payload":{"id":"sess-codex-2t-1","timestamp":"2026-06-04T11:00:00Z"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"First task: list the directory."}]}}
+{"type":"response_item","payload":{"type":"function_call","name":"shell_command","call_id":"call_t1_001","arguments":"{\"command\":\"ls -la\",\"workdir\":\"/repo\"}"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_t1_001","output":"Exit code: 0\nWall time: 0.1 seconds\nOutput:\nfoo bar baz"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Listed the directory."}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Second task: now show git status."}]}}
+{"type":"response_item","payload":{"type":"function_call","name":"shell_command","call_id":"call_t2_001","arguments":"{\"command\":\"git status\",\"workdir\":\"/repo\"}"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_t2_001","output":"Exit code: 0\nWall time: 0.2 seconds\nOutput:\nclean"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"git status: clean."}]}}
