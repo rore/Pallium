@@ -71,6 +71,8 @@ function makeInitial() {
       showResolved: false,
       sidebarSearch: "",
       composerTarget: null,
+      lastSeenContentHash: "",
+      fileChangedDetected: false,
     },
   };
 }

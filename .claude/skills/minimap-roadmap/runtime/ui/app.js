@@ -61,6 +61,7 @@ import {
   rollbackSpecSuggestion,
 } from "/spec/composer.js";
 import { initSpec } from "/spec/index.js";
+import { detectSpecFileChange } from "/spec/file-change.js";
 import { createState } from "/state.js";
 
 const FIXED_SECTIONS = ["Summary", "Why", "In Scope", "Out of Scope", "Done When", "Notes"];
@@ -308,6 +309,7 @@ initSpec({
   api,
   helpers: {
     setBanner,
+    clearTransientBanner,
     sameSpecUiPath,
     parseLeadingFrontmatter,
     buildSpecDocHeaderHtml,
@@ -438,11 +440,34 @@ function renderWorkspaceWarnings() {
   return true;
 }
 
+function renderSpecFileChangedBanner() {
+  // Sticky warning banner shown when the periodic poll detects that the
+  // active spec file's contentHash on disk no longer matches the hash we
+  // captured on the last full reload. The banner ships its own "Reload"
+  // button that re-runs loadSpecSession (which restamps the hash and
+  // clears the flag); the user can also dismiss the toast via the
+  // standard ×, in which case the next poll re-renders it.
+  if (!state.spec.fileChangedDetected || !state.spec.selectedPath) {
+    return false;
+  }
+  statusBanner.hidden = false;
+  statusBanner.dataset.tone = "warning";
+  statusBanner.innerHTML = `
+    <span class="status-banner-message">This file changed on disk.</span>
+    <button class="status-banner-action" type="button" data-spec-action="reload-changed-file">Reload</button>
+    <button class="status-banner-dismiss" type="button" aria-label="Dismiss status">&times;</button>
+  `;
+  return true;
+}
+
 function clearTransientBanner() {
-  // Clears the status banner unless there are sticky workspace-level warnings,
-  // in which case re-renders them. Use this instead of setBanner("") whenever
-  // an in-flow operation finishes successfully (item load, save, etc.) so that
-  // workspace warnings (e.g. orphan board items) stay visible.
+  // Clears the status banner unless a sticky condition is active, in which
+  // case re-renders the highest-precedence sticky banner. Spec file-changed
+  // beats workspace warnings because it requires user action (reload) to
+  // restore parity with disk; workspace warnings are informational.
+  if (renderSpecFileChangedBanner()) {
+    return;
+  }
   if (renderWorkspaceWarnings()) {
     return;
   }
@@ -2979,7 +3004,7 @@ function focusSpecSuggestionAnchor(suggestionId) {
     void diff.offsetWidth;
     diff.classList.add("is-spec-diff-pulse");
     window.setTimeout(() => diff.classList.remove("is-spec-diff-pulse"), 1500);
-    setBanner("");
+    clearTransientBanner();
     return;
   }
 
@@ -3157,6 +3182,8 @@ async function loadSpecSessions(options = {}) {
     state.spec.selectedPath = "";
     state.spec.context = null;
     state.spec.content = "";
+    state.spec.lastSeenContentHash = "";
+    state.spec.fileChangedDetected = false;
     state.spec.loadError = null;
   }
   if (!state.spec.selectedPath && state.spec.sessions.length > 0) {
@@ -3187,6 +3214,8 @@ async function loadSpecSession(filePath, options = {}) {
   } catch (error) {
     state.spec.context = null;
     state.spec.content = "";
+    state.spec.lastSeenContentHash = "";
+    state.spec.fileChangedDetected = false;
     state.spec.previewSuggestionId = "";
     state.spec.suggestionPreview = null;
     state.spec.loadError = {
@@ -3205,6 +3234,8 @@ async function loadSpecSession(filePath, options = {}) {
   }
   state.spec.context = context;
   state.spec.content = content.content || "";
+  state.spec.lastSeenContentHash = context?.session?.contentHash || "";
+  state.spec.fileChangedDetected = false;
   state.spec.loadError = null;
   state.spec.previewSuggestionId = "";
   state.spec.suggestionPreview = null;
@@ -3238,6 +3269,8 @@ async function removeSpecSession(filePath) {
     state.spec.selectedPath = state.spec.sessions[0]?.targetFile || "";
     state.spec.context = null;
     state.spec.content = "";
+    state.spec.lastSeenContentHash = "";
+    state.spec.fileChangedDetected = false;
     state.spec.loadError = null;
   }
 
@@ -3261,8 +3294,16 @@ async function refreshSpecReviewState() {
 
   const context = await api.getSessionContext(state.spec.selectedPath);
   state.spec.context = context;
+  // Compare BEFORE rendering so the new flag is in scope when the banner
+  // predicate runs below. The hash watermark is only ever advanced by full
+  // reloads (loadSpecSession); the periodic poll just observes.
+  const freshHash = context?.session?.contentHash || "";
+  if (detectSpecFileChange(state.spec.lastSeenContentHash, freshHash)) {
+    state.spec.fileChangedDetected = true;
+  }
   renderSpecComments();
   syncSpecToolbarChrome();
+  renderSpecFileChangedBanner();
 
   if (shouldRestoreReplyFocus) {
     focusActiveSpecReplyDraft();
@@ -4485,11 +4526,22 @@ window.addEventListener("resize", () => {
 });
 
 statusBanner.addEventListener("click", (event) => {
-  const button = event.target instanceof Element ? event.target.closest(".status-banner-dismiss") : null;
-  if (!button) {
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target) {
     return;
   }
-  setBanner("");
+  const reloadBtn = target.closest('[data-spec-action="reload-changed-file"]');
+  if (reloadBtn) {
+    if (state.spec.selectedPath) {
+      void loadSpecSession(state.spec.selectedPath).catch((error) => {
+        setBanner(error?.message || "Could not reload spec.", "error");
+      });
+    }
+    return;
+  }
+  if (target.closest(".status-banner-dismiss")) {
+    setBanner("");
+  }
 });
 
 setupViewElement.addEventListener("click", (event) => {

@@ -441,6 +441,28 @@ h3 {
   line-height: 1;
 }
 
+.status-banner-action {
+  flex: 0 0 auto;
+  appearance: none;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 2px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.status-banner-action:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.status-banner-action:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+
 .status-banner[data-tone="error"] {
   background: rgba(196, 61, 67, 0.06);
   border-color: rgba(196, 61, 67, 0.18);

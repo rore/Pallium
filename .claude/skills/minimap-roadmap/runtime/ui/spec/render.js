@@ -344,7 +344,7 @@ export function focusSpecAnchorItem(item, activeKey) {
     pulseTarget.classList.remove(pulseClass);
     STATE.spec.anchorHighlightTimer = null;
   }, 1700);
-  HELPERS.setBanner("");
+  HELPERS.clearTransientBanner();
 }
 
 export function renderSpecInlineSuggestionPreview(suggestion, preview) {

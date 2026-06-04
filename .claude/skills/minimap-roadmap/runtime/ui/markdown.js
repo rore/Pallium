@@ -15,11 +15,50 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+// Decide whether an href can navigate inside a browser tab. Web schemes,
+// mailto, tel, and same-page fragments all work; relative or absolute
+// filesystem paths do not — those resolve only inside an editor (VS Code,
+// Cursor, etc.) where the source spec was authored. Emitting `<a href>`
+// for filesystem paths produces a clickable link that 404s against the
+// minimap server, which is worse than rendering the link text as plain
+// text.
+//
+// We also block dangerous schemes (javascript:, data:, vbscript:) here so
+// the call site can fall back to the same plain-text path.
+function isNavigableHref(href) {
+  const stripped = String(href).trim().toLowerCase();
+  if (!stripped) return false;
+  if (stripped.startsWith("javascript:")) return false;
+  if (stripped.startsWith("data:")) return false;
+  if (stripped.startsWith("vbscript:")) return false;
+  if (stripped.startsWith("http://")) return true;
+  if (stripped.startsWith("https://")) return true;
+  if (stripped.startsWith("mailto:")) return true;
+  if (stripped.startsWith("tel:")) return true;
+  // Same-page fragments — browser-navigable.
+  if (stripped.startsWith("#")) return true;
+  // Anything else (relative paths like ../foo.py, absolute paths like
+  // /Users/me/x or C:/code/y, exotic schemes we don't recognize) — render
+  // the text but drop the wrapper.
+  return false;
+}
+
 export function renderInlineMarkdown(value) {
   let html = escapeHtml(value);
   html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  // [text](url) — link replacement runs LAST so the text can contain the
+  // tag output of the earlier passes (e.g. <code>x</code> from a backtick
+  // span, <strong>x</strong> from bold). Both captures are already
+  // HTML-escaped from the first pass, so we don't need to re-escape; we
+  // only emit an <a href> for browser-navigable hrefs. Non-navigable
+  // hrefs (filesystem paths, dangerous schemes) collapse to the link
+  // text — broken links are worse than no link.
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text, url) => {
+    if (!isNavigableHref(url)) return text;
+    return `<a href="${url}">${text}</a>`;
+  });
   return html;
 }
 
