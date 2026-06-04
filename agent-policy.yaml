@@ -115,6 +115,8 @@ zones:
       reason: API client collections
     - path: "examples/**"
       reason: examples
+    - path: "app/dashboard.py"
+      reason: dashboard FastAPI route — non-risky operator UI feature
     - path: "app/dashboard.html"
       reason: dashboard UI markup — routine, not structural
     - path: "app/dashboard.css"
