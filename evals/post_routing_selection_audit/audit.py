@@ -655,7 +655,9 @@ def main() -> int:
         "(only reason that emits both candidate_scores_json AND injected_blocks_json)."
     )
     run_log.append(
-        "- 'orientation_recency' injects 111 rows but stores no candidate_scores → not auditable."
+        "- 'orientation_recency' (retired 2026-06-09 in a0e6f50) historically injected without "
+        "storing candidate_scores; rows from the live window may carry decision_reason='orientation_recency' "
+        "but cannot be replayed. The layer is gone; old audit rows remain immutable."
     )
 
     ratings = _load_ratings(con)
@@ -855,7 +857,8 @@ def main() -> int:
     out_lines.append(
         "- Decision-reason filter: `carry_forward_available` (the only reason that "
         "stores both `candidate_scores_json` and `injected_blocks_json`). "
-        "`orientation_recency` injects without storing candidates and is not auditable; "
+        "`orientation_recency` (retired 2026-06-09 in a0e6f50) historically injected without "
+        "storing candidates and was never auditable; "
         "`same_thread_context_sufficient` and `no_relevant_memory` skip injection."
     )
     out_lines.append(
