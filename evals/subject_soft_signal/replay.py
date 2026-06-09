@@ -62,7 +62,8 @@ MIN_OVERLAP = 2
 
 # decision_reason values that actually produce injection AND can be re-ranked
 # (i.e. have non-empty candidate_scores_json).
-# `orientation_recency` injects but stores no candidates → cannot be replayed.
+# `orientation_recency` (retired 2026-06-09 in a0e6f50) historically injected
+# without storing candidates and could not be replayed; old audit rows remain.
 # `same_thread_context_sufficient` and `no_relevant_memory` skip injection.
 INJECTING_REASONS = ("carry_forward_available",)
 
@@ -689,7 +690,8 @@ def main() -> int:
     out_lines.append(f"- DB: `{args.db}` (read-only)")
     out_lines.append(f"- Decision-reason filter: `{INJECTING_REASONS}`")
     out_lines.append(
-        "  - `orientation_recency` injects but stores no candidate_scores_json → cannot re-rank"
+        "  - `orientation_recency` (retired 2026-06-09 in a0e6f50) historically injected without "
+        "storing candidate_scores_json → could not be re-ranked"
     )
     out_lines.append(
         "  - `same_thread_context_sufficient` and `no_relevant_memory` did not inject → no ratings"
