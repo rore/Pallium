@@ -168,10 +168,6 @@ class QueryResponse(BaseModel):
     injectable_blocks: list[InjectableBlockResponse] = Field(default_factory=list)
 
 
-class RecentMemoryObjectsResponse(BaseModel):
-    blocks: list[InjectableBlockResponse] = Field(default_factory=list)
-
-
 class MemoryEvidenceItemResponse(BaseModel):
     source_item_id: str
     source_type: str
