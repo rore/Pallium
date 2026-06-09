@@ -548,18 +548,6 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list_recent_memory_objects(
-        self,
-        *,
-        container_ref: str,
-        memory_types: list[str],
-        since: datetime,
-        limit: int,
-    ) -> list[MemoryObject]:
-        """Return active memory objects of the given types in the container, freshness >= since, ordered freshness DESC."""
-        raise NotImplementedError
-
-    @abstractmethod
     def record_memory_feedback(
         self,
         memory_object_id: str,
