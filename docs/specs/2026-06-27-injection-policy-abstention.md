@@ -122,6 +122,42 @@ decision-simulation replay against the proposed thresholds.
 Goal: produce real (not selection-on-train) precision numbers for the
 proposed thresholds.
 
+**Phase 1 RESULT (2026-06-27)** — see
+[`evals/injection_policy_2026_06/holdout_2026-06-27.json`](../../evals/injection_policy_2026_06/holdout_2026-06-27.json):
+
+After deduplicating duplicate ratings (617 → 606 events; 11 pairs
+collapsed, 3 ties resolved to `not_relevant`) and applying the
+chronological 80/20 split (train n=484, holdout n=122):
+
+| Type | Train thr | Holdout precision | Holdout kept | Disposition |
+|---|---|---|---|---|
+| `constraint_memory` | 12.0 | 0.00% (kept=2) | n/a | demote_to_on_demand |
+| `decision` | 19.0 | **62.50%** (kept=16) | n/a | demote_to_on_demand |
+| `investigation_outcome` | 23.0 | 50.00% (kept=6) | n/a | demote_to_on_demand |
+| `task_checkpoint` | 13.0 | 50.00% (kept=6) | n/a | reference_only |
+| `thread_summary` | — | — | n/a | demote_to_on_demand |
+| `fact_summary` | — | — | n/a | suspend_insufficient_data |
+
+**No type met the ≥70% precision pass bar on held-out data.**
+`recommended_final_policy` is empty.
+
+This is exactly the selection-on-train risk reviewer 1 flagged: the
+Phase 0 "75%" was best-threshold-on-the-same-data; on chronologically
+later data the same thresholds do not hold.
+
+**Implication for downstream phases:**
+- Phase 3a's TOML config cannot ship a per-type proactive threshold
+  derived from current data. The honest production state if we shipped
+  this today is **no proactive injection for any type**, with all
+  current types moving to event-/trigger-based or on-demand only.
+- That outcome aligns with the spec's "abstention discipline" framing
+  but is more drastic than the original policy table proposed.
+- Phase 3a should ship a config schema that supports per-type
+  proactive thresholds (so future tighter data can opt types back in)
+  but its **initial values** must be empty or extremely conservative
+  pending fresh data.
+
+
 - [ ] Split `memory_feedback` joined rows by `created_at`: 80% train / 20%
       held-out tail.
 - [ ] Derive per-type thresholds on train only.

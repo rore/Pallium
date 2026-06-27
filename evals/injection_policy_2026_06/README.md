@@ -6,9 +6,14 @@ Reproducible Phase 0 snapshot for the abstention-policy plan in
 ## Run
 
 ```bash
+# Phase 0 — snapshot (no holdout)
 python -m evals.injection_policy_2026_06.analyze
 python -m evals.injection_policy_2026_06.analyze --output report.json
-python -m evals.injection_policy_2026_06.analyze --db /path/to/pallium.db --quiet
+
+# Phase 1 — chronological 80/20 holdout
+python -m evals.injection_policy_2026_06.holdout
+python -m evals.injection_policy_2026_06.holdout --output report.json
+python -m evals.injection_policy_2026_06.holdout --db /path/to/pallium.db --quiet
 ```
 
 Reads the local Pallium SQLite database in read-only mode. Defaults to
@@ -26,26 +31,33 @@ Reads the local Pallium SQLite database in read-only mode. Defaults to
   to confirm `score` (the injected-block result score) is the correct
   field to gate on.
 
-## Committed snapshot
+## Committed snapshots
 
-`snapshot_2026-06-27.json` is the committed reference output used to
-back the headline numbers in the spec. Regenerate it only when those
-numbers move (e.g. after Phase 1 holdout work changes the policy).
+- `snapshot_2026-06-27.json` — Phase 0 reference output backing the
+  spec's all-data headline numbers. Regenerate when those numbers move.
+- `holdout_2026-06-27.json` — Phase 1 chronological 80/20 holdout
+  validation. The spec's binding pass-bar numbers come from this file,
+  not from Phase 0.
 
 ```bash
 python -m evals.injection_policy_2026_06.analyze \
     --output evals/injection_policy_2026_06/snapshot_2026-06-27.json \
     --quiet
+python -m evals.injection_policy_2026_06.holdout \
+    --output evals/injection_policy_2026_06/holdout_2026-06-27.json \
+    --quiet
 ```
 
 Ad-hoc re-runs should write to `.local/research/` instead of overwriting
-the committed snapshot.
+the committed snapshots.
 
 ## Tests
 
-`tests/test_injection_policy_2026_06_analyze.py` covers the pure
-computation layer with in-memory fixtures — NULL `injected_blocks_json`,
-missing block `score`, ratings outside the known enum, and duplicate
-ratings on the same `(memory_object_id, query_audit_log_id)` pair. The
-test does NOT assert against the live DB headline numbers; those belong
-in `snapshot_2026-06-27.json`.
+- `tests/test_injection_policy_2026_06_analyze.py` — Phase 0 pure
+  compute layer (15 tests).
+- `tests/test_injection_policy_2026_06_holdout.py` — Phase 1 dedup,
+  chronological split, min-N threshold rule, holdout evaluation,
+  disposition logic, recommended-policy assembly (23 tests).
+
+Tests use in-memory fixtures. Live-DB headline numbers belong in
+`snapshot_2026-06-27.json` / `holdout_2026-06-27.json`, not in tests.
