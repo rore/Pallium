@@ -204,6 +204,31 @@ class MemoryFeedbackRecord(Base):
     container_ref = Column(String, nullable=True)
 
 
+# Phase 5 (2026-06-27): per-injected-block usage telemetry.
+# Distinct from memory_feedback — feedback is a *human rating* of whether
+# a memory was on-topic; usage_audit is *did the agent actually use the
+# memory in its next response* (an integration-side heuristic match).
+# See docs/specs/2026-06-27-injection-policy-abstention.md.
+class MemoryUsageAuditRecord(Base):
+    __tablename__ = "memory_usage_audit"
+
+    id = Column(String, primary_key=True)
+    query_audit_log_id = Column(String, nullable=False)
+    memory_object_id = Column(String, nullable=False)
+    memory_type = Column(String, nullable=True)       # denorm for per-type rollups
+    container_ref = Column(String, nullable=True)     # denorm
+    thread_ref = Column(String, nullable=True)        # denorm
+    # Denorm of query_audit_log.trigger_origin so the Phase 6 metric
+    # "proactive-only useful-injection rate" can filter cheaply.
+    trigger_origin = Column(String, nullable=True)
+    # NULL = not yet populated; 0/1 once the populator hook resolves it.
+    referenced_in_next_turn = Column(Integer, nullable=True)
+    reference_kind = Column(String, nullable=True)    # id_quote | verbatim_snippet | entity_match | NULL
+    observation_window_turns = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    populated_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class MetricRecord(Base):
     __tablename__ = "metrics"
 
@@ -433,6 +458,30 @@ class SQLiteSchemaMixin:
             "ON memory_feedback (created_at)"
         ),
     }
+    # Phase 5: memory_usage_audit indexes.
+    _MEMORY_USAGE_AUDIT_INDEX_MIGRATIONS = {
+        "idx_memory_usage_audit_query_audit_log_id": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_usage_audit_query_audit_log_id "
+            "ON memory_usage_audit (query_audit_log_id)"
+        ),
+        "idx_memory_usage_audit_memory_object_id": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_usage_audit_memory_object_id "
+            "ON memory_usage_audit (memory_object_id, created_at DESC)"
+        ),
+        "idx_memory_usage_audit_type_trigger": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_usage_audit_type_trigger "
+            "ON memory_usage_audit (memory_type, trigger_origin, created_at)"
+        ),
+        "idx_memory_usage_audit_container": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_usage_audit_container "
+            "ON memory_usage_audit (container_ref, created_at)"
+        ),
+        "idx_memory_usage_audit_pending": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_usage_audit_pending "
+            "ON memory_usage_audit (populated_at) "
+            "WHERE populated_at IS NULL"
+        ),
+    }
     _MEMORY_FEEDBACK_COLUMN_MIGRATIONS = {
         "memory_type": "ALTER TABLE memory_feedback ADD COLUMN memory_type VARCHAR",
         "memory_text": "ALTER TABLE memory_feedback ADD COLUMN memory_text TEXT",
@@ -464,6 +513,9 @@ class SQLiteSchemaMixin:
             self._ensure_memory_flag_indexes()
             self._ensure_memory_feedback_columns()
             self._ensure_memory_feedback_indexes()
+            # Phase 5: memory_usage_audit indexes (table is created
+            # declaratively by Base.metadata.create_all above).
+            self._ensure_memory_usage_audit_indexes()
             self._ensure_fts5_table()
             self._backfill_legacy_memory_freshness()
             self._backfill_thread_position()
@@ -681,6 +733,11 @@ class SQLiteSchemaMixin:
     def _ensure_memory_feedback_indexes(self) -> None:
         with self._engine.begin() as connection:
             for _index_name, create_sql in self._MEMORY_FEEDBACK_INDEX_MIGRATIONS.items():
+                connection.execute(text(create_sql))
+
+    def _ensure_memory_usage_audit_indexes(self) -> None:
+        with self._engine.begin() as connection:
+            for _index_name, create_sql in self._MEMORY_USAGE_AUDIT_INDEX_MIGRATIONS.items():
                 connection.execute(text(create_sql))
 
     def _ensure_fts5_available(self, connection) -> None:

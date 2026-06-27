@@ -415,20 +415,46 @@ rating. It does NOT belong on `memory_feedback` (which is a
 human/self-rating table). Many injections never get a rating; mixing
 auto-usage with explicit rating would undercount and conflate.
 
-- [ ] Add a separate `memory_usage_audit` table (or extend
-      `query_audit_log` with a per-block usage array — schema decision
-      in implementation):
-  - one row per injected block per query,
-  - fields: `query_audit_log_id`, `memory_object_id`, `injected_at`,
-    `referenced_in_next_turn: bool|null`, `reference_kind`
-    (id-quote / entity-match / null), `observation_window_turns`.
-- [ ] Heuristic populator: after the agent's next 1–2 assistant turns,
-      a background pass marks `referenced_in_next_turn` based on
-      id-mention, verbatim-snippet match, or named-entity overlap.
-      Run on a delay so the window is complete.
-- [ ] Measurement: per-type rate of `referenced_in_next_turn=true` among
-      proactive injections is the real precision metric to beat.
-- [ ] `memory_feedback` stays the human-rating table — unchanged.
+**Phase 5a STATUS (shipped 2026-06-27).** Pallium-side surface
+landed. Phase 5b (the integration-side populator hook) deferred per
+the staging discipline used in Phases 3a/3b and 4.
+
+**Phase 5a — Pallium-side (shipped):**
+- New `memory_usage_audit` table (declarative `MemoryUsageAuditRecord`).
+- Indexes: `(query_audit_log_id)`, `(memory_object_id, created_at DESC)`,
+  `(memory_type, trigger_origin, created_at)`, `(container_ref,
+  created_at)`, and a partial index on `populated_at IS NULL` for
+  populator-sweep efficiency.
+- Denormalized fields (`memory_type`, `container_ref`, `thread_ref`,
+  `trigger_origin`) so Phase 6 rollup queries are a single indexed
+  scan, not multi-join.
+- Storage methods:
+  `write_memory_usage_audit_rows(query_audit_log_id, injected_blocks, ...)`,
+  `list_memory_usage_audit_rows(query_audit_log_id)`,
+  `update_memory_usage_audit_row(audit_row_id, ...)`.
+- Service-level `write_query_audit` now writes one usage-audit row per
+  injected block alongside the audit-log row, with
+  `referenced_in_next_turn=NULL` / `populated_at=NULL`.
+- API endpoints:
+  - `GET /memory-usage-audit?query_audit_log_id=...`
+  - `POST /memory-usage-audit/{audit_row_id}` with
+    `{referenced_in_next_turn, reference_kind, observation_window_turns}`.
+    Validation: `reference_kind` is required when
+    `referenced_in_next_turn=true`; must be one of
+    `id_quote / verbatim_snippet / entity_match`.
+  - Idempotent: POSTing to an already-populated row returns
+    `updated: false`. Phase 5b populator can safely retry.
+
+**Phase 5b — populator hook (deferred):**
+- Lives in `integrations/claude-code/hooks/stop.py`. After ingesting
+  the assistant response, observe recent queries in the thread, run
+  a heuristic matcher against the transcript, and POST results.
+- Minimum-viable matcher: id_quote OR verbatim_snippet ≥ 40 chars.
+- `entity_match` deferred (NER-heavy; high false-positive risk).
+- Contract documented in `stop.py` docstring so Phase 5b reads
+  straightforwardly.
+
+`memory_feedback` stays the human-rating table — unchanged by Phase 5.
 
 ### Phase 6 — One-month measurement window
 

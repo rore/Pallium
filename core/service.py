@@ -772,6 +772,50 @@ class PalliumService:
             "trigger_origin": trigger_origin,
         }
         self._storage.write_query_audit_row(row)
+        # Phase 5: write one memory_usage_audit row per injected block
+        # alongside the audit-log row. The populator (Phase 5b) fills in
+        # referenced_in_next_turn / reference_kind asynchronously. See
+        # docs/specs/2026-06-27-injection-policy-abstention.md.
+        try:
+            self._storage.write_memory_usage_audit_rows(
+                query_audit_log_id=row["id"],
+                injected_blocks=blocks_json_list,
+                container_ref=container_ref,
+                thread_ref=thread_ref,
+                trigger_origin=trigger_origin,
+            )
+        except Exception:
+            self._logger.warning(
+                "memory_usage_audit write failed", exc_info=True
+            )
+
+    def list_memory_usage_audit(self, query_audit_log_id: str) -> list[dict]:
+        """Phase 5: list usage-audit rows for a given query.
+
+        Used by the integration-side populator (Phase 5b) to discover
+        the rows it must update after observing the agent's next turns.
+        """
+        return self._storage.list_memory_usage_audit_rows(query_audit_log_id)
+
+    def update_memory_usage_audit(
+        self,
+        *,
+        audit_row_id: str,
+        referenced_in_next_turn: bool,
+        reference_kind: str | None,
+        observation_window_turns: int | None,
+    ) -> bool:
+        """Phase 5: idempotent update of a single usage-audit row.
+
+        Returns True if the row was updated, False if it was already
+        populated (no-op) or did not exist.
+        """
+        return self._storage.update_memory_usage_audit_row(
+            audit_row_id=audit_row_id,
+            referenced_in_next_turn=referenced_in_next_turn,
+            reference_kind=reference_kind,
+            observation_window_turns=observation_window_turns,
+        )
 
     def _persist_process_result(self, result: ProcessResult) -> None:
         for memory_object in result.memory_objects:

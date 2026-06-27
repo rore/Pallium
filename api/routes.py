@@ -17,6 +17,11 @@ from api.schemas import (
     MemoryExpandResponse,
     MemoryFeedbackRequest,
     MemoryFeedbackResponse,
+    MemoryUsageAuditListResponse,
+    MemoryUsageAuditRowResponse,
+    MemoryUsageAuditUpdateRequest,
+    MemoryUsageAuditUpdateResponse,
+    _REFERENCE_KIND_VALUES,
     ProcessingStatusResponse,
     QueryDebugResponse,
     QueryRequest,
@@ -656,6 +661,58 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             memory_object_id=memory_object_id,
             rating=request.rating,
             recorded=True,
+        )
+
+    # ── Phase 5: memory_usage_audit endpoints ───────────────────────────
+    # See docs/specs/2026-06-27-injection-policy-abstention.md.
+    # POST is idempotent on a per-row basis: re-populating a row that's
+    # already been resolved is a no-op (returns updated=False). The
+    # Phase 5b populator hook depends on this so it can safely retry.
+
+    @router.get(
+        "/memory-usage-audit",
+        response_model=MemoryUsageAuditListResponse,
+    )
+    def list_memory_usage_audit(
+        query_audit_log_id: str = Query(..., min_length=1),
+    ) -> MemoryUsageAuditListResponse:
+        rows = service.list_memory_usage_audit(query_audit_log_id)
+        return MemoryUsageAuditListResponse(
+            rows=[MemoryUsageAuditRowResponse(**row) for row in rows]
+        )
+
+    @router.post(
+        "/memory-usage-audit/{audit_row_id}",
+        response_model=MemoryUsageAuditUpdateResponse,
+    )
+    def update_memory_usage_audit(
+        audit_row_id: str, request: MemoryUsageAuditUpdateRequest,
+    ) -> MemoryUsageAuditUpdateResponse:
+        if request.referenced_in_next_turn and not request.reference_kind:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "reference_kind is required when "
+                    "referenced_in_next_turn=true"
+                ),
+            )
+        if request.reference_kind is not None and request.reference_kind not in _REFERENCE_KIND_VALUES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unknown reference_kind {request.reference_kind!r}; "
+                    f"valid: {list(_REFERENCE_KIND_VALUES)}"
+                ),
+            )
+        updated = service.update_memory_usage_audit(
+            audit_row_id=audit_row_id,
+            referenced_in_next_turn=request.referenced_in_next_turn,
+            reference_kind=request.reference_kind,
+            observation_window_turns=request.observation_window_turns,
+        )
+        return MemoryUsageAuditUpdateResponse(
+            audit_row_id=audit_row_id,
+            updated=updated,
         )
 
     return router
