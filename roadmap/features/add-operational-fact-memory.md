@@ -1,11 +1,29 @@
 ---
 id: add-operational-fact-memory
 title: Operational fact memory — reduce agent rediscovery waste
-status: proposed
+status: paused
 priority: medium
 commitment: shaping
 milestone: Next
 ---
+
+> **Paused 2026-06-27** pending outcome of the abstention-policy work in
+> [`docs/specs/2026-06-27-injection-policy-abstention.md`](../../docs/specs/2026-06-27-injection-policy-abstention.md).
+> The data analysis under that spec showed:
+> 1. The dominant injection failure is targeting, not coverage — adding
+>    another extracted memory type without an on-demand retrieval path
+>    would land in the same off-topic-injection failure mode (~55% bad
+>    rate, ~92% off-topic).
+> 2. The operational-fact spec itself already flagged this risk: "if no
+>    on-demand surfacing path exists, storing facts is dead code."
+> 3. Phase 4 of the abstention plan establishes deterministic triggers
+>    for on-demand retrieval. Operational-fact memory should be revisited
+>    only after those triggers are live and proven, so it can ship as a
+>    trigger-targeted type rather than a proactive one.
+>
+> Resume gate: Phase 4 trigger pass-bar met; consider whether
+> operational-fact content is best modeled as its own type or absorbed
+> into existing `decision`/`task_checkpoint` types under triggered recall.
 
 ## Summary
 

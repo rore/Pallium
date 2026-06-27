@@ -1,0 +1,740 @@
+{
+  "block_score": {
+    "distributions": {
+      "constraint_memory": {
+        "coverage": {
+          "n_bad": 21,
+          "n_relevant": 22,
+          "total": 43
+        },
+        "not_relevant": {
+          "max": 23.0,
+          "mean": 11.714,
+          "median": 11.0,
+          "min": 0.0,
+          "n": 21,
+          "p25": 11.0,
+          "p75": 14.0
+        },
+        "relevant": {
+          "max": 23.0,
+          "mean": 14.682,
+          "median": 20.5,
+          "min": 0.0,
+          "n": 22,
+          "p25": 9.0,
+          "p75": 22.0
+        }
+      },
+      "decision": {
+        "coverage": {
+          "n_bad": 69,
+          "n_relevant": 76,
+          "total": 145
+        },
+        "not_relevant": {
+          "max": 24.0,
+          "mean": 15.942,
+          "median": 16.0,
+          "min": 8.0,
+          "n": 69,
+          "p25": 12.0,
+          "p75": 21.0
+        },
+        "relevant": {
+          "max": 24.0,
+          "mean": 19.395,
+          "median": 21.0,
+          "min": 9.0,
+          "n": 76,
+          "p25": 19.0,
+          "p75": 23.0
+        }
+      },
+      "fact_summary": {
+        "coverage": {
+          "n_bad": 7,
+          "n_relevant": 3,
+          "total": 10
+        },
+        "not_relevant": {
+          "max": 22.0,
+          "mean": 14.143,
+          "median": 13.0,
+          "min": 9.0,
+          "n": 7,
+          "p25": 12.0,
+          "p75": 17.0
+        },
+        "relevant": {
+          "max": 21.0,
+          "mean": 17.667,
+          "median": 20.0,
+          "min": 12.0,
+          "n": 3,
+          "p25": 12.0,
+          "p75": 21.0
+        }
+      },
+      "interest": {
+        "coverage": {
+          "n_bad": 2,
+          "n_relevant": 6,
+          "total": 8
+        },
+        "not_relevant": {
+          "max": 22.0,
+          "mean": 21.0,
+          "median": 21.0,
+          "min": 20.0,
+          "n": 2,
+          "p25": 20.0,
+          "p75": 22.0
+        },
+        "relevant": {
+          "max": 22.0,
+          "mean": 17.333,
+          "median": 17.5,
+          "min": 12.0,
+          "n": 6,
+          "p25": 13.0,
+          "p75": 22.0
+        }
+      },
+      "investigation_outcome": {
+        "coverage": {
+          "n_bad": 126,
+          "n_relevant": 70,
+          "total": 196
+        },
+        "not_relevant": {
+          "max": 24.0,
+          "mean": 14.151,
+          "median": 13.0,
+          "min": 8.0,
+          "n": 126,
+          "p25": 12.0,
+          "p75": 14.0
+        },
+        "relevant": {
+          "max": 24.0,
+          "mean": 16.643,
+          "median": 14.0,
+          "min": 8.0,
+          "n": 70,
+          "p25": 13.0,
+          "p75": 22.0
+        }
+      },
+      "task_checkpoint": {
+        "coverage": {
+          "n_bad": 59,
+          "n_relevant": 68,
+          "total": 127
+        },
+        "not_relevant": {
+          "max": 24.0,
+          "mean": 8.508,
+          "median": 11.0,
+          "min": 0.0,
+          "n": 59,
+          "p25": 0.0,
+          "p75": 13.0
+        },
+        "relevant": {
+          "max": 24.0,
+          "mean": 11.265,
+          "median": 13.0,
+          "min": 0.0,
+          "n": 68,
+          "p25": 0.0,
+          "p75": 20.0
+        }
+      },
+      "task_trace": {
+        "coverage": {
+          "n_bad": 2,
+          "n_relevant": 0,
+          "total": 2
+        },
+        "not_relevant": {
+          "max": 0.0,
+          "mean": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "n": 2,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "relevant": null
+      },
+      "thread_summary": {
+        "coverage": {
+          "n_bad": 43,
+          "n_relevant": 19,
+          "total": 62
+        },
+        "not_relevant": {
+          "max": 22.0,
+          "mean": 13.116,
+          "median": 12.0,
+          "min": 11.0,
+          "n": 43,
+          "p25": 11.0,
+          "p75": 13.0
+        },
+        "relevant": {
+          "max": 23.0,
+          "mean": 15.632,
+          "median": 14.0,
+          "min": 12.0,
+          "n": 19,
+          "p25": 13.0,
+          "p75": 20.0
+        }
+      }
+    },
+    "pr_frontier_threshold_at_target": {
+      "constraint_memory": {
+        "best": {
+          "kept_bad": 5,
+          "kept_relevant": 12,
+          "kept_total": 17,
+          "precision": 0.7058823529411765,
+          "recall": 0.5454545454545454,
+          "threshold": 20.0
+        },
+        "n_relevant": 22,
+        "n_total": 43,
+        "target_precision": 0.7
+      },
+      "decision": {
+        "best": {
+          "kept_bad": 10,
+          "kept_relevant": 33,
+          "kept_total": 43,
+          "precision": 0.7674418604651163,
+          "recall": 0.4342105263157895,
+          "threshold": 22.0
+        },
+        "n_relevant": 76,
+        "n_total": 145,
+        "target_precision": 0.7
+      },
+      "fact_summary": {
+        "best": null,
+        "n_relevant": 3,
+        "n_total": 10,
+        "target_precision": 0.7
+      },
+      "interest": {
+        "best": {
+          "kept_bad": 2,
+          "kept_relevant": 6,
+          "kept_total": 8,
+          "precision": 0.75,
+          "recall": 1.0,
+          "threshold": 12.0
+        },
+        "n_relevant": 6,
+        "n_total": 8,
+        "target_precision": 0.7
+      },
+      "investigation_outcome": {
+        "best": null,
+        "n_relevant": 70,
+        "n_total": 196,
+        "target_precision": 0.7
+      },
+      "task_checkpoint": {
+        "best": {
+          "kept_bad": 7,
+          "kept_relevant": 24,
+          "kept_total": 31,
+          "precision": 0.7741935483870968,
+          "recall": 0.35294117647058826,
+          "threshold": 14.0
+        },
+        "n_relevant": 68,
+        "n_total": 127,
+        "target_precision": 0.7
+      },
+      "task_trace": {
+        "best": null,
+        "n_relevant": 0,
+        "n_total": 2,
+        "target_precision": 0.7
+      },
+      "thread_summary": {
+        "best": {
+          "kept_bad": 0,
+          "kept_relevant": 1,
+          "kept_total": 1,
+          "precision": 1.0,
+          "recall": 0.05263157894736842,
+          "threshold": 23.0
+        },
+        "n_relevant": 19,
+        "n_total": 62,
+        "target_precision": 0.7
+      }
+    },
+    "proposed_policy": {
+      "bad_eliminated_fraction": 0.936231884057971,
+      "base_precision": 0.44084278768233387,
+      "kept_bad": 22,
+      "kept_relevant": 69,
+      "kept_total": 91,
+      "new_precision": 0.7582417582417582,
+      "per_type": {
+        "constraint_memory": {
+          "kept_bad": 5,
+          "kept_relevant": 12,
+          "not_relevant": 37,
+          "relevant": 30
+        },
+        "decision": {
+          "kept_bad": 10,
+          "kept_relevant": 33,
+          "not_relevant": 69,
+          "relevant": 76
+        },
+        "fact_summary": {
+          "kept_bad": 0,
+          "kept_relevant": 0,
+          "not_relevant": 7,
+          "relevant": 3
+        },
+        "interest": {
+          "kept_bad": 0,
+          "kept_relevant": 0,
+          "not_relevant": 2,
+          "relevant": 6
+        },
+        "investigation_outcome": {
+          "kept_bad": 0,
+          "kept_relevant": 0,
+          "not_relevant": 126,
+          "relevant": 70
+        },
+        "task_checkpoint": {
+          "kept_bad": 7,
+          "kept_relevant": 24,
+          "not_relevant": 59,
+          "relevant": 68
+        },
+        "task_trace": {
+          "kept_bad": 0,
+          "kept_relevant": 0,
+          "not_relevant": 2,
+          "relevant": 0
+        },
+        "thread_summary": {
+          "kept_bad": 0,
+          "kept_relevant": 0,
+          "not_relevant": 43,
+          "relevant": 19
+        }
+      },
+      "policy": {
+        "constraint_memory": 20.0,
+        "decision": 22.0,
+        "task_checkpoint": 14.0
+      },
+      "recall_of_relevant_signal": 0.2536764705882353,
+      "score_field": "block_score",
+      "total_bad_original": 345,
+      "total_relevant_original": 272
+    }
+  },
+  "by_container": {
+    "git:github.com/rore/agent-redline": {
+      "bad_rate": 0.3333333333333333,
+      "not_relevant": 7,
+      "precision": 0.6666666666666666,
+      "relevant": 14,
+      "total": 21
+    },
+    "git:github.com/rore/agent-redline-demo": {
+      "bad_rate": 0.4,
+      "not_relevant": 2,
+      "precision": 0.6,
+      "relevant": 3,
+      "total": 5
+    },
+    "git:github.com/rore/minimap": {
+      "bad_rate": 0.5581395348837209,
+      "not_relevant": 24,
+      "precision": 0.4418604651162791,
+      "relevant": 19,
+      "total": 43
+    },
+    "git:github.com/rore/pallium": {
+      "bad_rate": 0.5433070866141733,
+      "not_relevant": 207,
+      "precision": 0.4566929133858268,
+      "relevant": 174,
+      "total": 381
+    },
+    "git:github.tools.sap/olc-foundation/agent-skills": {
+      "bad_rate": 0.6428571428571429,
+      "not_relevant": 9,
+      "precision": 0.35714285714285715,
+      "relevant": 5,
+      "total": 14
+    },
+    "git:github.tools.sap/xlm/clmia-poc": {
+      "bad_rate": 0.09090909090909091,
+      "not_relevant": 1,
+      "precision": 0.9090909090909091,
+      "relevant": 10,
+      "total": 11
+    },
+    "path:1b41d5ef137b": {
+      "bad_rate": 0.0,
+      "not_relevant": 0,
+      "precision": 1.0,
+      "relevant": 2,
+      "total": 2
+    },
+    "path:xlm:2889e4f8fd37": {
+      "bad_rate": 0.6785714285714286,
+      "not_relevant": 95,
+      "precision": 0.32142857142857145,
+      "relevant": 45,
+      "total": 140
+    }
+  },
+  "phase": "0 \u2014 snapshot",
+  "records": {
+    "n_bad": 345,
+    "n_records": 617,
+    "n_relevant": 272,
+    "n_with_block_score": 593,
+    "n_with_routing_score": 575
+  },
+  "routing_score_sanity_check": {
+    "distributions": {
+      "constraint_memory": {
+        "coverage": {
+          "n_bad": 37,
+          "n_relevant": 30,
+          "total": 67
+        },
+        "not_relevant": {
+          "max": 438.0,
+          "mean": 281.459,
+          "median": 336.0,
+          "min": -28.0,
+          "n": 37,
+          "p25": 136.0,
+          "p75": 409.0
+        },
+        "relevant": {
+          "max": 417.0,
+          "mean": 300.133,
+          "median": 325.5,
+          "min": 68.0,
+          "n": 30,
+          "p25": 250.0,
+          "p75": 386.0
+        }
+      },
+      "decision": {
+        "coverage": {
+          "n_bad": 69,
+          "n_relevant": 76,
+          "total": 145
+        },
+        "not_relevant": {
+          "max": 672.0,
+          "mean": 539.536,
+          "median": 545.0,
+          "min": 285.0,
+          "n": 69,
+          "p25": 464.0,
+          "p75": 654.0
+        },
+        "relevant": {
+          "max": 668.0,
+          "mean": 478.592,
+          "median": 447.5,
+          "min": 325.0,
+          "n": 76,
+          "p25": 407.0,
+          "p75": 545.0
+        }
+      },
+      "fact_summary": {
+        "coverage": {
+          "n_bad": 7,
+          "n_relevant": 3,
+          "total": 10
+        },
+        "not_relevant": {
+          "max": 470.0,
+          "mean": 337.143,
+          "median": 312.0,
+          "min": 228.0,
+          "n": 7,
+          "p25": 238.0,
+          "p75": 440.0
+        },
+        "relevant": {
+          "max": 353.0,
+          "mean": 317.0,
+          "median": 352.0,
+          "min": 246.0,
+          "n": 3,
+          "p25": 246.0,
+          "p75": 353.0
+        }
+      },
+      "interest": {
+        "coverage": {
+          "n_bad": 2,
+          "n_relevant": 6,
+          "total": 8
+        },
+        "not_relevant": {
+          "max": 420.0,
+          "mean": 420.0,
+          "median": 420.0,
+          "min": 420.0,
+          "n": 2,
+          "p25": 420.0,
+          "p75": 420.0
+        },
+        "relevant": {
+          "max": 419.0,
+          "mean": 341.667,
+          "median": 347.0,
+          "min": 264.0,
+          "n": 6,
+          "p25": 275.0,
+          "p75": 398.0
+        }
+      },
+      "investigation_outcome": {
+        "coverage": {
+          "n_bad": 126,
+          "n_relevant": 70,
+          "total": 196
+        },
+        "not_relevant": {
+          "max": 618.0,
+          "mean": 397.714,
+          "median": 388.5,
+          "min": 262.0,
+          "n": 126,
+          "p25": 346.0,
+          "p75": 465.0
+        },
+        "relevant": {
+          "max": 599.0,
+          "mean": 427.729,
+          "median": 437.0,
+          "min": 226.0,
+          "n": 70,
+          "p25": 364.0,
+          "p75": 478.0
+        }
+      },
+      "task_checkpoint": {
+        "coverage": {
+          "n_bad": 39,
+          "n_relevant": 48,
+          "total": 87
+        },
+        "not_relevant": {
+          "max": 716.0,
+          "mean": 486.282,
+          "median": 428.0,
+          "min": 335.0,
+          "n": 39,
+          "p25": 404.0,
+          "p75": 637.0
+        },
+        "relevant": {
+          "max": 716.0,
+          "mean": 606.917,
+          "median": 639.5,
+          "min": 337.0,
+          "n": 48,
+          "p25": 598.0,
+          "p75": 689.0
+        }
+      },
+      "thread_summary": {
+        "coverage": {
+          "n_bad": 43,
+          "n_relevant": 19,
+          "total": 62
+        },
+        "not_relevant": {
+          "max": 402.0,
+          "mean": 241.512,
+          "median": 255.0,
+          "min": 21.0,
+          "n": 43,
+          "p25": 132.0,
+          "p75": 352.0
+        },
+        "relevant": {
+          "max": 408.0,
+          "mean": 275.316,
+          "median": 320.0,
+          "min": -28.0,
+          "n": 19,
+          "p25": 232.0,
+          "p75": 373.0
+        }
+      }
+    },
+    "pr_frontier_threshold_at_target": {
+      "constraint_memory": {
+        "best": {
+          "kept_bad": 1,
+          "kept_relevant": 4,
+          "kept_total": 5,
+          "precision": 0.8,
+          "recall": 0.13333333333333333,
+          "threshold": 413.0
+        },
+        "n_relevant": 30,
+        "n_total": 67,
+        "target_precision": 0.7
+      },
+      "decision": {
+        "best": null,
+        "n_relevant": 76,
+        "n_total": 145,
+        "target_precision": 0.7
+      },
+      "fact_summary": {
+        "best": null,
+        "n_relevant": 3,
+        "n_total": 10,
+        "target_precision": 0.7
+      },
+      "interest": {
+        "best": {
+          "kept_bad": 2,
+          "kept_relevant": 6,
+          "kept_total": 8,
+          "precision": 0.75,
+          "recall": 1.0,
+          "threshold": 264.0
+        },
+        "n_relevant": 6,
+        "n_total": 8,
+        "target_precision": 0.7
+      },
+      "investigation_outcome": {
+        "best": null,
+        "n_relevant": 70,
+        "n_total": 196,
+        "target_precision": 0.7
+      },
+      "task_checkpoint": {
+        "best": {
+          "kept_bad": 18,
+          "kept_relevant": 43,
+          "kept_total": 61,
+          "precision": 0.7049180327868853,
+          "recall": 0.8958333333333334,
+          "threshold": 431.0
+        },
+        "n_relevant": 48,
+        "n_total": 87,
+        "target_precision": 0.7
+      },
+      "thread_summary": {
+        "best": {
+          "kept_bad": 0,
+          "kept_relevant": 1,
+          "kept_total": 1,
+          "precision": 1.0,
+          "recall": 0.05263157894736842,
+          "threshold": 408.0
+        },
+        "n_relevant": 19,
+        "n_total": 62,
+        "target_precision": 0.7
+      }
+    },
+    "same_thresholds_on_routing_score": {
+      "bad_eliminated_fraction": 0.5855072463768116,
+      "base_precision": 0.44084278768233387,
+      "kept_bad": 143,
+      "kept_relevant": 154,
+      "kept_total": 297,
+      "new_precision": 0.5185185185185185,
+      "per_type": {
+        "constraint_memory": {
+          "kept_bad": 35,
+          "kept_relevant": 30,
+          "not_relevant": 37,
+          "relevant": 30
+        },
+        "decision": {
+          "kept_bad": 69,
+          "kept_relevant": 76,
+          "not_relevant": 69,
+          "relevant": 76
+        },
+        "fact_summary": {
+          "kept_bad": 0,
+          "kept_relevant": 0,
+          "not_relevant": 7,
+          "relevant": 3
+        },
+        "interest": {
+          "kept_bad": 0,
+          "kept_relevant": 0,
+          "not_relevant": 2,
+          "relevant": 6
+        },
+        "investigation_outcome": {
+          "kept_bad": 0,
+          "kept_relevant": 0,
+          "not_relevant": 126,
+          "relevant": 70
+        },
+        "task_checkpoint": {
+          "kept_bad": 39,
+          "kept_relevant": 48,
+          "not_relevant": 59,
+          "relevant": 68
+        },
+        "task_trace": {
+          "kept_bad": 0,
+          "kept_relevant": 0,
+          "not_relevant": 2,
+          "relevant": 0
+        },
+        "thread_summary": {
+          "kept_bad": 0,
+          "kept_relevant": 0,
+          "not_relevant": 43,
+          "relevant": 19
+        }
+      },
+      "policy": {
+        "constraint_memory": 20.0,
+        "decision": 22.0,
+        "task_checkpoint": 14.0
+      },
+      "recall_of_relevant_signal": 0.5661764705882353,
+      "score_field": "routing_score",
+      "total_bad_original": 345,
+      "total_relevant_original": 272
+    }
+  },
+  "skips": {
+    "no_block_match": 10,
+    "no_block_score": 24,
+    "other_rating": 0
+  },
+  "spec": "docs/specs/2026-06-27-injection-policy-abstention.md"
+}
