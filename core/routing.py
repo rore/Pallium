@@ -48,12 +48,18 @@ def route_query_results(
     debug_candidate_loader=None,
     routing_overrides: RoutingOverrides | None = None,
     type_registry: TypeRegistry | None = None,
+    injection_policy=None,
 ) -> PackageQueryOutcome:
     """Route query results through the scoring/selection pipeline.
 
     This is the core entry point. Packages do not implement routing —
     they register their types with the TypeRegistry and the core
     routing pipeline handles scoring, selection, and injection.
+
+    `injection_policy` is an optional InjectionPolicyConfig (from
+    app/config.py). When None or empty, behavior is unchanged
+    (Phase 3a default). See
+    docs/specs/2026-06-27-injection-policy-abstention.md.
     """
     effective_overrides = dict(routing_overrides) if routing_overrides else {}
 
@@ -72,4 +78,5 @@ def route_query_results(
         include_trace=include_trace,
         debug_candidate_loader=debug_candidate_loader,
         routing_overrides=effective_overrides or None,
+        injection_policy=injection_policy,
     )

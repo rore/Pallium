@@ -69,6 +69,7 @@ class PalliumService:
         query_stats: QueryStats | None = None,
         metrics_store=None,
         metrics_retention_days: int = 0,
+        injection_policy=None,
     ) -> None:
         self._storage = storage
         self._retrieval = retrieval
@@ -89,6 +90,7 @@ class PalliumService:
             type_registry=type_registry,
             routing_overrides=routing_overrides,
             query_stats=query_stats,
+            injection_policy=injection_policy,
         )
         self._thread_rebuilder = ThreadRebuilder(
             storage=storage,

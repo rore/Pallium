@@ -233,6 +233,42 @@ Architect-review finding: if Phase 3 demotes `task_checkpoint` and
 become dead — no proactive path and no on-demand path. Sequence the
 flag rollout to prevent that.
 
+**Phase 3a STATUS (shipped 2026-06-27):** config schema + gate landed.
+With absent `[injection]` section the gate is a bit-exact no-op
+(verified across 2314 tests, 218 in the routing/selection/audit
+neighbourhood).
+
+The Phase 3a config schema is concretely:
+
+```toml
+[injection.policy.types.constraint_memory]
+mode = "proactive"      # or "event" | "on_demand" | "suspended"
+min_score = 20.0        # required when mode = "proactive"
+
+[injection.policy.types.decision]
+mode = "proactive"
+min_score = 22.0
+
+[[injection.policy.containers]]
+container_ref = "git:github.com/rore/pallium"
+
+[injection.policy.containers.types.constraint_memory]
+mode = "proactive"
+min_score = 20.0
+```
+
+Container override matching is exact string equality against
+`query_filters.container_ref`. Duplicate `container_ref` entries are
+rejected at load time. The loader is in
+`app/config.py::_build_injection_config`; the gate lives at
+`semantic/agent_conversation_memory_routing_selection.py::_policy_allows_proactive_injection`.
+
+**Per Phase 1 finding (no type passes ≥70% on holdout) the default
+`pallium.local.toml` does NOT set any `[injection.policy.*]` keys.**
+Phase 3b will be a TOML-only edit (no code change) that flips the
+non-proactive types to `event`/`on_demand`/`suspended` once Phase 4
+triggers are live.
+
 **Phase 3a — proactive thresholds for the surviving types only** (ship first):
 
 This is a staging step, not the final abstention policy. The headline

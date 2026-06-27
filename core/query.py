@@ -41,6 +41,7 @@ class QueryExecutor:
         type_registry: TypeRegistry | None = None,
         routing_overrides=None,
         query_stats: QueryStats | None = None,
+        injection_policy=None,
     ) -> None:
         self._storage = storage
         self._retrieval = retrieval
@@ -49,6 +50,7 @@ class QueryExecutor:
         self._type_registry = type_registry
         self._routing_overrides = routing_overrides
         self._query_stats = query_stats
+        self._injection_policy = injection_policy
 
     def query(
         self,
@@ -154,6 +156,7 @@ class QueryExecutor:
                 ),
                 routing_overrides=self._routing_overrides,
                 type_registry=self._type_registry,
+                injection_policy=self._injection_policy,
             )
             if not isinstance(outcome, PackageQueryOutcome):
                 raise TypeError("route_query_results must return PackageQueryOutcome")
