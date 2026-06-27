@@ -724,6 +724,12 @@ class PalliumService:
                         "post_routing_drop_reason": candidate.get("post_routing_drop_reason"),
                         "injected": result_id in injectable_result_ids if result_id else False,
                         "workstream_id": candidate_ws_map.get(mid) if mid else None,
+                        # Phase 0.5: result `score` (the field the abstention
+                        # policy gates on, matching injected_blocks_json[*].score)
+                        # and retrieval_source. See
+                        # docs/specs/2026-06-27-injection-policy-abstention.md
+                        "score": getattr(item, "score", None),
+                        "retrieval_source": getattr(item, "retrieval_source", None),
                     })
                 candidate_scores_json = json.dumps(snapshot)
             except Exception:
