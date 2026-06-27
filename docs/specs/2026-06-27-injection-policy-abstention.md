@@ -191,6 +191,31 @@ instrumentation has accumulated a fresh data window, this phase splits:
   has run for ≥1 week of fresh audit data, replay against the new
   candidate snapshots using the real `score` field.
 
+**Phase 2a RESULT (2026-06-27)** — audit-trail artifact, not a
+validation step (see
+[`evals/injection_policy_2026_06/decision_replay_2026-06-27.json`](../../evals/injection_policy_2026_06/decision_replay_2026-06-27.json)):
+
+Across 3313 audit rows / 2487 evaluated queries / 15,717 historical
+candidates, applying the proposed thresholds to `routing_score` (the
+only score field present in historical snapshots — see Phase 0.5):
+
+| Variant | Thresholds | Precision | Kept | Substituted | Prod-Dropped |
+|---|---|---|---|---|---|
+| `spec_headline` | constraint_memory>=20, decision>=22, task_checkpoint>=14 | **51.38%** | 5459 | 4807 | 867 |
+| `phase1_derived` | constraint_memory>=12, decision>=19, investigation_outcome>=23, task_checkpoint>=13 | **44.86%** | 8029 | 6826 | 316 |
+
+The 51.38% reproduces Codex's prior ~52% prediction for the routing-score
+sanity check exactly. Confirms `routing_score` is the wrong field; the
+real `score` field is what the policy must gate on. The high
+`substituted_in` counts (4807, 6826) show that the simulation diverges
+substantially from production-injected sets — a per-type score gate
+would surface many candidates production did not inject. Whether those
+substitutions are useful injections cannot be judged from this data
+alone (most are unrated).
+
+Phase 2a is now closed. Phase 2b will re-run after fresh data
+accumulates with Phase 0.5's `score` field.
+
 - [ ] Update or replace `evals/injection_precision_eval.py` to mirror
       current production gates (per inspection in
       `semantic/agent_conversation_memory_routing_selection.py`).

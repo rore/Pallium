@@ -1,0 +1,389 @@
+{
+  "framing": "Phase 1 established that no memory type meets the spec's >=70% precision bar on held-out data. Phase 2a is an audit-trail artifact, not a validation step. It does not \u2014 and cannot \u2014 rehabilitate any type for proactive injection.",
+  "n_audit_rows": 3313,
+  "n_feedback_keys": 616,
+  "phase": "2a \u2014 approximate historical decision-simulation replay",
+  "score_field_caveat": "Phase 2a gates on routing_score because historical candidate_scores_json rows do NOT carry the result `score` field (Phase 0.5 started capturing it; historical rows pre-date that). Per Codex's prior review, the same thresholds applied to routing_score yield ~52% precision vs ~76% on result score \u2014 i.e. routing_score is a weaker signal. Phase 2b will re-run with the correct field once fresh data accumulates.",
+  "score_field_used": "routing_score",
+  "spec": "docs/specs/2026-06-27-injection-policy-abstention.md",
+  "top_k_cap": 5,
+  "variants": {
+    "phase1_derived": {
+      "divergence_diagnostics_sample": [
+        {
+          "memory_type": "investigation_outcome",
+          "query_audit_log_id": "c79e5f38-c52c-439d-b8cd-89b9ee94b58b",
+          "score": 483.0,
+          "substituted_memory_object_id": "b3b97f0c-4c57-4980-8d13-65321c868363",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "ec1e819b-ffcc-4b1a-8508-0bd1cf3bd575",
+          "score": 509.0,
+          "substituted_memory_object_id": "33aabe01-ead6-4855-a827-9eae58b86e47",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "investigation_outcome",
+          "query_audit_log_id": "ec1e819b-ffcc-4b1a-8508-0bd1cf3bd575",
+          "score": 483.0,
+          "substituted_memory_object_id": "2ed1d0ce-0cf2-4a21-bd98-8ae4185cb46a",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "investigation_outcome",
+          "query_audit_log_id": "d0631145-70d5-4b5b-8fb6-2e4ab20feed0",
+          "score": 401.0,
+          "substituted_memory_object_id": "e87347b0-34b2-436f-bae6-2e48c53547de",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "investigation_outcome",
+          "query_audit_log_id": "c367c456-642f-4291-8631-4e8616605a1b",
+          "score": 457.0,
+          "substituted_memory_object_id": "472b1763-81fb-447a-b32c-4c9d609d74bc",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "7c3de8a0-c9d2-487f-bd96-81e8134bfac7",
+          "score": 499.0,
+          "substituted_memory_object_id": "19153a12-6b2c-441b-a386-5415b9179a07",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "7c3de8a0-c9d2-487f-bd96-81e8134bfac7",
+          "score": 468.0,
+          "substituted_memory_object_id": "66a2cb29-cac9-4cd5-b03e-0c72c530ac52",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "constraint_memory",
+          "query_audit_log_id": "7c3de8a0-c9d2-487f-bd96-81e8134bfac7",
+          "score": 422.0,
+          "substituted_memory_object_id": "e86c71ef-ec2b-460f-abb2-2724221d7635",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "investigation_outcome",
+          "query_audit_log_id": "58eecdd5-4874-40a3-9c68-13f6408bd1f7",
+          "score": 481.0,
+          "substituted_memory_object_id": "e87347b0-34b2-436f-bae6-2e48c53547de",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "investigation_outcome",
+          "query_audit_log_id": "58eecdd5-4874-40a3-9c68-13f6408bd1f7",
+          "score": 462.0,
+          "substituted_memory_object_id": "87ef6011-c4aa-43a4-866b-5b295fb6ae46",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "f9542c8a-a575-4737-bdfc-686c001771f2",
+          "score": 509.0,
+          "substituted_memory_object_id": "66a2cb29-cac9-4cd5-b03e-0c72c530ac52",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "investigation_outcome",
+          "query_audit_log_id": "f9542c8a-a575-4737-bdfc-686c001771f2",
+          "score": 480.0,
+          "substituted_memory_object_id": "31d9cdd5-02c3-4b29-a016-dec6c89ede3c",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "investigation_outcome",
+          "query_audit_log_id": "f9542c8a-a575-4737-bdfc-686c001771f2",
+          "score": 456.0,
+          "substituted_memory_object_id": "a752f7fe-a408-44f9-aa4e-e86b4bf8c994",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "investigation_outcome",
+          "query_audit_log_id": "70a42e0f-e5b6-422b-889a-e949213da582",
+          "score": 485.0,
+          "substituted_memory_object_id": "c0222942-e4cc-43b3-b97e-ce872a23b8f6",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "investigation_outcome",
+          "query_audit_log_id": "70a42e0f-e5b6-422b-889a-e949213da582",
+          "score": 384.0,
+          "substituted_memory_object_id": "b376afa8-8cde-4931-a137-81f52177f006",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "investigation_outcome",
+          "query_audit_log_id": "79586738-791e-41dd-a841-a2042a2f3814",
+          "score": 446.0,
+          "substituted_memory_object_id": "472b1763-81fb-447a-b32c-4c9d609d74bc",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "investigation_outcome",
+          "query_audit_log_id": "ea660c95-5f4f-4ee6-b040-f1af40bf4e15",
+          "score": 613.0,
+          "substituted_memory_object_id": "0ee8efa5-6417-4ddb-b7a4-e28d64211c90",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "investigation_outcome",
+          "query_audit_log_id": "ea660c95-5f4f-4ee6-b040-f1af40bf4e15",
+          "score": 589.0,
+          "substituted_memory_object_id": "2ed1d0ce-0cf2-4a21-bd98-8ae4185cb46a",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "investigation_outcome",
+          "query_audit_log_id": "ea660c95-5f4f-4ee6-b040-f1af40bf4e15",
+          "score": 577.0,
+          "substituted_memory_object_id": "85c88fd0-a0c0-4cb8-9c63-adfbcb8a7adb",
+          "variant": "phase1_derived"
+        },
+        {
+          "memory_type": "investigation_outcome",
+          "query_audit_log_id": "ea660c95-5f4f-4ee6-b040-f1af40bf4e15",
+          "score": 565.0,
+          "substituted_memory_object_id": "472b1763-81fb-447a-b32c-4c9d609d74bc",
+          "variant": "phase1_derived"
+        }
+      ],
+      "n_divergence_total": 6826,
+      "per_type": {
+        "constraint_memory": {
+          "kept": 561,
+          "rated_not_relevant": 31,
+          "rated_relevant": 27,
+          "rated_unknown": 503
+        },
+        "decision": {
+          "kept": 3427,
+          "rated_not_relevant": 69,
+          "rated_relevant": 74,
+          "rated_unknown": 3284
+        },
+        "investigation_outcome": {
+          "kept": 3193,
+          "rated_not_relevant": 125,
+          "rated_relevant": 66,
+          "rated_unknown": 3002
+        },
+        "task_checkpoint": {
+          "kept": 848,
+          "rated_not_relevant": 38,
+          "rated_relevant": 47,
+          "rated_unknown": 763
+        }
+      },
+      "thresholds": {
+        "constraint_memory": 12.0,
+        "decision": 19.0,
+        "investigation_outcome": 23.0,
+        "task_checkpoint": 13.0
+      },
+      "top_k_cap": 5,
+      "totals": {
+        "candidates_kept_after_topk": 8029,
+        "candidates_no_score": 128,
+        "candidates_passed_pre_topk": 10955,
+        "candidates_total": 15717,
+        "precision_rated_subset": 0.44863731656184486,
+        "prod_dropped_by_sim": 316,
+        "queries_evaluated": 2487,
+        "queries_skipped_no_candidates": 826,
+        "rated_not_relevant": 263,
+        "rated_relevant": 214,
+        "rated_unknown": 7552,
+        "substituted_in": 6826
+      }
+    },
+    "spec_headline": {
+      "divergence_diagnostics_sample": [
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "ec1e819b-ffcc-4b1a-8508-0bd1cf3bd575",
+          "score": 509.0,
+          "substituted_memory_object_id": "33aabe01-ead6-4855-a827-9eae58b86e47",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "7c3de8a0-c9d2-487f-bd96-81e8134bfac7",
+          "score": 499.0,
+          "substituted_memory_object_id": "19153a12-6b2c-441b-a386-5415b9179a07",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "7c3de8a0-c9d2-487f-bd96-81e8134bfac7",
+          "score": 468.0,
+          "substituted_memory_object_id": "66a2cb29-cac9-4cd5-b03e-0c72c530ac52",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "constraint_memory",
+          "query_audit_log_id": "7c3de8a0-c9d2-487f-bd96-81e8134bfac7",
+          "score": 422.0,
+          "substituted_memory_object_id": "e86c71ef-ec2b-460f-abb2-2724221d7635",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "f9542c8a-a575-4737-bdfc-686c001771f2",
+          "score": 509.0,
+          "substituted_memory_object_id": "66a2cb29-cac9-4cd5-b03e-0c72c530ac52",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "419cd106-2436-4172-a924-c876a4c6bc12",
+          "score": 673.0,
+          "substituted_memory_object_id": "66a2cb29-cac9-4cd5-b03e-0c72c530ac52",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "419cd106-2436-4172-a924-c876a4c6bc12",
+          "score": 664.0,
+          "substituted_memory_object_id": "33aabe01-ead6-4855-a827-9eae58b86e47",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "constraint_memory",
+          "query_audit_log_id": "419cd106-2436-4172-a924-c876a4c6bc12",
+          "score": 358.0,
+          "substituted_memory_object_id": "a797027b-19c2-439c-baff-721a0f44ab05",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "bc07aaf4-a110-4286-88ff-cdcd2b7e9fe6",
+          "score": 509.0,
+          "substituted_memory_object_id": "33aabe01-ead6-4855-a827-9eae58b86e47",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "bc07aaf4-a110-4286-88ff-cdcd2b7e9fe6",
+          "score": 469.0,
+          "substituted_memory_object_id": "66a2cb29-cac9-4cd5-b03e-0c72c530ac52",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "bc07aaf4-a110-4286-88ff-cdcd2b7e9fe6",
+          "score": 457.0,
+          "substituted_memory_object_id": "1312569c-1666-4893-9c90-bc4653d3d6f2",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "5244d273-a118-4532-a430-a4b890501acf",
+          "score": 688.0,
+          "substituted_memory_object_id": "33aabe01-ead6-4855-a827-9eae58b86e47",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "5244d273-a118-4532-a430-a4b890501acf",
+          "score": 650.0,
+          "substituted_memory_object_id": "66a2cb29-cac9-4cd5-b03e-0c72c530ac52",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "5244d273-a118-4532-a430-a4b890501acf",
+          "score": 638.0,
+          "substituted_memory_object_id": "31c066d5-c781-4eb2-b356-4f6da8eb9216",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "constraint_memory",
+          "query_audit_log_id": "5244d273-a118-4532-a430-a4b890501acf",
+          "score": 343.0,
+          "substituted_memory_object_id": "e86c71ef-ec2b-460f-abb2-2724221d7635",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "9a86b745-2ef1-421e-97e8-b4d7fe754bc7",
+          "score": 469.0,
+          "substituted_memory_object_id": "748e411a-2e61-4f87-acef-653f5d150154",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "constraint_memory",
+          "query_audit_log_id": "9a86b745-2ef1-421e-97e8-b4d7fe754bc7",
+          "score": 438.0,
+          "substituted_memory_object_id": "e86c71ef-ec2b-460f-abb2-2724221d7635",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "constraint_memory",
+          "query_audit_log_id": "bdb5eee8-dcbe-48c5-ba83-04cd16dbd8b6",
+          "score": 438.0,
+          "substituted_memory_object_id": "e86c71ef-ec2b-460f-abb2-2724221d7635",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "a66dc53b-53bb-45e0-85ec-0c5b1f22b83c",
+          "score": 491.0,
+          "substituted_memory_object_id": "0715a6c4-24aa-4873-989e-b95724d7c4f4",
+          "variant": "spec_headline"
+        },
+        {
+          "memory_type": "decision",
+          "query_audit_log_id": "a66dc53b-53bb-45e0-85ec-0c5b1f22b83c",
+          "score": 429.0,
+          "substituted_memory_object_id": "33aabe01-ead6-4855-a827-9eae58b86e47",
+          "variant": "spec_headline"
+        }
+      ],
+      "n_divergence_total": 4807,
+      "per_type": {
+        "constraint_memory": {
+          "kept": 775,
+          "rated_not_relevant": 34,
+          "rated_relevant": 28,
+          "rated_unknown": 713
+        },
+        "decision": {
+          "kept": 3815,
+          "rated_not_relevant": 69,
+          "rated_relevant": 74,
+          "rated_unknown": 3672
+        },
+        "task_checkpoint": {
+          "kept": 869,
+          "rated_not_relevant": 38,
+          "rated_relevant": 47,
+          "rated_unknown": 784
+        }
+      },
+      "thresholds": {
+        "constraint_memory": 20.0,
+        "decision": 22.0,
+        "task_checkpoint": 14.0
+      },
+      "top_k_cap": 5,
+      "totals": {
+        "candidates_kept_after_topk": 5459,
+        "candidates_no_score": 128,
+        "candidates_passed_pre_topk": 6566,
+        "candidates_total": 15717,
+        "precision_rated_subset": 0.5137931034482759,
+        "prod_dropped_by_sim": 867,
+        "queries_evaluated": 2487,
+        "queries_skipped_no_candidates": 826,
+        "rated_not_relevant": 141,
+        "rated_relevant": 149,
+        "rated_unknown": 5169,
+        "substituted_in": 4807
+      }
+    }
+  }
+}

@@ -14,6 +14,10 @@ python -m evals.injection_policy_2026_06.analyze --output report.json
 python -m evals.injection_policy_2026_06.holdout
 python -m evals.injection_policy_2026_06.holdout --output report.json
 python -m evals.injection_policy_2026_06.holdout --db /path/to/pallium.db --quiet
+
+# Phase 2a — approximate historical decision replay (audit-only)
+python -m evals.injection_policy_2026_06.decision_replay
+python -m evals.injection_policy_2026_06.decision_replay --output report.json
 ```
 
 Reads the local Pallium SQLite database in read-only mode. Defaults to
@@ -38,6 +42,9 @@ Reads the local Pallium SQLite database in read-only mode. Defaults to
 - `holdout_2026-06-27.json` — Phase 1 chronological 80/20 holdout
   validation. The spec's binding pass-bar numbers come from this file,
   not from Phase 0.
+- `decision_replay_2026-06-27.json` — Phase 2a approximate historical
+  decision-simulation replay. Audit-trail artifact only; gates on
+  `routing_score` because historical rows lack the result `score` field.
 
 ```bash
 python -m evals.injection_policy_2026_06.analyze \
@@ -45,6 +52,9 @@ python -m evals.injection_policy_2026_06.analyze \
     --quiet
 python -m evals.injection_policy_2026_06.holdout \
     --output evals/injection_policy_2026_06/holdout_2026-06-27.json \
+    --quiet
+python -m evals.injection_policy_2026_06.decision_replay \
+    --output evals/injection_policy_2026_06/decision_replay_2026-06-27.json \
     --quiet
 ```
 
@@ -58,6 +68,9 @@ the committed snapshots.
 - `tests/test_injection_policy_2026_06_holdout.py` — Phase 1 dedup,
   chronological split, min-N threshold rule, holdout evaluation,
   disposition logic, recommended-policy assembly (23 tests).
+- `tests/test_injection_policy_2026_06_decision_replay.py` — Phase 2a
+  candidate parsing, type-allowlist + threshold + top-K simulation,
+  variant comparison, divergence diagnostics (21 tests).
 
-Tests use in-memory fixtures. Live-DB headline numbers belong in
-`snapshot_2026-06-27.json` / `holdout_2026-06-27.json`, not in tests.
+Tests use in-memory fixtures. Live-DB headline numbers belong in the
+committed snapshot JSONs, not in tests.
