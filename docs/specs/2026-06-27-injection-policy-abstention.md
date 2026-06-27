@@ -458,6 +458,22 @@ the staging discipline used in Phases 3a/3b and 4.
 
 ### Phase 6 — One-month measurement window
 
+**Phase 6 STATUS (infrastructure shipped 2026-06-27, measurement
+window pending live data accumulation).**
+
+- [x] Phase 6 measurement script committed at
+      `evals/injection_policy_2026_06/phase6_measurement.py` with full
+      pure-rollup test coverage. Produces three reports:
+  - Per-`memory_type` proactive precision (usage_rate from
+    `memory_usage_audit` + rating_precision from `memory_feedback`).
+  - Per-`trigger_origin` usage rates.
+  - Demoted-type discovery: how often each on-demand type is actually
+    retrieved via a trigger.
+- [x] Phase 6 runbook committed at
+      [`docs/runbooks/2026-06-27-injection-policy-phase6.md`](../runbooks/2026-06-27-injection-policy-phase6.md)
+      with preconditions, the decision matrix, and sample-size
+      guardrails.
+
 - [ ] Ship Phase 3a (proactive thresholds for `constraint_memory` +
       `decision` only) behind flag in default config; opt-in per
       container via `[[injection.policy.containers]]` entries keyed by

@@ -18,6 +18,10 @@ python -m evals.injection_policy_2026_06.holdout --db /path/to/pallium.db --quie
 # Phase 2a — approximate historical decision replay (audit-only)
 python -m evals.injection_policy_2026_06.decision_replay
 python -m evals.injection_policy_2026_06.decision_replay --output report.json
+
+# Phase 6 — measurement-window rollups (requires Phase 0.5+4+5b live data)
+python -m evals.injection_policy_2026_06.phase6_measurement
+python -m evals.injection_policy_2026_06.phase6_measurement --since 2026-07-04
 ```
 
 Reads the local Pallium SQLite database in read-only mode. Defaults to
@@ -71,6 +75,14 @@ the committed snapshots.
 - `tests/test_injection_policy_2026_06_decision_replay.py` — Phase 2a
   candidate parsing, type-allowlist + threshold + top-K simulation,
   variant comparison, divergence diagnostics (21 tests).
+- `tests/test_injection_policy_2026_06_phase3a.py` — Phase 3a config
+  + gate semantics (28 tests).
+- `tests/test_injection_policy_2026_06_phase4.py` — Phase 4
+  trigger_origin validation + gate-bypass semantics (30 tests).
+- `tests/test_injection_policy_2026_06_phase5.py` — Phase 5a
+  memory_usage_audit schema, storage, service, endpoints (16 tests).
+- `tests/test_injection_policy_2026_06_phase6.py` — Phase 6
+  measurement rollups (9 tests).
 
 Tests use in-memory fixtures. Live-DB headline numbers belong in the
 committed snapshot JSONs, not in tests.
