@@ -167,6 +167,14 @@ class QueryAuditLogRecord(Base):
     candidate_scores_json = Column(Text, nullable=True)
     injection_method = Column(String, nullable=True)
     query_workstream_id = Column(String, nullable=True)
+    # Phase 4 (2026-06-27): opaque label identifying which deterministic
+    # trigger fired this query. Validated server-side as an enum-like
+    # token; values include "session_start_orientation",
+    # "session_start_checkpoint", "post_tool_failure",
+    # "retry_threshold", "user_explicit", "pre_compact", or NULL for
+    # legacy / proactive queries. See
+    # docs/specs/2026-06-27-injection-policy-abstention.md.
+    trigger_origin = Column(String, nullable=True)
 
 
 class MemoryFlagRecord(Base):
@@ -435,6 +443,7 @@ class SQLiteSchemaMixin:
         "candidate_scores_json": "ALTER TABLE query_audit_log ADD COLUMN candidate_scores_json TEXT",
         "injection_method": "ALTER TABLE query_audit_log ADD COLUMN injection_method VARCHAR",
         "query_workstream_id": "ALTER TABLE query_audit_log ADD COLUMN query_workstream_id VARCHAR",
+        "trigger_origin": "ALTER TABLE query_audit_log ADD COLUMN trigger_origin VARCHAR",
     }
 
     def _initialize_schema(self) -> None:

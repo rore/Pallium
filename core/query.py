@@ -67,6 +67,7 @@ class QueryExecutor:
         visibility: str | None = None,
         runtime_context: QueryRuntimeContext | None = None,
         include_trace: bool = False,
+        trigger_origin: str | None = None,
     ) -> QueryResult:
         filter_resolution = resolve_query_filters(
             source_type=source_type,
@@ -157,6 +158,7 @@ class QueryExecutor:
                 routing_overrides=self._routing_overrides,
                 type_registry=self._type_registry,
                 injection_policy=self._injection_policy,
+                trigger_origin=trigger_origin,
             )
             if not isinstance(outcome, PackageQueryOutcome):
                 raise TypeError("route_query_results must return PackageQueryOutcome")

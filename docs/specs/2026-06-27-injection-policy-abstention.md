@@ -332,39 +332,78 @@ making them dead before triggers exist.
 Without triggers, on-demand types become dead code (agents don't know what
 they don't know — Reviewer 1 explicit warning).
 
+**Phase 4 STATUS (shipped 2026-06-27).** Pallium-side infrastructure
+landed; integration hooks (Claude Code) updated. Codex parity deferred.
+
 Architect-review finding: triggers must stay structural to honor the
 "language-agnostic structural signals" decision (`docs/context/decisions.md`
 2026-05-30). NL phrase cues are allowed only as **explicit user-issued
 commands**, never as the primary signal.
 
-- [ ] `task_checkpoint`: trigger on session-start hook when prior session
-      had open checkpoint matching current cwd / branch / path activity.
-      Pure structural: cwd, branch, recent file paths, prior checkpoint
-      `subject` / `work_refs` intersection.
-- [ ] `investigation_outcome`: structural triggers (primary):
-      - tool-call failure events (test fail, build fail, error patterns —
-        match on error signature, exit code, file/path tuple),
-      - N≥3 retries on the same operation (same tool + same target),
-      - explicit user-issued type query (user passes a type filter via
-        the integration API, no NL parsing).
-- [ ] `investigation_outcome`: NL command aliases (secondary, optional):
-      - if the integration host wants to bind phrases like "have we hit
-        this before" to an explicit `pallium_query` call, that is an
-        integration-layer alias, not a Pallium-side cue table.
-      - Pallium itself MUST NOT add NL-phrase cue logic in routing /
-        selection paths. The 2026-03-22 cue-free control plane decision
-        stands.
-- [ ] Each trigger fires `pallium_query` with explicit type filter and
-      narrow scope (recent error signature / current path).
-- [ ] Trigger calls log into `query_audit_log` with a new
-      `trigger_origin` column or a tag inside the existing trace —
-      schema decision in Phase 4 implementation.
+**Pallium-side surface (this commit):**
+- `QueryRequest.trigger_origin` (string, optional, validated against an
+  enum-like set at the route handler).
+- `ItemAndQueryRequest.query_trigger_origin` (same shape).
+- `query_audit_log.trigger_origin` column (additive migration —
+  backward compatible; NULL for legacy rows).
+- Whitelisted values: `session_start_orientation`, `user_prompt_submit`,
+  `pre_compact`, `session_start_checkpoint`, `post_tool_failure`,
+  `retry_threshold`, `user_explicit`.
+- The abstention gate from Phase 3a now also accepts `trigger_origin`.
+  When the value is in `_TRIGGER_BYPASS_ORIGINS` (the deterministic
+  on-demand triggers — `session_start_checkpoint`, `post_tool_failure`,
+  `retry_threshold`, `user_explicit`), `event`/`on_demand`/`suspended`
+  type candidates are allowed through. Proactive thresholds still
+  apply regardless of trigger.
 
-**Phase 4 pass bar (required before Phase 3b flip):**
+**Integration hooks updated:**
+- `session_start.py`: tags the existing orientation query with
+  `trigger_origin="session_start_orientation"` for audit-log analysis.
+- `pre_compact.py`: tags pre-compact queries with
+  `trigger_origin="pre_compact"`.
+- `user_prompt_submit.py`: tags proactive prompt-submit queries with
+  `query_trigger_origin="user_prompt_submit"`.
+- **New** `post_tool_use.py`: registered as `PostToolUse` hook via
+  setup_claude_code. Two triggers:
+  - `post_tool_failure`: fires on non-zero exit code; queries with
+    a redacted error signature.
+  - `retry_threshold`: counts per `(session, tool, normalized_target)`;
+    at N≥3 same-target failures, fires a second query. Counter is
+    reset on success. State file at `~/.pallium/hooks/state/retry_counters/<session>.json`.
+
+**Triggers NOT implemented (out of scope; documented):**
+- `task_checkpoint` cwd-change and branch-checkout triggers — Claude
+  Code does not expose hooks for these events. Possible future work
+  via a git post-checkout hook or external watcher.
+- Codex integration triggers — the Codex hook layer has no
+  PostToolUse-equivalent. Deferred to a follow-up.
+
+**Phase 3b STATUS (shipped 2026-06-27).** The demotion config is now
+documented in `pallium.example.toml` as a commented-out block. Users
+opt in by copying the block into their `pallium.local.toml`. The
+default behaviour remains: no `[injection.policy]` section → bit-exact
+no-op (Phase 3a property preserved).
+
+The recommended Phase 3b config:
+- `task_checkpoint`: `event` (uses Phase 4 PostToolUse / SessionStart
+  triggers)
+- `investigation_outcome`: `on_demand` (uses PostToolUse failure +
+  retry triggers)
+- `thread_summary`: `on_demand` (explicit `pallium_query` only)
+- `fact_summary`: `suspended` (pipeline known broken)
+
+**Phase 4 pass bar (required before Phase 3b flip on a real container):**
 - Triggers fire on ≥X% of structurally eligible turns (number set during
   Phase 4 dry-run on existing audit data).
 - At least one structural trigger type produces hits with held-out
   precision ≥70%.
+
+**Known limitation:** this run ships Phase 4 INFRASTRUCTURE (trigger
+plumbing + reference hooks + audit-log enhancement). It cannot validate
+Phase 4 OUTCOMES (whether agents actually use on-demand types via these
+triggers and whether the resulting injections are useful). That requires
+the Phase 6 measurement window — 4 weeks of live data — which is the
+final phase.
 
 ### Phase 5 — Useful-not-just-relevant feedback
 

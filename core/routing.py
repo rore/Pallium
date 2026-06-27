@@ -49,6 +49,7 @@ def route_query_results(
     routing_overrides: RoutingOverrides | None = None,
     type_registry: TypeRegistry | None = None,
     injection_policy=None,
+    trigger_origin: str | None = None,
 ) -> PackageQueryOutcome:
     """Route query results through the scoring/selection pipeline.
 
@@ -60,6 +61,11 @@ def route_query_results(
     app/config.py). When None or empty, behavior is unchanged
     (Phase 3a default). See
     docs/specs/2026-06-27-injection-policy-abstention.md.
+
+    `trigger_origin`: Phase 4 — opaque label indicating which
+    deterministic trigger fired this query. When it matches one of
+    the bypass origins, the abstention gate allows `event`/`on_demand`/
+    `suspended` types through (proactive thresholds still apply).
     """
     effective_overrides = dict(routing_overrides) if routing_overrides else {}
 
@@ -79,4 +85,5 @@ def route_query_results(
         debug_candidate_loader=debug_candidate_loader,
         routing_overrides=effective_overrides or None,
         injection_policy=injection_policy,
+        trigger_origin=trigger_origin,
     )

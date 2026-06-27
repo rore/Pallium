@@ -30,6 +30,8 @@ def main() -> None:
             "actor_ref": actor_ref,
             "visibility": "private",
             "limit": 8,
+            # Phase 4: tag for audit-log analysis.
+            "trigger_origin": "pre_compact",
         }
         if session_id:
             query_payload["thread_ref"] = session_id
@@ -49,6 +51,7 @@ def main() -> None:
                 "visibility": "private",
                 "thread_ref": session_id,
                 "limit": 1,
+                "trigger_origin": "pre_compact",
             })
             if trace_response:
                 trace_blocks = trace_response.get("injectable_blocks", [])

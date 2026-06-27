@@ -44,16 +44,35 @@ from semantic.agent_conversation_memory_routing_injection import (
 # candidate_scores_json (Phase 0.5). NOT routing_score. Phase 2a's
 # audit-only replay confirmed routing_score yields ~51% precision vs
 # ~76% on score.
+#
+# Phase 4 (2026-06-27): when the request carries a deterministic
+# on-demand `trigger_origin`, the gate bypasses the
+# "event"/"on_demand"/"suspended" drop. Proactive threshold gating
+# still applies — the trigger does not bypass score thresholds; it
+# only bypasses the type-level demotion. This is what lets explicit
+# `pallium_query` for an `on_demand` type actually return results.
+
+_TRIGGER_BYPASS_ORIGINS: frozenset[str] = frozenset({
+    "session_start_checkpoint",
+    "post_tool_failure",
+    "retry_threshold",
+    "user_explicit",
+})
 
 
 def _policy_allows_proactive_injection(
     candidate: dict[str, object],
     injection_policy,
     query_filters: QueryFilters | None,
+    trigger_origin: str | None = None,
 ) -> bool:
     """Return True iff the candidate is allowed by the abstention policy.
 
     Default-allow when no policy is configured for the candidate's type.
+    When `trigger_origin` is in _TRIGGER_BYPASS_ORIGINS, demoted modes
+    (event/on_demand/suspended) act as "allow" — the deterministic
+    trigger is explicitly retrieving these types. Proactive-mode score
+    thresholds still apply regardless.
     """
     if injection_policy is None or injection_policy.is_empty():
         return True
@@ -81,7 +100,10 @@ def _policy_allows_proactive_injection(
         if score is None:
             return False
         return float(score) >= float(effective.min_score)
-    # "event", "on_demand", "suspended" — drop from proactive
+    # "event", "on_demand", "suspended" — drop from proactive UNLESS
+    # the call carried a deterministic trigger asking for this type.
+    if trigger_origin in _TRIGGER_BYPASS_ORIGINS:
+        return True
     return False
 
 from semantic.agent_conversation_memory_routing_scoring import (
@@ -808,6 +830,7 @@ def _build_injectable_blocks(
     runtime_context: QueryRuntimeContext | None,
     evidence_request: bool = False,
     injection_policy=None,
+    trigger_origin: str | None = None,
 ) -> tuple[list[InjectableBlock], dict[str, object]]:
     same_thread_context = _evaluate_same_thread_local_context(
         ranked_candidates,
@@ -909,7 +932,7 @@ def _build_injectable_blocks(
         # configured per-type (and optional per-container) policy. See
         # docs/specs/2026-06-27-injection-policy-abstention.md.
         if not _policy_allows_proactive_injection(
-            candidate, injection_policy, query_filters
+            candidate, injection_policy, query_filters, trigger_origin
         ):
             if not candidate.get("suppression_reason_code"):
                 candidate.setdefault(

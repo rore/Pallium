@@ -104,6 +104,11 @@ class QueryRequest(BaseModel):
     work_refs: list[str] | None = None
     visibility: Visibility | VisibilityContextModel | None = None
     runtime_context: RuntimeContextModel | None = None
+    # Phase 4 (2026-06-27): opaque label identifying which deterministic
+    # trigger fired this query. Validated server-side against a known
+    # token set; None means "legacy / proactive default." See
+    # docs/specs/2026-06-27-injection-policy-abstention.md.
+    trigger_origin: str | None = None
 
     def visibility_kind(self) -> str | None:
         if isinstance(self.visibility, VisibilityContextModel):
@@ -300,6 +305,10 @@ class ItemAndQueryRequest(BaseModel):
     query_actor_ref: str | None = None
     work_refs: list[str] | None = None
     runtime_context: RuntimeContextModel | None = None
+    # Phase 4 (2026-06-27): opaque trigger label for the query side of
+    # the combined ingest-and-query call. Same semantics as
+    # QueryRequest.trigger_origin.
+    query_trigger_origin: str | None = None
 
     def visibility_kind(self) -> str | None:
         if isinstance(self.visibility, VisibilityContextModel):

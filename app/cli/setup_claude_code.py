@@ -79,6 +79,10 @@ def _register_hooks(settings: dict) -> dict:
         ("UserPromptSubmit", "user_prompt_submit.py", 8),
         ("Stop", "stop.py", 15),
         ("PreCompact", "pre_compact.py", 8),
+        # Phase 4 (2026-06-27): deterministic on-demand triggers for
+        # investigation_outcome (failure + retry-threshold). See
+        # docs/specs/2026-06-27-injection-policy-abstention.md.
+        ("PostToolUse", "post_tool_use.py", 8),
     ]
 
     for event, script, timeout in hook_defs:

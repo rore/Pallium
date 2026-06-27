@@ -518,6 +518,7 @@ class PalliumService:
         visibility: str | None = None,
         runtime_context: QueryRuntimeContext | None = None,
         include_trace: bool = False,
+        trigger_origin: str | None = None,
     ) -> QueryResult:
         runtime_context = resolve_runtime_context(
             self._storage,
@@ -537,6 +538,7 @@ class PalliumService:
             visibility=visibility,
             runtime_context=runtime_context,
             include_trace=include_trace,
+            trigger_origin=trigger_origin,
         )
 
     def run_consolidation_pass(
@@ -660,6 +662,7 @@ class PalliumService:
         results: list,
         ranked_candidates: list[dict] | None = None,
         injection_method: str | None = None,
+        trigger_origin: str | None = None,
     ) -> None:
         result_lookup = {}
         for item in results:
@@ -764,6 +767,9 @@ class PalliumService:
             "candidate_scores_json": candidate_scores_json,
             "injection_method": injection_method,
             "query_workstream_id": query_workstream_id,
+            # Phase 4 (2026-06-27): which deterministic trigger fired this
+            # query, if any. None for legacy / proactive default queries.
+            "trigger_origin": trigger_origin,
         }
         self._storage.write_query_audit_row(row)
 
