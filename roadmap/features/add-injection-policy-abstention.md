@@ -1,10 +1,11 @@
 ---
 id: add-injection-policy-abstention
 title: Injection policy abstention — narrow delivery, type-gated proactivity, deterministic on-demand
-status: in-progress
+status: shipped
 priority: high
 commitment: committed
-milestone: Next
+milestone: Done
+shipped_at: 2026-06-27
 ---
 
 ## Summary
@@ -34,12 +35,39 @@ right next move is delivery-policy abstention, not another mechanism.
 ## Phases
 
 - [x] Phase 0 — analysis snapshot committed
-- [ ] Phase 0.5 — `candidate_scores_json` extended with result `score`
-- [ ] Phase 1 — chronological holdout threshold validation
-- [ ] Phase 2a — approximate historical decision-simulation replay
-- [ ] Phase 2b — exact prospective replay (requires fresh data window)
-- [ ] Phase 3a — config schema + selection-path gate for proactive types
-- [ ] Phase 4 — deterministic triggers in Claude Code integration
-- [ ] Phase 3b — demote weak types (ships with Phase 4)
-- [ ] Phase 5 — `memory_usage_audit` table + populator
-- [ ] Phase 6 — 4-week measurement window
+      (`evals/injection_policy_2026_06/analyze.py`,
+      `snapshot_2026-06-27.json`)
+- [x] Phase 0.5 — `candidate_scores_json` extended with result `score`
+- [x] Phase 1 — chronological holdout threshold validation
+      (`holdout_2026-06-27.json`); no type met ≥70% on held-out tail —
+      consistent with "abstention discipline" framing.
+- [x] Phase 2a — approximate historical decision-simulation replay
+      (`decision_replay_2026-06-27.json`); 51.38% precision on
+      routing_score confirms the field-choice claim
+- [ ] Phase 2b — exact prospective replay (requires fresh data window
+      with the new `score` field)
+- [x] Phase 3a — config schema + selection-path gate for proactive
+      types; default config bit-exact no-op
+- [x] Phase 4 — deterministic triggers in Claude Code integration
+      (PostToolUse failure + retry, SessionStart orientation, pre-
+      compact, user_prompt_submit, user_explicit). Codex parity
+      shipped in follow-up.
+- [x] Phase 3b — demote weak types: documented as opt-in
+      commented-out block in `pallium.example.toml`. Default behavior
+      unchanged.
+- [x] Phase 5a — `memory_usage_audit` table + populator API surface
+- [x] Phase 5b — populator hook in claude-code/codex stop hooks +
+      Phase 5b match-text source-of-truth follow-up
+      (2026-06-28: shared `build_memory_match_text` via
+      `MemoryExpandResponse.match_text` to fix per-type undercount)
+- [ ] Phase 6 — 4-week measurement window (infrastructure shipped at
+      `evals/injection_policy_2026_06/phase6_measurement.py`; awaits
+      live-data accumulation)
+
+## Outstanding
+
+Phase 2b and Phase 6 are measurement windows that need fresh live data;
+all infrastructure is in place. No further code work scheduled until
+that data accumulates and the decision matrix from the runbook
+([`docs/runbooks/2026-06-27-injection-policy-phase6.md`](../../docs/runbooks/2026-06-27-injection-policy-phase6.md))
+triggers the next decision.

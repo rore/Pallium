@@ -16,8 +16,8 @@ A directed analysis (2026-06-27, see also Codex independent review) on 593–617
 self-rated injections joined to `query_audit_log` shows:
 
 - Base precision: ~44% across all containers.
-- Bad-injection rates: 68% on multi-context container (xlm), 53% on focused
-  containers (pallium, minimap).
+- Bad-injection rates: 68% on a multi-context container, 53% on focused
+  single-project containers.
 - ~95% of bad injections are topically-similar-but-question-irrelevant for the
   current turn (free-text manual classification; not a labeled field).
 - Score distributions overlap heavily for `investigation_outcome` (the most
@@ -279,7 +279,7 @@ making them dead before triggers exist.
 
 - [ ] Add config block in `pallium.local.toml` schema. TOML keys cannot
       cleanly hold raw container refs like `git:github.com/rore/pallium`
-      or `path:xlm:2889e4f8fd37` as bare path segments. Use an array of
+      or `path:project:2889e4f8fd37` as bare path segments. Use an array of
       tables keyed by an explicit `container_ref` field:
 
       ```toml
@@ -521,9 +521,10 @@ window pending live data accumulation).**
       `decision` only) behind flag in default config; opt-in per
       container via `[[injection.policy.containers]]` entries keyed by
       `container_ref`.
-- [ ] Turn flag on for `xlm` and `pallium` containers via per-container
-      override. Default behavior stays unchanged for all other
-      containers until Phase 6 measurement.
+- [ ] Turn flag on for the two pilot containers (the multi-context one
+      and `git:github.com/rore/pallium`) via per-container override.
+      Default behavior stays unchanged for all other containers until
+      Phase 6 measurement.
 - [ ] Ship Phase 3b + Phase 4 together once Phase 4 pass bar is met.
 - [ ] After 4 weeks of live data:
   - Held-out precision per type from new feedback.

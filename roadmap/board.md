@@ -1,5 +1,4 @@
 # Next
-- add-injection-policy-abstention
 
 # Paused
 - investigate-thread-level-interest-and-threadless-aggregation
@@ -17,6 +16,8 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-thread-near-dup-supersession
+- add-injection-policy-abstention
 - add-agent-work-trace-parallel-package
 - add-work-ref-cross-surface-continuity
 - investigate-lexical-retrieval-scaling

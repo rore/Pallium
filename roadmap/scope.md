@@ -31,6 +31,21 @@ Current gap assessment against that north star:
 
 Shipped since last major scope update:
 
+- **Injection policy abstention (2026-06-27)**: per-type injection policy
+  (`[injection.policy.types.*]` config) with proactive/event/on_demand/
+  suspended modes; deterministic Phase 4 triggers
+  (PostToolUse failure + retry, SessionStart, pre-compact, user_prompt_submit,
+  user_explicit) in claude-code and codex integrations; `memory_usage_audit`
+  table + populator hook for measuring whether injected memories were
+  actually used (`referenced_in_next_turn`). Phase 6 measurement window
+  pending live-data accumulation.
+- **Thread + per-item near-duplicate supersession (2026-06-28)**:
+  `SequenceMatcher.ratio >= 0.85` similarity gate on top of T2's
+  exact-equality supersession. Closes the byte-equality blind spot
+  for LLM paraphrases across thread rebuilds (writer-side, in
+  `build_thread_summary`) AND per-item extractions on adjacent turns
+  (resolver-side, in `_resolve_supersession_pairs_in_session`). 296
+  active near-dup memories collapsed on the live corpus.
 - **Multilingual tokenization and embedding**: Unicode-aware tokenization for Hebrew, Arabic, CJK, Cyrillic; combining mark stripping; cross-script content-overlap bypass; embedding prefix modes with auto-detection for known model families (E5)
 - **Multi-package parallel processing**: `PackageProcessingRecord` per `(source_item_id, use_case)` enables items to be processed by multiple packages independently; `parallel_processing = True` packages process every item; `TypeRegistry` for package-owned memory type metadata
 - **Conversational knowledge fact extraction**: second production package (`conversational_knowledge`) extracts atomic facts via thread rebuild, runs alongside `agent_conversation_memory`
