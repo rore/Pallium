@@ -88,6 +88,13 @@ def _fetch_memory_match_text(memory_object_id: str) -> str:
     Uses the existing memory-expand endpoint. Returns empty string on
     any failure — the matcher tolerates empty input by simply not
     matching. Bounded by the matcher's own MATCH_TEXT_MAX_CHARS.
+
+    Prefers the server-side ``match_text`` field (Phase 5b, 2026-06-28)
+    which uses the canonical per-type text builder shared with the
+    embedding view. Falls back to the legacy hardcoded scalar-field
+    coalesce for older Pallium servers that predate that field — keeps
+    the hook self-contained and avoids hard-cutting compatibility on
+    integration upgrades.
     """
     if not memory_object_id:
         return ""
@@ -98,9 +105,15 @@ def _fetch_memory_match_text(memory_object_id: str) -> str:
     )
     if not expand or not isinstance(expand, dict):
         return ""
+    # Phase 5b preferred path: server-side per-type match text.
+    match_text = expand.get("match_text")
+    if isinstance(match_text, str) and match_text:
+        return match_text
+    # Fallback: legacy scalar-field coalesce. Older Pallium servers do
+    # not return match_text. The narrow field list is known to undercount
+    # for task_checkpoint / continuity_memory / thread_summary; once the
+    # server is upgraded the preferred path above kicks in.
     payload = expand.get("payload") or {}
-    # Coalesce the common display fields. Order doesn't matter — we
-    # concatenate so the matcher can hit any of them.
     parts: list[str] = []
     for key in (
         "summary", "decision", "investigation_outcome", "text",

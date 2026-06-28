@@ -189,6 +189,12 @@ class MemoryExpandResponse(BaseModel):
     memory_object_id: str
     payload: dict | None = None
     items: list[MemoryEvidenceItemResponse]
+    # Phase 5b (2026-06-28): per-type text view the usage-audit populator
+    # should compare against the assistant's response. Uses the same per-
+    # type field map as the embedding text view (single source of truth for
+    # "what counts as memory content"). None when the memory type has no
+    # per-type text view or no fields are populated.
+    match_text: str | None = None
 
 
 class QueryTraceFiltersResponse(BaseModel):

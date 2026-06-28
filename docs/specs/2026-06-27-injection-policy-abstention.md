@@ -454,6 +454,49 @@ the staging discipline used in Phases 3a/3b and 4.
 - Contract documented in `stop.py` docstring so Phase 5b reads
   straightforwardly.
 
+**Phase 5b — match-text source-of-truth (2026-06-28, follow-up to code review):**
+
+The initial Phase 5b populator built its `memory_text` from a hardcoded
+7-key scalar coalesce (`summary, decision, investigation_outcome, text,
+constraint_text, interest_text, title`) inside both
+`integrations/claude-code/hooks/stop.py` and
+`integrations/codex/hooks/stop.py`. A code review (2026-06-28) flagged
+that this list misses fields where substantive memory content lives:
+
+- `task_checkpoint` → `task`, `current_state`, `blocker_state`,
+  `next_step`, `key_findings[*]`
+- `continuity_memory` → `continuity_question`, `carry_forward_answer`
+- `thread_summary` / `pattern_memory` → `conclusions[*].text`
+- `decision.rationale`, `investigation_outcome.key_finding_text` /
+  `rationale`
+
+Effect: the populator reported `referenced_in_next_turn=false` when the
+agent actually referenced an ignored field. That distorts Phase 6
+per-type rollup numbers (the decision input for which types stay
+proactive vs. demote to on-demand).
+
+Fix landed: server-side single source of truth.
+- `semantic.agent_conversation_memory_embedding.build_memory_match_text`:
+  same per-type field map as `build_embedding_text` (extracted into a
+  shared `_build_memory_text` dispatcher), but without the 40-char
+  embedding floor or `[type]` prefix.
+- `PalliumService.get_memory_expand` returns `(payload, items,
+  match_text)` (3-tuple) and surfaces `match_text` via
+  `MemoryExpandResponse.match_text`.
+- Both hooks (`claude-code`/`codex`) prefer `match_text` when present
+  and fall back to the legacy 7-key coalesce for older Pallium servers.
+
+Tests: `tests/test_phase5b_match_text.py`,
+`tests/test_claude_code_hooks/test_stop_match_text.py`,
+`tests/test_codex_stop_match_text.py`. The reviewer's flagged fields
+are pinned as assertions so future drift fails loudly.
+
+Short constraint texts (< 40 chars, e.g. "No GPL deps.") are still
+below the matcher's 60-char + real-word floor; those are not helped by
+the fix. Tracked as a known limitation of verbatim_snippet matching —
+short references would need a different matcher strategy (id_quote
+already handles explicit `ref:` citations).
+
 `memory_feedback` stays the human-rating table — unchanged by Phase 5.
 
 ### Phase 6 — One-month measurement window

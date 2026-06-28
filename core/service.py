@@ -30,6 +30,7 @@ from core.visibility import is_visible
 from providers.embedding.base import EmbeddingProvider
 from retrieval.base import RetrievalProvider
 from semantic.base import SemanticPlugin
+from semantic.agent_conversation_memory_embedding import build_memory_match_text
 from storage.base import QueueHealthSnapshot, RetentionLeaseLostError, RetentionRunStats, StorageProvider, ThreadProcessingLease
 from storage.vector_index import VectorIndex
 from core.text import normalize_for_index as _normalize_for_index
@@ -845,8 +846,17 @@ class PalliumService:
 
     def get_memory_expand(
         self, memory_object_id: str, *, container_ref: str | None = None, query_actor_ref: str | None = None,
-    ) -> tuple[dict | None, list[SourceItem]]:
-        """Return structured payload and source items for a memory object."""
+    ) -> tuple[dict | None, list[SourceItem], str | None]:
+        """Return structured payload, source items, and a Phase-5b match-text view.
+
+        The ``match_text`` (3rd tuple element) is the per-type text the
+        usage-audit populator should compare against the assistant's
+        response. It uses the same per-type field map as the embedding
+        text view but without the 40-char floor or ``[type]`` prefix
+        (see ``semantic.agent_conversation_memory_embedding``
+        ``build_memory_match_text``). None when the type has no per-type
+        text view or no fields are populated.
+        """
         memory_object = self._storage.get_memory_object(memory_object_id)
         effective_container = container_ref or memory_object.container_ref
         if container_ref and memory_object.visibility != "global" and memory_object.container_ref != container_ref:
@@ -861,4 +871,5 @@ class PalliumService:
             effective_actor_ref = query_actor_ref or memory_object.actor_ref
             if is_visible(item.visibility, item.container_ref, effective_container, item.actor_ref, query_actor_ref=effective_actor_ref):
                 items.append(item)
-        return memory_object.payload, items
+        match_text = build_memory_match_text(memory_object) or None
+        return memory_object.payload, items, match_text

@@ -26,7 +26,7 @@ def build_embedding_text(memory_object: MemoryObject) -> str | None:
     """Build one retrieval-oriented text view per memory type.
 
     Uses selected payload fields in natural language (not normalize_for_index).
-    Returns None if type is not embeddable.
+    Returns None if type is not embeddable or text is too short to embed.
     """
     memory_type = memory_object.type
     payload = memory_object.payload
@@ -34,6 +34,37 @@ def build_embedding_text(memory_object: MemoryObject) -> str | None:
     if memory_type not in EMBEDDABLE_MEMORY_TYPES:
         return None
 
+    text = _build_memory_text(memory_type, payload)
+    if not text or len(text) < 40:
+        return None
+    return f"[{memory_type}] {text}"
+
+
+def build_memory_match_text(memory_object: MemoryObject) -> str:
+    """Build a per-type text view for Phase 5b usage-audit matching.
+
+    Same per-type field map as ``build_embedding_text`` (single source of
+    truth for "what counts as memory text"), but without:
+
+      - the 40-char minimum floor — the audit matcher has its own
+        60-char + real-word threshold and short legitimate texts
+        (e.g. constraint_text) should still be matchable;
+      - the ``[type]`` prefix — the agent would never quote the type tag.
+
+    Returns the empty string if the type has no per-type text view or
+    no fields are populated. Spec: docs/specs/2026-06-27-injection-policy-abstention.md
+    Phase 5b.
+    """
+    memory_type = memory_object.type
+    if memory_type not in EMBEDDABLE_MEMORY_TYPES:
+        return ""
+    return _build_memory_text(memory_type, memory_object.payload) or ""
+
+
+def _build_memory_text(memory_type: str, payload: dict) -> str:
+    """Dispatch to the per-type builder. Shared by ``build_embedding_text``
+    (retrieval view) and ``build_memory_match_text`` (usage-audit view).
+    """
     builders = {
         "decision": _build_decision_text,
         "investigation_outcome": _build_investigation_outcome_text,
@@ -47,11 +78,8 @@ def build_embedding_text(memory_object: MemoryObject) -> str | None:
     }
     builder = builders.get(memory_type)
     if builder is None:
-        return None
-    text = builder(payload)
-    if not text or len(text) < 40:
-        return None
-    return f"[{memory_type}] {text}"
+        return ""
+    return builder(payload)
 
 
 def _build_decision_text(payload: dict) -> str:

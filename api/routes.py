@@ -596,7 +596,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
     @router.get("/memory/{memory_object_id}/expand", response_model=MemoryExpandResponse)
     def get_memory_expand(memory_object_id: str, container_ref: str | None = None) -> MemoryExpandResponse:
         try:
-            raw_payload, items = service.get_memory_expand(memory_object_id, container_ref=container_ref)
+            raw_payload, items, match_text = service.get_memory_expand(memory_object_id, container_ref=container_ref)
         except KeyError:
             raise HTTPException(status_code=404, detail="memory object not found")
         filtered: dict | None = None
@@ -608,6 +608,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
         return MemoryExpandResponse(
             memory_object_id=memory_object_id,
             payload=filtered,
+            match_text=match_text,
             items=[
                 MemoryEvidenceItemResponse(
                     source_item_id=item.id,

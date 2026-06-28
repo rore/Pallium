@@ -79,7 +79,7 @@ class TestGetMemoryExpand:
             to_kind="source_item", to_id=si.id,
         ))
 
-        _payload, items = service.get_memory_expand(mo.id, container_ref="container-a")
+        _payload, items, _match_text = service.get_memory_expand(mo.id, container_ref="container-a")
         assert len(items) == 1
         assert items[0].content == "the original conversation"
 
@@ -118,7 +118,7 @@ class TestGetMemoryExpand:
             to_kind="source_item", to_id=si.id,
         ))
 
-        _payload, items = service.get_memory_expand(mo.id)
+        _payload, items, _match_text = service.get_memory_expand(mo.id)
         assert len(items) == 1
         assert items[0].content == "accessible without container"
 
@@ -156,7 +156,7 @@ class TestGetMemoryExpand:
                 to_kind="source_item", to_id=si.id,
             ))
 
-        _payload, items = service.get_memory_expand(mo.id, container_ref="container-a")
+        _payload, items, _match_text = service.get_memory_expand(mo.id, container_ref="container-a")
         contents = {item.content for item in items}
         assert "same container" in contents
         assert "public shared" in contents
@@ -182,7 +182,7 @@ class TestGetMemoryExpand:
                 to_kind="source_item", to_id=si.id,
             ))
 
-        _payload, result = service.get_memory_expand(mo.id, container_ref="container-a")
+        _payload, result, _match_text = service.get_memory_expand(mo.id, container_ref="container-a")
         assert len(result) == 3
 
     def test_returns_filtered_payload(self, test_db_url: str) -> None:

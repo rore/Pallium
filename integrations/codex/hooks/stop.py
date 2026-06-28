@@ -93,7 +93,13 @@ def _populate_usage_audit_rows(session_id: str, assistant_text: str) -> None:
 
 
 def _fetch_memory_match_text(memory_object_id: str) -> str:
-    """Fetch a memory's display-text for matching. Returns "" on failure."""
+    """Fetch a memory's display-text for matching. Returns "" on failure.
+
+    Prefers the server-side ``match_text`` field (Phase 5b, 2026-06-28)
+    which uses the canonical per-type text builder shared with the
+    embedding view. Falls back to the legacy hardcoded scalar-field
+    coalesce for older Pallium servers that predate that field.
+    """
     if not memory_object_id:
         return ""
     expand = pallium_request(
@@ -104,6 +110,14 @@ def _fetch_memory_match_text(memory_object_id: str) -> str:
     )
     if not expand or not isinstance(expand, dict):
         return ""
+    # Phase 5b preferred path: server-side per-type match text.
+    match_text = expand.get("match_text")
+    if isinstance(match_text, str) and match_text:
+        return match_text
+    # Fallback: legacy scalar-field coalesce. The narrow field list is
+    # known to undercount for task_checkpoint / continuity_memory /
+    # thread_summary; once the server is upgraded the preferred path
+    # above kicks in.
     payload = expand.get("payload") or {}
     parts: list[str] = []
     for key in (
