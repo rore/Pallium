@@ -43,7 +43,7 @@ evals/conversational_knowledge/output/
 pallium.db.schema.lock
 *.schema.lock
 
-.local/harness-sessions/
+.local/
 
 tmp/
 
