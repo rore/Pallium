@@ -4,6 +4,7 @@ import json
 import re
 from collections import OrderedDict
 from dataclasses import replace
+from difflib import SequenceMatcher
 from typing import Iterable
 
 from capabilities.consolidation import ConsolidationGroup
@@ -54,6 +55,70 @@ def _evidence_canonical_key(evidence: str | None) -> str | None:
     if len(tokens) < 3:
         return None
     return ' '.join(sorted(tokens))
+
+
+# ---------------------------------------------------------------------------
+# Thread-scoped near-duplicate supersession (2026-06-28)
+# ---------------------------------------------------------------------------
+#
+# Background: T2 (commit f9af592, 2026-06-04) anchored canonical_key on
+# normalize_for_index(decision_text|investigation_text) and widened
+# decision/investigation supersession to container scope. The exact-equality
+# check still missed paraphrases — when an LLM rebuild produced a slightly
+# different wording of the same conclusion, canonical_key drifted and no
+# hint was emitted, so the old row stayed active. Live data showed 48
+# active investigation_outcome memories on one thread, 8+ of them
+# paraphrases of "Pallium session is waiting for approval; context graph
+# session is not".
+#
+# Fix: inside build_thread_summary's hint emission, walk each new
+# decision/investigation against the SAME-THREAD prior conclusions
+# chronologically and supersede a prior one when text similarity on the
+# normalized canonical_key exceeds NEAR_DUP_THRESHOLD. The hint carries
+# the OLD record's canonical_key so the resolver's existing exact-
+# equality lookup in _resolve_supersession_pairs_in_session finds the
+# old record — no resolver change required.
+#
+# Same-thread restriction is implicit: `conclusions` is built by
+# core.thread_rebuild._collect_thread_conclusions from this thread's
+# source_items only. Cross-thread merges therefore cannot happen by
+# construction even though hints are emitted with thread_ref=None
+# (preserving T2's container-scoped property for the exact-match
+# branch).
+#
+# Threshold: 0.85 measured against live data — demotes 91 of 405 active
+# thread-derived investigation_outcomes, preserves 314 (76%). The naive
+# "one per thread" alternative would destroy 349 distinct findings.
+NEAR_DUP_THRESHOLD = 0.85
+
+
+def _supersedes_prior(
+    new_canonical_key: str,
+    old_memory_object: MemoryObject,
+    *,
+    threshold: float = NEAR_DUP_THRESHOLD,
+) -> bool:
+    """Decide whether ``new_canonical_key`` should supersede ``old_memory_object``.
+
+    Returns True when either:
+      1. the canonical_keys are byte-equal (fast path; same as pre-fix
+         behaviour and the resolver's exact-match branch); or
+      2. ``SequenceMatcher.ratio`` over the canonical_keys is >= threshold.
+
+    Both keys are already ``normalize_for_index`` output (lower-cased,
+    diacritic-stripped, whitespace-collapsed), so SequenceMatcher operates
+    on a stable surface form.
+
+    No new dependencies, no LLM call — pure-Python difflib.
+    """
+    if not new_canonical_key:
+        return False
+    old_ck = str(old_memory_object.payload.get("canonical_key") or "").strip()
+    if not old_ck:
+        return False
+    if old_ck == new_canonical_key:
+        return True
+    return SequenceMatcher(None, old_ck, new_canonical_key).ratio() >= threshold
 
 
 THREAD_SUMMARY_PROMPT_SCHEMA_VERSION = "v10"
@@ -829,24 +894,49 @@ def build_thread_summary(*, provider: LLMProvider, prompt_variant: str, plugin_n
                 )
                 for conclusion in carried_conclusions
             )
-        hints = [
-            SupersessionHint(
-                replacement_memory_id=new_obj.id,
-                memory_type=new_obj.type,
-                canonical_key=ck,
-                container_ref=aggregate.container_ref,
-                thread_ref=None,
-                visibility=aggregate.visibility,
-            )
-            for new_obj in memory_objects
-            if new_obj.type in {"decision", "investigation_outcome"}
-            for ck in [str(new_obj.payload.get("canonical_key") or "").strip()]
-            if ck
-            for old_obj in conclusions
-            if old_obj.type == new_obj.type
-            and old_obj.id != new_obj.id
-            and str(old_obj.payload.get("canonical_key") or "").strip() == ck
-        ]
+        hints: list[SupersessionHint] = []
+        # Supersession-hint emission (2026-06-28 near-dup fix).
+        #
+        # For each new decision/investigation_outcome, walk prior same-type
+        # conclusions and emit ONE hint for each prior record whose canonical_key
+        # is byte-equal OR (since 2026-06-28) similar above NEAR_DUP_THRESHOLD.
+        #
+        # The hint's canonical_key is the OLD record's key (not the new one).
+        # The resolver in storage/sqlite_queue._resolve_supersession_pairs_in_session
+        # finds existing records via exact equality on canonical_key, so the OLD
+        # key is what makes the lookup match. This keeps the resolver unchanged
+        # and preserves T2 (f9af592)'s container-scoped behaviour.
+        #
+        # `conclusions` is built by core.thread_rebuild from THIS thread's
+        # source_items, so same-thread-only is enforced by construction.
+        already_paired: set[str] = set()
+        for new_obj in memory_objects:
+            if new_obj.type not in {"decision", "investigation_outcome"}:
+                continue
+            new_ck = str(new_obj.payload.get("canonical_key") or "").strip()
+            if not new_ck:
+                continue
+            for old_obj in conclusions:
+                if old_obj.type != new_obj.type:
+                    continue
+                if old_obj.id == new_obj.id or old_obj.id in already_paired:
+                    continue
+                if not _supersedes_prior(new_ck, old_obj):
+                    continue
+                old_ck = str(old_obj.payload.get("canonical_key") or "").strip()
+                if not old_ck:
+                    continue
+                hints.append(
+                    SupersessionHint(
+                        replacement_memory_id=new_obj.id,
+                        memory_type=new_obj.type,
+                        canonical_key=old_ck,
+                        container_ref=aggregate.container_ref,
+                        thread_ref=None,
+                        visibility=aggregate.visibility,
+                    )
+                )
+                already_paired.add(old_obj.id)
         return ProcessResult(
             memory_objects=memory_objects,
             relations=relations,

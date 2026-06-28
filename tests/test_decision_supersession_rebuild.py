@@ -127,7 +127,17 @@ class DifferentKeyDecisionStubProvider:
 class NewKeyStubProvider:
     """Each batch emits a distinct decision (and distinct evidence) — so canonical_keys
     differ between batches. Detection is by content marker in the user prompt rather than
-    a per-call counter, because thread rebuilds may run multiple times per drain."""
+    a per-call counter, because thread rebuilds may run multiple times per drain.
+
+    Note (2026-06-28): the BATCH_1 and BATCH_2 decision_texts are deliberately
+    chosen so their canonical_keys are dissimilar enough to fall below
+    NEAR_DUP_THRESHOLD (0.85). The pre-2026-06-28 exact-equality
+    supersession let near-identical wordings stay active as long as
+    canonical_keys were byte-different; the post-2026-06-28 fuzzy match
+    would supersede texts that differ only by a single word. The fixture
+    preserves the test's intent ("genuinely distinct decisions stay
+    active") under both regimes.
+    """
     BATCH_1_EVIDENCE = "First topic: discussing a completely unique architectural decision for the system module"
     BATCH_2_EVIDENCE = "Second topic: discussing another separate unique architectural decision for the project component"
 
@@ -139,14 +149,14 @@ class NewKeyStubProvider:
         in_batch_2 = "Second topic" in user_prompt
         if in_batch_2:
             decision_text = (
-                "Completely unique architectural decision number two for a distinct subsystem "
-                "with no overlap to prior choices whatsoever."
+                "Adopt Postgres logical replication for the catalog service after "
+                "benchmarking against the legacy MySQL deployment over the holiday window."
             )
             evidence = self.BATCH_2_EVIDENCE
         else:
             decision_text = (
-                "Completely unique architectural decision number one for a distinct subsystem "
-                "with no overlap to prior choices whatsoever."
+                "Switch the order-update channel to gRPC streaming once the latency "
+                "regression in HTTP polling exceeds the agreed budget on weekday peaks."
             )
             evidence = self.BATCH_1_EVIDENCE
         payload = {
