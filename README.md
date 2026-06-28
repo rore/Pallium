@@ -10,6 +10,28 @@ threads.
 Multilingual by design: queries in one language retrieve memory stored in
 another. Local-first, no cloud dependencies.
 
+## Project Status
+
+Pallium is active research-grade software, not a finished product. The
+extraction → retrieval → injection pipeline works end-to-end and is used
+daily as a local memory sidecar for Claude Code and Codex, but proactive
+injection precision is the dominant open quality knob. A measurement
+snapshot from 2026-06-27 put baseline precision at ~44% across containers
+(68% bad-rate on a multi-topic container, 53% on focused single-topic
+ones); none of the proactive memory types cleared a 70% precision bar on
+chronological holdout. An opt-in per-type abstention policy targets ≥75%
+precision and is described in
+[docs/specs/2026-06-27-injection-policy-abstention.md](docs/specs/2026-06-27-injection-policy-abstention.md).
+A separate thread-rebuild near-duplicate supersession fix landed
+2026-06-28; databases that predate it may carry accumulated paraphrase
+duplicates.
+
+The system is genuinely useful in a narrow slice — carrying forward
+explicit decisions, investigation outcomes, and constraints across
+sessions on the same repo — and is being measured honestly outside that
+slice. Curated-benchmark numbers below are real; live-use numbers are
+tracked separately.
+
 ## What It Looks Like
 
 Thread 1: your agent helps debug a deployment issue. After investigation,
@@ -140,8 +162,14 @@ Two endpoints cover the full loop:
   (before the LLM call)
 - `POST /items` — store the reply and artifacts (after the LLM call)
 
-Pallium decides what to extract, what to inject, and when to stay silent.
-The agent trusts `should_inject` and passes `injectable_blocks` through.
+Pallium applies a configurable policy for what to extract, what to
+inject, and when to stay silent. The agent trusts `should_inject` and
+passes `injectable_blocks` through. Per-type proactive injection is
+governed by an opt-in `[injection.policy]` block in `pallium.local.toml`
+(see commented template in
+[pallium.example.toml](pallium.example.toml) and the spec linked under
+"Project Status"); by default the policy is permissive and every type is
+proactive.
 
 See [agent-integration.md](docs/agent-integration.md) for the full guide and
 [integration-example.md](docs/integration-example.md) for a Slack agent
@@ -211,6 +239,11 @@ broader mix including trivia-style factual recall.
 Results show both retrieval rate (did Pallium deliver the right memory?) and
 end-to-end accuracy (did the LLM answer correctly?). Retrieval rate isolates
 what Pallium controls; the gap shows what the answering LLM adds or loses.
+
+These are curated benchmarks on third-party datasets. They are not a
+proxy for live-use precision on real agent traffic — that is measured
+separately and is the subject of the abstention spec linked under
+"Project Status".
 
 | Benchmark | Retrieval | End-to-end | Questions |
 |---|---|---|---|

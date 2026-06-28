@@ -9,6 +9,11 @@ generate an answer, evaluate correctness. Retrieval rate (did the right
 memory reach the LLM?) is shown separately to isolate what Pallium controls
 from what the answering LLM does with it.
 
+These benchmarks run against curated third-party datasets. They are not
+a proxy for live-use proactive-injection precision on real agent
+traffic, which is measured separately and tracked in
+[the injection-policy abstention spec](specs/2026-06-27-injection-policy-abstention.md).
+
 ## LoCoMo — Conversational Recall (ACL 2024)
 
 [LoCoMo](https://snap-stanford.github.io/LoCoMo/) tests multi-session

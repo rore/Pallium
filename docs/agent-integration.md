@@ -253,6 +253,33 @@ The current packages are optimizing for two complementary recall jobs:
 The implementation uses multiple memory kinds internally to serve those jobs,
 but the integration loop does not require you to think in those terms first.
 
+## Injection Policy (Opt-In)
+
+Proactive injection precision on real agent traffic is the dominant open
+quality knob (see the
+[Project Status](../README.md#project-status) section and
+[docs/specs/2026-06-27-injection-policy-abstention.md](specs/2026-06-27-injection-policy-abstention.md)).
+An optional `[injection.policy]` TOML block lets operators demote
+specific memory types from proactive injection. Available modes per
+type: `proactive` (gate on result `score` ≥ `min_score`), `event`
+(only on configured event triggers), `on_demand` (only via explicit
+`pallium_query`), `suspended` (do not inject under any path). The
+commented template in `pallium.example.toml` demotes `task_checkpoint`
+to event, `investigation_outcome` and `thread_summary` to on-demand,
+and `fact_summary` to suspended. Types without a policy entry remain
+proactive without a score gate (the default).
+
+When a type is demoted, the gate runs in
+`semantic/agent_conversation_memory_routing_selection.py` and drops the
+candidate from `injectable_blocks` unless the request carries a
+`trigger_origin` in the bypass set (session-resumption checkpoints,
+post-tool failures, retry-threshold events, explicit user queries). The
+integrating runtime supplies `trigger_origin` on the query payload —
+Claude Code and Codex hooks already plumb the values shipped with the
+spec. The agent path is unchanged when the policy is absent (the
+default), and the contract on the agent side is identical:
+`should_inject` plus `injectable_blocks`.
+
 ## Container Visibility and Actor Scoping
 
 Set `visibility` based on the communication context:
