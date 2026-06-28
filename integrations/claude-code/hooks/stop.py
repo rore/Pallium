@@ -1,19 +1,16 @@
 """Stop hook — ingests the assistant's last response from the transcript.
 
-Phase 5b contract (TODO; not yet implemented in this hook):
-    After ingesting the assistant response, this hook will be the
-    natural site for the `memory_usage_audit` populator:
-      1. For each recent query_audit_log row from this thread within
-         the last few turns, GET /memory-usage-audit?query_audit_log_id=...
-      2. For each returned row with populated_at IS NULL, run the
-         minimum-viable matcher against the assistant transcript:
-           - id_quote: look for `ref:<memory_object_id>` mentions
-           - verbatim_snippet: any snippet >= 40 chars from the memory
-             block's text appears in the transcript
-      3. POST /memory-usage-audit/<row_id> with the result. POST is
-         idempotent — re-populating a row no-ops, so retrying safely
-         after transient errors is fine.
-    See docs/specs/2026-06-27-injection-policy-abstention.md (Phase 5b).
+Also implements the Phase 5b memory_usage_audit populator:
+  1. After ingest, GET /memory-usage-audit?thread_ref=<session_id> to
+     fetch usage-audit rows that are still pending (populated_at IS NULL).
+  2. For each pending row, run the matcher (id_quote / verbatim_snippet)
+     against the assistant transcript.
+  3. POST /memory-usage-audit/<row_id> with the verdict. The POST is
+     idempotent server-side, so retries are safe.
+  4. Fire-and-forget per row; failures log to stderr and never block
+     the hook from exiting 0.
+
+See docs/specs/2026-06-27-injection-policy-abstention.md (Phase 5b).
 """
 
 from __future__ import annotations
@@ -32,8 +29,87 @@ from common import (
     read_turn,
     resolve_container_ref,
 )
+from usage_audit_matcher import classify_memory_reference
 
 CONTENT_LENGTH_GATE = 20_000
+
+
+def _populate_usage_audit_rows(session_id: str, assistant_text: str) -> None:
+    """Phase 5b: discover pending usage-audit rows for this thread and
+    POST a verdict for each based on the assistant's just-finished
+    response.
+
+    Fails silently on any error — populator data is best-effort
+    telemetry, not load-bearing for any user-visible behavior.
+    """
+    if not session_id or not assistant_text:
+        return
+    response = pallium_request(
+        "GET",
+        f"/memory-usage-audit?thread_ref={session_id}&limit=20",
+        None,
+    )
+    if not response:
+        return
+    rows = response.get("rows") or []
+    for row in rows:
+        try:
+            row_id = row.get("id")
+            memory_object_id = row.get("memory_object_id") or ""
+            # The list endpoint doesn't return the memory's text/title.
+            # Fetch a one-block summary from the memory itself via the
+            # expand endpoint to get matchable text.
+            mem_text = _fetch_memory_match_text(memory_object_id)
+            referenced, kind = classify_memory_reference(
+                memory_object_id=memory_object_id,
+                memory_text=mem_text,
+                response_text=assistant_text,
+            )
+            pallium_request(
+                "POST",
+                f"/memory-usage-audit/{row_id}",
+                {
+                    "referenced_in_next_turn": referenced,
+                    "reference_kind": kind,
+                    "observation_window_turns": 1,
+                },
+            )
+        except Exception as exc:
+            print(
+                f"pallium stop hook: usage-audit populate failed for "
+                f"row {row.get('id')!r}: {exc}",
+                file=sys.stderr,
+            )
+
+
+def _fetch_memory_match_text(memory_object_id: str) -> str:
+    """Fetch a memory's display-text for matching.
+
+    Uses the existing memory-expand endpoint. Returns empty string on
+    any failure — the matcher tolerates empty input by simply not
+    matching. Bounded by the matcher's own MATCH_TEXT_MAX_CHARS.
+    """
+    if not memory_object_id:
+        return ""
+    expand = pallium_request(
+        "GET",
+        f"/memory/{memory_object_id}/expand",
+        None,
+    )
+    if not expand or not isinstance(expand, dict):
+        return ""
+    payload = expand.get("payload") or {}
+    # Coalesce the common display fields. Order doesn't matter — we
+    # concatenate so the matcher can hit any of them.
+    parts: list[str] = []
+    for key in (
+        "summary", "decision", "investigation_outcome", "text",
+        "constraint_text", "interest_text", "title",
+    ):
+        val = payload.get(key)
+        if isinstance(val, str) and val:
+            parts.append(val)
+    return "\n".join(parts)
 
 
 def main() -> None:
@@ -81,6 +157,10 @@ def main() -> None:
             item_payload["metadata"] = metadata
 
         pallium_request("POST", "/items", [item_payload])
+
+        # Phase 5b: populate memory_usage_audit rows now that we've
+        # observed the assistant's response.
+        _populate_usage_audit_rows(session_id, content)
 
     except Exception as exc:
         print(f"pallium stop hook error: {exc}", file=sys.stderr)

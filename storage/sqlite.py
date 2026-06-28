@@ -864,6 +864,52 @@ class SQLiteStorageProvider(
             return out
         return self._with_retry(_do)
 
+    def list_pending_memory_usage_audit_rows_by_thread(
+        self,
+        thread_ref: str,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """List usage-audit rows for a thread that are still pending
+        (`populated_at IS NULL`), newest first.
+
+        Phase 5b populator path: the Stop hook calls this to find which
+        rows from recent injections still need a usage verdict. The
+        hard cap protects against a runaway thread with thousands of
+        unresolved rows.
+        """
+        # Hard cap to bound matcher cost in the hook.
+        if limit < 1:
+            limit = 1
+        if limit > 100:
+            limit = 100
+        def _do(session: Session) -> list[dict[str, Any]]:
+            stmt = (
+                select(MemoryUsageAuditRecord)
+                .where(MemoryUsageAuditRecord.thread_ref == thread_ref)
+                .where(MemoryUsageAuditRecord.populated_at.is_(None))
+                .order_by(MemoryUsageAuditRecord.created_at.desc())
+                .limit(limit)
+            )
+            out: list[dict[str, Any]] = []
+            for r in session.execute(stmt).scalars().all():
+                out.append({
+                    "id": r.id,
+                    "query_audit_log_id": r.query_audit_log_id,
+                    "memory_object_id": r.memory_object_id,
+                    "memory_type": r.memory_type,
+                    "container_ref": r.container_ref,
+                    "thread_ref": r.thread_ref,
+                    "trigger_origin": r.trigger_origin,
+                    "referenced_in_next_turn": None,
+                    "reference_kind": None,
+                    "observation_window_turns": None,
+                    "created_at": r.created_at,
+                    "populated_at": None,
+                })
+            return out
+        return self._with_retry(_do)
+
     def update_memory_usage_audit_row(
         self,
         *,

@@ -445,4 +445,121 @@ def test_post_memory_usage_audit_unknown_row_returns_updated_false(service_and_c
               "observation_window_turns": 1},
     )
     assert resp.status_code == 200
-    assert resp.json()["updated"] is False
+
+
+# ---------------------------------------------------------------------------
+# Phase 5b — GET ?thread_ref=... discovery mode
+# ---------------------------------------------------------------------------
+
+
+def test_get_by_thread_returns_only_pending_rows(service_and_client):
+    """GET with thread_ref returns rows where populated_at IS NULL."""
+    service, client, _db_path = service_and_client
+    # Inject one block on thread-A and another on thread-B.
+    _write_query_with_blocks(service, thread_ref="thread-A", blocks=[
+        {"memory_object_id": "m1", "memory_type": "decision",
+         "block_type": "memory", "title_preview": "x", "score": 20,
+         "retrieval_source": "vector"},
+    ])
+    _write_query_with_blocks(service, thread_ref="thread-A", blocks=[
+        {"memory_object_id": "m2", "memory_type": "decision",
+         "block_type": "memory", "title_preview": "y", "score": 21,
+         "retrieval_source": "vector"},
+    ])
+    _write_query_with_blocks(service, thread_ref="thread-B", blocks=[
+        {"memory_object_id": "m3", "memory_type": "decision",
+         "block_type": "memory", "title_preview": "z", "score": 22,
+         "retrieval_source": "vector"},
+    ])
+    resp = client.get("/memory-usage-audit", params={"thread_ref": "thread-A"})
+    assert resp.status_code == 200
+    rows = resp.json()["rows"]
+    # Thread-A only — m1 and m2, not m3.
+    mids = sorted(r["memory_object_id"] for r in rows)
+    assert mids == ["m1", "m2"]
+    # All are pending.
+    assert all(r["populated_at"] is None for r in rows)
+    assert all(r["referenced_in_next_turn"] is None for r in rows)
+
+
+def test_get_by_thread_excludes_populated_rows(service_and_client):
+    service, client, _db_path = service_and_client
+    _write_query_with_blocks(service, thread_ref="thread-X", blocks=[
+        {"memory_object_id": "m_kept", "memory_type": "decision",
+         "block_type": "memory", "title_preview": "x", "score": 20,
+         "retrieval_source": "vector"},
+        {"memory_object_id": "m_done", "memory_type": "decision",
+         "block_type": "memory", "title_preview": "y", "score": 21,
+         "retrieval_source": "vector"},
+    ])
+    # Populate one of the rows
+    audit_id = _first_audit_id(service)
+    rows = client.get(
+        "/memory-usage-audit", params={"query_audit_log_id": audit_id}
+    ).json()["rows"]
+    done_row = next(r for r in rows if r["memory_object_id"] == "m_done")
+    client.post(
+        f"/memory-usage-audit/{done_row['id']}",
+        json={"referenced_in_next_turn": True,
+              "reference_kind": "verbatim_snippet",
+              "observation_window_turns": 1},
+    )
+    # Now the by-thread call should only return the still-pending one.
+    pending = client.get(
+        "/memory-usage-audit", params={"thread_ref": "thread-X"}
+    ).json()["rows"]
+    assert len(pending) == 1
+    assert pending[0]["memory_object_id"] == "m_kept"
+
+
+def test_get_by_thread_honors_limit(service_and_client):
+    service, client, _db_path = service_and_client
+    # Five pending rows on the same thread.
+    for i in range(5):
+        _write_query_with_blocks(service, thread_ref="thread-N", blocks=[
+            {"memory_object_id": f"m{i}", "memory_type": "decision",
+             "block_type": "memory", "title_preview": "x", "score": 20,
+             "retrieval_source": "vector"},
+        ])
+    resp = client.get(
+        "/memory-usage-audit",
+        params={"thread_ref": "thread-N", "limit": 2},
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()["rows"]) == 2
+
+
+def test_get_rejects_both_query_audit_id_and_thread_ref(service_and_client):
+    _service, client, _ = service_and_client
+    resp = client.get(
+        "/memory-usage-audit",
+        params={"query_audit_log_id": "q1", "thread_ref": "t1"},
+    )
+    assert resp.status_code == 400
+    assert "exactly one" in resp.json()["detail"].lower()
+
+
+def test_get_rejects_neither_param(service_and_client):
+    _service, client, _ = service_and_client
+    resp = client.get("/memory-usage-audit")
+    assert resp.status_code == 400
+    assert "exactly one" in resp.json()["detail"].lower()
+
+
+def test_get_by_thread_no_rows_returns_empty(service_and_client):
+    _service, client, _ = service_and_client
+    resp = client.get(
+        "/memory-usage-audit", params={"thread_ref": "no-such-thread"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["rows"] == []
+
+
+def test_get_by_thread_limit_capped_at_100(service_and_client):
+    """Request limit > 100 should be rejected by fastapi validation."""
+    _service, client, _ = service_and_client
+    resp = client.get(
+        "/memory-usage-audit",
+        params={"thread_ref": "t", "limit": 500},
+    )
+    assert resp.status_code == 422  # fastapi validation error

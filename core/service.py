@@ -797,6 +797,24 @@ class PalliumService:
         """
         return self._storage.list_memory_usage_audit_rows(query_audit_log_id)
 
+    def list_pending_memory_usage_audit_by_thread(
+        self,
+        thread_ref: str,
+        *,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Phase 5b: list pending (populated_at IS NULL) usage-audit rows
+        for a thread, newest first. Hard-capped at 100 rows server-side.
+
+        Used by the Stop-hook populator which doesn't know individual
+        query_audit_log_ids — it only knows which thread it's running
+        in. See docs/specs/2026-06-27-injection-policy-abstention.md
+        (Phase 5b).
+        """
+        return self._storage.list_pending_memory_usage_audit_rows_by_thread(
+            thread_ref, limit=limit,
+        )
+
     def update_memory_usage_audit(
         self,
         *,

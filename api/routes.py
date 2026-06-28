@@ -674,9 +674,33 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
         response_model=MemoryUsageAuditListResponse,
     )
     def list_memory_usage_audit(
-        query_audit_log_id: str = Query(..., min_length=1),
+        query_audit_log_id: str | None = Query(default=None, min_length=1),
+        thread_ref: str | None = Query(default=None, min_length=1),
+        limit: int = Query(default=20, ge=1, le=100),
     ) -> MemoryUsageAuditListResponse:
-        rows = service.list_memory_usage_audit(query_audit_log_id)
+        """List memory_usage_audit rows.
+
+        Two mutually-exclusive discovery modes:
+        - `query_audit_log_id=...` — all rows for a specific query (Phase 5a).
+        - `thread_ref=...` — pending rows for a thread (Phase 5b populator).
+
+        Exactly one must be provided. `limit` only applies to thread_ref
+        mode and is server-capped at 100.
+        """
+        if (query_audit_log_id is None) == (thread_ref is None):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Provide exactly one of query_audit_log_id or thread_ref"
+                ),
+            )
+        if query_audit_log_id is not None:
+            rows = service.list_memory_usage_audit(query_audit_log_id)
+        else:
+            assert thread_ref is not None
+            rows = service.list_pending_memory_usage_audit_by_thread(
+                thread_ref, limit=limit,
+            )
         return MemoryUsageAuditListResponse(
             rows=[MemoryUsageAuditRowResponse(**row) for row in rows]
         )
