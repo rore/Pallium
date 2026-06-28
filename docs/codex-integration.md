@@ -184,8 +184,9 @@ If memory doesn't appear:
 - Check Pallium is running: `curl http://localhost:19836/status`
 - Check hooks are registered: look in `~/.codex/hooks.json`
 - Check MCP is configured: look for `[mcp_servers.pallium]` in `~/.codex/config.toml`
-- Check MCP command: it should point at the installed `pallium-mcp` executable
-  (for example, the venv `pallium-mcp.exe` on Windows)
+- Check MCP command: it should use an absolute Python executable with
+  `args = ["-m", "app.run", "mcp"]`; this avoids blocked venv launcher
+  stubs on Windows
 - Check feature flag: ensure `codex_hooks = true` under `[features]` in config.toml
 - Inspect retrieval: use the `pallium_query_debug` MCP tool
 

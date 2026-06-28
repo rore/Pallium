@@ -12,15 +12,19 @@ import pytest
 from app.cli import setup_codex
 
 
-def test_codex_mcp_config_uses_absolute_venv_command_and_base_url(
+def test_codex_mcp_config_uses_python_module_launch_and_base_url(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(setup_codex.sys, "platform", "win32")
     monkeypatch.setattr(
         setup_codex.sys,
         "executable",
-        r"C:\Dev\rore\Pallium\.venv\Scripts\python.exe",
+        r"C:\Users\me\AppData\Roaming\uv\python\cpython-3.13.14-windows-x86_64-none\python.exe",
     )
+    monkeypatch.setattr(setup_codex, "_pallium_repo_root", lambda: tmp_path)
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    monkeypatch.setenv("PATH", r"C:\Windows")
 
     content = setup_codex._ensure_mcp_server(
         """
@@ -33,8 +37,46 @@ env = { PALLIUM_MCP_TRANSPORT = "stdio" }
     )
 
     assert content.count("[mcp_servers.pallium]") == 1
-    assert 'command = "C:/Dev/rore/Pallium/.venv/Scripts/pallium-mcp.exe"' in content
+    assert (
+        'command = "C:/Users/me/AppData/Roaming/uv/python/'
+        'cpython-3.13.14-windows-x86_64-none/python.exe"'
+    ) in content
+    assert 'args = ["-m", "app.run", "mcp"]' in content
     assert 'PALLIUM_BASE_URL = "http://localhost:19836"' in content
+    assert f'PYTHONPATH = "{tmp_path.as_posix()}"' in content
+
+
+def test_codex_mcp_config_adds_repo_local_and_uv_venv_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "Pallium"
+    local_site = repo / ".local" / "test-env" / "site-packages"
+    local_site.mkdir(parents=True)
+    uv_root = tmp_path / "uv"
+    py_dir = uv_root / "python" / "cpython-3.13.14-windows-x86_64-none"
+    py_dir.mkdir(parents=True)
+    pallium_site = uv_root / "pallium-venv" / "Lib" / "site-packages"
+    (pallium_site / "win32" / "lib").mkdir(parents=True)
+    (pallium_site / "pywin32_system32").mkdir(parents=True)
+
+    monkeypatch.setattr(setup_codex.sys, "platform", "win32")
+    monkeypatch.setattr(setup_codex.sys, "executable", str(py_dir / "python.exe"))
+    monkeypatch.setattr(setup_codex, "_pallium_repo_root", lambda: repo)
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    monkeypatch.setenv("PATH", r"C:\Windows")
+
+    content = setup_codex._ensure_mcp_server("", port=19836)
+
+    for expected in (
+        repo,
+        local_site,
+        pallium_site,
+        pallium_site / "win32",
+        pallium_site / "win32" / "lib",
+    ):
+        assert str(expected).replace("\\", "/") in content
+    assert str(pallium_site / "pywin32_system32").replace("\\", "/") in content
 
 
 def test_codex_hooks_use_absolute_commands_without_literal_quotes(

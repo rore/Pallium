@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import urllib.error
@@ -52,10 +53,77 @@ def _hook_command(script_name: str) -> str:
 
 
 def _mcp_command() -> str:
-    suffix = ".exe" if sys.platform == "win32" else ""
-    exe = sys.executable.replace("\\", "/")
-    parent = exe.rsplit("/", 1)[0] if "/" in exe else "."
-    return f"{parent}/pallium-mcp{suffix}"
+    return _python_executable().replace("\\", "/")
+
+
+def _path_for_env(path: Path) -> str:
+    return str(path).replace("\\", "/")
+
+
+def _mcp_pythonpath_entries() -> list[str]:
+    """Paths needed when Codex launches MCP via `python -m app.run mcp`."""
+    entries: list[Path] = [_pallium_repo_root()]
+
+    local_site = _pallium_repo_root() / ".local" / "test-env" / "site-packages"
+    if local_site.exists():
+        entries.append(local_site)
+
+    for parent in Path(sys.executable).resolve().parents:
+        candidate = parent / "pallium-venv" / "Lib" / "site-packages"
+        if candidate.exists():
+            entries.append(candidate)
+            win32 = candidate / "win32"
+            win32_lib = win32 / "lib"
+            if win32.exists():
+                entries.append(win32)
+            if win32_lib.exists():
+                entries.append(win32_lib)
+            break
+
+    existing = os.environ.get("PYTHONPATH")
+    if existing:
+        for part in existing.split(os.pathsep):
+            if part:
+                entries.append(Path(part))
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        text = _path_for_env(entry)
+        key = text.lower() if sys.platform == "win32" else text
+        if key not in seen:
+            seen.add(key)
+            out.append(text)
+    return out
+
+
+def _mcp_path_entries() -> list[str]:
+    entries: list[str] = []
+    for py_path in _mcp_pythonpath_entries():
+        pywin32 = Path(py_path) / "pywin32_system32"
+        if pywin32.exists():
+            entries.append(_path_for_env(pywin32))
+    return entries
+
+
+def _toml_inline_string(value: str) -> str:
+    return json.dumps(value)
+
+
+def _mcp_env_toml(port: int) -> str:
+    values = {
+        "PALLIUM_MCP_TRANSPORT": "stdio",
+        "PALLIUM_BASE_URL": f"http://localhost:{port}",
+        "PYTHONPATH": os.pathsep.join(_mcp_pythonpath_entries()),
+    }
+    path_value = os.pathsep.join(_mcp_path_entries())
+    if path_value:
+        values["PATH"] = path_value
+    pairs = [
+        f"{key} = {_toml_inline_string(value)}"
+        for key, value in values.items()
+    ]
+    return "{ " + ", ".join(pairs) + " }"
 
 
 # -- TOML helpers (minimal, stdlib-only) --
@@ -110,8 +178,8 @@ def _ensure_mcp_server(content: str, port: int = 19836) -> str:
     mcp_block = (
         '\n[mcp_servers.pallium]\n'
         f'command = "{_mcp_command()}"\n'
-        'args = ["--stdio"]\n'
-        f'env = {{ PALLIUM_MCP_TRANSPORT = "stdio", PALLIUM_BASE_URL = "http://localhost:{port}" }}\n'
+        'args = ["-m", "app.run", "mcp"]\n'
+        f'env = {_mcp_env_toml(port)}\n'
         'startup_timeout_sec = 10\n'
         'tool_timeout_sec = 30\n'
     )
